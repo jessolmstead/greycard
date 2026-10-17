@@ -7,6 +7,8 @@ import { PanelButton, Segmented, ClipMark } from "../controls.slint";
 export component PanelHead inherits VerticalLayout {
     in-out property <bool> culling;
     in property <string> file-name;
+    /// The camera's JPEG beside the raw, in words; empty for none.
+    in property <string> file-companion;
     in property <string> shot-camera;
     in property <string> shot-exposure;
     in property <string> shot-size;
@@ -93,6 +95,13 @@ export component PanelHead inherits VerticalLayout {
         }
         Text {
             text: root.shot-size;
+            height: 16px;
+            color: Theme.text-secondary;
+            font-size: Theme.font-sm;
+            overflow: elide;
+        }
+        if root.file-companion != "": Text {
+            text: root.file-companion;
             height: 16px;
             color: Theme.text-secondary;
             font-size: Theme.font-sm;

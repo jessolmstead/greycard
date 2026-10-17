@@ -404,7 +404,7 @@ pub(crate) fn cull_select(st: &mut State, app: &App, cell: usize) {
     st.current = Some(cell);
     crate::panel::viewport::settle_source_size(st);
     app.set_selected(row as i32);
-    app.set_file_name(file_name(st.path_of(cell)).into());
+    crate::panel::browser::show_file_name(st, app, Some(st.path_of(cell)));
     let shot = shot_text(st, st.file_of(cell)).unwrap_or_default();
     app.set_shot_camera(shot.camera.as_str().into());
     app.set_shot_exposure(shot.exposure.as_str().into());
@@ -476,13 +476,18 @@ pub(crate) fn cull_refresh(st: &mut State) {
     let (files, from_row, cells, library) = (&st.files, &st.from_row, &st.cells, &st.library);
     let plan = |c: usize| loupe_plan_of(files, from_row, cells, library, c);
     let path_of = |c: usize| files[cells[c].file].clone();
+    let picture_of = |c: usize| companion_picture(&st.companions, &files[cells[c].file]);
     let version_of = |c: usize| cells[c].version.clone();
     let frames: Vec<usize> = order.iter().map(|&r| st.shown[r]).collect();
     let mut wants = Vec::new();
     // At 1:1, the frame's full JPEG before anything, where its file can
     // be read.
     if st.zoom > 0.0 && !cull.cache.has_own_size(c) && cull.wants_file(c) && plan(c).file {
-        wants.push(cull::Want::for_loupe(c, path_of(c), 0).of_version(version_of(c)));
+        wants.push(
+            cull::Want::for_loupe(c, path_of(c), 0)
+                .of_version(version_of(c))
+                .with_picture(picture_of(c)),
+        );
     }
     // The local previews of the frames with no picture yet, all of
     // them ahead of any file: under an offline root they are all there
@@ -514,9 +519,23 @@ pub(crate) fn cull_refresh(st: &mut State) {
         if had || !cull.wants_file(f) || !plan(f).file {
             continue;
         }
-        wants.push(cull::Want::for_loupe(f, path_of(f), size).of_version(version_of(f)));
+        wants.push(
+            cull::Want::for_loupe(f, path_of(f), size)
+                .of_version(version_of(f))
+                .with_picture(picture_of(f)),
+        );
     }
     st.prefetch.want(wants);
+}
+
+/// The camera's JPEG beside the raw at `path`, which the loupe and the
+/// stand-in show in place of the raw's own preview; none for a frame
+/// with none.
+pub(crate) fn companion_picture(
+    companions: &HashMap<PathBuf, Vec<PathBuf>>,
+    path: &Path,
+) -> Option<PathBuf> {
+    companions.get(path)?.first().cloned()
 }
 
 /// Where the loupe takes cell `c`'s picture from, by its root: see
@@ -619,7 +638,9 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
         // The frame's own want, version and all: the delivery is
         // checked against the cell's key, and a version's picture
         // asked as its file's would be dropped there.
-        cull::Want::of_file(cell, path, size).of_version(st.cells[cell].version.clone()),
+        cull::Want::of_file(cell, path.clone(), size)
+            .of_version(st.cells[cell].version.clone())
+            .with_picture(companion_picture(&st.companions, &path)),
     ]);
     // The frame before this one may have gone with the window — a
     // jump across the folder — and then there is nothing standing in
@@ -968,8 +989,10 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
         && loupe_plan_of(&st.files, &st.from_row, &st.cells, &st.library, c).file
     {
         cull.full_asked = Some(c);
-        let want = cull::Want::for_loupe(c, st.files[st.cells[c].file].clone(), 0)
-            .of_version(st.cells[c].version.clone());
+        let path = st.files[st.cells[c].file].clone();
+        let want = cull::Want::for_loupe(c, path.clone(), 0)
+            .of_version(st.cells[c].version.clone())
+            .with_picture(companion_picture(&st.companions, &path));
         st.prefetch.push_front(want);
     }
     let mut tiles = Vec::new();
@@ -1337,13 +1360,18 @@ pub(crate) fn plate_words(named: &Named) -> String {
     }
 }
 
-/// The picture shown, in the status line's words: the camera's JPEG,
-/// a small camera preview, or the local preview kept in the cache.
+/// The picture shown, in the status line's words: the camera's JPEG
+/// (inside the raw or beside it), a small one, or the local preview
+/// kept in the cache.
 pub(crate) fn picture_words((w, h): (u32, u32), small: bool, from: cull::Origin) -> String {
     if from == cull::Origin::Edit {
         format!("the edit, {w} \u{d7} {h}")
     } else if from == cull::Origin::Local {
         format!("the local preview, {w} \u{d7} {h}")
+    } else if from == cull::Origin::Companion && small {
+        format!("a small camera JPEG beside the raw, {w} \u{d7} {h}")
+    } else if from == cull::Origin::Companion {
+        format!("the camera's JPEG beside the raw, {w} \u{d7} {h}")
     } else if small {
         format!("a small camera preview, {w} \u{d7} {h}")
     } else {
@@ -1555,7 +1583,12 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     let rejected: Vec<usize> = (0..st.files.len())
         .filter(|&i| to_move_out(st, i))
         .collect();
-    let moved = match cull::move_rejects(&st.files, &rejected) {
+    let moved = match cull::move_rejects_as(
+        &st.files,
+        &rejected,
+        cull::Orphans::WriteOver,
+        st.jpegs_apart,
+    ) {
         Ok(m) => m,
         Err(e) => {
             tracing::error!("moving the rejects: {e:#}");
@@ -1570,14 +1603,16 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     // them where they were.
     let dir = rejects_where_of(st, &moved.files).unwrap_or_default();
     let mut status = format!(
-        "moved {} frame{} and {} sidecar{} to {}",
+        "moved {} frame{}{} and {} sidecar{} to {}",
         moved.files.len(),
         if moved.files.len() == 1 { "" } else { "s" },
+        crate::delete::companion_words(moved.companions.len()),
         moved.sidecars,
         if moved.sidecars == 1 { "" } else { "s" },
         dir
     );
     status.push_str(&left_words(&moved.skipped));
+    status.push_str(&half_words(&moved.companions_left));
     tracing::info!("{status}");
     hand_moves(st, &moved);
     hand_folders(st, &moved);
@@ -1597,6 +1632,7 @@ fn hand_moves(st: &State, moved: &cull::Moved) {
                 .iter()
                 .zip(&moved.to)
                 .map(|(&i, to)| (st.files[i].clone(), to.clone()))
+                .chain(moved.companions.iter().cloned())
                 .collect(),
         );
     }
@@ -1646,6 +1682,24 @@ fn left_words(skipped: &[(usize, String)]) -> String {
         } else {
             ""
         }
+    )
+}
+
+/// The camera's JPEGs a move left behind their raws, as the status
+/// line's tail: half a pair is said, not only logged. Empty for none.
+fn half_words(left: &[(PathBuf, String)]) -> String {
+    let Some((jpeg, why)) = left.first() else {
+        return String::new();
+    };
+    format!(
+        "; {} stayed behind {} ({}: {why})",
+        crate::delete::count(left.len(), "camera JPEG"),
+        if left.len() == 1 {
+            "its raw"
+        } else {
+            "their raws"
+        },
+        file_name(jpeg)
     )
 }
 
@@ -1730,7 +1784,7 @@ pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
         app.set_status("no frame chosen is in a rejects folder".into());
         return;
     }
-    let moved = cull::move_back(&st.files, &frames);
+    let moved = cull::move_back(&st.files, &frames, st.jpegs_apart);
     for (i, why) in &moved.skipped {
         tracing::warn!("{} left where it is: {why}", file_name(&st.files[*i]));
     }
@@ -1739,9 +1793,10 @@ pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
     let mut status = match above.as_slice() {
         [] => "nothing moved back".to_string(),
         many => format!(
-            "moved {} frame{} and {} sidecar{} back to {}",
+            "moved {} frame{}{} and {} sidecar{} back to {}",
             moved.files.len(),
             if moved.files.len() == 1 { "" } else { "s" },
+            crate::delete::companion_words(moved.companions.len()),
             moved.sidecars,
             if moved.sidecars == 1 { "" } else { "s" },
             match many {
@@ -1757,6 +1812,7 @@ pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
         ),
     };
     status.push_str(&left_words(&moved.skipped));
+    status.push_str(&half_words(&moved.companions_left));
     tracing::info!("{status}");
     // The frames' flags written at their new paths, then the index told
     // of the moves, then both folders passed over. A save's word that
@@ -1913,7 +1969,7 @@ pub(crate) fn drop_files(
         }
         (None, None) => {
             app.set_selected(-1);
-            app.set_file_name("".into());
+            crate::panel::browser::show_file_name(st, app, None);
         }
     }
     crate::versions::refit_compare(st, app, compared);
@@ -2527,6 +2583,38 @@ mod tests {
         crate::STATE.with(|s| *s.borrow_mut() = None);
         assert_eq!(app.get_demosaic_hint(), "the raw could not be read");
         assert_eq!(state.borrow().open_mosaic(), OpenMosaic::Unreadable);
+    }
+
+    /// A raw with the camera's JPEG beside it is culled on that JPEG:
+    /// the loupe's wants for it name the JPEG, at the view's size and
+    /// at 1:1; its neighbors with none name nothing.
+    #[test]
+    fn a_raw_with_a_companion_is_culled_on_the_jpeg_beside_it() {
+        let app = window(4);
+        let files = folder(4);
+        let (state, _worker) = state_for(&app, files.clone());
+        let jpeg = files[1].with_extension("JPG");
+        let mut st = state.borrow_mut();
+        st.companions.insert(files[1].clone(), vec![jpeg.clone()]);
+        st.current = Some(1);
+        enter_cull(&mut st, &app, 1);
+        let asked = st.prefetch.asked();
+        let of = |file: usize| asked.iter().filter(move |w| w.file == file);
+        assert!(of(1).count() > 0, "{asked:?}");
+        assert!(
+            of(1).all(|w| w.picture.as_ref() == Some(&jpeg)),
+            "{asked:?}"
+        );
+        assert!(of(2).all(|w| w.picture.is_none()), "{asked:?}");
+        // At 1:1, the full copy first, from the JPEG too.
+        st.zoom = 1.0;
+        cull_refresh(&mut st);
+        let asked = st.prefetch.asked();
+        let full = asked
+            .iter()
+            .find(|w| w.file == 1 && w.size == 0)
+            .expect("the full copy");
+        assert_eq!(full.picture.as_ref(), Some(&jpeg));
     }
 
     /// The frame's full-size copy held from 1:1 and no view-size one

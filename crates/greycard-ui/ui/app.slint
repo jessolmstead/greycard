@@ -1422,6 +1422,9 @@ export component App inherits Window {
     /// the picture on screen is not that develop yet.
     in property <string> placeholder-status;
     in property <string> file-name;
+    // The camera's JPEG beside the frame's raw, in a line under its
+    // name: "With the camera's JPEG, IMG_0001.JPG"; empty for none.
+    in property <string> file-companion;
     // What the file says the frame was shot at, under its name: the
     // body and its lens, then the exposure triangle. Either is empty
     // when the file said nothing.
@@ -1677,6 +1680,8 @@ export component App inherits Window {
     }
     in-out property <string> sidecar-placement: "Beside the raw";
     in-out property <bool> xmp-sidecars: false;
+    in-out property <bool> jpegs-apart: false;
+    callback jpegs-apart-changed();
     in property <int> sidecars-elsewhere: 0;
     /// How many frames are open, which the count and the move run
     /// over; and whether this run writes sidecars at all.
@@ -2309,6 +2314,7 @@ export component App inherits Window {
                 head := PanelHead {
                     culling <=> root.culling;
                     file-name: root.file-name;
+                    file-companion: root.file-companion;
                     shot-camera: root.shot-camera;
                     shot-exposure: root.shot-exposure;
                     shot-size: root.shot-size;
@@ -3613,6 +3619,8 @@ export component App inherits Window {
         settings-open <=> root.settings-open;
         sidecar-placement <=> root.sidecar-placement;
         xmp-sidecars <=> root.xmp-sidecars;
+        jpegs-apart <=> root.jpegs-apart;
+        jpegs-apart-changed => { root.jpegs-apart-changed(); }
         open-frames: root.open-frames;
         sidecars-written: root.sidecars-written;
         sidecars-elsewhere: root.sidecars-elsewhere;

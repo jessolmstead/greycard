@@ -81,6 +81,13 @@ pub struct Settings {
     /// changes. The XMPs stay beside the frame whatever this says,
     /// since beside is where Lightroom and darktable look.
     pub sidecars_in_folder: bool,
+    /// Whether a camera's JPEG beside a raw of its name is listed as a
+    /// frame of its own, as Lightroom's "treat JPEG files next to raw
+    /// files as separate photos" lists it. Off by default: the JPEG is
+    /// the raw's companion, marked on its tile, and goes where the raw
+    /// goes (`greycard_library::pairs`). The command line's listing and
+    /// `--export` read it too. Written as the switch is flipped.
+    pub jpegs_apart: bool,
     /// Whether a rating, flag or label key in culling moves the
     /// selection on to the next frame. Off by default: the key and
     /// the arrow are two presses until a culler asks for one.
@@ -231,6 +238,7 @@ impl Default for Settings {
             hide_strip: false,
             xmp_sidecars: false,
             sidecars_in_folder: false,
+            jpegs_apart: false,
             cull_move_on: false,
             lenses_declined: false,
             last_file: String::new(),
@@ -405,6 +413,7 @@ mod tests {
             hide_strip: true,
             xmp_sidecars: true,
             sidecars_in_folder: true,
+            jpegs_apart: true,
             cull_move_on: true,
             lenses_declined: true,
             export_last_folder: "/home/x/Pictures/out".into(),

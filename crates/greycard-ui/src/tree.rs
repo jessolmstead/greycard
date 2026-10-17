@@ -286,7 +286,7 @@ fn loose_for(st: &State) -> Option<&Path> {
 /// walked, since the folder may be on a share; a folder with frames
 /// only further down has no tile, since Open folder would find nothing
 /// in it to open. Off the window's thread.
-fn loose_nodes(dir: &Path) -> std::io::Result<Vec<Node>> {
+fn loose_nodes(dir: &Path, apart: bool) -> std::io::Result<Vec<Node>> {
     let mut nodes: Vec<((String, OsString), Node)> = Vec::new();
     for entry in std::fs::read_dir(dir)?.flatten() {
         if entry.file_name().to_string_lossy().starts_with('.')
@@ -295,7 +295,7 @@ fn loose_nodes(dir: &Path) -> std::io::Result<Vec<Node>> {
             continue;
         }
         let path = entry.path();
-        let direct = crate::files::list_files(&path).map_or(0, |f| f.len());
+        let direct = crate::files::list_files(&path, apart).map_or(0, |f| f.len());
         if direct == 0 {
             continue;
         }
@@ -321,6 +321,15 @@ fn loose_nodes(dir: &Path) -> std::io::Result<Vec<Node>> {
 /// lost one: opened again, or a move or a delete in it. Its tiles read
 /// again, when the view is such a folder.
 pub(crate) fn loose_changed(st: &mut State, app: &App) {
+    st.tree.loose_stale = true;
+    want(st, app);
+}
+
+/// What a folder's count is has changed for every folder (the JPEGs
+/// beside raws counted as frames, or not): the tree and the tiles made
+/// again.
+pub(crate) fn recounted(st: &mut State, app: &App) {
+    st.tree.stale = true;
     st.tree.loose_stale = true;
     want(st, app);
 }
@@ -362,6 +371,7 @@ fn want_loose(st: &mut State, app: &App) {
         index: None,
         counts: None,
         loose: true,
+        apart: st.jpegs_apart,
     };
     if !send(app, build) {
         st.tree.loose_asked = None;
@@ -449,6 +459,7 @@ pub(crate) fn want(st: &mut State, app: &App) {
         index: st.index_path.clone(),
         counts,
         loose: false,
+        apart: st.jpegs_apart,
     };
     if !send(app, build) {
         st.tree.asked = None;
@@ -507,6 +518,8 @@ pub(crate) struct Build {
     /// `root` is a folder under no root, its own folders read from the
     /// disk rather than a tree from the index.
     loose: bool,
+    /// A camera's JPEG beside its raw is counted as a frame of its own.
+    apart: bool,
 }
 
 /// A tree built.
@@ -526,7 +539,7 @@ impl Build {
     pub(crate) fn run(self) -> Built {
         let started = Instant::now();
         if self.loose {
-            let nodes = match loose_nodes(&self.root) {
+            let nodes = match loose_nodes(&self.root, self.apart) {
                 Ok(n) => Some(n),
                 Err(e) => {
                     tracing::warn!("the folders in {}: {e}", self.root.display());
@@ -545,8 +558,12 @@ impl Build {
         let counts = match self.counts {
             Some(c) => Ok(c),
             None => match &self.index {
-                Some(path) => greycard_library::Library::open_read_only(path)
-                    .and_then(|lib| lib.folder_counts_under_canonical(&self.root)),
+                Some(path) => {
+                    greycard_library::Library::open_read_only(path).and_then(|mut lib| {
+                        lib.set_jpegs_apart(self.apart);
+                        lib.folder_counts_under_canonical(&self.root)
+                    })
+                }
                 None => Ok(Vec::new()),
             },
         };

@@ -150,7 +150,8 @@ fn walk_from(
 /// names, `IMG.xmp` or `IMG.CR3.xmp`, and is left when there is none.
 /// Two raws of one stem in one folder (`DSCF0001.RAF` and a
 /// `DSCF0001.DNG` made from it) are two frames, and the companions of
-/// that stem go with the first of them in path order.
+/// that stem go with the one the browser pairs the camera's JPEG with
+/// (`greycard_library::pairs`): the camera's own format before a DNG.
 pub fn scan(source: &Path) -> Result<Scan> {
     anyhow::ensure!(source.is_dir(), "{} is not a folder", source.display());
     let mut files = Vec::new();
@@ -164,7 +165,15 @@ pub fn scan(source: &Path) -> Result<Scan> {
         .iter()
         .filter(|f| greycard_core::decode::is_raw_path(f))
     {
-        raws.entry(key(f)).or_insert(items.len());
+        let at = items.len();
+        raws.entry(key(f))
+            .and_modify(|best| {
+                let rank = greycard_library::pairs::raw_rank;
+                if rank(f) < rank(&items[*best].file) {
+                    *best = at;
+                }
+            })
+            .or_insert(at);
         items.push(Item {
             file: f.clone(),
             companions: Vec::new(),
@@ -1833,6 +1842,35 @@ mod tests {
                 &a.join("IMG_0001.CR3.xmp")
             ),
             "2026-0001.CR3.xmp"
+        );
+    }
+
+    /// Two raws of one stem are two frames, and the camera's JPEG goes
+    /// with the camera's raw rather than the DNG made from it, as the
+    /// browser pairs them, though the DNG comes first by name.
+    #[test]
+    fn the_jpeg_of_two_raws_of_one_stem_goes_with_the_cameras() {
+        let card = dir("scan-two").join("DCIM");
+        for (f, body) in [
+            ("DSCF0001.DNG", b"dng".as_slice()),
+            ("DSCF0001.JPG", b"jpg"),
+            ("DSCF0001.RAF", b"raf"),
+        ] {
+            write(&card.join(f), body);
+        }
+        let s = scan(&card).unwrap();
+        assert_eq!(
+            s.items,
+            vec![
+                Item {
+                    file: card.join("DSCF0001.DNG"),
+                    companions: vec![],
+                },
+                Item {
+                    file: card.join("DSCF0001.RAF"),
+                    companions: vec![card.join("DSCF0001.JPG")],
+                },
+            ]
         );
     }
 

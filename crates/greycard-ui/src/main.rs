@@ -521,6 +521,15 @@ pub(crate) struct State {
     /// (`versions`). `current`, `picked`, `shown`, `menu_file` and the
     /// thumbnail vectors are by cell.
     pub(crate) cells: Vec<versions::Cell>,
+    /// The camera's JPEGs beside the listed raws, by the raw's path, as
+    /// the last read of the list found them (`greycard_library::pairs`):
+    /// the tile's mark, the name's line, the culling loupe's picture.
+    /// A move or a delete asks the disk again at the moment it acts.
+    /// Empty while `jpegs_apart`.
+    pub(crate) companions: HashMap<PathBuf, Vec<PathBuf>>,
+    /// Whether a camera's JPEG beside its raw is a frame of its own:
+    /// the Settings sheet's switch, `settings.jpegs_apart`.
+    pub(crate) jpegs_apart: bool,
     /// While a collection is the list: the frames it shows, each file
     /// and version, in its order. The cells are these, the ones whose
     /// file is listed and whose version its sidecar has, rather than
@@ -1207,6 +1216,8 @@ impl State {
             snapshot_placeholder: false,
             cull: None,
             cull_move_on: false,
+            companions: HashMap::new(),
+            jpegs_apart: false,
             notice_timer: slint::Timer::default(),
             tags: tags::History::default(),
             hold: None,

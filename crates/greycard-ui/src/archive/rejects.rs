@@ -353,7 +353,10 @@ pub(crate) fn look(
         _ => return Err(format!("there is no rejects folder at {}", dir.display())),
     }
     beat();
-    let frames = crate::files::list_files(dir)
+    // Every file of the folder its own, the camera's JPEG beside a raw
+    // too: each is found on the archive by its own content, and moved
+    // or deleted there on its own.
+    let frames = crate::files::list_files(dir, true)
         .map_err(|e| format!("the rejects folder cannot be read: {e:#}"))?;
     let lib = index.and_then(|p| open_index(p, false, beat));
     let mut rejects = Vec::with_capacity(frames.len());
@@ -522,6 +525,7 @@ pub(crate) fn run_moves(
                 std::slice::from_ref(copy),
                 &[0],
                 crate::cull::Orphans::Keep,
+                true,
             ) {
                 Ok(m) if m.files == [0] => {
                     let to = rejects_dir(folder).join(copy.file_name().unwrap_or_default());
@@ -633,7 +637,7 @@ pub(crate) fn run_deletes(
             continue;
         }
         let allowed = allowed_under(archive, &found.copies);
-        let plan = delete::plan(&found.copies, &allowed);
+        let plan = delete::plan(&found.copies, &found.copies, &allowed, true);
         out.refused.extend(plan.refused.iter().cloned());
         let done = delete::delete(&plan, how, &allowed, &trash);
         for f in &done.frames {

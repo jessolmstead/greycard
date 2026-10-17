@@ -191,6 +191,15 @@ impl State {
             return;
         };
         let was = std::mem::replace(at, to.clone());
+        // Its companions are taken to have gone with it, as every move
+        // of ours takes them; the next read of the list says for sure.
+        if let Some(with) = self.companions.remove(&was) {
+            let with = with
+                .iter()
+                .filter_map(|c| Some(to.with_file_name(c.file_name()?)))
+                .collect();
+            self.companions.insert(to.clone(), with);
+        }
         if let Some(frames) = self.collection_frames.as_mut() {
             for k in frames.iter_mut().filter(|k| k.path == was) {
                 k.path = to.clone();
@@ -426,7 +435,7 @@ pub(crate) fn settle(st: &mut State, app: &App, worker: &Worker) -> bool {
             crate::panel::browser::open_row(st, app, worker, row as i32, false);
         } else {
             app.set_selected(-1);
-            app.set_file_name("".into());
+            crate::panel::browser::show_file_name(st, app, None);
         }
     } else if st.cull.is_some()
         && let Some(c) = st.current

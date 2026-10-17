@@ -376,6 +376,44 @@ pub(crate) fn network_poll_changed(st: &mut State, app: &App) {
     crate::roots::restart_poll(st);
 }
 
+/// A JPEG beside its raw made a frame of its own, or the raw's
+/// companion again: the choice kept, the index's reader told, the
+/// roots' counts and the tree made again by it, and the open list read
+/// again, so the JPEGs come into it or go out of it as a merge brings
+/// any file in or takes one out. Nothing on disk is touched.
+pub(crate) fn jpegs_apart_changed(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    apart: bool,
+) {
+    {
+        let mut st = state.borrow_mut();
+        if st.jpegs_apart == apart {
+            return;
+        }
+        st.jpegs_apart = apart;
+        keep(&st, |s| s.jpegs_apart = apart);
+        tracing::info!(
+            "a JPEG beside its raw is {}",
+            if apart {
+                "a frame of its own"
+            } else {
+                "the raw's companion"
+            }
+        );
+        if let Some(lib) = st.index_reader.as_mut() {
+            lib.set_jpegs_apart(apart);
+        }
+        crate::roots::recount(&mut st);
+        crate::tree::recounted(&mut st, app);
+        crate::roots::show(&st, app);
+    }
+    if !crate::roots::refresh_view(state, app, worker) {
+        tracing::info!("the list is files given by hand, and is not read again");
+    }
+}
+
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
     // Clear the thumbnail cache: every folder's thumbnails are made
     // again the next time it opens.
@@ -489,6 +527,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_network_poll_minutes(poll_minutes(&st).to_string().into());
             app.set_sidecar_placement(placement_name(st.placement).into());
             app.set_xmp_sidecars(st.xmp_sidecars);
+            app.set_jpegs_apart(st.jpegs_apart);
             app.set_settings_note("".into());
             // A Check now still on its way keeps its "Checking...".
             if !app.get_update_checking() {
@@ -525,6 +564,17 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.xmp_sidecars = app.get_xmp_sidecars();
             let on = st.xmp_sidecars;
             keep(&st, |s| s.xmp_sidecars = on);
+        });
+    }
+    // A JPEG beside its raw a frame of its own, or the raw's companion:
+    // kept, and the open list read again under the new rule.
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_jpegs_apart_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            jpegs_apart_changed(&state, &app, &worker, app.get_jpegs_apart());
         });
     }
     // The folder's sidecars put where the setting says, confirmed.

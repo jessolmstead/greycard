@@ -8,7 +8,11 @@
 //! names are this frame's, as [`greycard_edit::xmp::paths_of`] names
 //! them for the move of the rejects. The short `IMG.xmp` is only this
 //! frame's when no other picture in the folder answers to `IMG`, so a
-//! raw deleted beside its JPEG leaves the XMP the two share.
+//! raw deleted beside a JPEG listed apart leaves the XMP the two share.
+//! The camera's JPEG beside a raw (`greycard_library::pairs`) is the
+//! raw's and goes with it, its own sidecars with it, unless the JPEGs
+//! are listed apart; a raw and its JPEG with one short XMP between them
+//! take the XMP too, since nothing of its stem is left to answer to it.
 //!
 //! Nothing outside the folders the caller allows is touched, and no
 //! link is followed: a frame, a sidecar or the hidden folder that is
@@ -21,6 +25,7 @@
 //! `panel::delete`'s. The trash itself is handed in as a function, so
 //! no test ever puts anything in the user's trash.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use greycard_edit::{Placement, SIDECAR_FOLDER, Sidecar};
@@ -70,6 +75,8 @@ pub(crate) enum How {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Doomed {
     pub(crate) frame: PathBuf,
+    /// The camera's JPEGs beside the raw, which go with it.
+    pub(crate) companions: Vec<PathBuf>,
     pub(crate) sidecars: Vec<PathBuf>,
 }
 
@@ -85,6 +92,10 @@ impl Plan {
     pub(crate) fn sidecars(&self) -> usize {
         self.frames.iter().map(|d| d.sidecars.len()).sum()
     }
+
+    pub(crate) fn companions(&self) -> usize {
+        self.frames.iter().map(|d| d.companions.len()).sum()
+    }
 }
 
 /// What a delete did.
@@ -97,6 +108,12 @@ pub(crate) struct Deleted {
     pub(crate) vanished: usize,
     /// How many sidecars went with them.
     pub(crate) sidecars: usize,
+    /// The camera's JPEGs beside them that went with them: the index
+    /// forgets their rows with the frames'.
+    pub(crate) companions: Vec<PathBuf>,
+    /// The camera's JPEGs left behind when their raw went, and why: half
+    /// a pair, said so.
+    pub(crate) companions_left: Vec<(PathBuf, String)>,
     /// The frames that could not be deleted, and why; each is whole
     /// where it was, its sidecars with it.
     pub(crate) failed: Vec<(PathBuf, String)>,
@@ -193,27 +210,123 @@ pub(crate) fn sidecars_of(frame: &Path) -> Vec<PathBuf> {
 
 /// What deleting `frames` would touch, each checked against `allowed`
 /// (as [`allowed`] makes it). A frame that is refused, or any of
-/// whose sidecars is, stays whole: its raw never goes without its
-/// sidecars or the other way round. A frame already gone is planned
-/// with whatever sidecars it left behind.
-pub(crate) fn plan(frames: &[PathBuf], allowed: &[PathBuf]) -> Plan {
+/// whose sidecars or companions is, stays whole: its raw never goes
+/// without its sidecars or its JPEG, or the other way round. A frame
+/// already gone is planned with whatever sidecars it left behind.
+/// Unless `apart`, each raw takes the camera's JPEGs beside it as its
+/// folder holds them now, but for a JPEG `listed` (the window's files),
+/// which is a frame of its own there.
+pub(crate) fn plan(
+    frames: &[PathBuf],
+    listed: &[PathBuf],
+    allowed: &[PathBuf],
+    apart: bool,
+) -> Plan {
     let mut plan = Plan::default();
+    let mut pairs = companions_of(frames, listed, apart);
+    let mut folders = Folders::default();
     for frame in frames {
         if let Err(why) = deletable(frame, allowed) {
             plan.refused.push((frame.clone(), why));
             continue;
         }
-        let sidecars = sidecars_of(frame);
-        if let Some(why) = sidecars.iter().find_map(|s| deletable(s, allowed).err()) {
+        let companions = pairs.remove(frame).unwrap_or_default();
+        let mut sidecars = sidecars_of(frame);
+        for c in &companions {
+            sidecars.extend(sidecars_of(c));
+        }
+        if !companions.is_empty()
+            && let Some(shared) = shared_xmp(frame, &companions, &mut folders)
+            && !sidecars.contains(&shared)
+        {
+            sidecars.push(shared);
+        }
+        let refused = companions
+            .iter()
+            .chain(&sidecars)
+            .find_map(|s| deletable(s, allowed).err());
+        if let Some(why) = refused {
             plan.refused.push((frame.clone(), why));
             continue;
         }
         plan.frames.push(Doomed {
             frame: frame.clone(),
+            companions,
             sidecars,
         });
     }
     plan
+}
+
+/// The camera's JPEGs beside each of `raws` that go where it goes, as
+/// their folders hold them now, each folder read once: none when the
+/// JPEGs are listed `apart`, and none that `listed` names, which is a
+/// frame of its own.
+pub(crate) fn companions_of(
+    raws: &[PathBuf],
+    listed: &[PathBuf],
+    apart: bool,
+) -> HashMap<PathBuf, Vec<PathBuf>> {
+    if apart {
+        return HashMap::new();
+    }
+    let listed: HashSet<&PathBuf> = listed.iter().collect();
+    greycard_library::pairs::companions_of(raws)
+        .into_iter()
+        .map(|(raw, with)| {
+            let with: Vec<PathBuf> = with.into_iter().filter(|c| !listed.contains(c)).collect();
+            (raw, with)
+        })
+        .filter(|(_, with)| !with.is_empty())
+        .collect()
+}
+
+/// The names in each folder asked about, each folder read once.
+#[derive(Default)]
+pub(crate) struct Folders(HashMap<PathBuf, Vec<std::ffi::OsString>>);
+
+impl Folders {
+    fn names(&mut self, dir: &Path) -> &[std::ffi::OsString] {
+        self.0.entry(dir.to_path_buf()).or_insert_with(|| {
+            let read = if dir.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                dir
+            };
+            std::fs::read_dir(read)
+                .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+                .unwrap_or_default()
+        })
+    }
+}
+
+/// The short XMP (`IMG.xmp`) a raw and its JPEGs share, when it is
+/// there and nothing else of its stem is: the pair's, which goes where
+/// the pair goes, though it is neither file's alone
+/// ([`greycard_edit::xmp::paths_of`]).
+pub(crate) fn shared_xmp(
+    raw: &Path,
+    companions: &[PathBuf],
+    folders: &mut Folders,
+) -> Option<PathBuf> {
+    let short = greycard_edit::xmp::short_path(raw);
+    std::fs::symlink_metadata(&short).ok()?;
+    let (dir, stem) = (
+        raw.parent()?,
+        raw.file_stem()?.to_string_lossy().to_lowercase(),
+    );
+    let others = folders.names(dir).iter().any(|name| {
+        let p = raw.with_file_name(name);
+        let ours = p
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| matches!(x.to_ascii_lowercase().as_str(), "xmp" | "gcd" | "tmp"));
+        let same = p
+            .file_stem()
+            .is_some_and(|s| s.to_string_lossy().to_lowercase() == stem);
+        same && !ours && p != raw && !companions.contains(&p)
+    });
+    (!others).then_some(short)
 }
 
 /// The system trash, for the window: the `trash` crate's. Called
@@ -273,24 +386,45 @@ pub(crate) fn delete(
             done.failed.push((d.frame.clone(), why));
             continue;
         }
+        let mut companions = Vec::new();
+        for c in &d.companions {
+            match deletable(c, allowed) {
+                Ok(true) => companions.push(c.clone()),
+                Ok(false) => {}
+                Err(why) => refused = Some(why),
+            }
+        }
+        if let Some(why) = refused {
+            done.failed.push((d.frame.clone(), why));
+            continue;
+        }
         match how {
             How::Trash => {
                 let all: Vec<PathBuf> = there
                     .then(|| d.frame.clone())
                     .into_iter()
+                    .chain(companions.iter().cloned())
                     .chain(sidecars.iter().cloned())
                     .collect();
                 if !all.is_empty()
                     && let Err(why) = trash(&all)
                 {
                     let still = |p: &PathBuf| std::fs::symlink_metadata(p).is_ok();
-                    let left: Vec<PathBuf> =
-                        sidecars.iter().filter(|s| still(s)).cloned().collect();
-                    let sidecars_gone = sidecars.len() - left.len();
+                    let left_sidecars = sidecars.iter().filter(|s| still(s)).count();
+                    let sidecars_gone = sidecars.len() - left_sidecars;
+                    let companions_gone: Vec<PathBuf> =
+                        companions.iter().filter(|c| !still(c)).cloned().collect();
+                    let left: Vec<PathBuf> = companions
+                        .iter()
+                        .chain(&sidecars)
+                        .filter(|s| still(s))
+                        .cloned()
+                        .collect();
                     let frame_gone = !still(&d.frame);
                     if frame_gone {
                         done.frames.push(d.frame.clone());
                         done.sidecars += sidecars_gone;
+                        done.companions.extend(companions_gone);
                         if !there {
                             done.vanished += 1;
                         }
@@ -307,11 +441,22 @@ pub(crate) fn delete(
                     break;
                 }
                 done.sidecars += sidecars.len();
+                done.companions.extend(companions);
             }
             How::Permanent => {
                 if there && let Err(e) = std::fs::remove_file(&d.frame) {
                     done.failed.push((d.frame.clone(), e.to_string()));
                     continue;
+                }
+                for c in companions {
+                    match std::fs::remove_file(&c) {
+                        Ok(()) => done.companions.push(c),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(e) => {
+                            tracing::warn!("{}: not deleted with its raw: {e}", c.display());
+                            done.companions_left.push((c, e.to_string()));
+                        }
+                    }
                 }
                 for s in &sidecars {
                     match std::fs::remove_file(s) {
@@ -335,6 +480,16 @@ pub(crate) fn count(n: usize, noun: &str) -> String {
     format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
 }
 
+/// The camera's JPEGs that go with the frames, as a list's middle
+/// item: ", 2 camera JPEGs"; empty for none.
+pub(crate) fn companion_words(n: usize) -> String {
+    if n == 0 {
+        String::new()
+    } else {
+        format!(", {}", count(n, "camera JPEG"))
+    }
+}
+
 fn name(p: &Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -350,12 +505,13 @@ pub(crate) fn summary(done: &Deleted, how: How, refused: &[(PathBuf, String)]) -
         "nothing was deleted".to_string()
     } else {
         format!(
-            "{} {} and {}{}",
+            "{} {}{} and {}{}",
             match how {
                 How::Trash => "moved to the trash:",
                 How::Permanent => "deleted permanently:",
             },
             count(done.frames.len(), "frame"),
+            companion_words(done.companions.len()),
             count(done.sidecars, "sidecar"),
             if done.vanished > 0 {
                 format!(" ({} gone already)", done.vanished)
@@ -427,6 +583,23 @@ pub(crate) fn summary(done: &Deleted, how: How, refused: &[(PathBuf, String)]) -
             } else {
                 ""
             }
+        ));
+    }
+    if let Some((jpeg, why)) = done.companions_left.first() {
+        out.push_str(&format!(
+            "; {} left where {} when {} went ({}: {why})",
+            count(done.companions_left.len(), "camera JPEG"),
+            if done.companions_left.len() == 1 {
+                "it was"
+            } else {
+                "they were"
+            },
+            if done.companions_left.len() == 1 {
+                "its raw"
+            } else {
+                "their raws"
+            },
+            name(jpeg)
         ));
     }
     out
@@ -547,7 +720,7 @@ mod tests {
         let ok = allowed(std::slice::from_ref(&dir));
         // A, B and the JPEG of D.
         let chosen = [files[0].clone(), files[1].clone(), files[4].clone()];
-        let p = plan(&chosen, &ok);
+        let p = plan(&chosen, &[], &ok, false);
         assert!(p.refused.is_empty(), "{:?}", p.refused);
         assert_eq!(p.frames.len(), 3);
         // A's .gcd and both XMPs, B's .gcd under the hidden folder;
@@ -559,6 +732,62 @@ mod tests {
         assert_eq!(done.vanished, 0);
         assert!(done.failed.is_empty() && done.trash_refused.is_none());
         assert_eq!(all(&dir), ["C.CR3", "D.CR3", "D.xmp", "notes.txt"]);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A raw takes the camera's JPEG beside it, the JPEG's own sidecar
+    /// and the short XMP the two share, said in the summary; apart, or
+    /// with the JPEG chosen as a frame of its own, the raw goes alone.
+    #[test]
+    fn a_raw_takes_its_jpeg_and_their_shared_xmp_unless_apart() {
+        let dir = scratch("pair");
+        for name in [
+            "P.CR3",
+            "P.JPG",
+            "P.xmp",
+            "P.JPG.gcd",
+            "Q.CR3",
+            "Q.JPG",
+            "R.CR3",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let ok = allowed(std::slice::from_ref(&dir));
+        let p = plan(&[dir.join("P.CR3"), dir.join("R.CR3")], &[], &ok, false);
+        assert!(p.refused.is_empty(), "{:?}", p.refused);
+        assert_eq!(p.frames[0].companions, [dir.join("P.JPG")]);
+        assert!(p.frames[1].companions.is_empty());
+        assert_eq!(p.companions(), 1);
+        assert_eq!(p.sidecars(), 2, "the JPEG's .gcd and the pair's XMP");
+        let done = delete(&p, How::Permanent, &ok, never);
+        assert_eq!(
+            (done.frames.len(), done.companions.len(), done.sidecars),
+            (2, 1, 2)
+        );
+        assert_eq!(all(&dir), ["Q.CR3", "Q.JPG"]);
+        assert_eq!(
+            summary(&done, How::Permanent, &[]),
+            "deleted permanently: 2 frames, 1 camera JPEG and 2 sidecars"
+        );
+        // Half a pair, a JPEG that would not go with its raw, is said.
+        let half = Deleted {
+            companions_left: vec![(dir.join("P.JPG"), "denied".into())],
+            ..done.clone()
+        };
+        assert!(
+            summary(&half, How::Permanent, &[])
+                .ends_with("; 1 camera JPEG left where it was when its raw went (P.JPG: denied)"),
+            "{}",
+            summary(&half, How::Permanent, &[])
+        );
+        // Apart, the raw is planned alone; and a JPEG chosen beside its
+        // raw is a frame of its own, not the raw's.
+        let p = plan(&[dir.join("Q.CR3")], &[], &ok, true);
+        assert!(p.frames[0].companions.is_empty());
+        let both = [dir.join("Q.CR3"), dir.join("Q.JPG")];
+        let p = plan(&both, &both, &ok, false);
+        assert_eq!(p.frames.len(), 2);
+        assert_eq!(p.companions(), 0);
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -575,7 +804,7 @@ mod tests {
         let ok = allowed(std::slice::from_ref(&shoot_dir));
         // Outside the folder; and through `..` back out of it.
         let sneaky = shoot_dir.join("..").join("elsewhere").join("E.CR3");
-        let p = plan(&[away.clone(), sneaky, files[2].clone()], &ok);
+        let p = plan(&[away.clone(), sneaky, files[2].clone()], &[], &ok, false);
         assert_eq!(p.frames.len(), 1);
         assert_eq!(p.refused.len(), 2);
         assert!(p.refused[0].1.contains("not in the folder open"));
@@ -590,7 +819,7 @@ mod tests {
             std::os::unix::fs::symlink(&away, &link).unwrap();
             let linked_gcd = Sidecar::path_for(&files[3]);
             std::os::unix::fs::symlink(&away, &linked_gcd).unwrap();
-            let p = plan(&[link.clone(), files[3].clone()], &ok);
+            let p = plan(&[link.clone(), files[3].clone()], &[], &ok, false);
             assert!(p.frames.is_empty(), "{p:?}");
             assert!(p.refused[0].1.contains("is a link"));
             assert!(p.refused[1].1.contains("is a link"));
@@ -599,7 +828,7 @@ mod tests {
             let hidden = shoot_dir.join(SIDECAR_FOLDER);
             std::fs::rename(&hidden, dir.join("hidden")).unwrap();
             std::os::unix::fs::symlink(dir.join("hidden"), &hidden).unwrap();
-            let p = plan(std::slice::from_ref(&files[1]), &ok);
+            let p = plan(std::slice::from_ref(&files[1]), &[], &ok, false);
             assert!(p.frames.is_empty(), "{p:?}");
             assert!(link.exists() && away.exists() && files[3].exists());
             assert!(files[1].exists());
@@ -612,7 +841,7 @@ mod tests {
         let dir = scratch("vanished");
         let files = shoot(&dir);
         let ok = allowed(std::slice::from_ref(&dir));
-        let p = plan(&[files[0].clone(), files[2].clone()], &ok);
+        let p = plan(&[files[0].clone(), files[2].clone()], &[], &ok, false);
         // Both gone by another hand, one of them with its sidecar.
         std::fs::remove_file(&files[0]).unwrap();
         std::fs::remove_file(&files[2]).unwrap();
@@ -667,7 +896,7 @@ mod tests {
             Ok(())
         };
         let chosen = [files[0].clone(), files[1].clone(), files[2].clone()];
-        let p = plan(&chosen, &ok);
+        let p = plan(&chosen, &[], &ok, false);
         let done = delete(&p, How::Trash, &ok, stand_in);
         assert_eq!(*calls.borrow(), [4, 2]);
         assert_eq!(done.frames, [files[0].clone()]);
@@ -708,7 +937,7 @@ mod tests {
             Err("the sidecar would not go".to_string())
         };
         // B, whose one sidecar is under the hidden folder, then C.
-        let p = plan(&[files[1].clone(), files[2].clone()], &ok);
+        let p = plan(&[files[1].clone(), files[2].clone()], &[], &ok, false);
         let done = delete(&p, How::Trash, &ok, stand_in);
         assert_eq!(done.frames, [files[1].clone()]);
         assert_eq!(done.sidecars, 0);
@@ -735,7 +964,7 @@ mod tests {
         let dir = scratch("gone-refused");
         let files = shoot(&dir);
         let ok = allowed(std::slice::from_ref(&dir));
-        let p = plan(std::slice::from_ref(&files[0]), &ok);
+        let p = plan(std::slice::from_ref(&files[0]), &[], &ok, false);
         std::fs::remove_file(&files[0]).unwrap();
         let done = delete(&p, How::Trash, &ok, |_: &[PathBuf]| {
             Err("refused".to_string())
@@ -775,6 +1004,7 @@ mod tests {
         let handmade = Plan {
             frames: vec![Doomed {
                 frame: away.clone(),
+                companions: Vec::new(),
                 sidecars: Vec::new(),
             }],
             refused: Vec::new(),
@@ -789,7 +1019,7 @@ mod tests {
         {
             // Planned, then the folder swapped for a link to one
             // holding files of the same names.
-            let p = plan(&files[..2], &ok);
+            let p = plan(&files[..2], &[], &ok, false);
             assert_eq!(p.frames.len(), 2);
             std::fs::write(elsewhere.join("B.CR3"), b"raw").unwrap();
             std::fs::rename(&shoot_dir, dir.join("moved")).unwrap();

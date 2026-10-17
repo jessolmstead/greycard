@@ -40,6 +40,7 @@ pub mod fixture;
 pub mod hash;
 mod index;
 pub mod lightroom_catalog;
+pub mod pairs;
 pub mod roots;
 pub mod thumbs;
 
@@ -460,6 +461,10 @@ pub struct Library {
     conn: Connection,
     path: PathBuf,
     read_only: bool,
+    /// Whether a camera's JPEG beside its raw is listed as a frame of
+    /// its own ([`Library::set_jpegs_apart`]); off, a listing leaves
+    /// the companions out ([`pairs`]).
+    jpegs_apart: bool,
 }
 
 /// What a file's EXIF says that a filter can ask about.
@@ -1047,6 +1052,7 @@ impl Library {
                     conn,
                     path: path.to_path_buf(),
                     read_only: false,
+                    jpegs_apart: false,
                 })
             }
             Judgement::NotOurs => Err(Error::NotALibrary(path.to_path_buf())),
@@ -1105,6 +1111,26 @@ impl Library {
                 })
             },
         )?;
+        conn.create_scalar_function(
+            "pairkey",
+            3,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8
+                | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+            |ctx| {
+                // A file's folder and name, when the name is of the kind
+                // asked, to the key a raw and its JPEG share
+                // (`pairs::pair_key`); any other file is NULL.
+                use rusqlite::types::ValueRef;
+                Ok(match (ctx.get_raw(0), ctx.get_raw(1), ctx.get_raw(2)) {
+                    (ValueRef::Blob(folder), ValueRef::Text(name), ValueRef::Text(kind)) => {
+                        let name = String::from_utf8_lossy(name);
+                        let kind = String::from_utf8_lossy(kind);
+                        pairs::pair_key(folder, Path::new(&*name), &kind)
+                    }
+                    _ => None,
+                })
+            },
+        )?;
         Ok(())
     }
 
@@ -1130,6 +1156,7 @@ impl Library {
                     conn,
                     path,
                     read_only,
+                    jpegs_apart: false,
                 });
             }
             Judgement::NotOurs => return Err(Error::NotALibrary(path)),
@@ -1225,11 +1252,37 @@ impl Library {
             conn,
             path,
             read_only,
+            jpegs_apart: false,
         })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// List a camera's JPEG beside its raw as a frame of its own, as
+    /// the editor's setting says, or (the default) leave it out of
+    /// every listing and count as the raw's companion ([`pairs`]).
+    /// Questions about rows already chosen ([`Library::ids_passing`],
+    /// [`Library::facet_counts`] within ids, a lookup by path or hash)
+    /// answer for the rows given either way.
+    pub fn set_jpegs_apart(&mut self, apart: bool) {
+        self.jpegs_apart = apart;
+    }
+
+    /// Whether a camera's JPEG beside its raw is listed apart.
+    pub fn jpegs_apart(&self) -> bool {
+        self.jpegs_apart
+    }
+
+    /// " AND not a companion" for a listing, or nothing when the
+    /// JPEGs are listed apart.
+    fn frames_only(&self) -> String {
+        if self.jpegs_apart {
+            String::new()
+        } else {
+            format!(" AND NOT {}", pairs::COMPANION_SQL)
+        }
     }
 
     pub fn is_read_only(&self) -> bool {
@@ -1284,16 +1337,18 @@ impl Library {
 
     /// The files that pass `filter`, by folder then name. A file the
     /// index last found missing is left out unless the filter asks
-    /// about missing files.
+    /// about missing files, and a camera's JPEG beside its raw unless
+    /// the JPEGs are listed apart ([`Library::set_jpegs_apart`]).
     pub fn query(&self, filter: &Filter) -> Result<Vec<Entry>> {
         let (body, params) = filter.to_sql();
         let sql = format!(
-            "SELECT {COLUMNS} FROM files WHERE ({body}){} ORDER BY files.folder, files.name",
+            "SELECT {COLUMNS} FROM files WHERE ({body}){}{} ORDER BY files.folder, files.name",
             if filter.mentions_missing() {
                 ""
             } else {
                 " AND files.missing_since IS NULL"
-            }
+            },
+            self.frames_only()
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(params.iter().map(param)), entry)?;
@@ -1305,12 +1360,13 @@ impl Library {
     pub fn count(&self, filter: &Filter) -> Result<usize> {
         let (body, params) = filter.to_sql();
         let sql = format!(
-            "SELECT count(*) FROM files WHERE ({body}){}",
+            "SELECT count(*) FROM files WHERE ({body}){}{}",
             if filter.mentions_missing() {
                 ""
             } else {
                 " AND files.missing_since IS NULL"
-            }
+            },
+            self.frames_only()
         );
         let n: i64 = self
             .conn
@@ -1427,9 +1483,9 @@ impl Library {
                 " AND files.missing_since IS NULL"
             },
             if within.is_some() {
-                " AND files.id IN (SELECT value FROM json_each(?))"
+                " AND files.id IN (SELECT value FROM json_each(?))".to_string()
             } else {
-                ""
+                self.frames_only()
             }
         );
         let mut all: Vec<rusqlite::types::Value> = params.iter().map(param).collect();
@@ -1799,7 +1855,9 @@ impl Library {
     /// Every file under these roots the index last found where it
     /// is, by folder then name: the all-roots view's list. A root is
     /// a folder, and a file is under it when its folder is the root
-    /// or starts with it and a separator.
+    /// or starts with it and a separator. A camera's JPEG beside its
+    /// raw is left out, here and in every listing and count of a
+    /// folder or a root below, unless the JPEGs are listed apart.
     pub fn paths_under(&self, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
         self.paths_under_as(roots, true)
     }
@@ -1816,8 +1874,9 @@ impl Library {
         }
         let (clause, params) = under_roots_as(roots, canonicalize);
         let sql = format!(
-            "SELECT path FROM files WHERE missing_since IS NULL AND ({clause}) \
-             ORDER BY folder, name"
+            "SELECT path FROM files WHERE missing_since IS NULL AND ({clause}){} \
+             ORDER BY folder, name",
+            self.frames_only()
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
@@ -1836,7 +1895,8 @@ impl Library {
         let (clause, params) = under_roots_as(roots, false);
         let sql = format!(
             "SELECT files.path, {META_COLUMNS} FROM files WHERE missing_since IS NULL \
-             AND ({clause}) ORDER BY folder, name"
+             AND ({clause}){} ORDER BY folder, name",
+            self.frames_only()
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
@@ -1899,7 +1959,10 @@ impl Library {
     fn count_under_as(&self, root: &Path, canonicalize: bool) -> Result<usize> {
         let (clause, params) =
             under_roots_as(std::slice::from_ref(&root.to_path_buf()), canonicalize);
-        let sql = format!("SELECT count(*) FROM files WHERE missing_since IS NULL AND ({clause})");
+        let sql = format!(
+            "SELECT count(*) FROM files WHERE missing_since IS NULL AND ({clause}){}",
+            self.frames_only()
+        );
         let n: i64 = self
             .conn
             .prepare_cached(&sql)?
@@ -1916,8 +1979,9 @@ impl Library {
     pub fn folder_counts_under_canonical(&self, root: &Path) -> Result<Vec<(PathBuf, usize)>> {
         let (clause, params) = under_roots_as(std::slice::from_ref(&root.to_path_buf()), false);
         let sql = format!(
-            "SELECT folder, count(*) FROM files WHERE missing_since IS NULL AND ({clause}) \
-             GROUP BY folder ORDER BY folder"
+            "SELECT folder, count(*) FROM files WHERE missing_since IS NULL AND ({clause}){} \
+             GROUP BY folder ORDER BY folder",
+            self.frames_only()
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
@@ -1936,7 +2000,8 @@ impl Library {
     pub fn rows_in_canonical(&self, folder: &Path) -> Result<Vec<(PathBuf, RowMeta)>> {
         let sql = format!(
             "SELECT files.path, {META_COLUMNS} FROM files WHERE folder = ? \
-             AND missing_since IS NULL ORDER BY name"
+             AND missing_since IS NULL{} ORDER BY name",
+            self.frames_only()
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(params![path_bytes(folder)], |r| {
@@ -1945,14 +2010,40 @@ impl Library {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// The camera's JPEGs beside raws in these folders (canonical, as
+    /// the index keys them), raw by raw, by [`pairs::pair`] over the
+    /// rows the index last found there: what a view listed from the
+    /// index knows its frames' companions by, with no folder read.
+    /// Nothing when the JPEGs are listed apart.
+    pub fn companions_in(&self, folders: &[PathBuf]) -> Result<Vec<(PathBuf, Vec<PathBuf>)>> {
+        if self.jpegs_apart {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT path FROM files WHERE folder = ? AND missing_since IS NULL")?;
+        let mut out = Vec::new();
+        for folder in folders {
+            let paths = stmt
+                .query_map(params![path_bytes(folder)], |r| {
+                    r.get::<_, Vec<u8>>(0).map(|b| path_from_bytes(&b))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            out.extend(pairs::pair(paths, false).companions);
+        }
+        Ok(out)
+    }
+
     /// How many files are directly in one folder (canonical), the
     /// missing left out.
     pub fn count_in_canonical(&self, folder: &Path) -> Result<usize> {
+        let sql = format!(
+            "SELECT count(*) FROM files WHERE folder = ? AND missing_since IS NULL{}",
+            self.frames_only()
+        );
         let n: i64 = self
             .conn
-            .prepare_cached(
-                "SELECT count(*) FROM files WHERE folder = ? AND missing_since IS NULL",
-            )?
+            .prepare_cached(&sql)?
             .query_row(params![path_bytes(folder)], |r| r.get(0))?;
         Ok(n as usize)
     }

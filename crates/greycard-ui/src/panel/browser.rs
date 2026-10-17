@@ -368,6 +368,29 @@ pub(crate) fn screen_filled(st: &State, app: &App) -> bool {
         .all(|&f| st.thumb_base[f].is_some() || st.thumb_failed[f])
 }
 
+/// The name of the frame on screen over the panel, and under it the
+/// camera's JPEG beside its raw when there is one; both empty for none.
+pub(crate) fn show_file_name(st: &State, app: &App, path: Option<&Path>) {
+    app.set_file_name(path.map(file_name).unwrap_or_default().into());
+    app.set_file_companion(
+        path.map(|p| companion_words(st, p))
+            .unwrap_or_default()
+            .into(),
+    );
+}
+
+/// The camera's JPEGs beside the raw at `path`, in the panel's words:
+/// "With the camera's JPEG, IMG_0001.JPG"; empty for a frame with none.
+pub(crate) fn companion_words(st: &State, path: &Path) -> String {
+    match st.companions.get(path).map(Vec::as_slice) {
+        None | Some([]) => String::new(),
+        Some(with) => {
+            let names: Vec<String> = with.iter().map(|p| file_name(p)).collect();
+            format!("With the camera's JPEG, {}", names.join(", "))
+        }
+    }
+}
+
 /// A browser row for a file: its name, the badges its meta asks for,
 /// and no picture until the worker has made one.
 pub(crate) fn thumb_for(path: &Path, meta: &Meta, marks: (bool, bool)) -> Thumb {
@@ -385,6 +408,7 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta, marks: (bool, bool)) -> Thumb 
         edited: marks.0,
         exported: marks.1,
         collected: false,
+        paired: false,
         version: Default::default(),
     }
 }
@@ -1177,6 +1201,8 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
                 // The cell's own frame, by its file's hash and its
                 // version.
                 collected: crate::panel::collections::collected(st, c),
+                paired: st.cells[c].version.is_none()
+                    && st.companions.contains_key(&st.files[file]),
                 version: st.version_name(c).unwrap_or_default().into(),
                 ..thumb_for(&st.files[file], &st.sidecars[file].meta, frame_marks(st, c))
             }
@@ -1393,7 +1419,8 @@ pub(crate) fn open_paths(
     worker: &Rc<Worker>,
     paths: &[PathBuf],
 ) {
-    let (files, refused) = files::list_paths(paths);
+    let apart = state.borrow().jpegs_apart;
+    let (files, refused) = files::list_paths(paths, apart);
     for e in &refused {
         tracing::warn!("{e:#}");
     }
@@ -1832,7 +1859,7 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
         show_history(st, app);
     }
     app.set_selected(row);
-    app.set_file_name(file_name(&path).into());
+    show_file_name(st, app, Some(&path));
     app.set_busy(true);
     app.set_status(format!("reading {}'s sidecar...", file_name(&path)).into());
     show_set(st, app);
@@ -1947,7 +1974,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         st.current = Some(i);
         st.generation += 1;
         app.set_selected(row);
-        app.set_file_name(file_name(&file).into());
+        show_file_name(st, app, Some(&file));
         app.set_busy(false);
         show_history(st, app);
         crate::rows::say_offline_for(st, app, i, ": nothing to develop, and no change is kept");
@@ -2017,7 +2044,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // frame: the log's line, and `--time-select`.
     st.selected_at = Some(std::time::Instant::now());
     app.set_selected(row);
-    app.set_file_name(file_name(&file).into());
+    show_file_name(st, app, Some(&file));
     // The last file's shot is not this one's; the open says
     // what this one was.
     app.set_shot_camera("".into());

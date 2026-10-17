@@ -2354,6 +2354,129 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A camera's JPEG beside its raw is the raw's companion: both keep
+    /// rows, and every listing and count leaves the JPEG out unless the
+    /// JPEGs are listed apart, by the same rule the folder's paths are
+    /// paired by in hand. A raw gone from the disk frees its JPEG.
+    #[test]
+    fn a_jpeg_beside_its_raw_is_left_out_of_listings_unless_apart() {
+        use crate::filter::Facet;
+        use crate::fixture::write_mosaic_dng;
+        let dir = scratch("pairs");
+        write_mosaic_dng(&dir.join("IMG_1.dng"), "RGGB");
+        write_mosaic_dng(&dir.join("IMG_3.DNG"), "RGGB");
+        // Not a raw the decoder reads, and a row all the same.
+        std::fs::write(dir.join("IMG_3.CR3"), b"not a raw").unwrap();
+        for name in ["IMG_1.JPG", "IMG_1.png", "IMG_2.JPG", "img_3.jpeg"] {
+            image::RgbImage::from_pixel(4, 3, image::Rgb([90, 120, 150]))
+                .save(dir.join(name))
+                .unwrap();
+        }
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.seen(), 7, "{report:?}");
+        let kinds = |lib: &Library| -> Vec<(String, usize)> {
+            lib.facet_counts(Facet::Kind, None, &Filter::default())
+                .unwrap()
+                .into_iter()
+                .map(|c| (c.value, c.count))
+                .collect()
+        };
+        let listed = |lib: &Library| -> Vec<String> {
+            let mut got: Vec<String> = lib
+                .paths_under(std::slice::from_ref(&dir))
+                .unwrap()
+                .iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+            got.sort();
+            got
+        };
+        let frames = [
+            "IMG_1.dng",
+            "IMG_1.png",
+            "IMG_2.JPG",
+            "IMG_3.CR3",
+            "IMG_3.DNG",
+        ];
+        assert_eq!(listed(&lib), frames);
+        // The rule in SQL is the rule in hand.
+        let mut on_disk: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        on_disk.sort();
+        let mut by_hand: Vec<PathBuf> = crate::pairs::pair(on_disk, false).frames;
+        by_hand.sort();
+        let mut by_index: Vec<PathBuf> = lib
+            .query(&Filter::default())
+            .unwrap()
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        by_index.sort();
+        assert_eq!(by_index, by_hand);
+        assert_eq!(lib.count(&Filter::default()).unwrap(), 5);
+        assert_eq!(names(&lib, "kind:jpeg"), ["IMG_2.JPG"]);
+        let one = |v: &str, n: usize| (v.to_string(), n);
+        assert_eq!(kinds(&lib), [one("raw", 3), one("jpeg", 1), one("png", 1)]);
+        assert_eq!(lib.count_under(&dir).unwrap(), 5);
+        assert_eq!(lib.count_in_canonical(&dir).unwrap(), 5);
+        assert_eq!(lib.rows_in_canonical(&dir).unwrap().len(), 5);
+        assert_eq!(
+            lib.rows_under_canonical(std::slice::from_ref(&dir))
+                .unwrap()
+                .len(),
+            5
+        );
+        assert_eq!(
+            lib.folder_counts_under_canonical(&dir).unwrap(),
+            [(dir.clone(), 5)]
+        );
+        // Each raw's companions, the camera's raw taking its JPEG over
+        // the DNG of its name.
+        assert_eq!(
+            lib.companions_in(std::slice::from_ref(&dir)).unwrap(),
+            [
+                (dir.join("IMG_1.dng"), vec![dir.join("IMG_1.JPG")]),
+                (dir.join("IMG_3.CR3"), vec![dir.join("img_3.jpeg")]),
+            ]
+        );
+        // Rows asked about by id answer for themselves, companion or not.
+        let ids: Vec<i64> = lib
+            .ids_of(&[dir.join("IMG_1.JPG")])
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(lib.ids_passing(&ids, &Filter::default()).unwrap().len(), 1);
+
+        // Apart, every file is a frame.
+        lib.set_jpegs_apart(true);
+        assert_eq!(listed(&lib).len(), 7);
+        assert_eq!(lib.count(&Filter::default()).unwrap(), 7);
+        let mut jpegs = names(&lib, "kind:jpeg");
+        jpegs.sort();
+        assert_eq!(jpegs, ["IMG_1.JPG", "IMG_2.JPG", "img_3.jpeg"]);
+        assert_eq!(kinds(&lib), [one("jpeg", 3), one("raw", 3), one("png", 1)]);
+        assert_eq!(lib.count_in_canonical(&dir).unwrap(), 7);
+        assert!(
+            lib.companions_in(std::slice::from_ref(&dir))
+                .unwrap()
+                .is_empty()
+        );
+
+        // A raw gone from the disk leaves its JPEG a frame of its own.
+        lib.set_jpegs_apart(false);
+        std::fs::remove_file(dir.join("IMG_1.dng")).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let mut jpegs = names(&lib, "kind:jpeg");
+        jpegs.sort();
+        assert_eq!(jpegs, ["IMG_1.JPG", "IMG_2.JPG"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// The index keeps each file's kind of mosaic, read on the same
     /// decoder as its EXIF: a Bayer DNG, an X-Trans DNG, a picture;
     /// and a row from before the column (schema 10) gets it on the next

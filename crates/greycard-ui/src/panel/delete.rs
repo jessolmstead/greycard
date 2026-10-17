@@ -297,7 +297,7 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
                     return;
                 }
             }
-            let frames = match crate::files::list_files(&dir) {
+            let frames = match crate::files::list_files(&dir, st.jpegs_apart) {
                 Ok(f) => f,
                 Err(e) => {
                     app.set_status(format!("the rejects folder cannot be read: {e:#}").into());
@@ -412,7 +412,7 @@ fn ask_sheet(st: &mut State, app: &App, which: Which, over: Over) {
         links,
         archived,
     } = over;
-    let plan = delete::plan(&frames, &allowed);
+    let plan = delete::plan(&frames, &st.files, &allowed, st.jpegs_apart);
     if plan.frames.is_empty() {
         let why = plan
             .refused
@@ -445,8 +445,9 @@ fn ask_sheet(st: &mut State, app: &App, which: Which, over: Over) {
         many => format!("{} folders", many.len()),
     };
     let mut text = format!(
-        "{} and {}, from {place}.",
+        "{}{} and {}, from {place}.",
         delete::count(n, "frame"),
+        delete::companion_words(plan.companions()),
         delete::count(plan.sidecars(), "sidecar")
     );
     if let Some((_, why)) = plan.refused.first() {
@@ -533,7 +534,7 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
         let edit = read_edit(app, &st.edit, st.target);
         save_edit(st, edit);
     }
-    let plan = delete::plan(&asked.frames, &asked.allowed);
+    let plan = delete::plan(&asked.frames, &st.files, &asked.allowed, st.jpegs_apart);
     let n = plan.frames.len();
     st.deleting = Some(plan.frames.iter().map(|d| d.frame.clone()).collect());
     app.set_status(format!("deleting {}...", delete::count(n, "frame")).into());
@@ -598,8 +599,16 @@ fn send_off(_app: &App, job: Job) -> bool {
 pub(crate) fn land(st: &mut State, app: &App, worker: &Worker, done: Done) {
     st.deleting = None;
     let gone = &done.deleted.frames;
+    // The camera's JPEGs that went with their raws are forgotten with
+    // them: a row left standing would be a frame of every listing of
+    // the index until a pass found the file gone.
     if let Some(indexer) = &st.index {
-        indexer.forget(gone.clone());
+        indexer.forget(
+            gone.iter()
+                .chain(&done.deleted.companions)
+                .cloned()
+                .collect(),
+        );
     }
     {
         let cache = worker.thumb_cache();
@@ -843,6 +852,79 @@ pub(crate) mod tests {
         for kept in [0, 2, 4] {
             assert!(reader.by_path(&files[kept]).unwrap().is_some());
         }
+        let indexer = state.borrow_mut().index.take().unwrap();
+        indexer.stop(Duration::from_secs(20));
+        drop(reader);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A raw deleted takes the camera's JPEG beside it, both said on the
+    /// sheet and in the status, and both rows are forgotten: the JPEG's
+    /// left standing would be a frame of every listing of the index
+    /// until a pass found it gone.
+    #[test]
+    fn deleting_a_raw_forgets_its_jpegs_row_with_its_own() {
+        let dir = scratch("pair");
+        let shoot_dir = dir.join("shoot");
+        std::fs::create_dir_all(&shoot_dir).unwrap();
+        let (raw, jpeg, other) = (
+            shoot_dir.join("P.dng"),
+            shoot_dir.join("P.JPG"),
+            shoot_dir.join("q.tif"),
+        );
+        greycard_library::fixture::write_mosaic_dng(&raw, "RGGB");
+        image::RgbImage::from_pixel(4, 3, image::Rgb([90, 120, 150]))
+            .save(&jpeg)
+            .unwrap();
+        write_frame(&other, &R5, 1);
+        let db = dir.join("data").join("library.sqlite");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let indexer = Indexer::start(db.clone(), move |told| {
+            let _ = tx.send(told);
+        })
+        .expect("the indexer starts");
+        let wait = |want: &dyn Fn(&Told) -> bool| loop {
+            let told = rx
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the indexer answers");
+            if want(&told) {
+                return told;
+            }
+        };
+        wait(&|t| matches!(t, Told::Opened(_)));
+        indexer.folders(vec![shoot_dir.clone()], 1);
+        wait(&|t| matches!(t, Told::Indexed { .. }));
+
+        let files = vec![raw.clone(), other.clone()];
+        let app = window(files.len());
+        let (state, worker) = opened(&app, files);
+        refused(&state, &shoot_dir);
+        state.borrow_mut().index = Some(indexer);
+        app.invoke_delete_asked("selection".into());
+        let text = app.get_delete_text();
+        assert!(
+            text.starts_with("1 frame, 1 camera JPEG and 0 sidecars, from "),
+            "{text}"
+        );
+        app.invoke_delete_answered(2);
+        land_all(&state, &app, &worker);
+        assert_eq!(names(&shoot_dir), ["q.tif"]);
+        let status = app.get_status();
+        assert!(
+            status.starts_with("deleted permanently: 1 frame, 1 camera JPEG and 0 sidecars"),
+            "{status}"
+        );
+        match wait(&|t| matches!(t, Told::Forgotten(..))) {
+            Told::Forgotten(n, _) => assert_eq!(n, 2),
+            other => panic!("{other:?}"),
+        }
+        let reader = Library::open_read_only(&db).unwrap();
+        assert_eq!(
+            reader
+                .paths_under(std::slice::from_ref(&shoot_dir))
+                .unwrap(),
+            std::slice::from_ref(&other)
+        );
         let indexer = state.borrow_mut().index.take().unwrap();
         indexer.stop(Duration::from_secs(20));
         drop(reader);

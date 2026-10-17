@@ -2,7 +2,8 @@
 // a picture, over everything until closed. Where the sidecars go and
 // whether an XMP goes beside them; and, with frames open, the move
 // that puts their sidecars where the setting says now, since flipping
-// it moves nothing by itself. And the check for a newer release.
+// it moves nothing by itself. Whether the camera's JPEG beside a raw is
+// a frame of its own. And the check for a newer release.
 
 import { Theme } from "../theme.slint";
 import { Toggle, PanelButton, Segmented } from "../controls.slint";
@@ -26,6 +27,11 @@ export component SettingsSheet inherits Rectangle {
     callback placement-changed();
     callback xmp-changed();
     callback sidecars-move();
+    /// Whether a JPEG beside a raw of its name is a frame of its own;
+    /// off, it is the raw's companion. Flipping it lists the open
+    /// frames again.
+    in-out property <bool> jpegs-apart;
+    callback jpegs-apart-changed();
     /// The thumbnail cache: whether this run has one, what it holds
     /// in words, and the button that empties it.
     in property <bool> thumb-cache-on;
@@ -179,6 +185,26 @@ export component SettingsSheet inherits Rectangle {
                     }
                     Text {
                         text: "Rating, label and keywords, for Lightroom and darktable.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: Theme.space-1; }
+                    Text {
+                        text: "RAW+JPEG";
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-secondary;
+                    }
+                    Toggle {
+                        label: "Treat a JPEG beside its raw as a separate frame";
+                        checked <=> root.jpegs-apart;
+                        toggled => { root.jpegs-apart-changed(); }
+                    }
+                    Text {
+                        text: root.jpegs-apart
+                            ? "IMG_0001.JPG is a frame of its own, with its own rating."
+                            : "IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG.";
                         font-size: Theme.font-xs;
                         color: Theme.text-muted;
                         wrap: word-wrap;

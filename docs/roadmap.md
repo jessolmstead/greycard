@@ -38,7 +38,6 @@ ours, so a tester brings a library over in one go.
       and lens rules in a smart collection matched through rawler's
       names
 - [ ] RawTherapee `.pp3` import on opening a folder (Library track)
-- [ ] RAW+JPEG pairs (Library track). After the kind filter
 - [ ] Stacks (Library track). After the pairs
 - [ ] The Lightroom mapper measured, then fitted, against the
       archive's exports with their settings read from the catalogs,
@@ -327,11 +326,6 @@ comes across with its ratings and collections.
       machine, so a set gathered on the laptop is not on the desktop;
       carry it through the archive as the sidecars are (§243). Waits on
       collections
-- [ ] RAW+JPEG pairs: a JPEG with a raw of the same name beside it is
-      the raw's companion, not a second frame in the grid and the
-      strip; a badge on the tile, a move or a delete takes both, the
-      pair's rating, flag and label one thing; a setting to list them
-      apart, as Lightroom's "treat JPEG as separate" is
 - [ ] RawTherapee `.pp3` import on opening a folder: the command is
       there (§328); a folder holding profiles beside its raws offered
       the import once, with the command's report on a sheet, and the

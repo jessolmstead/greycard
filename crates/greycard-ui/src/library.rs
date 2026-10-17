@@ -1639,7 +1639,8 @@ pub(crate) fn open_reader(st: &mut State, app: &App) {
         Ok(lib)
     });
     match opened {
-        Ok(lib) => {
+        Ok(mut lib) => {
+            lib.set_jpegs_apart(st.jpegs_apart);
             st.index_reader = Some(lib);
             if st.index_error.as_deref() == Some(READER_UNAVAILABLE) {
                 st.index_error = None;

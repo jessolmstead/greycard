@@ -416,6 +416,9 @@ pub(crate) struct Look {
     index: Option<PathBuf>,
     /// A view's read: its count, for the window's bar.
     progress: Option<Arc<Progress>>,
+    /// A camera's JPEG beside its raw is listed as a frame of its own;
+    /// else it is left out, and found as the raw's companion.
+    apart: bool,
 }
 
 /// What the frame on screen was found to be, off the window's thread.
@@ -518,6 +521,9 @@ pub(crate) struct Found {
     /// A collection's read: the frames it shows, each file and version,
     /// in its order.
     frames: Option<Vec<crate::versions::Key>>,
+    /// The camera's JPEGs beside the listed raws, raw by raw: from the
+    /// folder's listing, or from the index's rows for a view of it.
+    companions: Vec<(PathBuf, Vec<PathBuf>)>,
 }
 
 /// One root's look, out on a thread of its own: its answer when it has

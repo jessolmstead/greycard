@@ -957,13 +957,15 @@ export component ThumbBadges inherits Rectangle {
 // the badges' (rating, flag, color): a pencil for a frame whose edit
 // is not the default, a picture going down for a frame exported. Both
 // when both are so, nothing when neither. Quieter than the badges, in
-// the secondary text color on a lighter scrim.
+// the secondary text color on a lighter scrim. A raw with the camera's
+// JPEG beside it says so in a word, "+JPEG", after them.
 export component ThumbMarks inherits Rectangle {
     in property <bool> edited;
     in property <bool> exported;
     in property <bool> collected;
+    in property <bool> paired;
     in property <length> glyph: 9px;
-    visible: root.edited || root.exported || root.collected;
+    visible: root.edited || root.exported || root.collected || root.paired;
     width: marks.preferred-width;
     height: root.glyph + 6px;
     border-radius: Theme.radius-sm;
@@ -996,6 +998,15 @@ export component ThumbMarks inherits Rectangle {
             height: root.glyph;
             accessible-role: image;
             accessible-label: "In a collection";
+        }
+        if root.paired: Text {
+            text: "+JPEG";
+            color: Theme.text-secondary;
+            font-size: root.glyph;
+            font-weight: Theme.weight-medium;
+            vertical-alignment: center;
+            accessible-role: text;
+            accessible-label: "With the camera's JPEG";
         }
     }
 }

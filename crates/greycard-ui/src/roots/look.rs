@@ -18,10 +18,12 @@ impl Look {
         let mut looked = 0;
         let mut said = None;
         let mut rows: Option<HashMap<PathBuf, RowMeta>> = None;
-        let lib = self
-            .index
-            .as_deref()
-            .and_then(|p| greycard_library::Library::open_read_only(p).ok());
+        let lib = self.index.as_deref().and_then(|p| {
+            let mut lib = greycard_library::Library::open_read_only(p).ok()?;
+            lib.set_jpegs_apart(self.apart);
+            Some(lib)
+        });
+        let mut companions = Vec::new();
         // A collection's references found in the index, here off the
         // window's thread, and listed from there as a view of the roots
         // is: each picture once already, so nothing is hidden.
@@ -98,7 +100,10 @@ impl Look {
                     Some(_) => {
                         let key = greycard_library::key_folder(&dir);
                         canonical.push((dir.clone(), key));
-                        list_folder(&dir, &mut said)
+                        list_folder(&dir, self.apart, &mut said).map(|listed| {
+                            companions = listed.companions;
+                            listed.frames
+                        })
                     }
                 }
             }
@@ -110,6 +115,9 @@ impl Look {
                     {
                         canonical.push((dir.to_path_buf(), greycard_library::key_folder(dir)));
                     }
+                }
+                if !self.apart {
+                    companions = greycard_library::pairs::companions_of(&files);
                 }
                 Some(files)
             }
@@ -224,6 +232,16 @@ impl Look {
                     }
                 }
                 rows = Some(map);
+                // The companions from the index's rows of the same
+                // folders: a folder offline still has them, and none
+                // is read for them.
+                if let Some(lib) = &lib {
+                    let listed: Vec<PathBuf> = folders.iter().map(|d| d.to_path_buf()).collect();
+                    match lib.companions_in(&listed) {
+                        Ok(found) => companions = found,
+                        Err(e) => tracing::debug!("library: {e}; no companions marked"),
+                    }
+                }
                 if said.is_some() { None } else { Some(kept) }
             }
         };
@@ -340,19 +358,25 @@ impl Look {
             seconds,
             collection,
             frames,
+            companions,
         }
     }
 }
 
-/// A folder's pictures, or none with the reason in `said`: nothing in
-/// it, or not a folder.
-fn list_folder(dir: &Path, said: &mut Option<String>) -> Option<Vec<PathBuf>> {
-    match files::list_files(dir) {
-        Ok(files) if files.is_empty() => {
+/// A folder's pictures, with the camera's JPEGs beside its raws found
+/// unless `apart`, or none with the reason in `said`: nothing in it,
+/// or not a folder.
+fn list_folder(
+    dir: &Path,
+    apart: bool,
+    said: &mut Option<String>,
+) -> Option<greycard_library::pairs::Paired> {
+    match files::list(dir, apart) {
+        Ok(listed) if listed.frames.is_empty() => {
             *said = Some(format!("no pictures in {}", dir.display()));
             None
         }
-        Ok(files) => Some(files),
+        Ok(listed) => Some(listed),
         Err(e) => {
             tracing::warn!("{e:#}");
             *said = Some(format!("{}: not a folder", dir.display()));

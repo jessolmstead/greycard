@@ -63,6 +63,9 @@ export struct Thumb {
     exported: bool,
     /// The picture is in a collection: a third mark beside those two.
     collected: bool,
+    /// The camera's JPEG of the frame is beside its raw, and goes where
+    /// it goes: a fourth mark. Only on the file's own cell.
+    paired: bool,
     /// The version of the file the cell is, by its name ("Warm"): a
     /// tag on its picture, and the grid's label under it. Empty for
     /// the file's own.

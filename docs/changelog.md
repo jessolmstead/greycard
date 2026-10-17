@@ -14,6 +14,16 @@ note a first tester reads.
 
 ### Library
 
+- A camera's JPEG beside its raw of the same name is now the raw's
+  companion: one frame in the grid and the strip, marked +JPEG, with one
+  rating, flag and label, and a move or a delete of the raw takes the
+  JPEG with it. Culling shows the camera's JPEG for such a frame when it
+  is no smaller than the raw's own preview, and naming the JPEG (to open
+  it, with `--cull` or with `--export`) acts on its raw.
+  ([§332](https://github.com/jessolmstead/greycard/blob/master/docs/notes/332-raw-jpeg-pairs.md))
+- Settings, RAW+JPEG: "Treat a JPEG beside its raw as a separate frame"
+  lists the JPEGs as frames of their own again; `--export` and `greycard
+  library list` follow it.
 - `greycard library import-lightroom <catalog>` brings a Lightroom
   Classic catalog across: ratings, flags, labels, keywords, titles and
   captions exactly, the develop settings as one "Imported from

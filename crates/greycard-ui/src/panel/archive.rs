@@ -388,13 +388,18 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
     let (offline, here): (Vec<usize>, Vec<usize>) = chosen
         .into_iter()
         .partition(|&i| crate::rows::is_offline(&st, i));
-    let selection: Vec<PathBuf> = st
-        .files_of(&here)
-        .iter()
-        .filter_map(|&i| st.files.get(i))
-        .map(|f| keyed(&st, f))
+    let files = st.files_of(&here);
+    let chosen: Vec<&PathBuf> = files.iter().filter_map(|&i| st.files.get(i)).collect();
+    let many = chosen.len() + offline.len() > 1;
+    // A chosen raw's camera JPEG is copied with it, as a move takes it.
+    let selection: Vec<PathBuf> = chosen
+        .into_iter()
+        .flat_map(|f| {
+            let with = st.companions.get(f).cloned().unwrap_or_default();
+            std::iter::once(f.clone()).chain(with)
+        })
+        .map(|f| keyed(&st, &f))
         .collect();
-    let many = selection.len() + offline.len() > 1;
     let (side, frames) = match from {
         Pressed::Menu => (
             side_of_frames(&st, &selection),

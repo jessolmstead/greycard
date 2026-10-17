@@ -111,7 +111,7 @@ fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
     let renamed = shoot.join("bb.tif");
     std::fs::rename(&files[1], &renamed).unwrap();
     writer.index_folder(&shoot, &mut |_| {}).unwrap();
-    let listed = crate::files::list_files(&shoot).unwrap();
+    let listed = crate::files::list_files(&shoot, false).unwrap();
     assert_eq!(merge_read(&state, &app, &worker, listed, Some(&db)), None);
     {
         let st = state.borrow();
@@ -123,7 +123,7 @@ fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
     let moved = other.join("bb.tif");
     std::fs::rename(&renamed, &moved).unwrap();
     writer.index_tree(&dir, &mut |_| {}).unwrap();
-    let listed = crate::files::list_files(&shoot).unwrap();
+    let listed = crate::files::list_files(&shoot, false).unwrap();
     assert_eq!(listed.len(), 2);
     assert_eq!(merge_read(&state, &app, &worker, listed, Some(&db)), None);
     {

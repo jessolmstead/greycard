@@ -26,6 +26,7 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
         seconds,
         collection,
         frames,
+        companions,
     } = found;
     {
         let st = state.borrow();
@@ -48,6 +49,35 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
             st.collection_frames = frames;
         }
     }
+    // The camera's JPEGs beside the list's raws, as the same read found
+    // them: a JPEG come or gone beside a raw changes no frame, and the
+    // tiles are made again for its mark all the same.
+    let paired = {
+        let mut st = state.borrow_mut();
+        if st.view_generation == generation
+            && let Some(listed) = &files
+        {
+            // A JPEG that is a frame of this list itself (a collection
+            // holding it, put there while the JPEGs were listed apart)
+            // is no raw's companion here: no mark for it, no picture
+            // from it, and a move or a delete of the raw leaves it.
+            let listed: HashSet<&PathBuf> = listed.iter().collect();
+            let next: HashMap<PathBuf, Vec<PathBuf>> = companions
+                .into_iter()
+                .map(|(raw, with)| {
+                    let with: Vec<PathBuf> =
+                        with.into_iter().filter(|c| !listed.contains(c)).collect();
+                    (raw, with)
+                })
+                .filter(|(_, with)| !with.is_empty())
+                .collect();
+            let changed = st.companions != next;
+            st.companions = next;
+            changed
+        } else {
+            false
+        }
+    };
     // A collection's references found moved or rewritten: its file
     // takes their new hashes and hints, whatever the list does next.
     let mut missing = 0;
@@ -221,8 +251,13 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
                     again = true;
                 }
             }
-            if dimmed && ours && !rebuilt {
+            if (dimmed || paired) && ours && !rebuilt {
                 rebuild_browser(&mut state.borrow_mut(), app);
+            }
+            if paired && ours {
+                let st = state.borrow();
+                let on_screen = st.current.and_then(|c| st.path_at(c)).cloned();
+                crate::panel::browser::show_file_name(&st, app, on_screen.as_deref());
             }
             if again {
                 refresh_view(state, app, worker);

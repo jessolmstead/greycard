@@ -345,6 +345,7 @@ impl Job {
                 .first()
                 .map(|first| Doomed {
                     frame: first.clone(),
+                    companions: Vec::new(),
                     sidecars: self.files[1..].to_vec(),
                 })
                 .into_iter()

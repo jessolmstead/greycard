@@ -104,6 +104,9 @@ pub struct Preview {
     /// never taken for the JPEG's every pixel, so 1:1 still opens the
     /// camera's full JPEG for focus.
     pub edited: bool,
+    /// Decoded from the camera's JPEG beside the raw rather than the
+    /// preview inside it: the camera's finished picture, full size.
+    pub companion: bool,
     /// How long the decode took, for the log.
     pub seconds: f64,
 }
@@ -121,6 +124,7 @@ impl Preview {
             full,
             local: false,
             edited: false,
+            companion: false,
             seconds: 0.0,
         }
     }
@@ -139,6 +143,8 @@ impl Preview {
             Origin::Edit
         } else if self.local {
             Origin::Local
+        } else if self.companion {
+            Origin::Companion
         } else {
             Origin::Camera
         }
@@ -183,6 +189,8 @@ impl Preview {
 pub enum Origin {
     /// The camera's JPEG, or the picture itself, from the file.
     Camera,
+    /// The camera's JPEG beside the raw, from that file.
+    Companion,
     /// The frame's local preview, from the cache.
     Local,
     /// The picture made from the frame's edit, from the cache.
@@ -412,6 +420,11 @@ pub struct Want {
     /// A tile of the lightbox: the picture of the frame's edit when it
     /// has one, and never the camera's then (`lightbox::fetch`).
     pub lightbox: bool,
+    /// The file the camera's picture is read from when it is not
+    /// `path`: the camera's JPEG beside the raw, full size and the
+    /// camera's finished picture, where the raw's own preview may be a
+    /// small one.
+    pub picture: Option<PathBuf>,
 }
 
 impl Want {
@@ -425,7 +438,14 @@ impl Want {
             from: Source::File,
             make_preview: false,
             lightbox: false,
+            picture: None,
         }
+    }
+
+    /// The same want, the camera's picture read from `picture` (the
+    /// JPEG beside the raw) when there is one.
+    pub fn with_picture(self, picture: Option<PathBuf>) -> Self {
+        Self { picture, ..self }
     }
 
     /// The same want, of version `version` of the file.
@@ -467,6 +487,7 @@ impl Want {
             && self.version == other.version
             && self.from == other.from
             && self.lightbox == other.lightbox
+            && self.picture == other.picture
     }
 }
 
@@ -697,8 +718,13 @@ pub(crate) fn fetch(
         });
         return;
     }
-    match decode_keeping(&want.path, want.size) {
-        Ok((preview, picture, orientation)) => {
+    let decoded = match &want.picture {
+        Some(jpeg) => decode_paired(&want.path, jpeg, want.size),
+        None => decode_keeping(&want.path, want.size).map(|d| (d, false)),
+    };
+    match decoded {
+        Ok(((mut preview, picture, orientation), companion)) => {
+            preview.companion = companion;
             deliver(Loaded::Ok {
                 file: want.file,
                 frame: want.frame(),
@@ -749,6 +775,94 @@ fn decode_keeping(
 ) -> anyhow::Result<(Preview, image::RgbImage, Orientation)> {
     let started = Instant::now();
     let (image, orientation) = camera_picture(path)?;
+    Ok(shaped(image, orientation, size, started))
+}
+
+/// [`decode_keeping`] for a raw with the camera's JPEG beside it, and
+/// whether the picture is the JPEG's: the JPEG, the camera's finished
+/// picture, unless the raw's own preview is the larger (a JPEG shot
+/// small beside a full-size preview) or the JPEG will not read (gone
+/// since the list was read, or cut off), when the raw's own is shown.
+/// A JPEG as large as the frame itself is taken without the raw's
+/// preview read, since none inside the raw is larger.
+fn decode_paired(
+    raw: &Path,
+    jpeg: &Path,
+    size: u32,
+) -> anyhow::Result<((Preview, image::RgbImage, Orientation), bool)> {
+    let started = Instant::now();
+    let read = image::image_dimensions(jpeg)
+        .ok()
+        .filter(|_| jpeg_whole(jpeg));
+    let Some((jw, jh)) = read else {
+        tracing::debug!(
+            "{}: will not read, or is not all there; the raw's own preview",
+            jpeg.display()
+        );
+        return decode_keeping(raw, size).map(|d| (d, false));
+    };
+    let long = jw.max(jh);
+    let frame = greycard_core::decode::stance_path(raw)
+        .ok()
+        .and_then(|s| s.size)
+        .map(|(w, h)| w.max(h));
+    // Within a few percent: a sensor's frame runs a little past the
+    // camera's JPEG of it.
+    if frame.is_some_and(|f| u64::from(long) * 100 >= u64::from(f) * 95)
+        && let Ok(d) = decode_keeping(jpeg, size)
+    {
+        return Ok((d, true));
+    }
+    let own = camera_picture(raw);
+    if let Ok((image, _)) = &own
+        && image.width().max(image.height()) > long
+    {
+        let (image, orientation) = own?;
+        return Ok((shaped(image, orientation, size, started), false));
+    }
+    match decode_keeping(jpeg, size) {
+        Ok(d) => Ok((d, true)),
+        Err(e) => match own {
+            Ok((image, orientation)) => Ok((shaped(image, orientation, size, started), false)),
+            Err(_) => Err(e),
+        },
+    }
+}
+
+/// Whether the JPEG at `path` ends with its end-of-image marker, past
+/// any padding of zeros or `FF`s after it. A file cut off (a card's copy
+/// still being written) reads its header and decodes, its missing rows
+/// grey, so the header alone does not say the picture is there.
+fn jpeg_whole(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let Ok(len) = file.metadata().map(|m| m.len()) else {
+        return false;
+    };
+    let tail = len.min(4096);
+    if file.seek(SeekFrom::End(-(tail as i64))).is_err() {
+        return false;
+    }
+    let mut end = Vec::with_capacity(tail as usize);
+    if file.read_to_end(&mut end).is_err() {
+        return false;
+    }
+    match end.iter().rposition(|&b| b != 0x00 && b != 0xFF) {
+        Some(i) => i > 0 && end[i] == 0xD9 && end[i - 1] == 0xFF,
+        None => false,
+    }
+}
+
+/// A camera's picture at `size` on its long edge, zero for its own,
+/// turned as `orientation` says; with the picture, for a local preview.
+fn shaped(
+    image: image::RgbImage,
+    orientation: Orientation,
+    size: u32,
+    started: Instant,
+) -> (Preview, image::RgbImage, Orientation) {
     let (pw, ph) = (image.width(), image.height());
     let long = pw.max(ph);
     // The nearest whole factor: within a few percent of the size
@@ -771,7 +885,7 @@ fn decode_keeping(
     // JPEG was no larger than the view and came back whole.
     let mut preview = Preview::new(w, h, rgba, source, size == 0);
     preview.seconds = started.elapsed().as_secs_f64();
-    Ok((preview, image, orientation))
+    (preview, image, orientation)
 }
 
 /// The files read for a camera picture, for the tests that say a frame
@@ -908,17 +1022,24 @@ pub struct Moved {
     pub to: Vec<PathBuf>,
     /// How many of them had a sidecar that went with them.
     pub sidecars: usize,
+    /// The camera's JPEGs that went with their raws, each from where
+    /// to where.
+    pub companions: Vec<(PathBuf, PathBuf)>,
+    /// The camera's JPEGs that stayed when their raws went, and why:
+    /// half a pair, said so.
+    pub companions_left: Vec<(PathBuf, String)>,
     /// The files left where they were, and why.
     pub skipped: Vec<(usize, String)>,
 }
 
 /// Move the files at `rejected` (indices into `files`), each with its
-/// sidecar when it has one, into the rejects folder beside them.
-/// Never a delete: a file of the same name already there is left
-/// alone and the frame stays, said so in `skipped`. The folder is
-/// made if it is not there.
+/// sidecar when it has one and the camera's JPEG beside a raw, into
+/// the rejects folder beside them. Never a delete: a file of the same
+/// name already there is left alone and the frame stays, said so in
+/// `skipped`. The folder is made if it is not there.
+#[cfg(test)]
 pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Moved> {
-    move_rejects_as(files, rejected, Orphans::WriteOver)
+    move_rejects_as(files, rejected, Orphans::WriteOver, false)
 }
 
 /// What a move does with a sidecar already in the rejects folder under
@@ -934,11 +1055,13 @@ pub enum Orphans {
 }
 
 /// [`move_rejects`], with what to do about an orphaned sidecar in the
-/// rejects folder said.
+/// rejects folder said, and whether the camera's JPEG beside a raw is
+/// listed `apart`, a frame of its own that stays unless chosen.
 pub fn move_rejects_as(
     files: &[PathBuf],
     rejected: &[usize],
     orphans: Orphans,
+    apart: bool,
 ) -> anyhow::Result<Moved> {
     let mut moved = Moved::default();
     // Each frame into the rejects folder of its own folder: a list
@@ -980,7 +1103,7 @@ pub fn move_rejects_as(
                 .extend(group.iter().map(|&i| (i, why.clone())));
             continue;
         }
-        move_into(files, &group, &dir, orphans, &mut moved);
+        move_into(files, &group, &dir, orphans, apart, &mut moved);
     }
     Ok(moved)
 }
@@ -996,8 +1119,9 @@ pub fn move_rejects_as(
 /// `skipped`. A sidecar there of its names with no raw beside it is
 /// this frame's own, left when it was culled, and the frame's sidecar
 /// goes over it, as [`Orphans::WriteOver`] has it. A frame not in a
-/// rejects folder is left and said.
-pub fn move_back(files: &[PathBuf], chosen: &[usize]) -> Moved {
+/// rejects folder is left and said. The camera's JPEG beside a raw goes
+/// back with it unless the JPEGs are listed `apart`.
+pub fn move_back(files: &[PathBuf], chosen: &[usize], apart: bool) -> Moved {
     let mut moved = Moved::default();
     let mut by_folder: Vec<(PathBuf, Vec<usize>)> = Vec::new();
     for &i in chosen {
@@ -1016,7 +1140,7 @@ pub fn move_back(files: &[PathBuf], chosen: &[usize]) -> Moved {
         }
     }
     for (above, group) in by_folder {
-        move_into(files, &group, &above, Orphans::WriteOver, &mut moved);
+        move_into(files, &group, &above, Orphans::WriteOver, apart, &mut moved);
     }
     moved
 }
@@ -1083,10 +1207,27 @@ fn is_short_xmp(from: &Path, raw: &Path) -> bool {
 }
 
 /// The frames at `group`, all in one folder, into the folder `dir`:
-/// its rejects folder, or for Move back the folder above.
-fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, orphans: Orphans, moved: &mut Moved) {
+/// its rejects folder, or for Move back the folder above. A raw takes
+/// the camera's JPEGs beside it, their sidecars and the short XMP the
+/// pair shares, unless `apart` or the JPEG is in `files` itself, a
+/// frame of its own there.
+fn move_into(
+    files: &[PathBuf],
+    group: &[usize],
+    dir: &Path,
+    orphans: Orphans,
+    apart: bool,
+    moved: &mut Moved,
+) {
     // The raws this call has moved into `dir` so far.
     let mut arrived: Vec<PathBuf> = Vec::new();
+    // Their camera's JPEGs, and their folder's names, read once.
+    let raws: Vec<PathBuf> = group
+        .iter()
+        .filter_map(|&i| files.get(i).cloned())
+        .collect();
+    let mut pairs = crate::delete::companions_of(&raws, files, apart);
+    let mut folders = crate::delete::Folders::default();
     for &i in group {
         let Some(raw) = files.get(i) else {
             continue;
@@ -1104,10 +1245,28 @@ fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, orphans: Orphans, m
         // cull; the XMPs are always beside.
         let sidecar = greycard_edit::Sidecar::find(raw);
         let hidden = std::ffi::OsStr::new(greycard_edit::SIDECAR_FOLDER);
+        // The camera's JPEGs that go with it, and what is theirs: their
+        // own sidecars, and the short XMP the pair shares, which is
+        // neither file's alone where they are and stays the pair's.
+        let companions = pairs.remove(raw).unwrap_or_default();
+        let theirs: Vec<PathBuf> = companions
+            .iter()
+            .flat_map(|c| {
+                greycard_edit::Sidecar::find(c)
+                    .into_iter()
+                    .chain(greycard_edit::xmp::paths_of(c))
+            })
+            .chain(
+                (!companions.is_empty())
+                    .then(|| crate::delete::shared_xmp(raw, &companions, &mut folders))
+                    .flatten(),
+            )
+            .collect();
         let beside: Vec<(PathBuf, PathBuf)> = sidecar
             .iter()
             .cloned()
             .chain(greycard_edit::xmp::paths_of(raw))
+            .chain(theirs)
             .filter_map(|from| {
                 let file = from.file_name()?;
                 let to = if from.parent().and_then(Path::file_name) == Some(hidden) {
@@ -1139,10 +1298,20 @@ fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, orphans: Orphans, m
         // file's lost, and moved in beside it with none there it would
         // be nobody's, the frame's ratings lost to every reader; either
         // way the frame stays whole and the file is named.
+        let companion_there = companions
+            .iter()
+            .filter_map(|c| c.file_name())
+            .find(|n| dir.join(n).exists());
         let taken = if dest.exists() {
             Some(format!(
                 "{} is in {} already",
                 name.to_string_lossy(),
+                dir.display()
+            ))
+        } else if let Some(n) = companion_there {
+            Some(format!(
+                "{} is in {} already",
+                n.to_string_lossy(),
                 dir.display()
             ))
         } else {
@@ -1186,6 +1355,22 @@ fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, orphans: Orphans, m
         moved.files.push(i);
         moved.to.push(dest.clone());
         arrived.push(dest.clone());
+        for c in &companions {
+            let Some(n) = c.file_name() else {
+                continue;
+            };
+            let to = dir.join(n);
+            match std::fs::rename(c, &to) {
+                Ok(()) => {
+                    arrived.push(to.clone());
+                    moved.companions.push((c.clone(), to));
+                }
+                Err(e) => {
+                    tracing::warn!("{}: not moved with its raw: {e}", c.display());
+                    moved.companions_left.push((c.clone(), e.to_string()));
+                }
+            }
+        }
         // An orphan under the placement the frame's own sidecar does
         // not take goes, so it cannot shadow it; one under the same
         // placement is written over below. A frame with no sidecar of
@@ -1769,7 +1954,7 @@ mod tests {
         .unwrap();
         assert_eq!(above_rejects(&a), Some(dir.clone()));
 
-        let moved = move_back(std::slice::from_ref(&a), &[0]);
+        let moved = move_back(std::slice::from_ref(&a), &[0], false);
         assert_eq!(moved.files, vec![0]);
         assert_eq!(moved.sidecars, 1);
         assert!(moved.skipped.is_empty());
@@ -1791,7 +1976,7 @@ mod tests {
         let (dir, rejects) = shoot_with_rejects("hidden");
         let a = rejects.join("A.CR3");
         rejected_frame(&a, greycard_edit::Placement::Folder);
-        let moved = move_back(std::slice::from_ref(&a), &[0]);
+        let moved = move_back(std::slice::from_ref(&a), &[0], false);
         assert_eq!(moved.files, vec![0]);
         assert_eq!(moved.sidecars, 1);
         let hidden = greycard_edit::SIDECAR_FOLDER;
@@ -1820,7 +2005,7 @@ mod tests {
         std::fs::write(dir.join("B.JPG"), b"jpeg").unwrap();
         std::fs::write(dir.join("B.xmp"), b"the jpeg's").unwrap();
 
-        let moved = move_back(&[a.clone(), b.clone()], &[0, 1]);
+        let moved = move_back(&[a.clone(), b.clone()], &[0, 1], false);
         assert!(moved.files.is_empty());
         let skipped: Vec<usize> = moved.skipped.iter().map(|(i, _)| *i).collect();
         assert_eq!(skipped, vec![0, 1]);
@@ -1848,7 +2033,7 @@ mod tests {
         std::fs::create_dir_all(&hidden).unwrap();
         std::fs::write(hidden.join("A.CR3.gcd"), b"older").unwrap();
 
-        let moved = move_back(std::slice::from_ref(&a), &[0]);
+        let moved = move_back(std::slice::from_ref(&a), &[0], false);
         assert_eq!(moved.files, vec![0]);
         assert_eq!(moved.sidecars, 1);
         assert!(dir.join("A.CR3").exists());
@@ -1869,7 +2054,7 @@ mod tests {
         rejected_frame(&a, greycard_edit::Placement::Beside);
         rejected_frame(&b, greycard_edit::Placement::Beside);
         assert_eq!(above_rejects(&a), None);
-        let moved = move_back(&[a.clone(), b.clone()], &[0, 1]);
+        let moved = move_back(&[a.clone(), b.clone()], &[0, 1], false);
         assert_eq!(moved.files, vec![1]);
         assert_eq!(moved.skipped.len(), 1);
         assert_eq!(moved.skipped[0].0, 0);
@@ -1902,7 +2087,7 @@ mod tests {
         std::fs::remove_file(dir.join("A.CR3")).unwrap_or(());
         assert!(dir.join(hidden).join("A.CR3.gcd").exists());
 
-        let moved = move_back(std::slice::from_ref(&a), &[0]);
+        let moved = move_back(std::slice::from_ref(&a), &[0], false);
         assert_eq!(moved.files, vec![0]);
         assert_eq!(moved.to, vec![dir.join("A.CR3")]);
         assert!(dir.join("A.CR3.gcd").exists());
@@ -1921,7 +2106,7 @@ mod tests {
         rejected_frame(&b, greycard_edit::Placement::Beside);
         std::fs::create_dir_all(rejects.join(hidden)).unwrap();
         std::fs::write(rejects.join(hidden).join("B.CR3.gcd"), b"older").unwrap();
-        let kept = move_rejects_as(std::slice::from_ref(&b), &[0], Orphans::Keep).unwrap();
+        let kept = move_rejects_as(std::slice::from_ref(&b), &[0], Orphans::Keep, false).unwrap();
         assert!(kept.files.is_empty());
         assert!(
             kept.skipped[0].1.contains("B.CR3.gcd"),
@@ -1949,7 +2134,7 @@ mod tests {
         std::fs::write(hidden.join("A.CR3.gcd"), b"older").unwrap();
         std::fs::write(dir.join("A.CR3.jpg"), b"jpeg").unwrap();
         std::fs::write(dir.join("A.JPG"), b"jpeg").unwrap();
-        let moved = move_back(std::slice::from_ref(&a), &[0]);
+        let moved = move_back(std::slice::from_ref(&a), &[0], false);
         assert_eq!(moved.files, vec![0], "{:?}", moved.skipped);
         assert_ne!(std::fs::read(hidden.join("A.CR3.gcd")).unwrap(), b"older");
         crate::testing::remove_dir_retry(&dir);
@@ -2040,7 +2225,7 @@ mod tests {
             assert!(names(&dir).is_empty());
 
             let back_from = [rejects.join("A.CR3"), rejects.join("A.JPG")];
-            let back = move_back(&back_from, &order);
+            let back = move_back(&back_from, &order, false);
             assert_eq!(back.files.len(), 2, "{:?}", back.skipped);
             assert_eq!(names(&dir), trio, "back, in the order {order:?}");
             assert!(names(&rejects).is_empty());
@@ -2065,9 +2250,156 @@ mod tests {
         );
         // And back, the raw alone: the JPEG answers to A.xmp in the
         // shoot, which is not the raw's, so nothing stands in its way.
-        let back = move_back(&[rejects.join("A.CR3")], &[0]);
+        let back = move_back(&[rejects.join("A.CR3")], &[0], false);
         assert_eq!(back.files, vec![0], "{:?}", back.skipped);
         assert_eq!(names(&dir), trio);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The camera's JPEG beside a raw is the raw's: Move rejects takes
+    /// it, and the short XMP the two share, and Move back brings them
+    /// home; a JPEG of its name in the rejects folder already keeps the
+    /// pair whole where it is; apart, the raw goes alone.
+    #[test]
+    fn a_raw_takes_its_companion_out_and_back() {
+        let names = |d: &Path| {
+            let mut all: Vec<String> = std::fs::read_dir(d)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.path().is_file())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            all.sort();
+            all
+        };
+        let meta = greycard_edit::meta::Meta {
+            flag: greycard_edit::meta::Flag::Reject,
+            ..Default::default()
+        };
+        let (dir, rejects) = shoot_with_rejects("companion");
+        let a = dir.join("A.CR3");
+        rejected_frame(&a, greycard_edit::Placement::Beside);
+        std::fs::write(dir.join("A.JPG"), b"jpeg").unwrap();
+        std::fs::write(dir.join("A.xmp"), greycard_edit::xmp::fresh(&meta, None)).unwrap();
+        let four = ["A.CR3", "A.CR3.gcd", "A.JPG", "A.xmp"];
+
+        let out = move_rejects(std::slice::from_ref(&a), &[0]).unwrap();
+        assert_eq!(out.files, [0], "{:?}", out.skipped);
+        assert_eq!(out.companions, [(dir.join("A.JPG"), rejects.join("A.JPG"))]);
+        assert_eq!(names(&rejects), four);
+        assert!(names(&dir).is_empty());
+
+        let back = move_back(&[rejects.join("A.CR3")], &[0], false);
+        assert_eq!(back.files, [0], "{:?}", back.skipped);
+        assert_eq!(back.companions.len(), 1);
+        assert_eq!(names(&dir), four);
+        assert!(names(&rejects).is_empty());
+
+        // A JPEG of the name there already: the pair stays whole.
+        std::fs::write(rejects.join("A.JPG"), b"another").unwrap();
+        let kept = move_rejects(std::slice::from_ref(&a), &[0]).unwrap();
+        assert!(kept.files.is_empty());
+        assert!(
+            kept.skipped[0].1.starts_with("A.JPG is in"),
+            "{:?}",
+            kept.skipped
+        );
+        assert_eq!(names(&dir), four);
+        std::fs::remove_file(rejects.join("A.JPG")).unwrap();
+
+        // Apart: the raw alone, and the XMP stays, the JPEG's now.
+        let alone =
+            move_rejects_as(std::slice::from_ref(&a), &[0], Orphans::WriteOver, true).unwrap();
+        assert_eq!(alone.files, [0]);
+        assert!(alone.companions.is_empty());
+        assert_eq!(names(&rejects), ["A.CR3", "A.CR3.gcd"]);
+        assert_eq!(names(&dir), ["A.JPG", "A.xmp"]);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A want with the camera's JPEG beside the raw decodes that file,
+    /// whole, and says so: the loupe's line names it.
+    #[test]
+    fn a_want_with_a_companion_decodes_the_jpeg_beside_the_raw() {
+        let dir = crate::testing::scratch_dir("cull-companion");
+        let raw = dir.join("A.CR3");
+        std::fs::write(&raw, b"no preview in here").unwrap();
+        let jpeg = dir.join("A.JPG");
+        image::RgbImage::from_pixel(60, 40, image::Rgb([200, 120, 40]))
+            .save(&jpeg)
+            .unwrap();
+        let run = |want: &Want| {
+            let got = std::cell::RefCell::new(Vec::new());
+            fetch(want, None, &|l| got.borrow_mut().push(l));
+            got.into_inner()
+        };
+        let want = Want::for_loupe(0, raw.clone(), 0).with_picture(Some(jpeg.clone()));
+        let got = run(&want);
+        let [Loaded::Ok { preview, frame, .. }] = &got[..] else {
+            panic!("the JPEG beside the raw decoded");
+        };
+        assert_eq!(frame.path, raw, "the frame is the raw's");
+        assert!(preview.companion);
+        assert_eq!(preview.origin(), Origin::Companion);
+        assert_eq!(preview.source, (60, 40));
+        assert_eq!(
+            crate::panel::cull::picture_words((60, 40), preview.small(), preview.origin()),
+            "a small camera JPEG beside the raw, 60 \u{d7} 40"
+        );
+        assert_eq!(
+            crate::panel::cull::picture_words((6000, 4000), false, Origin::Companion),
+            "the camera's JPEG beside the raw, 6000 \u{d7} 4000"
+        );
+        // Without it the raw's own preview is asked for, and there is none.
+        let got = run(&Want::for_loupe(0, raw.clone(), 0));
+        assert!(matches!(&got[..], [Loaded::Failed { .. }]));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The JPEG beside a raw is shown only when it is no smaller than
+    /// the raw's own preview, and the raw's is shown when the JPEG will
+    /// not read. A picture stands in for the raw here: its camera
+    /// picture is itself, and it says its size as a raw does.
+    #[test]
+    fn a_companion_smaller_than_the_raws_preview_or_unreadable_gives_way() {
+        let dir = crate::testing::scratch_dir("cull-companion-size");
+        let raw = dir.join("A.png");
+        image::RgbImage::from_pixel(600, 400, image::Rgb([10, 20, 30]))
+            .save(&raw)
+            .unwrap();
+        let shown = |jpeg: &Path| {
+            let got = std::cell::RefCell::new(Vec::new());
+            let want = Want::for_loupe(0, raw.clone(), 0).with_picture(Some(jpeg.to_path_buf()));
+            fetch(&want, None, &|l| got.borrow_mut().push(l));
+            match &got.into_inner()[..] {
+                [Loaded::Ok { preview, .. }] => (preview.companion, preview.source),
+                _ => panic!("{} gave no picture", jpeg.display()),
+            }
+        };
+        // Smaller: the raw's own.
+        let small = dir.join("small.jpg");
+        image::RgbImage::from_pixel(60, 40, image::Rgb([200, 0, 0]))
+            .save(&small)
+            .unwrap();
+        assert_eq!(shown(&small), (false, (600, 400)));
+        // As large as the frame: the JPEG.
+        let full = dir.join("full.jpg");
+        image::RgbImage::from_pixel(600, 400, image::Rgb([0, 200, 0]))
+            .save(&full)
+            .unwrap();
+        assert_eq!(shown(&full), (true, (600, 400)));
+        // Gone, or cut off: the raw's own.
+        assert_eq!(shown(&dir.join("gone.jpg")), (false, (600, 400)));
+        let cut = dir.join("cut.jpg");
+        let bytes = std::fs::read(&full).unwrap();
+        std::fs::write(&cut, &bytes[..bytes.len() / 3]).unwrap();
+        assert_eq!(shown(&cut), (false, (600, 400)));
+        // Padding after the end-of-image marker is no cut.
+        let padded = dir.join("padded.jpg");
+        let mut bytes = bytes;
+        bytes.extend_from_slice(&[0, 0, 0xFF, 0xFF]);
+        std::fs::write(&padded, &bytes).unwrap();
+        assert_eq!(shown(&padded), (true, (600, 400)));
         crate::testing::remove_dir_retry(&dir);
     }
 }

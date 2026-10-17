@@ -11,6 +11,7 @@ use std::time::Duration;
 
 mod lists;
 mod loading;
+mod pairs;
 mod pane;
 mod picks;
 mod reads;

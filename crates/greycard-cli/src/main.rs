@@ -428,7 +428,9 @@ enum LibraryAction {
     /// the name and the keywords; `:` on a text field is contains,
     /// `=` and `!=` the whole value; numbers take `< <= > >=`; a date
     /// is a prefix, `2026-09`; `kind:raw` or `kind!=jpeg` tests what
-    /// the file is; `missing:yes` lists what is gone
+    /// the file is; `missing:yes` lists what is gone. A camera's JPEG
+    /// beside its raw is the raw's and not listed, unless the editor's
+    /// settings list such JPEGs apart
     List {
         /// The filter's terms, one an argument
         filter: Vec<String>,
@@ -470,23 +472,27 @@ enum LibraryAction {
     },
 }
 
-/// The editor's setting for where a new sidecar goes, read from its
-/// settings file (`$XDG_CONFIG_HOME/greycard/settings.json`, else under
-/// the platform's configuration folder): under the folder's `.greycard`
-/// when on. Off when there is no file or it will not read, as the
-/// editor's default is.
-fn sidecars_in_folder() -> bool {
-    let Some(base) = std::env::var_os("XDG_CONFIG_HOME")
+/// One of the editor's switches, read from its settings file
+/// (`$XDG_CONFIG_HOME/greycard/settings.json`, else under the
+/// platform's configuration folder), so that what the command line does
+/// is what the window would: `sidecars_in_folder`, where a new sidecar
+/// goes; `jpegs_apart`, whether a camera's JPEG beside its raw is a
+/// frame of its own. Off when there is no file, it will not read, or it
+/// does not say, as the editor's defaults are.
+fn editor_setting(key: &str) -> bool {
+    std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .or_else(dirs::config_dir)
-    else {
-        return false;
-    };
-    std::fs::read(base.join("greycard").join("settings.json"))
+        .is_some_and(|base| editor_setting_in(&base.join("greycard").join("settings.json"), key))
+}
+
+/// [`editor_setting`] as the settings file at `path` has it.
+fn editor_setting_in(path: &std::path::Path, key: &str) -> bool {
+    std::fs::read(path)
         .ok()
         .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-        .and_then(|v| v.get("sidecars_in_folder")?.as_bool())
+        .and_then(|v| v.get(key)?.as_bool())
         .unwrap_or(false)
 }
 
@@ -1884,7 +1890,7 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
             force,
             set,
             library: path,
-            sidecars_in_folder: sidecars_in_folder(),
+            sidecars_in_folder: editor_setting("sidecars_in_folder"),
         };
         let report = greycard_library::lightroom_catalog::import(&catalog, &options)
             .with_context(|| format!("importing {}", catalog.display()))?;
@@ -1901,6 +1907,7 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
         Library::open(&path)
     }
     .with_context(|| format!("opening the library at {}", path.display()))?;
+    lib.set_jpegs_apart(editor_setting("jpegs_apart"));
     match action {
         LibraryAction::Index { dirs, tree, prune } => {
             if dirs.is_empty() && !prune {
@@ -3453,6 +3460,33 @@ mod tests {
         assert!(complaint.contains("everything"), "{complaint}");
         assert!(complaint.contains("fast, balanced, best"), "{complaint}");
         assert!(complaint.contains(greycard_ai::SUBJECT.id), "{complaint}");
+    }
+
+    /// The editor's switches, read from its settings file: on only when
+    /// the file says so, off for a file without the key, one that will
+    /// not read, or none.
+    #[test]
+    fn the_editors_switches_are_read_from_its_settings() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-cli-apart-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        assert!(!editor_setting_in(&file, "jpegs_apart"));
+        std::fs::write(&file, r#"{"xmp_sidecars": true, "jpegs_apart": true}"#).unwrap();
+        assert!(editor_setting_in(&file, "jpegs_apart"));
+        assert!(!editor_setting_in(&file, "sidecars_in_folder"));
+        std::fs::write(&file, r#"{"jpegs_apart": false}"#).unwrap();
+        assert!(!editor_setting_in(&file, "jpegs_apart"));
+        std::fs::write(&file, b"not json").unwrap();
+        assert!(!editor_setting_in(&file, "jpegs_apart"));
+        std::fs::remove_file(&file).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
     }
 
     /// The listing says, for every model, what it is for, what it

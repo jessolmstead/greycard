@@ -171,6 +171,7 @@ fn send_view(
         on_screen: None,
         index: st.index_path.clone(),
         progress: Some(progress.clone()),
+        apart: st.jpegs_apart,
         purpose: Purpose::Open {
             view,
             asked,
@@ -249,6 +250,7 @@ pub(crate) fn open_listing(
         on_screen: None,
         index: st.index_path.clone(),
         progress: Some(progress.clone()),
+        apart: st.jpegs_apart,
         purpose: Purpose::Open {
             view: View::Folder,
             asked,
@@ -505,6 +507,7 @@ pub(super) fn ask(st: &State) -> Option<Look> {
         }),
         index: st.index_path.clone(),
         progress: None,
+        apart: st.jpegs_apart,
     })
 }
 

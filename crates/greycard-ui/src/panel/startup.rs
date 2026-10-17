@@ -86,7 +86,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // the last file to the list makes folders canonical.
     let (files, select): (Vec<PathBuf>, crate::roots::Select) = match &cli.path {
         Some(path) => {
-            let files = files::list_files(path)?;
+            let files = files::list_files(path, remembered.jpegs_apart)?;
             anyhow::ensure!(!files.is_empty(), "no RAW files at {}", path.display());
             let select = if path.is_dir() {
                 crate::roots::Select::Last(last_file.clone())
@@ -105,7 +105,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             let from_last = last_file
                 .as_deref()
                 .and_then(Path::parent)
-                .and_then(|dir| files::list_files(dir).ok())
+                .and_then(|dir| files::list_files(dir, remembered.jpegs_apart).ok())
                 .filter(|files| !files.is_empty());
             match from_last {
                 Some(files) => (files, crate::roots::Select::Last(last_file.clone())),
@@ -362,6 +362,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         write_sidecars: !cli.no_sidecars,
         xmp_sidecars: cli.xmp_sidecars || remembered.xmp_sidecars,
         cull_move_on: remembered.cull_move_on,
+        jpegs_apart: remembered.jpegs_apart,
         placement,
         zoom: cli.zoom.max(0.0),
         scope: opening_scope(&cli, &remembered),
@@ -1433,6 +1434,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.folder_tree_subfolders = kept.folder_tree_subfolders;
         settings.xmp_sidecars = kept.xmp_sidecars;
         settings.sidecars_in_folder = kept.sidecars_in_folder;
+        settings.jpegs_apart = kept.jpegs_apart;
         settings.cull_move_on = kept.cull_move_on;
         settings.lenses_declined = kept.lenses_declined;
         settings.thumb_cache_mb = kept.thumb_cache_mb;
@@ -1878,6 +1880,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // in from disk.
         xmp_sidecars: false,
         sidecars_in_folder: false,
+        jpegs_apart: false,
         cull_move_on: false,
         lenses_declined: false,
         last_file: String::new(),

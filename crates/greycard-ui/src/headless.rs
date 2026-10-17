@@ -166,7 +166,7 @@ pub(crate) fn plan(
         .filter(|p| p.is_file());
     let (files, first) = match &cli.path {
         Some(path) => {
-            let files = files::list_files(path)?;
+            let files = files::list_files(path, remembered.jpegs_apart)?;
             anyhow::ensure!(!files.is_empty(), "no RAW files at {}", path.display());
             let first = if path.is_dir() {
                 position_of(&files, last_file.as_deref())
@@ -179,7 +179,7 @@ pub(crate) fn plan(
             let dir = last_file.as_deref().and_then(Path::parent).context(
                 "--export wants a file or a folder to export from, and no last file is remembered",
             )?;
-            let files = files::list_files(dir)?;
+            let files = files::list_files(dir, remembered.jpegs_apart)?;
             anyhow::ensure!(!files.is_empty(), "no RAW files at {}", dir.display());
             let first = position_of(&files, last_file.as_deref());
             (files, first)

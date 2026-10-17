@@ -73,13 +73,14 @@ pub fn sidecar_to_raw(p: PathBuf) -> PathBuf {
 
 /// Several paths opened at once, as the Finder sends a selection:
 /// each listed as `list_files` lists it, in the order given, a file
-/// named twice (or a sidecar beside its raw) kept once, and the
-/// paths that list nothing returned with why.
-pub fn list_paths(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<anyhow::Error>) {
+/// named twice (or a sidecar beside its raw, or the camera's JPEG
+/// beside it) kept once, and the paths that list nothing returned
+/// with why.
+pub fn list_paths(paths: &[PathBuf], apart: bool) -> (Vec<PathBuf>, Vec<anyhow::Error>) {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut refused = Vec::new();
     for path in paths {
-        match list_files(path) {
+        match list_files(path, apart) {
             Ok(listed) => {
                 for f in listed {
                     if !files.contains(&f) {
@@ -93,7 +94,18 @@ pub fn list_paths(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<anyhow::Error>) {
     (files, refused)
 }
 
-pub fn list_files(path: &std::path::Path) -> Result<Vec<PathBuf>> {
+/// The frames `path` names, as [`list`] finds them.
+pub fn list_files(path: &Path, apart: bool) -> Result<Vec<PathBuf>> {
+    Ok(list(path, apart)?.frames)
+}
+
+/// What `path` names, as the editor opens it: a folder's frames, or
+/// the one file asked for, each raw with the camera's JPEGs beside it
+/// (`greycard_library::pairs`). Unless `apart`, a JPEG beside its raw
+/// is no frame: a folder's is left out, and one named on its own opens
+/// as its raw, as a sidecar named on its own does.
+pub fn list(path: &Path, apart: bool) -> Result<greycard_library::pairs::Paired> {
+    use greycard_library::pairs;
     // Before the extension: a name with the right ending but no file
     // behind it used to pass and open a blank window that never said
     // anything.
@@ -113,7 +125,7 @@ pub fn list_files(path: &std::path::Path) -> Result<Vec<PathBuf>> {
             .filter(|p| opens(p) && p.is_file())
             .collect();
         files.sort();
-        Ok(files)
+        Ok(pairs::pair(files, apart))
     } else {
         // For a single file, map .gcd sidecars to their raw files, but
         // ensure the raw actually exists.
@@ -131,7 +143,27 @@ pub fn list_files(path: &std::path::Path) -> Result<Vec<PathBuf>> {
                 mapped.display()
             );
         }
-        Ok(vec![mapped])
+        if apart {
+            return Ok(pairs::Paired {
+                frames: vec![mapped],
+                companions: Vec::new(),
+            });
+        }
+        let raw = match pairs::raw_on_disk(&mapped) {
+            Some(raw) => {
+                tracing::info!(
+                    "{} is the camera's JPEG of {}; the raw opens",
+                    mapped.display(),
+                    raw.display()
+                );
+                raw
+            }
+            None => mapped,
+        };
+        Ok(pairs::Paired {
+            companions: pairs::companions_of(std::slice::from_ref(&raw)),
+            frames: vec![raw],
+        })
     }
 }
 
@@ -173,7 +205,7 @@ mod tests {
                 assert!(dir.join("pipe.CR3").exists());
             }
         }
-        assert_eq!(list_files(&dir).unwrap(), vec![dir.join("a.CR3")]);
+        assert_eq!(list_files(&dir, false).unwrap(), vec![dir.join("a.CR3")]);
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -192,13 +224,13 @@ mod tests {
                 .as_nanos()
         );
         let missing = std::env::temp_dir().join(&name);
-        let e = list_files(&missing).expect_err("a missing file is an error");
+        let e = list_files(&missing, false).expect_err("a missing file is an error");
         let said = e.to_string();
         assert!(said.contains(&name), "{said}");
 
         // A file that is there is listed as before.
         std::fs::write(&missing, b"not a raw, but a file").unwrap();
-        assert_eq!(list_files(&missing).unwrap(), vec![missing.clone()]);
+        assert_eq!(list_files(&missing, false).unwrap(), vec![missing.clone()]);
         std::fs::remove_file(&missing).unwrap();
     }
 
@@ -222,7 +254,7 @@ mod tests {
         let missing = dir.join("gone.NEF");
         // The Finder's order, not the name's; the sidecar is its raw,
         // already listed.
-        let (files, refused) = list_paths(&[b.clone(), a.clone(), gcd, missing]);
+        let (files, refused) = list_paths(&[b.clone(), a.clone(), gcd, missing], false);
         assert_eq!(files, vec![b, a]);
         assert_eq!(refused.len(), 1);
         assert!(refused[0].to_string().contains("gone.NEF"));
@@ -242,6 +274,80 @@ mod tests {
         );
     }
 
+    /// A JPEG beside a raw of its name, in any case, is the raw's and
+    /// no frame; a JPEG alone is one, and so is each of two raws of one
+    /// stem, the camera's taking the JPEG. Apart, every file is a frame.
+    /// A JPEG named on its own opens as its raw, as a sidecar does.
+    #[test]
+    fn a_folders_jpegs_beside_their_raws_are_the_raws() {
+        let dir = crate::testing::scratch_dir("list-pairs");
+        for name in [
+            "IMG_1.CR3",
+            "IMG_1.JPG",
+            "IMG_2.jpg",
+            "img_3.nef",
+            "IMG_3.JPEG",
+            "DSCF4.DNG",
+            "DSCF4.RAF",
+            "dscf4.jpg",
+            "IMG_5.CR3",
+            "IMG_5.png",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let listed = list(&dir, false).unwrap();
+        let names = |files: &[PathBuf]| -> Vec<String> {
+            files
+                .iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            names(&listed.frames),
+            [
+                "DSCF4.DNG",
+                "DSCF4.RAF",
+                "IMG_1.CR3",
+                "IMG_2.jpg",
+                "IMG_5.CR3",
+                "IMG_5.png",
+                "img_3.nef",
+            ]
+        );
+        assert_eq!(
+            listed.companions,
+            [
+                (dir.join("DSCF4.RAF"), vec![dir.join("dscf4.jpg")]),
+                (dir.join("IMG_1.CR3"), vec![dir.join("IMG_1.JPG")]),
+                (dir.join("img_3.nef"), vec![dir.join("IMG_3.JPEG")]),
+            ]
+        );
+        let apart = list(&dir, true).unwrap();
+        assert_eq!(apart.frames.len(), 10);
+        assert!(apart.companions.is_empty());
+        // Named on its own: the companion opens its raw, with the pair
+        // found; apart, it opens as itself.
+        let named = list(&dir.join("IMG_1.JPG"), false).unwrap();
+        assert_eq!(named.frames, [dir.join("IMG_1.CR3")]);
+        assert_eq!(
+            named.companions,
+            [(dir.join("IMG_1.CR3"), vec![dir.join("IMG_1.JPG")])]
+        );
+        assert_eq!(
+            list_files(&dir.join("IMG_1.JPG"), true).unwrap(),
+            [dir.join("IMG_1.JPG")]
+        );
+        assert_eq!(
+            list_files(&dir.join("IMG_2.jpg"), false).unwrap(),
+            [dir.join("IMG_2.jpg")]
+        );
+        // Two paths of one pair given at once are its one frame.
+        let (files, refused) = list_paths(&[dir.join("IMG_1.JPG"), dir.join("IMG_1.CR3")], false);
+        assert!(refused.is_empty());
+        assert_eq!(files, [dir.join("IMG_1.CR3")]);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     #[test]
     fn a_folder_listing_skips_the_hidden_folder() {
         let dir = std::env::temp_dir().join(format!(
@@ -256,11 +362,11 @@ mod tests {
         std::fs::create_dir_all(&hidden).unwrap();
         std::fs::write(dir.join("a.CR3"), b"raw").unwrap();
         std::fs::write(hidden.join("a.CR3.gcd"), b"{}").unwrap();
-        let files = list_files(&dir).unwrap();
+        let files = list_files(&dir, false).unwrap();
         assert_eq!(files, vec![dir.join("a.CR3")]);
         // And the sidecar under it opens as its frame.
         assert_eq!(
-            list_files(&hidden.join("a.CR3.gcd")).unwrap(),
+            list_files(&hidden.join("a.CR3.gcd"), false).unwrap(),
             vec![dir.join("a.CR3")]
         );
         crate::testing::remove_dir_retry(&dir);
