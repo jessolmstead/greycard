@@ -339,3 +339,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§326. A file's kind as a facet and a term](notes/326-a-files-kind-as-a-facet-and-a-term.md) (2026-10-16)
 - [§327. A look previewed under the pointer](notes/327-a-look-previewed-under-the-pointer.md) (2026-10-16)
 - [§328. Importing RawTherapee profiles](notes/328-importing-rawtherapee-profiles.md) (2026-10-16)
+- [§329. Importing a Lightroom catalog, part 1: the command](notes/329-importing-a-lightroom-catalog-part-1-the-command.md) (2026-10-16)

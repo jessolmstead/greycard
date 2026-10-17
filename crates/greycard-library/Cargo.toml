@@ -12,6 +12,7 @@ repository.workspace = true
 log.workspace = true
 greycard-core = { path = "../greycard-core" }
 greycard-edit = { path = "../greycard-edit" }
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
@@ -28,6 +29,8 @@ dunce = "1"
 # ReadDirectoryChangesW on Windows. CC0-1.0; pinned, since a watcher's
 # events change shape between majors.
 notify = "=8.0.0"
+# A Lightroom catalog's XMP packets are kept deflated.
+flate2 = "1"
 # The thumbnail cache's entries are JPEGs.
 image.workspace = true
 # The test frames' metadata is rawler's type; see `fixtures`.

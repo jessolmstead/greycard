@@ -418,6 +418,26 @@ impl Filter {
     }
 }
 
+/// The filter bar as it is kept between sessions and in a smart
+/// collection's file: every chip, the rows' reading and the text, by
+/// names rather than by places on the bar, so a facet added to the bar
+/// later does not shift the ones kept. A facet's values are the
+/// index's own, as its chips hand them back. The bar's own filter is
+/// the editor's; this is its shape on disk, kept here so the editor
+/// and the command line write one shape.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Saved {
+    pub stars: u8,
+    pub exact: bool,
+    pub flags: Vec<Flag>,
+    pub labels: Vec<Label>,
+    pub text: String,
+    /// By the facet's field in the filter language: `camera`,
+    /// `lens`, `kind`, `style`, `iso`, `focal`, `date`, `keyword`.
+    pub facets: std::collections::BTreeMap<String, Vec<String>>,
+}
+
 /// The tokens of a filter: split on whitespace outside double
 /// quotes, the quotes kept for the term parser to strip.
 pub fn tokens(text: &str) -> Vec<String> {

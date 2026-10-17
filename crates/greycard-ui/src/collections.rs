@@ -46,380 +46,20 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use greycard_library::collections::stamp_of;
 use greycard_library::{Library, Rehash, RowMeta};
-use serde::{Deserialize, Serialize};
 
 use crate::CollectionChip;
-use crate::filter::Saved;
 use crate::panel::export_queue::Presence;
 
-/// The folder the collections are kept in, beside the library.
-pub(crate) const DIR: &str = "collections";
-
-/// What the files say their shape is: a later build that changes it
-/// bumps this, and this build leaves a file of a later one alone. 2 is
-/// a collection holding a version of a picture; a file without one is
-/// written at 1 as before, so a build that knows no versions goes on
-/// reading every collection that has none.
-const VERSION: u32 = 2;
-
-/// The shape a file without a version in it is written at.
-const PLAIN_VERSION: u32 = 1;
-
-const SMART_END: &str = ".smart.json";
-const PLAIN_END: &str = ".json";
-
-/// One frame of a collection: the picture by its content hash, the
-/// version of it, and the path it was last seen at.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Reference {
-    pub(crate) hash: String,
-    /// The path as the index keys it, as text: a hint, and what a file
-    /// rewritten in place is found by.
-    pub(crate) hint: String,
-    /// The version's id in the sidecar, none for the file's own: left
-    /// out of the file then, so a collection with no version in it is
-    /// the file it always was.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) version: Option<String>,
-}
-
-/// A frame as a collection names it: its picture's hash and its
-/// version, none for the file's own.
-pub(crate) type Pair<'a> = (&'a str, Option<&'a str>);
-
-/// A frame to add: its picture's hash, the path it is at, and its
-/// version, none for the file's own.
-pub(crate) type Frame = (String, PathBuf, Option<String>);
-
-impl Reference {
-    pub(crate) fn pair(&self) -> Pair<'_> {
-        (self.hash.as_str(), self.version.as_deref())
-    }
-
-    fn owned_pair(&self) -> (String, Option<String>) {
-        (self.hash.clone(), self.version.clone())
-    }
-}
-
-/// A collection filled by hand.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Collection {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    /// The sets it sits in, as a slash path (`Clients/2026`); empty for
-    /// none.
-    pub(crate) set: String,
-    /// When it was made, seconds since the epoch.
-    pub(crate) made: u64,
-    /// The frames, in the collection's own order.
-    pub(crate) refs: Vec<Reference>,
-}
-
-/// A smart collection: the filter bar's question under a name.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Smart {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) set: String,
-    pub(crate) made: u64,
-    /// The bar as the settings keep it: the chips and the text, the
-    /// text in the filter language.
-    pub(crate) filter: Saved,
-    /// The one root it looks under; none for all of them.
-    pub(crate) root: Option<PathBuf>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct CollectionFile {
-    version: u32,
-    name: String,
-    #[serde(default)]
-    set: String,
-    #[serde(default)]
-    made: u64,
-    #[serde(default)]
-    refs: Vec<Reference>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SmartFile {
-    version: u32,
-    name: String,
-    #[serde(default)]
-    set: String,
-    #[serde(default)]
-    made: u64,
-    #[serde(default)]
-    filter: Saved,
-    #[serde(default)]
-    root: Option<String>,
-}
-
-/// What an add did: frames added at the end, and members whose hint
-/// moved to the copy given.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct Added {
-    pub(crate) added: usize,
-    pub(crate) moved: usize,
-}
-
-/// A name as typed, split at its last slash into the sets and the
-/// name: `Clients/2026/Cover` is the collection `Cover` in the set
-/// `Clients/2026`. Empty pieces go.
-pub(crate) fn split_name(typed: &str) -> (String, String) {
-    let parts: Vec<&str> = typed
-        .split('/')
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .collect();
-    match parts.split_last() {
-        None => (String::new(), String::new()),
-        Some((name, sets)) => (sets.join("/"), name.to_string()),
-    }
-}
-
-/// The name as it is typed back: the sets and the name, slashed.
-pub(crate) fn full_name(set: &str, name: &str) -> String {
-    if set.is_empty() {
-        name.to_string()
-    } else {
-        format!("{set}/{name}")
-    }
-}
-
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// A new id: 32 hex digits from the standard library's random hasher
-/// keys, the time and the process mixed in.
-fn new_id() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let mut a = std::collections::hash_map::RandomState::new().build_hasher();
-    a.write_u128(nanos);
-    a.write_u32(std::process::id());
-    let a = a.finish();
-    let mut b = std::collections::hash_map::RandomState::new().build_hasher();
-    b.write_u64(a);
-    b.write_u128(nanos);
-    format!("{a:016x}{:016x}", b.finish())
-}
-
-/// A path as a reference keeps it.
-pub(crate) fn hint_of(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
-}
-
-impl Collection {
-    /// A new, empty collection named as typed (`Sets/Name`).
-    pub(crate) fn new(typed: &str) -> Collection {
-        let (set, name) = split_name(typed);
-        Collection {
-            id: new_id(),
-            name,
-            set,
-            made: now(),
-            refs: Vec::new(),
-        }
-    }
-
-    /// Whether the frame `pair` is in it: that version of that picture.
-    pub(crate) fn has(&self, pair: Pair<'_>) -> bool {
-        self.refs.iter().any(|r| r.pair() == pair)
-    }
-
-    /// Frames added, each by its hash, the path it is at and its
-    /// version: a frame not in the collection goes at the end, in the
-    /// order given; one that is moves its hint to this path, and keeps
-    /// its place. Two versions of one picture are two frames.
-    pub(crate) fn add(&mut self, frames: &[Frame]) -> Added {
-        let mut out = Added::default();
-        for (hash, path, version) in frames {
-            let hint = hint_of(path);
-            let pair = (hash.as_str(), version.as_deref());
-            match self.refs.iter_mut().find(|r| r.pair() == pair) {
-                Some(r) => {
-                    if r.hint != hint {
-                        r.hint = hint;
-                        out.moved += 1;
-                    }
-                }
-                None => {
-                    self.refs.push(Reference {
-                        hash: hash.clone(),
-                        hint,
-                        version: version.clone(),
-                    });
-                    out.added += 1;
-                }
-            }
-        }
-        out
-    }
-
-    /// Frame `frame` put just after the frame `after`, or at the end when
-    /// that is not in it; a frame in it already stays where it is. True
-    /// when it went in.
-    pub(crate) fn insert_after(&mut self, after: Pair<'_>, frame: &Frame) -> bool {
-        let (hash, path, version) = frame;
-        if self.has((hash.as_str(), version.as_deref())) {
-            return false;
-        }
-        let at = self
-            .refs
-            .iter()
-            .position(|r| r.pair() == after)
-            .map_or(self.refs.len(), |i| i + 1);
-        self.refs.insert(
-            at,
-            Reference {
-                hash: hash.clone(),
-                hint: hint_of(path),
-                version: version.clone(),
-            },
-        );
-        true
-    }
-
-    /// The references of these frames taken out; how many frames were,
-    /// a frame named twice in the file counted once.
-    pub(crate) fn remove(&mut self, pairs: &HashSet<Pair<'_>>) -> usize {
-        let n = pairs.iter().filter(|&&p| self.has(p)).count();
-        self.refs.retain(|r| !pairs.contains(&r.pair()));
-        n
-    }
-
-    /// How many frames it holds, each (hash, version) once however many
-    /// times the file names it.
-    pub(crate) fn count(&self) -> usize {
-        self.refs
-            .iter()
-            .map(Reference::pair)
-            .collect::<HashSet<_>>()
-            .len()
-    }
-
-    /// The references of `moving` put, in the order they have now, just
-    /// before the reference of `before`, or at the end for none. A
-    /// `before` that is itself moving is the first reference after it
-    /// that is not. True when the order changed.
-    pub(crate) fn reorder(&mut self, moving: &HashSet<Pair<'_>>, before: Option<Pair<'_>>) -> bool {
-        let was = self.refs.clone();
-        let anchor = before.and_then(|b| {
-            let at = self.refs.iter().position(|r| r.pair() == b)?;
-            self.refs[at..]
-                .iter()
-                .find(|r| !moving.contains(&r.pair()))
-                .map(Reference::owned_pair)
-        });
-        let (taken, mut kept): (Vec<Reference>, Vec<Reference>) = self
-            .refs
-            .drain(..)
-            .partition(|r| moving.contains(&r.pair()));
-        let at = anchor
-            .and_then(|(h, v)| kept.iter().position(|r| r.pair() == (&h, v.as_deref())))
-            .unwrap_or(kept.len());
-        kept.splice(at..at, taken);
-        self.refs = kept;
-        self.refs != was
-    }
-
-    /// The reference of `old` (that version of the old picture) takes
-    /// `new` and the hint `path`. When another reference holds that
-    /// version of `new` already, taking it would put that frame in the
-    /// collection twice, and this reference is never dropped for it:
-    /// while a copy of its own picture survives (`survivor`, that copy's
-    /// path) its hint moves to the copy; with none known it stays as it
-    /// is, on its old hash, missing until found. True when anything
-    /// changed.
-    fn take_hash(&mut self, old: Pair<'_>, new: &str, path: &str, survivor: Option<&str>) -> bool {
-        let Some(at) = self.refs.iter().position(|r| r.pair() == old) else {
-            return false;
-        };
-        let (old_hash, version) = (old.0.to_string(), old.1.map(str::to_string));
-        if old_hash == new {
-            if self.refs[at].hint == path {
-                return false;
-            }
-            self.refs[at].hint = path.to_string();
-            return true;
-        }
-        match (
-            self.has((new, version.as_deref())),
-            survivor.filter(|c| !c.is_empty()),
-        ) {
-            (true, None) => return false,
-            (true, Some(copy)) => {
-                if self.refs[at].hint == copy {
-                    return false;
-                }
-                self.refs[at].hint = copy.to_string();
-            }
-            (false, _) => {
-                self.refs[at] = Reference {
-                    hash: new.to_string(),
-                    hint: path.to_string(),
-                    version,
-                };
-            }
-        }
-        true
-    }
-
-    /// The shape its file is written at: 2 when a reference names a
-    /// version, else 1, so a build that knows no versions reads it.
-    fn file_version(&self) -> u32 {
-        if self.refs.iter().any(|r| r.version.is_some()) {
-            VERSION
-        } else {
-            PLAIN_VERSION
-        }
-    }
-
-    fn to_file(&self) -> CollectionFile {
-        CollectionFile {
-            version: self.file_version(),
-            name: self.name.clone(),
-            set: self.set.clone(),
-            made: self.made,
-            refs: self.refs.clone(),
-        }
-    }
-}
-
-impl Smart {
-    /// A new smart collection named as typed, of the filter given.
-    pub(crate) fn new(typed: &str, filter: Saved, root: Option<PathBuf>) -> Smart {
-        let (set, name) = split_name(typed);
-        Smart {
-            id: new_id(),
-            name,
-            set,
-            made: now(),
-            filter,
-            root,
-        }
-    }
-
-    fn to_file(&self) -> SmartFile {
-        SmartFile {
-            version: PLAIN_VERSION,
-            name: self.name.clone(),
-            set: self.set.clone(),
-            made: self.made,
-            filter: self.filter.clone(),
-            root: self.root.as_deref().map(hint_of),
-        }
-    }
-}
+// The files and their writer are the library's, so the command line's
+// Lightroom import writes them as the editor does.
+#[cfg(test)]
+pub(crate) use greycard_library::collections::{Added, DIR};
+pub(crate) use greycard_library::collections::{
+    Collection, Frame, Pair, Reference, Smart, Stamp, VERSION, file_of, full_name, hint_of,
+    read_collection, split_name,
+};
 
 /// The collections as the editor holds them: the folder they are kept
 /// in, each one, and what the window marks with them.
@@ -463,41 +103,10 @@ pub(crate) struct Store {
     bases: std::collections::HashMap<String, HashSet<(String, Option<String>)>>,
 }
 
-/// A hash of a file's contents.
-type Stamp = blake3::Hash;
-
-fn stamp_of(path: &Path) -> Option<Stamp> {
-    let bytes = std::fs::read(path).ok()?;
-    Some(blake3::hash(&bytes))
-}
-
-fn read_collection(path: &Path) -> Result<CollectionFile, String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    serde_json::from_slice::<CollectionFile>(&bytes).map_err(|e| e.to_string())
-}
-
-/// Write `text` to `path` through a part file beside it, renamed over
-/// it, so a crash mid-write never leaves half a file. The part file
-/// carries the process's id, so two editors never write the same one.
-fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir)?;
-    }
-    let part = path.with_extension(format!("json.{}.part", std::process::id()));
-    std::fs::write(&part, text)?;
-    std::fs::rename(&part, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&part);
-    })
-}
-
 impl Store {
     /// The folder for a library at `library`: beside it.
     pub(crate) fn dir_beside(library: &Path) -> PathBuf {
-        library
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."))
-            .join(DIR)
+        greycard_library::collections::dir_beside(library)
     }
 
     /// Every collection in `dir`. A file that will not read, or one a
@@ -510,75 +119,22 @@ impl Store {
     /// [`Store::load`] by a build that reads files up to shape `up_to`:
     /// what an older build does with a newer file, for the tests.
     fn load_reading(dir: PathBuf, up_to: u32) -> Store {
+        let folder = greycard_library::collections::read_folder(&dir, up_to);
         let mut store = Store {
             dir: Some(dir.clone()),
+            bases: folder
+                .list
+                .iter()
+                .map(|c| {
+                    let base = c.refs.iter().map(Reference::owned_pair).collect();
+                    (c.id.clone(), base)
+                })
+                .collect(),
+            list: folder.list,
+            smart: folder.smart,
+            stamps: folder.stamps,
             ..Store::default()
         };
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return store,
-            Err(e) => {
-                tracing::warn!("collections {}: {e}", dir.display());
-                return store;
-            }
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(file) = path.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            let read = || std::fs::read(&path);
-            if let Some(id) = file.strip_suffix(SMART_END) {
-                match read().map_err(|e| e.to_string()).and_then(|b| {
-                    serde_json::from_slice::<SmartFile>(&b).map_err(|e| e.to_string())
-                }) {
-                    Ok(f) if f.version <= up_to => {
-                        if let Some(stamp) = stamp_of(&path) {
-                            store.stamps.insert(id.to_string(), stamp);
-                        }
-                        store.smart.push(Smart {
-                            id: id.to_string(),
-                            name: f.name,
-                            set: f.set,
-                            made: f.made,
-                            filter: f.filter,
-                            root: f.root.map(PathBuf::from),
-                        })
-                    }
-                    Ok(f) => tracing::warn!(
-                        "collection {}: version {} is a later build's; left alone",
-                        path.display(),
-                        f.version
-                    ),
-                    Err(e) => tracing::warn!("collection {}: {e}; left alone", path.display()),
-                }
-            } else if let Some(id) = file.strip_suffix(PLAIN_END) {
-                match read_collection(&path) {
-                    Ok(f) if f.version <= up_to => {
-                        if let Some(stamp) = stamp_of(&path) {
-                            store.stamps.insert(id.to_string(), stamp);
-                        }
-                        store.bases.insert(
-                            id.to_string(),
-                            f.refs.iter().map(Reference::owned_pair).collect(),
-                        );
-                        store.list.push(Collection {
-                            id: id.to_string(),
-                            name: f.name,
-                            set: f.set,
-                            made: f.made,
-                            refs: f.refs,
-                        })
-                    }
-                    Ok(f) => tracing::warn!(
-                        "collection {}: version {} is a later build's; left alone",
-                        path.display(),
-                        f.version
-                    ),
-                    Err(e) => tracing::warn!("collection {}: {e}; left alone", path.display()),
-                }
-            }
-        }
         store.sort();
         tracing::info!(
             "collections: {} and {} smart, from {}",
@@ -635,8 +191,7 @@ impl Store {
     }
 
     fn file_of(&self, id: &str, smart: bool) -> Option<PathBuf> {
-        let end = if smart { SMART_END } else { PLAIN_END };
-        Some(self.dir.as_ref()?.join(format!("{id}{end}")))
+        Some(file_of(self.dir.as_ref()?, id, smart))
     }
 
     /// Write the collection or the smart collection `id` to its file.
@@ -713,36 +268,28 @@ impl Store {
                 }
             }
         }
-        let (text, file) = if let Some(c) = self.collection(id) {
-            (
-                serde_json::to_string_pretty(&c.to_file()),
-                self.file_of(id, false),
-            )
+        let Some(dir) = self.dir.clone() else {
+            return;
+        };
+        let written = if let Some(c) = self.collection(id) {
+            c.write(&dir)
         } else if let Some(s) = self.smart(id) {
-            (
-                serde_json::to_string_pretty(&s.to_file()),
-                self.file_of(id, true),
-            )
+            s.write(&dir)
         } else {
             return;
         };
-        let Some(file) = file else {
-            return;
-        };
-        let written = text
-            .map_err(std::io::Error::other)
-            .and_then(|t| write_atomic(&file, &t));
         match written {
-            Ok(()) => {
-                if let Some(stamp) = stamp_of(&file) {
-                    self.stamps.insert(id.to_string(), stamp);
-                }
+            Ok(stamp) => {
+                self.stamps.insert(id.to_string(), stamp);
                 if let Some(c) = self.collection(id) {
                     let base = c.refs.iter().map(Reference::owned_pair).collect();
                     self.bases.insert(id.to_string(), base);
                 }
             }
-            Err(e) => tracing::warn!("collection not saved to {}: {e}", file.display()),
+            Err(e) => tracing::warn!(
+                "collection not saved to {}: {e}",
+                file_of(&dir, id, smart).display()
+            ),
         }
     }
 
@@ -1237,7 +784,7 @@ pub(crate) fn resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::Filter;
+    use crate::filter::{Filter, Saved, SavedBar};
     use greycard_library::fixture::{A7, R5, R6, write_frame};
 
     fn scratch(what: &str) -> PathBuf {

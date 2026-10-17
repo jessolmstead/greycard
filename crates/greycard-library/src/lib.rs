@@ -33,11 +33,13 @@ use greycard_core::raw::{Shot, camera_name};
 use greycard_edit::meta::Meta;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 
+pub mod collections;
 pub mod filter;
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixture;
 pub mod hash;
 mod index;
+pub mod lightroom_catalog;
 pub mod roots;
 pub mod thumbs;
 

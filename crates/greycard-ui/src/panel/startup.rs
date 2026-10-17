@@ -1,3 +1,4 @@
+use crate::filter::SavedBar;
 use crate::panel::assets::show_presets;
 use crate::panel::browser::{
     grid_filled, open_folder, open_paths, rebuild_browser, row_of, show_thumb, time_select,

@@ -30,11 +30,13 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] The Lightroom catalog import: `.lrcat` read for its folders,
-      the develop settings of each frame mapped onto ours as the XMP
-      import maps them, the collections and collection sets, the
-      flags that XMP has no field for; a dry run that says what would
-      come across and what has no match
+- [ ] The Lightroom catalog import, part 2: the command (§329) behind
+      a sheet in the window, asking where each root now lives and
+      showing the dry run's report before the write; Lightroom's crop
+      mapped (on the unrotated frame with an angle, ours on the leveled
+      plane), the most common edit the command names today; camera
+      and lens rules in a smart collection matched through rawler's
+      names
 - [ ] X-Trans step 2: denoising, hot pixel repair and chromatic
       aberration correction on the X-Trans path (§322)
 - [ ] Lightroom preset import in the window: the CLI's `presets
@@ -340,17 +342,6 @@ comes across with its ratings and collections.
       strip; a badge on the tile, a move or a delete takes both, the
       pair's rating, flag and label one thing; a setting to list them
       apart, as Lightroom's "treat JPEG as separate" is
-- [ ] Lightroom catalog import: the `.lrcat` read as SQLite, ratings,
-      flags, labels, keywords and captions to the meta section
-      exactly, collections and translatable smart collections to the
-      collections file, develop settings through the XMP mapper as a
-      named first history state, roots remapped by asking; the older
-      process versions (PV2003, PV2010), whose keys and slider
-      meanings differ from the 2012 ones the mapper reads, mapped or
-      reported as approximate, their keys checked against a real old
-      catalog; a command with a dry-run report first, then a sheet
-      (§79). Waits on collections; the capstone, its own release if it
-      grows
 - [ ] RawTherapee `.pp3` import on opening a folder: the command is
       there (§328); a folder holding profiles beside its raws offered
       the import once, with the command's report on a sheet, and the

@@ -14,6 +14,15 @@ note a first tester reads.
 
 ### Library
 
+- `greycard library import-lightroom <catalog>` brings a Lightroom
+  Classic catalog across: ratings, flags, labels, keywords, titles and
+  captions exactly, the develop settings as one "Imported from Lightroom" step,
+  virtual copies as versions, collections, the smart collections that
+  translate, and the root folders as roots (`--root A:/Photos=/photos`
+  for a catalog from another machine). Without `--write` it only
+  reports what it would do; point it at a copy made after Lightroom
+  quit, or with the `-wal` beside it
+  ([§329](https://github.com/jessolmstead/greycard/blob/master/docs/notes/329-importing-a-lightroom-catalog-part-1-the-command.md))
 - `greycard rawtherapee <raws or folders>` reads the RawTherapee
   `.pp3` beside each raw: the rank, color label and trash mark come
   into the meta exactly, and the white balance, exposure, crop,

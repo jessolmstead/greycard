@@ -434,6 +434,68 @@ enum LibraryAction {
         #[arg(long)]
         count: bool,
     },
+    /// Bring a Lightroom Classic catalog across: the ratings, flags,
+    /// labels, keywords, titles and captions exactly, the develop
+    /// settings as an approximation in one named state, virtual
+    /// copies as versions, the collections and the smart collections
+    /// that translate, the root folders as roots. Without --write it
+    /// only reports what it would do. Work on a copy of the catalog,
+    /// made after Lightroom quit or with the -wal beside it: without
+    /// its -wal, a catalog copied while Lightroom ran lacks the newest
+    /// changes
+    ImportLightroom {
+        /// The .lrcat
+        catalog: PathBuf,
+        /// Where a root folder of the catalog is now: its path as the
+        /// catalog has it (or a folder above it, or its name), `=`,
+        /// and the folder here. With none, each root is looked for
+        /// where the catalog says
+        #[arg(long = "root", value_name = "CATALOG=HERE", value_parser = root_mapping)]
+        roots: Vec<(String, PathBuf)>,
+        /// Write the sidecars, the collections and the roots
+        #[arg(long)]
+        write: bool,
+        /// Write over sidecars that have history, versions or meta
+        #[arg(long, requires = "write")]
+        force: bool,
+        /// The set the collections go under; the catalog's name when
+        /// not given, none when empty
+        #[arg(long, value_name = "NAME")]
+        set: Option<String>,
+    },
+}
+
+/// The editor's setting for where a new sidecar goes, read from its
+/// settings file (`$XDG_CONFIG_HOME/greycard/settings.json`, else under
+/// the platform's configuration folder): under the folder's `.greycard`
+/// when on. Off when there is no file or it will not read, as the
+/// editor's default is.
+fn sidecars_in_folder() -> bool {
+    let Some(base) = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(dirs::config_dir)
+    else {
+        return false;
+    };
+    std::fs::read(base.join("greycard").join("settings.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| v.get("sidecars_in_folder")?.as_bool())
+        .unwrap_or(false)
+}
+
+/// A `--root` as typed: the catalog's side up to the first `=`, the
+/// folder here after it.
+fn root_mapping(text: &str) -> Result<(String, PathBuf), String> {
+    match text.split_once('=') {
+        Some((from, to)) if !from.trim().is_empty() && !to.trim().is_empty() => {
+            Ok((from.trim().to_string(), PathBuf::from(to.trim())))
+        }
+        _ => Err(format!(
+            "want <catalog path>=<folder here>, as A:/Photos=/photos, not {text}"
+        )),
+    }
 }
 
 fn main() -> Result<()> {
@@ -1777,6 +1839,30 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
         Some(path) => path,
         None => Library::user_path().context("no data directory for the library")?,
     };
+    // The import needs no index: it writes sidecars, the collections
+    // and the roots beside the library, and its dry run writes nothing,
+    // the library itself included.
+    if let LibraryAction::ImportLightroom {
+        catalog,
+        roots,
+        write,
+        force,
+        set,
+    } = action
+    {
+        let options = greycard_library::lightroom_catalog::Options {
+            roots,
+            write,
+            force,
+            set,
+            library: path,
+            sidecars_in_folder: sidecars_in_folder(),
+        };
+        let report = greycard_library::lightroom_catalog::import(&catalog, &options)
+            .with_context(|| format!("importing {}", catalog.display()))?;
+        print!("{report}");
+        return Ok(());
+    }
     // A listing reads only, so it opens read-only and never waits
     // for an index that is running; a library not there yet is made,
     // so the first listing says "0 of 0" rather than "no such file".
@@ -1902,6 +1988,7 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
             }
             Ok(())
         }
+        LibraryAction::ImportLightroom { .. } => unreachable!("taken before the library opens"),
     }
 }
 

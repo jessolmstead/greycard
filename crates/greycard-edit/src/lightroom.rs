@@ -12,6 +12,10 @@
 //! black and white section on, and only then are
 //! `GrayMixerRed..GrayMixerMagenta` read as its eight weights, band
 //! for band; the color mixer keeps its own HSL bands.
+//!
+//! A Lightroom catalog keeps the same keys for each image as a Lua
+//! table rather than XMP ([`read_table`]), and its smart collections'
+//! rules in the same form ([`parse_table`]).
 
 use std::collections::BTreeMap;
 
@@ -74,6 +78,295 @@ pub fn read(xml: &str, fallback: &str) -> Result<Imported> {
         .filter(|n| !n.trim().is_empty())
         .unwrap_or_else(|| fallback.to_string());
     Ok(map(name, &keys, &curves))
+}
+
+/// Read the develop settings a Lightroom catalog keeps for an image:
+/// the same Camera Raw keys as a preset's XMP, written as a Lua table
+/// (`s = { Exposure2012 = 0.5, ToneCurvePV2012 = { 0, 0, 255, 255 },
+/// ... }`), mapped as [`read`] maps them. The tables inside it that
+/// are not curves (the masks, the spots healed, the Enhance filters)
+/// are kept as their key alone, so what they hold is named among what
+/// did not come across.
+pub fn read_table(text: &str, name: &str) -> Result<Imported> {
+    let top = parse_table(text).map_err(Error::Preset)?;
+    let mut keys: BTreeMap<String, String> = BTreeMap::new();
+    let mut curves: BTreeMap<String, Vec<Point>> = BTreeMap::new();
+    for (key, value) in top {
+        let Some(key) = key else { continue };
+        match value {
+            Value::Word(word) => {
+                keys.insert(key, word);
+            }
+            Value::Table(items) if key.starts_with("ToneCurve") && !key.ends_with("Name") => {
+                // The points flat, x then y, on 0..255.
+                let numbers: Vec<f32> = items
+                    .iter()
+                    .filter_map(|(_, v)| match v {
+                        Value::Word(w) => w.parse::<f32>().ok(),
+                        Value::Table(_) => None,
+                    })
+                    .collect();
+                let points = numbers
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|[x, y]| [x / 255.0, y / 255.0])
+                    .collect();
+                curves.insert(key, points);
+            }
+            Value::Table(items) if !items.is_empty() => {
+                keys.insert(key, String::new());
+            }
+            Value::Table(_) => {}
+        }
+    }
+    if keys.is_empty() && curves.is_empty() {
+        return Err(Error::Preset("no Camera Raw settings in the table".into()));
+    }
+    Ok(map(name.to_string(), &keys, &curves))
+}
+
+/// One value of a serialized table: a word as written (a string's
+/// text, a number, `true`), or a table of its own, each entry under
+/// its key or, for a list, none.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Word(String),
+    Table(Vec<(Option<String>, Value)>),
+}
+
+/// The entries of a Lua table as Lightroom writes one, `name = { ...
+/// }` or the bare table: keys as names or `["quoted"]`, values strings,
+/// numbers, booleans, `nil` and tables. Nothing else of Lua is read.
+pub fn parse_table(text: &str) -> std::result::Result<Vec<(Option<String>, Value)>, String> {
+    let mut p = Lua {
+        s: text.as_bytes(),
+        at: 0,
+        depth: 0,
+    };
+    p.space();
+    // `s = ` before the table, when there is one.
+    let mark = p.at;
+    if p.name().is_some() {
+        p.space();
+        if !p.eat(b'=') {
+            p.at = mark;
+        }
+        p.space();
+    }
+    let Value::Table(items) = p.value()? else {
+        return Err("the settings are not a table".into());
+    };
+    p.space();
+    if p.at < p.s.len() {
+        return Err(format!("text after the table, at byte {}", p.at));
+    }
+    Ok(items)
+}
+
+/// How deep tables may nest: Lightroom's go five or six deep, and a
+/// damaged or hostile text nested further would run the stack out.
+const DEEPEST: usize = 64;
+
+struct Lua<'a> {
+    s: &'a [u8],
+    at: usize,
+    /// The tables open around the reader.
+    depth: usize,
+}
+
+impl Lua<'_> {
+    fn peek(&self) -> Option<u8> {
+        self.s.get(self.at).copied()
+    }
+
+    fn eat(&mut self, c: u8) -> bool {
+        let ate = self.peek() == Some(c);
+        if ate {
+            self.at += 1;
+        }
+        ate
+    }
+
+    fn space(&mut self) {
+        while self.peek().is_some_and(|c| c.is_ascii_whitespace()) {
+            self.at += 1;
+        }
+    }
+
+    fn name(&mut self) -> Option<String> {
+        let start = self.at;
+        if !self
+            .peek()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == b'_')
+        {
+            return None;
+        }
+        while self
+            .peek()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_')
+        {
+            self.at += 1;
+        }
+        Some(String::from_utf8_lossy(&self.s[start..self.at]).into_owned())
+    }
+
+    fn value(&mut self) -> std::result::Result<Value, String> {
+        self.space();
+        match self.peek() {
+            Some(b'{') => self.table(),
+            Some(q @ (b'"' | b'\'')) => {
+                self.at += 1;
+                self.quoted(q).map(Value::Word)
+            }
+            Some(b'[') if matches!(self.s.get(self.at + 1), Some(b'[' | b'=')) => {
+                self.long().map(Value::Word)
+            }
+            Some(c) if c == b'-' || c == b'.' || c == b'+' || c.is_ascii_alphanumeric() => {
+                let start = self.at;
+                while self.peek().is_some_and(|c| {
+                    c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'+' | b'_')
+                }) {
+                    self.at += 1;
+                }
+                Ok(Value::Word(
+                    String::from_utf8_lossy(&self.s[start..self.at]).into_owned(),
+                ))
+            }
+            Some(c) => Err(format!("{:?} at byte {}", c as char, self.at)),
+            None => Err("the text ends inside the table".into()),
+        }
+    }
+
+    fn table(&mut self) -> std::result::Result<Value, String> {
+        if self.depth == DEEPEST {
+            return Err(format!("tables nested past {DEEPEST}, at byte {}", self.at));
+        }
+        self.depth += 1;
+        let read = self.entries();
+        self.depth -= 1;
+        read
+    }
+
+    /// A table's entries, at its opening brace.
+    fn entries(&mut self) -> std::result::Result<Value, String> {
+        self.at += 1;
+        let mut items = Vec::new();
+        loop {
+            self.space();
+            if self.eat(b'}') {
+                return Ok(Value::Table(items));
+            }
+            // `name = value`, `["key"] = value`, or a list's value.
+            let mark = self.at;
+            let key = if self.peek() == Some(b'[')
+                && matches!(self.s.get(self.at + 1), Some(b'"' | b'\''))
+            {
+                self.at += 1;
+                let q = self.s[self.at];
+                self.at += 1;
+                let key = self.quoted(q)?;
+                self.space();
+                if !self.eat(b']') {
+                    return Err(format!("no ] after a key, at byte {}", self.at));
+                }
+                self.space();
+                if !self.eat(b'=') {
+                    return Err(format!("no = after a key, at byte {}", self.at));
+                }
+                Some(key)
+            } else if let Some(name) = self.name() {
+                self.space();
+                if self.eat(b'=') {
+                    Some(name)
+                } else {
+                    // A bare word in a list: `true`, say.
+                    self.at = mark;
+                    None
+                }
+            } else {
+                None
+            };
+            let value = self.value()?;
+            items.push((key, value));
+            self.space();
+            if !self.eat(b',') && !self.eat(b';') {
+                self.space();
+                if !self.eat(b'}') {
+                    return Err(format!("no , or }} at byte {}", self.at));
+                }
+                return Ok(Value::Table(items));
+            }
+        }
+    }
+
+    /// A quoted string's text, the opening quote read already.
+    fn quoted(&mut self, q: u8) -> std::result::Result<String, String> {
+        let mut out: Vec<u8> = Vec::new();
+        loop {
+            let Some(c) = self.peek() else {
+                return Err("a string runs to the end".into());
+            };
+            self.at += 1;
+            match c {
+                c if c == q => break,
+                b'\\' => {
+                    let Some(e) = self.peek() else {
+                        return Err("a string runs to the end".into());
+                    };
+                    self.at += 1;
+                    match e {
+                        b'n' => out.push(b'\n'),
+                        b'r' => out.push(b'\r'),
+                        b't' => out.push(b'\t'),
+                        b'0'..=b'9' => {
+                            // Up to three digits, a byte.
+                            let mut n = u32::from(e - b'0');
+                            for _ in 0..2 {
+                                match self.peek() {
+                                    Some(d @ b'0'..=b'9') => {
+                                        n = n * 10 + u32::from(d - b'0');
+                                        self.at += 1;
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            out.push(n.min(255) as u8);
+                        }
+                        other => out.push(other),
+                    }
+                }
+                c => out.push(c),
+            }
+        }
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    }
+
+    /// A long string, `[[...]]` or `[==[...]==]`.
+    fn long(&mut self) -> std::result::Result<String, String> {
+        self.at += 1;
+        let mut level = 0;
+        while self.eat(b'=') {
+            level += 1;
+        }
+        if !self.eat(b'[') {
+            return Err(format!("a [ that opens nothing, at byte {}", self.at));
+        }
+        let close: Vec<u8> = std::iter::once(b']')
+            .chain(std::iter::repeat_n(b'=', level))
+            .chain(std::iter::once(b']'))
+            .collect();
+        let start = self.at;
+        let len = self.s[start..]
+            .windows(close.len())
+            .position(|w| w == close.as_slice())
+            .ok_or("a long string runs to the end")?;
+        self.at = start + len + close.len();
+        // A newline straight after the opening is not part of it.
+        let body = &self.s[start..start + len];
+        let body = body.strip_prefix(b"\n").unwrap_or(body);
+        Ok(String::from_utf8_lossy(body).into_owned())
+    }
 }
 
 /// The `x-default` (or the first) text of an `rdf:Alt`.
@@ -394,10 +687,35 @@ fn map(
         "BlueHue",
         "BlueSaturation",
         "ShadowTint",
+        "PerspectiveUpright",
+        "PerspectiveVertical",
+        "PerspectiveHorizontal",
+        "PerspectiveRotate",
     ];
     for k in NO_PLACE {
         if num(k).is_some_and(|v| v != 0.0) {
             unmapped.push(k.to_string());
+        }
+    }
+    // The crop is the frame's, not a preset's. An XMP says so with
+    // `HasCrop`; a catalog's table has the edges only when cropped.
+    let cropped = get("HasCrop").is_some_and(|v| v.eq_ignore_ascii_case("true"))
+        || num("CropAngle").is_some_and(|a| a != 0.0)
+        || num("CropLeft").is_some_and(|v| v > 0.0)
+        || num("CropTop").is_some_and(|v| v > 0.0)
+        || num("CropRight").is_some_and(|v| v < 1.0)
+        || num("CropBottom").is_some_and(|v| v < 1.0);
+    if cropped {
+        unmapped.push("crop".into());
+    }
+    // A catalog's tables of their own, named when they hold anything.
+    for (k, what) in [
+        ("RetouchAreas", "spots"),
+        ("FilterList", "Enhance"),
+        ("LensBlur", "lens blur"),
+    ] {
+        if keys.contains_key(k) {
+            unmapped.push(what.into());
         }
     }
     if let Some(look) = get("CameraProfile").filter(|p| !p.starts_with("Adobe") && !p.is_empty()) {
@@ -412,6 +730,7 @@ fn map(
         || keys
             .keys()
             .any(|k| k.starts_with("GradientBasedCorrections"))
+        || keys.keys().any(|k| k.starts_with("PaintBasedCorrections"))
     {
         unmapped.push("masks".into());
     }
@@ -677,6 +996,91 @@ mod tests {
         let Imported { preset, unmapped } = read(xml, "x").unwrap();
         assert!(preset.sections.is_empty());
         assert_eq!(unmapped, vec!["WhiteBalance"]);
+    }
+
+    #[test]
+    fn a_catalog_table_reads_as_lightroom_writes_it() {
+        let text = "s = { Name = \"x\",\n\
+            Quoted = \"a \\\"b\\\"\\n\\065\",\n\
+            [\"Odd key\"] = -1.5e-1,\n\
+            Long = [==[one]]\ntwo]==],\n\
+            Flag = true,\n\
+            Nothing = nil,\n\
+            List = { 1, \"two\", { Deep = false } },\n\
+            Empty = {  },\n\
+            }\n";
+        let items = parse_table(text).unwrap();
+        let get = |k: &str| {
+            items
+                .iter()
+                .find(|(key, _)| key.as_deref() == Some(k))
+                .map(|(_, v)| v)
+        };
+        let word = |w: &str| Value::Word(w.to_string());
+        assert_eq!(get("Name"), Some(&word("x")));
+        assert_eq!(get("Quoted"), Some(&word("a \"b\"\nA")));
+        assert_eq!(get("Odd key"), Some(&word("-1.5e-1")));
+        assert_eq!(get("Long"), Some(&word("one]]\ntwo")));
+        assert_eq!(get("Flag"), Some(&word("true")));
+        assert_eq!(get("Nothing"), Some(&word("nil")));
+        assert_eq!(
+            get("List"),
+            Some(&Value::Table(vec![
+                (None, word("1")),
+                (None, word("two")),
+                (
+                    None,
+                    Value::Table(vec![(Some("Deep".into()), word("false"))])
+                ),
+            ]))
+        );
+        assert_eq!(get("Empty"), Some(&Value::Table(Vec::new())));
+        // The bare table reads too; what is not one is refused.
+        assert_eq!(parse_table("{ a = 1 }").unwrap().len(), 1);
+        assert!(parse_table("s = { a = 1").is_err());
+        assert!(parse_table("s = { a = \"open }").is_err());
+        assert!(parse_table("s = { a = 1 } extra").is_err());
+        assert!(parse_table("s = 3").is_err());
+        // Nesting past reason is refused rather than run the stack out.
+        let deep = format!("s = {}{}", "{ ".repeat(100_000), "}".repeat(100_000));
+        assert!(parse_table(&deep).unwrap_err().contains("nested"));
+    }
+
+    #[test]
+    fn a_catalog_table_maps_as_the_xmp_does_and_names_its_tables() {
+        let text = "s = { Exposure2012 = 0.5,\n\
+            Contrast2012 = 20,\n\
+            WhiteBalance = \"Custom\",\n\
+            Temperature = 4800,\n\
+            Tint = 15,\n\
+            ConvertToGrayscale = false,\n\
+            CropLeft = 0.05,\n\
+            CropAngle = 1.2,\n\
+            ToneCurvePV2012 = { 0,\n10,\n128,\n120,\n255,\n245 },\n\
+            MaskGroupBasedCorrections = { { What = \"Correction\" } },\n\
+            RetouchAreas = { { SpotType = \"heal\" } },\n\
+            FilterList = { Filters = { { Name = \"Enhance\" } } },\n\
+            LensBlur = {  },\n\
+            }\n";
+        let Imported { preset, unmapped } = read_table(text, "From the catalog").unwrap();
+        assert_eq!(preset.name, "From the catalog");
+        let e = &preset.edit;
+        assert_eq!(e.light.exposure, 0.5);
+        assert!((e.light.tone.contrast - 1.1).abs() < 1e-6);
+        assert!(
+            matches!(e.white_balance, WhiteBalance::Custom { temperature, .. } if temperature == 4800.0)
+        );
+        assert_eq!(e.curves.rgb.len(), 3);
+        assert!((e.curves.rgb[2][1] - 245.0 / 255.0).abs() < 1e-6);
+        assert!(!e.bw.enabled);
+        // The crop, the masks, the spots and the Enhance named; an empty
+        // lens blur is nothing.
+        for what in ["crop", "masks", "spots", "Enhance"] {
+            assert!(unmapped.iter().any(|u| u == what), "{what}: {unmapped:?}");
+        }
+        assert!(!unmapped.iter().any(|u| u == "lens blur"));
+        assert!(read_table("s = { }", "x").is_err());
+        assert!(read_table("not a table", "x").is_err());
     }
 
     #[test]

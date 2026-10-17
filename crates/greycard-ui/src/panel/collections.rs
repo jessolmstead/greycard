@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 use greycard_library::Rehash;
 
 use crate::collections::{Collection, Frame, Pair, Smart, full_name};
-use crate::filter::Saved;
+use crate::filter::{Saved, SavedBar};
 use crate::panel::browser::chosen_frames;
 use crate::roots::View;
 use crate::*;

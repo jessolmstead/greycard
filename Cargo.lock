@@ -2032,6 +2032,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dirs",
  "greycard-ai",
  "greycard-core",
  "greycard-edit",
@@ -2039,6 +2040,7 @@ dependencies = [
  "greycard-library",
  "image",
  "log",
+ "serde_json",
  "tracing",
  "tracing-log",
  "tracing-subscriber",
@@ -2110,6 +2112,7 @@ dependencies = [
  "blake3",
  "dirs",
  "dunce",
+ "flate2",
  "greycard-core",
  "greycard-edit",
  "image",
@@ -2117,6 +2120,7 @@ dependencies = [
  "notify",
  "rawler",
  "rusqlite",
+ "serde",
  "serde_json",
  "thiserror 2.0.20",
 ]
