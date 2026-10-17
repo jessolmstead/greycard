@@ -44,6 +44,8 @@ ours, so a tester brings a library over in one go.
 - [ ] A Sync button in the develop panel over a selection (Pool)
 - [ ] The crop's starting aspect as a setting (Pool)
 - [ ] A keys sheet and a Help menu (Pool)
+- [ ] The window's structure: the CLI split, `State` grouped by owner,
+      the library views measured for a crate of their own (Pool)
 - [ ] The Lightroom mapper fitted from the measurement (§323, §333):
       the per-body baseline exposure first (the GFX 100S II renders
       about a stop brighter than Lightroom under every profile, the
@@ -464,8 +466,9 @@ clears or a tester asks for it.
 - [ ] The long `run` and `develop_job` in `worker/` and `Look::run` in
       `roots/` cut into functions, a later round after the splits
       (§316, §318, §321)
-- [ ] After 0.8.0, the window's structure, in three mechanical passes
-      each landing green: the CLI's `main.rs` split one file a
+- [ ] The window's structure (0.8.0), in three mechanical passes
+      each landing green, each alone with no other window branch in
+      flight: the CLI's `main.rs` split one file a
       subcommand; the window's `State` (about 216 fields in `main.rs`,
       every panel reaching in) grouped into a few structs by owner
       (library, develop, culling, sheets, worker handles), the
