@@ -1,16 +1,16 @@
 # greycard
 
-A raw photo editor for photographers leaving Lightroom Classic, on
-Linux, macOS and Windows.
+A professional raw photo editor with accurate color, for Linux, macOS
+and Windows. Fast, and open source.
 
 [![greycard editing a mountain landscape: presets and history on the left, the picture in the middle, the histogram and Develop sliders on the right, the filmstrip along the bottom.](docs/images/develop.webp)](https://greycard.org)
 
 I took my favorite parts of every editor I know and built the one I
 wanted to use. I'm a software engineer and a
-[photographer](https://jessolmstead.com), and greycard is already good
-enough that I've left Lightroom Classic for it. It's still early, and
-there's a lot more on the [roadmap](docs/roadmap.md). I'm not going to
-stop until it's a complete, battle-tested editor.
+[photographer](https://jessolmstead.com), and greycard is already the
+editor I use for my own work. It's still early, and there's a lot more
+on the [roadmap](docs/roadmap.md). I'm not going to stop until it's a
+complete, battle-tested editor.
 
 **[Download](https://github.com/jessolmstead/greycard/releases/latest)** ·
 [User guide](docs/user-guide.md) ·
