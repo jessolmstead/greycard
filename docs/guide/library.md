@@ -204,7 +204,9 @@ add up (Red or Green); different groups narrow each other (Red and
 Under them are chips read from the cameras' data: **Camera**,
 **Lens**, **Style** (the camera's picture style), **ISO**, **Focal**,
 **Day** and **Keyword**. They fill in once greycard has indexed the
-folder.
+folder. Beside them is **Kind**, from the file's name: **Raw**,
+**JPEG**, **PNG** or **TIFF**, shown when the frames shown hold more
+than one.
 
 The count at the end of the row says how many frames are shown, for
 example "120 of 640". **Clear** shows the whole folder again.
@@ -234,6 +236,7 @@ You can also type tests, with no spaces inside them:
 | `date` | A year, month or day: `date:2026-09`, `date<=2026-09-21` |
 | `flag` | `pick`, `reject` or `none` |
 | `label` | `red`, `yellow`, `green`, `blue`, `purple` or `none` |
+| `kind` | `raw`, `jpeg`, `png` or `tiff`: `kind:raw`, `kind!=jpeg` |
 | `has:versions` | Frames with at least one version |
 
 The tests are:

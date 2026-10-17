@@ -1975,14 +1975,17 @@ pub(crate) fn show_filter(st: &State, app: &App) {
     app.set_filter_shown(counts.shown as i32);
     app.set_filter_total(counts.total as i32);
     app.set_filter_on(!st.filter.is_empty());
-    // The EXIF facets, counted by the index; none until it has
-    // rows for the folder, when the note says why.
+    // The facets: the EXIF's counted by the index, none until it has
+    // rows for the folder; the keyword's and the kind's counted from
+    // the frames in hand. The note beside them says how the index is
+    // getting on, or why there are none.
     let rows = crate::library::facet_rows(st);
+    let note = crate::library::facet_note(st, !rows.is_empty());
     let (long, short) = crate::library::split_facet_rows(&rows);
     app.set_filter_facets(ModelRc::new(VecModel::from(rows)));
     app.set_filter_facets_long(ModelRc::new(VecModel::from(long)));
     app.set_filter_facets_short(ModelRc::new(VecModel::from(short)));
-    app.set_filter_facet_note(crate::library::facet_note(st).into());
+    app.set_filter_facet_note(note.into());
 }
 
 /// The browser has nothing left to show and the filter is why, which

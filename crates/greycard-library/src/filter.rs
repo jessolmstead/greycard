@@ -10,7 +10,7 @@
 //! ```text
 //! camera:"R6"  lens:RF  iso>=3200  focal<=35  aperture:1.8  shutter<1/60
 //! date:2026-09  rating>=3  flag:pick  label!=red  keyword:wedding
-//! name:IMG_00  folder:/shoots/skye  missing:yes
+//! name:IMG_00  folder:/shoots/skye  missing:yes  kind:raw
 //! ```
 //!
 //! `:` on a text field is a case-insensitive substring, `=` the
@@ -23,9 +23,10 @@
 //! operator compares that much of the file's own date, so
 //! `date<=2026-09` is everything through September. A flag is
 //! `pick`, `reject` or `none`, a label one of Lightroom's five or
-//! `none`, and `missing` is `yes` or `no`. `!=` on any field leaves
-//! out a file that does not say: a JPEG with no EXIF is not "not
-//! ISO 100", it is unknown.
+//! `none`, `missing` is `yes` or `no`, and a kind is `raw` or a
+//! picture's format, `jpeg`, `png` or `tiff` ([`kind_of`]). `!=` on
+//! any field leaves out a file that does not say: a JPEG with no EXIF
+//! is not "not ISO 100", it is unknown.
 //!
 //! Case is folded with Unicode's rules on both sides, as the
 //! browser's search box folds it (`greycard-ui`'s `filter.rs`), so
@@ -90,6 +91,12 @@ pub enum Term {
     /// Whether the file's sidecar keeps versions beside its own
     /// (`has:versions`).
     HasVersions(bool),
+    /// Whether the file is of this kind ([`kind_of`]), or with `is`
+    /// false of another one.
+    Kind {
+        is: bool,
+        kind: &'static str,
+    },
     /// Any of a facet's values: the filter bar's chips, one group of
     /// them. No text spells it; the bar builds it, from values the
     /// index's own counts named ([`Facet`]), so a chip matches
@@ -111,6 +118,9 @@ pub enum Term {
 pub enum Facet {
     Camera,
     Lens,
+    /// Raw or a picture's format, from the file's name ([`kind_of`]):
+    /// the one facet every file has a value for.
+    Kind,
     /// The maker's picture style, where it is fixed: the camera
     /// match's group key, "Canon Faithful".
     Style,
@@ -121,9 +131,13 @@ pub enum Facet {
 }
 
 impl Facet {
-    pub const ALL: [Facet; 7] = [
+    /// Every facet, in the order the bar shows their rows. A place in
+    /// it is a code on the window and nothing kept: the settings keep
+    /// a facet by its field.
+    pub const ALL: [Facet; 8] = [
         Facet::Camera,
         Facet::Lens,
+        Facet::Kind,
         Facet::Style,
         Facet::Iso,
         Facet::Focal,
@@ -136,6 +150,7 @@ impl Facet {
         match self {
             Facet::Camera => "camera",
             Facet::Lens => "lens",
+            Facet::Kind => "kind",
             Facet::Style => "style",
             Facet::Iso => "iso",
             Facet::Focal => "focal",
@@ -150,6 +165,7 @@ impl Facet {
         Some(match name.to_ascii_lowercase().as_str() {
             "camera" => Facet::Camera,
             "lens" => Facet::Lens,
+            "kind" => Facet::Kind,
             "style" => Facet::Style,
             "iso" => Facet::Iso,
             "focal" | "mm" => Facet::Focal,
@@ -160,11 +176,14 @@ impl Facet {
     }
 
     /// What a file's value is grouped and matched by. The keyword's
-    /// is over the keyword table, aliased `k`.
+    /// is over the keyword table, aliased `k`; the kind's is
+    /// [`kind_of`] on the name, which the library registers with
+    /// SQLite as `filekind`.
     pub(crate) fn key(self) -> &'static str {
         match self {
             Facet::Camera => "files.camera",
             Facet::Lens => "files.lens",
+            Facet::Kind => "filekind(files.name)",
             Facet::Style => "files.style",
             Facet::Iso => "files.iso",
             Facet::Focal => "round(files.focal, 1)",
@@ -284,10 +303,67 @@ impl std::error::Error for ParseError {}
 
 /// The field names the language knows, for the error that lists
 /// them.
-const FIELDS: [&str; 17] = [
+const FIELDS: [&str; 18] = [
     "camera", "make", "model", "lens", "iso", "focal", "aperture", "shutter", "date", "rating",
-    "flag", "label", "keyword", "name", "folder", "missing", "has",
+    "flag", "label", "keyword", "name", "folder", "missing", "has", "kind",
 ];
+
+/// The kind [`kind_of`] gives a raw.
+pub const RAW: &str = "raw";
+
+/// What kind of file a path names, by its extension: [`RAW`] for
+/// anything the decoder takes for a raw, and for a picture its
+/// format, `jpeg`, `png` or `tiff`, as its MIME type names it, so
+/// `.jpg` and `.jpeg` are one kind. `None` for a file that is neither.
+/// A format added to `picture::EXTENSIONS` has its name checked here:
+/// not every MIME type's is a word (`x-exr`).
+///
+/// The filter bar's Kind chips group by this and the `kind` term
+/// matches by it, in SQL as `filekind(files.name)` and on a path in
+/// hand, so the two cannot disagree.
+pub fn kind_of(path: &Path) -> Option<&'static str> {
+    if greycard_core::decode::is_raw_path(path) {
+        return Some(RAW);
+    }
+    if !greycard_core::picture::is_picture_path(path) {
+        return None;
+    }
+    image::ImageFormat::from_extension(path.extension()?)?
+        .to_mime_type()
+        .strip_prefix("image/")
+}
+
+/// Every kind there is, raw first, then the pictures' in the order
+/// their extensions are listed.
+pub fn kinds() -> Vec<&'static str> {
+    let mut out = vec![RAW];
+    for ext in greycard_core::picture::EXTENSIONS {
+        if let Some(kind) = kind_of(Path::new(&format!("x.{ext}")))
+            && !out.contains(&kind)
+        {
+            out.push(kind);
+        }
+    }
+    out
+}
+
+/// A kind as a filter may spell it: the kind's name, a picture's
+/// extension (`jpg`, `tif`), either with an `s` on the end (`raws`),
+/// case aside. A raw's own extension is not one: `kind:nef` would
+/// read as every raw, which is not what it says.
+pub fn kind_named(value: &str) -> Option<&'static str> {
+    let v = value.trim().to_ascii_lowercase();
+    let named = |v: &str| {
+        if v == RAW {
+            Some(RAW)
+        } else if greycard_core::picture::EXTENSIONS.contains(&v) {
+            kind_of(Path::new(&format!("x.{v}")))
+        } else {
+            None
+        }
+    };
+    named(&v).or_else(|| v.strip_suffix('s').and_then(named))
+}
 
 impl Filter {
     /// Parse a filter; an empty or blank string is the filter that
@@ -530,6 +606,12 @@ fn parse_term(token: &str) -> Result<Term, ParseError> {
                 _ => Err(err(format!("has is has:versions, not {value:?}"))),
             }
         }
+        "kind" => {
+            let is = yes_or_not(op, name, &err)?;
+            let kind = kind_named(&value)
+                .ok_or_else(|| err(format!("a kind is {}, not {value:?}", or_list(&kinds()))))?;
+            Ok(Term::Kind { is, kind })
+        }
         _ => Err(err(format!(
             "no field called {name}; the fields are {}",
             FIELDS.join(", ")
@@ -566,6 +648,15 @@ fn looks_like_a_term(token: &str) -> bool {
     ["!=", ">=", "<=", ":", "=", ">", "<"]
         .iter()
         .any(|op| rest.strip_prefix(op).is_some_and(|v| !v.is_empty()))
+}
+
+/// "a", "a or b", "a, b or c".
+fn or_list(names: &[&str]) -> String {
+    match names.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+    }
 }
 
 /// A value with another term inside it is a whole filter handed over
@@ -838,6 +929,12 @@ impl Term {
                 "{}EXISTS (SELECT 1 FROM versions WHERE versions.file = files.id)",
                 if *yes { "" } else { "NOT " }
             ),
+            // A file of no kind is NULL, and passes neither way, as
+            // `on_meta` has it.
+            Term::Kind { is, kind } => {
+                params.push(Param::Text(kind.to_string()));
+                format!("{} {} ?", Facet::Kind.key(), if *is { "=" } else { "<>" })
+            }
             Term::Facet { facet, values } => {
                 if values.is_empty() {
                     return "1".to_string();
@@ -861,9 +958,10 @@ impl Term {
 
     /// This term answered from what a file's sidecar and its path
     /// say, as the SQL would answer it from the row: a word, the
-    /// name, a keyword, the rating, the flag, the label. `None` for a
-    /// term only the index can answer — the EXIF, and the folder,
-    /// which the index holds canonical and a path in hand may not be.
+    /// name, the kind, a keyword, the rating, the flag, the label.
+    /// `None` for a term only the index can answer — the EXIF, and
+    /// the folder, which the index holds canonical and a path in hand
+    /// may not be.
     ///
     /// The editor holds every open frame's sidecar, fresher than the
     /// row an `index_file` is still writing, so the filter bar asks
@@ -918,6 +1016,7 @@ impl Term {
             Term::Flag { is, flag } => (meta.flag == *flag) == *is,
             Term::Label { is, label } => (meta.label == *label) == *is,
             Term::Missing(yes) => !*yes,
+            Term::Kind { is, kind } => kind_of(path).is_some_and(|k| (k == *kind) == *is),
             Term::Facet {
                 facet: Facet::Keyword,
                 values,
@@ -925,6 +1024,10 @@ impl Term {
                 values.is_empty()
                     || keywords().any(|k| values.iter().any(|v| v.to_lowercase() == k))
             }
+            Term::Facet {
+                facet: Facet::Kind,
+                values,
+            } => values.is_empty() || kind_of(path).is_some_and(|k| values.iter().any(|v| v == k)),
             _ => return None,
         })
     }
@@ -1228,6 +1331,8 @@ mod tests {
                 "keyword!=wedding",
                 "NOT EXISTS (SELECT 1 FROM keywords k WHERE k.file = files.id AND ulower(k.word) = ?)",
             ),
+            ("kind:raw", "filekind(files.name) = ?"),
+            ("kind!=jpg", "filekind(files.name) <> ?"),
         ];
         for (text, want) in checks {
             let (sql, params) = Filter::parse(text).unwrap().to_sql();
@@ -1350,6 +1455,78 @@ mod tests {
         // A value with a space and no operator in it is fine, and so
         // is a token that starts with a digit.
         assert!(Filter::from_terms(&["lens:RF 24-105", "keyword:noon 12:30"]).is_ok());
+    }
+
+    /// A file's kind is read from its extension, case aside: a raw by
+    /// the decoder's list, a picture by its format, its two spellings
+    /// one kind.
+    #[test]
+    fn a_files_kind_is_raw_or_its_pictures_format() {
+        let kind = |name: &str| kind_of(Path::new(name));
+        for name in ["a.CR3", "b.nef", "c.dng", "dir.jpg/d.RAF"] {
+            assert_eq!(kind(name), Some(RAW), "{name}");
+        }
+        assert_eq!(kind("a.jpg"), Some("jpeg"));
+        assert_eq!(kind("a.JPEG"), Some("jpeg"));
+        assert_eq!(kind("a.tif"), Some("tiff"));
+        assert_eq!(kind("a.Tiff"), Some("tiff"));
+        assert_eq!(kind("a.png"), Some("png"));
+        for name in ["a.xmp", "a.gif", "jpg", "a.cr3.txt", ""] {
+            assert_eq!(kind(name), None, "{name}");
+        }
+        // Every extension either list takes has a kind, and the
+        // kinds are four.
+        for ext in greycard_core::decode::RAW_EXTENSIONS {
+            assert_eq!(kind(&format!("x.{ext}")), Some(RAW), "{ext}");
+        }
+        for ext in greycard_core::picture::EXTENSIONS {
+            assert!(kind(&format!("x.{ext}")).is_some(), "{ext}");
+        }
+        assert_eq!(kinds(), ["raw", "jpeg", "png", "tiff"]);
+    }
+
+    #[test]
+    fn a_kind_is_named_and_anything_else_is_refused_with_the_kinds() {
+        assert_eq!(
+            one("kind:raw"),
+            Term::Kind {
+                is: true,
+                kind: RAW
+            }
+        );
+        assert_eq!(
+            one("kind=jpeg"),
+            Term::Kind {
+                is: true,
+                kind: "jpeg"
+            }
+        );
+        assert_eq!(
+            one("kind!=raw"),
+            Term::Kind {
+                is: false,
+                kind: RAW
+            }
+        );
+        // The extensions' spellings, a plural and any case.
+        for (text, kind) in [
+            ("kind:jpg", "jpeg"),
+            ("kind:JPEGs", "jpeg"),
+            ("kind:tif", "tiff"),
+            ("kind:TIFFS", "tiff"),
+            ("kind:pngs", "png"),
+            ("kind:Raws", RAW),
+        ] {
+            assert_eq!(one(text), Term::Kind { is: true, kind }, "{text}");
+        }
+        // A raw's own extension would be every raw; a format the
+        // editor does not open is no kind.
+        for text in ["kind:nef", "kind:gif", "kind:rawss", "kind:s"] {
+            let said = refused(text);
+            assert!(said.contains("raw, jpeg, png or tiff"), "{said}");
+        }
+        assert!(refused("kind>raw").contains("takes"));
+        assert!(is_term("kind:raw") && is_term("KIND!=jpg"));
     }
 
     #[test]

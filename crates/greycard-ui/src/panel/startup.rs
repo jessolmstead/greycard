@@ -288,10 +288,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             }
             None => {
                 let (text, wanted) = filter::from_cli(name);
-                let filter = filter::Filter {
+                let mut filter = filter::Filter {
                     text,
                     ..filter::Filter::default()
                 };
+                let wanted = filter.choose_at_once(wanted);
                 for e in filter.typed().errors {
                     tracing::warn!("--filter: {e}");
                 }

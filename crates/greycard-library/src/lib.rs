@@ -1086,6 +1086,23 @@ impl Library {
                 })
             },
         )?;
+        conn.create_scalar_function(
+            "filekind",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8
+                | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+            |ctx| {
+                // A file's name to its kind, by `filter::kind_of`,
+                // the function the path in hand is asked through;
+                // a name of no kind, or no name, is NULL.
+                Ok(match ctx.get_raw(0) {
+                    rusqlite::types::ValueRef::Text(t) => {
+                        filter::kind_of(Path::new(&*String::from_utf8_lossy(t)))
+                    }
+                    _ => None,
+                })
+            },
+        )?;
         Ok(())
     }
 
@@ -1393,7 +1410,9 @@ impl Library {
             _ => ("files", key, "count(*)"),
         };
         let order = match facet {
-            Facet::Camera | Facet::Lens | Facet::Style | Facet::Keyword => "2 DESC, 1",
+            Facet::Camera | Facet::Lens | Facet::Kind | Facet::Style | Facet::Keyword => {
+                "2 DESC, 1"
+            }
             Facet::Iso | Facet::Focal | Facet::Date => "1",
         };
         let sql = format!(

@@ -2263,6 +2263,97 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A file's kind is a facet and a term, both read from its name
+    /// through the one function: the chips count raws and pictures
+    /// by format, a chip lists what it counted, and `kind:` answered
+    /// from a path in hand is the index's answer from the row.
+    #[test]
+    fn a_files_kind_is_counted_and_matched_by_one_reading_of_its_name() {
+        use crate::filter::{Facet, Term};
+        use crate::fixture::write_mosaic_dng;
+        let dir = scratch("kinds");
+        shoot(&dir);
+        write_mosaic_dng(&dir.join("d1.dng"), "RGGB");
+        write_mosaic_dng(&dir.join("d2.DNG"), "RGGB");
+        for name in ["SHOT.JPG", "shot.jpeg", "flat.png"] {
+            image::RgbImage::from_pixel(4, 3, image::Rgb([90, 120, 150]))
+                .save(dir.join(name))
+                .unwrap();
+        }
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 8, "{report:?}");
+        let all = Filter::default();
+        let counts = |filter: &Filter| -> Vec<(String, usize)> {
+            lib.facet_counts(Facet::Kind, None, filter)
+                .unwrap()
+                .into_iter()
+                .map(|c| (c.value, c.count))
+                .collect()
+        };
+        let pairs = |want: &[(&str, usize)]| -> Vec<(String, usize)> {
+            want.iter().map(|(v, n)| (v.to_string(), *n)).collect()
+        };
+        // Most held first, as the cameras are; two spellings of JPEG
+        // and two cases of DNG are one chip each.
+        assert_eq!(
+            counts(&all),
+            pairs(&[("tiff", 3), ("jpeg", 2), ("raw", 2), ("png", 1)])
+        );
+        // The other tests narrow it: only the R5 is rated.
+        assert_eq!(
+            counts(&Filter::parse("rating>=3").unwrap()),
+            pairs(&[("tiff", 1)])
+        );
+        // A chip pressed lists what it counted, on the rows and on
+        // the paths in hand, and so does the term typed for it.
+        let entries = lib.query(&all).unwrap();
+        for chip in lib.facet_counts(Facet::Kind, None, &all).unwrap() {
+            let pressed = Filter {
+                terms: vec![Term::Facet {
+                    facet: Facet::Kind,
+                    values: vec![chip.value.clone()],
+                }],
+            };
+            assert_eq!(lib.count(&pressed).unwrap(), chip.count, "{}", chip.value);
+            let term = &pressed.terms[0];
+            assert!(term.is_meta());
+            let in_hand = entries
+                .iter()
+                .filter(|e| term.on_meta(&e.path, &e.meta).unwrap())
+                .count();
+            assert_eq!(in_hand, chip.count, "{}", chip.value);
+            let typed = Filter::parse(&format!("kind={}", chip.value)).unwrap();
+            assert_eq!(lib.count(&typed).unwrap(), chip.count, "{}", chip.value);
+        }
+        let mut raws = names(&lib, "kind:raw");
+        raws.sort();
+        assert_eq!(raws, ["d1.dng", "d2.DNG"]);
+
+        // The term on a path in hand agrees with the index's row.
+        for text in [
+            "kind:raw",
+            "kind!=raw",
+            "kind=jpeg",
+            "kind:jpg",
+            "kind!=tif",
+            "kind:pngs",
+            "kind:TIFF",
+        ] {
+            let filter = Filter::parse(text).unwrap();
+            let term = &filter.terms[0];
+            assert!(term.is_meta(), "{text}");
+            let got: Vec<String> = entries
+                .iter()
+                .filter(|e| term.on_meta(&e.path, &e.meta).unwrap())
+                .map(Entry::name)
+                .collect();
+            assert!(!got.is_empty(), "{text}");
+            assert_eq!(got, names(&lib, text), "{text}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// The index keeps each file's kind of mosaic, read on the same
     /// decoder as its EXIF: a Bayer DNG, an X-Trans DNG, a picture;
     /// and a row from before the column (schema 10) gets it on the next

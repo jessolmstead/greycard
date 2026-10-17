@@ -401,7 +401,8 @@ enum LibraryAction {
     /// keyword:wedding date:2026-09 'lens:RF 24'`. A bare word tests
     /// the name and the keywords; `:` on a text field is contains,
     /// `=` and `!=` the whole value; numbers take `< <= > >=`; a date
-    /// is a prefix, `2026-09`; `missing:yes` lists what is gone
+    /// is a prefix, `2026-09`; `kind:raw` or `kind!=jpeg` tests what
+    /// the file is; `missing:yes` lists what is gone
     List {
         /// The filter's terms, one an argument
         filter: Vec<String>,

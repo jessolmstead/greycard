@@ -1781,11 +1781,13 @@ pub(crate) fn index_pass(st: &State) -> Vec<bool> {
     }
 }
 
-/// The keyword's chips, from the sidecars in hand: each keyword,
-/// case folded, and how many frames hold it among those the other
-/// groups leave — the meta tests, and the index's as the list was
-/// last made. The chip shows the first spelling met, in file order.
-fn keyword_counts(st: &State, typed: &filter::Typed) -> Vec<FacetCount> {
+/// A facet's chips counted from the frames in hand
+/// ([`filter::in_hand`]): each value and how many frames hold it
+/// among those the other groups leave — the meta tests, and the
+/// index's as the list was last made. The keyword's are from the
+/// sidecars, case folded, the chip showing the first spelling met in
+/// file order; the kind's are from the paths.
+fn counts_in_hand(st: &State, typed: &filter::Typed, facet: Facet) -> Vec<FacetCount> {
     let mut by: BTreeMap<String, (String, usize)> = BTreeMap::new();
     for (i, (path, s)) in st.files.iter().zip(&st.sidecars).enumerate() {
         let frame = filter::Frame {
@@ -1793,7 +1795,15 @@ fn keyword_counts(st: &State, typed: &filter::Typed) -> Vec<FacetCount> {
             meta: &s.meta,
             index: st.index_passed.get(i).copied().unwrap_or(true),
         };
-        if !frame.index || !st.filter.shows_meta(typed, frame, false) {
+        if !frame.index || !st.filter.shows_meta(typed, frame, Some(facet)) {
+            continue;
+        }
+        if facet == Facet::Kind {
+            if let Some(kind) = greycard_library::filter::kind_of(path) {
+                by.entry(kind.to_string())
+                    .or_insert_with(|| (kind.to_string(), 0))
+                    .1 += 1;
+            }
             continue;
         }
         let mut seen = HashSet::new();
@@ -1816,21 +1826,26 @@ fn keyword_counts(st: &State, typed: &filter::Typed) -> Vec<FacetCount> {
     counts
 }
 
-/// Every facet's chips: each value among the frames the filter's
-/// other tests leave, with its count — the rule the meta rows keep
-/// (`filter::Counts`). The EXIF facets are one `GROUP BY` each on
-/// the index: the tests the sidecars answer pick the rows
-/// (`within`), and the index's own tests, less the facet's, are the
-/// query's filter. The keyword is counted from the sidecars. A read
-/// that fails keeps the last answer.
+/// Every facet's chips, in [`Facet::ALL`]'s order: each value among
+/// the frames the filter's other tests leave, with its count — the
+/// rule the meta rows keep (`filter::Counts`). The EXIF facets are
+/// one `GROUP BY` each on the index: the tests the frames in hand
+/// answer pick the rows (`within`), and the index's own tests, less
+/// the facet's, are the query's filter. The keyword and the kind are
+/// counted in hand, with or without an index. A read that fails
+/// keeps the last answer.
 pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
     let typed = st.filter.typed();
-    let keywords = (Facet::Keyword, keyword_counts(st, &typed));
+    let in_hand: Vec<(Facet, Vec<FacetCount>)> = Facet::ALL
+        .into_iter()
+        .filter(|f| filter::in_hand(*f))
+        .map(|f| (f, counts_in_hand(st, &typed, f)))
+        .collect();
     let Some(lib) = &st.index_reader else {
-        return vec![keywords];
+        return in_hand;
     };
     if st.index_ids.len() != st.files.len() {
-        return vec![keywords];
+        return in_hand;
     }
     let within: Vec<i64> = st
         .files
@@ -1843,12 +1858,18 @@ pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
                 meta: &s.meta,
                 index: true,
             };
-            id.filter(|_| st.filter.shows_meta(&typed, frame, true))
+            id.filter(|_| st.filter.shows_meta(&typed, frame, None))
         })
         .collect();
+    // The index's rows and the ones in hand, back in the bar's order.
+    let in_order = |mut rows: Vec<(Facet, Vec<FacetCount>)>, in_hand| {
+        rows.extend(in_hand);
+        rows.sort_by_key(|(f, _)| filter::facet_slot(*f));
+        rows
+    };
     let mut rows = Vec::new();
     for facet in Facet::ALL {
-        if facet == Facet::Keyword {
+        if filter::in_hand(facet) {
             continue;
         }
         let asked = st.filter.index_filter(&typed, Some(facet));
@@ -1857,13 +1878,12 @@ pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
             Err(e) => {
                 tracing::debug!("index: {facet:?}: {e}; keeping the last answer");
                 let mut last = st.facets_last.borrow().clone();
-                last.retain(|(f, _)| *f != Facet::Keyword);
-                last.push(keywords);
-                return last;
+                last.retain(|(f, _)| !filter::in_hand(*f));
+                return in_order(last, in_hand);
             }
         }
     }
-    rows.push(keywords);
+    let rows = in_order(rows, in_hand);
     *st.facets_last.borrow_mut() = rows.clone();
     rows
 }
@@ -1925,13 +1945,16 @@ pub(crate) fn chips_of(
 }
 
 /// The rows the bar shows: a facet with nothing to offer and nothing
-/// on is left out.
+/// on is left out, and so is a kind with one chip and it off: every
+/// frame in an all-raw folder is a raw, and a row that says so asks
+/// nothing a press could narrow.
 pub(crate) fn facet_rows(st: &State) -> Vec<FacetRow> {
     let started = Instant::now();
     let counts = facet_counts(st);
     if st.index_reader.is_some() {
         tracing::debug!(
-            "index: six facets counted over {} frames in {:.1} ms",
+            "index: {} facets counted over {} frames in {:.1} ms",
+            Facet::ALL.len(),
             st.files.len(),
             started.elapsed().as_secs_f64() * 1e3
         );
@@ -1955,7 +1978,9 @@ pub(crate) fn facet_rows(st: &State) -> Vec<FacetRow> {
             } else {
                 chips_of(facet, &counts, on, &|v| v.to_string())
             };
-            (!chips.is_empty()).then(|| FacetRow {
+            let says_nothing =
+                chips.is_empty() || (facet == Facet::Kind && chips.len() == 1 && !chips[0].on);
+            (!says_nothing).then(|| FacetRow {
                 name: filter::facet_caption(facet).into(),
                 code: filter::facet_slot(facet) as i32,
                 chips: ModelRc::new(VecModel::from(chips)),
@@ -1965,7 +1990,8 @@ pub(crate) fn facet_rows(st: &State) -> Vec<FacetRow> {
 }
 
 /// The rows split for the grid's header, which has two: camera and
-/// lens, whose chips are long, then the rest, which are short.
+/// lens, whose chips are long, then the rest, which are short, the
+/// kind first among them as it is in [`Facet::ALL`].
 pub(crate) fn split_facet_rows(rows: &[FacetRow]) -> (Vec<FacetRow>, Vec<FacetRow>) {
     let long = |row: &FacetRow| {
         [Facet::Camera, Facet::Lens]
@@ -1978,13 +2004,17 @@ pub(crate) fn split_facet_rows(rows: &[FacetRow]) -> (Vec<FacetRow>, Vec<FacetRo
     )
 }
 
-/// What the facets' row says while it has no chips.
-pub(crate) fn facet_note(st: &State) -> String {
+/// What the facets' row says before its chips: the index's error, its
+/// progress or its opening, whatever rows there are — a mixed folder
+/// has its kind's row before the index has a row of its own — and,
+/// with no rows at all, that the files have no EXIF to count.
+pub(crate) fn facet_note(st: &State, rows: bool) -> String {
     if let Some(e) = &st.index_error {
         return e.clone();
     }
     match (&st.index_reader, st.index_progress) {
         (_, Some((done, total))) => format!("Indexing the folder: {done} of {total}"),
+        (Some(_), None) if rows => String::new(),
         (Some(_), None) => "No camera, lens or date in these files' EXIF".to_string(),
         (None, None) if st.index.is_some() => "Opening the library index".to_string(),
         (None, None) => String::new(),
@@ -2001,8 +2031,8 @@ pub(crate) fn choose_wanted(st: &mut State) -> bool {
     let ids: Vec<i64> = st.index_ids.iter().flatten().copied().collect();
     let mut chose = false;
     for want in wanted {
-        let counts = if want.facet == Facet::Keyword {
-            keyword_counts(st, &filter::Typed::default())
+        let counts = if filter::in_hand(want.facet) {
+            counts_in_hand(st, &filter::Typed::default(), want.facet)
         } else {
             let Some(lib) = &st.index_reader else {
                 continue;
@@ -2366,7 +2396,7 @@ mod busy_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use greycard_library::fixture::{A7, R5, R6, write_frame};
+    use greycard_library::fixture::{A7, R5, R6, write_frame, write_mosaic_dng};
 
     fn scratch(what: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -2605,6 +2635,114 @@ mod tests {
         st.filter.text = "rating>=9".into();
         assert_eq!(st.filter.typed().errors.len(), 1);
         assert_eq!(shown(&st), Vec::<usize>::new());
+        drop(st);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The kind's row: counted from the paths, left out of a folder of
+    /// one kind until its chip is on, first in the short row of a
+    /// folder of more. Its chip, or `--filter kind:raw`, holds every
+    /// frame to it from the start: one the index has no row for, and
+    /// every one with no index at all.
+    #[test]
+    fn the_kind_row_is_counted_from_the_paths_and_holds_a_frame_with_no_row() {
+        let kind_row = |rows: &[FacetRow]| rows.iter().find(|r| r.name == "Kind").cloned();
+        let chips = |row: &FacetRow| -> Vec<(String, i32, bool)> {
+            (0..row.chips.row_count())
+                .map(|i| {
+                    let c = row.chips.row_data(i).unwrap();
+                    (c.text.to_string(), c.count, c.on)
+                })
+                .collect()
+        };
+        // All TIFFs: a row of one chip says nothing, and is left out;
+        // with that chip on it stays, to be pressed off.
+        let dir = scratch("onekind");
+        let app = crate::testing::window(5);
+        let mut st = state(&app, &dir);
+        let rows = facet_rows(&st);
+        assert!(rows.iter().any(|r| r.name == "Camera"));
+        assert!(kind_row(&rows).is_none());
+        st.filter.toggle_facet(Facet::Kind, "tiff");
+        let row = kind_row(&facet_rows(&st)).expect("a kind on");
+        // The fifth, which the index has not reached, among them.
+        assert_eq!(chips(&row), [("TIFF".to_string(), 5, true)]);
+        drop(st);
+        crate::testing::remove_dir_retry(&dir);
+
+        // A synthetic raw beside two pictures, and a JPEG that
+        // arrives after the pass: no row.
+        let dir = scratch("twokinds");
+        let files = vec![
+            dir.join("a.dng"),
+            dir.join("b.tif"),
+            dir.join("c.tif"),
+            dir.join("d.jpg"),
+        ];
+        write_mosaic_dng(&files[0], "RGGB");
+        write_frame(&files[1], &R6, 1);
+        write_frame(&files[2], &R5, 2);
+        let db = dir.join("index").join("library.sqlite");
+        Library::open(&db)
+            .unwrap()
+            .index_folder(&dir, &mut |_| {})
+            .unwrap();
+        image::RgbImage::from_pixel(4, 3, image::Rgb([90, 120, 150]))
+            .save(&files[3])
+            .unwrap();
+        let app = crate::testing::window(4);
+        let mut st = State::empty(files, &app);
+        st.sidecars = vec![Sidecar::default(); 4];
+        st.index_reader = Some(Library::open_read_only(&db).unwrap());
+        refresh_ids(&mut st);
+        assert_eq!(st.index_ids[3], None, "the JPEG has no row");
+        let rows = facet_rows(&st);
+        let (long, short) = split_facet_rows(&rows);
+        assert!(kind_row(&long).is_none());
+        assert_eq!(short[0].name, "Kind", "first in the short row");
+        assert_eq!(short[0].code, filter::facet_slot(Facet::Kind) as i32);
+        assert_eq!(
+            chips(&short[0]),
+            [
+                ("TIFF".to_string(), 2, false),
+                ("JPEG".to_string(), 1, false),
+                ("Raw".to_string(), 1, false)
+            ]
+        );
+        // While the index is at work its progress stays up beside the
+        // kind's row, which a mixed folder has from the start; with
+        // rows and the index done, there is nothing to say.
+        st.index_progress = Some((1, 4));
+        crate::panel::cull::show_filter(&st, &app);
+        assert!(app.get_filter_facets().iter().any(|r| r.name == "Kind"));
+        assert_eq!(app.get_filter_facet_note(), "Indexing the folder: 1 of 4");
+        st.index_progress = None;
+        crate::panel::cull::show_filter(&st, &app);
+        assert_eq!(app.get_filter_facet_note(), "");
+        assert_eq!(
+            facet_note(&st, false),
+            "No camera, lens or date in these files' EXIF"
+        );
+
+        // `--filter kind:raw` has the chip on before any frame is read,
+        // and the JPEG the index has not reached is not shown.
+        let (text, wanted) = filter::from_cli("kind:raw");
+        assert!(text.is_empty());
+        st.filter = filter::Filter::default();
+        assert!(st.filter.choose_at_once(wanted).is_empty());
+        assert_eq!(st.filter.chosen(Facet::Kind), ["raw".to_string()]);
+        assert_eq!(shown(&st), [0]);
+        // The JPEG chip the bar hands back, the same.
+        st.filter.toggle_facet(Facet::Kind, "raw");
+        st.filter.toggle_facet(Facet::Kind, "jpeg");
+        assert_eq!(shown(&st), [3]);
+
+        // With no index at all the row is there and the chip holds.
+        st.index_reader = None;
+        refresh_ids(&mut st);
+        let row = kind_row(&facet_rows(&st)).expect("a kind row with no index");
+        assert_eq!(row.chips.row_count(), 3);
+        assert_eq!(shown(&st), [3]);
         drop(st);
         crate::testing::remove_dir_retry(&dir);
     }

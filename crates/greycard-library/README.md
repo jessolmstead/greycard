@@ -53,7 +53,7 @@ all of which must pass:
 ```text
 camera:"R6" lens:RF iso>=3200 focal<=35 aperture:f/1.8 shutter<1/60
 date:2026-09 rating>=3 flag:pick label!=red keyword:wedding
-name:IMG_00 folder:/shoots missing:yes harbor
+name:IMG_00 folder:/shoots missing:yes kind:raw harbor
 ```
 
 A bare word is searched in the file's name and its keywords, case

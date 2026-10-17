@@ -12,6 +12,13 @@ note a first tester reads.
 
 ## 0.8.0, unreleased
 
+### Library
+
+- A Kind row in the filter bar, Raw, JPEG, PNG or TIFF, when the frames
+  shown hold more than one kind; `kind:raw` or `kind!=jpeg` typed in
+  the field, in `greycard library list` and in `--filter` does the same
+  ([§326](https://github.com/jessolmstead/greycard/blob/master/docs/notes/326-a-files-kind-as-a-facet-and-a-term.md))
+
 ### Fixes
 
 - A Lightroom preset's Tint came in with the wrong sign and too small:

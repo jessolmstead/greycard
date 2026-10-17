@@ -410,9 +410,10 @@ struct Cli {
     /// The browser's filter to open with: All, Picks or "No rejects",
     /// or terms of the filter language, one argument, spaces
     /// between them (`'camera:R6 iso>=3200 rating>=3'`). A camera,
-    /// lens, iso, focal, date or keyword term with `:` or `=` turns
-    /// on the chips it names once the folder is indexed; the rest go
-    /// in the text field
+    /// lens, style, iso, focal, date or keyword term with `:` or `=`
+    /// turns on the chips it names once the folder is indexed, and a
+    /// kind term (`kind:raw`) its chip at once; the rest go in the
+    /// text field
     #[arg(long, value_name = "WHAT")]
     filter: Option<String>,
     /// Keep the library index in this database rather than the

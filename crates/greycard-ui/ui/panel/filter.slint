@@ -109,7 +109,7 @@ component FacetChips inherits Rectangle {
         row := HorizontalLayout {
             spacing: Theme.space-1;
             alignment: start;
-            if root.facets.length == 0: Text {
+            if root.note != "": Text {
                 text: root.note;
                 color: Theme.text-muted;
                 font-size: Theme.font-xs;
@@ -138,19 +138,21 @@ component FacetChips inherits Rectangle {
 }
 
 // The browser's filter: the rating chips and how they read, the flag
-// chips, the label chips, the EXIF facets the library index counts,
-// and words or terms looked for. In the grid's header, one row of
-// chips with the words at its end and a row of facets under it; the
-// same chips a group to a row in the CULLING section, where the panel
-// is 320px wide and the header's row would not fit.
+// chips, the label chips, the facets (the EXIF's, the keyword and
+// the file's kind), and words or terms looked for. In the grid's
+// header, one row of chips with the words at its end and a row of
+// facets under it; the same chips a group to a row in the CULLING
+// section, where the panel is 320px wide and the header's row would
+// not fit.
 export component FilterBar inherits Rectangle {
     in property <[FilterChip]> stars;
     in property <[FilterChip]> flags;
     in property <[FilterChip]> labels;
-    /// The EXIF facets with a value in the folder: camera, lens, ISO,
-    /// focal length, day and keyword, as the library index holds
-    /// them. Empty until the index has rows for the folder, when
-    /// `facet-note` says why.
+    /// The facets with a value in the folder: camera, lens, kind,
+    /// style, ISO, focal length, day and keyword. The EXIF's are the
+    /// library index's, empty until it has rows for the folder, when
+    /// `facet-note` says why; the kind is the paths' and the keyword
+    /// the sidecars'.
     in property <[FacetRow]> facets;
     /// The header's two rows of them, split by the window: camera and
     /// lens, whose chips run long, then the rest. The stacked bar takes
@@ -273,7 +275,7 @@ export component FilterBar inherits Rectangle {
             }
             // A facet to a row here, each scrolled on its own: a
             // lens's name alone can be most of the panel's width.
-            if root.facets.length == 0 && root.facet-note != "": Text {
+            if root.facet-note != "": Text {
                 text: root.facet-note;
                 color: Theme.text-muted;
                 font-size: Theme.font-xs;
@@ -387,9 +389,11 @@ export component FilterBar inherits Rectangle {
                 clicked => { root.cleared(); root.released(); }
             }
         }
-        // The first row also carries the note while the index has
-        // nothing; the second is there only when it has something.
-        if !root.stacked && (root.facets-long.length > 0 || root.facets-short.length == 0): FacetChips {
+        // The first row also carries the note, before its chips: the
+        // index's progress, or why it has nothing. The second is there
+        // only when it has something.
+        if !root.stacked && (root.facets-long.length > 0 || root.facets-short.length == 0
+            || root.facet-note != ""): FacetChips {
             facets: root.facets-long;
             note: root.facet-note;
             toggled(code, key) => { root.facet-toggled(code, key); }

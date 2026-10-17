@@ -541,8 +541,9 @@ export component App inherits Window {
     /// A key has asked for the filter's text field; the bar on
     /// screen answers it and puts it back to false.
     in-out property <bool> filter-focus: false;
-    /// The EXIF facets the library index counts for the folder, a
-    /// row a facet, and what to say while there are none.
+    /// The facets counted for the folder, a row a facet: the EXIF's
+    /// from the library index, the keyword's and the kind's from the
+    /// frames in hand; and what to say while there are none.
     in property <[FacetRow]> filter-facets: [];
     /// The same rows split for the grid's header: camera and lens, then
     /// the others.
