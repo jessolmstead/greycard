@@ -4833,7 +4833,7 @@ checksum = "1839c82df8c23135a69c027587efada55602a7311af4b5849313062f831630ca"
 [[package]]
 name = "rawler"
 version = "0.8.0"
-source = "git+https://github.com/jessolmstead/dnglab?rev=ec749df15c87f770ebdd29b0d3896bb354816f8c#ec749df15c87f770ebdd29b0d3896bb354816f8c"
+source = "git+https://github.com/jessolmstead/dnglab?rev=7f4526a38924ac62228ffc3559c83a0ab7822ef6#7f4526a38924ac62228ffc3559c83a0ab7822ef6"
 dependencies = [
  "backtrace",
  "bitstream-io",
@@ -4856,6 +4856,7 @@ dependencies = [
  "rayon",
  "rustc_version",
  "serde",
+ "serde_arrays",
  "thiserror 2.0.20",
  "toml 0.8.23",
  "uuid",
@@ -5271,6 +5272,15 @@ checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde_arrays"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94a16b99c5ea4fe3daccd14853ad260ec00ea043b2708d1fd1da3106dcd8d9df"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
