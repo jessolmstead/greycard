@@ -864,7 +864,7 @@ pub(crate) mod tests {
     /// until a pass found it gone.
     #[test]
     fn deleting_a_raw_forgets_its_jpegs_row_with_its_own() {
-        let dir = scratch("pair");
+        let dir = dunce::canonicalize(scratch("pair")).unwrap();
         let shoot_dir = dir.join("shoot");
         std::fs::create_dir_all(&shoot_dir).unwrap();
         let (raw, jpeg, other) = (
