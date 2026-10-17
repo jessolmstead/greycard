@@ -36,7 +36,10 @@ ours, so a tester brings a library over in one go.
       mapped (on the unrotated frame with an angle, ours on the leveled
       plane), the most common edit the command names today; camera
       and lens rules in a smart collection matched through rawler's
-      names
+      names; Lightroom's stacks brought across as ours (§334); a
+      catalog row for a camera's JPEG beside its raw mapped onto the
+      raw's frame, since the window never reads the JPEG while they
+      are paired (§332), and the same in the `.pp3` import
 - [ ] RawTherapee `.pp3` import on opening a folder (Library track)
 - [ ] The Lightroom mapper fitted from the measurement (§323, §333):
       the per-body baseline exposure first (the GFX 100S II renders
@@ -184,14 +187,22 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       data we assemble); a 4096-wide raster for Sky so a 100 MP
       frame's twigs are not averaged fourfold; more hard negatives
       for the gate (sky-blue walls, a lake reflecting sky with none
-      above it, a snowfield filling the frame); the bimodal WebGPU
-      prior
+      above it, a snowfield filling the frame); the gate's core rule
+      refusing a true sky: a peak above cloud, 55% of the frame sky at
+      0.997, was refused in the landscape trial of 2026-10-17 (§175's
+      dilution again); the bimodal WebGPU prior
 - [ ] Landscape masks: Water, Mountain, Foliage, Ground and Building
       as shapes beside Sky in the Masks tab, each a matte from the Sky
       prior's scene labels (§175) refined at the edge as Sky is, with
       its own gate and hard negatives (a lake reflecting sky, a
       rockface against cloud, a hedge against a lawn); SAM 3 by phrase
-      (§252) as the fallback for a thing the labels do not name
+      (§252) as the fallback for a thing the labels do not name. A
+      trial over 135 archive frames (2026-10-17) found Water, Foliage,
+      Mountain and Building clean behind their gates (no wrong frame
+      kept, never a false sky on water), the outline from the labels
+      themselves with Mountain feathered; Grass and Rock second with
+      hard negatives; Sand and Snow out; Cloud, Cliff and Hedge by
+      phrase
 - [ ] MediaPipe's iris landmarks as the CPU fallback for the Iris
       part, where the crop cascade takes about 15 s (§252)
 - [ ] Describe your own mask: a free-text field beside the presets,
@@ -277,6 +288,12 @@ ask for first.
       wins; the per-lens radial report fed
       into the vignetting line below; `style:` in the filter text;
       Sony's Picture Profiles and Panasonic's newer Photo Styles (§265)
+- [ ] The survey's ends for NEF, ARW, RW2 and DNG (§324): the IFD
+      chain, EXIF and maker note walked to where they end and read as
+      the head, the DNG's directory at its end as the tail, so those
+      bodies read kilobytes over a share where today they read whole;
+      a size cut through a TIFF is never safe, since a zeroed gap can
+      make rawler ask for gigabytes, which aborts and no guard catches
 - [ ] Camera match Refine: the frame on screen, or the selection,
       pinned into a group's sample and the group fitted again, with the
       pinned frames' error and the rest's said before and after; a
@@ -326,8 +343,19 @@ comes across with its ratings and collections.
       in §188
 - [ ] Collections carried across machines: the collections file is per
       machine, so a set gathered on the laptop is not on the desktop;
-      carry it through the archive as the sidecars are (§243). Waits on
-      collections
+      carry it through the archive as the sidecars are (§243), and the
+      stacks with it (§334)
+- [ ] Stacks follow-ups (§334): a folder renamed loses its stacks, the
+      index seeing new files and missing ones rather than a move; a
+      member moved outside every root is not found again; Shift+[ and
+      Shift+] to move a member within its stack; a band round an open
+      stack as Lightroom draws; the one-folder queries behind the grid
+      (`rows_in_canonical`, `count_in_canonical`) still gather the
+      raws' keys from the whole table, 22 ms on a 100,000-row library
+      (§332), where a subquery limited to the folder would not
+- [ ] macOS's `._` resource forks beside the raws on a share are not
+      skipped: the browser lists them and the indexer reads them
+      (found by the §324 survey)
 - [ ] RawTherapee `.pp3` import on opening a folder: the command is
       there (§328); a folder holding profiles beside its raws offered
       the import once, with the command's report on a sheet, and the
@@ -524,15 +552,21 @@ clears or a tester asks for it.
 - [ ] `stack.rs` and `register.rs` warps: rows written the way the lens
       correction's were, with captured models re-read per pixel; the
       lens gain (§165) says they are the next place to look
-- [ ] X-Trans noise measurement, which brings back the hot pixel
-      repair, the profiled denoise and the dual threshold on X-Trans
-      (§322)
-- [ ] X-Trans chromatic aberration correction, CPU reference first,
-      then the GPU's (§322)
+- [ ] The X-Trans CA correction's shortfall against Bayer's (86% and
+      99% of the error left where Bayer leaves 80% and 90%, §331):
+      plane-exact weights for the color difference's read in place of
+      the tent, and the stand-in mosaic's vote, read at 0.77 of a true
+      Bayer one, weighted back; a GPU version if the CPU's 0.84 s
+      becomes what a develop waits on
+- [ ] The noise estimate on a frame of texture with no flat area, on
+      any mosaic (§331)
 - [ ] The capture sharpen's radius measured from an X-Trans mosaic
       (§322)
 - [ ] A learned denoiser contract for X-Trans: a packing of its own and
-      training data (§322)
+      training data (§322); the data could be made from the archive's
+      low-ISO Bayer frames, demosaiced and re-mosaiced to the 6x6
+      pattern with a noise model fitted from the X-Trans samples, or
+      a self-supervised fit on real RAFs
 - [ ] A GPU X-Trans demosaic, if the CPU's 0.6 s on 40 MP becomes what
       a develop waits on (§322)
 - [ ] A sync's first read of frames the library has not indexed yet
@@ -664,6 +698,10 @@ release when the wait clears.
       zero on a zero height (§160). Filed as dnglab/dnglab#848 and
       #850; until the first is fixed a damaged CR3 on a card is the
       one way an index pass can be brought down
+- [ ] rawler on a CR3 whose box carries a 64-bit size that wraps the
+      offset past it asks for 6 GiB and aborts, on the whole file as on
+      the ends (§324). Report upstream with the box-parser reports
+      above
 - [ ] ort rc.13 ignores every `ep::WebGPU` option (the key prefix is
       applied twice); greycard sets them through a config entry
       instead (§159). Fixed on ort's main in pykeio/ort@bc23566;
