@@ -370,6 +370,12 @@ comes across with its ratings and collections.
       hand-set CA amounts given a part of their own so an unforced
       import with a lens profile leaves them alone. darktable's XMP
       history after it, if a tester asks
+- [ ] The capture time shifted on a selection, for a second body
+      whose clock was off (a wedding's two cameras sorted together):
+      a shift kept in the sidecar's meta beside the rating, never a
+      rewrite of the raw, read by the index as the frame's time, sorted
+      and filtered by, and written to the export's EXIF and XMP as the
+      corrected time; a tester asked to change the shot time
 - [ ] A map: the frames' EXIF GPS on tiles, a click to select them, a
       position given to a frame by hand. Low priority
 
@@ -537,9 +543,22 @@ clears or a tester asks for it.
       Export the queue and Clear; the queued frames marked in the strip
       and the grid. Covers the destination half of the naming-patterns
       line (§157) and the last-location line above
+- [ ] A keys sheet in the window (a Help menu with Keys and the
+      guide, and ? to open it), made from the key table itself so it
+      never goes stale; a tester could not find the shortcuts, and the
+      guide's Keys chapter is not reachable from the editor
 - [ ] Rebindable keys: a sheet in Settings to change any shortcut,
       saved in settings.json, with a conflict warning and a reset to
       defaults
+- [ ] Batch edits findable: a Sync button in the develop panel's head
+      whenever more than one frame is selected, opening the sync sheet
+      Ctrl+Shift+S opens, and the frame menu's copy, paste and sync
+      items named for what they do to the selection; a tester with
+      Lightroom habits could not find a batch edit
+- [ ] The crop's starting aspect as a setting: Original, the last one
+      used, or Free, remembered across sessions, where today the crop
+      opens under the aspect it was last fitted under in the session;
+      a tester wants Original locked as their preference
 
 
 #### Library
