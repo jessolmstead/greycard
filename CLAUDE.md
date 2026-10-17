@@ -45,5 +45,8 @@
   version's opening paragraph and tidy the headings. The release
   workflow puts a version's changelog section into the GitHub release.
 - `docs/where-greycard-fits.md` is the positioning against the other
-  editors, written to become the README and website. Its last section
-  separates built from planned; move an item across when it lands.
+  editors, and the website's Why greycard page. Its last section separates
+  built from planned; move an item across when it lands.
+- `README.md` is the front page, short and in the first person ("I"):
+  a pitch, highlights, limits, install. Details go in the user guide
+  and `docs/building.md`, not here.

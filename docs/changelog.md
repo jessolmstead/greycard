@@ -1,14 +1,7 @@
 # Changelog
 
-What changed for the user, under the version it shipped in, newest
-first. A version opens with a short paragraph and groups its items
-under headings; each item is a line or two linking its notes section,
-where the detail and the reasoning are. Fixes are listed only for bugs
-a released version had. An item is written here when it is merged to master; the
-release workflow puts a version's section into the GitHub release.
-Everything before the first release is under its own heading at the
-end, in the same one-line-an-item form; 0.1.0's own section is the
-note a first tester reads.
+What's new in each version, newest first. Each item links to the
+design note behind it.
 
 ## 0.8.0, unreleased
 
