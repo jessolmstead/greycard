@@ -355,6 +355,11 @@ comes across with its ratings and collections.
       hand), and an error row in the index for a file whose hash fails
       so it stops showing under every chip (§168). The all-roots view
       and the filter remembered between sessions are there since §174
+- [ ] A root added while the machine is loaded is skipped by the index
+      pass as not answering ("Shoot isn't reachable") when its sibling
+      added a moment later indexes fine; seen after a catalog import's
+      write added two roots (2026-10-17). The reachability check wants
+      a longer patience or a retry
 - [ ] The network assumed slow and sometimes hung: a timeout on every
       read of a root over a network mount so a sleeping NAS does not
       hold the pool; the indexer's reads several at once on such a
