@@ -68,6 +68,12 @@ pub fn paste_label(from: &str) -> String {
     format!("Paste from {from}")
 }
 
+/// A profile from another editor imported as a frame's state, named
+/// for the editor: "Imported from RawTherapee".
+pub fn import_label(from: &str) -> String {
+    format!("Imported from {from}")
+}
+
 /// A snapshot restored.
 pub fn snapshot_label(name: &str) -> String {
     format!("Snapshot: {name}")

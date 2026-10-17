@@ -21,9 +21,9 @@ dirs.workspace = true
 blake3 = "1"
 # The host's name on a revision. Already in the tree through x11rb.
 gethostname = "1"
-
-[dev-dependencies]
-# A camera profile made by hand, for the local white balance's tests.
+# The kelvin and Duv of a chromaticity, for a RawTherapee profile's
+# white; and a camera profile made by hand, for the local white
+# balance's tests. Already in the tree through greycard-core.
 rawcolor.workspace = true
 
 [target.'cfg(windows)'.dependencies]

@@ -14,6 +14,14 @@ note a first tester reads.
 
 ### Library
 
+- `greycard rawtherapee <raws or folders>` reads the RawTherapee
+  `.pp3` beside each raw: the rank, color label and trash mark come
+  into the meta exactly, and the white balance, exposure, crop,
+  rotation and lens settings land as one history state named
+  "Imported from RawTherapee"; what has no place here is listed. A
+  dry run until `--write`; a frame already developed here waits for
+  `--force`
+  ([§328](https://github.com/jessolmstead/greycard/blob/master/docs/notes/328-importing-rawtherapee-profiles.md))
 - A Kind row in the filter bar, Raw, JPEG, PNG or TIFF, when the frames
   shown hold more than one kind; `kind:raw` or `kind!=jpeg` typed in
   the field, in `greycard library list` and in `--filter` does the same

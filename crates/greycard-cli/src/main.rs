@@ -117,6 +117,27 @@ enum Command {
         #[arg(long, value_name = "DIR")]
         dir: Option<PathBuf>,
     },
+    /// Import RawTherapee's .pp3 profiles: for each raw, the profile
+    /// beside it (IMG_0001.CR3.pp3, or IMG_0001.pp3) read, its rank,
+    /// color label and trash mark carried into the meta exactly, and
+    /// its white balance, exposure, geometry and lens settings, as near
+    /// as this engine has them, laid over the edit as one state named
+    /// for the import. What has no place here is named. A dry run
+    /// unless --write
+    Rawtherapee {
+        /// Raws, or folders whose raws (not their subfolders') to read
+        paths: Vec<PathBuf>,
+        /// Write the sidecars; without it, only the report
+        #[arg(long)]
+        write: bool,
+        /// Import into a frame that has a history here already, as a
+        /// new state on top of it. Forced, every setting the profile's
+        /// read sections hold comes across, RawTherapee's neutral ones
+        /// too (an exposure of 0 sets this frame's back to 0), so the
+        /// frame follows RawTherapee; the report lists those as neutral
+        #[arg(long)]
+        force: bool,
+    },
     /// Fit the transform that puts one frame on top of another:
     /// pyramidal Lucas-Kanade on the two frames' luminance, for a
     /// stack's alignment. Prints the transform, what it moves the
@@ -443,6 +464,11 @@ fn main() -> Result<()> {
             camera,
         } => lenses(file.as_deref(), fetch, lens.as_deref(), camera.as_deref()),
         Command::Models { fetch } => models(fetch.as_deref()),
+        Command::Rawtherapee {
+            paths,
+            write,
+            force,
+        } => rawtherapee(&paths, write, force),
         Command::Register {
             reference,
             moving,
@@ -1336,7 +1362,6 @@ fn presets(
     apply: Option<&str>,
     dir: Option<PathBuf>,
 ) -> Result<()> {
-    use greycard_edit::Sidecar;
     use greycard_edit::preset::Store;
     let store = match dir {
         Some(dir) => Store::at(dir),
@@ -1375,53 +1400,7 @@ fn presets(
             anyhow::bail!("--apply wants files to lay {} over", entry.preset.name);
         }
         for file in files {
-            let mut sidecar = match Sidecar::load(file)
-                .with_context(|| format!("reading the sidecar of {}", file.display()))?
-            {
-                Some(s) => s,
-                None if greycard_core::picture::is_picture_path(file) => Sidecar {
-                    line: greycard_edit::Line::of(greycard_edit::Edit::for_picture()),
-                    ..Sidecar::default()
-                },
-                // A raw's learned-denoiser blend starts from its ISO,
-                // probed without a full decode; a probe that fails
-                // says so and leaves it at the old constant.
-                None => {
-                    let iso = match greycard_core::decode::probe_path(file) {
-                        Ok(p) => p.iso,
-                        Err(e) => {
-                            tracing::warn!(
-                                "no iso from {}, the learned blend keeps its default: {e}",
-                                file.display()
-                            );
-                            None
-                        }
-                    };
-                    let mut edit = greycard_edit::Edit::default();
-                    edit.noise.learned_strength = greycard_edit::Noise::blend_for_iso(iso);
-                    Sidecar {
-                        line: greycard_edit::Line::of(edit),
-                        ..Sidecar::default()
-                    }
-                }
-            };
-            // A sidecar from before schema 4 does not know which
-            // way up an `Original` crop goes until the frame says;
-            // the file is here, so ask it before writing anything
-            // back (see `Edit::migrate_with_frame`).
-            if sidecar.needs_frame() {
-                match greycard_core::decode::stance_path(file)
-                    .ok()
-                    .and_then(|s| s.shown_size(sidecar.turn))
-                {
-                    Some((w, h)) => sidecar.migrate_with_frame(h > w),
-                    None => tracing::warn!(
-                        "{}: will not say which way up it is, so its Original crop \
-                         is left for the editor to bring up to date",
-                        file.display()
-                    ),
-                }
-            }
+            let mut sidecar = sidecar_for(file)?;
             let edit = entry.preset.applied(&sidecar.current);
             let label = greycard_edit::history::preset_label(&entry.preset.name);
             if sidecar.record_as(edit, Some(label)) {
@@ -1463,6 +1442,303 @@ fn presets(
                 e.path.display()
             );
         }
+    }
+    Ok(())
+}
+
+/// A frame's sidecar to lay something over: the one it has, wherever
+/// it is, or a new one at the edit the editor would open the frame at.
+fn sidecar_for(file: &std::path::Path) -> Result<greycard_edit::Sidecar> {
+    use greycard_edit::Sidecar;
+    let mut sidecar = match Sidecar::load(file)
+        .with_context(|| format!("reading the sidecar of {}", file.display()))?
+    {
+        Some(s) => s,
+        None if greycard_core::picture::is_picture_path(file) => Sidecar {
+            line: greycard_edit::Line::of(greycard_edit::Edit::for_picture()),
+            ..Sidecar::default()
+        },
+        // A raw's learned-denoiser blend starts from its ISO, probed
+        // without a full decode; a probe that fails says so and
+        // leaves it at the old constant.
+        None => {
+            let iso = match greycard_core::decode::probe_path(file) {
+                Ok(p) => p.iso,
+                Err(e) => {
+                    tracing::warn!(
+                        "no iso from {}, the learned blend keeps its default: {e}",
+                        file.display()
+                    );
+                    None
+                }
+            };
+            let mut edit = greycard_edit::Edit::default();
+            edit.noise.learned_strength = greycard_edit::Noise::blend_for_iso(iso);
+            Sidecar {
+                line: greycard_edit::Line::of(edit),
+                ..Sidecar::default()
+            }
+        }
+    };
+    // A sidecar from before schema 4 does not know which way up an
+    // `Original` crop goes until the frame says; the file is here, so
+    // ask it before writing anything back (see
+    // `Edit::migrate_with_frame`).
+    if sidecar.needs_frame() {
+        match greycard_core::decode::stance_path(file)
+            .ok()
+            .and_then(|s| s.shown_size(sidecar.turn))
+        {
+            Some((w, h)) => sidecar.migrate_with_frame(h > w),
+            None => tracing::warn!(
+                "{}: will not say which way up it is, so its Original crop \
+                 is left for the editor to bring up to date",
+                file.display()
+            ),
+        }
+    }
+    Ok(sidecar)
+}
+
+/// The profile RawTherapee keeps beside `file`: `IMG_0001.CR3.pp3`,
+/// its default name, or `IMG_0001.pp3`, the one it writes when told
+/// to replace the extension.
+fn pp3_beside(file: &std::path::Path) -> Option<PathBuf> {
+    let mut name = file.file_name()?.to_os_string();
+    name.push(".pp3");
+    let appended = file.with_file_name(name);
+    if appended.is_file() {
+        return Some(appended);
+    }
+    let replaced = file.with_extension("pp3");
+    (replaced != file && replaced.is_file()).then_some(replaced)
+}
+
+/// The frames the rawtherapee subcommand was given, each once: each
+/// folder's raws and pictures in name order (its own, not its
+/// subfolders'), and each file named that is one; then the files named
+/// that are not, passed over, so that `dir/*` does not take a profile
+/// or a sidecar for a frame.
+fn frames_named(paths: &[PathBuf]) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let is_frame = |p: &std::path::Path| {
+        greycard_core::decode::is_raw_path(p) || greycard_core::picture::is_picture_path(p)
+    };
+    let mut frames = Vec::new();
+    let mut passed = Vec::new();
+    for path in paths {
+        if path.is_dir() {
+            let mut found: Vec<PathBuf> = std::fs::read_dir(path)
+                .with_context(|| format!("reading {}", path.display()))?
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.is_file() && is_frame(p))
+                .collect();
+            found.sort();
+            frames.extend(found);
+        } else if is_frame(path) {
+            frames.push(path.clone());
+        } else {
+            passed.push(path.clone());
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    frames.retain(|f| seen.insert(f.clone()));
+    Ok((frames, passed))
+}
+
+/// How the rawtherapee subcommand left one frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Pp3Outcome {
+    /// No profile beside it.
+    NoProfile,
+    /// The profile or the frame's sidecar would not read: why.
+    Unreadable(String),
+    /// The sidecar would not write: why.
+    Failed(String),
+    /// A history here already, and no `--force`.
+    HasHistory,
+    /// Imported, or what an import would do on a dry run.
+    Imported {
+        meta: bool,
+        edit: bool,
+        skipped: Vec<String>,
+    },
+}
+
+/// Read the profile beside `file` and lay it into the frame's sidecar,
+/// saving only when `write`; the report printed as it goes. A frame
+/// with a history here waits for `force`, and forced, takes every
+/// setting the profile's read sections speak to, RawTherapee's neutral
+/// ones too ([`greycard_edit::pp3::Carry::Every`]). Only the original
+/// takes it: the frame's other versions are as they were, as a preset
+/// laid over the frame leaves them.
+fn import_pp3(file: &std::path::Path, write: bool, force: bool) -> Result<Pp3Outcome> {
+    use greycard_edit::pp3;
+    let Some(profile) = pp3_beside(file) else {
+        return Ok(Pp3Outcome::NoProfile);
+    };
+    let profile_name = profile
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let text = match std::fs::read(&profile) {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(e) => {
+            println!("unreadable    {}: {e}", profile.display());
+            return Ok(Pp3Outcome::Unreadable(e.to_string()));
+        }
+    };
+    // One frame's sidecar that will not read is that frame's to
+    // report, not the end of a folder's run.
+    let mut sidecar = match sidecar_for(file) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("unreadable    {e:#}");
+            return Ok(Pp3Outcome::Unreadable(format!("{e:#}")));
+        }
+    };
+    let stance = greycard_core::decode::stance_path(file).ok();
+    let frame = pp3::Frame {
+        size: stance.and_then(|s| s.shown_size(0)),
+        turned: sidecar.turn % 4 != 0,
+    };
+    let history = pp3::has_history(&sidecar);
+    let carry = if history && force {
+        pp3::Carry::Every
+    } else {
+        pp3::Carry::Set
+    };
+    let imported = match pp3::read_carrying(&text, frame, carry) {
+        Ok(i) => i,
+        Err(e) => {
+            println!("unreadable    {}: {e}", profile.display());
+            return Ok(Pp3Outcome::Unreadable(e.to_string()));
+        }
+    };
+    println!("frame         {}", file.display());
+    println!("  profile     {profile_name}, {}", imported.source());
+    for (kind, words) in imported.report() {
+        println!("  {kind:<11} {words}");
+    }
+    if history && !force {
+        println!("  held back   it has a history here already; --force lays the import over it");
+        return Ok(Pp3Outcome::HasHistory);
+    }
+    if carry == pp3::Carry::Every {
+        println!("  forced      over its history here, RawTherapee's neutral settings too");
+    }
+    let landed = pp3::import_into(&mut sidecar, &imported);
+    let what = match (landed.meta, landed.edit) {
+        (true, true) => format!(
+            "the meta and a state \"{}\"",
+            greycard_edit::history::import_label(pp3::SOURCE)
+        ),
+        (true, false) => "the meta".to_string(),
+        (false, true) => format!(
+            "a state \"{}\"",
+            greycard_edit::history::import_label(pp3::SOURCE)
+        ),
+        (false, false) => String::new(),
+    };
+    if what.is_empty() {
+        println!("  unchanged   the sidecar has all of it already");
+    } else if write {
+        // Back where it was found: the CLI has no setting.
+        if let Err(e) = sidecar.save_in(file, greycard_edit::Placement::of(file)) {
+            println!("  failed      writing the sidecar: {e}");
+            return Ok(Pp3Outcome::Failed(e.to_string()));
+        }
+        println!("  wrote       {what}");
+    } else {
+        println!("  would write {what}");
+    }
+    if landed.edit && !sidecar.versions.is_empty() {
+        println!(
+            "              on the original; its {} other versions are as they were",
+            sidecar.versions.len()
+        );
+    }
+    Ok(Pp3Outcome::Imported {
+        meta: landed.meta,
+        edit: landed.edit,
+        skipped: imported.skipped,
+    })
+}
+
+/// The rawtherapee subcommand: each frame's profile read and reported,
+/// and written only when asked, then the totals.
+fn rawtherapee(paths: &[PathBuf], write: bool, force: bool) -> Result<()> {
+    if paths.is_empty() {
+        anyhow::bail!("give the raws, or the folders they are in");
+    }
+    let (frames, passed) = frames_named(paths)?;
+    for path in &passed {
+        println!("not a frame   {}", path.display());
+    }
+    let mut profiled = 0;
+    let mut meta = 0;
+    let mut edits = 0;
+    let mut held = 0;
+    let mut unreadable = 0;
+    let mut failed = 0;
+    // Each name passed over, and on how many frames.
+    let mut skipped: Vec<(String, usize)> = Vec::new();
+    for file in &frames {
+        let outcome = import_pp3(file, write, force)?;
+        if outcome != Pp3Outcome::NoProfile {
+            profiled += 1;
+        }
+        match outcome {
+            Pp3Outcome::NoProfile => {}
+            Pp3Outcome::Unreadable(_) => unreadable += 1,
+            Pp3Outcome::Failed(_) => failed += 1,
+            Pp3Outcome::HasHistory => held += 1,
+            Pp3Outcome::Imported {
+                meta: m,
+                edit: e,
+                skipped: names,
+            } => {
+                meta += usize::from(m);
+                edits += usize::from(e);
+                for name in names {
+                    match skipped.iter_mut().find(|(n, _)| *n == name) {
+                        Some((_, count)) => *count += 1,
+                        None => skipped.push((name, 1)),
+                    }
+                }
+            }
+        }
+    }
+    let verb = if write { "" } else { "would be " };
+    println!(
+        "frames        {} found, {profiled} with a profile",
+        frames.len()
+    );
+    if !passed.is_empty() {
+        println!("not frames    {} passed over", passed.len());
+    }
+    println!("meta          {meta} {verb}carried exactly");
+    println!("edits         {edits} {verb}carried, as a state of their own");
+    if held > 0 {
+        println!("held back     {held} with a history here already (--force to import over it)");
+    }
+    if unreadable > 0 {
+        println!("unreadable    {unreadable}");
+    }
+    if failed > 0 {
+        println!("failed        {failed}");
+    }
+    if !skipped.is_empty() {
+        let names: Vec<String> = skipped
+            .iter()
+            .map(|(name, n)| format!("{name} ({n})"))
+            .collect();
+        println!("no place      {}", names.join(", "));
+    }
+    if !write {
+        println!("dry run       nothing written; --write writes it");
+    }
+    if failed > 0 {
+        anyhow::bail!("{failed} sidecars would not write");
     }
     Ok(())
 }
@@ -3692,5 +3968,217 @@ mod stack_tests {
         )
         .expect_err("one frame");
         assert!(e.to_string().contains("at least two"), "{e}");
+    }
+}
+
+#[cfg(test)]
+mod pp3_tests {
+    use super::*;
+    use greycard_edit::Sidecar;
+    use greycard_edit::meta::{Flag, Label};
+
+    /// A profile of RawTherapee's shape: the meta, an exposure, and a
+    /// tool with no place here.
+    const PROFILE: &str = "\
+[Version]
+AppVersion=5.10
+Version=351
+
+[General]
+Rank=4
+ColorLabel=3
+InTrash=true
+
+[Exposure]
+Compensation=-0.7
+
+[Local Contrast]
+Enabled=true
+";
+
+    /// A fresh folder a test can write into, its own by name and pid.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-cli-pp3-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_profile_is_found_by_either_name() {
+        let dir = scratch("names");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"").unwrap();
+        assert_eq!(pp3_beside(&raw), None);
+        std::fs::write(dir.join("IMG_0001.pp3"), PROFILE).unwrap();
+        assert_eq!(pp3_beside(&raw), Some(dir.join("IMG_0001.pp3")));
+        // RawTherapee's own naming wins when both are there.
+        std::fs::write(dir.join("IMG_0001.CR3.pp3"), PROFILE).unwrap();
+        assert_eq!(pp3_beside(&raw), Some(dir.join("IMG_0001.CR3.pp3")));
+        remove_dir_retry(&dir);
+    }
+
+    #[test]
+    fn a_folder_is_its_frames_each_once() {
+        let dir = scratch("folder");
+        for name in ["b.NEF", "a.cr3", "a.cr3.pp3", "a.cr3.gcd", "notes.txt"] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub").join("c.cr3"), b"").unwrap();
+        let (frames, passed) = frames_named(&[dir.clone(), dir.join("a.cr3")]).unwrap();
+        assert_eq!(frames, [dir.join("a.cr3"), dir.join("b.NEF")]);
+        assert!(passed.is_empty());
+        // `dir/*`: the profile and the sidecar named are not frames.
+        let named: Vec<PathBuf> = ["a.cr3", "a.cr3.pp3", "a.cr3.gcd", "b.NEF"]
+            .iter()
+            .map(|n| dir.join(n))
+            .collect();
+        let (frames, passed) = frames_named(&named).unwrap();
+        assert_eq!(frames, [dir.join("a.cr3"), dir.join("b.NEF")]);
+        assert_eq!(passed, [dir.join("a.cr3.pp3"), dir.join("a.cr3.gcd")]);
+        remove_dir_retry(&dir);
+    }
+
+    /// A test's folder removed, tried again for a while when the
+    /// system refuses, as the window's tests do: on Windows a file let
+    /// go of a moment ago can still be held.
+    fn remove_dir_retry(dir: &std::path::Path) {
+        let start = std::time::Instant::now();
+        loop {
+            match std::fs::remove_dir_all(dir) {
+                Ok(()) => return,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+                Err(_) if start.elapsed() < std::time::Duration::from_secs(20) => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => panic!("{} could not be removed: {e}", dir.display()),
+            }
+        }
+    }
+
+    #[test]
+    fn forced_the_frame_follows_rawtherapee_back_to_neutral() {
+        let dir = scratch("forced");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"").unwrap();
+        let profile = dir.join("IMG_0001.CR3.pp3");
+        std::fs::write(&profile, PROFILE).unwrap();
+        import_pp3(&raw, true, false).unwrap();
+        // The exposure set back to nothing there.
+        std::fs::write(
+            &profile,
+            PROFILE.replace("Compensation=-0.7", "Compensation=0"),
+        )
+        .unwrap();
+        assert_eq!(
+            import_pp3(&raw, true, false).unwrap(),
+            Pp3Outcome::HasHistory
+        );
+        assert!(matches!(
+            import_pp3(&raw, true, true).unwrap(),
+            Pp3Outcome::Imported { edit: true, .. }
+        ));
+        let sidecar = Sidecar::load(&raw).unwrap().unwrap();
+        assert_eq!(sidecar.current.light.exposure, 0.0);
+        assert_eq!(sidecar.history.len(), 2);
+        remove_dir_retry(&dir);
+    }
+
+    #[test]
+    fn a_sidecar_that_will_not_read_is_that_frame_s_alone() {
+        let dir = scratch("bad-sidecar");
+        for n in ["IMG_0001.CR3", "IMG_0002.CR3"] {
+            std::fs::write(dir.join(n), b"").unwrap();
+            std::fs::write(dir.join(format!("{n}.pp3")), PROFILE).unwrap();
+        }
+        std::fs::write(dir.join("IMG_0001.CR3.gcd"), "{ not json").unwrap();
+        assert!(matches!(
+            import_pp3(&dir.join("IMG_0001.CR3"), true, false).unwrap(),
+            Pp3Outcome::Unreadable(_)
+        ));
+        // The folder's run goes on to the next frame.
+        rawtherapee(std::slice::from_ref(&dir), true, false).unwrap();
+        let next = Sidecar::load(&dir.join("IMG_0002.CR3")).unwrap().unwrap();
+        assert_eq!(next.meta.rating, 4);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("IMG_0001.CR3.gcd")).unwrap(),
+            "{ not json"
+        );
+        remove_dir_retry(&dir);
+    }
+
+    #[test]
+    fn a_dry_run_writes_nothing_and_write_writes_the_meta_and_one_state() {
+        let dir = scratch("import");
+        // Not a raw: the import reads nothing of the file but its
+        // name, and the probes that fail on it say so and go on.
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"").unwrap();
+        std::fs::write(dir.join("IMG_0001.CR3.pp3"), PROFILE).unwrap();
+        let other = dir.join("IMG_0002.CR3");
+        std::fs::write(&other, b"").unwrap();
+        assert_eq!(
+            import_pp3(&other, true, false).unwrap(),
+            Pp3Outcome::NoProfile
+        );
+
+        let dry = import_pp3(&raw, false, false).unwrap();
+        assert_eq!(
+            dry,
+            Pp3Outcome::Imported {
+                meta: true,
+                edit: true,
+                skipped: vec!["Local Contrast".into()],
+            }
+        );
+        assert!(Sidecar::find(&raw).is_none(), "a dry run writes nothing");
+        rawtherapee(std::slice::from_ref(&dir), false, false).unwrap();
+        assert!(Sidecar::find(&raw).is_none());
+
+        assert_eq!(import_pp3(&raw, true, false).unwrap(), dry);
+        let sidecar = Sidecar::load(&raw).unwrap().expect("written");
+        assert_eq!(sidecar.meta.rating, 4);
+        assert_eq!(sidecar.meta.label, Label::Green);
+        assert_eq!(sidecar.meta.flag, Flag::Reject);
+        assert_eq!(sidecar.history.len(), 1);
+        assert_eq!(
+            sidecar.current_label.as_deref(),
+            Some("Imported from RawTherapee")
+        );
+        assert_eq!(sidecar.current.light.exposure, -0.7);
+        assert_eq!(sidecar.history[0].edit.light.exposure, 0.0);
+
+        // Now it has a history: held back, unless forced, and forced
+        // there is nothing new to lay over it.
+        assert_eq!(
+            import_pp3(&raw, true, false).unwrap(),
+            Pp3Outcome::HasHistory
+        );
+        let forced = import_pp3(&raw, true, true).unwrap();
+        assert_eq!(
+            forced,
+            Pp3Outcome::Imported {
+                meta: false,
+                edit: false,
+                skipped: vec!["Local Contrast".into()],
+            }
+        );
+        assert_eq!(Sidecar::load(&raw).unwrap().unwrap().history.len(), 1);
+
+        // A profile that is not one is said, and passed over.
+        std::fs::write(dir.join("IMG_0002.CR3.pp3"), "not a profile").unwrap();
+        assert!(matches!(
+            import_pp3(&other, true, false).unwrap(),
+            Pp3Outcome::Unreadable(_)
+        ));
+        assert!(Sidecar::find(&other).is_none());
+        remove_dir_retry(&dir);
     }
 }

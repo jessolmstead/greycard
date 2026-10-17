@@ -33,6 +33,7 @@ pub mod look;
 pub mod mask;
 pub mod meta;
 pub mod mixer;
+pub mod pp3;
 pub mod preset;
 pub mod retouch;
 pub mod sync;
@@ -86,6 +87,8 @@ pub enum Error {
     Preset(String),
     #[error("xmp: {0}")]
     Xmp(String),
+    #[error("pp3: {0}")]
+    Pp3(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

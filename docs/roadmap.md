@@ -41,7 +41,7 @@ ours, so a tester brings a library over in one go.
       --import` behind a button on the presets list, a file chooser
       for `.xmp` and `.gcp`, and the mapper's report of what did not
       carry shown once
-- [ ] RawTherapee `.pp3` import, the command (Library track)
+- [ ] RawTherapee `.pp3` import on opening a folder (Library track)
 - [ ] RAW+JPEG pairs (Library track). After the kind filter
 - [ ] Stacks (Library track). After the pairs
 - [ ] The camera match's folder survey over a NAS: the probe from the
@@ -351,12 +351,11 @@ comes across with its ratings and collections.
       catalog; a command with a dry-run report first, then a sheet
       (§79). Waits on collections; the capstone, its own release if it
       grows
-- [ ] RawTherapee `.pp3` import: the profile beside a raw read by a
-      command or on opening the folder, `[General]`'s Rank, ColorLabel
-      and InTrash to the meta section exactly, crop, rotation, white
-      balance, exposure and the lens settings as a named first history
-      state, the tools with no match here reported as skipped; a dry
-      run first, as the Lightroom catalog import has. darktable's XMP
+- [ ] RawTherapee `.pp3` import on opening a folder: the command is
+      there (§328); a folder holding profiles beside its raws offered
+      the import once, with the command's report on a sheet, and the
+      hand-set CA amounts given a part of their own so an unforced
+      import with a lens profile leaves them alone. darktable's XMP
       history after it, if a tester asks
 - [ ] A map: the frames' EXIF GPS on tiles, a click to select them, a
       position given to a frame by hand. Low priority
