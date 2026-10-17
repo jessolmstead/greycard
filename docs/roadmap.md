@@ -464,6 +464,18 @@ clears or a tester asks for it.
 - [ ] The long `run` and `develop_job` in `worker/` and `Look::run` in
       `roots/` cut into functions, a later round after the splits
       (§316, §318, §321)
+- [ ] After 0.8.0, the window's structure, in three mechanical passes
+      each landing green: the CLI's `main.rs` split one file a
+      subcommand; the window's `State` (about 216 fields in `main.rs`,
+      every panel reaching in) grouped into a few structs by owner
+      (library, develop, culling, sheets, worker handles), the
+      `st.cull` pattern made the rule; then the library views (the
+      browser, grid, culling, lightbox, collections, stacks, tree)
+      carved into a crate of their own that owns their state and hands
+      the develop side a selection, halving the 148,000-line crate's
+      compile (7.5 GB for rustc) and giving its 1,300 tests two
+      processes. The crate tree itself stays as it is: core knows
+      nothing, edit and library sit on it, the window on everything
 - [ ] Every test's scratch folder removed through the testing helpers
       (`remove_scratch` where the state holds the index open,
       `remove_dir_retry` otherwise), the 290-odd bare `remove_dir_all`
