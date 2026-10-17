@@ -146,10 +146,10 @@ pub(super) fn develop_job(
                 profile: None,
             }),
             (Input::Raw(frame), tier)
-                if let Some(why) = denoise_unavailable(frame, &settings, tier.is_some()) =>
+                if let Some(why) = denoise_unavailable(frame, tier.is_some()) =>
             {
-                // Nothing to try, and nothing to fall back to: the
-                // engine's develop without a denoise, said so.
+                // Nothing to try: the engine's develop, as a learned
+                // tier that is not downloaded falls back to it, said so.
                 report = LearnedReport::Unavailable(why);
                 engine_base(frame, edit, turn, &settings, stamp, ca)
             }
@@ -818,7 +818,7 @@ fn note_developed(
         LearnedReport::Kept => parts.push("denoiser kept".into()),
         LearnedReport::Missing(_) => parts.push("denoiser missing".into()),
         LearnedReport::Failed(_) => parts.push("denoiser failed".into()),
-        LearnedReport::Unavailable(_) => parts.push("no denoiser for this mosaic".into()),
+        LearnedReport::Unavailable(_) => parts.push("no learned denoiser for this mosaic".into()),
     }
     if !fills.made.is_empty() {
         parts.push(format!(

@@ -282,9 +282,11 @@ greys take the tint's hue.
 
 Raw only. Choose one of two kinds of noise reduction.
 
-On a Fujifilm X-Trans raw the section says "not on X-Trans yet" and
-its controls rest: neither denoiser works on that sensor yet, so a
-high ISO X-Trans frame stays noisy. See [Demosaic](#demosaic).
+On a Fujifilm X-Trans raw the section says "learned: not on X-Trans
+yet" and the learned tiers rest: the learned denoiser does not work on
+that sensor yet. **Denoise**, the profiled one, works as on any raw. A
+tier already set on an X-Trans frame (by a sync from another camera,
+say) can still be turned off. See [Demosaic](#demosaic).
 
 ### The learned denoiser
 
@@ -428,11 +430,12 @@ A method made for the other kind of sensor, carried by a preset, a
 sync or a paste, is left off an X-Trans frame and the status line
 says so; the same goes the other way round.
 
-Some parts of the develop don't work on X-Trans yet: noise reduction,
-hot pixel repair, chromatic aberration correction, and the measured
-radius of **Auto radius** in **SHARPEN**, which uses its default
-radius instead. A high ISO X-Trans frame therefore stays noisy for
-now.
+Two parts of the develop don't work on X-Trans yet: the learned
+denoiser, and the measured radius of **Auto radius** in **SHARPEN**,
+which uses its default radius instead. The profiled denoise and the
+hot pixel repair work as on any raw. The chromatic aberration
+correction runs too, but takes out less of a fringe than on other
+raws for now, and little of a blue one.
 
 ## What happens without a control
 
@@ -441,7 +444,6 @@ Two repairs run on every raw. Neither has a setting:
 - **Hot pixels.** A sensor site stuck bright or dark is replaced from
   its neighbors. Only a site lit in one color counts, so stars, glints
   and catchlights stay. A stuck pixel on busy texture may be missed.
-  Not on X-Trans raws yet.
 - **Clipped highlights.** Where one or two color channels clipped,
   greycard rebuilds them from the channels that did not. A blown
   highlight then keeps a natural color instead of taking a cast.

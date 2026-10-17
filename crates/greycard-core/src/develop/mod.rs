@@ -8,6 +8,7 @@
 
 pub mod amaze;
 pub mod ca;
+pub mod ca_xtrans;
 pub mod defringe;
 pub mod dehaze;
 pub mod denoise;
@@ -24,6 +25,7 @@ pub mod reduced;
 pub mod retouch;
 pub mod segments;
 pub mod sharpen;
+pub mod sites;
 pub mod vng4;
 pub mod xtrans;
 
@@ -504,7 +506,10 @@ impl Prepared {
 /// reference (on a GPU, say): given the balanced mosaic, its size, its
 /// pattern and the options, the corrected mosaic and what was measured.
 /// What it hands back must be the reference's answer to the tolerance
-/// the consumer states, since the export develops on the reference.
+/// the consumer states, since the export develops on the reference. It
+/// is handed X-Trans mosaics too, which the reference corrects in
+/// [`ca_xtrans`]; one that has no version for them (the GPU's) runs the
+/// reference's.
 pub type CaCorrector<'a> = &'a dyn Fn(
     &[f32],
     usize,
@@ -542,7 +547,12 @@ pub fn prepare_with(
             return Err(unsupported_mosaic(pattern));
         }
         if pattern.is_xtrans() {
-            log_xtrans_skips(settings, measure_noise);
+            // The one stage before the demosaic with no X-Trans version
+            // yet, said in the log rather than passed by quietly; an
+            // automatic sharpen takes its default radius.
+            log::info!(
+                "X-Trans mosaic: the capture sharpen's radius measurement has no X-Trans version yet and is left out"
+            );
         }
     }
     let white_balance = white_balance_for(frame, settings)?;
@@ -599,7 +609,7 @@ pub fn prepare_with(
 
     let mut ca_stats = None;
     if let (Some(pattern), Some(options)) = (&pattern, &settings.chromatic_aberration)
-        && ca::is_bayer(pattern)
+        && ca::corrects(pattern)
     {
         let (corrected, s) = match ca {
             Some(correct) => correct(&samples, width, height, pattern, options)?,
@@ -626,59 +636,6 @@ pub fn prepare_with(
         demosaic: settings.demosaic,
         orientation: settings.orientation.unwrap_or(frame.orientation),
     })
-}
-
-/// The stages of a develop under some settings that have no X-Trans
-/// version yet, which an X-Trans frame passes by: each is gated on a
-/// Bayer pattern where it is called.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct XtransSkips {
-    /// Stages on by default, or there for another's sake: said in the
-    /// log as a matter of record.
-    pub defaults: Vec<&'static str>,
-    /// Stages the user asked for (the profiled denoise): worth a
-    /// warning, since what was asked for does not happen.
-    pub requested: Vec<&'static str>,
-}
-
-/// What an X-Trans develop under `settings` leaves out; `measure_noise`
-/// as [`prepare`] takes it.
-pub fn xtrans_skips(settings: &DevelopSettings, measure_noise: bool) -> XtransSkips {
-    let mut skips = XtransSkips::default();
-    if measure_noise || wants_noise(settings) {
-        skips.defaults.push("the noise measurement");
-    }
-    if settings.hot_pixels.is_some() {
-        skips.defaults.push("the hot pixel repair");
-    }
-    if settings.chromatic_aberration.is_some() {
-        skips.defaults.push("the chromatic aberration correction");
-    }
-    skips
-        .defaults
-        .push("the capture sharpen's radius measurement");
-    if settings.denoise.is_some() {
-        skips.requested.push("the profiled denoise");
-    }
-    skips
-}
-
-/// Say what [`xtrans_skips`] finds, so the log says so rather than the
-/// stage going quietly.
-fn log_xtrans_skips(settings: &DevelopSettings, measure_noise: bool) {
-    let skips = xtrans_skips(settings, measure_noise);
-    if !skips.defaults.is_empty() {
-        log::info!(
-            "X-Trans mosaic: {} have no X-Trans version yet and are left out",
-            skips.defaults.join(", ")
-        );
-    }
-    if !skips.requested.is_empty() {
-        log::warn!(
-            "X-Trans mosaic: {} was asked for and does not run; it has no X-Trans version yet",
-            skips.requested.join(", ")
-        );
-    }
 }
 
 /// The engine's own demosaic and profiled denoise of a prepared frame:
@@ -917,8 +874,8 @@ type BalancedSamples = (
 ///
 /// Returns the samples, the crop's dimensions and, for a CFA frame, the
 /// pattern as seen from the crop's origin. Linear frames come back
-/// interleaved RGB with no pattern. With `estimate_noise`, a Bayer
-/// frame's noise is measured before the gains go on, and with
+/// interleaved RGB with no pattern. With `estimate_noise`, a Bayer or
+/// X-Trans frame's noise is measured before the gains go on, and with
 /// `hot_pixels` the defects are repaired against it.
 fn balanced_samples(
     frame: &RawFrame,
@@ -941,11 +898,11 @@ fn balanced_samples(
                     "CFA with non-RGB filters: {pattern:?}"
                 )));
             }
-            if estimate_noise && noise::is_bayer(&pattern) {
+            if estimate_noise && noise::measures(&pattern) {
                 noise = Some(noise::estimate_noise(&samples, width, height, &pattern)?);
             }
             if let (Some(options), Some(estimate)) = (hot_pixels, &noise)
-                && hotpixels::is_bayer(&pattern)
+                && hotpixels::repairs(&pattern)
             {
                 hot = Some(hotpixels::fix_hot_pixels(
                     &mut samples,
@@ -1626,47 +1583,68 @@ pub(crate) mod tests {
         }
     }
 
-    /// What an X-Trans develop leaves out: the defaults as a record, the
-    /// denoise, which the user asked for, apart.
+    /// The profiled denoise on X-Trans: the noise is measured on the
+    /// mosaic, the denoise after the demosaic reads that model, and the
+    /// develop comes out quieter for it.
     #[test]
-    fn the_xtrans_skips_put_a_requested_denoise_apart() {
-        let defaults = xtrans_skips(&DevelopSettings::default(), false);
-        assert!(defaults.requested.is_empty());
-        assert!(defaults.defaults.contains(&"the hot pixel repair"));
-        assert!(
-            defaults
-                .defaults
-                .contains(&"the chromatic aberration correction")
-        );
-        assert!(defaults.defaults.contains(&"the noise measurement"));
-        let bare = DevelopSettings {
-            hot_pixels: None,
-            chromatic_aberration: None,
-            demosaic: DemosaicMethod::Amaze,
-            ..Default::default()
+    fn an_xtrans_frame_is_measured_and_denoised() {
+        let pattern = CfaPattern::xtrans().shifted(2, 3);
+        let (w, h) = (192, 160);
+        let level = [0.25f32, 0.4, 0.2];
+        let sigma = 0.01f32;
+        let mut g = noise::tests::Gauss(3);
+        let mut samples = Vec::with_capacity(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let c = pattern.color_at(y, x).rgb_index().unwrap();
+                let v = (level[c] + sigma * g.next()).clamp(0.0, 1.0);
+                samples.push((v * 16383.0).round() as u16);
+            }
+        }
+        let frame = RawFrame {
+            width: w,
+            height: h,
+            layout: SensorLayout::Cfa(pattern),
+            samples: Samples::U16(samples),
+            levels: Levels {
+                black: LevelPattern::uniform(0.0, 1),
+                white: LevelPattern::uniform(16383.0, 1),
+            },
+            crop: None,
+            ..flat_frame()
         };
-        assert_eq!(
-            xtrans_skips(&bare, false).defaults,
-            vec!["the capture sharpen's radius measurement"]
-        );
-        assert!(
-            xtrans_skips(&bare, true)
-                .defaults
-                .contains(&"the noise measurement")
-        );
-        let denoised = DevelopSettings {
-            denoise: Some(denoise::DenoiseOptions::default()),
-            ..bare
+        let spread = |d: &Developed| {
+            let px: Vec<[f32; 3]> = d.image.pixels().copied().collect();
+            let inner: Vec<f32> = (0..px.len())
+                .filter(|i| (8..h - 8).contains(&(i / w)) && (8..w - 8).contains(&(i % w)))
+                .map(|i| px[i][1])
+                .collect();
+            let mean = inner.iter().sum::<f32>() / inner.len() as f32;
+            (inner.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / inner.len() as f32).sqrt()
         };
-        assert_eq!(
-            xtrans_skips(&denoised, false).requested,
-            vec!["the profiled denoise"]
-        );
+        let plain = develop(&frame, &DevelopSettings::default()).unwrap();
+        let denoised = develop(
+            &frame,
+            &DevelopSettings {
+                denoise: Some(denoise::DenoiseOptions::default()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let estimate = denoised.noise.expect("the noise was measured");
+        for (c, &at) in level.iter().enumerate() {
+            let got = estimate.model.sigma(c, at);
+            assert!((got / sigma - 1.0).abs() < 0.2, "channel {c}: {got}");
+        }
+        assert!(denoised.denoise.is_some_and(|s| s.scales > 0));
+        let (before, after) = (spread(&plain), spread(&denoised));
+        assert!(after < 0.5 * before, "{before} -> {after}");
     }
 
-    /// The stages with no X-Trans version step aside, the demosaic is
+    /// Every stage before the demosaic runs on X-Trans, the demosaic is
     /// Markesteijn's or bilinear, and a flat grey comes out flat and
-    /// grey whatever the method.
+    /// grey whatever the method. The frame is flat and clean, so no
+    /// stage finds anything to do.
     #[test]
     fn an_xtrans_frame_develops_under_every_method() {
         let frame = xtrans_frame();
@@ -1678,9 +1656,22 @@ pub(crate) mod tests {
             };
             let d = develop(&frame, &settings).unwrap();
             assert_eq!((d.image.width, d.image.height), (70, 60));
-            assert!(d.chromatic_aberration.is_none(), "{method:?}");
-            assert!(d.hot_pixels.is_none() && d.noise.is_none(), "{method:?}");
-            assert!(d.denoise.is_none() && d.dual.is_none(), "{method:?}");
+            let ca = d.chromatic_aberration.expect("the CA correction ran");
+            assert!(!ca.corrected, "{method:?}: {ca:?}");
+            assert_eq!(
+                d.hot_pixels,
+                Some(hotpixels::HotPixelStats::default()),
+                "{method:?}"
+            );
+            assert!(
+                d.noise.is_some_and(|n| n.model.is_silent()),
+                "{method:?}: {:?}",
+                d.noise
+            );
+            assert!(
+                d.denoise.is_some_and(|s| s.scales == 0) && d.dual.is_none(),
+                "{method:?}"
+            );
             let first = d.image.pixels().next().unwrap();
             for px in d.image.pixels() {
                 for c in 0..3 {
@@ -1691,7 +1682,7 @@ pub(crate) mod tests {
         // The prepared frame carries the pattern from the crop's origin.
         let prepared = prepare(&frame, &DevelopSettings::default(), true).unwrap();
         assert_eq!(prepared.pattern, Some(CfaPattern::xtrans().shifted(5, 7)));
-        assert!(prepared.noise.is_none());
+        assert!(prepared.noise.is_some());
         // The camera-space demosaic takes it too.
         let out = demosaic(&frame, &DevelopSettings::default()).unwrap();
         for px in out.image.pixels() {

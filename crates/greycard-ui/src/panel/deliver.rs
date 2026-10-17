@@ -391,13 +391,20 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     st.source = finish::Source::Scene;
                     app.set_raw_input(true);
                     app.set_source_note("".into());
-                    // Neither denoiser has an X-Trans version yet: the
-                    // section says so and its controls rest.
+                    // The learned denoiser has no X-Trans version yet:
+                    // the section says so and its tiers rest, while the
+                    // profiled denoise works as on any raw.
                     let xtrans = st.frame.as_ref().is_some_and(|(f, _)| {
                         matches!(&f.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans())
                     });
-                    app.set_noise_unavailable(
-                        if xtrans { "not on X-Trans yet" } else { "" }.into(),
+                    app.set_noise_unavailable("".into());
+                    app.set_learned_unavailable(
+                        if xtrans {
+                            "learned: not on X-Trans yet"
+                        } else {
+                            ""
+                        }
+                        .into(),
                     );
                     // The raw's mosaic, now known from its pixels: the
                     // menu, if the worker's read ahead had not said.
@@ -416,6 +423,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     st.source = finish::Source::Display;
                     app.set_raw_input(false);
                     app.set_noise_unavailable("raw only".into());
+                    app.set_learned_unavailable("".into());
                     app.set_source_note(
                         format!(
                             "{}-bit {} read as {space}; already rendered",

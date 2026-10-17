@@ -1,10 +1,10 @@
 use super::*;
 
-/// An X-Trans frame asked for a denoise, learned or profiled, is
-/// told none runs, before anything is prepared; a Bayer one, or one
-/// asked for none, is not.
+/// An X-Trans frame asked for the learned denoiser is told it does not
+/// run, before anything is prepared; a Bayer one is not, and the
+/// profiled denoise runs on both.
 #[test]
-fn a_denoise_on_x_trans_is_unavailable_and_said_so() {
+fn the_learned_denoiser_on_x_trans_is_unavailable_and_said_so() {
     use greycard_core::raw::{CfaPattern, LevelPattern, Levels, Samples, SensorLayout};
     let mut frame = RawFrame {
         make: "Test".into(),
@@ -24,19 +24,11 @@ fn a_denoise_on_x_trans_is_unavailable_and_said_so() {
         orientation: greycard_core::raw::Orientation::Normal,
         shot: Default::default(),
     };
-    let profiled = DevelopSettings {
-        denoise: Some(Default::default()),
-        ..DevelopSettings::default()
-    };
-    let none = DevelopSettings {
-        denoise: None,
-        ..DevelopSettings::default()
-    };
-    assert_eq!(denoise_unavailable(&frame, &profiled, true), None);
+    assert_eq!(denoise_unavailable(&frame, true), None);
+    assert_eq!(denoise_unavailable(&frame, false), None);
     frame.layout = SensorLayout::Cfa(CfaPattern::xtrans());
-    assert!(denoise_unavailable(&frame, &profiled, false).is_some());
-    assert!(denoise_unavailable(&frame, &none, true).is_some());
-    assert_eq!(denoise_unavailable(&frame, &none, false), None);
+    assert!(denoise_unavailable(&frame, true).is_some());
+    assert_eq!(denoise_unavailable(&frame, false), None);
 }
 
 #[test]

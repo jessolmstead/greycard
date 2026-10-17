@@ -185,19 +185,9 @@ fn main() -> Result<()> {
             cli.pattern
         )
     })?;
-    if pattern.is_xtrans() {
-        // The CA correction and the noise estimate are Bayer only.
-        if cli.aberrate > 0.0 && !cli.no_ca {
-            bail!(
-                "--aberrate on X-Trans needs --no-ca: the CA correction has no X-Trans version yet"
-            );
-        }
-        if cli.denoise || cli.ai_model.is_some() || cli.dual_contrast == "noise" {
-            bail!(
-                "--denoise, --ai-model and --dual-contrast noise need a noise estimate, \
-                 which has no X-Trans version yet"
-            );
-        }
+    // The learned denoiser takes a packed 2x2 Bayer mosaic.
+    if pattern.is_xtrans() && cli.ai_model.is_some() {
+        bail!("--ai-model needs a Bayer pattern: the learned denoiser has no X-Trans version");
     }
     let methods: Vec<DemosaicMethod> = if cli.ai_model.is_some() {
         // The network stands in for every method; one placeholder run.

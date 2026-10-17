@@ -50,6 +50,10 @@
 //! the fit and the solve) are `fit_votes`, which a GPU implementation
 //! calls on the votes it reads back; `measure_votes` gives the
 //! reference's own votes for a check against them.
+//!
+//! An X-Trans mosaic is corrected in [`super::ca_xtrans`], which casts
+//! these votes on a Bayer mosaic it makes of the X-Trans one and
+//! resamples on the X-Trans sites.
 
 use rayon::prelude::*;
 
@@ -116,8 +120,15 @@ pub struct CaStats {
     pub max_shift: [f32; 2],
 }
 
-/// Correct lateral CA in a white-balanced Bayer mosaic. Returns the
-/// corrected mosaic (green untouched) and what was measured.
+/// Whether [`correct_ca`] takes this pattern: 2x2 Bayer, or X-Trans,
+/// which [`super::ca_xtrans`] corrects.
+pub fn corrects(pattern: &CfaPattern) -> bool {
+    is_bayer(pattern) || pattern.is_xtrans()
+}
+
+/// Correct lateral CA in a white-balanced Bayer or X-Trans mosaic.
+/// Returns the corrected mosaic (green untouched) and what was
+/// measured. An X-Trans mosaic goes to [`super::ca_xtrans`].
 pub fn correct_ca(
     samples: &[f32],
     width: usize,
@@ -125,9 +136,12 @@ pub fn correct_ca(
     pattern: &CfaPattern,
     options: &CaOptions,
 ) -> Result<(Vec<f32>, CaStats)> {
+    if pattern.is_xtrans() {
+        return super::ca_xtrans::correct_ca(samples, width, height, pattern, options);
+    }
     if !is_bayer(pattern) {
         return Err(Error::Unsupported(format!(
-            "CA correction needs a 2x2 Bayer pattern, got {pattern}"
+            "CA correction needs a 2x2 Bayer or an X-Trans pattern, got {pattern}"
         )));
     }
     if samples.len() != width * height {
@@ -1391,7 +1405,7 @@ pub fn box_radius(sigma: f32) -> usize {
 
 /// Three box blurs of equal width approximate a Gaussian closely enough
 /// for a factor map this smooth.
-fn gaussian_blur_approx(data: &mut [f32], width: usize, height: usize, sigma: f32) {
+pub(crate) fn gaussian_blur_approx(data: &mut [f32], width: usize, height: usize, sigma: f32) {
     let radius = box_radius(sigma);
     let mut tmp = vec![0.0f32; width * height];
     // The passes commute, so the three row passes go first, then the
@@ -1497,12 +1511,12 @@ fn median9(mut p: [f32; 9]) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A smooth random texture with plenty of edges: sums of a few sine
     /// gratings at different angles and frequencies, in 0.2..0.8.
-    fn texture(width: usize, height: usize) -> Vec<f32> {
+    pub(crate) fn texture(width: usize, height: usize) -> Vec<f32> {
         (0..width * height)
             .map(|i| {
                 let (x, y) = ((i % width) as f32, (i / width) as f32);
@@ -1516,7 +1530,7 @@ mod tests {
     }
 
     /// Bilinear sample with edge clamping.
-    fn sample(img: &[f32], width: usize, height: usize, x: f32, y: f32) -> f32 {
+    pub(crate) fn sample(img: &[f32], width: usize, height: usize, x: f32, y: f32) -> f32 {
         let x = x.clamp(0.0, (width - 1) as f32);
         let y = y.clamp(0.0, (height - 1) as f32);
         let (x0, y0) = (x.floor() as usize, y.floor() as usize);

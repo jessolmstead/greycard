@@ -247,8 +247,8 @@ Built, as of 0.7.0:
 
 Planned, in order: the tone controls made to feel right; a generative
 fill; the Lightroom catalog import; HDR merge and panoramas, and the
-merges in the browser; tethering. Denoising, hot pixel repair and
-chromatic aberration correction for X-Trans alongside these.
+merges in the browser; tethering. The learned denoiser for X-Trans
+alongside these.
 
 The reasoning behind every choice is in `docs/notes/`, one numbered
 section a file with `docs/notes.md` as the index, and the plan is

@@ -116,26 +116,32 @@ export component NoiseSection inherits Section {
     in-out property <float> denoise-learned-strength;
     // Why the section rests, or "" when it does not.
     in property <string> unavailable;
+    // Why the learned tiers rest (an X-Trans raw), or "" when they do
+    // not; the profiled denoise is unaffected.
+    in property <string> learned-unavailable;
     callback develop-changed();
 
     title: "NOISE";
     icon: @image-url("../icons/sparkles.svg");
-    hint: root.unavailable;
+    hint: root.unavailable != "" ? root.unavailable : root.learned-unavailable;
     collapsed <=> root.collapsed-noise;
     switchable: true;
     on <=> root.noise-enabled;
     switched => { root.develop-changed(); }
     // The learned denoiser stands in for the
-    // demosaic and the profiled denoise both.
+    // demosaic and the profiled denoise both. Where it rests, a tier
+    // already set (a sync from a Bayer frame) can still be turned off,
+    // and off and that tier are all it offers: no other is reachable.
     Segmented {
-        options: root.denoise-tiers;
-        enabled: root.unavailable == "";
+        options: root.learned-unavailable == "" ? root.denoise-tiers
+            : root.denoise-learned == "off" ? ["off"] : ["off", root.denoise-learned];
+        enabled: root.unavailable == "" && (root.learned-unavailable == "" || root.denoise-learned != "off");
         current <=> root.denoise-learned;
         selected(v) => { root.develop-changed(); }
     }
     EditSlider {
         label: "Blend";
-        enabled: root.unavailable == "" && root.denoise-learned != "off";
+        enabled: root.unavailable == "" && root.learned-unavailable == "" && root.denoise-learned != "off";
         minimum: 0;
         maximum: 1;
         default: 1;

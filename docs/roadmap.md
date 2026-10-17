@@ -37,8 +37,6 @@ ours, so a tester brings a library over in one go.
       plane), the most common edit the command names today; camera
       and lens rules in a smart collection matched through rawler's
       names
-- [ ] X-Trans step 2: denoising, hot pixel repair and chromatic
-      aberration correction on the X-Trans path (§322)
 - [ ] RawTherapee `.pp3` import on opening a folder (Library track)
 - [ ] RAW+JPEG pairs (Library track). After the kind filter
 - [ ] Stacks (Library track). After the pairs

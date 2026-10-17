@@ -24,13 +24,36 @@
 //! several sites by the optics and lights every color round it. With
 //! that test the repair is on by default. A site it misses (a defect
 //! on a busy background) is the per-camera defect map's to take.
+//!
+//! **X-Trans.** The reference's X-Trans path builds, for each site of
+//! the 6x6 pattern, a table of the four nearest same-color sites by a
+//! search outward, since they sit at no one offset. Ours builds its
+//! tables from the pattern the same way, once a call
+//! ([`super::sites`]), with what the Bayer rule reads carried over: the
+//! same-color test reads every site of a green candidate's color in its
+//! 5x5 (twelve to sixteen, the adjacent greens of a 2x2 block among
+//! them) and of a red or blue one's in its 7x7 (eleven), and the others
+//! test reads each of the two other colors, its sites in the 3x3 as
+//! the adjacent ones and its sites two and three out as the
+//! background. Every 3x3 of X-Trans holds all three colors, so each
+//! other color has an adjacent site at every candidate. Red and blue
+//! read the 7x7 because their 5x5 holds five, to Bayer's eight: a speck
+//! of texture clears five far more often, and on a texture of 2x2 cells
+//! the repair took fourteen times Bayer's rate of sites with the 5x5,
+//! and a seventh of it with the 7x7.
 
 use rayon::prelude::*;
 
 use super::noise::NoiseModel;
 pub use super::rcd::is_bayer;
+use super::sites::{Phases, of_color};
 use crate::error::{Error, Result};
 use crate::raw::CfaPattern;
+
+/// Whether the repair reads this pattern: 2x2 Bayer or X-Trans.
+pub fn repairs(pattern: &CfaPattern) -> bool {
+    is_bayer(pattern) || pattern.is_xtrans()
+}
 
 /// How far out a photosite has to be.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -105,8 +128,9 @@ pub struct HotPixelStats {
     pub dead: usize,
 }
 
-/// One of the three other positions of the 2x2 pattern round a
-/// candidate, as the candidate's nearest sites of it read.
+/// One of the other positions of the 2x2 pattern round a candidate
+/// (on X-Trans, one of the other two colors), as the candidate's
+/// nearest sites of it read.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Neighbors {
     /// The brightest of the adjacent sites of this position (for a
@@ -131,8 +155,10 @@ pub struct Candidate {
     pub value: f32,
     /// The brightest (or darkest) same-color neighbor, its repair.
     pub replacement: f32,
-    /// The horizontal, vertical and diagonal neighbors' positions.
-    pub others: [Neighbors; 3],
+    /// On Bayer the horizontal, vertical and diagonal neighbors'
+    /// positions; on X-Trans the two other colors in RGB order, and
+    /// `None` last.
+    pub others: [Option<Neighbors>; 3],
 }
 
 impl Candidate {
@@ -155,6 +181,7 @@ impl Candidate {
     pub fn others_factor(&self, sigmas: f32) -> f32 {
         self.others
             .iter()
+            .flatten()
             .filter_map(|n| {
                 if self.hot {
                     (n.near - n.background > sigmas * n.sigma).then(|| n.near / n.background)
@@ -164,6 +191,124 @@ impl Candidate {
             })
             .fold(1.0, f32::max)
     }
+}
+
+/// One class of the sites round a candidate that the others test
+/// reads: offsets of its adjacent sites and of its sites two and three
+/// out, and their color.
+struct Class {
+    near: Vec<isize>,
+    ring: Vec<isize>,
+    color: usize,
+}
+
+/// What the tests read round a site of one position of the pattern:
+/// its color, the offsets of its same-color neighbors, and the other
+/// classes. The same-color offsets are a fixed `N` (eight on Bayer,
+/// sixteen on X-Trans), a site with fewer padded with its first one
+/// again, which the largest and the smallest of them do not see: every
+/// site reads in a loop of one length, which the compiler unrolls.
+struct Site<const N: usize> {
+    color: usize,
+    same: [isize; N],
+    others: Vec<Class>,
+}
+
+/// The most same-color sites any X-Trans site reads: a green's in its
+/// 5x5 (a red's or blue's 7x7 holds eleven).
+const XTRANS_SAME: usize = 16;
+/// Bayer's: the eight two photosites away.
+const BAYER_SAME: usize = 8;
+
+/// Offsets into a buffer `width` wide.
+fn linear(offsets: impl IntoIterator<Item = (isize, isize)>, width: usize) -> Vec<isize> {
+    offsets
+        .into_iter()
+        .map(|(dy, dx)| dy * width as isize + dx)
+        .collect()
+}
+
+/// The tests' reads for each site of `pattern`, 2x2 Bayer or X-Trans.
+///
+/// Bayer: the same-color neighbors two photosites away (eight), and the
+/// other three positions of the 2x2, one photosite across, down and
+/// diagonal, each its sites in the 3x3 and in the 7x7 outside it.
+/// X-Trans: the same color's sites in the 5x5 for green and the 7x7 for
+/// red and blue, and the other two colors, each its sites in the 3x3
+/// and in the 7x7 outside it.
+fn layout<const N: usize>(pattern: &CfaPattern, width: usize) -> Phases<Site<N>> {
+    let xtrans = pattern.is_xtrans();
+    let padded = |same: Vec<isize>| -> [isize; N] {
+        assert!(
+            !same.is_empty() && same.len() <= N,
+            "{} same-color sites",
+            same.len()
+        );
+        std::array::from_fn(|k| same.get(k).copied().unwrap_or(same[0]))
+    };
+    let color_at = |y: usize, x: usize| {
+        pattern
+            .color_at(y, x)
+            .rgb_index()
+            .expect("repaired patterns are RGB")
+    };
+    let adjacent = |&(dy, dx): &(isize, isize)| dy.abs() <= 1 && dx.abs() <= 1;
+    Phases::build(pattern, |y, x| {
+        let color = color_at(y, x);
+        if xtrans {
+            let others = (0..3)
+                .filter(|&c| c != color)
+                .map(|c| {
+                    let (near, ring): (Vec<_>, Vec<_>) = of_color(pattern, y, x, c, 3)
+                        .into_iter()
+                        .partition(adjacent);
+                    Class {
+                        near: linear(near, width),
+                        ring: linear(ring, width),
+                        color: c,
+                    }
+                })
+                .collect();
+            Site {
+                color,
+                // Green its 5x5, red and blue their 7x7: see the
+                // module doc.
+                same: padded(linear(
+                    of_color(pattern, y, x, color, if color == 1 { 2 } else { 3 }),
+                    width,
+                )),
+                others,
+            }
+        } else {
+            let same = [-2isize, 0, 2]
+                .into_iter()
+                .flat_map(|dy| [-2isize, 0, 2].map(|dx| (dy, dx)))
+                .filter(|&d| d != (0, 0));
+            let others = [(0isize, 1isize), (1, 0), (1, 1)]
+                .into_iter()
+                .map(|(py, px)| {
+                    let (near, ring): (Vec<_>, Vec<_>) = (-3isize..=3)
+                        .filter(|d| (d - py).rem_euclid(2) == 0)
+                        .flat_map(|dy| {
+                            (-3isize..=3)
+                                .filter(|d| (d - px).rem_euclid(2) == 0)
+                                .map(move |dx| (dy, dx))
+                        })
+                        .partition(adjacent);
+                    Class {
+                        near: linear(near, width),
+                        ring: linear(ring, width),
+                        color: color_at(y + py as usize, x + px as usize),
+                    }
+                })
+                .collect();
+            Site {
+                color,
+                same: padded(linear(same, width)),
+                others,
+            }
+        }
+    })
 }
 
 /// The photosites the same-color tests flag, with the other colors
@@ -178,9 +323,9 @@ pub fn candidates(
     sigmas: f32,
     ratio: f32,
 ) -> Result<Vec<Candidate>> {
-    if !is_bayer(pattern) {
+    if !repairs(pattern) {
         return Err(Error::Unsupported(format!(
-            "hot pixel repair needs a 2x2 Bayer pattern, got {pattern}"
+            "hot pixel repair needs a 2x2 Bayer or an X-Trans pattern, got {pattern}"
         )));
     }
     if samples.len() != width * height {
@@ -191,43 +336,65 @@ pub fn candidates(
     if width < 7 || height < 7 || sigmas <= 0.0 {
         return Ok(Vec::new());
     }
-    let k = sigmas;
     let ratio = ratio.max(1.0);
-    let color: [[usize; 2]; 2] = std::array::from_fn(|y| {
-        std::array::from_fn(|x| {
-            pattern
-                .color_at(y, x)
-                .rgb_index()
-                .expect("Bayer pattern is RGB")
-        })
-    });
+    let size = (width, height);
+    Ok(if pattern.is_xtrans() {
+        scan(
+            samples,
+            size,
+            &layout::<XTRANS_SAME>(pattern, width),
+            model,
+            sigmas,
+            ratio,
+        )
+    } else {
+        scan(
+            samples,
+            size,
+            &layout::<BAYER_SAME>(pattern, width),
+            model,
+            sigmas,
+            ratio,
+        )
+    })
+}
+
+/// [`candidates`] over a layout: the same-color tests at every site
+/// three or more from the edge, then the others measured round each
+/// site they flag.
+fn scan<const N: usize>(
+    samples: &[f32],
+    (width, height): (usize, usize),
+    layout: &Phases<Site<N>>,
+    model: &NoiseModel,
+    k: f32,
+    ratio: f32,
+) -> Vec<Candidate> {
     // The model's noise, never below a sensor's read noise: where the
     // samples are clamped at black the estimate sees no spread and
     // can put the read noise at zero, and then a site a few units
     // above black over neighbors at zero is many sigmas out.
     let sigma = |c: usize, level: f32| model.sigma(c, level.max(0.0)).max(MIN_SIGMA);
-    let at = |y: usize, x: usize, dy: isize, dx: isize| {
-        samples[(y as isize + dy) as usize * width + (x as isize + dx) as usize]
-    };
-    Ok((3..height - 3)
+    let at = |i: usize, o: isize| samples[(i as isize + o) as usize];
+    (3..height - 3)
         .into_par_iter()
         .flat_map_iter(|y| {
             let mut row = Vec::new();
-            for x in 3..width - 3 {
-                let v = samples[y * width + x];
+            let sites = layout.row(y);
+            let sites = sites.iter().cycle().skip(3 % sites.len());
+            for (x, site) in (3..width - 3).zip(sites) {
+                let i = y * width + x;
+                let v = samples[i];
+                let near = &samples[i - 3 * width - 3..=i + 3 * width + 3];
+                let base = (3 * width + 3) as isize;
                 let mut mx = f32::NEG_INFINITY;
                 let mut mn = f32::INFINITY;
-                for dy in [-2isize, 0, 2] {
-                    for dx in [-2isize, 0, 2] {
-                        if dy == 0 && dx == 0 {
-                            continue;
-                        }
-                        let n = at(y, x, dy, dx);
-                        mx = mx.max(n);
-                        mn = mn.min(n);
-                    }
+                for &o in &site.same {
+                    let n = near[(base + o) as usize];
+                    mx = mx.max(n);
+                    mn = mn.min(n);
                 }
-                let c = color[y & 1][x & 1];
+                let c = site.color;
                 let hot = if v - mx > k * sigma(c, mx) && v > mx * ratio {
                     true
                 } else if mn - v > k * sigma(c, mn) && v * ratio < mn {
@@ -235,41 +402,36 @@ pub fn candidates(
                 } else {
                     continue;
                 };
-                // The other three positions of the pattern: one
-                // photosite across (0, 1), down (1, 0) and diagonal
-                // (1, 1). Each is judged on its adjacent sites against
-                // its own sites two and three out.
-                let others = [(0isize, 1isize), (1, 0), (1, 1)].map(|(py, px)| {
+                // The other classes round the site, each judged on its
+                // adjacent sites against its own sites two and three
+                // out.
+                let mut others = [None; 3];
+                for (slot, class) in others.iter_mut().zip(&site.others) {
                     let mut near = if hot {
                         f32::NEG_INFINITY
                     } else {
                         f32::INFINITY
                     };
-                    let mut ring = [0f32; 12];
-                    let mut n = 0;
-                    for dy in (-3isize..=3).filter(|d| (d - py).rem_euclid(2) == 0) {
-                        for dx in (-3isize..=3).filter(|d| (d - px).rem_euclid(2) == 0) {
-                            let s = at(y, x, dy, dx);
-                            if dy.abs() <= 1 && dx.abs() <= 1 {
-                                near = if hot { near.max(s) } else { near.min(s) };
-                            } else {
-                                ring[n] = s;
-                                n += 1;
-                            }
-                        }
+                    for &o in &class.near {
+                        let s = at(i, o);
+                        near = if hot { near.max(s) } else { near.min(s) };
+                    }
+                    let mut ring = [0f32; 40];
+                    let n = class.ring.len();
+                    for (r, &o) in ring.iter_mut().zip(&class.ring) {
+                        *r = at(i, o);
                     }
                     let ring = &mut ring[..n];
                     ring.sort_unstable_by(f32::total_cmp);
                     let background = ring[n / 2];
-                    let oc = color[(y + py as usize) & 1][(x + px as usize) & 1];
-                    Neighbors {
+                    *slot = Some(Neighbors {
                         near,
                         background,
-                        sigma: sigma(oc, background),
-                    }
-                });
+                        sigma: sigma(class.color, background),
+                    });
+                }
                 row.push(Candidate {
-                    index: y * width + x,
+                    index: i,
                     hot,
                     value: v,
                     replacement: if hot { mx } else { mn },
@@ -278,7 +440,7 @@ pub fn candidates(
             }
             row
         })
-        .collect())
+        .collect()
 }
 
 /// Repair `samples` (one per photosite, levels normalized, no gains
@@ -553,7 +715,7 @@ mod tests {
         assert_eq!(found.len(), 1);
         let c = found[0];
         assert!(c.hot && c.index == 20 * w + 20);
-        for (n, want) in c.others.iter().zip([0.4, 0.4, 0.02]) {
+        for (n, want) in c.others.iter().flatten().zip([0.4, 0.4, 0.02]) {
             assert!((n.background - want).abs() < 0.2 * want, "{n:?}");
         }
         assert!(!c.others_follow(DEFAULT_OTHERS, OTHERS_SIGMAS));
@@ -719,5 +881,208 @@ mod tests {
         )
         .unwrap();
         assert_eq!(stats, HotPixelStats { hot: 1, dead: 0 });
+    }
+
+    /// X-Trans at several phases, every site of the period: a lone hot
+    /// or dead site goes and nothing else changes; any adjacent site lit
+    /// to two and a half times its level (or dark) with it spares it, a
+    /// same-color one of a 2x2 green block as much as one of another
+    /// color; a site of another color two or three out lit to twice its
+    /// level does not. Twice there, not the Bayer test's two and a
+    /// half: the ring was set when a red or blue site read the five
+    /// same-color sites of its 5x5, where a noisy site lit by two and
+    /// a half could stand three times above all five, a candidate of
+    /// its own; the 7x7's eleven leave it at two, which the texture
+    /// test holds.
+    #[test]
+    fn every_x_trans_site_reads_its_neighbors_right() {
+        let (w, h) = (40usize, 40usize);
+        for (px, py) in [(0usize, 0usize), (2, 2), (5, 3)] {
+            let pattern = CfaPattern::xtrans().shifted(px, py);
+            let color = |y: isize, x: isize| pattern.color_at(y as usize, x as usize);
+            for (cy, cx) in (17..23usize).flat_map(|y| (17..23usize).map(move |x| (y, x))) {
+                let ci = cy * w + cx;
+                let seed = 5 + (px * 1000 + ci) as u64;
+                let at = |dy: isize, dx: isize| {
+                    (cy as isize + dy) as usize * w + (cx as isize + dx) as usize
+                };
+                let tag = format!("phase ({px},{py}), site ({cy},{cx})");
+
+                let mut s = colored(w, h, &pattern, seed);
+                s[ci] = 0.9;
+                let shot = s.clone();
+                assert_eq!(fix_on(&mut s, w, h, &pattern).hot, 1, "{tag}");
+                let changed: Vec<usize> = (0..w * h).filter(|&i| s[i] != shot[i]).collect();
+                assert_eq!(changed, [ci], "{tag}");
+
+                for dy in -1isize..=1 {
+                    for dx in -1isize..=1 {
+                        if (dy, dx) == (0, 0) {
+                            continue;
+                        }
+                        let mut s = shot.clone();
+                        s[at(dy, dx)] *= 2.5;
+                        assert_eq!(
+                            fix_on(&mut s, w, h, &pattern).hot,
+                            0,
+                            "{tag}: adjacent ({dy},{dx}) lit"
+                        );
+                    }
+                }
+
+                let own = color(cy as isize, cx as isize);
+                for dy in -3isize..=3 {
+                    for dx in -3isize..=3 {
+                        let (y, x) = (cy as isize + dy, cx as isize + dx);
+                        if dy.abs().max(dx.abs()) < 2 || color(y, x) == own {
+                            continue;
+                        }
+                        let mut s = shot.clone();
+                        s[at(dy, dx)] *= 2.0;
+                        assert_eq!(
+                            fix_on(&mut s, w, h, &pattern).hot,
+                            1,
+                            "{tag}: ring ({dy},{dx}) lit"
+                        );
+                    }
+                }
+
+                let mut dark = colored(w, h, &pattern, seed + 1);
+                dark[ci] = 0.001;
+                let mut s = dark.clone();
+                assert_eq!(fix_on(&mut s, w, h, &pattern).dead, 1, "{tag}: dead");
+                for dy in -1isize..=1 {
+                    for dx in -1isize..=1 {
+                        if (dy, dx) == (0, 0) {
+                            continue;
+                        }
+                        let mut s = dark.clone();
+                        s[at(dy, dx)] = 0.001;
+                        assert_eq!(
+                            fix_on(&mut s, w, h, &pattern).dead,
+                            0,
+                            "{tag}: dead, adjacent ({dy},{dx}) dark"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Texture at the scale of a 2x2 cell with a wide contrast, every
+    /// color of a cell moving together with a tint of its own, at base
+    /// ISO: what `fine_texture_is_left_alone` makes, on any pattern.
+    fn cell_texture(w: usize, h: usize, pattern: &CfaPattern, seed: u64) -> Vec<f32> {
+        let model = base_iso();
+        let mut g = Gauss(seed);
+        let cells: Vec<f32> = (0..(w / 2) * (h / 2))
+            .map(|_| 0.05 * (1.2 * g.next()).exp())
+            .collect();
+        let tint = [0.6f32, 1.0, 0.8];
+        (0..w * h)
+            .map(|i| {
+                let (y, x) = (i / w, i % w);
+                let c = pattern.color_at(y, x).rgb_index().unwrap();
+                let v = (cells[(y / 2) * (w / 2) + x / 2] * tint[c]).min(1.0);
+                v + g.next() * model.sigma(c, v)
+            })
+            .collect()
+    }
+
+    /// On X-Trans, as on Bayer: a one-color site goes, a glint that
+    /// lights a 2x2 of every color and a catchlight spread over a 3x3
+    /// stay.
+    #[test]
+    fn x_trans_defects_go_and_pictures_stay() {
+        let (w, h) = (96, 96);
+        let pattern = CfaPattern::xtrans().shifted(1, 4);
+        let mut samples = colored(w, h, &pattern, 61);
+        let defects = [21 * w + 21, 60 * w + 33, 70 * w + 80];
+        for &i in &defects {
+            samples[i] = 0.9;
+        }
+        for (y, x) in [(20, 60), (20, 61), (21, 60), (21, 61)] {
+            samples[y * w + x] = 0.9;
+        }
+        for dy in 0..3 {
+            for dx in 0..3 {
+                samples[(44 + dy) * w + 40 + dx] = if (dy, dx) == (1, 1) { 0.95 } else { 0.5 };
+            }
+        }
+        let shot = samples.clone();
+        let stats = fix_on(&mut samples, w, h, &pattern);
+        assert_eq!(stats, HotPixelStats { hot: 3, dead: 0 });
+        let changed: Vec<usize> = (0..w * h).filter(|&i| samples[i] != shot[i]).collect();
+        assert_eq!(changed, defects);
+    }
+
+    /// Texture at the scale of a 2x2 cell on X-Trans, over seeds and
+    /// phases, against the same texture on Bayer: the same-color test
+    /// alone takes hundreds of sites a frame, and the repair takes
+    /// no more than it does on Bayer.
+    ///
+    /// With the red and blue sites' same-color test over their 5x5
+    /// (five neighbors, to Bayer's eight) a speck of texture cleared
+    /// them all often enough that over 300 frames (100 seeds, three
+    /// phases) the repair took 1.95 sites a frame, against Bayer's
+    /// 0.14, and in half the frames more than one. Over the 7x7 (eleven
+    /// neighbors) it is 0.02.
+    #[test]
+    fn x_trans_texture_is_left_alone_as_on_bayer() {
+        let (w, h) = (252, 252);
+        let model = base_iso();
+        let count = |patterns: &[CfaPattern]| {
+            let mut total = 0;
+            for p in patterns {
+                // Seed 0 is a dead frame: the xorshift stays at zero.
+                for seed in 1..=10u64 {
+                    let mut s = cell_texture(w, h, p, seed);
+                    let shot = s.clone();
+                    let stats = fix_on(&mut s, w, h, p);
+                    let changed = (0..w * h).filter(|&i| s[i] != shot[i]).count();
+                    assert_eq!(changed, stats.hot + stats.dead);
+                    total += changed;
+                }
+            }
+            total
+        };
+        let xtrans = [
+            CfaPattern::xtrans(),
+            CfaPattern::xtrans().shifted(1, 4),
+            CfaPattern::xtrans().shifted(3, 2),
+        ];
+        let bayer = [
+            CfaPattern::rggb(),
+            CfaPattern::rggb().shifted(1, 0),
+            CfaPattern::rggb().shifted(1, 1),
+        ];
+        let shot = cell_texture(w, h, &xtrans[1], 78);
+        let old = fix_hot_pixels(&mut shot.clone(), w, h, &xtrans[1], &model, &OLD_RULE).unwrap();
+        assert!(
+            old.hot + old.dead > 200,
+            "the old rule takes texture: {old:?}"
+        );
+        let (on_xtrans, on_bayer) = (count(&xtrans), count(&bayer));
+        assert!(
+            on_xtrans <= on_bayer.max(1),
+            "{on_xtrans} against Bayer's {on_bayer}"
+        );
+    }
+
+    #[test]
+    fn other_patterns_are_refused() {
+        let all_green = CfaPattern::new(6, 6, vec![crate::raw::CfaColor::Green; 36]).unwrap();
+        assert!(!repairs(&all_green));
+        assert!(
+            fix_hot_pixels(
+                &mut [0.0; 64],
+                8,
+                8,
+                &all_green,
+                &base_iso(),
+                &HotPixelOptions::default()
+            )
+            .is_err()
+        );
     }
 }

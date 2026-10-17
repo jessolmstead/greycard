@@ -71,8 +71,6 @@ fn ops_alone() {
     let (w, h) = (prepared.width, prepared.height);
     let pattern = prepared.pattern.clone().expect("a mosaic");
     let (camera, _, _) = demosaic_prepared(&prepared, &settings).expect("it demosaics");
-    // Not measured on an X-Trans frame: the ops that need it are left
-    // out there.
     let model = prepared.noise_model();
     let mut image = WorkingImage::from_data(w, h, camera.clone()).unwrap();
     apply_matrix(&mut image.data, prepared.white_balance.matrix_f32());
@@ -90,6 +88,32 @@ fn ops_alone() {
             let mut s = prepared.samples.clone();
             let t = Instant::now();
             apply_gains_cfa(&mut s, w, &pattern, prepared.gains);
+            (t.elapsed(), s)
+        });
+    }
+    // The noise estimate and the hot pixel repair read the balanced
+    // samples here, not the levels before the gains the develop gives
+    // them: the same reads, and a time, not an answer.
+    if wants("noise") {
+        time("noise", runs, || {
+            let t = Instant::now();
+            let estimate = noise::estimate_noise(&prepared.samples, w, h, &pattern).unwrap();
+            (t.elapsed(), [estimate.model.a, estimate.model.b].concat())
+        });
+    }
+    if let Some(estimate) = prepared.noise.filter(|_| wants("hotpixels")) {
+        time("hotpixels", runs, || {
+            let mut s = prepared.samples.clone();
+            let t = Instant::now();
+            hotpixels::fix_hot_pixels(
+                &mut s,
+                w,
+                h,
+                &pattern,
+                &estimate.model.after_gains(prepared.gains),
+                &hotpixels::HotPixelOptions::default(),
+            )
+            .unwrap();
             (t.elapsed(), s)
         });
     }
@@ -239,8 +263,8 @@ fn ops_alone() {
             }
         }
     }
-    // RCD and the CA correction are Bayer only; on an X-Trans frame they
-    // are left out of `all`, and out when named.
+    // RCD is Bayer only; on an X-Trans frame it is left out of `all`,
+    // and out when named.
     if wants("rcd") && rcd::is_bayer(&pattern) {
         time("rcd", runs, || {
             let t = Instant::now();
@@ -277,7 +301,7 @@ fn ops_alone() {
             });
         }
     }
-    if wants("ca") && ca::is_bayer(&pattern) {
+    if wants("ca") && ca::corrects(&pattern) {
         time("ca", runs, || {
             let t = Instant::now();
             let (out, _) =

@@ -105,8 +105,8 @@ away and rebuilt. Move a shoot to another drive and nothing breaks.
 ## What it does not do yet
 
 - A Lightroom catalog import is designed and not built yet.
-- Fujifilm X-Trans raws develop without noise reduction, hot pixel
-  repair or chromatic aberration correction for now.
+- The learned denoiser does not run on Fujifilm X-Trans raws yet; the
+  profiled denoise does.
 - The tone controls are still being tuned: their ranges and response
   curves are being fitted so that a small move does what your hands
   expect. That work gets the same care as the color science under

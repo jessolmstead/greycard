@@ -11,7 +11,12 @@
 //! The frame is cut into 16x16 blocks. In each block, per filter color,
 //! the residual of every sample against the mean of its four same-color
 //! neighbors two pixels away is squared and averaged: for white noise
-//! that is 1.25 times the variance, and texture only adds to it. Blocks
+//! that is 1.25 times the variance, and texture only adds to it. On
+//! X-Trans, whose sites of a color sit at no one offset, the residual is
+//! against every same-color site in the 5x5, weighted to be exact on a
+//! plane ([`super::sites::planar_weights`]), and each squared residual
+//! is divided by its own `1 + sum w^2`: 1.2 at a red or blue site (five
+//! neighbors), 1.06 to 1.08 at a green one (twelve to sixteen). Blocks
 //! are binned by mean level, evenly in the square root of the level so
 //! the shadows get as many bins as the highlights, and in each bin the
 //! quietest quarter of the blocks is taken as the noise-only population,
@@ -26,6 +31,7 @@
 
 use rayon::prelude::*;
 
+use super::sites::{Phases, Tap, linear, of_color, planar_weights};
 use crate::error::{Error, Result};
 use crate::raw::CfaPattern;
 
@@ -97,36 +103,85 @@ const CLIP: f32 = 0.98;
 /// The residual against four neighbors has 1 + 4/16 of the variance.
 const RESIDUAL_GAIN: f32 = 1.25;
 
-/// Estimate the noise model of a Bayer mosaic. `samples` are levels
-/// normalized to 0..1, before white balance. A frame with no unclipped
-/// blocks gives a silent model, not an error.
+/// Whether [`estimate_noise`] reads this pattern: 2x2 Bayer or X-Trans.
+pub fn measures(pattern: &CfaPattern) -> bool {
+    is_bayer(pattern) || pattern.is_xtrans()
+}
+
+/// Estimate the noise model of a Bayer or an X-Trans mosaic. `samples`
+/// are levels normalized to 0..1, before white balance. A frame with no
+/// unclipped blocks gives a silent model, not an error.
 pub fn estimate_noise(
     samples: &[f32],
     width: usize,
     height: usize,
     pattern: &CfaPattern,
 ) -> Result<NoiseEstimate> {
-    if !is_bayer(pattern) {
+    if !measures(pattern) {
         return Err(Error::Unsupported(format!(
-            "noise estimation needs a 2x2 Bayer pattern, got {pattern}"
+            "noise estimation needs a 2x2 Bayer or an X-Trans pattern, got {pattern}"
         )));
     }
-    let mut model = NoiseModel::default();
-    let mut blocks = [0usize; 3];
-    let mut bins_used = [0usize; 3];
     if width < BLOCK + 4 || height < BLOCK + 4 {
         return Ok(NoiseEstimate {
-            model,
-            blocks,
-            bins: bins_used,
+            model: NoiseModel::default(),
+            blocks: [0; 3],
+            bins: [0; 3],
         });
     }
+    let at = |i: usize| samples[i];
+    let rows = if is_bayer(pattern) {
+        block_rows(samples, width, height, pattern, |i, v| {
+            let neighbors = (at(i - 2) + at(i + 2) + at(i - 2 * width) + at(i + 2 * width)) * 0.25;
+            let r = v - neighbors;
+            r * r
+        })
+    } else {
+        // Each site's taps, and the factor that puts its squared
+        // residual on the scale the blocks divide by.
+        let table = Phases::build(pattern, |y, x| {
+            let color = pattern.color_at(y, x).rgb_index().expect("X-Trans is RGB");
+            let offsets = of_color(pattern, y, x, color, 2);
+            let weights = planar_weights(&offsets).expect("X-Trans sites span a plane");
+            let gain = 1.0 + weights.iter().map(|w| w * w).sum::<f32>();
+            let taps: Vec<Tap> = offsets
+                .iter()
+                .zip(weights)
+                .map(|(&(dy, dx), w)| (dy, dx, w))
+                .collect();
+            (linear(&taps, width), RESIDUAL_GAIN / gain)
+        });
+        block_rows(samples, width, height, pattern, |i, v| {
+            let (taps, scale) = table.at(i / width, i % width);
+            let neighbors: f32 = taps
+                .iter()
+                .map(|&(o, w)| w * at((i as isize + o) as usize))
+                .sum();
+            let r = v - neighbors;
+            r * r * scale
+        })
+    };
+    Ok(fit_bins(rows))
+}
 
-    // Per channel, per bin: (mean level, noise variance estimate) per block.
-    // Block rows in parallel, each with its own bins, merged in order.
-    let at = |y: usize, x: usize| samples[y * width + x];
+/// Per row of blocks, each channel's bins and its count of blocks.
+type BlockRows = Vec<(Bins, [usize; 3])>;
+
+/// Per channel, per bin: (mean level, noise variance estimate) per
+/// block. Block rows in parallel, each with its own bins.
+/// `residual(i, v)` is the squared residual of the sample `v` at index
+/// `i` against its same-color neighbors, on the scale where white noise
+/// reads [`RESIDUAL_GAIN`] times its variance; it reads up to two sites
+/// out either way.
+fn block_rows(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    residual: impl Fn(usize, f32) -> f32 + Sync,
+) -> BlockRows {
     let block_rows: Vec<usize> = (2..height - 2 - BLOCK + 1).step_by(BLOCK).collect();
-    let rows: Vec<(Bins, [usize; 3])> = block_rows
+    block_rows
         .par_iter()
         .map(|&by| {
             let mut bins: Bins = std::array::from_fn(|_| vec![Vec::new(); BINS]);
@@ -138,7 +193,8 @@ pub fn estimate_noise(
                 let mut clipped = false;
                 'block: for y in by..by + BLOCK {
                     for x in bx..bx + BLOCK {
-                        let v = at(y, x);
+                        let i = y * width + x;
+                        let v = samples[i];
                         if v >= CLIP {
                             clipped = true;
                             break 'block;
@@ -146,12 +202,9 @@ pub fn estimate_noise(
                         let c = pattern
                             .color_at(y, x)
                             .rgb_index()
-                            .expect("Bayer patterns are RGB");
-                        let neighbors =
-                            (at(y, x - 2) + at(y, x + 2) + at(y - 2, x) + at(y + 2, x)) * 0.25;
-                        let r = v - neighbors;
+                            .expect("measured patterns are RGB");
                         sum[c] += v as f64;
-                        sq[c] += (r * r) as f64;
+                        sq[c] += residual(i, v) as f64;
                         n[c] += 1;
                     }
                 }
@@ -171,7 +224,16 @@ pub fn estimate_noise(
             }
             (bins, blocks)
         })
-        .collect();
+        .collect()
+}
+
+/// The model from the blocks: the rows' bins merged in order, then per
+/// channel the quietest quarter of each bin and a weighted line through
+/// the bins.
+fn fit_bins(rows: BlockRows) -> NoiseEstimate {
+    let mut model = NoiseModel::default();
+    let mut blocks = [0usize; 3];
+    let mut bins_used = [0usize; 3];
     let mut bins: Bins = std::array::from_fn(|_| vec![Vec::new(); BINS]);
     for (row_bins, row_blocks) in rows {
         for c in 0..3 {
@@ -233,11 +295,11 @@ pub fn estimate_noise(
         model.b[c] = b as f32;
     }
 
-    Ok(NoiseEstimate {
+    NoiseEstimate {
         model,
         blocks,
         bins: bins_used,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -362,6 +424,59 @@ pub(crate) mod tests {
                 "channel {c}: sigma {got} vs {want}; {est:?}"
             );
         }
+    }
+
+    /// The X-Trans estimate at several of the pattern's phases: a known
+    /// model comes back from a noisy ramp, and the ramp without noise is
+    /// silent, which a plain mean of a site's lopsided neighbors would
+    /// not give (it reads the ramp a fraction of a pixel away).
+    #[test]
+    fn recovers_a_known_model_on_x_trans() {
+        let (w, h) = (512, 384);
+        let truth = NoiseModel {
+            a: [4e-4, 2e-4, 6e-4],
+            b: [4e-6, 2e-6, 8e-6],
+        };
+        for (dx, dy) in [(0, 0), (2, 2), (5, 1), (3, 4)] {
+            let pattern = CfaPattern::xtrans().shifted(dx, dy);
+            let clean = estimate_noise(&ramp(w, h), w, h, &pattern).unwrap();
+            assert!(clean.model.is_silent(), "({dx}, {dy}): {clean:?}");
+            let cfa = noisy(&ramp(w, h), &pattern, w, &truth, 7 + dx as u64);
+            let est = estimate_noise(&cfa, w, h, &pattern).unwrap();
+            // Red and blue are two sites in nine, against one in four
+            // on Bayer, so the line's intercept, which carries the
+            // estimate at the bottom of the ramp, scatters more there:
+            // up to 20% over these phases and seeds, within 6% from
+            // 0.1 up.
+            for c in 0..3 {
+                assert!(est.bins[c] >= 8, "{est:?}");
+                for (level, within) in [(0.02, 0.25), (0.1, 0.12), (0.3, 0.12), (0.7, 0.12)] {
+                    let (got, want) = (est.model.sigma(c, level), truth.sigma(c, level));
+                    assert!(
+                        (got / want - 1.0).abs() < within,
+                        "({dx}, {dy}) channel {c} at {level}: sigma {got} vs {want}; {est:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn other_patterns_are_refused() {
+        let quad = CfaPattern::new(
+            4,
+            4,
+            [0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 2]
+                .map(|c| match c {
+                    0 => crate::raw::CfaColor::Red,
+                    1 => crate::raw::CfaColor::Green,
+                    _ => crate::raw::CfaColor::Blue,
+                })
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(!measures(&quad));
+        assert!(estimate_noise(&vec![0.5; 64 * 64], 64, 64, &quad).is_err());
     }
 
     #[test]

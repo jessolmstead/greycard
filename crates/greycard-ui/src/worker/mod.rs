@@ -245,23 +245,18 @@ pub enum LearnedReport {
     Missing(&'static greycard_ai::Model),
     /// It could not run; the engine's own path stood in.
     Failed(String),
-    /// No denoiser takes this frame's mosaic (X-Trans, so far): the
-    /// edit asked for one, learned or profiled, and the develop ran
-    /// without any. Says why.
+    /// The learned denoiser does not take this frame's mosaic (X-Trans):
+    /// the edit asked for it, and the develop ran without it. Says why.
     Unavailable(&'static str),
 }
 
-/// Why no denoiser runs on `frame`, when the edit asks for one: neither
-/// has an X-Trans version yet. Read from the layout before anything is
-/// prepared or loaded.
-fn denoise_unavailable(
-    frame: &RawFrame,
-    settings: &DevelopSettings,
-    learned: bool,
-) -> Option<&'static str> {
+/// Why the learned denoiser does not run on `frame`, when the edit asks
+/// for it: its network takes a packed 2x2 Bayer mosaic, and has no
+/// X-Trans version. Read from the layout before anything is prepared
+/// or loaded. The profiled denoise runs on X-Trans as on Bayer.
+fn denoise_unavailable(frame: &RawFrame, learned: bool) -> Option<&'static str> {
     let xtrans = matches!(&frame.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans());
-    (xtrans && (learned || settings.denoise.is_some()))
-        .then_some("no denoiser has an X-Trans version yet")
+    (xtrans && learned).then_some("the learned denoiser has no X-Trans version yet")
 }
 
 /// What the fill model did for a develop's Fill patches, by name.

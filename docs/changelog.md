@@ -52,6 +52,13 @@ note a first tester reads.
 
 ### Cameras
 
+- Fujifilm X-Trans raws now get the hot pixel repair, the profiled
+  **Denoise** and the chromatic aberration correction: a stuck colored
+  dot goes, a high ISO frame can be denoised, and red fringes along
+  high-contrast edges toward the corners are reduced (blue ones only a
+  little, for now). The learned denoiser is still not on X-Trans; its
+  tiers rest with "learned: not on X-Trans yet".
+  ([§331](https://github.com/jessolmstead/greycard/blob/master/docs/notes/331-x-trans-step-2-noise-hot-pixels-and-chromatic-aberration.md))
 - "Fit this camera's look" on a folder with no library reads a CR3's
   or RAF's metadata from the file's two ends rather than the whole file
   (about 1.5 MB of a 27 MB CR3, 64 KB of a 100 MB RAF), four files at a

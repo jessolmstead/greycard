@@ -4,7 +4,9 @@
 //! Prints one CSV line a photosite the same-color tests flag, at the
 //! sigma and ratio given, with how its other colors read: whether the
 //! repair at a given others factor takes it is a filter over these
-//! lines. Coordinates are the crop's, as the develop sees it.
+//! lines. Coordinates are the crop's, as the develop sees it. The
+//! h, v and d columns are the Bayer positions; on X-Trans they hold the
+//! two other colors in RGB order, and d is empty.
 //!
 //! ```text
 //! cargo run --release -p greycard-core --example hot_candidates -- 6 2 FILE...
@@ -58,10 +60,15 @@ fn main() {
             } else {
                 c.replacement / c.value.max(1e-9)
             };
+            // On X-Trans the classes are the two other colors, and the
+            // third is empty.
             let o: Vec<String> = c
                 .others
                 .iter()
-                .map(|n| format!("{:.6},{:.6},{:.6}", n.near, n.background, n.sigma))
+                .map(|n| match n {
+                    Some(n) => format!("{:.6},{:.6},{:.6}", n.near, n.background, n.sigma),
+                    None => ",,".into(),
+                })
                 .collect();
             // The others factor the repair compares with its setting:
             // above it, the site is spared.
