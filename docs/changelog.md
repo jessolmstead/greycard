@@ -16,10 +16,10 @@ note a first tester reads.
 
 - `greycard library import-lightroom <catalog>` brings a Lightroom
   Classic catalog across: ratings, flags, labels, keywords, titles and
-  captions exactly, the develop settings as one "Imported from Lightroom" step,
-  virtual copies as versions, collections, the smart collections that
-  translate, and the root folders as roots (`--root A:/Photos=/photos`
-  for a catalog from another machine). Without `--write` it only
+  captions exactly, the develop settings as one "Imported from
+  Lightroom" step, virtual copies as versions, collections, the smart
+  collections that translate, and the root folders as roots (`--root
+  A:/Photos=/photos` for a catalog from another machine). Without `--write` it only
   reports what it would do; point it at a copy made after Lightroom
   quit, or with the `-wal` beside it
   ([§329](https://github.com/jessolmstead/greycard/blob/master/docs/notes/329-importing-a-lightroom-catalog-part-1-the-command.md))
@@ -38,6 +38,13 @@ note a first tester reads.
 
 ### Editing
 
+- The presets' **Import...** takes several `.xmp` and `.gcp` files at
+  once; what a Lightroom preset had no place for (masks among them) is
+  named once, on the status line or a small sheet, and a file that is
+  not a preset, or names a preset you have, is left out with the reason.
+  `greycard presets --import` refuses a name you have too, unless given
+  `--replace`
+  ([§330](https://github.com/jessolmstead/greycard/blob/master/docs/notes/330-importing-presets-from-the-window.md))
 - Resting the pointer on a row of the Look list shows the picture with
   that look at the Strength set, and moving off the list puts the kept
   look back; a click keeps it. Hovering adds no history step

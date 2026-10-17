@@ -213,43 +213,192 @@ pub(crate) fn presets_missing_words(store: bool, missing: &[String]) -> String {
     }
 }
 
-/// Bring a preset file into the store, Lightroom's or this engine's,
-/// and say what came across.
-pub(crate) fn import_preset(st: &mut State, app: &App, path: &Path) {
-    let imported = match preset::import(path) {
-        Ok(i) => i,
-        Err(e) => {
-            tracing::warn!("preset import {}: {e}", file_name(path));
-            app.set_status(format!("{}: {e}", file_name(path)).into());
-            return;
-        }
-    };
+/// What one file chosen for import came to.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Brought {
+    /// In the store under `name`, carrying `carried` ("3 sections"),
+    /// with Lightroom's names for what had no place here.
+    In {
+        name: String,
+        carried: String,
+        passed: Vec<String>,
+    },
+    /// Left out, and why, as a sentence.
+    Refused(String),
+}
+
+/// How an import's report is shown: on the status line when it is one
+/// preset in and the line has room for it, else on its sheet, with the
+/// refusals in red. Either way once, and nothing of it is kept.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Report {
+    Status(String),
+    Sheet {
+        title: String,
+        refusals: Vec<String>,
+        lines: Vec<String>,
+        note: String,
+    },
+}
+
+/// The most the status line says of an import before the sheet says it
+/// instead: about what a narrow window shows of the line.
+const STATUS_ROOM: usize = 80;
+
+/// Bring each file into the store through the importer the command
+/// line's `--import` uses, show the list again, and say once what came
+/// across.
+pub(crate) fn import_presets(st: &mut State, app: &App, paths: &[PathBuf]) {
     let Some(store) = st.preset_store.as_ref() else {
         tracing::warn!("preset import: no configuration directory to save into");
-        app.set_status("no configuration directory to save into".into());
+        app.set_status("no configuration directory to keep presets in".into());
         return;
     };
-    let name = imported.preset.name.clone();
-    match store.save(&imported.preset) {
-        Ok(_) => {
-            let mut status = format!(
-                "imported {name} ({})",
-                preset::carried_words(imported.preset.sections.len(), imported.preset.parts.len())
+    let brought: Vec<Brought> = paths.iter().map(|p| bring(store, p)).collect();
+    refresh_presets(st, app);
+    show_import_report(app, import_report(&brought));
+}
+
+/// One file into the store, and what it came to.
+fn bring(store: &preset::Store, path: &Path) -> Brought {
+    let file = file_name(path);
+    // Never over a preset the list has: its bin is the way to a new
+    // copy, and a refusal here says so.
+    match store.import(path, false) {
+        Ok((written, imported)) => {
+            let preset = &imported.preset;
+            tracing::info!(
+                "preset {} imported from {} into {}",
+                preset.name,
+                path.display(),
+                written.display()
             );
-            if !imported.unmapped.is_empty() {
-                status.push_str(&format!(
-                    "; no place here for {}",
-                    imported.unmapped.join(", ")
-                ));
+            Brought::In {
+                name: preset.name.clone(),
+                carried: preset::carried_words(preset.sections.len(), preset.parts.len()),
+                passed: imported.unmapped,
             }
-            app.set_status(status.into());
         }
         Err(e) => {
-            tracing::warn!("preset {name}: not saved: {e}");
-            app.set_status(format!("saving {name}: {e}").into());
+            tracing::warn!("preset import {}: {e}", path.display());
+            Brought::Refused(refusal_words(&file, &e))
         }
     }
-    refresh_presets(st, app);
+}
+
+/// Why a file was left out, as the look sheets say a refusal: a
+/// sentence, the file named.
+pub(crate) fn refusal_words(file: &str, e: &preset::ImportError) -> String {
+    use preset::ImportError;
+    match e {
+        ImportError::Unreadable(e) => format!("{file} could not be read: {e}."),
+        ImportError::NotAPreset(why) => format!("{file} is not a preset: {why}."),
+        ImportError::Newer(_) => format!("{file} is {e}."),
+        ImportError::Nameless => format!("{file} was not imported: {e}."),
+        ImportError::Taken(name) => {
+            format!("{file} was not imported: there is a preset called \"{name}\" already.")
+        }
+        ImportError::Unsaved(_, e) => format!(
+            "{file} could not be written into the list: {}.",
+            preset::plain(e)
+        ),
+    }
+}
+
+/// What an import's report says, and where.
+pub(crate) fn import_report(brought: &[Brought]) -> Report {
+    let line = |name: &str, carried: &str, passed: &[String]| {
+        let mut line = format!("{name} ({carried})");
+        if !passed.is_empty() {
+            line.push_str(&format!("; no place here for {}", passed.join(", ")));
+        }
+        line
+    };
+    if let [
+        Brought::In {
+            name,
+            carried,
+            passed,
+        },
+    ] = brought
+    {
+        let status = format!("imported {}", line(name, carried, passed));
+        if status.chars().count() <= STATUS_ROOM {
+            return Report::Status(status);
+        }
+    }
+    let mut refusals = Vec::new();
+    let mut lines = Vec::new();
+    let mut names = Vec::new();
+    let mut passed_any = false;
+    for b in brought {
+        match b {
+            Brought::In {
+                name,
+                carried,
+                passed,
+            } => {
+                lines.push(line(name, carried, passed));
+                names.push(name.as_str());
+                passed_any |= !passed.is_empty();
+            }
+            Brought::Refused(why) => refusals.push(why.clone()),
+        }
+    }
+    let title = match (names.as_slice(), brought.len()) {
+        ([name], 1) => format!("Imported {name}"),
+        ([], 1) => "Not imported".to_string(),
+        ([], _) => "No presets imported".to_string(),
+        (_, n) if names.len() == n => format!("Imported {n} presets"),
+        (_, n) => format!("Imported {} of {n} presets", names.len()),
+    };
+    let note = if passed_any {
+        "What had no place here is named as Lightroom names it; set it by hand where a \
+         picture wants it."
+            .to_string()
+    } else {
+        String::new()
+    };
+    Report::Sheet {
+        title,
+        refusals,
+        lines,
+        note,
+    }
+}
+
+/// Put the report up: the status line, or the sheet.
+pub(crate) fn show_import_report(app: &App, report: Report) {
+    match report {
+        Report::Status(status) => app.set_status(status.into()),
+        Report::Sheet {
+            title,
+            refusals,
+            lines,
+            note,
+        } => {
+            let model = |v: Vec<String>| {
+                ModelRc::new(VecModel::from(
+                    v.into_iter()
+                        .map(slint::SharedString::from)
+                        .collect::<Vec<_>>(),
+                ))
+            };
+            // The title in the status line's own case, for when the
+            // sheet is gone: "imported 3 presets", a preset's name as
+            // it is.
+            let mut status = title.clone();
+            if let Some(first) = status.get(..1) {
+                status.replace_range(..1, &first.to_lowercase());
+            }
+            app.set_status(status.into());
+            app.set_preset_report_title(title.into());
+            app.set_preset_report_refusals(model(refusals));
+            app.set_preset_report_lines(model(lines));
+            app.set_preset_report_note(note.into());
+            app.set_preset_report_open(true);
+        }
+    }
 }
 
 /// What the LENS panel says of the open file: the profile found, or
@@ -919,13 +1068,20 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let start = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
             let app_weak = app.as_weak();
-            app.set_status("choosing a preset to import...".into());
-            export::choose_open(
-                "Import preset",
+            app.set_status("choosing presets to import...".into());
+            // As many as the user picks, Lightroom's and this engine's
+            // together. A test opens no chooser: it answers as a cancel.
+            export::choose_open_many(
+                "Import presets",
                 start,
                 (
                     "Presets".to_string(),
-                    vec!["*.xmp".into(), "*.XMP".into(), "*.gcp".into()],
+                    vec![
+                        "*.xmp".into(),
+                        "*.XMP".into(),
+                        "*.gcp".into(),
+                        "*.GCP".into(),
+                    ],
                 ),
                 move |chosen| {
                     let _ = slint::invoke_from_event_loop(move || {
@@ -939,8 +1095,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         };
                         let mut st = state.borrow_mut();
                         match chosen {
-                            Ok(Some(path)) => import_preset(&mut st, &app, &path),
-                            Ok(None) => app.set_status("import canceled".into()),
+                            Ok(paths) if paths.is_empty() => {
+                                app.set_status("import canceled".into());
+                            }
+                            Ok(paths) => import_presets(&mut st, &app, &paths),
                             Err(e) => {
                                 tracing::warn!("file chooser: {e:#}");
                                 app.set_status("the desktop offered no file chooser".into());
@@ -1197,9 +1355,239 @@ mod tests {
         )
         .unwrap();
         state.borrow_mut().preset_store = Some(preset::Store::at(d.join("store")));
-        import_preset(&mut state.borrow_mut(), &app, &file);
+        import_presets(&mut state.borrow_mut(), &app, std::slice::from_ref(&file));
         assert_eq!(app.get_status(), "imported Haze (1 part)");
+        assert!(
+            !app.get_preset_report_open(),
+            "a line that fits needs no sheet"
+        );
         crate::testing::remove_dir_retry(&d);
+    }
+
+    /// A Lightroom preset as Lightroom Classic writes one: a name
+    /// inside, settings this engine has, and some it has not (the
+    /// color noise reduction, the calibration, a mask).
+    const LIGHTROOM: &str = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   crs:PresetType="Normal"
+   crs:Version="15.0"
+   crs:ProcessVersion="11.0"
+   crs:Exposure2012="+0.50"
+   crs:Contrast2012="+20"
+   crs:Clarity2012="-35"
+   crs:ColorNoiseReduction="25"
+   crs:RedHue="+12"
+   crs:HasSettings="True">
+   <crs:Name>
+    <rdf:Alt>
+     <rdf:li xml:lang="x-default">Soft Matte</rdf:li>
+    </rdf:Alt>
+   </crs:Name>
+   <crs:MaskGroupBasedCorrections>
+    <rdf:Seq>
+     <rdf:li rdf:parseType="Resource"/>
+    </rdf:Seq>
+   </crs:MaskGroupBasedCorrections>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"#;
+
+    /// Several files chosen at once: the Lightroom preset and a
+    /// greycard one come into the store and the list, and the report
+    /// is a sheet, since two presets are more than the status line
+    /// says; what the Lightroom one passed over is named. Chosen
+    /// again, with a file that is no preset and one that is gone,
+    /// each is refused in its own words and the store is as it was.
+    #[test]
+    fn presets_imported_in_the_window_come_into_the_list_and_report_once() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let d = crate::testing::scratch_dir("preset-import-window");
+        std::fs::create_dir_all(&d).unwrap();
+        let xmp = d.join("soft-matte.xmp");
+        std::fs::write(&xmp, LIGHTROOM).unwrap();
+        let gcp = d.join("grain.gcp");
+        std::fs::write(
+            &gcp,
+            r#"{"name": "Fine Grain", "sections": ["grain"], "edit": {"grain": {"amount": 0.2}}}"#,
+        )
+        .unwrap();
+        let store = d.join("store");
+        state.borrow_mut().preset_store = Some(preset::Store::at(store.clone()));
+        refresh_presets(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_preset_names().row_count(), 0);
+
+        import_presets(&mut state.borrow_mut(), &app, &[xmp.clone(), gcp.clone()]);
+        let names: Vec<String> = app
+            .get_preset_names()
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
+        assert_eq!(names, ["Fine Grain", "Soft Matte"]);
+        assert!(store.join("soft-matte.gcp").is_file());
+        assert!(store.join("fine-grain.gcp").is_file());
+        assert!(app.get_preset_report_open());
+        assert_eq!(app.get_preset_report_title(), "Imported 2 presets");
+        assert_eq!(app.get_status(), "imported 2 presets");
+        assert_eq!(app.get_preset_report_refusals().row_count(), 0);
+        let lines: Vec<String> = app
+            .get_preset_report_lines()
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Soft Matte (2 sections); no place here for ColorNoiseReduction, RedHue, masks",
+                "Fine Grain (1 section)",
+            ]
+        );
+        assert!(app.get_preset_report_note().contains("Lightroom"));
+        // Shown once: closed, it is not put up again by anything.
+        app.set_preset_report_open(false);
+        refresh_presets(&mut state.borrow_mut(), &app);
+        assert!(!app.get_preset_report_open());
+
+        // Again, with a file that is no preset and one that is gone.
+        let before = std::fs::read_to_string(store.join("soft-matte.gcp")).unwrap();
+        let junk = d.join("notes.xmp");
+        std::fs::write(&junk, "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>").unwrap();
+        let gone = d.join("gone.gcp");
+        import_presets(&mut state.borrow_mut(), &app, &[xmp, junk, gone]);
+        assert!(app.get_preset_report_open());
+        assert_eq!(app.get_preset_report_title(), "No presets imported");
+        let refusals: Vec<String> = app
+            .get_preset_report_refusals()
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(refusals.len(), 3, "{refusals:?}");
+        assert_eq!(
+            refusals[0],
+            "soft-matte.xmp was not imported: there is a preset called \"Soft Matte\" already."
+        );
+        assert_eq!(
+            refusals[1],
+            "notes.xmp is not a preset: no Camera Raw settings in the file."
+        );
+        assert!(
+            refusals[2].starts_with("gone.gcp could not be read: "),
+            "{}",
+            refusals[2]
+        );
+        assert_eq!(app.get_preset_report_lines().row_count(), 0);
+        assert_eq!(app.get_preset_report_note(), "");
+        assert_eq!(app.get_preset_names().row_count(), 2);
+        assert_eq!(
+            std::fs::read_to_string(store.join("soft-matte.gcp")).unwrap(),
+            before
+        );
+        crate::testing::remove_dir_retry(&d);
+    }
+
+    /// The report sheet asks nothing: its OK closes it, and so does a
+    /// click outside its card, where one inside it does nothing, and
+    /// Escape. Each found where the layout put it, not guessed.
+    #[test]
+    fn the_import_report_closes_on_ok_outside_or_escape() {
+        use i_slint_backend_testing::ElementHandle;
+        let app = crate::testing::window(1);
+        let open = || {
+            show_import_report(
+                &app,
+                import_report(&[Brought::Refused(
+                    "x.gcp is not a preset: it carries nothing.".into(),
+                )]),
+            );
+            assert!(app.get_preset_report_open());
+            // Built on the next event: a pointer move at the corner.
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(0.0, 0.0),
+                });
+        };
+        let bounds = |id: &str| {
+            let e = ElementHandle::find_by_element_id(&app, id)
+                .next()
+                .unwrap_or_else(|| panic!("{id} on screen"));
+            (e.absolute_position(), e.size())
+        };
+
+        open();
+        let (at, size) = bounds("PresetReportSheet::ok");
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert!(!app.get_preset_report_open(), "OK closes it");
+
+        open();
+        let (card, card_size) = bounds("PresetReportSheet::card");
+        assert!(card.y > 20.0, "room above the card for a click");
+        crate::testing::click(&app, card.x + 12.0, card.y + 12.0);
+        assert!(
+            app.get_preset_report_open(),
+            "a click on the card is not a close"
+        );
+        crate::testing::click(&app, card.x + card_size.width / 2.0, card.y - 10.0);
+        assert!(!app.get_preset_report_open(), "a click outside closes it");
+
+        open();
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_preset_report_open(), "Escape closes it");
+    }
+
+    /// One preset in goes on the status line while the line has room;
+    /// a longer one, a refusal, or a mix go on the sheet.
+    #[test]
+    fn an_import_report_takes_the_status_line_only_when_it_fits() {
+        let one = |passed: &[&str]| Brought::In {
+            name: "Soft Matte".into(),
+            carried: "3 sections".into(),
+            passed: passed.iter().map(|p| p.to_string()).collect(),
+        };
+        assert_eq!(
+            import_report(&[one(&["masks"])]),
+            Report::Status("imported Soft Matte (3 sections); no place here for masks".into())
+        );
+        let long = &[
+            "ColorNoiseReduction",
+            "RedHue",
+            "GreenSaturation",
+            "CameraProfile Camera Portrait",
+            "masks",
+        ];
+        match import_report(&[one(long)]) {
+            Report::Sheet {
+                title,
+                refusals,
+                lines,
+                note,
+            } => {
+                assert_eq!(title, "Imported Soft Matte");
+                assert!(refusals.is_empty());
+                assert_eq!(lines.len(), 1);
+                assert!(lines[0].ends_with("Camera Portrait, masks"));
+                assert!(!note.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        let refused = Brought::Refused("x.gcp is not a preset: it carries nothing.".into());
+        match import_report(std::slice::from_ref(&refused)) {
+            Report::Sheet {
+                title, refusals, ..
+            } => {
+                assert_eq!(title, "Not imported");
+                assert_eq!(refusals, ["x.gcp is not a preset: it carries nothing."]);
+            }
+            other => panic!("{other:?}"),
+        }
+        match import_report(&[one(&[]), refused]) {
+            Report::Sheet { title, note, .. } => {
+                assert_eq!(title, "Imported 1 of 2 presets");
+                assert_eq!(note, "", "nothing was passed over");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// A bin asks and removes nothing; the Remove that names the

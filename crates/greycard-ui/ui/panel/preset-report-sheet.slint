@@ -1,0 +1,93 @@
+// The preset import's report: what came into the list from the files
+// chosen, what the mapper passed over in each, and the files that did
+// not come in and why, in red as the look sheets say a refusal. Shown
+// once, when the status line is too short for it; OK, Enter, Escape
+// or a click outside closes it, and nothing of it is kept.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { PanelButton } from "../controls.slint";
+
+export component PresetReportSheet inherits Rectangle {
+    in-out property <bool> report-open;
+    in property <string> report-title;
+    /// The files that did not come in, a sentence each.
+    in property <[string]> report-refusals;
+    /// What came in, a preset a line, and what each passed over.
+    in property <[string]> report-lines;
+    in property <string> report-note;
+
+    background: #000000a0;
+    TouchArea { clicked => { root.report-open = false; } }
+    card := Rectangle {
+        width: 480px;
+        height: sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        // The sheet takes the keys while it is up: it asks nothing, so
+        // Escape and Enter both close it.
+        FocusScope {
+            init => { self.focus(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape || (e.text == Key.Return && !e.repeat)) {
+                    root.report-open = false;
+                }
+                return accept;
+            }
+            sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: root.report-title;
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                // However many files were chosen: a long report scrolls,
+                // and its lines wrap at the sheet's width, never past it.
+                scroll := ScrollView {
+                    height: min(list.preferred-height, 280px);
+                    content-height: list.preferred-height;
+                    content-width: self.visible-width;
+                    list := VerticalLayout {
+                        width: scroll.visible-width;
+                        spacing: Theme.space-1;
+                        for line in root.report-refusals: Text {
+                            text: line;
+                            font-size: Theme.font-sm;
+                            color: Theme.label-red;
+                            wrap: word-wrap;
+                        }
+                        for line in root.report-lines: Text {
+                            text: line;
+                            font-size: Theme.font-sm;
+                            color: Theme.text;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                if root.report-note != "": Text {
+                    text: root.report-note;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: Theme.space-2; }
+                HorizontalLayout {
+                    alignment: end;
+                    ok := PanelButton {
+                        text: "OK";
+                        primary: true;
+                        clicked => { root.report-open = false; }
+                    }
+                }
+            }
+        }
+    }
+}

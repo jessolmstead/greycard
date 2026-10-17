@@ -39,10 +39,6 @@ ours, so a tester brings a library over in one go.
       names
 - [ ] X-Trans step 2: denoising, hot pixel repair and chromatic
       aberration correction on the X-Trans path (§322)
-- [ ] Lightroom preset import in the window: the CLI's `presets
-      --import` behind a button on the presets list, a file chooser
-      for `.xmp` and `.gcp`, and the mapper's report of what did not
-      carry shown once
 - [ ] RawTherapee `.pp3` import on opening a folder (Library track)
 - [ ] RAW+JPEG pairs (Library track). After the kind filter
 - [ ] Stacks (Library track). After the pairs

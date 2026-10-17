@@ -623,6 +623,9 @@ pub(crate) enum Shown {
     Imported,
     /// The model sheet, with sample text where the download's goes.
     Fetch,
+    /// The preset import's report sheet, over sample presets: two in,
+    /// one passing things over, and one refused. Nothing is imported.
+    PresetReport,
     /// The lens profiles' download as the first launch offers it.
     Lenses,
     /// The settings sheet.
@@ -685,6 +688,7 @@ impl Shown {
             "synced" => Ok(Self::Synced),
             "preset-onto-set" => Ok(Self::PresetOntoSet),
             "preset-remove" => Ok(Self::PresetRemove),
+            "preset-report" => Ok(Self::PresetReport),
             "paste" => Ok(Self::Paste),
             "pasted" => Ok(Self::Pasted),
             "import" => Ok(Self::Import),
@@ -701,9 +705,9 @@ impl Shown {
             "parts" => Ok(Self::Parts),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
-                 preset-onto-set, preset-remove, paste, pasted, import, imported, match, \
-                 matched, refit, look-remove, look-rename, root-name, delete, archive, \
-                 archive-rejects or parts, not {name}"
+                 preset-onto-set, preset-remove, preset-report, paste, pasted, import, \
+                 imported, match, matched, refit, look-remove, look-rename, root-name, \
+                 delete, archive, archive-rejects or parts, not {name}"
             )),
         }
     }
@@ -784,6 +788,32 @@ impl Shown {
                 );
                 app.set_fetch_note("Sample text: this sheet was opened for a snapshot.".into());
                 app.set_fetch_open(true);
+            }
+            Self::PresetReport => {
+                use crate::panel::assets::{Brought, import_report, show_import_report};
+                let sample = [
+                    Brought::In {
+                        name: "Soft Matte".into(),
+                        carried: "4 sections".into(),
+                        passed: vec![
+                            "ColorNoiseReduction".into(),
+                            "RedHue".into(),
+                            "CameraProfile Camera Portrait".into(),
+                            "masks".into(),
+                        ],
+                    },
+                    Brought::In {
+                        name: "Fine Grain".into(),
+                        carried: "1 section".into(),
+                        passed: Vec::new(),
+                    },
+                    Brought::Refused(
+                        "warm-film.xmp was not imported: there is a preset called \"Warm Film\" \
+                         already."
+                            .into(),
+                    ),
+                ];
+                show_import_report(app, import_report(&sample));
             }
             Self::Lenses => {
                 if let Some(state) = STATE.with(|s| s.borrow().clone()) {
@@ -1878,6 +1908,11 @@ mod tests {
         Shown::PresetRemove.open(&app);
         assert_eq!(app.get_preset_confirm_remove(), 1);
         app.set_preset_confirm_remove(-1);
+        assert_eq!(Shown::sheet("preset-report"), Ok(Shown::PresetReport));
+        Shown::PresetReport.open(&app);
+        assert!(app.get_preset_report_open());
+        assert_eq!(app.get_preset_report_title(), "Imported 2 of 3 presets");
+        app.set_preset_report_open(false);
 
         // A tool brings the Crop tab with it.
         assert_eq!(app.get_panel_tab(), "Develop");

@@ -94,7 +94,7 @@ look's file has to be on the machine where you use the preset.
 
 ### Importing presets, including Lightroom's
 
-Press **Import...** and choose a file:
+Press **Import...** and choose one file or several:
 
 - a greycard preset (`.gcp`), from another machine or another user;
 - a Lightroom or Camera Raw preset (`.xmp`).
@@ -109,9 +109,15 @@ or off only), luminance noise reduction, the post-crop vignette, grain
 and the lens profile switch.
 
 These do not: color noise reduction, defringe, the global color grade,
-calibration, a camera profile that is not Adobe's, and masks. The
-status line names any of them the file set, so you can do them by
-hand.
+calibration, a camera profile that is not Adobe's, and masks. Once the
+import is done, greycard names any of them the file set, so you can do
+them by hand: on the status line for one short preset, or on a small
+sheet when you chose several or the list is long.
+
+A file is left out, and the sheet says why, when it is not a preset,
+when it cannot be read, or when the list already has a preset of that
+name. To bring in a new copy of a preset you have, remove the old one
+first.
 
 ### Removing a preset
 

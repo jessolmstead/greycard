@@ -340,3 +340,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§327. A look previewed under the pointer](notes/327-a-look-previewed-under-the-pointer.md) (2026-10-16)
 - [§328. Importing RawTherapee profiles](notes/328-importing-rawtherapee-profiles.md) (2026-10-16)
 - [§329. Importing a Lightroom catalog, part 1: the command](notes/329-importing-a-lightroom-catalog-part-1-the-command.md) (2026-10-16)
+- [§330. Importing presets from the window](notes/330-importing-presets-from-the-window.md) (2026-10-17)

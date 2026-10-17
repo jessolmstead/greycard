@@ -106,9 +106,14 @@ enum Command {
         /// no --apply, the versions each sidecar holds are listed
         files: Vec<PathBuf>,
         /// Preset files to bring into the store, Lightroom's .xmp or
-        /// this engine's .gcp
+        /// this engine's .gcp; a name the store has already is refused
+        /// without --replace
         #[arg(long, value_name = "FILE", num_args = 1..)]
         import: Vec<PathBuf>,
+        /// With --import, write over a preset of the same name rather
+        /// than refuse the file
+        #[arg(long, requires = "import")]
+        replace: bool,
         /// Lay this preset (by name, or a preset file's path) over
         /// each file's edit, as a step in its history
         #[arg(long, value_name = "NAME")]
@@ -557,9 +562,10 @@ fn main() -> Result<()> {
         Command::Presets {
             files,
             import,
+            replace,
             apply,
             dir,
-        } => presets(&files, &import, apply.as_deref(), dir),
+        } => presets(&files, &import, replace, apply.as_deref(), dir),
         Command::Develop {
             file,
             dng,
@@ -1414,6 +1420,17 @@ impl FetchReport {
     }
 }
 
+/// A preset file's refusal as `--import` prints it, with the way past
+/// a name the store has.
+fn not_imported(path: &std::path::Path, e: &greycard_edit::preset::ImportError) -> String {
+    let hint = if matches!(e, greycard_edit::preset::ImportError::Taken(_)) {
+        "; --replace writes over it"
+    } else {
+        ""
+    };
+    format!("not imported  {}: {e}{hint}", path.display())
+}
+
 /// The lens corrections on the developed picture, from the database's
 /// profile when one is asked for and found, and the manual ones.
 /// The presets subcommand: what the store holds, and imports and
@@ -1421,6 +1438,7 @@ impl FetchReport {
 fn presets(
     files: &[PathBuf],
     import: &[PathBuf],
+    replace: bool,
     apply: Option<&str>,
     dir: Option<PathBuf>,
 ) -> Result<()> {
@@ -1437,13 +1455,20 @@ fn presets(
             store
         }
     };
+    // Every file tried, as the window tries them: a refusal is said
+    // where it falls and the rest still come in, and the run fails at
+    // the end if any was refused.
+    let mut refused = 0;
     for path in import {
-        let greycard_edit::lightroom::Imported { preset, unmapped } =
-            greycard_edit::preset::import(path)
-                .with_context(|| format!("reading {} as a preset", path.display()))?;
-        let written = store
-            .save(&preset)
-            .with_context(|| format!("saving {}", preset.name))?;
+        let (written, greycard_edit::lightroom::Imported { preset, unmapped }) =
+            match store.import(path, replace) {
+                Ok(got) => got,
+                Err(e) => {
+                    eprintln!("{}", not_imported(path, &e));
+                    refused += 1;
+                    continue;
+                }
+            };
         println!(
             "imported      {} ({}) into {}",
             preset.name,
@@ -1453,6 +1478,9 @@ fn presets(
         if !unmapped.is_empty() {
             println!("              no place here for {}", unmapped.join(", "));
         }
+    }
+    if refused > 0 {
+        anyhow::bail!("{refused} of {} preset files not imported", import.len());
     }
     if let Some(name) = apply {
         let entry = store
@@ -2922,6 +2950,70 @@ impl std::str::FromStr for AutoF32 {
 
 #[cfg(test)]
 mod tests {
+    /// `--import` refuses a name the store has and says how to
+    /// replace it, tries every file whatever is refused, and fails at
+    /// the end; `--replace` writes over the one there, in its file.
+    #[test]
+    fn a_preset_import_replaces_only_on_asking() {
+        use std::path::PathBuf;
+        let d =
+            std::env::temp_dir().join(format!("greycard-cli-preset-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let store = d.join("store");
+        let gcp = d.join("grain.gcp");
+        let write = |amount: f32| {
+            std::fs::write(
+                &gcp,
+                format!(
+                    r#"{{"name": "Fine Grain", "sections": ["grain"],
+                        "edit": {{"grain": {{"amount": {amount}}}}}}}"#
+                ),
+            )
+            .unwrap()
+        };
+        let open = || greycard_edit::preset::Store::at(store.clone());
+        let amount = || open().find("Fine Grain").unwrap().preset.edit.grain.amount;
+        let import = |paths: &[PathBuf], replace| {
+            super::presets(&[], paths, replace, None, Some(store.clone()))
+        };
+        write(0.2);
+        import(std::slice::from_ref(&gcp), false).unwrap();
+        assert_eq!(amount(), 0.2);
+
+        // Refused, and the files after the refusals still tried: a
+        // file that is no preset first, the name the store has, then
+        // a new one, which comes in. The run fails at the end.
+        write(0.5);
+        let junk = d.join("junk.xmp");
+        std::fs::write(&junk, "not xml").unwrap();
+        let other = d.join("other.gcp");
+        std::fs::write(
+            &other,
+            r#"{"name": "Other", "sections": ["grain"], "edit": {"grain": {"amount": 0.1}}}"#,
+        )
+        .unwrap();
+        let failed = import(&[junk, gcp.clone(), other], false).unwrap_err();
+        assert_eq!(failed.to_string(), "2 of 3 preset files not imported");
+        assert!(open().find("Other").is_some(), "tried after the refusals");
+        assert_eq!(amount(), 0.2, "refused, the one there is as it was");
+        // What it printed for the name the store has.
+        let e = open().import(&gcp, false).unwrap_err();
+        assert_eq!(
+            super::not_imported(&gcp, &e),
+            format!(
+                "not imported  {}: there is a preset called \"Fine Grain\" already; \
+                 --replace writes over it",
+                gcp.display()
+            )
+        );
+
+        import(std::slice::from_ref(&gcp), true).unwrap();
+        assert_eq!(amount(), 0.5);
+        assert_eq!(std::fs::read_dir(&store).unwrap().count(), 2);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
     /// Left out, the demosaic is the mosaic's default; asked, it is
     /// taken where the mosaic takes it and refused where it does not.
     #[test]

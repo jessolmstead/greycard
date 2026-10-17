@@ -923,6 +923,102 @@ pub fn import(path: &Path) -> Result<crate::lightroom::Imported> {
     })
 }
 
+/// Why a preset file did not come into the store.
+#[derive(Debug, thiserror::Error)]
+pub enum ImportError {
+    /// The file would not read.
+    #[error("{0}")]
+    Unreadable(std::io::Error),
+    /// It read, and is not a preset: not XMP with Camera Raw settings
+    /// in it, not a preset's JSON, or one that carries nothing this
+    /// engine has. Why, in words.
+    #[error("not a preset: {0}")]
+    NotAPreset(String),
+    /// A preset of ours from a build newer than this one: its schema.
+    #[error("from a newer greycard (schema {0})")]
+    Newer(u32),
+    /// A preset whose name is blank, which no row could show.
+    #[error("a preset needs a name")]
+    Nameless,
+    /// The store has a preset of this name, in any case: the stored
+    /// one's name, as the list shows it.
+    #[error("there is a preset called \"{0}\" already")]
+    Taken(String),
+    /// It read, and could not be written into the store.
+    #[error("saving {0}: {why}", why = plain(.1))]
+    Unsaved(String, Error),
+}
+
+/// An error's own words: a file system's without the "sidecar: " that
+/// [`Error::Io`] puts before them, which a preset is not.
+pub fn plain(e: &Error) -> String {
+    match e {
+        Error::Io(e) => e.to_string(),
+        e => e.to_string(),
+    }
+}
+
+impl Store {
+    /// Bring a preset file into the store: Lightroom's `.xmp` or this
+    /// engine's `.gcp`, read as [`import`] reads it, with what did not
+    /// come across. The editor's Import and the command line's
+    /// `--import` both come here.
+    ///
+    /// A name the store has already is refused rather than written
+    /// over, where a save from the editor writes over it: a file
+    /// brought in is not necessarily a newer copy of the one there, and
+    /// the one there may be the user's own. A blank name is refused, as
+    /// a save refuses one. With `replace` the caller says it is, and the
+    /// one there is written over in its own file; the window refuses,
+    /// having a Remove, and the command line replaces on `--replace`.
+    /// A new name's file is the first free one, so a different name
+    /// with the same slug ("Warm, Film" beside "Warm Film") takes no
+    /// other preset's file either.
+    pub fn import(
+        &self,
+        path: &Path,
+        replace: bool,
+    ) -> std::result::Result<(PathBuf, crate::lightroom::Imported), ImportError> {
+        let imported = import(path).map_err(|e| match e {
+            Error::Io(e) => ImportError::Unreadable(e),
+            Error::Newer(v) => ImportError::Newer(v),
+            Error::Json(e) => ImportError::NotAPreset(e.to_string()),
+            Error::Preset(why) | Error::Xmp(why) | Error::Pp3(why) => ImportError::NotAPreset(why),
+        })?;
+        let preset = &imported.preset;
+        if preset.is_empty() {
+            let why = match imported.unmapped.as_slice() {
+                [] => "it carries nothing".to_string(),
+                passed => format!("nothing in it has a place here ({})", passed.join(", ")),
+            };
+            return Err(ImportError::NotAPreset(why));
+        }
+        let name = preset.name.trim();
+        if name.is_empty() {
+            return Err(ImportError::Nameless);
+        }
+        let there = self
+            .list()
+            .into_iter()
+            .find(|e| e.preset.name.trim().eq_ignore_ascii_case(name));
+        let written = match there {
+            Some(entry) if replace => entry.path,
+            Some(entry) => return Err(ImportError::Taken(entry.preset.name)),
+            None => {
+                let slug = slug(name);
+                std::iter::once(self.path_for(name))
+                    .chain((2..).map(|n| self.dir.join(format!("{slug}-{n}.{EXTENSION}"))))
+                    .find(|p| !p.exists())
+                    .expect("a free file name")
+            }
+        };
+        preset
+            .save_to(&written)
+            .map_err(|e| ImportError::Unsaved(name.to_string(), e))?;
+        Ok((written, imported))
+    }
+}
+
 /// A file's stem as a name.
 fn stem_name(path: &Path) -> String {
     path.file_stem()
@@ -2011,6 +2107,127 @@ mod tests {
         assert_eq!(got.preset.edit.grain.amount, 0.2);
         assert!(got.unmapped.is_empty());
         assert!(import(&d.join("none.gcp")).is_err());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// The store's import: a preset in, under its slug, with what did
+    /// not come across; a name the store has refused in any case, the
+    /// one there untouched; a file that is no preset, or carries
+    /// nothing, refused; and a name whose slug another preset's file
+    /// has takes the next file, not that one.
+    #[test]
+    fn the_store_imports_and_refuses_a_name_it_has() {
+        let d = dir("store-import");
+        std::fs::create_dir_all(&d).unwrap();
+        let store = Store::at(d.join("store"));
+        let xmp = d.join("faded.xmp");
+        std::fs::write(&xmp, r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="+1.0" crs:RedHue="+10"/></rdf:RDF></x:xmpmeta>"#).unwrap();
+        let (written, got) = store.import(&xmp, false).unwrap();
+        assert_eq!(written, store.dir().join("faded.gcp"));
+        assert_eq!(got.preset.name, "faded");
+        assert_eq!(got.unmapped, vec!["RedHue"]);
+        assert_eq!(store.list().len(), 1);
+
+        // Again, and as another case: refused, and the file the same.
+        let before = std::fs::read_to_string(&written).unwrap();
+        let other = d.join("FADED.gcp");
+        std::fs::write(
+            &other,
+            r#"{"sections": ["grain"], "edit": {"grain": {"amount": 0.2}}}"#,
+        )
+        .unwrap();
+        for path in [&xmp, &other] {
+            match store.import(path, false) {
+                // The stored one's name, not the incoming "FADED".
+                Err(ImportError::Taken(name)) => assert_eq!(name, "faded"),
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(std::fs::read_to_string(&written).unwrap(), before);
+
+        // Asked to replace: the other case's file goes over the one
+        // there, in that one's own file, and the store has one still.
+        let (replaced, got) = store.import(&other, true).unwrap();
+        assert_eq!(replaced, written);
+        assert_eq!(got.preset.name, "FADED");
+        assert_eq!(store.list().len(), 1);
+        assert_eq!(store.list()[0].preset.edit.grain.amount, 0.2);
+        // And back, for what follows.
+        store.import(&xmp, true).unwrap();
+        assert_eq!(std::fs::read_to_string(&written).unwrap(), before);
+
+        // Not a preset, nothing in it, not there.
+        let junk = d.join("junk.xmp");
+        std::fs::write(&junk, "not xml at all").unwrap();
+        assert!(matches!(
+            store.import(&junk, false),
+            Err(ImportError::NotAPreset(_))
+        ));
+        let masks = d.join("masks.xmp");
+        std::fs::write(&masks, r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:RedHue="+10"/></rdf:RDF></x:xmpmeta>"#).unwrap();
+        match store.import(&masks, false) {
+            Err(ImportError::NotAPreset(why)) => assert!(why.contains("RedHue"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            store.import(&d.join("gone.xmp"), false),
+            Err(ImportError::Unreadable(_))
+        ));
+        // A name of spaces alone, which no row could show, and one of
+        // ours from a newer build.
+        let blank = d.join("blank.gcp");
+        std::fs::write(
+            &blank,
+            r#"{"name": "   ", "sections": ["grain"], "edit": {"grain": {"amount": 0.2}}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            store.import(&blank, true),
+            Err(ImportError::Nameless)
+        ));
+        let newer = d.join("newer.gcp");
+        std::fs::write(
+            &newer,
+            format!(
+                r#"{{"version": {}, "name": "Next", "sections": ["grain"], "edit": {{}}}}"#,
+                VERSION + 1
+            ),
+        )
+        .unwrap();
+        match store.import(&newer, false) {
+            Err(e @ ImportError::Newer(v)) => {
+                assert_eq!(v, VERSION + 1);
+                assert_eq!(
+                    e.to_string(),
+                    format!("from a newer greycard (schema {})", VERSION + 1)
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        // A write that fails says so in the file system's words.
+        let unsaved = ImportError::Unsaved(
+            "Other".into(),
+            Error::Io(std::io::Error::other("disk full")),
+        );
+        assert_eq!(unsaved.to_string(), "saving Other: disk full");
+        assert_eq!(store.list().len(), 1);
+
+        // "Faded!" is another name with the same slug: its own file.
+        let bang = d.join("bang.gcp");
+        std::fs::write(
+            &bang,
+            r#"{"name": "Faded!", "sections": ["grain"], "edit": {"grain": {"amount": 0.2}}}"#,
+        )
+        .unwrap();
+        let (written, _) = store.import(&bang, false).unwrap();
+        assert_eq!(written, store.dir().join("faded-2.gcp"));
+        assert_eq!(
+            std::fs::read_to_string(store.dir().join("faded.gcp")).unwrap(),
+            before
+        );
+        assert_eq!(store.list().len(), 2);
         std::fs::remove_dir_all(&d).unwrap();
     }
 

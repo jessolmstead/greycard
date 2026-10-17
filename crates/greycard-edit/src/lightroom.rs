@@ -68,6 +68,16 @@ pub fn read(xml: &str, fallback: &str) -> Result<Imported> {
                 && !child.children().any(|n| n.is_element())
             {
                 keys.insert(key.to_string(), text.to_string());
+            } else if child.descendants().any(|n| {
+                n.is_element()
+                    && n != child
+                    && !matches!(n.tag_name().name(), "Seq" | "Bag" | "Alt")
+            }) {
+                // A structure (the masks, the spots healed, the lens
+                // blur) is kept as its key alone, as a catalog's
+                // table is, so what it holds is named among what did
+                // not come across. An empty list holds nothing.
+                keys.insert(key.to_string(), String::new());
             }
         }
     }
@@ -996,6 +1006,30 @@ mod tests {
         let Imported { preset, unmapped } = read(xml, "x").unwrap();
         assert!(preset.sections.is_empty());
         assert_eq!(unmapped, vec!["WhiteBalance"]);
+    }
+
+    /// A preset's masks and spots are structures in its XMP, not
+    /// values: named among what did not come across, as a catalog's
+    /// are, and an empty list of them is nothing to name.
+    #[test]
+    fn an_xmp_presets_masks_and_spots_are_named() {
+        let xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="+0.5">
+            <crs:MaskGroupBasedCorrections>
+              <rdf:Seq><rdf:li rdf:parseType="Resource"><crs:What>Correction</crs:What></rdf:li></rdf:Seq>
+            </crs:MaskGroupBasedCorrections>
+            <crs:RetouchAreas><rdf:Seq><rdf:li>x</rdf:li></rdf:Seq></crs:RetouchAreas>
+            <crs:PaintBasedCorrections><rdf:Seq/></crs:PaintBasedCorrections>
+          </rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        let Imported { preset, unmapped } = read(xml, "x").unwrap();
+        assert_eq!(preset.edit.light.exposure, 0.5);
+        assert_eq!(unmapped, vec!["spots", "masks"]);
+        // Only an empty list: nothing.
+        let xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="+0.5">
+            <crs:PaintBasedCorrections><rdf:Seq/></crs:PaintBasedCorrections>
+          </rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        assert!(read(xml, "x").unwrap().unmapped.is_empty());
     }
 
     #[test]

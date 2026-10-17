@@ -35,6 +35,7 @@ import { ArchiveSheet, ArchiveCard } from "panel/archive-sheet.slint";
 import { ArchiveRejectsSheet } from "panel/archive-rejects-sheet.slint";
 import { MatchSheet } from "panel/match-sheet.slint";
 import { PresetSheet } from "panel/preset-sheet.slint";
+import { PresetReportSheet } from "panel/preset-report-sheet.slint";
 import { SyncSheet } from "panel/sync-sheet.slint";
 import { ExportSheet } from "panel/deliver.slint";
 import { ImportSheet } from "panel/import-sheet.slint";
@@ -900,6 +901,13 @@ export component App inherits Window {
     /// names it; -1 for none. Nothing is removed until then.
     in-out property <int> preset-confirm-remove: -1;
     callback preset-import();
+    /// The import's report, when the status line is too short for it:
+    /// what came in, what each passed over, and the files refused.
+    in-out property <bool> preset-report-open: false;
+    in property <string> preset-report-title: "";
+    in property <[string]> preset-report-refusals: [];
+    in property <[string]> preset-report-lines: [];
+    in property <string> preset-report-note: "";
     callback preset-save-open();
     in-out property <bool> preset-open: false;
     in-out property <string> preset-name: "";
@@ -1821,7 +1829,7 @@ export component App inherits Window {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
             || root.delete-open || root.look-remove-open || root.look-rename-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
-            || root.root-sheet-open || root.collection-sheet-open;
+            || root.root-sheet-open || root.collection-sheet-open || root.preset-report-open;
     }
 
     // A value typed into a field, set or let go: the keys are the
@@ -1846,6 +1854,9 @@ export component App inherits Window {
     changed collection-sheet-open => {
         if (!root.collection-sheet-open && !root.sheet-open()) { keys.focus(); }
     }
+    changed preset-report-open => {
+        if (!root.preset-report-open && !root.sheet-open()) { keys.focus(); }
+    }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
     forward-focus: keys;
@@ -1865,6 +1876,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.import-open) { root.import-open = false; return accept; }
             if (e.text == Key.Escape && root.fetch-open) { root.fetch-answered(false); return accept; }
             if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
+            if (e.text == Key.Escape && root.preset-report-open) { root.preset-report-open = false; return accept; }
             if (e.text == Key.Escape && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
             if (e.text == Key.Escape && root.collection-sheet-open) { root.collection-sheet-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
@@ -3471,6 +3483,15 @@ export component App inherits Window {
         preset-all(on) => { root.preset-all(on); }
         preset-join-chosen(join) => { root.preset-join-chosen(join); }
         preset-saved => { root.preset-saved(); }
+    }
+
+    // The preset import's report, once: what came in and what did not.
+    if root.preset-report-open: PresetReportSheet {
+        report-open <=> root.preset-report-open;
+        report-title: root.preset-report-title;
+        report-refusals: root.preset-report-refusals;
+        report-lines: root.preset-report-lines;
+        report-note: root.preset-report-note;
     }
 
     // The collection sheet: a name for a new collection, a smart one

@@ -759,7 +759,7 @@ const SOFTWARE: &str = concat!("greycard ", env!("CARGO_PKG_VERSION"));
 
 /// What a file chooser is being asked for. The desktop portal and the
 /// native dialogs answer the same request in their own ways, so the
-/// two calls below build one of these and hand it to `ask`.
+/// calls below build one of these and hand it to `ask`.
 struct Ask {
     /// The dialog's title.
     title: &'static str,
@@ -772,6 +772,8 @@ struct Ask {
     filter: (String, Vec<String>),
     /// A folder chooser rather than a file one.
     directory: bool,
+    /// Files to open, as many as the user picks, rather than one.
+    multiple: bool,
 }
 
 /// Ask the desktop for a file to open: `start` is the folder to open
@@ -790,6 +792,28 @@ pub fn choose_open(
             name: None,
             filter,
             directory: false,
+            multiple: false,
+        },
+        move |picked| done(picked.map(|p| p.into_iter().next())),
+    );
+}
+
+/// Ask for files to open, the same way, as many as the user picks:
+/// `done` gets them, none when the user canceled.
+pub fn choose_open_many(
+    title: &'static str,
+    start: PathBuf,
+    filter: (String, Vec<String>),
+    done: impl FnOnce(Result<Vec<PathBuf>>) + Send + 'static,
+) {
+    ask(
+        Ask {
+            title,
+            folder: start,
+            name: None,
+            filter,
+            directory: false,
+            multiple: true,
         },
         done,
     );
@@ -809,19 +833,21 @@ pub fn choose_folder(
             name: None,
             filter: (String::new(), Vec::new()),
             directory: true,
+            multiple: false,
         },
-        done,
+        move |picked| done(picked.map(|p| p.into_iter().next())),
     );
 }
 
 /// Linux asks the desktop's file chooser portal, on a thread of its
 /// own since the dialog takes as long as the user and the call is a
-/// blocking one.
+/// blocking one. `done` gets what was picked, nothing when the user
+/// canceled.
 #[cfg(target_os = "linux")]
-fn ask(request: Ask, done: impl FnOnce(Result<Option<PathBuf>>) + Send + 'static) {
+fn ask(request: Ask, done: impl FnOnce(Result<Vec<PathBuf>>) + Send + 'static) {
     // No file chooser from a test: it answers as a cancel.
     if cfg!(test) {
-        return done(Ok(None));
+        return done(Ok(Vec::new()));
     }
     // The folder it opens on is looked at here, on the thread that
     // may wait on a mount, not on the window's.
@@ -853,9 +879,9 @@ fn nearest_folder(start: &Path) -> PathBuf {
 /// on drawing. `done` then runs on that thread, where the callers'
 /// `invoke_from_event_loop` is a queued call like any other.
 #[cfg(not(target_os = "linux"))]
-fn ask(request: Ask, done: impl FnOnce(Result<Option<PathBuf>>) + Send + 'static) {
+fn ask(request: Ask, done: impl FnOnce(Result<Vec<PathBuf>>) + Send + 'static) {
     if cfg!(test) {
-        return done(Ok(None));
+        return done(Ok(Vec::new()));
     }
     // `done` is answered exactly once, by whichever of the two arms
     // gets to it: the dialog when there is an event loop to put it
@@ -867,15 +893,17 @@ fn ask(request: Ask, done: impl FnOnce(Result<Option<PathBuf>>) + Send + 'static
         slint::invoke_from_event_loop(move || {
             let dialog = native(&request);
             let spawned = slint::spawn_local(async move {
-                let picked = if request.directory {
-                    dialog.pick_folder().await
+                let picked: Vec<rfd::FileHandle> = if request.directory {
+                    dialog.pick_folder().await.into_iter().collect()
                 } else if request.name.is_some() {
-                    dialog.save_file().await
+                    dialog.save_file().await.into_iter().collect()
+                } else if request.multiple {
+                    dialog.pick_files().await.unwrap_or_default()
                 } else {
-                    dialog.pick_file().await
+                    dialog.pick_file().await.into_iter().collect()
                 };
                 if let Some(done) = slot.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                    done(Ok(picked.map(|f| f.path().to_path_buf())));
+                    done(Ok(picked.iter().map(|f| f.path().to_path_buf()).collect()));
                 }
             });
             if spawned.is_err() {
@@ -953,9 +981,11 @@ fn portal_filters(filter: (String, Vec<String>)) -> Option<PortalFilters> {
 
 /// The portal's `SaveFile` or `OpenFile`: the request's folder is
 /// where the chooser opens, its name is offered when there is one,
-/// and `directory` asks for a folder chooser rather than a file one.
+/// `directory` asks for a folder chooser rather than a file one, and
+/// `multiple` for as many files as the user picks. Nothing picked is
+/// a cancel.
 #[cfg(target_os = "linux")]
-fn portal(request: Ask) -> Result<Option<PathBuf>> {
+fn portal(request: Ask) -> Result<Vec<PathBuf>> {
     use std::collections::HashMap;
     use std::os::unix::ffi::OsStrExt;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -976,6 +1006,8 @@ fn portal(request: Ask) -> Result<Option<PathBuf>> {
         /// Only a folder chooser asks for a directory; left out
         /// otherwise.
         directory: Option<bool>,
+        /// Likewise a chooser of several files.
+        multiple: Option<bool>,
     }
 
     static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -1021,6 +1053,7 @@ fn portal(request: Ask) -> Result<Option<PathBuf>> {
         current_folder: folder,
         filters: portal_filters(request.filter),
         directory: request.directory.then_some(true),
+        multiple: request.multiple.then_some(true),
     };
     let handle: OwnedObjectPath = chooser
         .call(method, &("", request.title, options))
@@ -1033,15 +1066,21 @@ fn portal(request: Ask) -> Result<Option<PathBuf>> {
     let message = responses.next().context("the file chooser went away")?;
     let (code, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize()?;
     if code != 0 {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let uris = results.get("uris").context("a reply without a file")?;
     let uris = Vec::<String>::try_from(uris.clone()).context("the reply's file")?;
-    let uri = uris.first().context("a reply without a file")?;
-    let path = uri
-        .strip_prefix("file://")
-        .with_context(|| format!("not a local file: {uri}"))?;
-    Ok(Some(PathBuf::from(percent_decode(path))))
+    if uris.is_empty() {
+        anyhow::bail!("a reply without a file");
+    }
+    uris.iter()
+        .map(|uri| {
+            let path = uri
+                .strip_prefix("file://")
+                .with_context(|| format!("not a local file: {uri}"))?;
+            Ok(PathBuf::from(percent_decode(path)))
+        })
+        .collect()
 }
 
 /// `%20` and friends back to bytes.
