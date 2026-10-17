@@ -36,6 +36,15 @@ design note behind it.
   move off and the kept look returns. A click keeps it
   ([§327](https://github.com/jessolmstead/greycard/blob/master/docs/notes/327-a-look-previewed-under-the-pointer.md))
 
+### Masks
+
+- Landscape: a button beside Sky runs the sky model once and offers
+  what it found, largest first: Water, Foliage, Mountain, Building and
+  Sky. Each is a mask edged from the picture; Foliage keeps off a
+  found sky. A true sky above a sea of cloud that the Sky gate refused
+  now passes
+  ([§335](https://github.com/jessolmstead/greycard/blob/master/docs/notes/335-the-landscape-masks-as-built.md))
+
 ### Cameras
 
 - Fujifilm X-Trans raws get the hot pixel repair, Denoise and the

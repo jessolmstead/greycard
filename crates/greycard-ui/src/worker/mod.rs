@@ -199,6 +199,9 @@ pub enum Job {
     /// The people on the open picture, as the People model finds them,
     /// for a Part chosen to be picked among: answered with `People`.
     People,
+    /// What the Landscape button offers on the open picture, from the
+    /// sky's model run once on it: answered with `Landscape`.
+    Landscape,
     /// `frame` was saved under `edit` at `turn`: when it is the open
     /// frame and its develop is in hand, the edit's pictures are made
     /// from it and kept (`edited`); when the develop is still to land,
@@ -480,6 +483,13 @@ pub enum Outcome {
         file: Option<PathBuf>,
         people: Result<(Vec<crate::ai::Candidate>, &'static str, f64), String>,
     },
+    /// What the Landscape button offers on the open picture, `file`,
+    /// the largest first, with the provider and the seconds; or why it
+    /// could not be found.
+    Landscape {
+        file: Option<PathBuf>,
+        offers: Result<(Vec<greycard_ai::landscape::Offer>, &'static str, f64), String>,
+    },
     Fetching {
         name: &'static str,
         done: u64,
@@ -529,6 +539,8 @@ struct Queue {
     masks: std::collections::VecDeque<(Key, Shape, Option<&'static greycard_ai::Model>)>,
     /// The people on the open picture are wanted (`Job::People`).
     people: bool,
+    /// What the Landscape button offers is wanted (`Job::Landscape`).
+    landscape: bool,
     /// The saves of the open frame (`Job::Keep`), the newest a frame,
     /// taken ahead of a develop or an open queued after them, so a frame
     /// left at once still has its picture in hand when its save is seen.
@@ -746,6 +758,7 @@ enum Blame {
     Develop(u64),
     Mask(Key),
     People,
+    Landscape,
     Nobody,
 }
 
@@ -760,6 +773,7 @@ impl Blame {
             Job::ExportSet { .. } | Job::ExportFrame { .. } => Blame::Nobody,
             Job::Mask { key, .. } => Blame::Mask(*key),
             Job::People => Blame::People,
+            Job::Landscape => Blame::Landscape,
             Job::Thumbnail { .. }
             | Job::CachedThumbnail { .. }
             | Job::Fetch { .. }
@@ -781,6 +795,10 @@ impl Blame {
             Blame::People => Outcome::People {
                 file: None,
                 people: Err(message),
+            },
+            Blame::Landscape => Outcome::Landscape {
+                file: None,
+                offers: Err(message),
             },
             Blame::Nobody => return None,
         })

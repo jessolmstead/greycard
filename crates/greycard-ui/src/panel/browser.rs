@@ -1333,15 +1333,26 @@ pub(crate) fn load_sidecar_said(
     };
     let mut sidecar = match Sidecar::load(f) {
         Ok(Some(s)) => {
-            // A shape from a later build: loaded as nothing,
-            // the rest of the edit kept, and gone on the next
-            // save.
+            // A shape from a later build: loaded as nothing, the
+            // rest of the edit kept. One of a kind this build has
+            // not heard of is gone on the next save; a known kind
+            // with a route or a group it has not (a Part, a
+            // Landscape) is written back as it came.
             let unknown: usize = s.current.adjustments.iter().map(|a| a.mask.unknown()).sum();
+            let dropped: usize = s
+                .current
+                .adjustments
+                .iter()
+                .flat_map(|a| &a.mask.components)
+                .filter(|c| c.shape == Shape::Unknown)
+                .count();
             if unknown > 0 {
                 tracing::warn!(
-                    "{}: sidecar: {unknown} mask shape(s) of a kind this build does not know; \
-                     left out, and dropped when the edit is saved",
-                    file_name(f)
+                    "{}: sidecar: {unknown} mask shape(s) this build does not know, left out of \
+                     their masks; {dropped} of a kind it has not heard of, dropped when the edit \
+                     is saved, and {} kept as they came",
+                    file_name(f),
+                    unknown - dropped
                 );
             }
             s

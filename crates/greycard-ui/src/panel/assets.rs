@@ -694,6 +694,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         "without the model the shape masks nothing"
                     };
                     app.set_status(lost.into());
+                    // A Landscape press waiting on the sky's model says
+                    // what it cannot do instead.
+                    if model.id == greycard_ai::SKY.id {
+                        crate::panel::landscape::model_answered(&mut st, &app, false);
+                    }
                 }
                 (Fetch::Lenses, true) => {
                     st.fetching = true;

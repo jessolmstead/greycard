@@ -323,6 +323,8 @@ pub(crate) fn all_people(st: &mut State, app: &App) -> bool {
 pub(crate) fn stopped(st: &mut State) {
     st.choosing = None;
     st.part_pending = None;
+    // And a Landscape press, which waits on the picture the same way.
+    crate::panel::landscape::stopped(st);
 }
 
 /// Another frame's edit on the panel: its people are not the last
@@ -1008,7 +1010,7 @@ mod tests {
         let button = slint.split("parts-button := PanelButton {").nth(1).unwrap();
         assert!(button.contains("text: \"People\";"));
         assert!(button.contains("users-round.svg"));
-        let first = slint.split("Menu {").nth(1).unwrap();
+        let first = button.split("Menu {").nth(1).unwrap();
         let (top, rest) = first.split_once("MenuSeparator").unwrap();
         assert_eq!(top.matches("MenuItem").count(), 1, "{top}");
         assert!(top.contains("add-part(\"Whole person\""));

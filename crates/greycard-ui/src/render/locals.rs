@@ -135,6 +135,7 @@ impl ShapeGpu {
             | Shape::Subject {}
             | Shape::Background {}
             | Shape::Sky { .. }
+            | Shape::Landscape { .. }
             | Shape::Object { .. }
             | Shape::Part { .. } => match raster {
                 Some(r) => Self {

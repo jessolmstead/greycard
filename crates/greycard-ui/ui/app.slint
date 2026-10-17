@@ -1009,6 +1009,14 @@ export component App inherits Window {
     callback add-part(string, string);
     callback all-people();
     in-out property <bool> parts-menu-shown: false;
+    // The Landscape button joined by the mode, and a kind from what it
+    // found (Sky, Water, Foliage, Mountain or Building); the menu of
+    // what it found, its words and its kinds, opened from Rust.
+    callback find-landscape(string);
+    callback add-landscape(string);
+    in-out property <[string]> landscape-offers;
+    in-out property <[string]> landscape-kinds;
+    in-out property <bool> landscape-menu-shown: false;
     callback delete-shape-at(int);
     callback shape-toggled(int);
     callback invert-shape-toggled(int);
@@ -2518,6 +2526,11 @@ export component App inherits Window {
                             add-shape(a, b) => { root.add-shape(a, b); }
                             add-part(a, b) => { root.add-part(a, b); }
                             parts-menu-shown <=> root.parts-menu-shown;
+                            find-landscape(a) => { root.find-landscape(a); }
+                            add-landscape(a) => { root.add-landscape(a); }
+                            landscape-offers <=> root.landscape-offers;
+                            landscape-kinds <=> root.landscape-kinds;
+                            landscape-menu-shown <=> root.landscape-menu-shown;
                             delete-shape-at(a) => { root.delete-shape-at(a); }
                             shape-toggled(a) => { root.shape-toggled(a); }
                             invert-shape-toggled(a) => { root.invert-shape-toggled(a); }

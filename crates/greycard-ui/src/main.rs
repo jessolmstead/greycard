@@ -318,8 +318,10 @@ struct Cli {
     /// (the delete sheet over the selection; never answered), archive
     /// (the grid header's Back up or Bring back; never answered),
     /// archive-rejects (Remove rejects from the first archive, over the
-    /// open folder's rejects folder; never answered) or parts (the
+    /// open folder's rejects folder; never answered), parts (the
     /// masks panel's People menu, over the mask --show-mask chooses)
+    /// or landscape (the masks panel's Landscape button pressed on the
+    /// mask --show-mask chooses, its menu of what was found)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
@@ -899,6 +901,11 @@ pub(crate) struct State {
     /// A part chosen from the menu, waiting on the people (or its
     /// model's download).
     pub(crate) part_pending: Option<panel::parts::Pending>,
+    /// The Landscape button pressed, waiting on what the model finds
+    /// (or on its model's download), for the mask it was pressed on.
+    pub(crate) landscape_pending: Option<panel::landscape::Pending>,
+    /// What it found is on its menu: the mask a pick from it goes to.
+    pub(crate) landscape_offer: Option<panel::landscape::Pending>,
     /// The open picture's placed parts that ask which person they are
     /// of, by component.
     pub(crate) part_asks: HashMap<Key, ai::Ask>,
@@ -1345,6 +1352,8 @@ impl State {
             placing: None,
             choosing: None,
             part_pending: None,
+            landscape_pending: None,
+            landscape_offer: None,
             part_asks: HashMap::new(),
             part_dismissed: Default::default(),
             picking: None,
@@ -1478,6 +1487,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     sync::install(app, &state);
     panel::mask::install(app, &state, &worker);
     panel::parts::install(app, &state);
+    panel::landscape::install(app, &state);
     panel::browser::install(app, &state, &worker);
     panel::color::install(app, &state, &worker);
     panel::viewport::install(app, &state, &worker);

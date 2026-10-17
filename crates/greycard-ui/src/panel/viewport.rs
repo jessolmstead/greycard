@@ -671,6 +671,9 @@ pub(crate) enum Shown {
     Guide,
     /// The masks panel's People menu, open over the chosen mask.
     Parts,
+    /// The masks panel's Landscape button pressed on the chosen mask:
+    /// its menu of what the model found, once the answer is in.
+    Landscape,
     /// A part chosen from the People menu by its label (`--part`).
     Part(&'static str),
 }
@@ -703,11 +706,12 @@ impl Shown {
             "archive" => Ok(Self::Archive),
             "archive-rejects" => Ok(Self::ArchiveRejects),
             "parts" => Ok(Self::Parts),
+            "landscape" => Ok(Self::Landscape),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, preset-report, paste, pasted, import, \
                  imported, match, matched, refit, look-remove, look-rename, root-name, \
-                 delete, archive, archive-rejects or parts, not {name}"
+                 delete, archive, archive-rejects, parts or landscape, not {name}"
             )),
         }
     }
@@ -868,6 +872,10 @@ impl Shown {
                 app.set_panel_tab("Masks".into());
                 app.set_parts_menu_shown(true);
             }
+            Self::Landscape => {
+                app.set_panel_tab("Masks".into());
+                app.invoke_find_landscape("Add".into());
+            }
             Self::Part(label) => {
                 app.set_panel_tab("Masks".into());
                 app.invoke_add_part(label.into(), "Add".into());
@@ -885,9 +893,9 @@ pub(crate) static SNAPSHOT_KEYS: std::sync::OnceLock<String> = std::sync::OnceLo
 /// on (or after `tries` looks a fifth of a second apart), and half a
 /// second later, for the frame that shows what came.
 fn when_quiet(state: Rc<RefCell<State>>, then: impl FnOnce() + 'static, tries: u32) {
-    let quiet = state
-        .try_borrow()
-        .is_ok_and(|st| st.asked.is_empty() && st.part_pending.is_none());
+    let quiet = state.try_borrow().is_ok_and(|st| {
+        st.asked.is_empty() && st.part_pending.is_none() && st.landscape_pending.is_none()
+    });
     if quiet || tries == 0 {
         slint::Timer::single_shot(std::time::Duration::from_millis(500), then);
     } else {

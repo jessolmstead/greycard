@@ -210,6 +210,14 @@ export component AdjustmentsSection inherits Section {
     // A part from the People menu, by its label, joined by the mode.
     callback add-part(string, string);
     in-out property <bool> parts-menu-shown;
+    // The Landscape button, joined by the mode: the model runs once on
+    // the picture, and a menu of only what it found opens from Rust
+    // once the answer is in, each entry's words and the kind it makes.
+    callback find-landscape(string);
+    callback add-landscape(string);
+    in-out property <[string]> landscape-offers;
+    in-out property <[string]> landscape-kinds;
+    in-out property <bool> landscape-menu-shown;
     callback delete-shape-at(int);
     callback shape-toggled(int);
     callback invert-shape-toggled(int);
@@ -688,6 +696,35 @@ export component AdjustmentsSection inherits Section {
                             primary: root.placing == "Sky" && root.placing-into;
                             clicked => { root.add-shape("Sky", root.shape-mode); }
                         }
+                        // The picture's water, foliage, mountains and
+                        // buildings, and its sky: only what the model
+                        // found, the largest first.
+                        landscape-button := PanelButton {
+                            property <bool> want: root.landscape-menu-shown;
+                            changed want => {
+                                if (self.want) {
+                                    root.landscape-menu-shown = false;
+                                    landscape-menu.show({ x: 0, y: self.height });
+                                }
+                            }
+                            text: "Landscape";
+                            icon: @image-url("../icons/mountain.svg");
+                            clicked => { root.find-landscape(root.shape-mode); }
+                            landscape-menu := ContextMenuArea {
+                                width: 0px;
+                                height: 0px;
+                                enabled: false;
+                                Menu {
+                                    for offer[i] in root.landscape-offers: MenuItem {
+                                        title: offer;
+                                        activated => { root.add-landscape(root.landscape-kinds[i]); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
                         PanelButton {
                             text: root.component-kind == "Object" ? "Pick" : "Object";
                             icon: @image-url("../icons/mouse-pointer-click.svg");

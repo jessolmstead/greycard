@@ -196,22 +196,22 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       data we assemble); a 4096-wide raster for Sky so a 100 MP
       frame's twigs are not averaged fourfold; more hard negatives
       for the gate (sky-blue walls, a lake reflecting sky with none
-      above it, a snowfield filling the frame); the gate's core rule
-      refusing a true sky: a peak above cloud, 55% of the frame sky at
-      0.997, was refused in the landscape trial of 2026-10-17 (§175's
-      dilution again); the bimodal WebGPU prior
-- [ ] Landscape masks: Water, Mountain, Foliage, Ground and Building
-      as shapes beside Sky in the Masks tab, each a matte from the Sky
-      prior's scene labels (§175) refined at the edge as Sky is, with
-      its own gate and hard negatives (a lake reflecting sky, a
-      rockface against cloud, a hedge against a lawn); SAM 3 by phrase
-      (§252) as the fallback for a thing the labels do not name. A
-      trial over 135 archive frames (2026-10-17) found Water, Foliage,
-      Mountain and Building clean behind their gates (no wrong frame
-      kept, never a false sky on water), the outline from the labels
-      themselves with Mountain feathered; Grass and Rock second with
-      hard negatives; Sand and Snow out; Cloud, Cliff and Hedge by
-      phrase
+      above it, a snowfield filling the frame); the matte's rule for
+      unlabeled pixels inside a found sky (a peak above a sea of cloud
+      shows square holes and stepped plateaus in the cloud, §335),
+      measured over the 32 skies; the sky's outline at the frame's top
+      edge (a block of blue above a tree left to Foliage); the bimodal
+      WebGPU prior
+- [ ] Landscape masks, after the first four (§335): Mountain cut by
+      the found sky at a ridge as Foliage is (the sum dips to half over
+      ten raster pixels at a peak); Grass and Rock next, each a group
+      the schema already names, after their hard negatives (a wheat
+      field, bokeh, a rockface's plants, a concrete ledge), Ground and
+      Road after; Cloud, Cliff, Hedge and a field crop by SAM 3 phrase
+      (§252), which the labels cannot name; a cap of one group's matte
+      by its neighbors' labels; spires the labels' step under-covers;
+      more hard negatives for every bar (fog, snowfields, beaches,
+      interiors with plants)
 - [ ] The AI features on a CPU without AVX2: once the runtime is loaded
       at first use rather than at exec, a machine without x86-64-v3
       (Intel before Haswell, AMD before Zen, Pentium and Celeron parts

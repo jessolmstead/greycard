@@ -19,8 +19,9 @@
 //!    labels its pixels [`DOUBT`], not sky, and adds nothing to the
 //!    soft map, so a bluish snow slope the model half believes is not
 //!    painted because a real sky elsewhere in the frame is sure.
-//! 2. **The gate** ([`gate`]): a sure sky query, a core (the soft map
-//!    over 0.8) covering a quarter of a percent of the frame after an
+//! 2. **The gate** ([`gate`]): a sure sky query, a core (the labeled
+//!    sky where the soft map over the kept queries alone is over 0.8)
+//!    covering a quarter of a percent of the frame after an
 //!    erosion of one percent of the long side, at least half a percent
 //!    of the frame labeled sky, and that sky touching the top or a side
 //!    of the frame. Fail any and there is no sky. The trial's gate
@@ -189,6 +190,19 @@ impl Sky {
             image.height,
         ))
     }
+
+    /// The prior and the landscape's groups for `image`, at its size,
+    /// from the one model run and the one labeling pass.
+    pub fn scene(&mut self, image: &Rgb8) -> Result<crate::landscape::Scene> {
+        let boxed = letterbox(image);
+        let logits = self.logits(boxed.planes)?;
+        Ok(crate::landscape::Scene::label(
+            &logits,
+            (boxed.width, boxed.height),
+            image.width,
+            image.height,
+        ))
+    }
 }
 
 /// A picture made ready for the model: resized to `SIZE` on its long
@@ -298,8 +312,15 @@ pub struct Prior {
     pub width: usize,
     pub height: usize,
     /// The soft sky map, 0 to 1: Σ p(sky|q)·m_q over the sure sky
-    /// queries, over Σ p(any|q)·m_q over all of them.
+    /// queries, over Σ p(any|q)·m_q over all of them. The seeds, the
+    /// clip and the matte read it.
     pub sky: Vec<f32>,
+    /// The same over the kept queries alone, Σ p(any|q)·m_q over them
+    /// the denominator: the gate's core reads it, over the labeled sky.
+    /// Over every query, the model's leftover queries dilute a sure sky
+    /// to under 0.8 on some frames (a peak above a sea of cloud, 54.7%
+    /// of the frame labeled sky at 0.997, had no pixel over 0.8).
+    pub sky_kept: Vec<f32>,
     /// Each pixel's class, `UNLABELED` where no kept query claims it,
     /// `DOUBT` where a sky query the model is not sure of does.
     pub labels: Vec<u8>,
@@ -309,40 +330,43 @@ pub struct Prior {
     pub sure: f32,
 }
 
+/// Everything the labeling pass says of a picture: the sky's prior at
+/// the picture's size, and, at the size the labels were made at, what
+/// the landscape's shapes read from the same pass (`crate::landscape`),
+/// so one model run and one labeling serve the sky and them all.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Labeled {
+    pub prior: Prior,
+    /// The size the maps below are at: `WORK` on the long side, or the
+    /// picture's own when it is smaller.
+    pub work: (usize, usize),
+    /// Each pixel's winning kept query's class probability, 0 where no
+    /// kept query claims it.
+    pub win: Vec<f32>,
+    /// One soft map a landscape group, in `landscape::Group::ALL`'s
+    /// order: Σ p(group|q)·m_q over the kept queries whose class is in
+    /// the group, over Σ p(any|q)·m_q over the kept queries.
+    pub groups: Vec<Vec<f32>>,
+}
+
 impl Prior {
     /// The labeling rule, made at `WORK` on the long side and brought
     /// to `width` × `height` (the soft map bilinearly, the labels to
     /// the nearest), from the model's answer for a picture that took
     /// `content` of the square.
     pub fn label(logits: &Logits, content: (usize, usize), width: usize, height: usize) -> Self {
-        let long = width.max(height).max(1);
-        let s = (WORK as f64 / long as f64).min(1.0);
-        let ww = ((width as f64 * s).round() as usize).max(1);
-        let wh = ((height as f64 * s).round() as usize).max(1);
-        let sure = queries(&logits.class)
-            .iter()
-            .filter(|q| q.kept && (q.label == SKY_CLASS || q.label == DOUBT))
-            .map(|q| q.best)
-            .fold(0.0f32, f32::max);
-        let (sky, labels) = label_at(logits, content, ww, wh);
-        if (ww, wh) == (width, height) {
-            return Self {
-                width,
-                height,
-                sky,
-                labels,
-                sure,
-            };
-        }
-        let sky = Mask::new(ww, wh, sky).resampled(width, height).data;
-        let labels = nearest(&labels, ww, wh, width, height);
-        Self {
-            width,
-            height,
-            sky,
-            labels,
-            sure,
-        }
+        labeled(logits, content, width, height).prior
+    }
+
+    /// The sky's prior (as [`Prior::label`]) and what the landscape
+    /// reads, from one labeling pass.
+    pub fn labeled(
+        logits: &Logits,
+        content: (usize, usize),
+        width: usize,
+        height: usize,
+    ) -> Labeled {
+        labeled(logits, content, width, height)
     }
 
     /// Whether pixel `i` is labeled sky.
@@ -376,6 +400,42 @@ impl Prior {
     }
 }
 
+fn labeled(logits: &Logits, content: (usize, usize), width: usize, height: usize) -> Labeled {
+    let long = width.max(height).max(1);
+    let s = (WORK as f64 / long as f64).min(1.0);
+    let ww = ((width as f64 * s).round() as usize).max(1);
+    let wh = ((height as f64 * s).round() as usize).max(1);
+    let sure = queries(&logits.class)
+        .iter()
+        .filter(|q| q.kept && (q.label == SKY_CLASS || q.label == DOUBT))
+        .map(|q| q.best)
+        .fold(0.0f32, f32::max);
+    let at = label_at(logits, content, ww, wh);
+    let (sky, sky_kept, labels) = if (ww, wh) == (width, height) {
+        (at.sky, at.sky_kept, at.labels)
+    } else {
+        let bring = |map: Vec<f32>| Mask::new(ww, wh, map).resampled(width, height).data;
+        (
+            bring(at.sky),
+            bring(at.sky_kept),
+            nearest(&at.labels, ww, wh, width, height),
+        )
+    };
+    Labeled {
+        prior: Prior {
+            width,
+            height,
+            sky,
+            sky_kept,
+            labels,
+            sure,
+        },
+        work: (ww, wh),
+        win: at.win,
+        groups: at.groups,
+    }
+}
+
 /// Each query's class probabilities without "no object", best class,
 /// and whether it is kept.
 struct Query {
@@ -386,6 +446,9 @@ struct Query {
     kept: bool,
     /// Its class is sky and the model is sure of it.
     sure_sky: bool,
+    /// The landscape group its class is in, when it is kept and in one,
+    /// and its probability of that group (the group's classes summed).
+    group: Option<(usize, f32)>,
 }
 
 fn queries(class: &[f32]) -> Vec<Query> {
@@ -407,7 +470,16 @@ fn queries(class: &[f32]) -> Vec<Query> {
             let label = label as u8;
             let kept = best >= KEEP;
             let sure_sky = kept && label == SKY_CLASS && best >= SURE;
+            let group = crate::landscape::Group::ALL
+                .iter()
+                .position(|g| g.classes().contains(&label))
+                .filter(|_| kept)
+                .map(|g| {
+                    let classes = crate::landscape::Group::ALL[g].classes();
+                    (g, classes.iter().map(|&c| p[c as usize]).sum())
+                });
             Query {
+                group,
                 sky: p[SKY_CLASS as usize],
                 any: p.iter().sum(),
                 best,
@@ -424,12 +496,33 @@ fn queries(class: &[f32]) -> Vec<Query> {
         .collect()
 }
 
+/// What one labeling pass makes, at the size it was made at.
+struct At {
+    sky: Vec<f32>,
+    sky_kept: Vec<f32>,
+    labels: Vec<u8>,
+    win: Vec<f32>,
+    groups: Vec<Vec<f32>>,
+}
+
+/// One row of [`At`].
+#[derive(Default)]
+struct Row {
+    sky: Vec<f32>,
+    sky_kept: Vec<f32>,
+    labels: Vec<u8>,
+    win: Vec<f32>,
+    groups: Vec<Vec<f32>>,
+}
+
 /// The labeling rule at `w` × `h`: each query's mask logits cropped to
 /// the picture's part of the square, bilinearly resized (half-pixel
 /// centers, as `F.interpolate` with `align_corners=False`), then the
-/// sigmoid.
-fn label_at(logits: &Logits, content: (usize, usize), w: usize, h: usize) -> (Vec<f32>, Vec<u8>) {
+/// sigmoid. Every map the sky and the landscape read comes from the
+/// one pass over the queries.
+fn label_at(logits: &Logits, content: (usize, usize), w: usize, h: usize) -> At {
     let queries = queries(&logits.class);
+    let n_groups = crate::landscape::Group::ALL.len();
     let side = MASK_SIDE as f32 / SIZE as f32;
     let mw = ((content.0 as f32 * side).round() as usize).clamp(1, MASK_SIDE);
     let mh = ((content.1 as f32 * side).round() as usize).clamp(1, MASK_SIDE);
@@ -446,18 +539,17 @@ fn label_at(logits: &Logits, content: (usize, usize), w: usize, h: usize) -> (Ve
     };
     let xs = axis(mw, w);
     let ys = axis(mh, h);
-    let mut sky = vec![0.0f32; w * h];
-    let mut labels = vec![UNLABELED; w * h];
-    sky.par_chunks_mut(w)
-        .zip(labels.par_chunks_mut(w))
-        .enumerate()
-        .for_each(|(y, (sky_row, label_row))| {
+    let rows: Vec<Row> = (0..h)
+        .into_par_iter()
+        .map(|y| {
             let (y0, y1, ty) = ys[y];
             let mut num = vec![0.0f32; w];
             let mut den = vec![0.0f32; w];
+            let mut den_kept = vec![0.0f32; w];
+            let mut group_num = vec![vec![0.0f32; w]; n_groups];
             let mut best = vec![f32::NEG_INFINITY; w];
             let mut win_m = vec![0.0f32; w];
-            let mut win_l = vec![UNLABELED; w];
+            let mut win_q = vec![usize::MAX; w];
             for (q, query) in queries.iter().enumerate() {
                 let plane =
                     &logits.masks[q * MASK_SIDE * MASK_SIDE..(q + 1) * MASK_SIDE * MASK_SIDE];
@@ -473,24 +565,61 @@ fn label_at(logits: &Logits, content: (usize, usize), w: usize, h: usize) -> (Ve
                     }
                     den[x] += query.any * m;
                     if query.kept {
+                        den_kept[x] += query.any * m;
+                        if let Some((g, p)) = query.group {
+                            group_num[g][x] += p * m;
+                        }
                         let p = query.best * m;
                         if p > best[x] {
                             best[x] = p;
                             win_m[x] = m;
-                            win_l[x] = query.label;
+                            win_q[x] = q;
                         }
                     }
                 }
             }
+            let over = |n: &[f32], d: &[f32]| -> Vec<f32> {
+                n.iter()
+                    .zip(d)
+                    .map(|(a, b)| (a / b.max(1e-6)).clamp(0.0, 1.0))
+                    .collect()
+            };
+            let mut row = Row {
+                sky: over(&num, &den),
+                sky_kept: over(&num, &den_kept),
+                groups: group_num.iter().map(|g| over(g, &den_kept)).collect(),
+                ..Default::default()
+            };
             for x in 0..w {
-                sky_row[x] = (num[x] / den[x].max(1e-6)).clamp(0.0, 1.0);
-                label_row[x] = if win_m[x] >= 0.5 { win_l[x] } else { UNLABELED };
+                let claimed = win_m[x] >= 0.5;
+                let query = &queries[win_q[x].min(QUERIES - 1)];
+                row.labels
+                    .push(if claimed { query.label } else { UNLABELED });
+                row.win.push(if claimed { query.best } else { 0.0 });
             }
-        });
-    (sky, labels)
+            row
+        })
+        .collect();
+    let mut at = At {
+        sky: Vec::with_capacity(w * h),
+        sky_kept: Vec::with_capacity(w * h),
+        labels: Vec::with_capacity(w * h),
+        win: Vec::with_capacity(w * h),
+        groups: vec![Vec::with_capacity(w * h); n_groups],
+    };
+    for row in rows {
+        at.sky.extend(row.sky);
+        at.sky_kept.extend(row.sky_kept);
+        at.labels.extend(row.labels);
+        at.win.extend(row.win);
+        for (o, g) in at.groups.iter_mut().zip(row.groups) {
+            o.extend(g);
+        }
+    }
+    at
 }
 
-fn nearest(labels: &[u8], w: usize, h: usize, nw: usize, nh: usize) -> Vec<u8> {
+pub(crate) fn nearest<T: Copy>(labels: &[T], w: usize, h: usize, nw: usize, nh: usize) -> Vec<T> {
     let mut out = Vec::with_capacity(nw * nh);
     for y in 0..nh {
         let sy = ((y * h) / nh).min(h - 1);
@@ -542,7 +671,14 @@ pub fn gate(prior: &Prior) -> std::result::Result<(), NoSky> {
     if prior.sure < SURE {
         return Err(NoSky::Unsure(prior.sure));
     }
-    let confident: Vec<bool> = prior.sky.iter().map(|&p| p > CONFIDENT).collect();
+    // Over the kept queries, of the labeled sky: a pixel no kept query
+    // claims divides one faint mask by others there.
+    let confident: Vec<bool> = prior
+        .sky_kept
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| p > CONFIDENT && prior.is_sky(i))
+        .collect();
     let core =
         erode(&confident, w, h, r).iter().filter(|&&v| v).count() as f32 / (w * h).max(1) as f32;
     if core < MIN_CORE {
@@ -933,6 +1069,7 @@ mod tests {
         Prior {
             width: w,
             height: h,
+            sky_kept: map.clone(),
             sky: map,
             labels,
             sure: 0.999,
@@ -1151,6 +1288,40 @@ mod tests {
         assert!(middle > 0.8 && middle < 0.9, "{middle}");
         assert!(prior.sky_area() > 0.25);
         assert_eq!(gate(&prior), Ok(()));
+    }
+
+    /// A sure sky the leftover queries dilute under 0.8 everywhere over
+    /// all 200 (the peak above a sea of cloud: 54.7% of the frame
+    /// labeled sky at 0.997, no pixel over 0.8): over the kept queries
+    /// its core is the labeled sky's, and the gate passes. The map the
+    /// seeds, the clip and the matte read is the one over all of them,
+    /// unchanged.
+    #[test]
+    fn a_sure_sky_diluted_under_eight_tenths_passes_on_the_kept_queries() {
+        let top = |_: usize, y: usize| y < 80;
+        let logits = logits_of(&[(SKY_CLASS as usize, 0.997, &top)], 60);
+        let prior = Prior::label(&logits, (640, 640), 320, 320);
+        let over_all = prior.sky.iter().copied().fold(0.0f32, f32::max);
+        assert!(over_all < 0.8, "{over_all}");
+        assert!(prior.sky_kept[40 * 320 + 160] > 0.95);
+        assert!(prior.sky_area() > 0.45);
+        assert_eq!(gate(&prior), Ok(()));
+    }
+
+    /// Over the kept queries, a pixel no kept query claims divides one
+    /// faint mask by another, and can read sure sky; the core is of the
+    /// labeled sky alone, so a sliver of sky with nothing beside it
+    /// claimed has no core.
+    #[test]
+    fn the_kept_core_is_of_the_labeled_sky() {
+        let line = |_: usize, y: usize| y == 2;
+        let logits = logits_of(&[(SKY_CLASS as usize, 0.999, &line)], 0);
+        let prior = Prior::label(&logits, (640, 640), 640, 640);
+        // Unclaimed, far from the line, the kept map is the sky query's
+        // alone.
+        assert!(prior.sky_kept[400 * 640 + 320] > 0.9);
+        assert!(!prior.is_sky(400 * 640 + 320));
+        assert!(matches!(gate(&prior), Err(NoSky::NoCore(c)) if c == 0.0));
     }
 
     /// One sure sky query over a strip at the top, and one only 90 percent
@@ -1462,6 +1633,7 @@ mod tests {
         let prior = Prior {
             width: w,
             height: h,
+            sky_kept: map.clone(),
             sky: map,
             labels,
             sure: 0.999,

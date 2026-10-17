@@ -767,6 +767,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     Shape::Subject {}
                         | Shape::Background {}
                         | Shape::Sky { .. }
+                        | Shape::Landscape { .. }
                         | Shape::Part { .. }
                 )
                 && provider.is_some()
@@ -783,6 +784,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 app.set_status(format!("{name} found on {p} in {seconds:.2} s").into());
             }
             app.window().request_redraw();
+        }
+        Outcome::Landscape { file, offers } => {
+            crate::panel::landscape::found(&mut state.borrow_mut(), app, file, offers);
         }
         Outcome::People { file, people } => {
             let changed =
@@ -819,6 +823,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if model.id == greycard_ai::SAM3.id {
                 crate::panel::parts::model_answered(&mut st, app, true);
             }
+            // A Landscape press waiting on this download, or on the
+            // sheet it held, goes on.
+            crate::panel::landscape::resume(&mut st, app);
             // Either Subject file arriving means the worker's loaded
             // one, if any, may no longer be the one to use: drop it,
             // so the next Subject mask picks up the new choice rather
@@ -875,6 +882,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             tracing::error!("{name} could not be fetched: {message}");
             let status = crate::panel::mask::fetch_failed(&mut st.fetch_failed, id, name, &message);
             app.set_status(status.into());
+            if st.landscape_pending.is_some() {
+                crate::panel::landscape::resume(&mut st, app);
+            }
             // The masks waiting on it are asked about again, and may
             // now turn to another model.
             app.window().request_redraw();

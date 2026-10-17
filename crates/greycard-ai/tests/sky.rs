@@ -13,6 +13,7 @@
 //! PNG or JPEG, say a develop of a real frame) for the CPU against
 //! WebGPU comparison; without it, a picture made up here.
 
+use greycard_ai::landscape::Scene;
 use greycard_ai::sky::{self, Logits, Prior};
 use greycard_ai::{Provider, Rgb8, Sky, Store};
 
@@ -257,7 +258,8 @@ fn what_the_gate_sees() {
         let boxed = sky::letterbox(&picture);
         let content = (boxed.width, boxed.height);
         let logits = sky.logits(boxed.planes).unwrap();
-        let prior = Prior::label(&logits, content, picture.width, picture.height);
+        let scene = Scene::label(&logits, content, picture.width, picture.height);
+        let prior = &scene.prior;
         // Each query whose best class is sky: its probability, and how
         // much of the frame its mask (over a half) covers.
         let mut queries = Vec::new();
@@ -287,14 +289,27 @@ fn what_the_gate_sees() {
         let core = sky::erode(&core, w, h, r).iter().filter(|&&v| v).count() as f32 / n * 100.0;
         let core9: Vec<bool> = prior.sky.iter().map(|&v| v > 0.9).collect();
         let core9 = sky::erode(&core9, w, h, r).iter().filter(|&&v| v).count() as f32 / n * 100.0;
+        // The core over the kept queries alone, as the landscape's
+        // groups take theirs: of every pixel, and of the labeled sky.
+        let kept_core = |labeled: bool| {
+            let m: Vec<bool> = prior
+                .sky_kept
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| v > 0.8 && (!labeled || prior.is_sky(i)))
+                .collect();
+            sky::erode(&m, w, h, r).iter().filter(|&&v| v).count() as f32 / n * 100.0
+        };
         println!(
-            "{}: labeled {:.2}% | >0.8 {:.2}% >0.9 {:.2}% >0.95 {:.2}% peak {peak:.3} | core0.8 {core:.2}% core0.9 {core9:.2}% | gate {:?} | sky queries {}",
+            "{}: labeled {:.2}% | >0.8 {:.2}% >0.9 {:.2}% >0.95 {:.2}% peak {peak:.3} | core0.8 {core:.2}% core0.9 {core9:.2}% | kept core {:.2}% of labels {:.2}% | gate {:?} | sky queries {}",
             path.file_stem().unwrap().to_string_lossy(),
             prior.sky_area() * 100.0,
             over(0.8),
             over(0.9),
             over(0.95),
-            sky::gate(&prior),
+            kept_core(false),
+            kept_core(true),
+            sky::gate(prior),
             queries.join(" ")
         );
     }

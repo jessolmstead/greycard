@@ -626,6 +626,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_status("".into());
             }
             st.part_pending = None;
+            crate::panel::landscape::stopped(&mut st);
             let edit = read_edit(&app, &st.edit, st.target);
             st.edit = edit;
             let target = (i > 0).then(|| i as usize - 1);
@@ -1117,6 +1118,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 s @ (Shape::Subject {}
                 | Shape::Background {}
                 | Shape::Sky { .. }
+                | Shape::Landscape { .. }
                 | Shape::Part { .. }
                 | Shape::Luminance { .. }
                 | Shape::Color { .. }
@@ -1215,6 +1217,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 Shape::Subject {}
                 | Shape::Background {}
                 | Shape::Sky { .. }
+                | Shape::Landscape { .. }
                 | Shape::Part { .. }
                 | Shape::Luminance { .. }
                 | Shape::Color { .. }
@@ -1300,6 +1303,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     | Shape::Subject {}
                     | Shape::Background {}
                     | Shape::Sky { .. }
+                    | Shape::Landscape { .. }
                     | Shape::Object { .. }
                     | Shape::Part { .. }
                     | Shape::Luminance { .. }

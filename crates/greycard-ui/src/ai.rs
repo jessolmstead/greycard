@@ -12,9 +12,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use greycard_ai::landscape::{self, Offer, Scene};
 use greycard_ai::sam::Embedding;
 use greycard_ai::sam3::{self, Choice, Encodings, Picture, Presets, Sam3};
-use greycard_ai::sky::{self, Prior};
+use greycard_ai::sky;
+#[cfg(test)]
+use greycard_ai::sky::Prior;
 use greycard_ai::{
     Denoiser, Fill, Model, Prompt, Provider, Rgb8, Rgbf, SAM, SAM3, SKY, Sam, Sky, Store, Subject,
     refine,
@@ -89,6 +92,8 @@ pub fn model_with(
             original_failed_on_webgpu,
         )),
         Shape::Sky { .. } => Some(sky_model(have, unavailable)),
+        // The sky's prior alone: its labels are the outline.
+        Shape::Landscape { .. } if !shape.is_unknown() => Some(&SKY),
         Shape::Object { .. } => Some(&SAM),
         Shape::Part { .. } => Some(&SAM3),
         _ => None,
@@ -113,7 +118,20 @@ fn sky_model(have: impl Fn(&Model) -> bool, unavailable: &[&str]) -> &'static Mo
 /// its disk cache's key: the stages' version, and whether SAM made the
 /// outline, so a sky made without SAM is made again once SAM is in,
 /// and one made by an older pipeline once the pipeline changes.
-const SKY_PIPELINE: &str = "sky-1";
+const SKY_PIPELINE: &str = "sky-2";
+
+/// What a Landscape raster was made by beside the file and the shape,
+/// in its disk cache's key: the groups' gates and edges, so one made by
+/// an older rule is made again.
+const LANDSCAPE_PIPELINE: &str = "landscape-2";
+
+/// The found sky Foliage is cut by, by base develop and raster size,
+/// and what the status line said of it: a Sky with no picks too.
+type SkyCut = (
+    (u64, (usize, usize)),
+    Option<greycard_ai::Mask>,
+    Option<String>,
+);
 
 /// What a Part raster was made by beside the file and the shape, in
 /// its disk cache's key: the routes' and the people's version, so a
@@ -140,6 +158,7 @@ fn background_or_not(shape: &Shape, base: &[u8]) -> Vec<u8> {
 pub fn prompted(shape: &Shape) -> bool {
     match shape {
         Shape::Subject {} | Shape::Background {} | Shape::Sky { .. } | Shape::Part { .. } => true,
+        Shape::Landscape { .. } => !shape.is_unknown(),
         Shape::Object { picks, boxes } => !picks.is_empty() || !boxes.is_empty(),
         _ => false,
     }
@@ -156,9 +175,15 @@ pub struct Ai {
     subject: Option<Subject>,
     sam: Option<Sam>,
     sky: Option<Sky>,
-    /// The sky prior of base develop `stamp`, kept like the embedding,
-    /// so a pick on a Sky shape decodes again without running it.
-    sky_prior: Option<(u64, Prior)>,
+    /// The sky's prior and the landscape's groups of base develop
+    /// `stamp`, from one model run and one labeling, kept like the
+    /// embedding: a pick on a Sky shape decodes again without running
+    /// it, and the Landscape button, a Sky and every Landscape shape on
+    /// the picture share it.
+    scene: Option<(u64, Scene, Provider)>,
+    /// The found sky Foliage is cut by, of base develop `stamp` at a
+    /// raster size, or none where the sky's gate finds no sky.
+    sky_cut: Option<SkyCut>,
     /// What the last Sky raster took, stage by stage.
     pub(crate) last_sky: Option<SkyReport>,
     fill: Option<Fill>,
@@ -205,6 +230,11 @@ pub struct Ai {
     /// test to set the two edges side by side.
     #[cfg(test)]
     pub(crate) sams_edge_only: bool,
+    /// How many times the sky model has run for a scene: for a test
+    /// that the Landscape button, a Sky and the Landscape shapes share
+    /// one run.
+    #[cfg(test)]
+    pub(crate) scene_runs: usize,
 }
 
 /// Why the learned denoiser is not to be had.
@@ -589,7 +619,8 @@ impl Ai {
             subject: None,
             sam: None,
             sky: None,
-            sky_prior: None,
+            scene: None,
+            sky_cut: None,
             last_sky: None,
             fill: None,
             denoiser: None,
@@ -607,13 +638,15 @@ impl Ai {
             subject_matte: None,
             #[cfg(test)]
             sams_edge_only: false,
+            #[cfg(test)]
+            scene_runs: 0,
         }
     }
 
     /// The sky prior of the last develop a Sky raster was made on.
     #[cfg(test)]
     pub(crate) fn sky_prior(&self) -> Option<&Prior> {
-        self.sky_prior.as_ref().map(|p| &p.1)
+        self.scene.as_ref().map(|s| &s.1.prior)
     }
 
     /// Models from `store` on `providers` alone, and no file, so no
@@ -658,7 +691,8 @@ impl Ai {
         self.fills.clear();
         self.preview = None;
         self.embedding = None;
-        self.sky_prior = None;
+        self.scene = None;
+        self.sky_cut = None;
         self.subject_matte = None;
         self.encodings.clear();
         self.people = None;
@@ -902,7 +936,7 @@ impl Ai {
         let file = self.file.as_ref()?;
         let model = match shape {
             Shape::Subject {} | Shape::Background {} => self.subject_model(model)?,
-            Shape::Sky { .. } => &SKY,
+            Shape::Sky { .. } | Shape::Landscape { .. } => &SKY,
             _ => model_for(shape, self.store.as_ref(), &[])?,
         };
         let prompt = serde_json::to_string(shape).ok()?;
@@ -918,6 +952,21 @@ impl Ai {
         }
         if matches!(shape, Shape::Part { .. }) {
             PART_PIPELINE.hash(&mut h);
+        }
+        if matches!(shape, Shape::Landscape { .. }) {
+            LANDSCAPE_PIPELINE.hash(&mut h);
+        }
+        // Foliage is cut by the sky, whose outline is SAM's once SAM
+        // is in, made by the sky's stages: made again when either
+        // changes, as a sky is.
+        if matches!(
+            shape,
+            Shape::Landscape {
+                group: greycard_edit::mask::LandscapeGroup::Foliage
+            }
+        ) {
+            SKY_PIPELINE.hash(&mut h);
+            store.have(&SAM).hash(&mut h);
         }
         // Made again with Subject's edge once a Subject model is in.
         if takes_subject_edge(shape) {
@@ -948,9 +997,10 @@ impl Ai {
         {
             return Ready::Cached;
         }
-        // A Sky is the prior's to make, SAM only sharpening its outline.
+        // A Sky is the prior's to make, SAM only sharpening its outline;
+        // a Landscape shape the prior's alone.
         let model = match shape {
-            Shape::Sky { .. } => Some(&SKY),
+            Shape::Sky { .. } | Shape::Landscape { .. } => Some(&SKY),
             _ => model_for(shape, self.store.as_ref(), &[]),
         };
         match model {
@@ -1032,7 +1082,7 @@ impl Ai {
             && s == shape
         {
             return Ok(Made {
-                note: self.sky_note(shape, r),
+                note: self.empty_note(shape, r),
                 raster: r.clone(),
                 provider: None,
                 seconds: 0.0,
@@ -1050,7 +1100,7 @@ impl Ai {
             self.cache
                 .insert((key, turn), (shape.clone(), raster.clone()));
             return Ok(Made {
-                note: self.sky_note(shape, &raster),
+                note: self.empty_note(shape, &raster),
                 raster,
                 provider: None,
                 seconds: 0.0,
@@ -1147,8 +1197,21 @@ impl Ai {
         }
         if let Shape::Sky { picks } = shape {
             let start = Instant::now();
-            let (matte, provider, note) =
-                self.sky_matte(stamp, image, picks, aspect, (RASTER_WIDTH, height), &store)?;
+            let size = (RASTER_WIDTH, height);
+            // With no picks, the sky a Foliage was cut by on this
+            // develop, when one was: the same sky, made once.
+            let kept = match (&self.sky_cut, &self.scene) {
+                (Some((k, matte, note)), Some((s, _, provider)))
+                    if picks.is_empty() && *k == (stamp, size) && *s == stamp =>
+                {
+                    Some((matte.clone(), *provider, note.clone()))
+                }
+                _ => None,
+            };
+            let (matte, provider, note) = match kept {
+                Some(k) => k,
+                None => self.sky_matte(stamp, image, picks, aspect, size, &store)?,
+            };
             let t = Instant::now();
             let data = match &matte {
                 Some(m) => m.resampled(RASTER_WIDTH, height).to_u8(),
@@ -1157,6 +1220,28 @@ impl Ai {
             if let Some(report) = &mut self.last_sky {
                 report.raster = t.elapsed().as_secs_f64();
             }
+            if let Some(path) = &cached {
+                write_raster(path, height, &data);
+            }
+            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            self.cache
+                .insert((key, turn), (shape.clone(), raster.clone()));
+            return Ok(Made {
+                note,
+                raster,
+                provider: Some(provider),
+                seconds: start.elapsed().as_secs_f64(),
+                part: None,
+            });
+        }
+        if let Shape::Landscape { group } = shape {
+            let start = Instant::now();
+            let (matte, provider, note) =
+                self.landscape_matte(stamp, image, group, (RASTER_WIDTH, height), &store)?;
+            let data = match &matte {
+                Some(m) => m.to_u8(),
+                None => vec![0u8; RASTER_WIDTH * height],
+            };
             if let Some(path) = &cached {
                 write_raster(path, height, &data);
             }
@@ -1613,19 +1698,198 @@ impl Ai {
         ))
     }
 
-    /// What the status line says of a Sky raster that comes back from
-    /// a cache, in memory or on disk, with nothing in it: the gate
-    /// found no sky. The raster is the only record a cache keeps, and
-    /// an empty one means exactly that: once the gate passes, at least
-    /// half a percent of the frame is labeled sky, the outline is never
-    /// empty (the labels are its fallback), and so neither is the matte
-    /// made from it. A raster made just now carries the gate's own word
-    /// (`sky_matte`). Nothing for any other shape.
-    fn sky_note(&self, shape: &Shape, raster: &Raster) -> Option<String> {
-        if !matches!(shape, Shape::Sky { .. }) || raster.data().iter().any(|&v| v > 0) {
+    /// What the status line says of a Sky or Landscape raster that
+    /// comes back from a cache, in memory or on disk, with nothing in
+    /// it: the gate found none. The raster is the only record a cache
+    /// keeps, and an empty one means exactly that: once a gate passes,
+    /// a share of the frame is labeled the shape (half a percent for a
+    /// sky; a core of a quarter of one for a landscape group), the
+    /// outline is never empty (the labels are its fallback, or are it),
+    /// and so neither is the matte made from it. A raster made just now
+    /// carries the gate's own word (`sky_matte`, `landscape_matte`).
+    /// Nothing for any other shape.
+    fn empty_note(&self, shape: &Shape, raster: &Raster) -> Option<String> {
+        if raster.data().iter().any(|&v| v > 0) {
             return None;
         }
-        Some(no_sky_note(self.file.as_deref()))
+        match shape {
+            Shape::Sky { .. } => Some(no_sky_note(self.file.as_deref())),
+            Shape::Landscape { group } => Some(none_found_note(
+                &group.label().to_lowercase(),
+                self.file.as_deref(),
+            )),
+            _ => None,
+        }
+    }
+
+    /// The scene of base develop `stamp`, made on its preview once for
+    /// the develop whoever asks first (a Sky shape, the Landscape
+    /// button or a Landscape shape), the sky model loaded for it then.
+    /// The provider it ran on, the seconds loading took and the seconds
+    /// the run and the labeling took, both none when it was kept.
+    fn scene_of(&mut self, stamp: u64, store: &Store) -> Result<(Provider, f64, f64), String> {
+        if let Some((s, _, provider)) = &self.scene
+            && *s == stamp
+        {
+            return Ok((*provider, 0.0, 0.0));
+        }
+        let Ai {
+            sky: loaded,
+            scene,
+            preview,
+            providers,
+            ..
+        } = self;
+        let (_, rgb, _) = preview.as_ref().expect("a preview is made before a mask");
+        let mut load = 0.0;
+        if loaded.is_none() {
+            let t = Instant::now();
+            *loaded = Some(Sky::load(store, providers).map_err(|e| e.to_string())?);
+            load = t.elapsed().as_secs_f64();
+        }
+        let model = loaded.as_mut().expect("the Sky model was just loaded");
+        let t = Instant::now();
+        let made = model.scene(rgb).map_err(|e| e.to_string())?;
+        let run = t.elapsed().as_secs_f64();
+        *scene = Some((stamp, made, model.provider()));
+        #[cfg(test)]
+        {
+            self.scene_runs += 1;
+        }
+        Ok((model.provider(), load, run))
+    }
+
+    /// What the Landscape button offers on the preview of base develop
+    /// `stamp` of `image` under `edit`: the sky and the landscape's
+    /// groups whose gates pass, the largest first; the provider the
+    /// model ran on and the seconds the answer took. The model runs
+    /// once a develop, for this and for every Sky and Landscape shape
+    /// made on it.
+    pub fn landscape(
+        &mut self,
+        stamp: u64,
+        image: &WorkingImage,
+        edit: &Edit,
+        kind: crate::finish::Source,
+    ) -> Result<(Vec<Offer>, Provider, f64), String> {
+        let store = self
+            .store
+            .clone()
+            .ok_or("no cache directory for the models")?;
+        if self.providers.is_empty() {
+            self.providers = Provider::available();
+        }
+        let start = Instant::now();
+        self.preview_of(stamp, image, edit, kind);
+        let (provider, load, run) = self.scene_of(stamp, &store)?;
+        let scene = &self.scene.as_ref().expect("the scene was just made").1;
+        let offers = scene.offers();
+        let name = self
+            .file
+            .as_deref()
+            .and_then(|f| f.file_name())
+            .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+        let groups: Vec<String> = landscape::Group::ALL
+            .into_iter()
+            .filter(|&g| scene.measure(g).area > 0.0)
+            .map(|g| {
+                let m = scene.measure(g);
+                format!(
+                    "{} {:.1}% at {:.3}, core {:.2}% ({})",
+                    g.name(),
+                    m.area * 100.0,
+                    m.mean,
+                    m.core * 100.0,
+                    match scene.gate(g) {
+                        Ok(()) => "offered".to_string(),
+                        Err(why) => why.says(g),
+                    }
+                )
+            })
+            .collect();
+        tracing::info!(
+            "landscape of {name}: model and labels {run:.3}s on {} (load {load:.2}s); sky {}; {}",
+            provider.name(),
+            match sky::gate(&scene.prior) {
+                Ok(()) => "offered".to_string(),
+                Err(why) => why.to_string(),
+            },
+            groups.join("; ")
+        );
+        Ok((offers, provider, start.elapsed().as_secs_f64()))
+    }
+
+    /// A Landscape shape's matte for `group` on the preview of base
+    /// develop `stamp`, at `size`, or none when its gate refuses it;
+    /// the provider the prior ran on, and what the status line says
+    /// instead of the usual.
+    fn landscape_matte(
+        &mut self,
+        stamp: u64,
+        image: &WorkingImage,
+        group: &greycard_edit::mask::LandscapeGroup,
+        size: (usize, usize),
+        store: &Store,
+    ) -> Result<(Option<greycard_ai::Mask>, Provider, Option<String>), String> {
+        let label = group.label();
+        let group = landscape::Group::of_name(group.name())
+            .ok_or_else(|| format!("{label} is not a part of the landscape this build knows"))?;
+        let (provider, load, run) = self.scene_of(stamp, store)?;
+        // The sky a group is cut by: the Sky shape with no picks, as
+        // it makes one (SAM's outline when SAM is in the store), kept
+        // for the develop whichever asks first, a Sky or a Foliage.
+        if group.capped_by_sky() && self.sky_cut.as_ref().is_none_or(|c| c.0 != (stamp, size)) {
+            let t = Instant::now();
+            let aspect = image.height as f32 / image.width.max(1) as f32;
+            let (cut, _, _) = self.sky_matte(stamp, image, &[], aspect, size, store)?;
+            tracing::info!(
+                "the sky Foliage is cut by: {} in {:.3}s",
+                if cut.is_some() { "found" } else { "none" },
+                t.elapsed().as_secs_f64()
+            );
+        }
+        let scene = &self.scene.as_ref().expect("the scene was just made").1;
+        let (_, rgb, luma) = self
+            .preview
+            .as_ref()
+            .expect("a preview is made before a mask");
+        let frame = sky::Frame {
+            display: rgb,
+            luma,
+            linear: image,
+        };
+        let name = self
+            .file
+            .as_deref()
+            .and_then(|f| f.file_name())
+            .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+        let t = Instant::now();
+        let cut = self
+            .sky_cut
+            .as_ref()
+            .filter(|_| group.capped_by_sky())
+            .and_then(|c| c.1.as_ref());
+        let found = landscape::find(scene, group, &frame, size, cut);
+        let edge = t.elapsed().as_secs_f64();
+        Ok(match found {
+            landscape::Found::Shape { matte, matted } => {
+                tracing::info!(
+                    "{} of {name}: prior {run:.3}s on {} (load {load:.2}s), edge {edge:.3}s ({})",
+                    group.name(),
+                    provider.name(),
+                    if matted { "matte" } else { "feathered" }
+                );
+                (Some(matte), provider, None)
+            }
+            landscape::Found::None(why) => {
+                tracing::info!("no {} found in {name}: {}", group.name(), why.says(group));
+                (
+                    None,
+                    provider,
+                    Some(none_found_note(group.name(), self.file.as_deref())),
+                )
+            }
+        })
     }
 
     /// A Sky shape's matte on the preview of base develop `stamp`, at
@@ -1646,9 +1910,12 @@ impl Ai {
     ) -> Result<(Option<greycard_ai::Mask>, Provider, Option<String>), String> {
         let mut report = SkyReport::default();
         let any_positive = picks.iter().any(|p| p.positive);
+        let (provider, load, run) = self.scene_of(stamp, store)?;
+        report.prior_on = Some(provider);
+        report.load = load;
+        report.prior = run;
         let Ai {
-            sky: loaded,
-            sky_prior,
+            scene,
             sam,
             embedding,
             preview,
@@ -1657,21 +1924,7 @@ impl Ai {
             ..
         } = self;
         let (_, rgb, luma) = preview.as_ref().expect("a preview is made before a mask");
-        if loaded.is_none() {
-            let t = Instant::now();
-            *loaded = Some(Sky::load(store, providers).map_err(|e| e.to_string())?);
-            report.load = t.elapsed().as_secs_f64();
-        }
-        let model = loaded.as_mut().expect("the Sky model was just loaded");
-        let provider = model.provider();
-        report.prior_on = Some(provider);
-        if sky_prior.as_ref().is_none_or(|p| p.0 != stamp) {
-            let t = Instant::now();
-            let prior = model.prior(rgb).map_err(|e| e.to_string())?;
-            report.prior = t.elapsed().as_secs_f64();
-            *sky_prior = Some((stamp, prior));
-        }
-        let prior = &sky_prior.as_ref().expect("the prior was just made").1;
+        let prior = &scene.as_ref().expect("the scene was just made").1.prior;
         let frame = sky::Frame {
             display: rgb,
             luma,
@@ -1763,6 +2016,12 @@ impl Ai {
             st.edge,
         );
         self.last_sky = Some(report);
+        // A sky with no picks is the one Foliage is cut by: kept for
+        // the develop, so a Foliage after it, or a Sky after a Foliage,
+        // costs no second sky.
+        if picks.is_empty() {
+            self.sky_cut = Some(((stamp, size), matte.clone(), note.clone()));
+        }
         Ok((matte, provider, note))
     }
 }
@@ -1936,12 +2195,18 @@ fn part_note(part: &Unresolved, file: Option<&Path>) -> String {
 
 /// The status line for a Sky shape on a frame with no sky.
 fn no_sky_note(file: Option<&Path>) -> String {
+    none_found_note("sky", file)
+}
+
+/// The status line for a shape the model finds none of on a frame:
+/// "no water found in FILE".
+pub(crate) fn none_found_note(what: &str, file: Option<&Path>) -> String {
     let name = file
         .and_then(|f| f.file_name())
         .map_or("this picture".to_string(), |n| {
             n.to_string_lossy().into_owned()
         });
-    format!("no sky found in {name}")
+    format!("no {what} found in {name}")
 }
 
 /// What a model sees: the picture under the global look alone, no
@@ -2346,9 +2611,9 @@ mod tests {
             .expect("the kept raster");
         assert_eq!(again.note, made.note);
         let some = Raster::from_data(1.0, RASTER_WIDTH, vec![7u8; RASTER_WIDTH * RASTER_WIDTH]);
-        assert_eq!(ai.sky_note(&shape, &some), None);
+        assert_eq!(ai.empty_note(&shape, &some), None);
         assert_eq!(
-            ai.sky_note(&Shape::Subject {}, &Raster::from_data(1.0, 4, vec![0; 16])),
+            ai.empty_note(&Shape::Subject {}, &Raster::from_data(1.0, 4, vec![0; 16])),
             None
         );
 
@@ -2928,5 +3193,171 @@ mod tests {
         assert_eq!(pick(&have(&[SKY.id]), &[SAM.id]), Some(SKY.id));
         assert_eq!(pick(&have(&[SKY.id, SAM.id]), &[]), Some(SKY.id));
         assert!(prompted(&sky));
+    }
+
+    /// A Landscape shape wants the sky's prior alone, whatever SAM's
+    /// state; a group this build does not know wants nothing and is
+    /// never asked for.
+    #[test]
+    fn a_landscape_shape_waits_on_the_prior_alone() {
+        let cpu = [Provider::Cpu];
+        let no = |_: &Model| false;
+        for kind in ["Water", "Foliage", "Mountain", "Building"] {
+            let shape = Shape::of_kind(kind);
+            for have in [&[][..], &[SKY.id][..], &[SKY.id, SAM.id][..]] {
+                let model = model_with(&shape, |m: &Model| have.contains(&m.id), &cpu, &[], no);
+                assert_eq!(model.map(|m| m.id), Some(SKY.id), "{kind} with {have:?}");
+            }
+            assert!(prompted(&shape));
+        }
+        let later = Shape::Landscape {
+            group: greycard_edit::mask::LandscapeGroup::Other("grass".into()),
+        };
+        assert_eq!(model_with(&later, |_: &Model| true, &cpu, &[], no), None);
+        assert!(!prompted(&later));
+    }
+
+    /// Logits for a picture of a sky over a sea, a query each, as the
+    /// model gives them: the sky 99.9 percent sure over the top 40
+    /// rows of the 160, the sea 95 percent over the rest.
+    fn sky_over_sea() -> sky::Logits {
+        let (q, c, side) = (sky::QUERIES, sky::CLASSES, sky::MASK_SIDE);
+        let mut class = vec![0.0f32; q * c];
+        for i in 0..q {
+            class[i * c + c - 1] = 20.0;
+        }
+        let mut masks = vec![-10.0f32; q * side * side];
+        for (i, (label, p, rows)) in [
+            (sky::SKY_CLASS as usize, 0.999f32, 0..40),
+            (103, 0.95, 40..160),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            class[i * c..(i + 1) * c].fill(0.0);
+            class[i * c + label] = (p * 133.0 / (1.0 - p)).ln();
+            for y in rows {
+                masks[i * side * side + y * side..i * side * side + (y + 1) * side].fill(10.0);
+            }
+        }
+        sky::Logits { class, masks }
+    }
+
+    /// The Landscape button and the shapes it makes read the scene kept
+    /// for the develop: with one there, the button's offer, a Water
+    /// shape and a Building the gate refuses all come without a model
+    /// (none is in this store to load), and the refused one is empty
+    /// and says so, from the memory cache too.
+    #[test]
+    fn the_button_and_its_shapes_read_the_kept_scene() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/test-scratch/greycard-ai-landscape-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut ai = Ai::for_test(Store::at(dir.join("models")), vec![Provider::Cpu]);
+        ai.file = Some(PathBuf::from("coast.CR3"));
+        let (w, h) = (64usize, 64usize);
+        let mut image = WorkingImage::new(w, h);
+        for (i, p) in image
+            .data
+            .as_chunks_mut::<{ WorkingImage::CHANNELS }>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
+            let sea = i / w >= h / 4;
+            p.copy_from_slice(if sea {
+                &[0.02, 0.06, 0.12]
+            } else {
+                &[0.3, 0.45, 0.8]
+            });
+        }
+        let edit = Edit::default();
+        let kind = crate::finish::Source::Scene;
+        ai.preview_of(1, &image, &edit, kind);
+        let (pw, ph) = {
+            let p = &ai.preview.as_ref().unwrap().1;
+            (p.width, p.height)
+        };
+        let scene = Scene::label(&sky_over_sea(), (640, 640), pw, ph);
+        ai.scene = Some((1, scene, Provider::Cpu));
+        let (offers, provider, _) = ai.landscape(1, &image, &edit, kind).expect("the offer");
+        assert_eq!(provider, Provider::Cpu);
+        let kinds: Vec<_> = offers.iter().map(|o| o.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                landscape::Kind::Group(landscape::Group::Water),
+                landscape::Kind::Sky
+            ]
+        );
+        let water = Shape::of_kind("Water");
+        let made = ai
+            .raster(1, &image, &edit, kind, 0, (1, 0), &water, None)
+            .expect("the water");
+        assert!(made.note.is_none());
+        let data = made.raster.data();
+        let height = data.len() / RASTER_WIDTH;
+        let at = |y: usize| data[y * RASTER_WIDTH + RASTER_WIDTH / 2];
+        assert!(at(height * 7 / 8) > 240 && at(height / 16) < 15);
+        let building = Shape::of_kind("Building");
+        for _ in 0..2 {
+            let made = ai
+                .raster(1, &image, &edit, kind, 0, (1, 1), &building, None)
+                .expect("an empty building");
+            assert!(made.raster.data().iter().all(|&v| v == 0));
+            assert_eq!(made.note.as_deref(), Some("no building found in coast.CR3"));
+        }
+        assert_eq!(ai.scene_runs, 0, "nothing ran the model");
+        // A Sky with no picks after a Foliage's cut is that cut, not
+        // a sky made again; one with picks is made.
+        let height = RASTER_WIDTH; // the picture is square
+        let marked = greycard_ai::Mask::new(RASTER_WIDTH, height, vec![0.5; RASTER_WIDTH * height]);
+        ai.sky_cut = Some(((1, (RASTER_WIDTH, height)), Some(marked), None));
+        let sky = Shape::Sky { picks: Vec::new() };
+        let made = ai
+            .raster(1, &image, &edit, kind, 0, (2, 0), &sky, None)
+            .expect("the kept sky");
+        assert!(
+            made.raster.data().iter().all(|&v| v == 128),
+            "the cut, read back"
+        );
+        let picked = Shape::Sky {
+            picks: vec![greycard_edit::mask::Pick {
+                pos: [0.5, 0.1],
+                positive: false,
+            }],
+        };
+        let made = ai
+            .raster(1, &image, &edit, kind, 0, (2, 1), &picked, None)
+            .expect("a sky with a pick");
+        assert!(
+            made.raster.data().iter().any(|&v| v != 128),
+            "made, not the cut"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Each group has its own slot in the disk cache, and none is a
+    /// sky's.
+    #[test]
+    fn a_landscape_raster_is_cached_by_its_group() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/test-scratch/greycard-ai-landscape-cache-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let mut ai = Ai::new();
+        ai.store = Some(Store::at(dir.join("models")));
+        ai.file = Some(PathBuf::from("coast.CR3"));
+        let mut slots: Vec<PathBuf> = ["Water", "Foliage", "Mountain", "Building", "Sky"]
+            .into_iter()
+            .map(|k| ai.cached_path(&Shape::of_kind(k), None, 0).expect("a slot"))
+            .collect();
+        slots.sort();
+        slots.dedup();
+        assert_eq!(slots.len(), 5);
     }
 }

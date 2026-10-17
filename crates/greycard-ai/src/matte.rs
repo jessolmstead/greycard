@@ -785,6 +785,7 @@ mod tests {
             prior: Prior {
                 width: w,
                 height: h,
+                sky_kept: sky.clone(),
                 sky,
                 labels,
                 sure: 0.999,

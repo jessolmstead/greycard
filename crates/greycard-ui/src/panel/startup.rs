@@ -996,6 +996,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 | Shape::Subject {}
                                 | Shape::Background {}
                                 | Shape::Sky { .. }
+                                | Shape::Landscape { .. }
                                 | Shape::Object { .. }
                                 | Shape::Part { .. }
                                 | Shape::Luminance { .. }
@@ -1070,8 +1071,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // A snapshot waits for the develop; one of the
                     // grid waits for the pictures the grid shows, or
                     // it would catch a sheet of empty cells.
-                    let quiet =
-                        st.asked.is_empty() && st.part_pending.is_none() && grid_filled(st, &app);
+                    let quiet = st.asked.is_empty()
+                        && st.part_pending.is_none()
+                        && st.landscape_pending.is_none()
+                        && grid_filled(st, &app);
                     // A timed slider move is sent as its frame starts.
                     if pending.is_some() {
                         time_moves(st, &app);

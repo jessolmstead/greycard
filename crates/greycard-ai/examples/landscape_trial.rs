@@ -534,6 +534,7 @@ fn as_sky(l: &Labels, g: usize, best: f32) -> Prior {
         width: l.w,
         height: l.h,
         sky: l.soft[g].clone(),
+        sky_kept: l.soft[g].clone(),
         labels,
         sure: best,
     }

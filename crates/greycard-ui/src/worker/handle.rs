@@ -433,6 +433,7 @@ impl Worker {
                 q.masks.push_back((key, shape, model));
             }
             Job::People => q.people = true,
+            Job::Landscape => q.landscape = true,
             Job::Keep {
                 frame,
                 edit,

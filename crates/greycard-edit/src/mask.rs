@@ -173,6 +173,16 @@ pub enum Shape {
         #[serde(default)]
         picks: Vec<Pick>,
     },
+    /// A part of the landscape, found from the same model's scene
+    /// labels as the sky (greycard-ai's `landscape`): the picture's
+    /// water, foliage, mountains or buildings, and nothing on a
+    /// picture where the model is not sure of them. No picks: its
+    /// outline is the model's own labels, which a click has nothing
+    /// to steer, so a correction is another shape in the mask. A group
+    /// a later build added loads as `Other` and is written back as it
+    /// came, counted as a shape this build does not know. Like a brush
+    /// it has no value of its own.
+    Landscape { group: LandscapeGroup },
     /// Things picked out by a model from clicks and boxes. Like a
     /// brush it has no value of its own.
     Object {
@@ -408,6 +418,7 @@ impl Shape {
             | Shape::Background {}
             | Shape::Luminance { .. }
             | Shape::Color { .. }
+            | Shape::Landscape { .. }
             | Shape::Unknown => {}
             Shape::Sky { picks } => {
                 for pick in picks {
@@ -470,6 +481,75 @@ impl From<String> for Route {
 impl From<Route> for String {
     fn from(route: Route) -> Self {
         route.name().to_string()
+    }
+}
+
+/// Which part of the landscape a [`Shape::Landscape`] is, by the same
+/// names as greycard-ai's `landscape::Group`. A group a later build
+/// added loads as `Other` and is written back as it came; the shape
+/// counts as one this build does not know ([`Shape::is_unknown`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum LandscapeGroup {
+    Water,
+    Foliage,
+    Mountain,
+    Building,
+    Other(String),
+}
+
+impl LandscapeGroup {
+    /// The groups this build makes, in the order the panel names them.
+    pub const KNOWN: [LandscapeGroup; 4] = [
+        LandscapeGroup::Water,
+        LandscapeGroup::Foliage,
+        LandscapeGroup::Mountain,
+        LandscapeGroup::Building,
+    ];
+
+    /// The sidecar's name.
+    pub fn name(&self) -> &str {
+        match self {
+            LandscapeGroup::Water => "water",
+            LandscapeGroup::Foliage => "foliage",
+            LandscapeGroup::Mountain => "mountain",
+            LandscapeGroup::Building => "building",
+            LandscapeGroup::Other(name) => name,
+        }
+    }
+
+    /// The panel's name: the shape's, and the offer's.
+    pub fn label(&self) -> &'static str {
+        match self {
+            LandscapeGroup::Water => "Water",
+            LandscapeGroup::Foliage => "Foliage",
+            LandscapeGroup::Mountain => "Mountain",
+            LandscapeGroup::Building => "Building",
+            LandscapeGroup::Other(_) => "Landscape",
+        }
+    }
+
+    /// The known group the panel calls `label`.
+    pub fn of_label(label: &str) -> Option<Self> {
+        Self::KNOWN.into_iter().find(|g| g.label() == label)
+    }
+}
+
+impl From<String> for LandscapeGroup {
+    fn from(name: String) -> Self {
+        match name.as_str() {
+            "water" => LandscapeGroup::Water,
+            "foliage" => LandscapeGroup::Foliage,
+            "mountain" => LandscapeGroup::Mountain,
+            "building" => LandscapeGroup::Building,
+            _ => LandscapeGroup::Other(name),
+        }
+    }
+}
+
+impl From<LandscapeGroup> for String {
+    fn from(group: LandscapeGroup) -> Self {
+        group.name().to_string()
     }
 }
 
@@ -667,6 +747,9 @@ impl Shape {
             "Luminance" => Shape::LUMINANCE,
             "Color" => Shape::skin(),
             "Sky" => Shape::Sky { picks: Vec::new() },
+            "Water" | "Foliage" | "Mountain" | "Building" => Shape::Landscape {
+                group: LandscapeGroup::of_label(kind).expect("one of the four labels"),
+            },
             "Object" => Shape::Object {
                 picks: Vec::new(),
                 boxes: Vec::new(),
@@ -694,6 +777,7 @@ impl Shape {
             | Shape::Subject {}
             | Shape::Background {}
             | Shape::Sky { .. }
+            | Shape::Landscape { .. }
             | Shape::Object { .. }
             | Shape::Part { .. }
             | Shape::Luminance { .. }
@@ -757,6 +841,7 @@ impl Shape {
             | Shape::Subject {}
             | Shape::Background {}
             | Shape::Sky { .. }
+            | Shape::Landscape { .. }
             | Shape::Object { .. }
             | Shape::Part { .. }
             | Shape::Luminance { .. }
@@ -772,6 +857,7 @@ impl Shape {
             | Shape::Subject {}
             | Shape::Background {}
             | Shape::Sky { .. }
+            | Shape::Landscape { .. }
             | Shape::Object { .. }
             | Shape::Part { .. }
             | Shape::Luminance { .. }
@@ -878,6 +964,7 @@ impl Shape {
             Shape::Subject {} => "Subject",
             Shape::Background {} => "Background",
             Shape::Sky { .. } => "Sky",
+            Shape::Landscape { group } => group.label(),
             Shape::Object { .. } => "Object",
             Shape::Part { phrase, .. } => part_of(phrase).map_or("People", |p| p.label),
             Shape::Luminance { .. } => "Luminance",
@@ -887,8 +974,8 @@ impl Shape {
     }
 
     /// Whether this build does not know the shape: one of a kind it
-    /// has not heard of, or a part asked by a route it has not. Neither
-    /// counts in the mask.
+    /// has not heard of, a part asked by a route it has not, or a part
+    /// of the landscape of a group it has not. None counts in the mask.
     pub fn is_unknown(&self) -> bool {
         matches!(
             self,
@@ -896,6 +983,9 @@ impl Shape {
                 | Shape::Part {
                     route: Route::Other(_),
                     ..
+                }
+                | Shape::Landscape {
+                    group: LandscapeGroup::Other(_)
                 }
         )
     }
@@ -913,6 +1003,7 @@ impl Shape {
                 | Shape::Subject {}
                 | Shape::Background {}
                 | Shape::Sky { .. }
+                | Shape::Landscape { .. }
                 | Shape::Object { .. }
                 | Shape::Part { .. }
         )
@@ -925,6 +1016,7 @@ impl Shape {
             Shape::Subject {}
                 | Shape::Background {}
                 | Shape::Sky { .. }
+                | Shape::Landscape { .. }
                 | Shape::Object { .. }
                 | Shape::Part { .. }
         )
@@ -938,6 +1030,7 @@ impl Shape {
             | Shape::Subject {}
             | Shape::Background {}
             | Shape::Sky { .. }
+            | Shape::Landscape { .. }
             | Shape::Object { .. }
             | Shape::Part { .. }
             | Shape::Luminance { .. }
@@ -1649,6 +1742,90 @@ mod tests {
         );
         assert_eq!(serde_json::from_str::<Shape>(&json).unwrap(), her);
         assert!(her.is_learned() && !her.is_unknown());
+    }
+
+    #[test]
+    fn a_landscape_shape_is_learned_and_round_trips_by_its_group() {
+        for group in LandscapeGroup::KNOWN {
+            let shape = Shape::of_kind(group.label());
+            assert_eq!(
+                shape,
+                Shape::Landscape {
+                    group: group.clone()
+                }
+            );
+            assert!(shape.is_raster() && shape.is_learned() && !shape.is_unknown());
+            assert!(shape.handles().is_empty() && !shape.on_body((0.5, 0.5)));
+            assert_eq!(shape.at(0.5, 0.5), 0.0);
+            assert_eq!(shape.name(), group.label());
+            let json = serde_json::to_string(&shape).unwrap();
+            assert_eq!(
+                json,
+                format!(r#"{{"kind":"landscape","group":"{}"}}"#, group.name())
+            );
+            assert_eq!(serde_json::from_str::<Shape>(&json).unwrap(), shape);
+            // Nothing of its own to turn.
+            let mut turned = shape.clone();
+            turned.turn(Turned::new(1, 1.5));
+            assert_eq!(turned, shape);
+        }
+        assert_eq!(LandscapeGroup::of_label("Sky"), None);
+    }
+
+    /// A group a later build added (Grass, say): the shape loads, counts
+    /// as nothing, and is written back as it came, so the build after
+    /// that finds it again; the shapes beside it are untouched.
+    #[test]
+    fn a_landscape_group_from_a_later_build_is_kept_and_counts_as_nothing() {
+        let json = r#"{"kind":"landscape","group":"grass"}"#;
+        let shape: Shape = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            &shape,
+            Shape::Landscape { group: LandscapeGroup::Other(g) } if g == "grass"
+        ));
+        assert!(shape.is_unknown());
+        assert_eq!(shape.name(), "Landscape");
+        assert_eq!(serde_json::to_string(&shape).unwrap(), json);
+        let mask = Mask {
+            components: vec![
+                Component {
+                    shape: shape.clone(),
+                    ..Default::default()
+                },
+                Component {
+                    shape: Shape::of_kind("Water"),
+                    ..Default::default()
+                },
+            ],
+            invert: false,
+        };
+        assert_eq!(mask.live().map(|(i, _)| i).collect::<Vec<_>>(), [1]);
+        assert_eq!(mask.unknown(), 1);
+        let back: Mask = serde_json::from_str(&serde_json::to_string(&mask).unwrap()).unwrap();
+        assert_eq!(back, mask, "kept, not dropped, on the way out");
+    }
+
+    /// What a build from before the Landscape shapes reads of a mask
+    /// with one: the kind is one it has not heard of, so the shape is
+    /// `Unknown` and the rest of the mask loads. Shown with a stand-in
+    /// for that build's enum, the same serde attributes without the
+    /// variant, since the build itself is not here to ask.
+    #[test]
+    fn a_landscape_shape_reads_as_unknown_where_the_kind_is_not_known() {
+        #[derive(Debug, PartialEq, Deserialize)]
+        #[serde(tag = "kind", rename_all = "snake_case")]
+        enum Before {
+            Sky {
+                #[serde(default)]
+                picks: Vec<Pick>,
+            },
+            #[serde(other)]
+            Unknown,
+        }
+        let shapes = [Shape::of_kind("Sky"), Shape::of_kind("Mountain")];
+        let json = serde_json::to_string(&shapes).unwrap();
+        let before: Vec<Before> = serde_json::from_str(&json).unwrap();
+        assert_eq!(before, [Before::Sky { picks: Vec::new() }, Before::Unknown]);
     }
 
     #[test]

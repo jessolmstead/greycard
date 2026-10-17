@@ -386,6 +386,200 @@ fn the_sky_over_real_frames() {
     );
 }
 
+/// The Landscape button over real frames, the product's own path:
+/// each file opened and developed as the worker does under the default
+/// edit, then the button's offer made by `Ai::landscape`, each shape
+/// offered made by `Ai::raster`, and the button pressed again; the
+/// model must run once a frame for all of it. Set `GREYCARD_SAMPLES` to
+/// a folder of frames (copies: nothing is written beside them) and
+/// `GREYCARD_MODELS` to a store holding the Sky model and SAM, and run
+/// with `--ignored`; without both it passes at once.
+/// `GREYCARD_LANDSCAPE_OUT` names a folder for each frame's preview
+/// (`<stem>.jpg`) and each shape's raster (`<stem>-<kind>.png`), and
+/// `report.txt`; `GREYCARD_LANDSCAPE_ONLY` a comma list of stems.
+/// Fails if a stem in `GREYCARD_LANDSCAPE_NONE` (a comma list) is
+/// offered anything, if an offered shape comes out empty, or if, where
+/// Sky and Foliage are both offered, Foliage holds over a quarter of
+/// more than `GREYCARD_LANDSCAPE_MAX_SKY_OVERLAP` (0.02 without it) of
+/// the pixels the Sky holds over a half, or the two sum past 1.25
+/// anywhere there.
+#[test]
+#[ignore]
+fn the_landscape_over_real_frames() {
+    use greycard_ai::Provider;
+    let (Some(samples), Some(models)) = (
+        std::env::var_os("GREYCARD_SAMPLES"),
+        std::env::var_os("GREYCARD_MODELS"),
+    ) else {
+        return;
+    };
+    let out = std::env::var_os("GREYCARD_LANDSCAPE_OUT").map(PathBuf::from);
+    if let Some(out) = &out {
+        std::fs::create_dir_all(out).unwrap();
+    }
+    let list = |name: &str| -> Option<Vec<String>> {
+        std::env::var(name)
+            .ok()
+            .map(|s| s.split(',').map(str::to_string).collect())
+    };
+    let only = list("GREYCARD_LANDSCAPE_ONLY");
+    let none = list("GREYCARD_LANDSCAPE_NONE").unwrap_or_default();
+    let max_over: f64 = std::env::var("GREYCARD_LANDSCAPE_MAX_SKY_OVERLAP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.02);
+    let store = greycard_ai::Store::at(models);
+    let mut develop_ai = Ai::for_test(store.clone(), vec![Provider::Cpu]);
+    let mut ai = Ai::for_test(store, Provider::available());
+    let mut frames: Vec<PathBuf> = std::fs::read_dir(&samples)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| greycard_core::decode::is_raw_path(p))
+        .collect();
+    frames.sort();
+    let (mut lines, mut wrong) = (Vec::new(), Vec::new());
+    let deliver: Deliver = Arc::new(|_| {});
+    for path in frames {
+        let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+        if only.as_ref().is_some_and(|o| !o.contains(&stem)) {
+            continue;
+        }
+        let Ok((input, _)) = open(&path) else {
+            println!("{stem}: passed over, it will not open");
+            continue;
+        };
+        let mut base = None;
+        let _ = develop_job(
+            &input,
+            &Edit::default(),
+            0,
+            1,
+            &mut base,
+            &mut None,
+            &mut develop_ai,
+            None,
+            None,
+            &mut None,
+            &deliver,
+        );
+        let Some(b) = base.as_ref() else {
+            println!("{stem}: passed over, it did not develop");
+            continue;
+        };
+        ai.forget(Some(path.clone()));
+        let runs = ai.scene_runs;
+        let (offers, provider, seconds) = ai
+            .landscape(b.stamp, &b.image, &b.edit, b.source)
+            .unwrap_or_else(|e| panic!("{stem}: {e}"));
+        let (mut made, mut rasters) = (Vec::new(), Vec::new());
+        for (i, offer) in offers.iter().enumerate() {
+            let kind = crate::panel::landscape::kind_of(offer);
+            let shape = Shape::of_kind(kind);
+            let t = Instant::now();
+            let raster = ai
+                .raster(
+                    b.stamp,
+                    &b.image,
+                    &b.edit,
+                    b.source,
+                    b.turn,
+                    (1, i),
+                    &shape,
+                    None,
+                )
+                .unwrap_or_else(|e| panic!("{stem}: {kind}: {e}"))
+                .raster;
+            let took = t.elapsed().as_secs_f64();
+            let data = raster.data();
+            let area = data.iter().filter(|&&v| v > 127).count() as f64 / data.len() as f64;
+            if area == 0.0 {
+                wrong.push(format!("{stem}: {kind} offered and empty"));
+            }
+            made.push(format!("{kind} {:.1}% in {took:.2}s", area * 100.0));
+            if let Some(out) = &out {
+                image::save_buffer(
+                    out.join(format!("{stem}-{}.png", kind.to_lowercase())),
+                    data,
+                    raster.width as u32,
+                    raster.height as u32,
+                    image::ExtendedColorType::L8,
+                )
+                .unwrap();
+            }
+            rasters.push((kind, raster));
+        }
+        // Foliage against the sky the Sky shape found: of the pixels
+        // the sky holds over a half, the share Foliage holds over a
+        // quarter (`over`: a pixel of leaf and sky mixed counts), and
+        // the share where the two sum past 1.25 (`both`: claimed
+        // twice). Foliage is cut by this same sky, so none may be both.
+        let of = |k: &str| rasters.iter().find(|(kind, _)| *kind == k).map(|r| &r.1);
+        if let (Some(sky), Some(foliage)) = (of("Sky"), of("Foliage")) {
+            let (mut n, mut over, mut both) = (0usize, 0usize, 0usize);
+            for (&s, &f) in sky.data().iter().zip(foliage.data()) {
+                if s > 127 {
+                    n += 1;
+                    over += (f > 63) as usize;
+                    both += (s as u32 + f as u32 > 319) as usize;
+                }
+            }
+            let (over, both) = (over as f64 / n.max(1) as f64, both as f64 / n.max(1) as f64);
+            made.push(format!(
+                "Foliage over {:.2}% of the sky, both {:.3}%",
+                over * 100.0,
+                both * 100.0
+            ));
+            if both > 0.001 || over > max_over {
+                wrong.push(format!(
+                    "{stem}: Foliage over {:.2}% of the sky, both {:.3}%",
+                    over * 100.0,
+                    both * 100.0
+                ));
+            }
+        }
+        // Pressed again: the offer from the scene kept.
+        let (again, _, _) = ai
+            .landscape(b.stamp, &b.image, &b.edit, b.source)
+            .unwrap_or_else(|e| panic!("{stem}: {e}"));
+        assert_eq!(again, offers, "{stem}: the second press");
+        assert_eq!(
+            ai.scene_runs,
+            runs + 1,
+            "{stem}: one model run for everything"
+        );
+        if none.contains(&stem) && !offers.is_empty() {
+            wrong.push(format!("{stem}: offered {offers:?}"));
+        }
+        let line = format!(
+            "{stem}: offered on {} in {seconds:.2}s [{}] | made: {}",
+            provider.name(),
+            offers
+                .iter()
+                .map(crate::panel::landscape::words_of)
+                .collect::<Vec<_>>()
+                .join(", "),
+            made.join(", ")
+        );
+        println!("{line}");
+        lines.push(line);
+        if let Some(out) = &out {
+            let rgb = crate::ai::preview(&b.image, &b.edit, b.source);
+            image::save_buffer(
+                out.join(format!("{stem}.jpg")),
+                &rgb.data,
+                rgb.width as u32,
+                rgb.height as u32,
+                image::ExtendedColorType::Rgb8,
+            )
+            .unwrap();
+        }
+    }
+    if let Some(out) = &out {
+        std::fs::write(out.join("report.txt"), lines.join("\n") + "\n").unwrap();
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 /// The People mask on real frames, through the editor's own path:
 /// each frame of `GREYCARD_PARTS_PICTURES` (the trial's JPEGs)
 /// opened and developed, its people found, and the parts made on

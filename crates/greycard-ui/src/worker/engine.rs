@@ -138,6 +138,10 @@ pub(super) fn run(
                     q.people = false;
                     break Job::People;
                 }
+                if q.landscape {
+                    q.landscape = false;
+                    break Job::Landscape;
+                }
                 if let Some((key, shape, model)) = q.masks.pop_front() {
                     break Job::Mask { key, shape, model };
                 }
@@ -578,6 +582,18 @@ pub(super) fn run(
                 deliver(Outcome::People {
                     file: opened_path.clone(),
                     people,
+                });
+            }
+            Job::Landscape => {
+                let offers = match &base {
+                    Some(b) => ai
+                        .landscape(b.stamp, &b.image, &b.edit, b.source)
+                        .map(|(found, provider, seconds)| (found, provider.name(), seconds)),
+                    None => Err("nothing developed yet".into()),
+                };
+                deliver(Outcome::Landscape {
+                    file: opened_path.clone(),
+                    offers,
                 });
             }
             Job::Fetch { .. }
