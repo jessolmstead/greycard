@@ -97,6 +97,13 @@ pub struct Settings {
     /// was answered Not now. It is asked once: from then on the LENS
     /// section's own button is the way to them.
     pub lenses_declined: bool,
+    /// The folders whose RawTherapee profiles were offered as they
+    /// opened and answered, by Not now, or by a write that brought a
+    /// frame in, each by its canonical path: never offered again. Kept
+    /// here rather than in the folder, where a `.greycard` made to hold
+    /// it would take the folder's new sidecars from then on. Written as
+    /// the offer is answered.
+    pub rawtherapee_answered: Vec<String>,
     /// The absolute path of the last file open, developed and all, so
     /// the next run with no path can jump back to it. Written as soon
     /// as it develops, not waited for the window to close; empty
@@ -245,6 +252,7 @@ impl Default for Settings {
             jpegs_apart: false,
             cull_move_on: false,
             lenses_declined: false,
+            rawtherapee_answered: Vec::new(),
             last_file: String::new(),
             recent_folders: Vec::new(),
             folder_tree_subfolders: false,
@@ -421,6 +429,7 @@ mod tests {
             jpegs_apart: true,
             cull_move_on: true,
             lenses_declined: true,
+            rawtherapee_answered: vec!["/home/x/Pictures/rt".into()],
             export_last_folder: "/home/x/Pictures/out".into(),
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
@@ -482,6 +491,8 @@ mod tests {
         assert_eq!(read.scope, Settings::default().scope);
         // A file from before Recently opened has an empty list.
         assert!(read.recent_folders.is_empty());
+        // And from before the RawTherapee offer, nothing answered.
+        assert!(read.rawtherapee_answered.is_empty());
         // And from before the folder tree, a folder's own frames.
         assert!(!read.folder_tree_subfolders);
         // And from before the previews' own cap, 8 GB of them.

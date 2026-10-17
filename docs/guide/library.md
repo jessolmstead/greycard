@@ -438,6 +438,55 @@ a standard `.xmp` beside each raw. An `.xmp` that is already there is
 read either way. Picks and rejects have no XMP field, so they stay in
 the `.gcd`.
 
+### Profiles from RawTherapee
+
+RawTherapee keeps each frame's edit in a `.pp3` beside it. When you
+open a folder that holds them, a line under the folder's name says how
+many frames have one ("RawTherapee profiles found beside 24 frames"),
+counting the frames an import would change and would not hold back
+(below). It is offered once a folder: **Not now** puts it away
+for good, and so does importing any of the frames. Opening the sheet
+with **Import...** and canceling it leaves the offer for the next time
+you open the folder. Your answer is kept in greycard's settings, not
+in the folder. A run started with `--no-sidecars` offers nothing.
+
+A profile named after the raw with its extension replaced
+(`IMG_0001.pp3`) belongs to the raw: the camera's JPEG beside it
+doesn't take it.
+
+**Import...** opens a sheet with what the import would do, a few lines
+a frame: the profile and the RawTherapee version that wrote it, what
+comes across exactly (the stars, the color label, the trash mark as a
+reject, the lens profile's switches, the angle and turns), what comes
+across as a likeness (the exposure, the white balance, the crop, the
+manual distortion), and what has no place here, by RawTherapee's own
+name ("Local Contrast", "Exposure Curve"). The totals sit at the top.
+A folder of more than 200 profiles lists the first 200 frames and says
+how many more the totals count. The tone curves are never carried:
+they do the job greycard's base curve does.
+
+A frame you have developed here is left alone, and so is one whose
+stars, label or flag set here the profile would change, so a cull you
+made in greycard is never wiped by RawTherapee's unrated profiles.
+When there are some, a switch appears, **Write over the N frames
+developed or rated here already**. With it
+on, the report says what a forced import would set, RawTherapee's
+neutral settings included for a developed frame, and what it replaces
+of your own culling ("5 stars to 0, the reject cleared"). **Write**
+writes the sidecars, one history step named "Imported from
+RawTherapee" a frame, which you can undo like any other. The frame on
+screen picks up what was written at once. A slider you moved just
+before pressing **Write** is saved first, so that frame counts as
+developed here.
+
+The import doesn't touch the hand-set chromatic aberration of a frame
+unless the profile sets one: a lens profile's correction and the
+amounts set by hand are separate.
+
+The command line does the same: `greycard rawtherapee FOLDER` prints
+the report, and `--write` writes it (`--force` for the frames
+developed or rated here).
+
 ### A raw moved by hand
 
 Under a library root, a raw you move or rename in your file manager

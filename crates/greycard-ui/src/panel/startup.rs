@@ -1470,6 +1470,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.cull_move_on = kept.cull_move_on;
         settings.sort = kept.sort;
         settings.lenses_declined = kept.lenses_declined;
+        settings.rawtherapee_answered = kept.rawtherapee_answered;
         settings.thumb_cache_mb = kept.thumb_cache_mb;
         settings.preview_cache_mb = kept.preview_cache_mb;
         settings.network_poll_minutes = kept.network_poll_minutes;
@@ -1976,6 +1977,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         jpegs_apart: false,
         cull_move_on: false,
         lenses_declined: false,
+        // Written as the RawTherapee offer is answered.
+        rawtherapee_answered: Vec::new(),
         last_file: String::new(),
         // Written as each folder opens.
         recent_folders: Vec::new(),

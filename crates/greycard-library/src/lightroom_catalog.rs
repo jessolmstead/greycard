@@ -905,7 +905,7 @@ fn copy_name(image: &Image) -> String {
 }
 
 /// The edit a frame nobody has developed starts from.
-fn starting_edit(raw: &Path) -> Edit {
+pub(crate) fn starting_edit(raw: &Path) -> Edit {
     if greycard_core::picture::is_picture_path(raw) {
         return Edit::for_picture();
     }
@@ -1081,7 +1081,7 @@ pub fn imported_edit(
 /// under the folder's `.greycard` when the folder has one, so a shoot
 /// whose sidecars live there keeps them together; else as the editor's
 /// setting says.
-fn placement_for(raw: &Path, in_folder: bool) -> Placement {
+pub(crate) fn placement_for(raw: &Path, in_folder: bool) -> Placement {
     if Sidecar::find(raw).is_some() {
         return Placement::of(raw);
     }

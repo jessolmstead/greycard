@@ -43,6 +43,7 @@ pub mod lightroom_catalog;
 pub mod lightroom_exports;
 pub mod order;
 pub mod pairs;
+pub mod rawtherapee;
 pub mod roots;
 pub mod stacks;
 pub mod thumbs;

@@ -633,6 +633,11 @@ pub(crate) enum Shown {
     /// write run as the Write button runs it, for a capture of a
     /// scratch catalog's import).
     Lightroom(LightroomStep),
+    /// RawTherapee's profiles beside the open folder's frames: the
+    /// offer under the folder's name (answered or not), their import's
+    /// sheet at its dry run's report, or written (the write run as the
+    /// Write button runs it, for a capture of a scratch folder's).
+    RawTherapee(RawTherapeeStep),
     /// The settings sheet.
     Settings,
     /// The camera match's sheet, as the Look section's button opens it.
@@ -685,6 +690,15 @@ pub(crate) enum Shown {
     Sort,
 }
 
+/// Which step of the RawTherapee profiles' offer and sheet a capture
+/// shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RawTherapeeStep {
+    Offer,
+    Report,
+    Written,
+}
+
 /// Which step of the Lightroom import's sheet a capture shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LightroomStep {
@@ -725,13 +739,17 @@ impl Shown {
             "lightroom" => Ok(Self::Lightroom(LightroomStep::Roots)),
             "lightroom-report" => Ok(Self::Lightroom(LightroomStep::Report)),
             "lightroom-written" => Ok(Self::Lightroom(LightroomStep::Written)),
+            "rawtherapee-offer" => Ok(Self::RawTherapee(RawTherapeeStep::Offer)),
+            "rawtherapee" => Ok(Self::RawTherapee(RawTherapeeStep::Report)),
+            "rawtherapee-written" => Ok(Self::RawTherapee(RawTherapeeStep::Written)),
             "sort" => Ok(Self::Sort),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, preset-report, paste, pasted, import, \
                  imported, match, matched, refit, look-remove, look-rename, root-name, \
                  delete, archive, archive-rejects, parts, landscape, lightroom, \
-                 lightroom-report, lightroom-written or sort, not {name}"
+                 lightroom-report, lightroom-written, rawtherapee-offer, rawtherapee, \
+                 rawtherapee-written or sort, not {name}"
             )),
         }
     }
@@ -861,6 +879,26 @@ impl Shown {
                     }
                 }
             }
+            Self::RawTherapee(step) => {
+                if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                    let mut st = state.borrow_mut();
+                    match (step, st.recent.open.clone()) {
+                        (_, None) => {
+                            tracing::warn!("--sheet rawtherapee wants a folder open")
+                        }
+                        (RawTherapeeStep::Offer, Some(_)) => {
+                            st.rawtherapee.force_offer = true;
+                            crate::panel::rawtherapee::folder_opened(&mut st, app);
+                        }
+                        (RawTherapeeStep::Report | RawTherapeeStep::Written, Some(dir)) => {
+                            if step == RawTherapeeStep::Written {
+                                st.rawtherapee.then = crate::panel::rawtherapee::Then::Write;
+                            }
+                            crate::panel::rawtherapee::open(&mut st, app, dir);
+                        }
+                    }
+                }
+            }
             Self::Match => app.invoke_match_asked(),
             Self::Refit => app.invoke_look_refit_asked(),
             Self::LookRemove | Self::LookRename => {
@@ -935,6 +973,7 @@ fn when_quiet(state: Rc<RefCell<State>>, then: impl FnOnce() + 'static, tries: u
             && st.part_pending.is_none()
             && st.landscape_pending.is_none()
             && !st.lightroom.busy()
+            && !st.rawtherapee.busy()
     });
     if quiet || tries == 0 {
         slint::Timer::single_shot(std::time::Duration::from_millis(500), then);
@@ -1960,6 +1999,18 @@ mod tests {
         assert_eq!(
             Shown::sheet("lightroom-written"),
             Ok(Shown::Lightroom(LightroomStep::Written))
+        );
+        assert_eq!(
+            Shown::sheet("rawtherapee"),
+            Ok(Shown::RawTherapee(RawTherapeeStep::Report))
+        );
+        assert_eq!(
+            Shown::sheet("rawtherapee-offer"),
+            Ok(Shown::RawTherapee(RawTherapeeStep::Offer))
+        );
+        assert_eq!(
+            Shown::sheet("rawtherapee-written"),
+            Ok(Shown::RawTherapee(RawTherapeeStep::Written))
         );
         // With no --lightroom catalog it opens nothing.
         Shown::Lightroom(LightroomStep::Roots).open(&app);

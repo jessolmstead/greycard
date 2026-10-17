@@ -22,6 +22,11 @@ use greycard_library::lightroom_catalog::{self as lrcat, Found, Progress, Report
 use crate::files::tilde;
 use crate::*;
 
+/// What the sheet says when the run writes no sidecars: the report is
+/// shown, and Write stays off.
+pub(crate) const NO_SIDECARS: &str =
+    "This run writes no sidecars (--no-sidecars), so nothing can be imported.";
+
 /// The sheet's side of the state.
 #[derive(Default)]
 pub(crate) struct Sheet {
@@ -249,7 +254,12 @@ pub(crate) fn show(st: &State, app: &App) {
         r.collections.iter().any(|c| c.creation.is_some()) || !r.creations_left.is_empty()
     }));
     app.set_lr_already(report.map_or(0, |r| r.already) as i32);
-    app.set_lr_ready(report.is_some_and(|r| r.found > 0) && st.index_path.is_some());
+    app.set_lr_ready(
+        report.is_some_and(|r| r.found > 0) && st.index_path.is_some() && st.write_sidecars,
+    );
+    if !st.write_sidecars && app.get_lr_note().is_empty() {
+        app.set_lr_note(NO_SIDECARS.into());
+    }
     if let Some(r) = report {
         app.set_lr_subtitle(
             format!(
@@ -294,6 +304,10 @@ pub(crate) fn root_chosen(st: &mut State, app: &App, row: usize, folder: PathBuf
 pub(crate) fn write(state: &Rc<RefCell<State>>, app: &App) {
     let mut st = state.borrow_mut();
     if st.lightroom.thread.is_some() {
+        return;
+    }
+    if !st.write_sidecars {
+        app.set_lr_note(NO_SIDECARS.into());
         return;
     }
     let (Some(catalog), Some(opts)) = (st.lightroom.catalog.clone(), write_options(&mut st, app))
@@ -466,7 +480,7 @@ pub(crate) fn wrote(
         }
     };
     took_up(state, app);
-    reread_written(state, app, keys);
+    reread_written(state, app, keys, "lightroom import");
     say(app, line.clone());
     {
         let st = state.borrow();
@@ -528,7 +542,14 @@ fn took_up(state: &Rc<RefCell<State>>, app: &App) {
 /// disk, its cells' pictures asked again, and the frame on screen opened
 /// again on its sidecar with nothing of its old panel saved over it, so
 /// the next key or slider moves from the import's edit and not over it.
-fn reread_written(state: &Rc<RefCell<State>>, app: &App, keys: Vec<PathBuf>) {
+/// `whose` names the import in the log. The RawTherapee profiles'
+/// import takes up its write the same way.
+pub(crate) fn reread_written(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    keys: Vec<PathBuf>,
+    whose: &str,
+) {
     let mut st = state.borrow_mut();
     let written: std::collections::HashSet<PathBuf> = keys.into_iter().collect();
     let files: Vec<usize> = st
@@ -554,7 +575,7 @@ fn reread_written(state: &Rc<RefCell<State>>, app: &App, keys: Vec<PathBuf>) {
         crate::panel::browser::open_frame(&mut st, app, &worker, c);
     }
     tracing::info!(
-        "lightroom import: {} of the frames written held by the window, read again",
+        "{whose}: {} of the frames written held by the window, read again",
         files.len()
     );
 }
@@ -768,6 +789,7 @@ mod tests {
         let catalog = catalog(&dir);
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        state.borrow_mut().write_sidecars = true;
         let library = dir.join("library").join("library.sqlite");
         state.borrow_mut().index_path = Some(library.clone());
 
@@ -957,12 +979,42 @@ mod tests {
         crate::testing::remove_scratch(state, &dir);
     }
 
+    /// A run told to write no sidecars shows the report with Write off,
+    /// says why, and a Write pressed anyway writes nothing.
+    #[test]
+    fn with_no_sidecars_the_report_shows_and_write_is_off() {
+        let dir = scratch("no-sidecars");
+        let catalog = catalog(&dir);
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let library = dir.join("library").join("library.sqlite");
+        {
+            let mut st = state.borrow_mut();
+            st.write_sidecars = false;
+            st.index_path = Some(library.clone());
+        }
+        open(&mut state.borrow_mut(), &app, catalog);
+        land_now(&state, &app);
+        assert_eq!(app.get_lr_roots().row_count(), 1);
+        assert!(!app.get_lr_ready());
+        assert_eq!(app.get_lr_note(), NO_SIDECARS);
+        write(&state, &app);
+        assert!(state.borrow().lightroom.thread.is_none());
+        assert!(!app.get_lr_running());
+        for n in ["IMG_0001.CR3", "IMG_0002.CR3"] {
+            assert!(greycard_edit::Sidecar::find(&dir.join("Shoots").join(n)).is_none());
+        }
+        assert!(!crate::collections::Store::dir_beside(&library).exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn a_write_goes_to_the_folders_the_report_showed() {
         let dir = scratch("resolved");
         let catalog = catalog(&dir);
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        state.borrow_mut().write_sidecars = true;
         state.borrow_mut().index_path = Some(dir.join("library").join("library.sqlite"));
         open(&mut state.borrow_mut(), &app, catalog);
         land_now(&state, &app);
@@ -981,6 +1033,7 @@ mod tests {
         let catalog = catalog(&dir);
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        state.borrow_mut().write_sidecars = true;
         let library = dir.join("library").join("library.sqlite");
         state.borrow_mut().index_path = Some(library.clone());
         open(&mut state.borrow_mut(), &app, catalog.clone());

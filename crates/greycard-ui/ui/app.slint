@@ -37,6 +37,7 @@ import { MatchSheet } from "panel/match-sheet.slint";
 import { PresetSheet } from "panel/preset-sheet.slint";
 import { PresetReportSheet } from "panel/preset-report-sheet.slint";
 import { LightroomSheet } from "panel/lightroom-sheet.slint";
+import { RawTherapeeSheet } from "panel/rawtherapee-sheet.slint";
 import { SyncSheet } from "panel/sync-sheet.slint";
 import { ExportSheet } from "panel/deliver.slint";
 import { ImportSheet } from "panel/import-sheet.slint";
@@ -1731,6 +1732,29 @@ export component App inherits Window {
     callback lr-check();
     callback lr-back();
     callback lr-write();
+    // RawTherapee's profiles beside a folder's frames: offered once
+    // under the folder's name, then the import's sheet, its dry run as
+    // the command prints it and the write on a thread. Through Rust
+    // throughout.
+    /// The offer's words, empty for none.
+    in property <string> rt-offer: "";
+    callback rt-offer-import();
+    callback rt-offer-dismissed();
+    in-out property <bool> rt-open: false;
+    in property <int> rt-step: 0;
+    in property <string> rt-title: "";
+    in property <string> rt-subtitle: "";
+    in property <string> rt-note: "";
+    in property <[ReportLine]> rt-totals: [];
+    in property <[ReportLine]> rt-lines: [];
+    in property <int> rt-held: 0;
+    in-out property <bool> rt-force: false;
+    in property <bool> rt-busy: false;
+    in property <bool> rt-writing: false;
+    in property <string> rt-busy-text: "";
+    in property <bool> rt-ready: false;
+    callback rt-force-toggled();
+    callback rt-write();
     // The settings sheet: what is the installation's and not a
     // picture's. Where a sidecar is written, "Beside the raw" or
     // "Hidden folder"; whether an XMP is written beside it; how many
@@ -1908,7 +1932,7 @@ export component App inherits Window {
             || root.delete-open || root.look-remove-open || root.look-rename-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
             || root.root-sheet-open || root.collection-sheet-open || root.preset-report-open
-            || root.lr-open;
+            || root.lr-open || root.rt-open;
     }
 
     // A value typed into a field, set or let go: the keys are the
@@ -1939,6 +1963,9 @@ export component App inherits Window {
     changed lr-open => {
         if (!root.lr-open && !root.sheet-open()) { keys.focus(); }
     }
+    changed rt-open => {
+        if (!root.rt-open && !root.sheet-open()) { keys.focus(); }
+    }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
     forward-focus: keys;
@@ -1961,6 +1988,10 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.preset-report-open) { root.preset-report-open = false; return accept; }
             if (e.text == Key.Escape && root.lr-open) {
                 if (!root.lr-busy) { root.lr-open = false; }
+                return accept;
+            }
+            if (e.text == Key.Escape && root.rt-open) {
+                if (!root.rt-writing) { root.rt-open = false; }
                 return accept;
             }
             if (e.text == Key.Escape && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
@@ -3261,6 +3292,33 @@ export component App inherits Window {
                         tip(t, x, y) => { root.tip-at(t, x, y); }
                         menu-shown => { return root.menu-shown(); }
                     }
+                    // RawTherapee's profiles found beside the folder's
+                    // frames, offered once: Import... opens the sheet,
+                    // Not now asks no more for this folder.
+                    if root.rt-offer != "": VerticalLayout {
+                        spacing: 2px;
+                        padding-top: 2px;
+                        padding-bottom: Theme.space-2;
+                        Text {
+                            text: root.rt-offer;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            PanelButton {
+                                text: "Import...";
+                                horizontal-stretch: 1;
+                                clicked => { keys.focus(); root.rt-offer-import(); }
+                            }
+                            PanelButton {
+                                text: "Not now";
+                                horizontal-stretch: 1;
+                                clicked => { keys.focus(); root.rt-offer-dismissed(); }
+                            }
+                        }
+                    }
                 }
                 // The other way a folder fills, from a card, and while
                 // it runs its progress under it: the grid covers the
@@ -3649,6 +3707,25 @@ export component App inherits Window {
         lr-check => { root.lr-check(); }
         lr-back => { root.lr-back(); }
         lr-write => { root.lr-write(); }
+    }
+
+    // The RawTherapee profiles' import over the folder open.
+    if root.rt-open: RawTherapeeSheet {
+        rt-open <=> root.rt-open;
+        rt-step: root.rt-step;
+        rt-title: root.rt-title;
+        rt-subtitle: root.rt-subtitle;
+        rt-note: root.rt-note;
+        rt-totals: root.rt-totals;
+        rt-lines: root.rt-lines;
+        rt-held: root.rt-held;
+        rt-force <=> root.rt-force;
+        rt-busy: root.rt-busy;
+        rt-writing: root.rt-writing;
+        rt-busy-text: root.rt-busy-text;
+        rt-ready: root.rt-ready;
+        rt-force-toggled => { root.rt-force-toggled(); }
+        rt-write => { root.rt-write(); }
     }
 
     // The collection sheet: a name for a new collection, a smart one

@@ -23,10 +23,14 @@ design note behind it.
   and stacks come across; the same from the command line
   ([§329](https://github.com/jessolmstead/greycard/blob/master/docs/notes/329-importing-a-lightroom-catalog-part-1-the-command.md),
   [§337](https://github.com/jessolmstead/greycard/blob/master/docs/notes/337-importing-a-lightroom-catalog-part-2-the-sheet-the-crop-the-camera-rules-and-the-stacks.md))
-- RawTherapee `.pp3` profiles beside the raws import from the command
-  line: rank, label and trash mark, and the edits that have a place
-  here as one history step
-  ([§328](https://github.com/jessolmstead/greycard/blob/master/docs/notes/328-importing-rawtherapee-profiles.md))
+- RawTherapee `.pp3` profiles beside the raws come in: rank, label
+  and trash mark, and the edits that have a place here as one history
+  step. A folder holding profiles is offered the import once when it
+  opens, with the command's report on a sheet; frames developed or
+  culled here are left alone unless you say so, and a camera JPEG
+  never takes its raw's profile. The same from the command line
+  ([§328](https://github.com/jessolmstead/greycard/blob/master/docs/notes/328-importing-rawtherapee-profiles.md),
+  [§340](https://github.com/jessolmstead/greycard/blob/master/docs/notes/340-importing-rawtherapee-profiles-part-2-the-offer-the-sheet-and-the-aberration-by-hand.md))
 - A Kind row in the filter bar (Raw, JPEG, PNG, TIFF) when a folder
   mixes them; `kind:raw` works in the field too
   ([§326](https://github.com/jessolmstead/greycard/blob/master/docs/notes/326-a-files-kind-as-a-facet-and-a-term.md))

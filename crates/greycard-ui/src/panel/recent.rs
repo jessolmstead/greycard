@@ -77,6 +77,8 @@ pub(crate) fn opened(st: &mut State, app: &App) {
     }
     app.set_open_folder_note("".into());
     show(st, app);
+    // RawTherapee's profiles beside its frames, offered once.
+    crate::panel::rawtherapee::folder_opened(st, app);
 }
 
 /// A folder as the pane and the list name it: its own name, and the

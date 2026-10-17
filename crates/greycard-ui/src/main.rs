@@ -334,8 +334,13 @@ struct Cli {
     /// (the Lightroom catalog import's sheet over --lightroom's
     /// catalog, at its roots), lightroom-report (the same at its dry
     /// run's report), lightroom-written (the same, written as its
-    /// Write button writes it: point it at a scratch catalog) or sort
-    /// (the grid's Sort menu, open; with --grid)
+    /// Write button writes it: point it at a scratch catalog),
+    /// rawtherapee-offer (the offer of the RawTherapee profiles beside
+    /// the open folder's frames, answered or not), rawtherapee (their
+    /// import's sheet over the open folder, at its dry run's report),
+    /// rawtherapee-written (the same, written as its Write button
+    /// writes it: point it at a scratch folder) or sort (the grid's
+    /// Sort menu, open; with --grid)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
@@ -1220,6 +1225,8 @@ pub(crate) struct State {
     pub(crate) import: panel::import::Sheet,
     /// The Lightroom catalog import's sheet.
     pub(crate) lightroom: panel::lightroom::Sheet,
+    /// The RawTherapee profiles' offer and their import's sheet.
+    pub(crate) rawtherapee: panel::rawtherapee::Sheet,
     /// The archive roots: the sheet's question, a copy under way, the
     /// header's count (`panel::archive`).
     pub(crate) archive: panel::archive::Archive,
@@ -1488,6 +1495,7 @@ impl State {
             failed: false,
             import: panel::import::Sheet::default(),
             lightroom: panel::lightroom::Sheet::default(),
+            rawtherapee: panel::rawtherapee::Sheet::default(),
             archive: panel::archive::Archive::default(),
         }
     }
@@ -1542,6 +1550,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::versions::install(app, &state, &worker);
     panel::import::install(app, &state, &worker);
     panel::lightroom::install(app, &state);
+    panel::rawtherapee::install(app, &state);
     panel::recent::install(app, &state, &worker);
     panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);

@@ -231,7 +231,8 @@ Built, as of 0.7.0:
   from a card with renaming, a preset and a verified backup.
   A Lightroom Classic catalog brought across from a sheet: ratings,
   labels, keywords, develop settings, crops, virtual copies,
-  collections and stacks.
+  collections and stacks. RawTherapee's profiles beside a folder's
+  raws, offered when the folder opens.
 - **Culling.** The strip, a zoomable grid and a lightbox, each frame
   shown as edited and made in the background. Culling from the
   camera's JPEG or a local preview when the drive is offline, compare,

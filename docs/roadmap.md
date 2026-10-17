@@ -30,7 +30,6 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] RawTherapee `.pp3` import on opening a folder (Library track)
 - [ ] A Sync button in the develop panel over a selection (Pool)
 - [ ] The crop's starting aspect as a setting (Pool)
 - [ ] A keys sheet and a Help menu (Pool)
@@ -364,12 +363,11 @@ comes across with its ratings and collections.
 - [ ] macOS's `._` resource forks beside the raws on a share are not
       skipped: the browser lists them and the indexer reads them
       (found by the §324 survey)
-- [ ] RawTherapee `.pp3` import on opening a folder: the command is
-      there (§328); a folder holding profiles beside its raws offered
-      the import once, with the command's report on a sheet, and the
-      hand-set CA amounts given a part of their own so an unforced
-      import with a lens profile leaves them alone. darktable's XMP
-      history after it, if a tester asks
+- [ ] darktable's XMP history imported as RawTherapee's profiles are
+      (§328, §340), if a tester asks
+- [ ] The RawTherapee sheet: a menu entry back into it for a folder
+      already answered, and its frame list laid out lazily rather than
+      capped at 200 (§340)
 - [ ] The capture time shifted on a selection, for a second body
       whose clock was off (a wedding's two cameras sorted together):
       a shift kept in the sidecar's meta beside the rating, never a

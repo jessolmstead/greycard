@@ -1,0 +1,182 @@
+// The RawTherapee profiles' import over a folder: the import's dry run
+// as the command prints it, its totals over each frame's lines, a
+// switch for writing over the frames with edits here already, then a
+// write on its own thread and the report again with what was written.
+// Over everything until closed, and while it writes.
+//
+// The frames' lines scroll between a head and a foot that stay: a
+// folder of hundreds of profiles never puts the totals or the buttons
+// off the sheet.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { PanelButton, Toggle } from "../controls.slint";
+import { ReportLine } from "../structs.slint";
+
+// A line of the report: its word in a column, then what it says.
+component RtLine inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> text;
+    in property <length> size: Theme.font-xs;
+    spacing: Theme.space-2;
+    // Each frame a little apart from the one before.
+    padding-top: root.label == "frame" ? 6px : 0px;
+    Text {
+        text: root.label;
+        width: 88px;
+        font-size: root.size;
+        color: Theme.text-secondary;
+    }
+    // Its width said, so that its height is the wrapped text's and the
+    // scroll measures the whole report.
+    Text {
+        text: root.text;
+        width: max(40px, root.width - 88px - Theme.space-2);
+        wrap: word-wrap;
+        font-size: root.size;
+        color: Theme.text;
+    }
+}
+
+export component RawTherapeeSheet inherits Rectangle {
+    in-out property <bool> rt-open;
+    /// 0 the dry run's report, 1 what was written.
+    in property <int> rt-step;
+    in property <string> rt-title;
+    in property <string> rt-subtitle;
+    /// A word over the sheet: an error.
+    in property <string> rt-note;
+    /// The report's totals, over the frames.
+    in property <[ReportLine]> rt-totals;
+    /// Each frame's lines.
+    in property <[ReportLine]> rt-lines;
+    /// Frames with a history here already; none hides the switch.
+    in property <int> rt-held;
+    in-out property <bool> rt-force: false;
+    /// A dry run is reading, or the write writing; the buttons wait.
+    in property <bool> rt-busy;
+    /// The write writing: the sheet stays until it lands. A dry run
+    /// reading can be walked away from.
+    in property <bool> rt-writing;
+    in property <string> rt-busy-text;
+    /// Something a write would write.
+    in property <bool> rt-ready;
+    callback rt-force-toggled();
+    callback rt-write();
+
+    background: #000000a0;
+    TouchArea { clicked => { if (!root.rt-writing) { root.rt-open = false; } } }
+    Rectangle {
+        width: min(600px, root.width - 2 * Theme.space-5);
+        height: min(body.preferred-height, root.height - 2 * Theme.space-5);
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        clip: true;
+        TouchArea { }
+        body := VerticalLayout {
+            padding: Theme.space-5;
+            spacing: Theme.space-2;
+            // The head.
+            Text {
+                text: root.rt-title;
+                font-size: Theme.font-lg;
+                font-weight: Theme.weight-medium;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+            if root.rt-subtitle != "": Text {
+                text: root.rt-subtitle;
+                wrap: word-wrap;
+                font-size: Theme.font-xs;
+                color: Theme.text-secondary;
+            }
+            if root.rt-note != "": Text {
+                text: root.rt-note;
+                wrap: word-wrap;
+                font-size: Theme.font-sm;
+                color: Theme.label-red;
+            }
+            // The totals: what a write would do, or what it did.
+            VerticalLayout {
+                spacing: 2px;
+                for l in root.rt-totals: RtLine {
+                    label: l.label;
+                    text: l.text;
+                    size: Theme.font-sm;
+                }
+            }
+            // The middle, which scrolls: each frame's lines.
+            scroll := ScrollView {
+                vertical-stretch: 1;
+                min-height: root.rt-lines.length == 0 ? 0px : 72px;
+                preferred-height: list.preferred-height;
+                content-height: list.preferred-height;
+                content-width: self.visible-width;
+                list := VerticalLayout {
+                    width: scroll.visible-width;
+                    spacing: 2px;
+                    for l in root.rt-lines: RtLine {
+                        label: l.label;
+                        text: l.text;
+                    }
+                }
+            }
+            // The foot: the switch, then the buttons.
+            if root.rt-step == 0 && root.rt-held > 0: Toggle {
+                label: root.rt-held == 1
+                    ? "Write over the 1 frame developed or rated here already"
+                    : "Write over the " + root.rt-held + " frames developed or rated here already";
+                enabled: !root.rt-busy;
+                checked <=> root.rt-force;
+                toggled => { root.rt-force-toggled(); }
+            }
+            Rectangle { height: Theme.space-2; }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                alignment: end;
+                if root.rt-busy: Text {
+                    text: root.rt-busy-text;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-secondary;
+                    vertical-alignment: center;
+                }
+                if root.rt-step == 0: PanelButton {
+                    text: "Cancel";
+                    enabled: !root.rt-writing;
+                    clicked => { root.rt-open = false; }
+                }
+                if root.rt-step == 0: PanelButton {
+                    text: "Write";
+                    primary: true;
+                    enabled: !root.rt-busy && root.rt-ready;
+                    clicked => { root.rt-write(); }
+                }
+                if root.rt-step == 1: PanelButton {
+                    text: "OK";
+                    primary: true;
+                    clicked => { root.rt-open = false; }
+                }
+            }
+        }
+        // A report longer than the sheet says that it goes on, laid over
+        // the foot of its scroll rather than in the layout it measures.
+        if list.preferred-height > scroll.visible-height + 1px
+            && scroll.content-y > scroll.visible-height - list.preferred-height + 1px: Rectangle {
+            x: scroll.x;
+            y: scroll.y + scroll.height - self.height;
+            width: scroll.width;
+            height: more.preferred-height + 6px;
+            background: Theme.surface;
+            more := Text {
+                text: "The report goes on below: scroll for the rest.";
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                horizontal-alignment: right;
+            }
+        }
+    }
+}

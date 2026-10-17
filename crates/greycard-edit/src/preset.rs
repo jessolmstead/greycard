@@ -268,9 +268,11 @@ pub enum Part {
     LensProfile,
     /// The profile's vignetting.
     LensVignetting,
-    /// The profile's lateral chromatic aberration and the one set by
-    /// hand.
+    /// The profile's lateral chromatic aberration, its switch.
     LensChromaticAberration,
+    /// The lateral chromatic aberration set by hand: the red's and the
+    /// blue's amounts, the two sliders under the profile's switches.
+    LensManualChromaticAberration,
     /// The distortion set by hand.
     LensDistortion,
     LensScale,
@@ -336,6 +338,7 @@ impl Part {
         Part::LensProfile,
         Part::LensVignetting,
         Part::LensChromaticAberration,
+        Part::LensManualChromaticAberration,
         Part::LensDistortion,
         Part::LensScale,
         Part::LensDefringe,
@@ -369,6 +372,7 @@ impl Part {
             LensProfile
             | LensVignetting
             | LensChromaticAberration
+            | LensManualChromaticAberration
             | LensDistortion
             | LensScale
             | LensDefringe => Section::Lens,
@@ -415,7 +419,8 @@ impl Part {
             GradingBalance => "grading.balance",
             LensProfile => "lens.profile",
             LensVignetting => "lens.vignetting",
-            LensChromaticAberration => "lens.chromatic-aberration",
+            LensChromaticAberration => "lens.profile-chromatic-aberration",
+            LensManualChromaticAberration => "lens.manual-chromatic-aberration",
             LensDistortion => "lens.distortion",
             LensScale => "lens.scale",
             LensDefringe => "lens.defringe",
@@ -468,6 +473,7 @@ impl Part {
             LensProfile => "Profile",
             LensVignetting => "Vignetting",
             LensChromaticAberration => "Chromatic aberration",
+            LensManualChromaticAberration => "Manual aberration",
             LensDistortion => "Manual distortion",
             LensScale => "Scale",
             LensDefringe => "Defringe",
@@ -486,6 +492,21 @@ impl Part {
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|p| p.name() == name)
+    }
+
+    /// The parts a name in a preset's file stands for: its own, or for
+    /// a name an older build wrote, what that name carried then.
+    /// `lens.chromatic-aberration` was the profile's switch and the
+    /// amounts set by hand together, before the two were parts of their
+    /// own, and a preset saved then still carries both.
+    pub fn from_file_name(name: &str) -> Vec<Self> {
+        match name {
+            "lens.chromatic-aberration" => vec![
+                Part::LensChromaticAberration,
+                Part::LensManualChromaticAberration,
+            ],
+            _ => Self::from_name(name).into_iter().collect(),
+        }
     }
 
     /// Lay this part of `from` over `onto`, the rest of the section
@@ -528,6 +549,8 @@ impl Part {
             LensVignetting => o.lens.vignetting = f.lens.vignetting,
             LensChromaticAberration => {
                 o.lens.chromatic_aberration = f.lens.chromatic_aberration;
+            }
+            LensManualChromaticAberration => {
                 o.lens.ca_red = f.lens.ca_red;
                 o.lens.ca_blue = f.lens.ca_blue;
             }
@@ -590,16 +613,19 @@ impl<'de> Deserialize<'de> for Part {
 /// rather than the whole preset refused, and a null is none.
 fn known_parts<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<Part>, D::Error> {
     let names = Option::<Vec<String>>::deserialize(d)?.unwrap_or_default();
-    Ok(names
-        .iter()
-        .filter_map(|n| {
-            let part = Part::from_name(n);
-            if part.is_none() {
-                log::warn!("preset: no part called {n:?}, passed over");
+    let mut parts = Vec::new();
+    for n in &names {
+        let these = Part::from_file_name(n);
+        if these.is_empty() {
+            log::warn!("preset: no part called {n:?}, passed over");
+        }
+        for p in these {
+            if !parts.contains(&p) {
+                parts.push(p);
             }
-            part
-        })
-        .collect())
+        }
+    }
+    Ok(parts)
 }
 
 /// How a preset's masks land on a picture's.
@@ -1804,6 +1830,7 @@ mod tests {
         from.grading.balance = 0.4;
         from.lens.profile = !from.lens.profile;
         from.lens.vignetting = !from.lens.vignetting;
+        from.lens.chromatic_aberration = !from.lens.chromatic_aberration;
         from.lens.ca_red = 0.001;
         from.lens.manual = -0.02;
         from.lens.scale = 1.1;
@@ -1918,6 +1945,45 @@ mod tests {
             Preset::from_json(newer).unwrap().parts,
             vec![Part::DetailDehaze]
         );
+    }
+
+    #[test]
+    fn the_chromatic_aberration_of_an_older_preset_carries_both_its_halves() {
+        // Saved when the profile's switch and the amounts by hand were
+        // one part: both come across, as they did then.
+        let old = r#"{"name": "Fringe", "sections": [], "parts": ["lens.chromatic-aberration"],
+                      "edit": {"lens": {"chromatic_aberration": true, "ca_red": 0.002,
+                                        "ca_blue": -0.001}}}"#;
+        let p = Preset::from_json(old).unwrap();
+        assert_eq!(
+            p.parts,
+            vec![
+                Part::LensChromaticAberration,
+                Part::LensManualChromaticAberration
+            ]
+        );
+        let out = p.applied(&Edit::default());
+        assert!(out.lens.chromatic_aberration);
+        assert_eq!((out.lens.ca_red, out.lens.ca_blue), (0.002, -0.001));
+        // Written again, each by its own name; the old one never is.
+        let json = p.to_json();
+        assert!(
+            json.contains(r#""lens.profile-chromatic-aberration""#),
+            "{json}"
+        );
+        assert!(
+            json.contains(r#""lens.manual-chromatic-aberration""#),
+            "{json}"
+        );
+        assert!(!json.contains(r#""lens.chromatic-aberration""#), "{json}");
+        // The switch alone leaves the amounts as the picture has them.
+        let mut onto = Edit::default();
+        onto.lens.ca_red = -0.003;
+        let mut from = Edit::default();
+        from.lens.chromatic_aberration = true;
+        Part::LensChromaticAberration.copy(&from, &mut onto);
+        assert!(onto.lens.chromatic_aberration);
+        assert_eq!(onto.lens.ca_red, -0.003);
     }
 
     #[test]

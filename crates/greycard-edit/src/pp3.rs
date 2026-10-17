@@ -49,12 +49,13 @@
 //! with no history here nothing else could differ. An import forced
 //! over a frame developed here carries every setting a section read
 //! here speaks to, neutral ones too ([`Carry::Every`]), so the frame
-//! comes out as RawTherapee has it. Either way two things are written
+//! comes out as RawTherapee has it. Either way one thing is written
 //! that the profile may not set: the camera's white balance, which is
-//! carried whenever the profile says "Camera", and the hand-set
-//! chromatic aberration, which shares its part with the profile's
-//! switch for it and so is written, at zero when the profile has none,
-//! whenever a lens profile is carried.
+//! carried whenever the profile says "Camera". The chromatic
+//! aberration set by hand is a part of its own, apart from the lens
+//! profile's switch for it, so a lens profile carried leaves the
+//! frame's hand-set amounts as they are unless the profile sets some
+//! (or, forced, has the section at all).
 
 use crate::geometry::{Aspect, Crop, Geometry, MIN_CROP};
 use crate::meta::{Flag, Label, Meta, STARS};
@@ -758,18 +759,16 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
             approximated.push("manual distortion".into());
         }
     }
-    // The hand-set aberration rides in one part with the profile's
-    // switch for it, so a profile carried writes these too, at zero
-    // when the profile has none.
+    // The hand-set aberration is a part of its own, apart from the
+    // profile's switch: carried when the profile sets it, or forced
+    // with the section there, and otherwise the frame's own.
     let red = p.num("CACorrection", "Red").unwrap_or(0.0);
     let blue = p.num("CACorrection", "Blue").unwrap_or(0.0);
     if red != 0.0 || blue != 0.0 || (every && p.keys("CACorrection").is_some()) {
         let m = crate::lens::MAX_MANUAL_CA;
         edit.lens.ca_red = (red as f32).clamp(-m, m);
         edit.lens.ca_blue = (blue as f32).clamp(-m, m);
-        if !parts.contains(&Part::LensChromaticAberration) {
-            parts.push(Part::LensChromaticAberration);
-        }
+        parts.push(Part::LensManualChromaticAberration);
         if red != 0.0 || blue != 0.0 {
             exact.push("chromatic aberration by hand".into());
         } else {
@@ -1440,11 +1439,61 @@ Method=amaze
         );
         assert_eq!(i.exact, ["chromatic aberration by hand"]);
         assert_eq!(i.skipped, ["Vignetting Correction"]);
+        assert!(
+            i.preset
+                .parts
+                .contains(&Part::LensManualChromaticAberration)
+        );
         // No profile there leaves this engine's own lookup alone.
         let i = read("[LensProfile]\nLcMode=none\n", Frame::default()).unwrap();
         assert!(i.preset.is_empty());
         let i = read("[LensProfile]\nLcMode=later\n", Frame::default()).unwrap();
         assert_eq!(i.skipped, ["LensProfile LcMode later"]);
+    }
+
+    #[test]
+    fn a_lens_profile_carried_leaves_the_aberration_set_by_hand_alone() {
+        // A frame with amounts of its own set by hand.
+        let mut mine = Edit::default();
+        mine.lens.ca_red = 0.003;
+        mine.lens.ca_blue = -0.002;
+        // The profile's lookup with its switch for the aberration, and
+        // no amounts by hand (RawTherapee writes the section at zero).
+        let profile = "[LensProfile]\nLcMode=lfauto\nUseDistortion=true\nUseVignette=true\n\
+                       UseCA=true\n[CACorrection]\nRed=0\nBlue=0\n";
+        let set = read(profile, frame(6000, 4000)).unwrap();
+        assert!(set.preset.parts.contains(&Part::LensChromaticAberration));
+        assert!(
+            !set.preset
+                .parts
+                .contains(&Part::LensManualChromaticAberration)
+        );
+        let e = set.applied(&mine);
+        assert!(e.lens.profile && e.lens.chromatic_aberration);
+        assert_eq!((e.lens.ca_red, e.lens.ca_blue), (0.003, -0.002));
+        assert!(!set.neutral.iter().any(|n| n.contains("aberration")));
+        // Forced, the section at zero sets them back to zero, and the
+        // report names it.
+        let every = read_carrying(profile, frame(6000, 4000), Carry::Every).unwrap();
+        let e = every.applied(&mine);
+        assert_eq!((e.lens.ca_red, e.lens.ca_blue), (0.0, 0.0));
+        assert!(
+            every
+                .neutral
+                .iter()
+                .any(|n| n == "no chromatic aberration by hand")
+        );
+        // Amounts in the profile come across over the frame's, said as
+        // exact.
+        let given = read(&profile.replace("Red=0", "Red=0.001"), frame(6000, 4000)).unwrap();
+        assert_eq!(given.applied(&mine).lens.ca_red, 0.001);
+        assert_eq!(given.applied(&mine).lens.ca_blue, 0.0);
+        assert!(
+            given
+                .exact
+                .iter()
+                .any(|n| n == "chromatic aberration by hand")
+        );
     }
 
     #[test]

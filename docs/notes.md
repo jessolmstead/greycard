@@ -350,3 +350,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§337. Importing a Lightroom catalog, part 2: the sheet, the crop, the camera rules and the stacks](notes/337-importing-a-lightroom-catalog-part-2-the-sheet-the-crop-the-camera-rules-and-the-stacks.md) (2026-10-17)
 - [§338. ONNX Runtime at first use, and the processors it cannot run on](notes/338-onnx-runtime-at-first-use-and-the-processors-it-cannot-run-on.md) (2026-10-17)
 - [§339. A sort order for the grid](notes/339-a-sort-order-for-the-grid.md) (2026-10-17)
+- [§340. Importing RawTherapee profiles, part 2: the offer, the sheet and the aberration by hand](notes/340-importing-rawtherapee-profiles-part-2-the-offer-the-sheet-and-the-aberration-by-hand.md) (2026-10-17)
