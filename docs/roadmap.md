@@ -683,7 +683,10 @@ release when the wait clears.
       registered; fixed in slint-ui/slint#13507 on 2026-09-19. Waits
       on the release after 1.18.0 (§99)
 - [ ] Drop the rawler `[patch.crates-io]`. Waits on a rawler release
-      carrying dnglab/dnglab#840 (§13j)
+      after 0.8.0 carrying dnglab/dnglab#840 (§13j), #851 and #855,
+      all on its main since 2026-10-17; until then the pin can move to
+      the fork's Nikon HE branch rebased on that main, which brings
+      the three fixes in today
 - [ ] rawler's DNG decoder reads the image data on a dummy read, so a
       DNG's `Stance` costs a decode; report and fix upstream, then
       drop the tag reader in `dng_mosaic` (§322)
@@ -696,12 +699,17 @@ release when the wait clears.
 - [ ] rawler 0.8 on a CR3 with a zero-size box in `moov` loops
       until it runs out of memory, and its RW2 decoder divides by
       zero on a zero height (§160). Filed as dnglab/dnglab#848 and
-      #850; until the first is fixed a damaged CR3 on a card is the
-      one way an index pass can be brought down
+      #850; the first is fixed on main by #855 (2026-10-17) and
+      reaches us with the pin's move above, the second is open; until
+      the pin moves a damaged CR3 on a card is the one way an index
+      pass can be brought down. The zeroed CTMD record of #849 is
+      fixed by our #851; the NEF, RAF and RW2 panics on a zeroed tail
+      are dnglab/dnglab#852, open, and the survey's guard (§324)
+      catches them meanwhile
 - [ ] rawler on a CR3 whose box carries a 64-bit size that wraps the
       offset past it asks for 6 GiB and aborts, on the whole file as on
-      the ends (§324). Report upstream with the box-parser reports
-      above
+      the ends (§324). #855 rejects a zero or undersized box but not a
+      size that overflows the offset; report upstream as its follow-up
 - [ ] ort rc.13 ignores every `ep::WebGPU` option (the key prefix is
       applied twice); greycard sets them through a config entry
       instead (§159). Fixed on ort's main in pykeio/ort@bc23566;
