@@ -333,4 +333,6 @@ in its section; the roadmap and the changelog only point at it.
 - [§320. Virtual copies, part 3: Compare](notes/320-virtual-copies-part-3-compare.md) (2026-10-15)
 - [§321. Splitting roots.rs](notes/321-splitting-roots-rs.md) (2026-10-15)
 - [§322. X-Trans, step 1: Markesteijn's demosaic](notes/322-x-trans-step-1-markesteijns-demosaic.md) (2026-10-15)
+- [§323. Fitting the Lightroom mapper to its exports](notes/323-fitting-the-lightroom-mapper-to-its-exports.md) (2026-10-16)
 - [§324. The camera match's survey over a network share](notes/324-the-camera-matchs-survey-over-a-network-share.md) (2026-10-16)
+- [§325. Lightroom's tint came in backwards](notes/325-lightrooms-tint-came-in-backwards.md) (2026-10-16)

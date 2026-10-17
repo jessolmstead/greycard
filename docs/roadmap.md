@@ -38,10 +38,22 @@ ours, so a tester brings a library over in one go.
 - [ ] A look previewed under the pointer (Color track)
 - [ ] X-Trans step 2: denoising, hot pixel repair and chromatic
       aberration correction on the X-Trans path (§322)
+- [ ] Lightroom preset import in the window: the CLI's `presets
+      --import` behind a button on the presets list, a file chooser
+      for `.xmp` and `.gcp`, and the mapper's report of what did not
+      carry shown once
+- [ ] RawTherapee `.pp3` import, the command (Library track)
+- [ ] RAW+JPEG pairs (Library track). After the kind filter
+- [ ] Stacks (Library track). After the pairs
 - [ ] The camera match's folder survey over a NAS: the probe from the
       file's two ends, a count while it reads, the empty text only once
       it has finished, four reads at once (§324). After X-Trans step 2
       if that changes `rawler_backend.rs`
+- [ ] The Lightroom mapper measured, then fitted, against the
+      archive's exports with their settings read from the catalogs,
+      the camera's fitted look on first so the error left is the
+      sliders'; held out by shoot (§323). After the catalog import's
+      part 1
 
 
 ## Tracks
@@ -329,9 +341,11 @@ comes across with its ratings and collections.
       machine, so a set gathered on the laptop is not on the desktop;
       carry it through the archive as the sidecars are (§243). Waits on
       collections
-- [ ] Faces in the library: detection and grouping by a clean-license
-      model, names as keywords in the meta section, a facet in the
-      filter bar. The index is there since §160
+- [ ] RAW+JPEG pairs: a JPEG with a raw of the same name beside it is
+      the raw's companion, not a second frame in the grid and the
+      strip; a badge on the tile, a move or a delete takes both, the
+      pair's rating, flag and label one thing; a setting to list them
+      apart, as Lightroom's "treat JPEG as separate" is
 - [ ] Lightroom catalog import: the `.lrcat` read as SQLite, ratings,
       flags, labels, keywords and captions to the meta section
       exactly, collections and translatable smart collections to the
@@ -343,8 +357,46 @@ comes across with its ratings and collections.
       catalog; a command with a dry-run report first, then a sheet
       (§79). Waits on collections; the capstone, its own release if it
       grows
+- [ ] RawTherapee `.pp3` import: the profile beside a raw read by a
+      command or on opening the folder, `[General]`'s Rank, ColorLabel
+      and InTrash to the meta section exactly, crop, rotation, white
+      balance, exposure and the lens settings as a named first history
+      state, the tools with no match here reported as skipped; a dry
+      run first, as the Lightroom catalog import has. darktable's XMP
+      history after it, if a tester asks
 - [ ] A map: the frames' EXIF GPS on tiles, a click to select them, a
       position given to a frame by hand. Low priority
+
+### Culling and search
+
+A card's worth of frames comes back in a first-pass order: bursts
+grouped with the sharpest on top, missed focus and closed eyes said,
+and a picture found across the library by a phrase or by a person.
+A model suggests; a flag, a rating or a keyword is only ever set by
+the user.
+
+- [ ] Bursts and near-duplicates grouped: frames seconds apart with
+      near-identical previews put in one stack, its sharpest frame on
+      top. Waits on stacks (Library track)
+- [ ] A focus score for every frame from its embedded preview, on the
+      subject where the Subject mask finds one and on the frame
+      otherwise; a sort, a `focus:` term, and the order inside a burst
+- [ ] Closed eyes said from the face parts the Parts mask already
+      finds (§252), as a term and a mark on the tile, never a reject
+- [ ] Search by phrase: an image embedding from a CLIP-style model
+      (SigLIP 2 a candidate, its license and training data checked)
+      computed by the indexer from each preview and kept in the
+      library index, never a sidecar; a phrase in the filter field
+      ranked against them
+- [ ] Suggested keywords from the same embeddings, kept apart from the
+      user's own until accepted into the meta section
+- [ ] People: faces found and grouped by a clean-license model, a group
+      named once, a Person facet in the filter bar and a `person:`
+      term, the names written as keywords so other tools see them.
+      Waits on the face-recognition license search (AuraFace's
+      recognizer and SFace the candidates, their training data
+      unasked) and on whether the index may hold a face embedding,
+      which is biometric data; never a sidecar (§253)
 
 ### Merge
 
@@ -582,6 +634,12 @@ clears or a tester asks for it.
 - [ ] Idea: AI color grade matching to a reference
 - [ ] Idea: AI highlight recovery
 - [ ] Maybe: MCP
+- [ ] Maybe: Spektrafilm, darktable's spectral film simulation
+      (measured film and paper data, grain, halation), in place of
+      the look stage rather than over it, as darktable advises. Waits
+      on darktable's module shipping and on the licenses of
+      spektrafilm and its data pack
+- [ ] Maybe: Depth mapping for blur
 
 ## Blocked
 
