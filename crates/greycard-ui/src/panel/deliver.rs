@@ -733,6 +733,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 return;
             }
             st.asked.remove(&key);
+            st.masks_failed.remove(&key);
             // A Part asking which person it is of here: the picking,
             // with the people outlined; settled, it asks no more. An
             // ask made on a picture no longer open is that picture's.
@@ -796,10 +797,14 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             }
         }
         Outcome::MaskFailed { key, message } => {
-            let st = state.borrow();
+            let mut st = state.borrow_mut();
             tracing::error!("mask: {message}");
-            if st.asked.contains_key(&key) {
+            if let Some(shape) = st.asked.get(&key).cloned() {
                 app.set_status(format!("mask: {message}").into());
+                let file = st.learned_of.clone();
+                st.masks_failed.insert(key, (shape, file));
+                // A capture waiting on this shape is waiting no more.
+                app.window().request_redraw();
             }
         }
         Outcome::Fetching { name, done, total } => {
@@ -817,6 +822,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let mut st = state.borrow_mut();
             st.fetching = false;
             st.asked.clear();
+            st.masks_failed.clear();
             st.fetch_failed.retain(|id| *id != model.id);
             let short = model.name.split(',').next().unwrap_or(model.name);
             app.set_status(format!("{short} is ready").into());

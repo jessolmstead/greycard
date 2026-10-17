@@ -76,7 +76,7 @@ and unpack it.
 
 You'll need a GPU with Vulkan, or Metal on a Mac.
 [Building from source](docs/building.md) is a `cargo build --release`
-once the libraries are in.
+once the libraries are in, and one script for the AI runtime.
 
 ## Feedback
 

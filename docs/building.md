@@ -17,8 +17,9 @@ tarball does not suit, or to get a fix before it is released.
   behind it.
 - **Disk.** A debug and a release build of the workspace together
   come to around ten gigabytes under `target/`.
-- **Network, once.** The build fetches around 700 crates and a
-  prebuilt ONNX Runtime. After that it builds offline.
+- **Network, once.** The build fetches around 700 crates, and
+  `scripts/ort-dylib.sh` a prebuilt ONNX Runtime. After that it
+  builds offline.
 
 ## 1. A compiler and the libraries
 
@@ -77,15 +78,15 @@ winget install Microsoft.VisualStudio.BuildTools ^
   --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 ```
 
-The toolset version matters. `ort` links a prebuilt static
-`onnxruntime.lib`, and a toolset older than the one that library was
-compiled with fails at the very last step — `link.exe` reporting
-unresolved `__std_*` symbols, which are MSVC STL vector algorithms
-renamed between toolsets. Rust code compiles fine; only the link
-fails. As of `ort 2.0.0-rc.13` the floor is **14.51.36231**, which is
-the VS 2026 build tools; VS 2022 17.14's 14.44.35207 is too old, and
-rustc picks the newest toolset installed. To read the floor out of the
-library itself, under `%LOCALAPPDATA%\ort.pyke.io\dfbin\`:
+The toolset version matters. `scripts/ort-dylib.sh` (step 4) links
+`onnxruntime.dll` out of pyke's prebuilt static `onnxruntime.lib`,
+and a toolset older than the one that library was compiled with fails
+at the very last step — `link.exe` reporting unresolved `__std_*`
+symbols, which are MSVC STL vector algorithms renamed between
+toolsets. As of `ort 2.0.0-rc.13` the floor is **14.51.36231**, which
+is the VS 2026 build tools; VS 2022 17.14's 14.44.35207 is too old,
+and the newest toolset installed is the one used. To read the floor
+out of the library itself, under `target\ort-dylib\<hash>\src\`:
 
 ```sh
 grep -ao "VC.Tools.MSVC.14\.[0-9.]*" onnxruntime.lib | sort -u
@@ -93,9 +94,9 @@ grep -ao "VC.Tools.MSVC.14\.[0-9.]*" onnxruntime.lib | sort -u
 
 lcms2 builds from the source its crate carries, so there is no
 vcpkg step, and nothing needs pkg-config. Windows 10 or newer.
-`ort` puts `webgpu_dawn.dll`, `dxcompiler.dll` and `dxil.dll` into
-`target/<profile>/` for you — there is no rpath on Windows, and the
-loader looks beside the executable.
+The script puts `onnxruntime.dll`, `webgpu_dawn.dll`, `dxcompiler.dll`
+and `dxil.dll` into `target/<profile>/` for you, copied rather than
+linked; the loader looks beside the executable.
 
 ## 2. Rust
 
@@ -134,10 +135,32 @@ level; femtovg's carries a rendering fix.
 
 ```sh
 cargo build --release
+scripts/ort-dylib.sh
 ```
 
-The first one takes ten to twenty minutes and is mostly quiet.
+On Windows the script runs from Git Bash; from PowerShell or `cmd`,
+`cargo run --locked -p ort-dylib -- debug release` does the same.
+
+The first build takes ten to twenty minutes and is mostly quiet.
 Afterwards a rebuild of your own change is seconds.
+
+The binaries do not link ONNX Runtime, the library the learned
+masks, the denoiser and the fill run on: they load it the first time
+a model is wanted, so a processor it cannot run on still starts the
+editor. `scripts/ort-dylib.sh` makes that library, once, out of the
+static build `ort`'s authors publish: it fetches the archive into
+`target/ort-dylib/`, checks its hash, links `libonnxruntime.so`
+(`.dylib` on a Mac, `onnxruntime.dll` on Windows) with your C++
+toolchain, and puts it and Dawn, the GPU backend the models run on,
+into `target/debug/` and `target/release/` (name a profile to do just
+that one). Run it again after `cargo clean`; with nothing changed it
+does nothing. A build without it runs: the editor, the command line
+and the tests say "the AI features are off: no libonnxruntime.so
+beside greycard …" and go on without them. The x86-64 library needs
+AVX2, BMI2 and the rest of x86-64-v3 (Intel from Haswell, AMD from
+Zen); on an older processor the AI features are off the same way.
+`GREYCARD_ORT_DYLIB` names another ONNX Runtime library to load in its
+place, taken without that check.
 
 Nikon's High Efficiency raws (HE and HE*, written by newer Z bodies
 such as the Z9, Z8, Z6 III, Zf and Z50 II) are JPEG XS inside, and
@@ -150,18 +173,19 @@ Build the debug profile instead if you are going to attach a
 debugger, but do not develop photographs with it: the pipeline is
 tens of times slower unoptimized.
 
-That leaves three files in `target/release/`:
+That leaves four files in `target/release/`:
 
 ```
 greycard-ui             the editor
 greycard                the command line
-libwebgpu_dawn.so       the GPU backend the models run on
+libonnxruntime.so       the runtime the models run on
+libwebgpu_dawn.so       the GPU backend it runs them on
 ```
 
-`libwebgpu_dawn.so` (`.dylib` on a Mac) is a symlink into ONNX
-Runtime's download cache under `~/.cache/ort.pyke.io`. The binaries
-find it through an rpath that points beside themselves, so if you
-copy them anywhere, copy it too — dereferenced.
+The two libraries (`.dylib` on a Mac) are symlinks into
+`target/ort-dylib/`. The binaries look for ONNX Runtime beside
+themselves, and it finds Dawn beside itself, so if you copy them
+anywhere, copy both libraries too — dereferenced.
 
 ## 5. Run it
 
@@ -191,6 +215,7 @@ a release ships, for the platform you are on:
 
 ```sh
 cargo build --release -p greycard-ui -p greycard-cli
+scripts/ort-dylib.sh release
 scripts/package.sh
 ```
 
@@ -210,6 +235,12 @@ cargo test
 cargo clippy --all-targets
 cargo fmt
 ```
+
+Run `scripts/ort-dylib.sh debug` before the tests: without it the
+tests that open ONNX Runtime return early and pass, with the reason
+kept where `cargo test` keeps a passing test's output (`-- --nocapture`
+shows it). `GREYCARD_REQUIRE_ORT=1`, which the CI sets, makes each of
+them fail instead.
 
 `hooks/pre-push` runs the first two for you on a push that touches
 code, and lets a push of docs alone through at once. The tests it
@@ -250,10 +281,14 @@ Vulkan driver. `vulkaninfo --summary` from `vulkan-tools` says
 whether the system has one at all. Inside a VM or over plain SSH
 there usually is not.
 
-**`libwebgpu_dawn.so: cannot open shared object file`** — the
-symlink into `~/.cache/ort.pyke.io` is dangling, because the cache
-was cleared or `target/` was restored from somewhere else. `cargo
-clean -p greycard-ai && cargo build --release` fetches it again.
+**"the AI features are off: no libonnxruntime.so beside greycard"**
+— `scripts/ort-dylib.sh` has not run for this profile, or
+`target/ort-dylib/` was cleared under its links. Run it again.
+
+**"ONNX Runtime at … would not load: …"** — the reason follows. A
+missing `libwebgpu_dawn.so` is the same cure as above; a `GLIBC_2.xx`
+not found means the library was linked on a newer system than the one
+running it, which a library made on the same machine never is.
 
 **The build is killed partway through** — it ran out of memory.
 `cargo build --release -j 2` builds fewer crates at once.

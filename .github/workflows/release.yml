@@ -13,8 +13,9 @@
 #
 # The Windows runner has to carry an MSVC toolset at least as new as
 # the one ort's prebuilt onnxruntime.lib was compiled with, which for
-# ort 2.0.0-rc.13 is 14.51.36231: an older one fails at link with
-# unresolved __std_* symbols out of the MSVC STL and nowhere earlier.
+# ort 2.0.0-rc.13 is 14.51.36231: an older one fails the link of
+# onnxruntime.dll (scripts/ort-dylib.sh) with unresolved __std_*
+# symbols out of the MSVC STL and nowhere earlier.
 # windows-2025 took Visual Studio 2026, and that toolset with it, in
 # June 2026. The step below prints what is actually installed, so a
 # link failure is read off the log rather than guessed at; if the image
@@ -140,6 +141,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
+          # llvm-readobj, for the Windows binaries' imports below.
+          components: llvm-tools
 
       # Nikon High Efficiency decoding (the nikon-he feature) stays out
       # of every published build: JPEG XS is licensed per copy of a
@@ -154,18 +157,57 @@ jobs:
             exit 1
           fi
 
-      # No build cache here, on purpose. target/release/libwebgpu_dawn.so
-      # is a symlink into the ort download cache, which is not part of
-      # any cache action; restoring a target directory without it would
-      # leave the link dangling and the package short a library. A
-      # release is rare enough to pay for a cold build.
+      # No build cache here, on purpose: a release is rare enough to pay
+      # for a cold build, and builds exactly what the tree says.
       # --locked: the lockfile is committed, and one dependency is
       # pinned to a git revision. A release builds what it says it does.
       - name: Build
         run: cargo build --locked --release -p greycard-ui -p greycard-cli
 
-      # The same, checked on what was built: every error rawler's JPEG
-      # XS decoder can return names the format, so a binary with the
+      # ONNX Runtime as a shared library, made from pyke's static build
+      # and left with Dawn in target/release for package.sh. The
+      # binaries load it at first use and link none of it: linked in,
+      # its x86-64-v3 initializers killed an older processor at exec.
+      - name: ONNX Runtime library
+        run: scripts/ort-dylib.sh release
+
+      # Checked on what was built: neither binary may name ONNX Runtime
+      # or Dawn as a library to load at exec, or a processor without
+      # AVX2 dies before main again. macOS lists them with otool, Linux
+      # with readelf, Windows with the llvm-readobj rustup ships in
+      # llvm-tools (Git Bash has no dumpbin or objdump).
+      - name: Nothing of ONNX Runtime or Dawn loaded at exec
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          sysroot=$(rustc --print sysroot)
+          if [ "$RUNNER_OS" = Windows ]; then
+            sysroot=$(cygpath -u "$sysroot")
+          fi
+          readobj="$sysroot/lib/rustlib/$host/bin/llvm-readobj"
+          for bin in target/release/greycard target/release/greycard-ui; do
+            if [ "$RUNNER_OS" = macOS ]; then
+              needed=$(otool -L "$bin")
+            elif [ "$RUNNER_OS" = Windows ]; then
+              needed=$("$readobj.exe" --coff-imports "$bin.exe")
+              # An empty answer would pass the grep below without
+              # having looked at anything.
+              if ! grep -qi 'kernel32' <<<"$needed"; then
+                echo "llvm-readobj listed no imports for $bin.exe:"
+                echo "$needed"
+                exit 1
+              fi
+            else
+              needed=$(readelf -d "$bin")
+            fi
+            if grep -Eqi 'onnxruntime|webgpu_dawn' <<<"$needed"; then
+              echo "$bin links ONNX Runtime or Dawn at exec:"
+              echo "$needed"
+              exit 1
+            fi
+          done
+
+      # The JPEG XS check again, on what was built: every error rawler's
+      # JPEG XS decoder can return names the format, so a binary with the
       # decoder in it carries the text and one without it does not.
       - name: No JPEG XS decoder in the binaries
         run: |

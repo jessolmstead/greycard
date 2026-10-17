@@ -523,7 +523,22 @@ fn root_mapping(text: &str) -> Result<(String, PathBuf), String> {
     }
 }
 
-fn main() -> Result<()> {
+/// The command, and then the process's end: by `runtime::leave`, so a
+/// run that opened a model ends without ONNX Runtime's exit handler,
+/// which could crash after the output was written (exit 139 to a
+/// script). An error is said as `main` returning it would say it.
+fn main() -> std::process::ExitCode {
+    let code = match run() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("Error: {e:?}");
+            1
+        }
+    };
+    greycard_ai::runtime::leave(code)
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
     log::start(cli.verbose);
     // A panic inside rawler is caught and comes back as the file's
@@ -731,6 +746,15 @@ fn main() -> Result<()> {
                 orientation: None,
             };
             let ai_denoise = ai_denoise.as_deref().map(denoiser_for).transpose()?;
+            // The model named, and then whether anything can run it:
+            // before the frame, which a machine without ONNX Runtime
+            // would otherwise decode and prepare only to stop at the
+            // load.
+            if ai_denoise.is_some()
+                && let Err(why) = greycard_ai::runtime::status()
+            {
+                anyhow::bail!("--ai-denoise: {why}");
+            }
             let detail = detail_edit.options();
             let lens = greycard_edit_lens(
                 lens,
@@ -1301,6 +1325,11 @@ fn model_lines(
 /// The `models` command: the registry, and fetching from it.
 fn models(fetch: Option<&str>) -> Result<()> {
     let store = greycard_ai::Store::user().context("finding the model store")?;
+    // The models can be listed and fetched anywhere, to carry to
+    // another machine; this one is told it cannot run them.
+    if let Err(why) = greycard_ai::runtime::status() {
+        eprintln!("{why}");
+    }
     println!("store         {}", store.root().display());
     let Some(what) = fetch else {
         let width = greycard_ai::MODELS

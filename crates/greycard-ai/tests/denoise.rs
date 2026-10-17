@@ -8,9 +8,17 @@ use greycard_ai::runtime::Provider;
 use greycard_core::develop::noise::NoiseModel;
 use greycard_core::raw::CfaPattern;
 
-fn fixture() -> Denoiser {
+/// The fixture on the CPU, or nothing where ONNX Runtime cannot be
+/// had (a fresh clone before `scripts/ort-dylib.sh`), said on stderr.
+fn fixture() -> Option<Denoiser> {
+    if let Err(why) = greycard_ai::runtime::status() {
+        greycard_ai::runtime::absent_in_test(why);
+        return None;
+    }
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/replicate.onnx");
-    Denoiser::load(std::path::Path::new(path), &[Provider::Cpu]).expect("fixture loads on CPU")
+    Some(
+        Denoiser::load(std::path::Path::new(path), &[Provider::Cpu]).expect("fixture loads on CPU"),
+    )
 }
 
 /// A smooth scene, mosaicked with `pattern`.
@@ -73,7 +81,9 @@ fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
 
 #[test]
 fn every_phase_and_an_odd_size_come_back_as_the_block_samples() {
-    let mut net = fixture();
+    let Some(mut net) = fixture() else {
+        return;
+    };
     let model = NoiseModel {
         a: [3e-4, 2.9e-4, 3.1e-4],
         b: [6e-8, 7e-8, 8e-8],
@@ -94,7 +104,9 @@ fn every_phase_and_an_odd_size_come_back_as_the_block_samples() {
 
 #[test]
 fn small_tiles_give_the_same_answer_as_one() {
-    let mut net = fixture();
+    let Some(mut net) = fixture() else {
+        return;
+    };
     let model = NoiseModel {
         a: [1e-3; 3],
         b: [1e-5; 3],
@@ -124,7 +136,9 @@ fn small_tiles_give_the_same_answer_as_one() {
 
 #[test]
 fn a_silent_model_still_gives_a_finite_answer() {
-    let mut net = fixture();
+    let Some(mut net) = fixture() else {
+        return;
+    };
     let pattern = CfaPattern::rggb();
     let (width, height) = (24, 20);
     let (_, cfa) = scene(width, height, &pattern);
@@ -144,5 +158,8 @@ fn a_silent_model_still_gives_a_finite_answer() {
 
 #[test]
 fn the_fixture_declares_its_version() {
-    assert_eq!(fixture().version(), "fixture");
+    let Some(net) = fixture() else {
+        return;
+    };
+    assert_eq!(net.version(), "fixture");
 }

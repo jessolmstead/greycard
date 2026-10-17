@@ -295,6 +295,7 @@ pub(crate) fn learned_for(st: &mut State, file: &Path) {
     if st.learned_of.as_deref() != Some(file) {
         st.learned.clear();
         st.asked.clear();
+        st.masks_failed.clear();
         st.learned_of = Some(file.to_path_buf());
     }
 }

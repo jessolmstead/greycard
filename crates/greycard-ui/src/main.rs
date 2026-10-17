@@ -1003,6 +1003,12 @@ pub(crate) struct State {
     pub(crate) learned: HashMap<Key, (Shape, Arc<Raster>)>,
     /// The shapes asked of the worker and not yet answered.
     pub(crate) asked: HashMap<Key, Shape>,
+    /// The shapes the worker answered by failing (no runtime here, a
+    /// provider that would not run it), with the file they were asked
+    /// of. They stay in `asked`, so the same shape is not asked again
+    /// and again, but count as answered for a capture's wait, which
+    /// would otherwise wait on them for ever.
+    pub(crate) masks_failed: HashMap<Key, (Shape, Option<PathBuf>)>,
     /// The file `learned` and `asked` are of: the one last sent to the
     /// worker to open (`panel::mask::learned_for`).
     pub(crate) learned_of: Option<PathBuf>,
@@ -1402,6 +1408,7 @@ impl State {
             stances: HashMap::new(),
             learned: HashMap::new(),
             asked: HashMap::new(),
+            masks_failed: HashMap::new(),
             learned_of: None,
             store: None,
             fetch: None,

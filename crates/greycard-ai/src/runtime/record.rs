@@ -66,6 +66,11 @@ struct Contents {
     entries: Vec<Entry>,
 }
 
+fn contents(store_root: &Path) -> Option<Contents> {
+    let text = std::fs::read_to_string(path(store_root)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 /// Where the record lives for a store rooted at `store_root`.
 pub fn path(store_root: &Path) -> PathBuf {
     store_root.join("providers.json")
@@ -75,12 +80,7 @@ pub fn path(store_root: &Path) -> PathBuf {
 /// or will not parse: this is only ever worth a slower launch, never
 /// an error.
 pub fn read(store_root: &Path) -> Vec<Entry> {
-    let Ok(text) = std::fs::read_to_string(path(store_root)) else {
-        return Vec::new();
-    };
-    serde_json::from_str::<Contents>(&text)
-        .map(|c| c.entries)
-        .unwrap_or_default()
+    contents(store_root).map(|c| c.entries).unwrap_or_default()
 }
 
 /// Write `entries` back, beside and renamed so a crash leaves nothing
@@ -91,14 +91,15 @@ pub fn read(store_root: &Path) -> Vec<Entry> {
 /// only ever worth a slower next launch for whichever write lost.
 /// Best effort throughout; removes its temp file on any failure.
 pub fn write(store_root: &Path, entries: &[Entry]) {
+    let contents = Contents {
+        entries: entries.to_vec(),
+    };
     let out = path(store_root);
     let Some(parent) = out.parent() else { return };
     if std::fs::create_dir_all(parent).is_err() {
         return;
     }
-    let Ok(text) = serde_json::to_string_pretty(&Contents {
-        entries: entries.to_vec(),
-    }) else {
+    let Ok(text) = serde_json::to_string_pretty(&contents) else {
         return;
     };
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -145,7 +146,9 @@ pub fn upsert(entries: &mut Vec<Entry>, entry: Entry) {
 /// commit, build type — cheap: it reads a string ONNX Runtime already
 /// built in, no session or environment needed), so a greycard build
 /// carrying a fixed or regressed ONNX Runtime is a different question
-/// even at the same `CARGO_PKG_VERSION`.
+/// even at the same `CARGO_PKG_VERSION`. Asked only once the runtime
+/// is loaded (`runtime::open` and `runtime::remembered_failure` see
+/// to it): `ort::info` reads the library.
 pub fn build_fingerprint(providers: &[Provider]) -> String {
     let names: Vec<&str> = providers.iter().map(|p| p.name()).collect();
     format!(
@@ -373,8 +376,14 @@ mod tests {
         );
     }
 
+    /// Reads the loaded runtime's build string: only where it can be
+    /// had (scripts/ort-dylib.sh has run on a processor it suits).
     #[test]
     fn the_build_fingerprint_names_the_providers_in_order() {
+        if let Err(why) = crate::runtime::init() {
+            crate::runtime::absent_in_test(why);
+            return;
+        }
         let f = build_fingerprint(&[Provider::WebGpu, Provider::Cpu]);
         assert!(f.starts_with("WebGPU,CPU"));
         assert!(f.contains(env!("CARGO_PKG_VERSION")));

@@ -738,6 +738,7 @@ pub(crate) fn turn_frames(
     st.rasters.clear();
     st.learned.clear();
     st.asked.clear();
+    st.masks_failed.clear();
     // The open frame, turned from the culling loupe or among a
     // selection, is measured the way up the viewport will draw it.
     crate::panel::viewport::settle_source_size(st);

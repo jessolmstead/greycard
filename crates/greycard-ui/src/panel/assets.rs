@@ -104,6 +104,30 @@ pub(crate) fn offer_model(
     model: &'static greycard_ai::Model,
     falls_back: bool,
 ) {
+    offered(st, app, model, falls_back);
+}
+
+/// [`offer_model`], and whether the sheet was opened: not where ONNX
+/// Runtime cannot be had. Every model runs on it, and there a download
+/// would only fill the disk, so the status line says why instead and
+/// the model is taken as declined for the session: nothing offers it
+/// again, and a People shape waiting on it is let go.
+pub(crate) fn offered(
+    st: &mut State,
+    app: &App,
+    model: &'static greycard_ai::Model,
+    falls_back: bool,
+) -> bool {
+    if let Err(why) = greycard_ai::runtime::status() {
+        if !st.declined.contains(&model.id) {
+            st.declined.push(model.id);
+        }
+        if model.id == greycard_ai::SAM3.id {
+            crate::panel::parts::model_answered(st, app, false);
+        }
+        app.set_status(why.to_string().into());
+        return false;
+    }
     st.fetch = Some(Fetch::Model(model));
     let note = model_note(model);
     app.set_fetch_note(
@@ -141,6 +165,7 @@ Kept in {}.",
         .into(),
     );
     app.set_fetch_open(true);
+    true
 }
 
 /// The status line once the Subject model is declined for a Whole
@@ -152,7 +177,10 @@ pub(crate) const EDGE_DECLINED: &str =
 /// person's finer edge: the mask is made meanwhile with the coarser
 /// one, and the sheet says so.
 pub(crate) fn offer_edge(st: &mut State, app: &App, model: &'static greycard_ai::Model) {
-    offer_model(st, app, model, false);
+    // Not offered (no runtime here): no sheet to dress.
+    if !offered(st, app, model, false) {
+        return;
+    }
     st.fetch = Some(Fetch::Edge(model));
     app.set_fetch_note(
         format!(
@@ -1146,6 +1174,21 @@ mod tests {
         let app = crate::testing::window(1);
         let (state, _worker) = crate::testing::retouch_state(&app);
         offer_edge(&mut state.borrow_mut(), &app, &greycard_ai::SUBJECT_WEBGPU);
+        // Without ONNX Runtime nothing is offered: the line is said
+        // and the model taken as declined.
+        if let Err(why) = greycard_ai::runtime::status() {
+            greycard_ai::runtime::absent_in_test(why);
+            assert!(!app.get_fetch_open());
+            assert_eq!(state.borrow().fetch, None);
+            assert!(
+                state
+                    .borrow()
+                    .declined
+                    .contains(&greycard_ai::SUBJECT_WEBGPU.id)
+            );
+            assert_eq!(app.get_status(), why.to_string());
+            return;
+        }
         assert!(app.get_fetch_open());
         assert_eq!(
             state.borrow().fetch,

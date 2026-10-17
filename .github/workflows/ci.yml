@@ -11,10 +11,11 @@
 #
 # windows-2025 has to carry an MSVC toolset at least as new as the one
 # ort's prebuilt onnxruntime.lib was compiled with, 14.51.36231 for ort
-# 2.0.0-rc.13, or the link fails on unresolved __std_* symbols out of
-# the MSVC STL and nowhere earlier; release.yml's header has the rest
-# of that story. windows-2025 took Visual Studio 2026 in June 2026;
-# windows-2025-vs2026 is the label to pin if that image goes backwards.
+# 2.0.0-rc.13, or the link of onnxruntime.dll fails on unresolved
+# __std_* symbols out of the MSVC STL and nowhere earlier; release.yml's
+# header has the rest of that story. windows-2025 took Visual Studio
+# 2026 in June 2026; windows-2025-vs2026 is the label to pin if that
+# image goes backwards.
 name: CI
 
 on:
@@ -100,6 +101,13 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: ONNX Runtime library
+        # The runtime greycard-ai loads at first use, made from pyke's
+        # static build into target/debug beside Dawn, so the tests that
+        # open a model (a missing file on each provider, the record's
+        # build fingerprint) run here as they did when it was linked in.
+        run: scripts/ort-dylib.sh debug
+
       - name: cargo test
         # On Linux a GPU test that finds no adapter fails instead of
         # returning, so a broken lavapipe cannot pass the GPU tests by
@@ -109,7 +117,12 @@ jobs:
         # Vulkan one, and a GL device made off any display is lost at
         # creation (seen on NVIDIA's GL beside lavapipe); the instances
         # read WGPU_BACKEND, as wgpu's own convention has it.
+        # ONNX Runtime is required everywhere: the step above made it,
+        # so a test that cannot find it fails rather than skipping, and
+        # a library that lands where the tests do not look turns the
+        # run red instead of leaving the runtime paths unchecked.
         env:
+          GREYCARD_REQUIRE_ORT: '1'
           GREYCARD_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
           WGPU_BACKEND: ${{ runner.os == 'Linux' && 'vulkan' || '' }}
         run: cargo test

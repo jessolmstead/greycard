@@ -26,19 +26,25 @@
 #            The archive is a .zip: Windows 10's Explorer opens one
 #            by double-click and does not open a .tar.gz at all.
 #
-# The libraries we ship are Dawn and, on Windows, the two DXC ones it
-# loads by name. greycard-ai links ONNX Runtime statically, but Dawn
-# comes as a shared object: libwebgpu_dawn.so on Linux, .dylib on
-# macOS, webgpu_dawn.dll on Windows. On Windows that DLL calls
-# LoadLibrary on dxcompiler.dll and dxil.dll to compile shaders for
-# the D3D12 backend, and ort's prebuilt bundle puts all three in
-# target/release; shipping only Dawn leaves a package whose viewport
-# fails on the machine it is unpacked on. The build leaves symlinks
-# to them there on a host that can make one, so they are copied
-# dereferenced and the archive stands alone. The binaries carry
-# $ORIGIN (@executable_path on macOS) on their runpath, so beside
-# them is where it has to land; Windows looks beside the executable
-# on its own.
+# The libraries we ship are ONNX Runtime, Dawn and, on Windows, the
+# two DXC ones Dawn loads by name. The binaries link neither ONNX
+# Runtime nor Dawn: greycard-ai loads ONNX Runtime the first time a
+# model is asked for, from beside the executable, and it brings Dawn
+# in as its own dependency, so a processor the prebuilt runtime cannot
+# run on still starts the editor (the AI features off, and said).
+# scripts/ort-dylib.sh makes the runtime library from pyke's static
+# build and leaves it, with Dawn, in target/release: libonnxruntime.so
+# and libwebgpu_dawn.so on Linux, the same as .dylib on macOS,
+# onnxruntime.dll and webgpu_dawn.dll on Windows. On Windows Dawn
+# calls LoadLibrary on dxcompiler.dll and dxil.dll to compile shaders
+# for the D3D12 backend, and those come from the same bundle; shipping
+# without them leaves a package whose WebGPU fails on the machine it
+# is unpacked on. The build leaves symlinks to them there on a host
+# that can make one, so they are copied dereferenced and the archive
+# stands alone. ONNX Runtime carries $ORIGIN (@loader_path on macOS)
+# on its runpath to find Dawn, and the binaries look for it beside
+# themselves, so beside them is where both have to land; Windows
+# resolves Dawn from the executable's directory on its own.
 
 set -eu
 
@@ -73,10 +79,10 @@ fi
 host=$(rustc -vV | sed -n 's/^host: //p')
 arch=${host%%-*}
 case "$host" in
-*-linux-*) os=linux; libs=libwebgpu_dawn.so; exe= ;;
-*-darwin*) os=macos; libs=libwebgpu_dawn.dylib; exe= ;;
+*-linux-*) os=linux; libs="libonnxruntime.so libwebgpu_dawn.so"; exe= ;;
+*-darwin*) os=macos; libs="libonnxruntime.dylib libwebgpu_dawn.dylib"; exe= ;;
 # Dawn loads the two DXC libraries by name at runtime; see above.
-*-windows-*) os=windows; libs="webgpu_dawn.dll dxcompiler.dll dxil.dll"; exe=.exe ;;
+*-windows-*) os=windows; libs="onnxruntime.dll webgpu_dawn.dll dxcompiler.dll dxil.dll"; exe=.exe ;;
 *)
     echo "package.sh: no package layout for host $host" >&2
     exit 1
@@ -87,14 +93,18 @@ name="greycard-$version-$arch-$os"
 build=target/release
 stage="target/dist/$name"
 
-# -e follows the link, so a library symlink left pointing at a
-# download cache that has since been cleared fails here rather than
+# -e follows the link, so a library symlink left pointing into a
+# target/ort-dylib that has since been cleared fails here rather than
 # silently shipping nothing.
-want="$build/greycard-ui$exe $build/greycard$exe"
-for l in $libs; do want="$want $build/$l"; done
-for f in $want; do
+for f in "$build/greycard-ui$exe" "$build/greycard$exe"; do
     if [ ! -e "$f" ]; then
         echo "package.sh: $f is missing; run cargo build --release first" >&2
+        exit 1
+    fi
+done
+for l in $libs; do
+    if [ ! -e "$build/$l" ]; then
+        echo "package.sh: $build/$l is missing; run scripts/ort-dylib.sh release first" >&2
         exit 1
     fi
 done
@@ -105,7 +115,8 @@ mkdir -p "$stage"
 
 if [ "$os" = macos ]; then
     # The bundle. Both binaries sit in Contents/MacOS beside the one
-    # copy of Dawn, since each finds it through @executable_path.
+    # copy of ONNX Runtime and Dawn, since each looks for the runtime
+    # beside itself and the runtime finds Dawn through @loader_path.
     app="$stage/greycard.app/Contents"
     mkdir -p "$app/MacOS" "$app/Resources"
     cp "$build/greycard-ui" "$build/greycard" "$app/MacOS/"
@@ -174,8 +185,10 @@ else
         # "VCRUNTIME140.dll was not found" box and no other clue, and
         # the redistributable is common enough that the machine it was
         # built on will never show that. The five are what the two
-        # binaries and Dawn import between them, and they are closed
-        # under their own imports; app-local is a deployment
+        # binaries, ONNX Runtime and Dawn import between them (the
+        # runtime is built /MD against the same DLLs, and these five
+        # already covered it when the binaries linked it in), and they
+        # are closed under their own imports; app-local is a deployment
         # Microsoft's redistributable licence allows, and these come
         # from the toolset's own Redist directory rather than from
         # System32, which is the installed copy and not ours to hand
@@ -236,12 +249,13 @@ if [ "$os" = macos ]; then
     echo "shared libraries:"
     otool -L "$app/MacOS/greycard-ui" | sed 's/^/  ui  /'
     otool -L "$app/MacOS/greycard" | sed 's/^/  cli /'
+    otool -L "$app/MacOS/libonnxruntime.dylib" | sed 's/^/  ort /'
     # A Mac has no package manager to fill in a missing library, so
     # anything outside the system and the bundle stops the package.
     # v0.1.0 went out linked to Homebrew's lcms2 and ran only on Macs
     # that happened to have it.
     stray=$(for f in "$app/MacOS/greycard-ui" "$app/MacOS/greycard" \
-        "$app/MacOS/libwebgpu_dawn.dylib"; do
+        "$app/MacOS/libonnxruntime.dylib" "$app/MacOS/libwebgpu_dawn.dylib"; do
         otool -L "$f" | tail -n +2 | awk '{ print $1 }'
     done | grep -Ev '^(/usr/lib/|/System/Library/|@rpath/|@executable_path/)' |
         sort -u) || true
@@ -254,6 +268,9 @@ elif command -v ldd >/dev/null 2>&1; then
     echo "shared libraries:"
     ldd "$stage/bin/greycard-ui$exe" | sed 's/^/  ui  /'
     ldd "$stage/bin/greycard$exe" | sed 's/^/  cli /'
+    if [ "$os" = linux ]; then
+        ldd "$stage/bin/libonnxruntime.so" | sed 's/^/  ort /'
+    fi
 fi
 
 # Nothing about who rolled this or when belongs in the archive: names

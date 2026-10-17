@@ -2382,6 +2382,16 @@ impl Library {
         Ok(())
     }
 
+    /// Fold the whole write-ahead log into the file and empty it,
+    /// waiting on the other connections as the busy handler allows:
+    /// for a process on its way out, where nothing else starts a read
+    /// that a truncating checkpoint could refuse (see `checkpoint`).
+    pub fn checkpoint_all(&self) -> Result<()> {
+        self.conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(())
+    }
+
     pub(crate) fn conn_mut(&mut self) -> &mut Connection {
         &mut self.conn
     }

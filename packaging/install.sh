@@ -5,14 +5,16 @@
 #     sh install.sh
 #
 # On Linux, the binaries go to ~/.local/bin and the desktop entry and
-# the icon under ~/.local/share. libwebgpu_dawn.so is a binary as far
-# as this is concerned: it has to sit next to the executables, which
-# look for it beside themselves and nowhere else. On macOS the tarball
-# holds greycard.app instead, which goes into ~/Applications, and the
-# command line is linked out of it into ~/.local/bin so it keeps the
-# library beside it. Set PREFIX to install somewhere other than
-# ~/.local, and on macOS APPLICATIONS to put the app somewhere other
-# than ~/Applications. uninstall.sh takes it all back out.
+# the icon under ~/.local/share. libonnxruntime.so and
+# libwebgpu_dawn.so are binaries as far as this is concerned: they
+# have to sit next to the executables, which look for ONNX Runtime
+# beside themselves and nowhere else (it finds Dawn beside itself).
+# On macOS the tarball holds greycard.app instead, which goes into
+# ~/Applications, and the command line is linked out of it into
+# ~/.local/bin; it follows the link to find the libraries in the
+# bundle. Set PREFIX to install somewhere other than ~/.local, and on
+# macOS APPLICATIONS to put the app somewhere other than
+# ~/Applications. uninstall.sh takes it all back out.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -47,8 +49,8 @@ if [ "$layout" = app ]; then
     xattr -dr com.apple.quarantine "$apps/greycard.app" 2>/dev/null || true
     echo "  $apps/greycard.app"
 
-    # Links rather than copies: each binary finds Dawn beside itself,
-    # and the link resolves to where that is.
+    # Links rather than copies: each binary follows its link back into
+    # the bundle and finds ONNX Runtime and Dawn beside it there.
     for name in greycard greycard-ui; do
         rm -f "$bin_dir/$name"
         ln -s "$apps/greycard.app/Contents/MacOS/$name" "$bin_dir/$name"

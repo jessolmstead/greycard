@@ -18,6 +18,7 @@ prefix=${PREFIX:-$HOME/.local}
 files="
 $prefix/bin/greycard-ui
 $prefix/bin/greycard
+$prefix/bin/libonnxruntime.so
 $prefix/bin/libwebgpu_dawn.so
 $prefix/share/applications/greycard.desktop
 $prefix/share/icons/hicolor/scalable/apps/greycard.svg

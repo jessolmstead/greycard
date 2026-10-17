@@ -18,15 +18,27 @@
 //! warm-up on a remembered success would hand back a session that has
 //! never actually run the graph this launch, with no provider left to
 //! fall through to and nothing written back if it turns out wrong.
+//!
+//! ONNX Runtime itself is a shared library loaded the first time a
+//! model is opened, never linked in (`dylib` has why: the build greycard
+//! ships needs x86-64-v3, and linked in it killed an older processor
+//! at exec). [`status`] says, without loading anything, whether it can
+//! be had here; where it cannot, the AI features are off, every
+//! [`open`] answers [`Error::Unavailable`] with the one line that says
+//! why, before any provider is tried. The provider-outcome record is
+//! not written then: it is about what a provider did with a model
+//! file, and none was tried; the line is the log's and the caller's.
 
 use std::path::Path;
-use std::sync::{Once, OnceLock};
+use std::sync::OnceLock;
 
-use ort::ep::ExecutionProvider;
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 
+mod dylib;
 mod record;
+
+pub use dylib::{LIBRARY, Unavailable};
 
 /// An execution provider, in the order they are tried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,26 +64,23 @@ impl Provider {
         .to_vec()
     }
 
-    /// Those that say they are available here.
+    /// Those that can be tried here: every one this build offers, or
+    /// none at all where ONNX Runtime cannot be had ([`status`]).
+    /// Asked without loading the runtime, so the first ask (the window
+    /// asks on its render path) costs nothing: a provider this build
+    /// was compiled with is one the library it ships carries, and one
+    /// a library named by hand lacks fails its session build in
+    /// [`open`] and the next is tried, as a provider that cannot run a
+    /// graph always has been.
     pub fn available() -> Vec<Provider> {
+        if status().is_err() {
+            return Vec::new();
+        }
         Self::all()
-            .into_iter()
-            .filter(|p| p.is_available())
-            .collect()
     }
 
     pub fn is_available(self) -> bool {
-        match self {
-            #[cfg(feature = "cuda")]
-            Provider::Cuda => ort::ep::CUDA::default().is_available().unwrap_or(false),
-            #[cfg(not(feature = "cuda"))]
-            Provider::Cuda => false,
-            #[cfg(feature = "webgpu")]
-            Provider::WebGpu => ort::ep::WebGPU::default().is_available().unwrap_or(false),
-            #[cfg(not(feature = "webgpu"))]
-            Provider::WebGpu => false,
-            Provider::Cpu => true,
-        }
+        status().is_ok() && Self::all().contains(&self)
     }
 
     pub fn name(self) -> &'static str {
@@ -207,15 +216,131 @@ pub enum Error {
          which the WebGPU provider does not report: try a smaller tile"
     )]
     Implausible(String),
+    /// ONNX Runtime cannot be had on this machine: the processor, or
+    /// no library, or one that would not load.
+    #[error("{0}")]
+    Unavailable(Unavailable),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-fn init() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        ort::init().with_name("greycard").commit();
-    });
+/// Whether ONNX Runtime can be had here, and from where: the
+/// processor asked and the library looked for, once a process, and
+/// nothing of it loaded (`dylib::probe`). Once a load has been tried,
+/// its outcome: a library that is there and would not load is as off
+/// as one that is not there.
+pub fn status() -> std::result::Result<&'static Path, &'static Unavailable> {
+    if let Some(Err(why)) = LOADED.get() {
+        return Err(why);
+    }
+    probed().as_deref()
+}
+
+fn probed() -> &'static std::result::Result<std::path::PathBuf, Unavailable> {
+    static PROBED: OnceLock<std::result::Result<std::path::PathBuf, Unavailable>> = OnceLock::new();
+    PROBED.get_or_init(dylib::probe)
+}
+
+/// The outcome of loading the library, once a process.
+static LOADED: OnceLock<std::result::Result<(), Unavailable>> = OnceLock::new();
+
+/// Whether ONNX Runtime was loaded in this process: a model was opened.
+pub fn loaded() -> bool {
+    matches!(LOADED.get(), Some(Ok(())))
+}
+
+/// End the process with `code`, its work done and said, without the
+/// exit handlers when ONNX Runtime was loaded; return `code` for
+/// `main` to hand back otherwise.
+///
+/// With the runtime loaded, `ort` releases its environment from an
+/// exit handler (a `.fini_array` entry on Linux, `__cxa_atexit` on a
+/// Mac), and the release tears down the WebGPU provider's Dawn
+/// instance and with it Dawn's Vulkan instance, whose destructor calls
+/// through libvulkan into a driver the loader may already have let go
+/// of by then: one run in about thirty of `greycard develop
+/// --ai-denoise` died with SIGSEGV, exit 139, after its file was
+/// written. `ort` 2.0.0-rc.13 offers no way to release the environment
+/// earlier (it is a private static, and a release of our own through
+/// the C API would be released again by that handler), so the handler
+/// is not run: `_exit` ends the process at once, the kernel takes back
+/// the driver's state, and no exit handler or destructor runs on this
+/// thread or another. Stdout, stderr and the C library's streams are
+/// flushed first. A caller has every file it wrote closed by then.
+///
+/// On Windows the process returns as it otherwise would; Dawn runs on
+/// D3D12 there and the crash has not been seen.
+pub fn leave(code: u8) -> std::process::ExitCode {
+    use std::io::Write;
+    if loaded() {
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        #[cfg(unix)]
+        // SAFETY: `fflush(NULL)` flushes every C stdio stream, so a C or
+        // C++ library's buffered output is not lost with the exit
+        // handlers that would have flushed it; `_exit` then ends the
+        // process at once and returns nothing to undo.
+        unsafe {
+            libc::fflush(std::ptr::null_mut());
+            libc::_exit(i32::from(code))
+        }
+    }
+    std::process::ExitCode::from(code)
+}
+
+/// For a test that needs ONNX Runtime and finds `why` it cannot have
+/// it: a failure where `GREYCARD_REQUIRE_ORT` is set (CI, where
+/// `scripts/ort-dylib.sh` has run, so a library the tests cannot find
+/// is a broken build and not a machine without it), and a word on
+/// stderr otherwise, for the test to return on. libtest keeps that
+/// word to itself on a pass, which is why the variable exists.
+#[doc(hidden)]
+pub fn absent_in_test(why: &Unavailable) {
+    if std::env::var_os("GREYCARD_REQUIRE_ORT").is_some_and(|v| !v.is_empty()) {
+        panic!("GREYCARD_REQUIRE_ORT is set and ONNX Runtime cannot be had: {why}");
+    }
+    eprintln!("skipped, no ONNX Runtime (run scripts/ort-dylib.sh): {why}");
+}
+
+/// ONNX Runtime loaded, the first time a model is asked for, and the
+/// environment's options set; or why it cannot be. Nothing of the
+/// library is in the process before this returns `Ok` the first time.
+fn init() -> std::result::Result<(), &'static Unavailable> {
+    LOADED
+        .get_or_init(|| {
+            let path = probed().as_ref().map_err(Clone::clone)?;
+            let started = std::time::Instant::now();
+            match ort::init_from(path) {
+                Ok(builder) => {
+                    builder.with_name("greycard").commit();
+                    log::info!(
+                        "ONNX Runtime loaded from {} in {:.0} ms",
+                        path.display(),
+                        started.elapsed().as_secs_f64() * 1000.0
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    // `ort`'s error says the path (ours already does)
+                    // and "dlopen failed", and keeps the loader's own
+                    // reason inside the libloading error it holds
+                    // rather than as its source: that reason is what
+                    // is worth saying.
+                    let why = match &e {
+                        ort::LoadDynamicError::Dlopen { error, .. } => dylib::chain(error),
+                        other => dylib::chain(other),
+                    };
+                    let why = Unavailable::WouldNotLoad {
+                        path: path.clone(),
+                        why,
+                    };
+                    log::warn!("{why}");
+                    Err(why)
+                }
+            }
+        })
+        .as_ref()
+        .map(|_| ())
 }
 
 /// A session and the provider it settled on.
@@ -243,7 +368,9 @@ pub fn open(
     remember: Option<Remembered<'_>>,
     mut warm: impl FnMut(&mut Session) -> ort::Result<()>,
 ) -> Result<Loaded> {
-    init();
+    if let Err(why) = init() {
+        return Err(Error::Unavailable(why.clone()));
+    }
     let mut tried = Vec::new();
     let name = path
         .file_name()
@@ -366,6 +493,11 @@ pub fn remembered_failure(
     provider: Provider,
     providers: &[Provider],
 ) -> bool {
+    // Nothing runs here at all; and the build's fingerprint is read
+    // off the loaded runtime, so this is the first use where it can be.
+    if init().is_err() {
+        return false;
+    }
     let Some(adapter) = provider.adapter_identity() else {
         return false;
     };
@@ -419,9 +551,20 @@ mod tests {
     fn cpu_is_always_offered_last() {
         let all = Provider::all();
         assert_eq!(all.last(), Some(&Provider::Cpu));
-        assert!(Provider::available().contains(&Provider::Cpu));
+        // Where the runtime can be had, CPU is among what is offered;
+        // where it cannot, nothing is.
+        match status() {
+            Ok(_) => assert!(Provider::available().contains(&Provider::Cpu)),
+            Err(why) => {
+                absent_in_test(why);
+                assert!(Provider::available().is_empty());
+            }
+        }
     }
 
+    /// With the library (scripts/ort-dylib.sh has run), a file that is
+    /// not there fails on each provider tried; without it, nothing is
+    /// tried, and the answer is why.
     #[test]
     fn a_missing_file_fails_on_every_provider() {
         let e = open(
@@ -433,8 +576,17 @@ mod tests {
         )
         .err()
         .expect("no such file");
-        assert!(matches!(e, Error::NoProvider { .. }));
-        assert!(e.to_string().contains("CPU"));
+        match status() {
+            Ok(_) => {
+                assert!(matches!(e, Error::NoProvider { .. }));
+                assert!(e.to_string().contains("CPU"));
+            }
+            Err(why) => {
+                absent_in_test(why);
+                assert!(matches!(&e, Error::Unavailable(u) if u == why));
+                assert!(e.to_string().starts_with("the AI features are off: "));
+            }
+        }
     }
 
     #[test]

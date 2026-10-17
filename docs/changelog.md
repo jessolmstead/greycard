@@ -76,6 +76,13 @@ design note behind it.
 - A Lightroom preset's Tint came in backwards and too small, a
   magenta cast where green was meant
   ([§325](https://github.com/jessolmstead/greycard/blob/master/docs/notes/325-lightrooms-tint-came-in-backwards.md))
+- greycard starts on processors without AVX2 or BMI2 (an Ivy Bridge
+  i5, issue #23). The ONNX Runtime it ships is now loaded the first
+  time a model runs, not at exec, and on a processor that cannot run
+  it the AI features are off with a line saying why, everything else
+  as before. The binaries shrink by 26 MB each; a build from source
+  makes the runtime with `scripts/ort-dylib.sh`
+  ([§338](https://github.com/jessolmstead/greycard/blob/master/docs/notes/338-onnx-runtime-at-first-use-and-the-processors-it-cannot-run-on.md))
 
 ## 0.7.0, 2026-10-15
 

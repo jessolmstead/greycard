@@ -10,9 +10,11 @@ repository.workspace = true
 
 [features]
 default = ["webgpu"]
-# Which prebuilt ONNX Runtime the build fetches. WebGPU runs on any
-# Vulkan, Metal or DX12 device through Dawn; CUDA wants CUDA 13 and
-# cuDNN on the system at run time. Each also pulls in a way to name
+# Which execution providers the build tries; the library that carries
+# them is made by scripts/ort-dylib.sh (WebGPU's) or named by
+# GREYCARD_ORT_DYLIB. WebGPU runs on any Vulkan, Metal or DX12 device
+# through Dawn; CUDA wants CUDA 13 and cuDNN on the system at run
+# time, and a library built with it. Each also pulls in a way to name
 # the adapter it ran on, for the provider-outcome record (runtime.rs,
 # notes §97): `wgpu` for WebGPU (the same struct `greycard-ui` reads
 # off its own device), `nvidia-smi` at run time for CUDA, since
@@ -24,7 +26,20 @@ cuda = ["ort/cuda"]
 log.workspace = true
 greycard-core = { path = "../greycard-core" }
 rayon.workspace = true
-ort = { version = "=2.0.0-rc.13", features = ["half"] }
+# Loaded at first use (`load-dynamic`), never linked: pyke's prebuilt
+# ONNX Runtime is compiled for x86-64-v3, and linked in, its static
+# initializers ran before `main` and killed the process on a processor
+# without AVX2 or BMI2. `runtime::init` asks the processor first and
+# loads the library `scripts/ort-dylib.sh` makes from pyke's archive;
+# none of `ort`'s defaults are wanted with that (no download, no
+# copied libraries, no ndarray).
+ort = { version = "=2.0.0-rc.13", default-features = false, features = [
+    "std",
+    "tracing",
+    "api-27",
+    "half",
+    "load-dynamic",
+] }
 half = "2"
 ureq = "3"
 sha2 = "0.10"
@@ -37,6 +52,10 @@ serde_json.workspace = true
 # version `greycard-ui` gets through Slint.
 wgpu = { version = "30", optional = true }
 pollster = { version = "0.4", optional = true }
+
+# `runtime::leave`'s `_exit`. Already in the tree.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 image.workspace = true

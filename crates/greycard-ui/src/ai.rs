@@ -664,6 +664,8 @@ impl Ai {
     /// The learned denoiser `model`, loaded the first time it is asked
     /// for; another tier replaces the one loaded.
     pub fn denoiser(&mut self, model: &'static Model) -> Result<&mut Denoiser, NoDenoiser> {
+        // No runtime here: fetching the model would not help.
+        greycard_ai::runtime::status().map_err(|why| NoDenoiser::Failed(why.to_string()))?;
         let store = self.store.clone().ok_or(NoDenoiser::Missing)?;
         if !store.have(model) {
             return Err(NoDenoiser::Missing);
@@ -780,6 +782,7 @@ impl Ai {
         {
             return Ok(data.clone());
         }
+        greycard_ai::runtime::status().map_err(|why| NoFill::Failed(why.to_string()))?;
         let store = self.store.clone().ok_or(NoFill::Missing)?;
         if !store.have(&greycard_ai::FILL) {
             return Err(NoFill::Missing);
@@ -1066,8 +1069,32 @@ impl Ai {
     /// possibly land on a different file than the one the panel
     /// offered or asked for); `None` from a caller with no session to
     /// ask, which falls back to the plain store-and-providers guess.
+    ///
+    /// What is made or kept already (a raster cached, a scene kept) is
+    /// had without ONNX Runtime; what cannot be had where the runtime
+    /// is off says so, rather than the store's or a load's own word
+    /// for a model it could not have run anyway.
     #[allow(clippy::too_many_arguments)]
     pub fn raster(
+        &mut self,
+        stamp: u64,
+        image: &WorkingImage,
+        edit: &Edit,
+        kind: crate::finish::Source,
+        turn: u8,
+        key: Key,
+        shape: &Shape,
+        model: Option<&'static Model>,
+    ) -> Result<Made, String> {
+        self.raster_of(stamp, image, edit, kind, turn, key, shape, model)
+            .map_err(|e| match greycard_ai::runtime::status() {
+                Err(why) => why.to_string(),
+                Ok(_) => e,
+            })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn raster_of(
         &mut self,
         stamp: u64,
         image: &WorkingImage,
@@ -1377,6 +1404,7 @@ impl Ai {
         kind: crate::finish::Source,
         turn: u8,
     ) -> Result<(Vec<Candidate>, Provider, f64), String> {
+        greycard_ai::runtime::status().map_err(|why| why.to_string())?;
         let store = self
             .store
             .clone()

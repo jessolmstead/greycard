@@ -71,9 +71,15 @@ fn dng(path: &Path, width: usize, height: usize) {
 /// settings, caches and log in `home`, waited on for at most two
 /// minutes.
 fn editor(home: &Path, args: &[&std::ffi::OsStr]) -> Output {
+    editor_with(home, args, &[])
+}
+
+/// `editor` with more of the environment set.
+fn editor_with(home: &Path, args: &[&std::ffi::OsStr], env: &[(&str, &std::ffi::OsStr)]) -> Output {
     let started = Instant::now();
     let child = Command::new(env!("CARGO_BIN_EXE_greycard-ui"))
         .args(args)
+        .envs(env.iter().copied())
         .env_remove("DISPLAY")
         .env_remove("WAYLAND_DISPLAY")
         .env("XDG_CONFIG_HOME", home.join("config"))
@@ -194,6 +200,99 @@ fn an_export_runs_with_no_display_and_its_exit_code_says_how_it_went() {
     assert_eq!(ran.status.code(), Some(1), "{said}");
     assert!(said.contains("--screenshot"), "{said}");
     assert!(!home.0.join("again.jpg").exists());
+}
+
+/// With no ONNX Runtime to be had (here `GREYCARD_ORT_DYLIB` names a file
+/// that is not there, which is decided the same way as a processor
+/// without AVX2 or no library beside the executable), the editor
+/// starts, says once why the AI features are off, and exports; an
+/// edit with a learned mask goes without it, the shape named and the
+/// same reason given, exit 2. Nothing of the runtime is loaded on the
+/// way: the line comes from the decision alone.
+#[test]
+fn without_onnx_runtime_the_editor_runs_and_says_why() {
+    let home = Scratch(Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "greycard-headless-no-runtime-{}",
+        std::process::id()
+    )));
+    let _ = std::fs::remove_dir_all(&home.0);
+    std::fs::create_dir_all(&home.0).unwrap();
+    let nowhere = home.0.join("nowhere").join("libonnxruntime.so");
+    let env = [("GREYCARD_ORT_DYLIB", nowhere.as_os_str())];
+    let source = home.0.join("frame.dng");
+    dng(&source, 240, 160);
+    let out = home.0.join("out.jpg");
+    let ran = editor_with(
+        &home.0,
+        &[
+            source.as_os_str(),
+            "--no-sidecars".as_ref(),
+            "--long-edge".as_ref(),
+            "120".as_ref(),
+            "--export".as_ref(),
+            out.as_os_str(),
+        ],
+        &env,
+    );
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success(), "{said}");
+    let line = format!(
+        "the AI features are off: GREYCARD_ORT_DYLIB names {}, which is not there",
+        nowhere.display()
+    );
+    assert_eq!(said.matches(&line).count(), 1, "{said}");
+    assert!(said.contains("exported"), "{said}");
+    assert!(out.is_file());
+
+    let masked = home.0.join("masked.dng");
+    std::fs::copy(&source, &masked).unwrap();
+    let mut sidecar = greycard_edit::Sidecar::default();
+    sidecar.current.adjustments.push(greycard_edit::Adjustment {
+        name: "Sky".into(),
+        mask: greycard_edit::mask::Mask {
+            components: vec![greycard_edit::mask::Component {
+                shape: greycard_edit::mask::Shape::Subject {},
+                ..Default::default()
+            }],
+            invert: false,
+        },
+        ..Default::default()
+    });
+    sidecar
+        .save_in(&masked, greycard_edit::Placement::Beside)
+        .unwrap();
+    let without = home.0.join("without.jpg");
+    let ran = editor_with(
+        &home.0,
+        &[masked.as_os_str(), "--export".as_ref(), without.as_os_str()],
+        &env,
+    );
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(2), "{said}");
+    assert!(
+        said.contains(&format!("Sky's Subject shape: {line}")),
+        "{said}"
+    );
+    assert!(without.is_file());
+
+    // `ort`'s own variable is anybody's and not read: naming nothing
+    // with it, the Subject mask goes without for the reason it would
+    // anyway (no model in the run's cache, or no library beside the
+    // test's editor), and no line names the variable.
+    let foreign = [("ORT_DYLIB_PATH", nowhere.as_os_str())];
+    let ran = editor_with(
+        &home.0,
+        &[
+            masked.as_os_str(),
+            "--export".as_ref(),
+            home.0.join("again.jpg").as_os_str(),
+        ],
+        &foreign,
+    );
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(2), "{said}");
+    assert!(said.contains("Sky's Subject shape"), "{said}");
+    assert!(!said.contains("ORT_DYLIB_PATH"), "{said}");
 }
 
 #[test]

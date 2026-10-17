@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/greycard-core", "crates/greycard-edit", "crates/greycard-cli", "crates/greycard-bench", "crates/greycard-ui", "crates/greycard-ai", "crates/greycard-lens", "crates/greycard-gpu", "crates/greycard-library", "crates/greycard-match"]
+members = ["crates/greycard-core", "crates/greycard-edit", "crates/greycard-cli", "crates/greycard-bench", "crates/greycard-ui", "crates/greycard-ai", "crates/greycard-lens", "crates/greycard-gpu", "crates/greycard-library", "crates/greycard-match", "crates/ort-dylib"]
 
 [workspace.package]
 version = "0.7.0"
@@ -67,4 +67,12 @@ strip = true
 # queued on the same pool waits behind them past its own deadline; the
 # match crate's own tests went from 73 s to 5 s with it.
 [profile.dev.package.greycard-match]
+opt-level = 3
+
+# scripts/ort-dylib.sh runs its helper in the dev profile; unoptimized,
+# unpacking the Windows archive's 928 MB through LZMA2 and hashing the
+# download would take minutes rather than seconds.
+[profile.dev.package.lzma-rust2]
+opt-level = 3
+[profile.dev.package.sha2]
 opt-level = 3

@@ -1,0 +1,22 @@
+[package]
+name = "ort-dylib"
+version.workspace = true
+description = "Makes the ONNX Runtime shared library greycard loads at first use, from the static build ort's authors publish"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+# The same versions and features ort-sys's own download used, so the
+# lock file carries nothing new: ureq for the fetch, sha2 for the
+# check, lzma-rust2 for the archive (a raw LZMA2 stream, not .xz).
+ureq = "3"
+sha2 = "0.10"
+lzma-rust2 = { version = "0.15", default-features = false, features = ["std", "optimization"] }
+# Finds MSVC's link.exe and the LIB path it needs, the way cc does for
+# a build script; on the other hosts it is never called.
+find-msvc-tools = "0.1"

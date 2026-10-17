@@ -129,6 +129,8 @@ pub(crate) fn export(cli: &Cli, target: &Path) -> Result<std::process::ExitCode>
 /// has been seen there, and that is unchecked.
 pub(crate) fn leave(code: u8) -> Result<std::process::ExitCode> {
     use std::io::Write;
+    // The same exit, and the same reason, `greycard_ai::runtime::leave`
+    // gives the command line once a model has been opened.
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
     #[cfg(unix)]

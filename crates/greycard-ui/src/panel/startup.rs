@@ -24,6 +24,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(log) = log::start(cli.verbose) {
         eprintln!("log: {}", log.display());
     }
+    // Whether the models can run here, asked of the processor and the
+    // disk and said once; nothing of ONNX Runtime is loaded to find
+    // out; it loads at the first model (`greycard_ai::runtime`).
+    if let Err(why) = greycard_ai::runtime::status() {
+        tracing::warn!("{why}");
+    }
     // `--match-compare` measures the camera match and writes a report;
     // no window, no device.
     if let Some(out) = cli.match_compare.as_deref() {
@@ -1080,8 +1086,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // A snapshot waits for the develop; one of the
                     // grid waits for the pictures the grid shows, or
                     // it would catch a sheet of empty cells.
-                    let quiet = st.asked.is_empty()
-                        && st.part_pending.is_none()
+                    // A shape the worker answered by failing, for the
+                    // file open now, is answered.
+                    let quiet = st.asked.iter().all(|(key, shape)| {
+                        st.masks_failed
+                            .get(key)
+                            .is_some_and(|(s, f)| s == shape && *f == st.learned_of)
+                    }) && st.part_pending.is_none()
                         && st.landscape_pending.is_none()
                         && grid_filled(st, &app);
                     // A timed slider move is sent as its frame starts.
@@ -1500,8 +1511,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // rename, so the copy is the old save or the new, whole. What is
     // lost is the job in hand, which leaving lost before too. A worker
     // that has ended by now, the usual case, leaves the process to end
-    // as it always has.
-    if !worker.finished() {
+    // as it always has, unless a model was opened: then ONNX Runtime's
+    // own exit handler would tear Dawn's Vulkan instance down after
+    // the driver, the crash `greycard_ai::runtime::leave` is about, and
+    // the quit ends by `_exit` too.
+    if !worker.finished() || greycard_ai::runtime::loaded() {
+        if let Err(e) = &ran {
+            eprintln!("Error: {e:?}");
+        }
+        let index = state.borrow().index_path.clone();
+        if let Some(index) = index {
+            fold_library_log(&index, LOG_FOLD_WAIT);
+        }
         return crate::headless::leave(u8::from(failed));
     }
     ran?;
@@ -1539,6 +1560,56 @@ pub(crate) fn bins_read(st: &mut State, app: &App, bins: Vec<u32>) {
 /// went out, this save's among them, is noted waiting for the next
 /// window, since no job sent now would land.
 /// What the followed frames' writes came to, for a test.
+/// How long a quit that ends by `_exit` waits for the library's last
+/// other connection to close, so that its own close folds the log in.
+const LOG_FOLD_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The library's write-ahead log folded into the file and removed,
+/// before a quit that ends by `_exit`. The index's own connections are
+/// closed by then, but a reader on a thread of its own (a folder's
+/// look, the tree's counts) can still hold one for some milliseconds,
+/// and the last connection to close is the one that folds the log in
+/// and removes it with its index; `_exit` closes that reader's for it,
+/// with no fold, and the `-wal` and `-shm` were left beside the
+/// library (where the return path, slower to end, used to give the
+/// reader time to close first). So a connection of our own is opened,
+/// checkpointed and closed until the log is gone, up to `within`. A
+/// reader still holding a snapshot after that keeps the checkpoint
+/// from folding the frames past it: the `-wal` and `-shm` are left,
+/// and the library's next open recovers them, as it does after any
+/// end that skipped the last close. The file is never whole without
+/// them then.
+fn fold_library_log(index: &Path, within: std::time::Duration) {
+    let mut log = index.as_os_str().to_owned();
+    log.push("-wal");
+    let log = PathBuf::from(log);
+    let asked = std::time::Instant::now();
+    while log.exists() {
+        match greycard_library::Library::open(index) {
+            Ok(lib) => {
+                // Short: the loop is the wait, not the busy handler.
+                let _ = lib.set_busy_timeout(std::time::Duration::from_millis(50));
+                let _ = lib.checkpoint_all();
+            }
+            Err(e) => {
+                tracing::warn!("library: not folded in at the quit: {e}");
+                return;
+            }
+        }
+        if !log.exists() {
+            return;
+        }
+        if asked.elapsed() >= within {
+            tracing::info!(
+                "library: another connection still open at the quit; its log is left beside \
+                 it, for the next open to recover"
+            );
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 pub(crate) fn save_at_quit(
     st: &mut State,
     edit: greycard_edit::Edit,

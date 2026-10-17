@@ -5,7 +5,8 @@
 # Everything lands in %LOCALAPPDATA%\Programs\greycard, which is where
 # a per-user application goes on Windows and is already excluded from
 # the places an administrator locks down. The binaries look for
-# webgpu_dawn.dll beside themselves and nowhere else, so the whole of
+# onnxruntime.dll beside themselves and nowhere else, and it finds
+# webgpu_dawn.dll in the executables' directory, so the whole of
 # bin\ moves as one directory rather than the executables going to one
 # place and the libraries to another.
 #

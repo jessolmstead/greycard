@@ -2051,13 +2051,30 @@ fn a_kept_stand_in_base_still_says_its_denoiser_was_missing() {
         .0
     };
     let first = develop(&edit, &mut base);
-    assert!(matches!(
-        &first,
-        Outcome::Developed {
-            learned: LearnedReport::Missing(_),
-            ..
-        }
-    ));
+    // Without ONNX Runtime the denoiser is not missing but cannot run,
+    // said with the runtime's line; the kept base says that instead.
+    let runtime = greycard_ai::runtime::status().err();
+    if let Some(why) = runtime {
+        greycard_ai::runtime::absent_in_test(why);
+        assert!(
+            matches!(
+                &first,
+                Outcome::Developed {
+                    learned: LearnedReport::Failed(m),
+                    ..
+                } if *m == why.to_string()
+            ),
+            "the denoiser should fail with the runtime's line"
+        );
+    } else {
+        assert!(matches!(
+            &first,
+            Outcome::Developed {
+                learned: LearnedReport::Missing(_),
+                ..
+            }
+        ));
+    }
     // A move that keeps the base: the exposure.
     edit.light.exposure = 0.5;
     let second = develop(&edit, &mut base);
@@ -2072,7 +2089,7 @@ fn a_kept_stand_in_base_still_says_its_denoiser_was_missing() {
     assert!(left_out_of(&second, None).is_empty(), "the outcome alone");
     let said = left_out_of(&second, base.as_ref());
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].starts_with("the learned denoiser:"), "{}", said[0]);
+    assert!(said[0].starts_with("the learned denoiser"), "{}", said[0]);
 }
 
 /// The viewport's half-float texture read back as a working image,
