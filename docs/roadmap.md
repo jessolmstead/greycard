@@ -44,6 +44,14 @@ ours, so a tester brings a library over in one go.
 - [ ] A Sync button in the develop panel over a selection (Pool)
 - [ ] The crop's starting aspect as a setting (Pool)
 - [ ] A keys sheet and a Help menu (Pool)
+- [ ] A sort for the grid: a Sort menu in the filter bar (capture
+      time, name, rating, date edited, and a direction), remembered per
+      view as the filter is; capture time by default over all roots
+      and in a collection, name within one folder, so a folder's order
+      stays the camera's; one rule read by the strip, culling's
+      arrows, the lightbox, Home and End and the headless list. Today
+      the order is folder path then name, which over a whole archive
+      is alphabetical by folder with two bodies' files interleaved
 - [ ] Adobe RGB as an export space: a fourth entry beside sRGB,
       Display P3 and Rec.2020, encoded and profiled with its own gamma
       (563/256) where the three share the sRGB curve; print labs and
