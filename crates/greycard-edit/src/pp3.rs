@@ -388,7 +388,9 @@ const COMMON: &str = "Common Properties for Transformations";
 /// be carried); the raw's own processing (the demosaic, the raw-level
 /// corrections and white balance, the camera profile and the output
 /// space), which is this engine's choice for a raw and not an edit to
-/// carry; and the metadata an export writes.
+/// carry; the highlight reconstruction and the capture sharpening,
+/// which RawTherapee switches on in every profile it writes and this
+/// engine always does; and the metadata an export writes.
 const PLUMBING: &[&str] = &[
     "Version",
     "General",
@@ -398,6 +400,8 @@ const PLUMBING: &[&str] = &[
     "RAW Bayer",
     "RAW X-Trans",
     "RAW Preprocess WB",
+    "HLRecovery",
+    "PostDemosaicSharpening",
     "MetaData",
     "Exif",
     "IPTC",
@@ -1751,6 +1755,8 @@ Method=amaze
     fn the_raw_s_own_sections_are_never_named() {
         let i = read(
             "[RAW]\nCA=true\n[RAW Bayer]\nMethod=amaze\n[RAW Preprocess WB]\nMode=1\n\
+             [HLRecovery]\nEnabled=true\nMethod=Coloropp\n\
+             [PostDemosaicSharpening]\nEnabled=true\nContrast=10\n\
              [Common Properties for Transformations]\nMethod=log\nAutoFill=true\n",
             Frame::default(),
         )

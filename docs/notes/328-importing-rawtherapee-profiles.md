@@ -191,7 +191,11 @@ whose zoom or stretch is named there when it cannot be carried;
 `Color Management`, `RAW`, `RAW Bayer`, `RAW X-Trans` and
 `RAW Preprocess WB` (the raw's own processing is this engine's choice,
 not an edit; the last has no switch and RawTherapee writes it into
-every profile); and `MetaData`, `Exif`, `IPTC`.
+every profile); `HLRecovery` and `PostDemosaicSharpening`, switched on
+in every profile RawTherapee 5.11 writes and always done here, so
+naming them said nothing (a dry run over the author's archive, 4,436
+profiles, named both on every frame before this); and `MetaData`,
+`Exif`, `IPTC`.
 
 **The command.** `greycard rawtherapee <files or folders>
 [--write] [--force]`: a folder is its own raws and pictures, not its
