@@ -559,6 +559,9 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            // By name over the folders: the frames are told apart by their
+            // place in the list this built, in that order.
+            st.sort = crate::sort::Kept::by_name();
             st.library.roots.add(&root).unwrap();
             let collections = dir.join(crate::collections::DIR);
             st.collections.dir = Some(collections.clone());

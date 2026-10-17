@@ -3,7 +3,7 @@
 // a row of tiles for the folders in the folder open.
 
 import { Theme } from "../theme.slint";
-import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile } from "../structs.slint";
+import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile, SortMenu } from "../structs.slint";
 import { PanelButton, ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 import { LoadingCard } from "loading.slint";
@@ -147,6 +147,11 @@ export component GridSheet inherits Rectangle {
     callback filter-save-smart();
     /// Whether the bar offers Save...: not over a collection.
     in property <bool> filter-can-save: true;
+    /// The bar's Sort menu, and its two picks.
+    in property <SortMenu> sort-menu;
+    callback sort-picked(int);
+    callback sort-turned(bool);
+    in-out property <bool> sort-shown;
     callback filter-star-picked(int);
     callback filter-flag-toggled(int);
     callback filter-label-toggled(int);
@@ -276,8 +281,13 @@ export component GridSheet inherits Rectangle {
                             clicked => { root.sync-retry(); }
                         }
                     }
+                    // The order in words rides here, on the header's top
+                    // row, which has room to spare: beside the filter's
+                    // count it took the last label chips off the row
+                    // below at the editor's default width.
                     Text {
                         text: root.thumbs.length + (root.thumbs.length == 1 ? " frame · " : " frames · ")
+                            + (root.sort-menu.label == "" ? "" : "by " + root.sort-menu.label + " · ")
                             + round(root.grid-cell / 1px) + " px";
                         color: Theme.text-muted;
                         font-size: Theme.font-xs;
@@ -398,6 +408,10 @@ export component GridSheet inherits Rectangle {
                     cleared => { root.filter-cleared(); }
                     can-save: root.filter-can-save;
                     save-smart => { root.filter-save-smart(); }
+                    sort: root.sort-menu;
+                    sort-shown <=> root.sort-shown;
+                    sort-picked(i) => { root.sort-picked(i); }
+                    sort-turned(d) => { root.sort-turned(d); }
                     released => { root.focus-keys(); }
                 }
             }

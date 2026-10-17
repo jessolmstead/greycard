@@ -376,6 +376,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         xmp_sidecars: cli.xmp_sidecars || remembered.xmp_sidecars,
         cull_move_on: remembered.cull_move_on,
         jpegs_apart: remembered.jpegs_apart,
+        sort: remembered.sort.clone(),
         placement,
         zoom: cli.zoom.max(0.0),
         scope: opening_scope(&cli, &remembered),
@@ -1467,6 +1468,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.sidecars_in_folder = kept.sidecars_in_folder;
         settings.jpegs_apart = kept.jpegs_apart;
         settings.cull_move_on = kept.cull_move_on;
+        settings.sort = kept.sort;
         settings.lenses_declined = kept.lenses_declined;
         settings.thumb_cache_mb = kept.thumb_cache_mb;
         settings.preview_cache_mb = kept.preview_cache_mb;
@@ -1987,6 +1989,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         import: settings::ImportChoices::default(),
         // The state's, filled in by the caller.
         filter: filter::Saved::default(),
+        // Written as a view's order is chosen.
+        sort: crate::sort::Kept::default(),
         // Written as the check answers and as the switch flips.
         update: crate::update::Kept::default(),
         // Written as the match sheet's boxes are ticked.

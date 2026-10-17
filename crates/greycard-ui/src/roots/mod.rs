@@ -78,7 +78,7 @@ use self::{
     landing::land,
     look::send_off,
     pane::{add, open_folder_to_add, open_sheet, remove, rename},
-    view::loading_done,
+    view::{loading_done, read_order},
     watcher::{Poll, online, watch},
 };
 pub(crate) use self::{
@@ -107,9 +107,9 @@ pub(crate) enum View {
         deep: bool,
     },
     /// A collection, by its id: its pictures from the index, each
-    /// once, in the collection's own order, or with `capture` by the
-    /// time each was taken.
-    Collection { id: String, capture: bool },
+    /// once, in the collection's own order, or in the order chosen for
+    /// it (`sort`).
+    Collection { id: String },
 }
 
 impl View {
@@ -140,16 +140,17 @@ impl View {
     }
 }
 
-/// The index's rows for a view: under each of `under`, by folder then
-/// name, or with `only`, directly in the one folder, by name.
+/// The index's rows for a view, in `order`: under each of `under`, or
+/// with `only`, directly in the one folder.
 fn rows_listed(
     lib: &greycard_library::Library,
     under: &[PathBuf],
     only: bool,
+    order: greycard_library::Order,
 ) -> greycard_library::Result<Vec<(PathBuf, RowMeta)>> {
     match (only, under) {
-        (true, [folder]) => lib.rows_in_canonical(folder),
-        _ => lib.rows_under_canonical(under),
+        (true, [folder]) => lib.rows_in_canonical(folder, order),
+        _ => lib.rows_under_canonical(under, order),
     }
 }
 
@@ -378,7 +379,6 @@ enum Source {
         /// one, whatever view is open when it lands.
         id: String,
         refs: Vec<crate::collections::Reference>,
-        capture: bool,
         archives: Vec<PathBuf>,
         shown: Option<crate::collections::Shown>,
     },
@@ -419,6 +419,9 @@ pub(crate) struct Look {
     /// A camera's JPEG beside its raw is listed as a frame of its own;
     /// else it is left out, and found as the raw's companion.
     apart: bool,
+    /// The order the list is read in, the view's choice: none for a
+    /// collection's own.
+    order: Option<greycard_library::Order>,
 }
 
 /// What the frame on screen was found to be, off the window's thread.
@@ -524,6 +527,9 @@ pub(crate) struct Found {
     /// The camera's JPEGs beside the listed raws, raw by raw: from the
     /// folder's listing, or from the index's rows for a view of it.
     companions: Vec<(PathBuf, Vec<PathBuf>)>,
+    /// The order the list was read in: a view opened before a sort was
+    /// chosen lands in the order it was asked in, and is read again.
+    order: Option<greycard_library::Order>,
 }
 
 /// One root's look, out on a thread of its own: its answer when it has

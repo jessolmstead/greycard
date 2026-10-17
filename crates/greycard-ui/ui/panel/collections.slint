@@ -79,8 +79,8 @@ component CollectionRow inherits Rectangle {
             horizontal-stretch: 1;
             overflow: elide;
         }
-        if root.chip.capture: Text {
-            text: "by time";
+        if root.chip.on && root.chip.order != "": Text {
+            text: root.chip.order;
             color: Theme.text-muted;
             font-size: Theme.font-xs;
             vertical-alignment: center;

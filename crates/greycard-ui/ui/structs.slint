@@ -170,6 +170,28 @@ export struct FacetChip {
     on: bool,
 }
 
+/// The filter bar's Sort menu, as the view's choice has it: Rust owns
+/// every word and which entry is checked.
+export struct SortMenu {
+    /// The order chosen, "Capture time", "Hand order".
+    words: string,
+    /// The same in the count's line, "7 of 7 · capture time": lowercase,
+    /// with no way up, which the button's arrows say.
+    label: string,
+    /// The button's tip and its accessible name: "Sort: Capture time,
+    /// oldest first".
+    tip: string,
+    /// The menu's entries: "Hand order" first in a collection's, then
+    /// each order.
+    entries: [string],
+    /// The entry checked.
+    checked: int,
+    /// The two ways up of the order chosen, "Oldest first" and "Newest
+    /// first"; none for a collection's hand order, which has no way up.
+    ways: [string],
+    descending: bool,
+}
+
 /// A collection's row in the left pane.
 export struct CollectionChip {
     /// The id its file is named by.
@@ -182,8 +204,12 @@ export struct CollectionChip {
     on: bool,
     /// A saved filter, not a list.
     smart: bool,
-    /// Open, and shown by the time taken rather than its own order.
+    /// It is in an order chosen rather than its own: what the row's
+    /// "Capture order" checks, which takes it back to its own.
     capture: bool,
+    /// That order, as the row says it while it is open ("capture
+    /// time"); empty for its own.
+    order: string,
 }
 
 /// One of the library's roots, as the grid's left pane lists it: the

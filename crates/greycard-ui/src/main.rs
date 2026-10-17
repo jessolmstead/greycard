@@ -59,6 +59,7 @@ mod scope;
 mod selection;
 mod settings;
 mod sheet;
+mod sort;
 mod stacks;
 mod sync;
 mod tags;
@@ -332,8 +333,9 @@ struct Cli {
     /// mask --show-mask chooses, its menu of what was found), lightroom
     /// (the Lightroom catalog import's sheet over --lightroom's
     /// catalog, at its roots), lightroom-report (the same at its dry
-    /// run's report) or lightroom-written (the same, written as its
-    /// Write button writes it: point it at a scratch catalog)
+    /// run's report), lightroom-written (the same, written as its
+    /// Write button writes it: point it at a scratch catalog) or sort
+    /// (the grid's Sort menu, open; with --grid)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
@@ -794,6 +796,12 @@ pub(crate) struct State {
     /// What the browser lists: a folder, or the files under the
     /// roots.
     pub(crate) view: roots::View,
+    /// The grid's order, each view's choice as kept in the settings:
+    /// what a read of the list is sorted by (`sort`).
+    pub(crate) sort: sort::Kept,
+    /// The order was just chosen: the read it asked for, once merged,
+    /// brings the frame on screen into view wherever it went.
+    pub(crate) sort_reveal: bool,
     /// Counts every list put in the browser, so a list read on
     /// another thread that arrives after a later one is dropped.
     pub(crate) view_generation: u64,
@@ -1335,6 +1343,8 @@ impl State {
             tree: tree::Tree::default(),
             camera_match: Default::default(),
             view: roots::View::Folder,
+            sort: sort::Kept::default(),
+            sort_reveal: false,
             view_generation: 0,
             loads: rows::Loads::default(),
             pick_pending: None,
@@ -1537,6 +1547,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     roots::install(app, &state, &worker);
     panel::collections::install(app, &state, &worker);
     panel::stacks::install(app, &state, &worker);
+    panel::sort::install(app, &state, &worker);
     lightbox::install(app, &state, &worker);
     tree::install(app, &state, &worker);
     report::install(app, &state);

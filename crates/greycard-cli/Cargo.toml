@@ -29,6 +29,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-log.workspace = true
 
+[dev-dependencies]
+# Frames with real EXIF for the listing's tests.
+greycard-library = { path = "../greycard-library", features = ["fixtures"] }
+
 [features]
 # Nikon High Efficiency raws; off by default, see greycard-core.
 nikon-he = ["greycard-core/nikon-he"]

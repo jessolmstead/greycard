@@ -130,9 +130,10 @@ taken for a single frame.
 
 Press **L** in the grid, the loupe or culling, or click **Lightbox**
 in the grid's header. The lightbox lays out whatever the grid shows,
-as the filter leaves it: a folder, a root, a
-[collection](library.md#collections) in its own order, or only your
-picks (the **Pick** chip, then **L**).
+as the filter leaves it and in the grid's
+[order](library.md#sort-order): a folder, a root, a
+[collection](library.md#collections), or only your picks (the
+**Pick** chip, then **L**).
 
 - **+** and **−**, or **Ctrl+wheel**, set how many frames go across,
   from two to six. It starts at four, and greycard keeps your choice
@@ -148,7 +149,7 @@ picks (the **Pick** chip, then **L**).
   selection: choose the frame that is right, Ctrl+click the ones that
   stand out, and sync. The frame menu has the same as **Sync settings
   of** *frame* **onto 3 other frames...**.
-- In a collection, a drag still reorders it.
+- In a collection in its hand order, a drag still reorders it.
 - **Tab** shows or hides the left pane.
 - **Esc**, **G** or **L** leave for the grid, as does **Leave
   lightbox** on the frame menu. With several frames selected, the

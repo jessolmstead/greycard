@@ -2429,9 +2429,14 @@ pub(crate) mod tests {
         assert_eq!(kinds(&lib), [one("raw", 3), one("jpeg", 1), one("png", 1)]);
         assert_eq!(lib.count_under(&dir).unwrap(), 5);
         assert_eq!(lib.count_in_canonical(&dir).unwrap(), 5);
-        assert_eq!(lib.rows_in_canonical(&dir).unwrap().len(), 5);
         assert_eq!(
-            lib.rows_under_canonical(std::slice::from_ref(&dir))
+            lib.rows_in_canonical(&dir, crate::Order::NAME)
+                .unwrap()
+                .len(),
+            5
+        );
+        assert_eq!(
+            lib.rows_under_canonical(std::slice::from_ref(&dir), crate::Order::NAME)
                 .unwrap()
                 .len(),
             5
@@ -4041,7 +4046,7 @@ pub(crate) mod tests {
         // listed.
         assert_eq!(lib.folder_counts_under_canonical(&dir).unwrap().len(), 4);
         let own: Vec<PathBuf> = lib
-            .rows_in_canonical(&ab)
+            .rows_in_canonical(&ab, crate::Order::NAME)
             .unwrap()
             .into_iter()
             .map(|(p, _)| p)
@@ -4049,7 +4054,11 @@ pub(crate) mod tests {
         assert_eq!(own, [ab.join("b.tif"), ab.join("c.tif")]);
         assert_eq!(lib.count_in_canonical(&ab).unwrap(), 2);
         assert_eq!(lib.count_in_canonical(&dir).unwrap(), 0);
-        assert!(lib.rows_in_canonical(&dir).unwrap().is_empty());
+        assert!(
+            lib.rows_in_canonical(&dir, crate::Order::NAME)
+                .unwrap()
+                .is_empty()
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -4610,7 +4619,7 @@ pub(crate) mod tests {
         let mut lib = Library::open_in_memory().unwrap();
         lib.index_folder(&dir, &mut quiet()).unwrap();
         let rows = lib
-            .rows_under_canonical(std::slice::from_ref(&dir))
+            .rows_under_canonical(std::slice::from_ref(&dir), crate::Order::NAME)
             .unwrap();
         let by_name: HashMap<String, &crate::RowMeta> = rows
             .iter()
@@ -4858,7 +4867,7 @@ pub(crate) mod tests {
     /// The rows of the `versions` table the file's row lists, by id,
     /// name and place.
     fn version_rows(lib: &Library, dir: &Path, file: &Path) -> Vec<crate::VersionRow> {
-        lib.rows_in_canonical(dir)
+        lib.rows_in_canonical(dir, crate::Order::NAME)
             .unwrap()
             .into_iter()
             .find(|(p, _)| p == file)
@@ -5282,7 +5291,7 @@ pub(crate) mod tests {
         // The same, through the filter and the rows.
         assert_eq!(names(&lib, "rating>=3"), ["both.tif", "only.tif"]);
         let rows = lib
-            .rows_under_canonical(std::slice::from_ref(&dir))
+            .rows_under_canonical(std::slice::from_ref(&dir), crate::Order::NAME)
             .unwrap();
         assert_eq!(rows.len(), 4);
 

@@ -30,6 +30,15 @@ design note behind it.
 - A Kind row in the filter bar (Raw, JPEG, PNG, TIFF) when a folder
   mixes them; `kind:raw` works in the field too
   ([§326](https://github.com/jessolmstead/greycard/blob/master/docs/notes/326-a-files-kind-as-a-facet-and-a-term.md))
+- A sort for the grid: the arrow button at the right of the filter
+  bar picks capture time, name, rating or date edited, oldest or
+  newest first, and the header says which. Remembered per view. A
+  single folder opens by name, as the camera numbered it; several
+  roots by capture time, so two bodies' frames interleave; a
+  collection keeps its hand order until you pick one. The strip,
+  culling, the lightbox and `greycard library list --sort` follow the
+  same order
+  ([§339](https://github.com/jessolmstead/greycard/blob/master/docs/notes/339-a-sort-order-for-the-grid.md))
 
 ### Editing
 

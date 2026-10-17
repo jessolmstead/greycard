@@ -137,6 +137,10 @@ pub struct Settings {
     /// command line names one. Clear empties it, and an empty one is
     /// what is kept then.
     pub filter: crate::filter::Saved,
+    /// The grid's order, a choice for each kind of view and each
+    /// collection (`sort::Kept`): written as it is chosen, not gathered
+    /// at the close. A file without it is every view in its default.
+    pub sort: crate::sort::Kept,
     /// The check for a newer release: its switch, when it last reached
     /// GitHub and what it found, and a release the pane was told not
     /// to offer. Written as each changes, not gathered at the close.
@@ -249,6 +253,7 @@ impl Default for Settings {
             network_poll_minutes: 10,
             import: ImportChoices::default(),
             filter: crate::filter::Saved::default(),
+            sort: crate::sort::Kept::default(),
             update: crate::update::Kept::default(),
             match_unchecked: Vec::new(),
         }
@@ -437,6 +442,13 @@ mod tests {
                 labels: vec![greycard_edit::meta::Label::Red],
                 text: "harbor iso>=3200".into(),
                 facets: [("camera".to_string(), vec!["Canon EOS R6m2".to_string()])]
+                    .into_iter()
+                    .collect(),
+            },
+            sort: crate::sort::Kept {
+                folder: Some("rating-desc".into()),
+                roots: Some("capture".into()),
+                collections: [("0123".to_string(), "hand".to_string())]
                     .into_iter()
                     .collect(),
             },

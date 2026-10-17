@@ -255,6 +255,53 @@ plain word, and the status line says what was wrong with it.
 frames. greycard remembers the filter when you quit and restores it
 next time.
 
+## Sort order
+
+**Sort**, the arrows at the end of the filter's row, sets the order of
+the grid, the filmstrip, culling and the lightbox. The arrows point
+the way the order runs, and the grid's header says what by beside the
+frame count ("8 frames · by capture time"), as the CULLING section
+does beside its count. Rest the pointer on the arrows for the whole
+of it, as "Sort: Capture time, oldest first". The menu offers:
+
+- **Capture time**, from each frame's own date in its EXIF;
+- **Name**, the file's name;
+- **Rating**;
+- **Date edited**, when the frame's edit was last saved;
+
+and under them which way up: **Oldest first** or **Newest first**
+(**A to Z** or **Z to A** for a name, **Lowest first** or **Highest
+first** for a rating).
+
+Each kind of view keeps its own order, and greycard remembers them
+when you quit:
+
+- **A folder** is by name until you choose otherwise, which is the
+  camera's numbering.
+- **All roots, a root, or a folder with its subfolders** is by
+  capture time, so the frames of two cameras from one day read in the
+  order they were taken, wherever their folders are. A smart
+  collection opens as one of these and uses the same order.
+- **A collection** is in its own order (below), and its menu starts
+  with **Hand order** to come back to it.
+
+Frames that tie, such as a burst taken within one second, follow their
+names. A frame with no capture time goes last, either way up, and so
+does a frame with no edit when you sort by date edited. Date edited
+is the last time the frame's sidecar was saved, so a rating given to
+an edited frame counts too.
+
+Changing the order keeps the frame you are on selected and scrolls to
+it. A closed [stack](culling.md#stacks) sits where its top frame
+falls, and an open one keeps its frames together behind the top. A camera's JPEG
+beside its raw goes where its raw does, and a
+[version](presets-and-history.md#versions-of-a-frame) right after its
+frame.
+
+The order is read when the list is: a frame you rate stays where it
+is while you cull, and moves to its new place the next time the list
+is read, when you choose the order again or open the view again.
+
 ## Collections
 
 A **collection** gathers frames from anywhere in your library, from
@@ -287,14 +334,22 @@ before the name.
 
 ### Order
 
-A collection opens in its own order. Drag a frame, or the selection,
-in the grid to move it; a bar marks where it will land. Right-click
-the collection's row for its menu:
+A collection opens in its own order, **Hand order** in the
+[Sort](#sort-order) menu. Drag a frame, or the selection, in the grid
+to move it; a bar marks where it will land.
+
+Any other order from the Sort menu shows the frames that way instead,
+without changing the order you made, and greycard remembers it for
+that collection. While it is on, a drag does nothing. Choose **Hand
+order** to go back.
+
+Right-click the collection's row for its menu:
 
 - **Rename...**
-- **Capture order** shows the frames by the time they were taken
-  instead, without changing the order you made. While it is on, a drag
-  does nothing.
+- **Capture order** is a quick way to the Sort menu's capture time,
+  oldest first. It is checked whenever the collection is in an order
+  you chose, and takes it back to hand order. While the collection is
+  open, its row names the order it is in.
 - **Delete...** deletes the collection after asking. Its frames stay
   where they are.
 

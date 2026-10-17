@@ -27,6 +27,7 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
         collection,
         frames,
         companions,
+        order,
     } = found;
     {
         let st = state.borrow();
@@ -208,6 +209,17 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
             if let Some(words) = crate::panel::collections::opened_words(&st, missing) {
                 app.set_status(words.into());
             }
+            // A sort chosen while this read was out (it could not be
+            // read again then, the view still opening): read again in
+            // it now, the frame on screen kept and brought into view.
+            let stale = read_order(&st, &st.view) != order;
+            drop(st);
+            if stale {
+                state.borrow_mut().sort_reveal = true;
+                if !refresh_view(state, app, worker) {
+                    state.borrow_mut().sort_reveal = false;
+                }
+            }
         }
         Purpose::Merge => {
             let mut again = {
@@ -258,6 +270,10 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
                 let st = state.borrow();
                 let on_screen = st.current.and_then(|c| st.path_at(c)).cloned();
                 crate::panel::browser::show_file_name(&st, app, on_screen.as_deref());
+            }
+            // A sort's read in: the frame on screen where it went.
+            if ours && !again {
+                crate::panel::sort::landed(state, app);
             }
             if again {
                 refresh_view(state, app, worker);

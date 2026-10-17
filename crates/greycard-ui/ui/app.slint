@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { LightroomRoot, ReportLine, Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow } from "structs.slint";
+import { LightroomRoot, ReportLine, Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -750,6 +750,20 @@ export component App inherits Window {
     callback filter-exact-toggled();
     callback filter-text-edited(string);
     callback filter-cleared();
+    /// The filter bar's Sort menu: the view's order as Rust says it,
+    /// an entry picked by its place, and a way up picked.
+    in property <SortMenu> sort-menu;
+    callback sort-picked(int);
+    callback sort-turned(bool);
+    /// The grid's Sort menu opened from Rust, for a snapshot of it.
+    in-out property <bool> sort-menu-shown: false;
+    /// Bring the frame chosen into view in the strip and the grid, from
+    /// where each stands: after a sort, when the row it is on may not
+    /// have moved but the rows around it have.
+    public function reveal-selected() {
+        root.strip-reveal();
+        root.grid-reveal();
+    }
     /// Ctrl+F or /: put the filter's chips where they can be reached
     /// and the cursor in its text field.
     callback filter-asked();
@@ -2515,6 +2529,9 @@ export component App inherits Window {
                             filter-exact-toggled => { root.filter-exact-toggled(); }
                             filter-text-edited(a) => { root.filter-text-edited(a); }
                             filter-cleared => { root.filter-cleared(); }
+                            sort-menu: root.sort-menu;
+                            sort-picked(a) => { root.sort-picked(a); }
+                            sort-turned(a) => { root.sort-turned(a); }
                             reject-count: root.reject-count;
                             rejects-asked => { root.rejects-asked(); }
                             back-count: root.back-count;
@@ -3139,6 +3156,10 @@ export component App inherits Window {
         reorder: root.collection-reorder;
         frame-moved(a, b) => { root.collection-moved(a, b); }
         filter-cleared => { root.filter-cleared(); }
+        sort-menu: root.sort-menu;
+        sort-shown <=> root.sort-menu-shown;
+        sort-picked(a) => { root.sort-picked(a); }
+        sort-turned(a) => { root.sort-turned(a); }
         // Said here only with the pane, which says it under Import,
         // put away.
         import-line: root.left-hidden ? root.import-status : "";

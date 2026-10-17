@@ -2310,8 +2310,18 @@ pub(crate) fn told(app: &App, told: Told) {
             let moved = refresh_ids(&mut st);
             let chose = !st.facets_wanted.is_empty() && choose_wanted(&mut st);
             st.awaiting_index = false;
+            // A folder sorted by what only its rows say (its capture
+            // times, its ratings) and read before the index had them is
+            // read again in that order once the pass has written them.
+            let resort = st.view == crate::roots::View::Folder
+                && st.sort.choice(&st.view).order().map(|o| o.by)
+                    != Some(greycard_library::SortBy::Name)
+                && report.added + report.changed + report.meta_refreshed > 0;
             drop(st);
             reread(&state, app, chose || moved);
+            if resort && let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
+                crate::roots::refresh_view(&state, app, &worker);
+            }
             app.window().request_redraw();
         }
         Told::FilesIndexed(rehashed) => {

@@ -3,7 +3,7 @@
 
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { FilterChip, FacetRow } from "../structs.slint";
+import { FilterChip, FacetRow, SortMenu } from "../structs.slint";
 import { PanelButton } from "../controls.slint";
 
 // A chip of the filter: a pill that says what it asks and how many
@@ -191,6 +191,16 @@ export component FilterBar inherits Rectangle {
     callback save-smart();
     /// The field is done with: the window's keys want it back.
     callback released();
+    /// The Sort menu, at the bar's end: the view's order and its way
+    /// up, one choice a view.
+    in property <SortMenu> sort;
+    /// An entry of the menu picked, by its place in `sort.entries`.
+    callback sort-picked(int);
+    /// A way up picked: descending or not.
+    callback sort-turned(bool);
+    /// Raised from Rust, for a snapshot of the menu open: the bar on
+    /// screen opens it and puts this back.
+    in-out property <bool> sort-shown;
     function grab() {
         root.wanted = false;
         field.focus();
@@ -347,9 +357,11 @@ export component FilterBar inherits Rectangle {
                 // Wide enough for a few words and no wider: a field
                 // the width of the window reads as the header rather
                 // than as one control in it. In the header it gives
-                // up width to the chips down to what a few words need.
+                // up width to the chips down to what a few words need:
+                // at the editor's default width, the chips, the count,
+                // Save..., Clear and the Sort button all fit with it.
                 max-width: root.stacked ? 100000px : 360px;
-                min-width: root.stacked ? 0px : 200px;
+                min-width: root.stacked ? 0px : 136px;
                 // In the header, the row's height is spelled out
                 // there (grid.slint): the field is held to a
                 // control's height rather than the style's taller
@@ -372,21 +384,76 @@ export component FilterBar inherits Rectangle {
                     return reject;
                 }
             }
+            // The count, and in the CULLING section's bar the order in
+            // words (the arrows on the Sort button say which way up).
+            // The grid's header says the order on its top row instead,
+            // where it takes no room from the chips.
             Text {
-                text: root.shown + " of " + root.total;
+                text: root.shown + " of " + root.total
+                    + (root.stacked && root.sort.label != "" ? " · " + root.sort.label : "");
                 color: root.on ? Theme.text : Theme.text-muted;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
             }
+            // The buttons keep their words: the chips before them give
+            // way first, clipped at a narrow window.
             if root.can-save: PanelButton {
                 text: "Save...";
+                min-width: self.preferred-width;
                 enabled: root.on;
                 clicked => { root.released(); root.save-smart(); }
             }
             PanelButton {
                 text: "Clear";
+                min-width: self.preferred-width;
                 enabled: root.on;
                 clicked => { root.cleared(); root.released(); }
+            }
+            // The order, last on the row: the button says what the
+            // list is by and which way up, and opens the menu.
+            sort-button := PanelButton {
+                property <bool> want: root.sort-shown && root.takes-focus;
+                changed want => {
+                    if (self.want) {
+                        root.sort-shown = false;
+                        sort-menu.show({ x: 0, y: self.height });
+                    }
+                }
+                // A picture and no words, so the header's row keeps its
+                // chips at the editor's default width: the arrows say
+                // which way up, the tip at the pointer what by, and the
+                // menu checks both.
+                words: root.sort.tip;
+                icon: root.sort.ways.length == 0 ? @image-url("../icons/arrow-up-down.svg")
+                    : root.sort.descending ? @image-url("../icons/arrow-down-wide-narrow.svg")
+                    : @image-url("../icons/arrow-up-narrow-wide.svg");
+                width: Theme.control-height;
+                accessible-role: button;
+                accessible-label: root.sort.tip;
+                clicked => {
+                    root.released();
+                    sort-menu.show({ x: 0, y: self.height });
+                }
+                sort-menu := ContextMenuArea {
+                    width: 0px;
+                    height: 0px;
+                    enabled: false;
+                    Menu {
+                        for name[i] in root.sort.entries: MenuItem {
+                            title: name;
+                            checkable: true;
+                            checked: i == root.sort.checked;
+                            activated => { root.sort-picked(i); }
+                        }
+                        if root.sort.ways.length > 0: MenuSeparator { }
+                        for way[i] in root.sort.ways: MenuItem {
+                            title: way;
+                            checkable: true;
+                            checked: (i == 1) == root.sort.descending;
+                            activated => { root.sort-turned(i == 1); }
+                        }
+                    }
+                }
             }
         }
         // The first row also carries the note, before its chips: the

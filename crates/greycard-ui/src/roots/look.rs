@@ -33,16 +33,14 @@ impl Look {
             Source::Collection {
                 id,
                 refs,
-                capture,
                 archives,
                 shown,
             } => {
                 let shown = match shown {
                     Some(shown) => Some(shown),
-                    None => match lib
-                        .as_ref()
-                        .map(|l| crate::collections::resolve(l, &refs, &away, &archives, capture))
-                    {
+                    None => match lib.as_ref().map(|l| {
+                        crate::collections::resolve(l, &refs, &away, &archives, self.order)
+                    }) {
                         Some(Ok(shown)) => Some(shown),
                         Some(Err(e)) => {
                             tracing::warn!("library: {e}");
@@ -82,6 +80,7 @@ impl Look {
             }
             source => source,
         };
+        let from_disk_list = matches!(source, Source::Folder(_) | Source::Files(_));
         let files = match source {
             // Listed as rows above; nothing comes this way.
             Source::Collection { .. } => None,
@@ -127,9 +126,10 @@ impl Look {
                 rows: listed,
                 hide,
             } => {
+                let order = self.order.unwrap_or(greycard_library::Order::NAME);
                 let listed = match listed {
                     Some(listed) => listed,
-                    None => match lib.as_ref().map(|l| rows_listed(l, &roots, only)) {
+                    None => match lib.as_ref().map(|l| rows_listed(l, &roots, only, order)) {
                         Some(Ok(listed)) => listed,
                         Some(Err(e)) => {
                             tracing::warn!("library: {e}");
@@ -274,6 +274,14 @@ impl Look {
                 Err(e) => tracing::debug!("library: {e}; the sidecars read instead"),
             }
         }
+        // A folder from the disk, or files given, in the view's order by
+        // the same rule the index's query lists by, from the rows the
+        // index has; a file it has no row for yet sorts as one with no
+        // value, by name. A view of the index came in its order already.
+        let mut files = files;
+        if let (true, Some(order), Some(files)) = (from_disk_list, self.order, files.as_mut()) {
+            sort_files(files, order, rows.as_ref());
+        }
         let fresh: Vec<PathBuf> = files
             .iter()
             .flatten()
@@ -359,8 +367,30 @@ impl Look {
             collection,
             frames,
             companions,
+            order: self.order,
         }
     }
+}
+
+/// `files` put in `order` by [`greycard_library::Order::compare`], each
+/// by its row where `rows` has one: the rule a view of the index is
+/// listed by, so a folder read from the disk and the same folder as a
+/// root's reads in one order.
+pub(crate) fn sort_files(
+    files: &mut [PathBuf],
+    order: greycard_library::Order,
+    rows: Option<&HashMap<PathBuf, RowMeta>>,
+) {
+    fn key<'a>(
+        f: &'a PathBuf,
+        rows: Option<&'a HashMap<PathBuf, RowMeta>>,
+    ) -> greycard_library::SortKey<'a> {
+        match rows.and_then(|r| r.get(f)) {
+            Some(row) => row.sort_key(f),
+            None => greycard_library::SortKey::bare(f),
+        }
+    }
+    files.sort_by(|a, b| order.compare(&key(a, rows), &key(b, rows)));
 }
 
 /// A folder's pictures, with the camera's JPEGs beside its raws found

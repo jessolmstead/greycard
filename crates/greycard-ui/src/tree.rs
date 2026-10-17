@@ -1106,6 +1106,9 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            // By name over the folders: the frames are told apart by their
+            // place in the list this built, in that order.
+            st.sort = crate::sort::Kept::by_name();
             // Sidecars as the editor keeps them, so a frame listed
             // from its row stands in until its sidecar is wanted.
             st.write_sidecars = true;
@@ -1195,7 +1198,9 @@ mod tests {
         pick(&app, "archive");
         land_sent(&state, &app, &worker);
         assert_eq!(state.borrow().view, View::Roots(Some(root.clone())));
-        assert_eq!(listed(&state), ["r.tif", "d1.tif", "d2.tif", "m.tif"]);
+        // By name across the folders (a test's window lists a view of
+        // several folders by name), the root's own frame among them.
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif", "r.tif"]);
         // And off again: the root's own frame alone.
         app.set_folder_tree_subfolders(false);
         app.invoke_folder_tree_subfolders_changed();

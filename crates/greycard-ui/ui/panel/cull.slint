@@ -2,7 +2,7 @@
 // browser's filter, the compare view and the two ways out.
 
 import { Theme } from "../theme.slint";
-import { FilterChip, FacetRow } from "../structs.slint";
+import { FilterChip, FacetRow, SortMenu } from "../structs.slint";
 import { Section, PanelButton, Segmented, Toggle } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 
@@ -33,6 +33,10 @@ export component CullSection inherits Section {
     callback filter-exact-toggled();
     callback filter-text-edited(string);
     callback filter-cleared();
+    /// The bar's Sort menu, and its two picks.
+    in property <SortMenu> sort-menu;
+    callback sort-picked(int);
+    callback sort-turned(bool);
     in property <int> reject-count;
     callback rejects-asked();
     /// Move back: the frames of the selection in a rejects folder, and
@@ -110,6 +114,9 @@ export component CullSection inherits Section {
         text-edited(t) => { root.filter-text-edited(t); }
         cleared => { root.filter-cleared(); }
         released => { root.focus-keys(); }
+        sort: root.sort-menu;
+        sort-picked(i) => { root.sort-picked(i); }
+        sort-turned(d) => { root.sort-turned(d); }
     }
     HorizontalLayout {
         spacing: Theme.space-2;

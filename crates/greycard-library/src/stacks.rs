@@ -222,6 +222,61 @@ pub fn shown<'a, K: Clone + Eq + std::hash::Hash>(
 pub struct Collapsed {
     pub hidden: HashSet<PathBuf>,
     pub tops: HashMap<PathBuf, usize>,
+    /// Each stack shown open, its files in its order, the top's first,
+    /// each once: what [`gather`] puts behind the top.
+    pub open: Vec<Vec<PathBuf>>,
+}
+
+/// An open stack's members put behind its top, in the stack's order,
+/// wherever the list's order had them: the list keeps its order for
+/// everything else, and the stack stands where its top does. `path`
+/// says each item's file; `open` is [`Collapsed::open`].
+pub fn gather<T>(list: Vec<T>, path: impl Fn(&T) -> &Path, open: &[Vec<PathBuf>]) -> Vec<T> {
+    // Each member's stack and its place there, the top's left out: the
+    // top stays where it is, and the rest go after it.
+    let mut behind: HashMap<&Path, (usize, usize)> = HashMap::new();
+    for (s, files) in open.iter().enumerate() {
+        for (i, f) in files.iter().enumerate().skip(1) {
+            behind.entry(f.as_path()).or_insert((s, i));
+        }
+    }
+    let tops: HashMap<&Path, usize> = open
+        .iter()
+        .enumerate()
+        .filter_map(|(s, files)| Some((files.first()?.as_path(), s)))
+        .collect();
+    let mut held: Vec<Vec<(usize, T)>> = (0..open.len()).map(|_| Vec::new()).collect();
+    let mut rest: Vec<(Option<usize>, T)> = Vec::with_capacity(list.len());
+    for item in list {
+        let p = path(&item);
+        match behind.get(p) {
+            // A member waits for its top.
+            Some(&(s, i)) => held[s].push((i, item)),
+            None => {
+                let top = tops.get(p).copied();
+                rest.push((top, item));
+            }
+        }
+    }
+    let present: HashSet<usize> = rest.iter().filter_map(|(t, _)| *t).collect();
+    let mut out = Vec::with_capacity(rest.len());
+    for (top, item) in rest {
+        out.push(item);
+        if let Some(s) = top {
+            let mut members = std::mem::take(&mut held[s]);
+            members.sort_by_key(|(i, _)| *i);
+            out.extend(members.into_iter().map(|(_, m)| m));
+        }
+    }
+    // Members of a stack whose top the list does not have keep to the
+    // end, in their stack's order, rather than be lost.
+    for (s, mut members) in held.into_iter().enumerate() {
+        if !present.contains(&s) {
+            members.sort_by_key(|(i, _)| *i);
+            out.extend(members.into_iter().map(|(_, m)| m));
+        }
+    }
+    out
 }
 
 /// The stacks over a list of files by [`shown`]'s rule. `versions`
@@ -250,6 +305,15 @@ pub fn collapsed(
             .insert(PathBuf::from(&s.members[0].0), s.members.len());
         if !open && !s.open {
             behind.extend(s.members[1..].iter().cloned());
+        } else {
+            let mut files: Vec<PathBuf> = Vec::new();
+            for (hint, _) in &s.members {
+                let f = PathBuf::from(hint);
+                if !files.contains(&f) {
+                    files.push(f);
+                }
+            }
+            out.open.push(files);
         }
     }
     let files: HashSet<&String> = behind.iter().map(|(hint, _)| hint).collect();
@@ -417,5 +481,25 @@ mod tests {
         // Without the first, the second is a stack again.
         let shown = collapsed(&stacks[1..], false, &all);
         assert_eq!(shown.tops, [(PathBuf::from("/2"), 2)].into());
+    }
+
+    /// An open stack's members follow its top in the stack's order,
+    /// wherever the list's order put them; the rest keep the list's
+    /// order, and a member whose top the list lacks is kept at the end.
+    #[test]
+    fn gather_puts_an_open_stacks_members_behind_its_top() {
+        let p = |s: &str| PathBuf::from(s);
+        let list = vec![p("/a"), p("/m2"), p("/b"), p("/top"), p("/m1"), p("/c")];
+        let open = vec![vec![p("/top"), p("/m1"), p("/m2")]];
+        assert_eq!(
+            gather(list.clone(), |f| f.as_path(), &open),
+            [p("/a"), p("/b"), p("/top"), p("/m1"), p("/m2"), p("/c")]
+        );
+        let without_top: Vec<PathBuf> = list.into_iter().filter(|f| f != &p("/top")).collect();
+        assert_eq!(
+            gather(without_top, |f| f.as_path(), &open),
+            [p("/a"), p("/b"), p("/c"), p("/m1"), p("/m2")]
+        );
+        assert_eq!(gather(vec![p("/x")], |f| f.as_path(), &[]), [p("/x")]);
     }
 }

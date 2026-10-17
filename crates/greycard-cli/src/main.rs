@@ -446,6 +446,14 @@ enum LibraryAction {
         #[arg(long, value_name = "SHOWN", default_value = "collapsed",
               value_parser = ["collapsed", "expanded"])]
         stacks: String,
+        /// The order, as the editor's grid has it over every root: by
+        /// `capture` time, `name`, `rating` or date `edited`, and
+        /// `-desc` after it for the other way up (`capture-desc` is the
+        /// newest first). Ties go by name, then path; a frame with no
+        /// capture time, or no develop for `edited`, comes last
+        #[arg(long, value_name = "ORDER", default_value = "capture",
+              value_parser = clap::builder::PossibleValuesParser::new(SORT_KEYS))]
+        sort: String,
     },
     /// Bring a Lightroom Classic catalog across: the ratings, flags,
     /// labels, keywords, titles and captions exactly, the develop
@@ -2021,17 +2029,17 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
             paths,
             count,
             stacks,
+            sort,
         } => {
             let filter = Filter::from_terms(&filter)?;
+            let order = greycard_library::Order::from_key(&sort)
+                .with_context(|| format!("--sort {sort}: not an order"))?;
             let stacked = stacks_over(&lib, &path, stacks == "expanded");
             if count && stacked.hidden.is_empty() {
                 println!("{}", lib.count(&filter)?);
                 return Ok(());
             }
-            let mut entries = lib.query(&filter)?;
-            // A closed stack's members are behind its top: a stack
-            // passes the filter when its top does.
-            entries.retain(|e| !stacked.hidden.contains(&e.path));
+            let entries = listed(&lib, &filter, order, &stacked)?;
             if count {
                 println!("{}", entries.len());
                 return Ok(());
@@ -2084,6 +2092,57 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
     }
 }
 
+/// The orders `library list --sort` takes: each of the grid's, and
+/// each the other way up.
+const SORT_KEYS: [&str; 8] = [
+    "capture",
+    "capture-desc",
+    "name",
+    "name-desc",
+    "rating",
+    "rating-desc",
+    "edited",
+    "edited-desc",
+];
+
+/// The files that pass `filter`, in `order`, as the editor's grid lists
+/// them: a closed stack's members behind its top (a stack passes the
+/// filter when its top does), an open one's gathered behind its top in
+/// the stack's own order, the stack standing where its top sorts. As in
+/// the window, the stacks are laid over the whole list before the
+/// filter is asked (the grid's cells are made, then filtered), so an
+/// open stack's members that pass stand at their top's place even when
+/// the top does not.
+fn listed(
+    lib: &greycard_library::Library,
+    filter: &greycard_library::Filter,
+    order: greycard_library::Order,
+    stacked: &greycard_library::stacks::Collapsed,
+) -> Result<Vec<greycard_library::Entry>> {
+    use greycard_library::filter::{Filter, Term};
+    let passing: std::collections::HashSet<PathBuf> = lib
+        .query_sorted(filter, order)?
+        .into_iter()
+        .map(|e| e.path)
+        .collect();
+    // The whole list under the same rule for missing files as the
+    // filter's, so every frame that passes is in it.
+    let whole = Filter {
+        terms: filter
+            .terms
+            .iter()
+            .filter(|t| matches!(t, Term::Missing(_)))
+            .cloned()
+            .collect(),
+    };
+    let mut entries = lib.query_sorted(&whole, order)?;
+    entries.retain(|e| !stacked.hidden.contains(&e.path));
+    let mut entries =
+        greycard_library::stacks::gather(entries, |e| e.path.as_path(), &stacked.open);
+    entries.retain(|e| passing.contains(&e.path));
+    Ok(entries)
+}
+
 /// The stacks kept beside the library at `library` over its rows, by
 /// the editor's rule (`stacks::shown`): a member is there when the
 /// index has a row at its path that is not missing and, for a version,
@@ -2109,7 +2168,10 @@ fn stacks_over(
         .collect();
     let mut kept: std::collections::HashMap<String, Vec<String>> = Default::default();
     for dir in &folders {
-        for (path, row) in lib.rows_in_canonical(dir).unwrap_or_default() {
+        for (path, row) in lib
+            .rows_in_canonical(dir, greycard_library::Order::NAME)
+            .unwrap_or_default()
+        {
             let ids = row.versions.into_iter().map(|v| v.id).collect();
             kept.insert(greycard_library::collections::hint_of(&path), ids);
         }
@@ -3094,6 +3156,145 @@ mod tests {
         later.made = u64::MAX;
         later.write(&dir_in(&dir_beside(&db))).unwrap();
         assert_eq!(super::stacks_over(&lib, &db, false), shown);
+        drop(lib);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// `library list --sort` takes every order the grid has, by the
+    /// names the editor's settings keep it by, capture time the
+    /// default; the listing is the grid's order, an open stack's
+    /// members gathered behind its top in the stack's own order.
+    #[test]
+    fn the_listing_sorts_as_the_grid_does() {
+        use clap::Parser;
+        use greycard_library::collections::{Reference, dir_beside, hint_of};
+        use greycard_library::fixture::{A7, Frame, R5, write_frame};
+        use greycard_library::stacks::{Stack, dir_in};
+        use greycard_library::{Order, SortBy};
+        for by in SortBy::ALL {
+            for descending in [false, true] {
+                let o = Order::new(by, descending);
+                assert!(super::SORT_KEYS.contains(&o.key().as_str()), "{o:?}");
+            }
+        }
+        for key in super::SORT_KEYS {
+            assert!(Order::from_key(key).is_some(), "{key}");
+        }
+        let sort_of = |args: &[&str]| -> String {
+            let cli = super::Cli::try_parse_from(args).unwrap();
+            match cli.command {
+                super::Command::Library {
+                    action: super::LibraryAction::List { sort, .. },
+                    ..
+                } => sort,
+                _ => panic!("not a listing"),
+            }
+        };
+        assert_eq!(sort_of(&["greycard", "library", "list"]), "capture");
+        assert_eq!(
+            sort_of(&["greycard", "library", "list", "--sort", "rating-desc"]),
+            "rating-desc"
+        );
+        assert!(
+            super::Cli::try_parse_from(["greycard", "library", "list", "--sort", "size"]).is_err()
+        );
+
+        // Two folders, two bodies, the times interleaved.
+        let d = std::env::temp_dir().join(format!("greycard-cli-sort-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let (a, b) = (d.join("a"), d.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let shots = [
+            (a.join("IMG_0001.tif"), "2026:05:01 10:00:01", &R5),
+            (a.join("IMG_0002.tif"), "2026:05:01 10:00:03", &R5),
+            (b.join("_DSC0001.tif"), "2026:05:01 10:00:00", &A7),
+            (b.join("_DSC0002.tif"), "2026:05:01 10:00:02", &A7),
+        ];
+        for (i, (path, taken, body)) in shots.iter().enumerate() {
+            write_frame(path, &Frame { taken, ..**body }, i as u16);
+        }
+        let db = d.join("index").join("library.sqlite");
+        let mut lib = greycard_library::Library::open(&db).unwrap();
+        lib.index_tree(&d, &mut |_| {}).unwrap();
+        let filtered = |terms: &[&str], order: Order, expanded: bool| -> Vec<String> {
+            let stacked = super::stacks_over(&lib, &db, expanded);
+            let filter = greycard_library::Filter::from_terms(terms).unwrap();
+            super::listed(&lib, &filter, order, &stacked)
+                .unwrap()
+                .iter()
+                .map(|e| e.name())
+                .collect::<Vec<_>>()
+        };
+        let names = |order: Order, expanded: bool| -> Vec<String> {
+            let stacked = super::stacks_over(&lib, &db, expanded);
+            super::listed(&lib, &greycard_library::Filter::default(), order, &stacked)
+                .unwrap()
+                .iter()
+                .map(|e| e.name())
+                .collect()
+        };
+        let by_time = [
+            "_DSC0001.tif",
+            "IMG_0001.tif",
+            "_DSC0002.tif",
+            "IMG_0002.tif",
+        ];
+        assert_eq!(names(Order::TAKEN, false), by_time);
+        assert_eq!(
+            names(Order::new(SortBy::Taken, true), false),
+            [
+                "IMG_0002.tif",
+                "_DSC0002.tif",
+                "IMG_0001.tif",
+                "_DSC0001.tif"
+            ]
+        );
+        assert_eq!(
+            names(Order::NAME, false),
+            [
+                "IMG_0001.tif",
+                "IMG_0002.tif",
+                "_DSC0001.tif",
+                "_DSC0002.tif"
+            ]
+        );
+        // A stack in b, its top _DSC0002: closed, the top alone where
+        // it sorts; open, its member behind it.
+        let key = |p: &std::path::Path| lib.by_path(p).unwrap().unwrap();
+        let r = |p: &std::path::Path| Reference {
+            hash: key(p).hash,
+            hint: hint_of(&key(p).path),
+            version: None,
+        };
+        Stack::new(vec![r(&b.join("_DSC0002.tif")), r(&b.join("_DSC0001.tif"))])
+            .write(&dir_in(&dir_beside(&db)))
+            .unwrap();
+        assert_eq!(
+            names(Order::TAKEN, false),
+            ["IMG_0001.tif", "_DSC0002.tif", "IMG_0002.tif"]
+        );
+        assert_eq!(
+            names(Order::TAKEN, true),
+            [
+                "IMG_0001.tif",
+                "_DSC0002.tif",
+                "_DSC0001.tif",
+                "IMG_0002.tif"
+            ]
+        );
+        // The top filtered out of an open stack: its member stands at
+        // the top's place, as the window's grid lays it, not at the end.
+        let desc = Order::new(SortBy::Name, true);
+        assert_eq!(
+            filtered(&["name!=_DSC0002.tif"], desc, true),
+            ["_DSC0001.tif", "IMG_0002.tif", "IMG_0001.tif"]
+        );
+        // Closed, the stack passes with its top or not at all.
+        assert_eq!(
+            filtered(&["name!=_DSC0002.tif"], desc, false),
+            ["IMG_0002.tif", "IMG_0001.tif"]
+        );
         drop(lib);
         std::fs::remove_dir_all(&d).unwrap();
     }

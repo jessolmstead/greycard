@@ -1231,6 +1231,8 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     app.set_reject_count(reject_count(st) as i32);
     // A smart collection is lit while the bar says its filter.
     crate::panel::collections::show(st, app);
+    // The Sort menu says the view's order.
+    crate::panel::sort::show(st, app);
     // A frame the filter now hides leaves the set: a key or a sync
     // must not reach a frame nobody can see is chosen.
     st.picked = selection::prune(&st.picked, &st.shown, st.current);

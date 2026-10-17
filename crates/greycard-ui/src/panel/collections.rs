@@ -67,7 +67,14 @@ pub(crate) fn name_of(st: &State, id: &str) -> String {
 /// the collection open, and whether the grid takes a drag.
 pub(crate) fn show(st: &State, app: &App) {
     let open = st.view.collection();
-    let capture = matches!(st.view, View::Collection { capture: true, .. });
+    // Each collection's order as kept: its own (none), or one chosen,
+    // which the row names while it is open and its menu checks.
+    let order = |id: &str| {
+        st.sort
+            .choice(&View::Collection { id: id.to_string() })
+            .order()
+    };
+    let hand = st.sort.choice(&st.view) == crate::sort::Choice::Hand;
     let filter = Saved::of(&st.filter);
     let smart_on = |s: &Smart| filter == s.filter && st.view == smart_view(st, s.root.as_deref());
     let store = &st.collections;
@@ -83,7 +90,11 @@ pub(crate) fn show(st: &State, app: &App) {
                 count: c.count() as i32,
                 on,
                 smart: false,
-                capture: on && capture,
+                capture: order(&c.id).is_some(),
+                order: order(&c.id)
+                    .map(|o| o.by.words().to_lowercase())
+                    .unwrap_or_default()
+                    .into(),
             }
         })
         .chain(store.smart.iter().map(|s| CollectionChip {
@@ -94,6 +105,7 @@ pub(crate) fn show(st: &State, app: &App) {
             on: smart_on(s),
             smart: true,
             capture: false,
+            order: Default::default(),
         }))
         .collect();
     if !store.rows.iter().eq(chips.iter().cloned()) {
@@ -108,7 +120,7 @@ pub(crate) fn show(st: &State, app: &App) {
         store.names.set_vec(names);
     }
     app.set_collection_open(open.map(|id| name_of(st, id)).unwrap_or_default().into());
-    app.set_collection_reorder(open.is_some() && !capture);
+    app.set_collection_reorder(open.is_some() && hand);
 }
 
 /// The view a smart collection looks over: the root it was saved under,
@@ -670,6 +682,9 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
             let name = name_of(&st, &id);
             if st.collections.delete(&id) {
                 tracing::info!("collection {name} deleted");
+                // Its order goes with it.
+                st.sort.forget(&id);
+                crate::panel::prefs::keep(&st, |s| s.sort.forget(&id));
                 app.set_status(format!("deleted {name}; no frame was touched").into());
                 if st.view.collection() == Some(id.as_str()) {
                     reopen = Some(View::Roots(None));
@@ -726,9 +741,14 @@ fn key(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
 fn moved(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, from: usize, to: usize) {
     {
         let mut st = state.borrow_mut();
-        let View::Collection { id, capture: false } = st.view.clone() else {
+        let View::Collection { id } = st.view.clone() else {
             return;
         };
+        // In an order chosen, a drag has nothing to move: the order is
+        // the frames', not the collection's.
+        if st.sort.choice(&st.view) != crate::sort::Choice::Hand {
+            return;
+        }
         let Some(&cell) = st.shown.get(from) else {
             return;
         };
@@ -754,19 +774,9 @@ fn moved(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, from: usize
 fn picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, id: &str) {
     let mut st = state.borrow_mut();
     if st.collections.collection(id).is_some() {
-        // Again on the one open: as it is, capture order and all.
-        let capture =
-            matches!(&st.view, View::Collection { id: open, capture: true } if open == id);
+        // In the order kept for it, its own until another is chosen.
         drop(st);
-        crate::roots::open_view(
-            state,
-            app,
-            worker,
-            View::Collection {
-                id: id.to_string(),
-                capture,
-            },
-        );
+        crate::roots::open_view(state, app, worker, View::Collection { id: id.to_string() });
         return;
     }
     let Some(s) = st.collections.smart(id).cloned() else {
@@ -843,19 +853,17 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let capture = !matches!(
-                &state.borrow().view,
-                View::Collection { id: open, capture: true } if open == id.as_str()
-            );
-            crate::roots::open_view(
-                &state,
-                &app,
-                &worker,
-                View::Collection {
-                    id: id.to_string(),
-                    capture,
-                },
-            );
+            // The row's own way to the Sort menu's capture time, the
+            // oldest first, and from any order back to the collection's
+            // own.
+            let view = View::Collection { id: id.to_string() };
+            let sorted = state.borrow().sort.choice(&view) != crate::sort::Choice::Hand;
+            let choice = if sorted {
+                crate::sort::Choice::Hand
+            } else {
+                crate::sort::Choice::By(greycard_library::Order::TAKEN)
+            };
+            crate::panel::sort::choose(&state, &app, &worker, &view, choice);
         });
     }
     {
@@ -1020,6 +1028,9 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            // By name over the folders: the frames are told apart by their
+            // place in the list this built, in that order.
+            st.sort = crate::sort::Kept::by_name();
             st.library.roots.add(&root).unwrap();
             st.collections.dir = Some(dir.join(crate::collections::DIR));
             // Sidecars on, as a session has them: a frame stands in from
@@ -1164,13 +1175,7 @@ mod tests {
         let (cx, cy) = middle_of(app, "Clients/Cover picks");
         click(app, cx, cy);
         land_sent(state, app, worker);
-        assert_eq!(
-            state.borrow().view,
-            View::Collection {
-                id: id.clone(),
-                capture: false
-            }
-        );
+        assert_eq!(state.borrow().view, View::Collection { id: id.clone() });
         assert_eq!(names(&state.borrow()), ["shoot/x.tif", "shoot/z.tif"]);
         assert_eq!(app.get_collection_open(), "Clients/Cover picks");
         assert!(app.get_collection_reorder());
@@ -1646,13 +1651,7 @@ mod tests {
         let hint = |id: &str| st.collections.collection(id).unwrap().refs[0].hint.clone();
         assert_eq!(hint(&b), s.files[0].to_string_lossy(), "B untouched");
         assert_ne!(hint(&a), stale, "A's own read healed A");
-        assert_eq!(
-            st.view,
-            View::Collection {
-                id: b.clone(),
-                capture: false
-            }
-        );
+        assert_eq!(st.view, View::Collection { id: b.clone() });
         drop(st);
         teardown(s);
     }

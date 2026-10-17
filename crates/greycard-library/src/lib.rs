@@ -41,6 +41,7 @@ pub mod hash;
 mod index;
 pub mod lightroom_catalog;
 pub mod lightroom_exports;
+pub mod order;
 pub mod pairs;
 pub mod roots;
 pub mod stacks;
@@ -49,6 +50,7 @@ pub mod thumbs;
 pub use filter::{Facet, Filter, ParseError};
 pub use hash::hash_file;
 pub use index::{Progress, Rehash, Report, TreeWalk, is_indexed_path, read_meta};
+pub use order::{Order, SortBy, SortKey};
 pub use roots::{BackupDefault, Change, Pairing, Roots, Watcher};
 pub use thumbs::{Thumb, Thumbs};
 
@@ -398,7 +400,8 @@ const META_COLUMNS: &str = "files.id, files.hash, files.mtime, files.rating, fil
     files.keywords, files.edited, files.turns, files.exported, files.iso, files.sidecar_hash, \
     files.develop_key, \
     (SELECT json_group_array(json_array(v.version, v.name, v.made, v.edited, v.exported, \
-     v.develop_key) ORDER BY v.position) FROM versions v WHERE v.file = files.id)";
+     v.develop_key) ORDER BY v.position) FROM versions v WHERE v.file = files.id), \
+    files.taken, CASE WHEN files.edited <> 0 THEN files.sidecar_mtime END";
 
 /// Whether the learned denoiser's `blend` is what nobody has touched:
 /// the default, or what the first open or export of a raw seeds from
@@ -667,6 +670,16 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// What this file is sorted by, as [`Order::sql`] sorts its row.
+    pub fn sort_key(&self) -> SortKey<'_> {
+        SortKey {
+            path: &self.path,
+            taken: self.exif.taken.as_deref(),
+            rating: self.meta.rating,
+            edited_at: self.sidecar_mtime.filter(|_| self.edited),
+        }
+    }
+
     pub fn name(&self) -> String {
         self.path
             .file_name()
@@ -724,6 +737,13 @@ pub struct RowMeta {
     /// The versions the sidecar keeps beside the file's own, in the
     /// sidecar's order, as the `versions` table mirrors them.
     pub versions: Vec<VersionRow>,
+    /// When the frame was taken, the index's `taken`: what a list
+    /// sorted by capture time reads ([`order::capture_time`]).
+    pub taken: Option<String>,
+    /// The sidecar's last write, nanoseconds since the epoch, when it
+    /// holds a develop; none when it holds none: what a list sorted by
+    /// date edited reads ([`SortBy::Edited`]).
+    pub edited_at: Option<i64>,
 }
 
 /// One version of a file as the index mirrors it from the sidecar: what
@@ -775,6 +795,16 @@ impl RowMeta {
     /// as the grid and the strip draw it.
     pub fn shown_turns(&self) -> (u8, bool) {
         unpack_turns(self.turns)
+    }
+
+    /// What the file at `path` is sorted by, from this row.
+    pub fn sort_key<'a>(&'a self, path: &'a Path) -> SortKey<'a> {
+        SortKey {
+            path,
+            taken: self.taken.as_deref(),
+            rating: self.meta.rating,
+            edited_at: self.edited_at,
+        }
     }
 }
 
@@ -1342,9 +1372,18 @@ impl Library {
     /// about missing files, and a camera's JPEG beside its raw unless
     /// the JPEGs are listed apart ([`Library::set_jpegs_apart`]).
     pub fn query(&self, filter: &Filter) -> Result<Vec<Entry>> {
+        self.query_by(filter, "files.folder, files.name")
+    }
+
+    /// [`Library::query`] in `order`, as the editor's grid lists them.
+    pub fn query_sorted(&self, filter: &Filter, order: Order) -> Result<Vec<Entry>> {
+        self.query_by(filter, &order.sql())
+    }
+
+    fn query_by(&self, filter: &Filter, order: &str) -> Result<Vec<Entry>> {
         let (body, params) = filter.to_sql();
         let sql = format!(
-            "SELECT {COLUMNS} FROM files WHERE ({body}){}{} ORDER BY files.folder, files.name",
+            "SELECT {COLUMNS} FROM files WHERE ({body}){}{} ORDER BY {order}",
             if filter.mentions_missing() {
                 ""
             } else {
@@ -1888,17 +1927,22 @@ impl Library {
     }
 
     /// [`Library::paths_under_canonical`] with what each row mirrors
-    /// of the file's sidecar beside the path, by folder then name: a
-    /// view of the roots built from this reads no sidecar.
-    pub fn rows_under_canonical(&self, roots: &[PathBuf]) -> Result<Vec<(PathBuf, RowMeta)>> {
+    /// of the file's sidecar beside the path, in `order`: a view of the
+    /// roots built from this reads no sidecar.
+    pub fn rows_under_canonical(
+        &self,
+        roots: &[PathBuf],
+        order: Order,
+    ) -> Result<Vec<(PathBuf, RowMeta)>> {
         if roots.is_empty() {
             return Ok(Vec::new());
         }
         let (clause, params) = under_roots_as(roots, false);
         let sql = format!(
             "SELECT files.path, {META_COLUMNS} FROM files WHERE missing_since IS NULL \
-             AND ({clause}){} ORDER BY folder, name",
-            self.frames_only()
+             AND ({clause}){} ORDER BY {}",
+            self.frames_only(),
+            order.sql()
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
@@ -1997,13 +2041,18 @@ impl Library {
 
     /// The files directly in one folder (canonical, as the index keys
     /// it), not those in the folders under it, with what each row
-    /// mirrors of the file's sidecar; by name, the missing left out.
+    /// mirrors of the file's sidecar; in `order`, the missing left out.
     /// A folder of a root opened from the index reads no sidecar.
-    pub fn rows_in_canonical(&self, folder: &Path) -> Result<Vec<(PathBuf, RowMeta)>> {
+    pub fn rows_in_canonical(
+        &self,
+        folder: &Path,
+        order: Order,
+    ) -> Result<Vec<(PathBuf, RowMeta)>> {
         let sql = format!(
             "SELECT files.path, {META_COLUMNS} FROM files WHERE folder = ? \
-             AND missing_since IS NULL{} ORDER BY name",
-            self.frames_only()
+             AND missing_since IS NULL{} ORDER BY {}",
+            self.frames_only(),
+            order.sql()
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(params![path_bytes(folder)], |r| {
@@ -2624,6 +2673,8 @@ fn row_meta(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<RowMeta> {
         sidecar_hash: row.get(from + 11)?,
         develop_key: row.get::<_, Option<i64>>(from + 12)?.map(|v| v as u64),
         versions: version_rows(row.get(from + 13)?),
+        taken: row.get(from + 14)?,
+        edited_at: row.get(from + 15)?,
     })
 }
 

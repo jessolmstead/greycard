@@ -426,7 +426,7 @@ impl Store {
         answers: &Answers<'_>,
     ) -> Option<Forgot> {
         let c = self.collection(id)?;
-        let shown = match resolve(lib?, &c.refs, away, &[], false) {
+        let shown = match resolve(lib?, &c.refs, away, &[], None) {
             Ok(shown) => shown,
             Err(e) => {
                 tracing::warn!("collection {}: {e}; nothing forgotten", c.name);
@@ -621,15 +621,17 @@ pub(crate) struct Shown {
 /// while the editor was not looking). A hint with no file of the hash
 /// at it moves to the file shown. A reference to a version is shown
 /// from a file whose sidecar has it, as the index's row lists it, and is
-/// missing when none has; each (hash, version) once. With `capture`,
-/// sorted by the time taken, those with none last, the collection's
-/// order kept among equals.
+/// missing when none has; each (hash, version) once. With an `order`,
+/// sorted by it as a view of the index is (its ties by name, then
+/// path), a version after its file's own and otherwise the
+/// collection's order kept among equals; with none, in the
+/// collection's own order.
 pub(crate) fn resolve(
     lib: &Library,
     refs: &[Reference],
     away: &[PathBuf],
     archives: &[PathBuf],
-    capture: bool,
+    order: Option<greycard_library::Order>,
 ) -> greycard_library::Result<Shown> {
     // Each frame in order: its file, its row (none for a version the
     // index does not list), its version and when it was taken.
@@ -751,14 +753,22 @@ pub(crate) fn resolve(
         }
         found.push((row.path, Some(row.row), r.version.clone(), row.taken));
     }
-    if capture {
-        // By the time taken, the undated last; the sort is stable, so
-        // the collection's order holds among equals.
-        found.sort_by(|a, b| match (&a.3, &b.3) {
-            (Some(x), Some(y)) => x.cmp(y),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
+    if let Some(order) = order {
+        // By the order's rule; the sort is stable, so the collection's
+        // order holds among the frames of one file past its own.
+        fn key(f: &FoundFrame) -> greycard_library::SortKey<'_> {
+            match &f.1 {
+                Some(row) => row.sort_key(&f.0),
+                None => greycard_library::SortKey {
+                    taken: f.3.as_deref(),
+                    ..greycard_library::SortKey::bare(&f.0)
+                },
+            }
+        }
+        found.sort_by(|a, b| {
+            order
+                .compare(&key(a), &key(b))
+                .then_with(|| a.2.is_some().cmp(&b.2.is_some()))
         });
     }
     // The files listed are those a frame was found in; a version the
@@ -1034,7 +1044,7 @@ mod tests {
             [r(&h, &hint_of(&copy)), r(&hb, &hint_of(&b))],
             "kept, and pointed at the copy that still is the picture"
         );
-        let shown = resolve(&lib, &store.list[0].refs, &[], &[], false).unwrap();
+        let shown = resolve(&lib, &store.list[0].refs, &[], &[], None).unwrap();
         let paths: Vec<&PathBuf> = shown.listed.iter().map(|(p, _)| p).collect();
         assert_eq!(paths, [&copy, &b]);
         // The selects' copy gone too, the reference hinted at the shoot's
@@ -1042,7 +1052,7 @@ mod tests {
         std::fs::remove_file(&copy).unwrap();
         lib.index_tree(&dir, &mut |_| {}).unwrap();
         let refs = [r(&h, &hint_of(&a)), r(&hb, &hint_of(&b))];
-        let shown = resolve(&lib, &refs, &[], &[], false).unwrap();
+        let shown = resolve(&lib, &refs, &[], &[], None).unwrap();
         assert_eq!(shown.missing, 1);
         assert_eq!(shown.listed.len(), 1);
         assert!(shown.changes.is_empty(), "{:?}", shown.changes);
@@ -1242,20 +1252,20 @@ mod tests {
             (ha.clone(), selects.join("a.tif"), None),
             ("feedface".into(), shoot.join("gone.tif"), None),
         ]);
-        let shown = resolve(&lib, &c.refs, &[], &[], false).unwrap();
+        let shown = resolve(&lib, &c.refs, &[], &[], None).unwrap();
         let paths: Vec<&PathBuf> = shown.listed.iter().map(|(p, _)| p).collect();
         assert_eq!(paths, [&b, &selects.join("a.tif")]);
         assert_eq!(shown.missing, 1);
         assert!(shown.changes.is_empty());
         // The hinted copy's root away: the other copy, hint kept.
-        let shown = resolve(&lib, &c.refs, std::slice::from_ref(&selects), &[], false).unwrap();
+        let shown = resolve(&lib, &c.refs, std::slice::from_ref(&selects), &[], None).unwrap();
         assert_eq!(shown.listed[1].0, a);
         assert!(shown.changes.is_empty());
         // The selects copy deleted and its folder passed: the shoot's,
         // and the hint follows it.
         std::fs::remove_file(selects.join("a.tif")).unwrap();
         lib.index_tree(&dir, &mut |_| {}).unwrap();
-        let shown = resolve(&lib, &c.refs, &[], &[], false).unwrap();
+        let shown = resolve(&lib, &c.refs, &[], &[], None).unwrap();
         assert_eq!(shown.listed[1].0, a);
         assert_eq!(
             shown.changes,
@@ -1276,7 +1286,7 @@ mod tests {
         lib.index_tree(&dir, &mut |_| {}).unwrap();
         let hb2 = hash(&lib, &b);
         let refs = store.list[0].refs.clone();
-        let shown = resolve(&lib, &refs, &[], &[], false).unwrap();
+        let shown = resolve(&lib, &refs, &[], &[], None).unwrap();
         assert_eq!(shown.listed[0].0, b);
         assert_eq!(
             shown.changes,
@@ -1292,7 +1302,14 @@ mod tests {
         assert_eq!(store.list[0].refs.len(), 3);
         assert_eq!(store.list[0].refs[0].hash, hb2);
         // Capture order: the test frames' dates follow their seeds.
-        let shown = resolve(&lib, &store.list[0].refs, &[], &[], true).unwrap();
+        let shown = resolve(
+            &lib,
+            &store.list[0].refs,
+            &[],
+            &[],
+            Some(greycard_library::Order::TAKEN),
+        )
+        .unwrap();
         let taken: Vec<Option<String>> = shown
             .listed
             .iter()
@@ -1357,7 +1374,7 @@ mod tests {
         store.save(&id);
         let away = std::slice::from_ref(&drive);
         let look = answering;
-        let before = resolve(&lib, &store.list[0].refs, away, &[], false).unwrap();
+        let before = resolve(&lib, &store.list[0].refs, away, &[], None).unwrap();
         assert_eq!(before.missing, 3, "b, d and the never-seen one");
         let gone: Vec<&str> = before.gone.iter().map(|r| r.hash.as_str()).collect();
         assert_eq!(gone, [hb.as_str(), "feedface"]);
@@ -1384,7 +1401,7 @@ mod tests {
         let on_disk: Vec<&str> = file.refs.iter().map(|r| r.hash.as_str()).collect();
         assert_eq!(on_disk, [&ha, &hc, &hd]);
         // The status line's count drops by them; the offline one stays.
-        let after = resolve(&lib, &store.list[0].refs, away, &[], false).unwrap();
+        let after = resolve(&lib, &store.list[0].refs, away, &[], None).unwrap();
         assert_eq!(after.missing, 1);
         assert!(after.gone.is_empty());
         let forgot = store
@@ -1423,7 +1440,7 @@ mod tests {
         let id = c.id.clone();
         let mut store = Store::default();
         store.list.push(c);
-        let shown = resolve(&lib, &store.list[0].refs, &[], &[], false).unwrap();
+        let shown = resolve(&lib, &store.list[0].refs, &[], &[], None).unwrap();
         assert_eq!((shown.missing, shown.gone.len()), (4, 4));
         let looked = std::cell::RefCell::new(Vec::new());
         let look = |dirs: &[PathBuf]| {
@@ -1647,7 +1664,7 @@ mod tests {
         // A second reference to Warm, as a join of two files could make.
         let mut refs = c.refs.clone();
         refs.push(refs[0].clone());
-        let shown = resolve(&lib, &refs, &[], &[], false).unwrap();
+        let shown = resolve(&lib, &refs, &[], &[], None).unwrap();
         // The gone one among them at its file, for the window to show
         // while the sidecar it holds has it.
         assert_eq!(
@@ -1676,7 +1693,7 @@ mod tests {
             }]
         );
         // The shoot's root away: the version gone there is away, kept.
-        let shown = resolve(&lib, &refs, std::slice::from_ref(&shoot), &[], false).unwrap();
+        let shown = resolve(&lib, &refs, std::slice::from_ref(&shoot), &[], None).unwrap();
         assert_eq!((shown.missing, shown.away), (1, 1));
         assert!(shown.lost.is_empty());
         crate::testing::remove_dir_retry(&dir);
@@ -1715,7 +1732,7 @@ mod tests {
         let id = c.id.clone();
         let mut store = Store::default();
         store.list.push(c);
-        let shown = resolve(&lib, &store.list[0].refs, &[], &[], false).unwrap();
+        let shown = resolve(&lib, &store.list[0].refs, &[], &[], None).unwrap();
         assert_eq!((shown.missing, shown.lost.len()), (3, 3));
         let forgot = store
             .forget_missing(&id, Some(&lib), &[], &[], &answering)

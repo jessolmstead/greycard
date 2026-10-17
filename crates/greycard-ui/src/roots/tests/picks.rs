@@ -858,6 +858,9 @@ fn many_under_a_root(
     {
         let mut st = state.borrow_mut();
         st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        // By name over the folders: the frames are told apart by their
+        // place in the list this built, in that order.
+        st.sort = crate::sort::Kept::by_name();
         st.index_path = Some(db);
         st.write_sidecars = true;
         st.library.roots.add(&a).unwrap();
@@ -1442,6 +1445,9 @@ fn three_picks_culling(
     {
         let mut st = state.borrow_mut();
         st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        // By name over the folders: the frames are told apart by their
+        // place in the list this built, in that order.
+        st.sort = crate::sort::Kept::by_name();
         st.index_path = Some(db);
         st.write_sidecars = true;
         st.library.roots.add(&a).unwrap();

@@ -35,6 +35,30 @@ fn every_root(st: &State, view: &View) -> Vec<PathBuf> {
     all
 }
 
+/// The order `view` is read in, its choice as kept: none for a
+/// collection in its own order.
+fn order_of(st: &State, view: &View) -> Option<greycard_library::Order> {
+    st.sort.choice(view).order()
+}
+
+/// The order a list that is not a collection's is read in. Its choice
+/// is never the hand order (`sort::Kept::choice`); should it be, the
+/// view's default stands.
+fn listed_order(st: &State, view: &View) -> greycard_library::Order {
+    order_of(st, view)
+        .or_else(|| crate::sort::Slot::of(view).default_choice().order())
+        .unwrap_or(greycard_library::Order::NAME)
+}
+
+/// The order a read of `view` is made in now: its choice, none for a
+/// collection in its own order.
+pub(super) fn read_order(st: &State, view: &View) -> Option<greycard_library::Order> {
+    match view {
+        View::Collection { .. } => order_of(st, view),
+        view => Some(listed_order(st, view)),
+    }
+}
+
 /// Show every file under the roots, or under one: the rows from the
 /// index; the roots and folders looked at off the window's thread, each
 /// frame standing in from its row with no sidecar read; and the
@@ -51,7 +75,8 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         return;
     };
     let asked = Instant::now();
-    if let View::Collection { id, capture } = &view {
+    let order = order_of(&st, &view);
+    if let View::Collection { id } = &view {
         let Some(c) = st.collections.collection(id) else {
             app.set_status("that collection is gone".into());
             return;
@@ -65,7 +90,7 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
             None
         } else {
             let away: Vec<PathBuf> = st.library.offline.iter().cloned().collect();
-            match crate::collections::resolve(lib, &refs, &away, &archives, *capture) {
+            match crate::collections::resolve(lib, &refs, &away, &archives, order) {
                 Ok(shown) => Some(shown),
                 Err(e) => {
                     tracing::warn!("library: {e}");
@@ -79,14 +104,14 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         let source = Source::Collection {
             id: id.clone(),
             refs,
-            capture: *capture,
             archives,
             shown,
         };
         drop(st);
-        send_view(state, app, view, source, count, asked, None);
+        send_view(state, app, view, source, count, asked, None, order);
         return;
     }
+    let order = listed_order(&st, &view);
     let (roots, only) = view.listed(st.library.roots.list());
     let at = match roots.as_slice() {
         [one] => one_root_named(&st.library.roots, [one.as_path()]),
@@ -99,7 +124,7 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
     let (rows, count) = if st.index_path.is_some() {
         (None, count_listed(lib, &roots, only))
     } else {
-        match rows_listed(lib, &roots, only) {
+        match rows_listed(lib, &roots, only, order) {
             Ok(rows) => {
                 let count = rows.len();
                 (Some(rows), count)
@@ -126,12 +151,13 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         hide: hidden_under(&st, &view),
     };
     drop(st);
-    send_view(state, app, view, source, count, asked, at);
+    send_view(state, app, view, source, count, asked, at, Some(order));
 }
 
 /// A view's read sent off the window's thread: the frame on screen kept
 /// when it is in the new list, the folders looked at again, and the bar
-/// put up if the read is slow.
+/// put up if the read is slow. `order` is what it is read in.
+#[allow(clippy::too_many_arguments)]
 fn send_view(
     state: &Rc<RefCell<State>>,
     app: &App,
@@ -140,6 +166,7 @@ fn send_view(
     count: usize,
     asked: Instant,
     at: Option<String>,
+    order: Option<greycard_library::Order>,
 ) {
     let mut st = state.borrow_mut();
     st.view_generation += 1;
@@ -172,6 +199,7 @@ fn send_view(
         index: st.index_path.clone(),
         progress: Some(progress.clone()),
         apart: st.jpegs_apart,
+        order,
         purpose: Purpose::Open {
             view,
             asked,
@@ -251,6 +279,7 @@ pub(crate) fn open_listing(
         index: st.index_path.clone(),
         progress: Some(progress.clone()),
         apart: st.jpegs_apart,
+        order: Some(listed_order(&st, &View::Folder)),
         purpose: Purpose::Open {
             view: View::Folder,
             asked,
@@ -439,7 +468,7 @@ pub(super) fn ask(st: &State) -> Option<Look> {
             let rows = if st.index_path.is_some() {
                 None
             } else {
-                match rows_listed(lib, &roots, only) {
+                match rows_listed(lib, &roots, only, listed_order(st, &st.view)) {
                     Ok(rows) => Some(rows),
                     Err(e) => {
                         tracing::debug!("library: {e}; the list kept");
@@ -457,7 +486,7 @@ pub(super) fn ask(st: &State) -> Option<Look> {
                 every_root(st, &st.view),
             )
         }
-        View::Collection { id, capture } => {
+        View::Collection { id } => {
             let lib = st.index_reader.as_ref()?;
             let refs = st.collections.collection(id)?.refs.clone();
             let archives = st.library.roots.archives().to_vec();
@@ -465,7 +494,8 @@ pub(super) fn ask(st: &State) -> Option<Look> {
                 None
             } else {
                 let away: Vec<PathBuf> = st.library.offline.iter().cloned().collect();
-                match crate::collections::resolve(lib, &refs, &away, &archives, *capture) {
+                let order = order_of(st, &st.view);
+                match crate::collections::resolve(lib, &refs, &away, &archives, order) {
                     Ok(shown) => Some(shown),
                     Err(e) => {
                         tracing::debug!("library: {e}; the list kept");
@@ -477,7 +507,6 @@ pub(super) fn ask(st: &State) -> Option<Look> {
                 Source::Collection {
                     id: id.clone(),
                     refs,
-                    capture: *capture,
                     archives,
                     shown,
                 },
@@ -508,6 +537,7 @@ pub(super) fn ask(st: &State) -> Option<Look> {
         index: st.index_path.clone(),
         progress: None,
         apart: st.jpegs_apart,
+        order: read_order(st, &st.view),
     })
 }
 

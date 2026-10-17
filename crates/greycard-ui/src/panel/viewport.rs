@@ -681,6 +681,8 @@ pub(crate) enum Shown {
     Landscape,
     /// A part chosen from the People menu by its label (`--part`).
     Part(&'static str),
+    /// The grid's Sort menu, open (with `--grid`).
+    Sort,
 }
 
 /// Which step of the Lightroom import's sheet a capture shows.
@@ -723,12 +725,13 @@ impl Shown {
             "lightroom" => Ok(Self::Lightroom(LightroomStep::Roots)),
             "lightroom-report" => Ok(Self::Lightroom(LightroomStep::Report)),
             "lightroom-written" => Ok(Self::Lightroom(LightroomStep::Written)),
+            "sort" => Ok(Self::Sort),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, preset-report, paste, pasted, import, \
                  imported, match, matched, refit, look-remove, look-rename, root-name, \
                  delete, archive, archive-rejects, parts, landscape, lightroom, \
-                 lightroom-report or lightroom-written, not {name}"
+                 lightroom-report, lightroom-written or sort, not {name}"
             )),
         }
     }
@@ -913,6 +916,7 @@ impl Shown {
                 app.set_panel_tab("Masks".into());
                 app.invoke_add_part(label.into(), "Add".into());
             }
+            Self::Sort => app.set_sort_menu_shown(true),
         }
         app.window().request_redraw();
     }
