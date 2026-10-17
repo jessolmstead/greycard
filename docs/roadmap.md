@@ -46,10 +46,6 @@ ours, so a tester brings a library over in one go.
 - [ ] RawTherapee `.pp3` import on opening a folder (Library track)
 - [ ] RAW+JPEG pairs (Library track). After the kind filter
 - [ ] Stacks (Library track). After the pairs
-- [ ] The camera match's folder survey over a NAS: the probe from the
-      file's two ends, a count while it reads, the empty text only once
-      it has finished, four reads at once (§324). After X-Trans step 2
-      if that changes `rawler_backend.rs`
 - [ ] The Lightroom mapper measured, then fitted, against the
       archive's exports with their settings read from the catalogs,
       the camera's fitted look on first so the error left is the

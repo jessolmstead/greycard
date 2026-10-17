@@ -130,3 +130,79 @@ one changed `rawler_backend.rs`.
 - An ignored test over the sample raws (`GREYCARD_TEST_RAWS`) asserts
   that `probe_ends_path` and `probe_path` give the same `Probe` for
   every file, and reports the bytes each read.
+
+## What the build found (2026-10-16)
+
+**What the build found.** The fallback the design leaned on, "any
+error, or a panic under `guarded`, falls back to `probe_path`", does
+not cover everything rawler can do with a gap of zeros. An allocation
+that fails is an abort, and no guard catches it. Measuring the ends
+turned up two:
+
+- a CR3 whose head stops partway through its `moov` box (32 KiB of a
+  39 KiB `moov`, the rest zeros) has rawler's box parser ask for 6 GiB;
+- the samples' DNGs, written by DNGLab, keep IFD0 at the very end of
+  the file, pointing back into the middle, and with the middle zeroed
+  rawler asks for 3.6 GB at once.
+
+So a head here ends where the format's own structure says the
+metadata does, and is never a size cut through it. The CR3's is the
+box walk, which always holds the `moov` whole. Past it rawler meets
+zeros only in `mdat`, where a CTMD record of size nought makes it
+panic, which the guard does catch. The RAF has a head of the same
+kind: rawler takes the camera, the EXIF and the maker note from the
+embedded JPEG's APP1 segment, which every Fujifilm sample writes first
+in the JPEG and whose length its own header gives (64 KiB, 148 bytes
+in). Past the JPEG, the RAF's own tags and the sensor's directory read
+as empty directories over zeros, and those are not in the probe.
+
+The table, measured on the sample set (46 CR3, 22 RAF, 4 DNG, 3 NEF,
+1 ARW, 1 RW2) as the smallest ends that give the whole file's probe:
+
+| Format | Read | The samples needed |
+|---|---|---|
+| CR3 | the boxes through `mdat`'s header (200 KB to 1 MB) and the last 1 MiB | that head and 115 to 120 KiB of tail |
+| RAF | the header and the JPEG through its EXIF segment (65,600 bytes) | 4 to 5 KiB of head |
+| NEF | whole | a 255 to 272 KiB head |
+| ARW | whole | a 135 KiB head |
+| RW2 | whole | a 5 KiB head |
+| DNG | whole | every byte (IFD0 last) |
+
+NEF, ARW, RW2 and DNG would gain from a head of the same kind: their
+IFD chains, EXIF and maker note walked to where they end, and for the
+DNG the directory at its end read as its tail. A fixed size cut through
+a TIFF of a body the samples do not have is the case that can abort.
+That walk is the follow-up, and it comes before the indexer's probe
+moves onto the ends.
+
+One abort is rawler's own and not the ends': in a CR3 whose box has a
+64-bit size large enough to wrap the offset past it, `probe_path`
+itself asks for 6 GiB. It is the same on the whole file, and it goes
+upstream with the other box-parser reports.
+
+On the samples, the ignored test read 70.8 MB of 1,125 MB for the 46
+CR3s (6.3%, 1.3 to 2.0 MB a file) and 1.4 MB of 2,167 MB for the 22
+RAFs. Every file's probe was the same both ways.
+
+**A survey the sheet moves on from stops.** Each time the sheet opens
+or a scope is picked, a new survey of four threads starts. Built as the
+design had it, the last one ran on to its end, and a tester who
+reopens a sheet that looks stuck would have had two or three surveys
+reading the same share at once. The next survey now sets a flag the
+last one checks before each raw it begins. The reads under way finish,
+the rest are left, and what was read is dropped with the old
+generation.
+
+**Two smaller things.**
+
+- `RawSource::new_from_slice`, which the design named, copies the
+  buffer it is given, and the copy touches every page of the zeroed
+  gap. The probe hands rawler the buffer through `new_from_shared_vec`
+  instead, so the gap stays untouched pages.
+- Neither the browser's listing (`files::list_files`) nor the
+  indexer's (`index::list_folder`) skips `._` files. Both skip only
+  hidden folders, so on an exFAT or SMB volume a `._3U2A3625.CR3` is
+  listed beside its raw and indexed as a raw that does not decode. The
+  survey has its own predicate (`camera_match::is_apple_double`) and
+  applies it to the folder's index check as well. Whether the browser
+  and the indexer should take it too is left open.

@@ -23,8 +23,12 @@ export component MatchSheet inherits Rectangle {
     /// it will fit, borrow or be skipped and why.
     in property <[MatchGroup]> match-groups;
     /// What the survey found beside the groups: frames not read yet,
-    /// frames with no fixed style; or that it is still reading.
+    /// frames with no fixed style; or, while it reads the files, how
+    /// many of them it has read.
     in property <string> match-summary;
+    /// What the list says when it has no group: that the survey is
+    /// reading, why it failed, or that it found none.
+    in property <string> match-list-note;
     in property <bool> match-can-fit;
     /// The Fit button's words, counting the groups checked, and the
     /// reason under it when it is off.
@@ -172,8 +176,9 @@ export component MatchSheet inherits Rectangle {
                                 wrap: word-wrap;
                             }
                         }
-                        if root.match-groups.length == 0: Text {
-                            text: "No camera with a fixed picture style here.";
+                        if root.match-groups.length == 0 && root.match-list-note != "": Text {
+                            text: root.match-list-note;
+                            wrap: word-wrap;
                             font-size: Theme.font-xs;
                             color: Theme.text-muted;
                         }

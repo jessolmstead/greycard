@@ -185,57 +185,148 @@ pub(crate) fn survey_library(
     })
 }
 
+/// Raws a survey of the files reads at once. Over a share the latency
+/// of each read, not the bandwidth, is what a survey waits on.
+pub(crate) const SURVEY_THREADS: usize = 4;
+
+/// Whether a file is macOS's `._` companion of another, which an exFAT
+/// or SMB volume shows beside it under the same extension: the
+/// resource fork and the Finder's tags, not a raw.
+pub(crate) fn is_apple_double(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with("._"))
+}
+
+/// What one raw's read gave the survey.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Surveyed {
+    /// A fixed or adaptive style of a known maker, and the body.
+    Styled {
+        maker: String,
+        /// The style's group key.
+        key: String,
+        exif: Box<greycard_library::Exif>,
+        fixed: bool,
+    },
+    /// No style to group by, or a file that would not read.
+    NoStyle,
+}
+
+/// One raw's maker's tags and EXIF, the EXIF from the file's two ends.
+fn read_raw(path: &Path) -> Surveyed {
+    let style = match greycard_core::decode::CameraStyle::read(path) {
+        Ok(Some(style)) => style,
+        Ok(None) => return Surveyed::NoStyle,
+        Err(e) => {
+            tracing::warn!("{}: the maker's tags: {e}", path.display());
+            return Surveyed::NoStyle;
+        }
+    };
+    let Some(key) = style.group_key() else {
+        return Surveyed::NoStyle;
+    };
+    match greycard_core::decode::probe_ends_path(path) {
+        Ok(probe) => Surveyed::Styled {
+            maker: style.maker.name().to_string(),
+            key,
+            exif: Box::new(greycard_library::Exif::from_probe(&probe)),
+            fixed: style.is_fixed(),
+        },
+        Err(e) => {
+            tracing::warn!("{}: {e}", path.display());
+            Surveyed::NoStyle
+        }
+    }
+}
+
 /// The groups of `files`, read from the files themselves: the maker's
 /// tags and the EXIF of each raw. For a folder the index does not
-/// cover, where it is cheap enough.
-pub(crate) fn survey_files(files: &[PathBuf]) -> Survey {
+/// cover. `progress` hears the raws read and of how many, from the
+/// survey's threads. Once `stop` is set no raw is begun, and what was
+/// read is what comes back: a survey the sheet has moved on from does
+/// not go on reading a share beside the one that replaced it.
+pub(crate) fn survey_files(
+    files: &[PathBuf],
+    progress: &(dyn Fn(usize, usize) + Sync),
+    stop: &AtomicBool,
+) -> Survey {
+    survey_with(files, &read_raw, progress, stop)
+}
+
+/// [`survey_files`] with the read of a raw given: [`SURVEY_THREADS`]
+/// at a time on threads of the survey's own, which end with it. No
+/// pool outlives a survey: tests run them by the hundred, and a pool
+/// kept for each is what ran macOS out of threads.
+pub(crate) fn survey_with(
+    files: &[PathBuf],
+    read: &(dyn Fn(&Path) -> Surveyed + Sync),
+    progress: &(dyn Fn(usize, usize) + Sync),
+    stop: &AtomicBool,
+) -> Survey {
+    use std::sync::atomic::AtomicUsize;
+    let raws: Vec<&PathBuf> = files
+        .iter()
+        .filter(|p| greycard_core::decode::is_raw_path(p) && !is_apple_double(p))
+        .collect();
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let mut reads: Vec<(usize, Surveyed)> = std::thread::scope(|s| {
+        let workers: Vec<_> = (0..SURVEY_THREADS.min(raws.len()))
+            .map(|_| {
+                s.spawn(|| {
+                    let mut out = Vec::new();
+                    loop {
+                        if stop.load(Ordering::Relaxed) {
+                            return out;
+                        }
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(path) = raws.get(i) else {
+                            return out;
+                        };
+                        out.push((i, read(path)));
+                        progress(done.fetch_add(1, Ordering::Relaxed) + 1, raws.len());
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+            .collect()
+    });
+    // In the files' order, as one thread would have read them.
+    reads.sort_by_key(|(i, _)| *i);
     let mut by_key: BTreeMap<(String, String), Group> = BTreeMap::new();
     let mut no_style = 0;
-    for path in files
-        .iter()
-        .filter(|p| greycard_core::decode::is_raw_path(p))
-    {
-        let style = match greycard_core::decode::CameraStyle::read(path) {
-            Ok(Some(style)) => style,
-            Ok(None) => {
-                no_style += 1;
-                continue;
-            }
-            Err(e) => {
-                tracing::warn!("{}: the maker's tags: {e}", path.display());
-                no_style += 1;
-                continue;
-            }
-        };
-        let Some(key) = style.group_key() else {
+    for (i, r) in reads {
+        let Surveyed::Styled {
+            maker,
+            key,
+            exif,
+            fixed,
+        } = r
+        else {
             no_style += 1;
             continue;
         };
-        let exif = match greycard_core::decode::probe_path(path) {
-            Ok(probe) => greycard_library::Exif::from_probe(&probe),
-            Err(e) => {
-                tracing::warn!("{}: {e}", path.display());
-                no_style += 1;
-                continue;
-            }
-        };
+        let exif = *exif;
         by_key
             .entry((exif.camera.clone(), key.clone()))
             .or_insert_with(|| Group {
                 camera: exif.camera.clone(),
                 make: exif.make.clone(),
                 model: exif.model.clone(),
-                maker: style.maker.name().to_string(),
+                maker,
                 style: key,
                 frames: Vec::new(),
                 look: None,
             })
             .frames
             .push(Frame {
-                path: path.clone(),
+                path: raws[i].clone(),
                 taken: exif.taken,
                 lens: exif.lens,
-                fixed: style.is_fixed(),
+                fixed,
             });
     }
     let mut groups: Vec<Group> = by_key.into_values().collect();
@@ -1538,6 +1629,177 @@ mod tests {
         assert_eq!(s.len(), 12);
         // By date.
         assert!(s.windows(2).all(|w| w[0].taken <= w[1].taken));
+    }
+
+    /// A survey's read of a file named `NNN.CR3`, as the fake reads
+    /// have it: every third frame a Canon EOS R6m2 in Faithful, every
+    /// third a Canon EOS R5m2 in Standard with an adaptive setting on,
+    /// the rest with no style; the later the number the earlier the
+    /// date, so a group's order is the dates' and not the files'.
+    fn surveyed(path: &Path) -> Surveyed {
+        let n: usize = path.file_stem().unwrap().to_string_lossy().parse().unwrap();
+        let (model, style) = match n % 3 {
+            0 => ("EOS R6m2", "Canon Faithful"),
+            1 => ("EOS R5m2", "Canon Standard"),
+            _ => return Surveyed::NoStyle,
+        };
+        Surveyed::Styled {
+            maker: "Canon".into(),
+            key: style.into(),
+            exif: Box::new(greycard_library::Exif {
+                camera: format!("Canon {model}"),
+                make: "Canon".into(),
+                model: model.into(),
+                taken: Some(format!("2026-01-01 00:{:02}:00", 59 - n)),
+                ..Default::default()
+            }),
+            fixed: n.is_multiple_of(3),
+        }
+    }
+
+    /// Four raws at a time, finishing in whatever order the reads take,
+    /// and the survey is what one thread reading them in turn would
+    /// make: the groups by body and style, each one's frames by date,
+    /// the raws with no style counted. The count is heard once a raw,
+    /// up to all of them.
+    #[test]
+    fn the_survey_reads_four_at_a_time_and_keeps_its_order() {
+        use std::sync::Mutex;
+        use std::sync::atomic::AtomicUsize;
+        let files: Vec<PathBuf> = (0..30)
+            .map(|i| PathBuf::from(format!("/s/{}/{i:03}.CR3", ["a", "b"][i % 2])))
+            .collect();
+        let (now, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let read = |path: &Path| {
+            let at = now.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(at, Ordering::SeqCst);
+            // The early files are the slow ones, so the reads end out
+            // of their order.
+            let n = files.iter().position(|f| f == path).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(1 + (30 - n as u64) % 7));
+            now.fetch_sub(1, Ordering::SeqCst);
+            surveyed(path)
+        };
+        let heard = Mutex::new(Vec::new());
+        let survey = survey_with(
+            &files,
+            &read,
+            &|done, of| heard.lock().unwrap().push((done, of)),
+            &AtomicBool::new(false),
+        );
+
+        let one_by_one: Vec<(usize, Surveyed)> = files
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (i, surveyed(f)))
+            .collect();
+        let frames_of = |model: &str| -> Vec<PathBuf> {
+            let mut frames: Vec<(String, PathBuf)> = one_by_one
+                .iter()
+                .filter_map(|(i, r)| match r {
+                    Surveyed::Styled { exif, .. } if exif.model == model => {
+                        Some((exif.taken.clone().unwrap(), files[*i].clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            frames.sort();
+            frames.into_iter().map(|(_, p)| p).collect()
+        };
+        let names: Vec<(String, String)> = survey
+            .groups
+            .iter()
+            .map(|g| (g.camera.clone(), g.style.clone()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Canon EOS R5m2".to_string(), "Canon Standard".to_string()),
+                ("Canon EOS R6m2".to_string(), "Canon Faithful".to_string()),
+            ]
+        );
+        for (g, model) in survey.groups.iter().zip(["EOS R5m2", "EOS R6m2"]) {
+            let paths: Vec<PathBuf> = g.frames.iter().map(|f| f.path.clone()).collect();
+            assert_eq!(paths, frames_of(model), "{model}");
+            assert!(g.frames.iter().all(|f| f.fixed == (model == "EOS R6m2")));
+        }
+        assert_eq!(survey.no_style, 10);
+        assert_eq!(survey.unread, 0);
+
+        let most = most.load(Ordering::SeqCst);
+        assert!(most <= SURVEY_THREADS, "{most} at once");
+        assert!(most > 1, "one at a time");
+        let mut heard = heard.into_inner().unwrap();
+        heard.sort();
+        assert_eq!(heard, (1..=30).map(|d| (d, 30)).collect::<Vec<_>>());
+
+        // Nothing to read is no survey and no thread.
+        let none = survey_with(
+            &[],
+            &|_| unreachable!(),
+            &|_, _| unreachable!(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(none, Survey::default());
+    }
+
+    /// A survey told to stop, as the next one tells it when the sheet
+    /// is opened again or its scope picked, begins no raw after that:
+    /// the reads under way finish and the rest of the folder is left.
+    #[test]
+    fn a_superseded_survey_stops_reading() {
+        let files: Vec<PathBuf> = (0..200)
+            .map(|i| PathBuf::from(format!("/nas/shoot/{i:03}.CR3")))
+            .collect();
+        let stop = AtomicBool::new(false);
+        let reads = std::sync::atomic::AtomicUsize::new(0);
+        let read = |path: &Path| {
+            // The next survey starts while the tenth raw is read.
+            if reads.fetch_add(1, Ordering::SeqCst) + 1 == 10 {
+                stop.store(true, Ordering::SeqCst);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            surveyed(path)
+        };
+        let survey = survey_with(&files, &read, &|_, _| {}, &stop);
+        let read = reads.load(Ordering::SeqCst);
+        // The tenth and the others under way beside it, no more.
+        assert!(read < 10 + SURVEY_THREADS, "{read} raws read");
+        let grouped: usize = survey.groups.iter().map(|g| g.frames.len()).sum();
+        assert_eq!(grouped + survey.no_style, read);
+        // Stopped before it began, it reads nothing.
+        let none = survey_with(&files, &|_| unreachable!(), &|_, _| {}, &stop);
+        assert_eq!(none, Survey::default());
+    }
+
+    /// A `._` file beside a raw, on an exFAT or SMB volume, has a raw's
+    /// extension and is not read, nor counted.
+    #[test]
+    fn the_survey_skips_macos_companion_files() {
+        assert!(is_apple_double(Path::new("/nas/shoot/._3U2A3625.CR3")));
+        assert!(!is_apple_double(Path::new("/nas/shoot/3U2A3625.CR3")));
+        assert!(!is_apple_double(Path::new("/nas/shoot/a._3.CR3")));
+        assert!(!is_apple_double(Path::new("/nas/._shoot/003.CR3")));
+        let files: Vec<PathBuf> = ["._000.CR3", "000.CR3", "._001.CR3", "001.CR3", "notes.txt"]
+            .iter()
+            .map(|n| PathBuf::from("/nas/shoot").join(n))
+            .collect();
+        let read = |p: &Path| {
+            assert!(!is_apple_double(p), "{} read", p.display());
+            surveyed(p)
+        };
+        let heard = std::sync::Mutex::new(Vec::new());
+        let survey = survey_with(
+            &files,
+            &read,
+            &|d, of| heard.lock().unwrap().push((d, of)),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(survey.groups.len(), 2);
+        assert_eq!(survey.no_style, 0);
+        let mut heard = heard.into_inner().unwrap();
+        heard.sort();
+        assert_eq!(heard, [(1, 2), (2, 2)]);
     }
 
     #[test]
@@ -2963,7 +3225,7 @@ mod tests {
             .filter_map(|e| e.ok().map(|e| e.path()))
             .collect();
         files.sort();
-        let survey = survey_files(&files);
+        let survey = survey_files(&files, &|_, _| {}, &AtomicBool::new(false));
         eprintln!(
             "{} groups, {} raws with no fixed style",
             survey.groups.len(),
@@ -3012,7 +3274,7 @@ mod tests {
             .filter_map(|e| e.ok().map(|e| e.path()))
             .collect();
         files.sort();
-        let survey = survey_files(&files);
+        let survey = survey_files(&files, &|_, _| {}, &AtomicBool::new(false));
         let curve = DisplayCurve::Channels;
         let plans = plan(&survey.groups, &HashMap::new(), curve, false);
         for (g, p) in survey.groups.iter().zip(&plans) {

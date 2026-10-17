@@ -103,6 +103,15 @@ pub(crate) struct Sheet {
     /// the sheet has since moved on from is dropped.
     generation: u64,
     survey: Option<Survey>,
+    /// While the scope is surveyed from its files: the raws read and of
+    /// how many.
+    reading: Option<(usize, usize)>,
+    /// Why the scope's survey failed, when it did.
+    failed: Option<String>,
+    /// Stops the survey under way: the next one sets it, so a sheet
+    /// opened again or a scope picked while the files are read does
+    /// not leave the last survey reading the share beside it.
+    surveying: Option<Arc<AtomicBool>>,
     /// The run under way, to stop it.
     cancel: Option<Arc<AtomicBool>>,
     results: Vec<String>,
@@ -243,7 +252,11 @@ fn remembered(key: &str) -> Vec<String> {
 /// A scope's groups: the library's from the index; a folder's from
 /// the index when the folder is under a root and the index has read
 /// the tags of everything in it, else from the files themselves.
-fn survey(at: &Where) -> Result<Survey, String> {
+fn survey(
+    at: &Where,
+    progress: &(dyn Fn(usize, usize) + Sync),
+    stop: &AtomicBool,
+) -> Result<Survey, String> {
     if at.scope == LIBRARY {
         let (path, roots) = at.library.as_ref().ok_or("no library is indexed")?;
         let lib = greycard_library::Library::open_read_only(path).map_err(|e| e.to_string())?;
@@ -262,7 +275,7 @@ fn survey(at: &Where) -> Result<Survey, String> {
         .filter(|p| p.is_file())
         .collect();
     files.sort();
-    Ok(fit::survey_files(&files))
+    Ok(fit::survey_files(&files, progress, stop))
 }
 
 /// A folder's groups from the index, its own frames only and not its
@@ -276,7 +289,9 @@ fn from_index(path: &Path, folder: &Path) -> Option<Survey> {
     let raws: Vec<PathBuf> = std::fs::read_dir(&canonical)
         .ok()?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_file() && greycard_core::decode::is_raw_path(p))
+        .filter(|p| {
+            p.is_file() && greycard_core::decode::is_raw_path(p) && !fit::is_apple_double(p)
+        })
         .collect();
     if !indexed_whole(&lib.ids_of(&raws).ok()?) {
         return None;
@@ -375,6 +390,29 @@ pub(crate) fn fit_label(checked: usize, have_groups: bool, donors: usize) -> (St
     }
 }
 
+/// What the list says when it has no group in it.
+pub(crate) const NO_GROUP: &str = "No camera with a fixed picture style here.";
+/// What the list says while the scope is surveyed.
+pub(crate) const READING: &str = "Reading the frames' picture styles...";
+
+/// What the list says when it has no group, and the line under it:
+/// while the survey runs, that it is reading and how far it has got;
+/// when it failed, why, in the list; once it is in, that it found no
+/// group, and what it left out.
+fn survey_words(sheet: &Sheet) -> (String, String) {
+    match (&sheet.survey, &sheet.failed) {
+        (Some(survey), _) => (NO_GROUP.into(), summary(survey)),
+        (None, Some(why)) => (why.clone(), String::new()),
+        (None, None) => (
+            READING.into(),
+            sheet
+                .reading
+                .map(|(done, of)| format!("Reading picture styles: {done} of {of}"))
+                .unwrap_or_default(),
+        ),
+    }
+}
+
 /// The line under the groups: what the survey left out of them.
 pub(crate) fn summary(survey: &Survey) -> String {
     let mut out = Vec::new();
@@ -414,8 +452,11 @@ fn show(st: &State, app: &App) {
     app.set_match_done(sheet.done);
     app.set_match_results(strings(&sheet.results));
     app.set_match_curve_note(sheet.curve_note().into());
+    let (list_note, summary_line) = survey_words(sheet);
+    app.set_match_list_note(list_note.into());
+    app.set_match_summary(summary_line.into());
     match (&sheet.survey, sheet.groups()) {
-        (Some(survey), Some(groups)) => {
+        (Some(_), Some(groups)) => {
             let existing = greycard_edit::look::store_dir()
                 .map(|d| fit::existing_in(&d))
                 .unwrap_or_default();
@@ -438,7 +479,6 @@ fn show(st: &State, app: &App) {
                 })
                 .collect();
             app.set_match_groups(ModelRc::new(VecModel::from(rows)));
-            app.set_match_summary(summary(survey).into());
             // Any checked group: one that will be skipped is still
             // reported, and a run is how the user finds out which
             // frames register.
@@ -467,6 +507,13 @@ fn start_survey(st: &mut State, app: &App) {
     st.camera_match.generation += 1;
     st.camera_match.done = false;
     st.camera_match.survey = None;
+    st.camera_match.reading = None;
+    st.camera_match.failed = None;
+    if let Some(last) = st.camera_match.surveying.take() {
+        last.store(true, Ordering::Relaxed);
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    st.camera_match.surveying = Some(stop.clone());
     let generation = st.camera_match.generation;
     let at = Where {
         scope: app.get_match_scope().to_string(),
@@ -482,10 +529,36 @@ fn start_survey(st: &mut State, app: &App) {
         remembered(&st.camera_match.scope_key).into_iter().collect()
     };
     show(st, app);
-    app.set_match_summary("reading the frames' picture styles...".into());
     let app_weak = app.as_weak();
     std::thread::spawn(move || {
-        let found = survey(&at);
+        // The count, at most once a tick and the last always.
+        let throttle = std::sync::Mutex::new(Throttle::default());
+        let heard = |done: usize, of: usize| {
+            let due = throttle
+                .lock()
+                .is_ok_and(|mut t| t.pass(std::time::Instant::now(), done == of));
+            if !due {
+                return;
+            }
+            let app_weak = app_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                let (Some(app), Some(state)) =
+                    (app_weak.upgrade(), STATE.with(|s| s.borrow().clone()))
+                else {
+                    return;
+                };
+                let mut st = state.borrow_mut();
+                if st.camera_match.generation != generation || st.camera_match.survey.is_some() {
+                    return;
+                }
+                // The threads report as they finish, so a count can
+                // arrive behind a larger one.
+                let was = st.camera_match.reading.map_or(0, |(d, _)| d);
+                st.camera_match.reading = Some((done.max(was), of));
+                show(&st, &app);
+            });
+        };
+        let found = survey(&at, &heard, &stop);
         let _ = slint::invoke_from_event_loop(move || {
             let (Some(app), Some(state)) = (app_weak.upgrade(), STATE.with(|s| s.borrow().clone()))
             else {
@@ -495,16 +568,12 @@ fn start_survey(st: &mut State, app: &App) {
             if st.camera_match.generation != generation {
                 return;
             }
+            st.camera_match.reading = None;
             match found {
-                Ok(survey) => {
-                    st.camera_match.survey = Some(survey);
-                    show(&st, &app);
-                }
-                Err(why) => {
-                    show(&st, &app);
-                    app.set_match_summary(why.into());
-                }
+                Ok(survey) => st.camera_match.survey = Some(survey),
+                Err(why) => st.camera_match.failed = Some(why),
             }
+            show(&st, &app);
         });
     });
 }
@@ -1331,6 +1400,54 @@ mod tests {
         press("Fit Canon EOS R6m2 Faithful");
         assert_eq!(app.get_match_fit_label(), "Fit 1 group");
         assert!(app.get_match_can_fit());
+    }
+
+    /// The sheet while its survey reads, when it fails and once it is
+    /// in with nothing: the list says it is reading and the line under
+    /// it counts; the error takes the list's place; and only a survey
+    /// that has finished says it found no camera.
+    #[test]
+    fn the_list_says_reading_failed_or_none_found() {
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let mut st = state.borrow_mut();
+        app.set_match_open(true);
+
+        st.camera_match = Sheet::default();
+        show(&st, &app);
+        assert_eq!(app.get_match_list_note(), READING);
+        assert_eq!(app.get_match_summary(), "");
+        st.camera_match.reading = Some((120, 800));
+        show(&st, &app);
+        assert_eq!(app.get_match_list_note(), READING);
+        assert_eq!(
+            app.get_match_summary(),
+            "Reading picture styles: 120 of 800"
+        );
+        assert_eq!(app.get_match_groups().row_count(), 0);
+        assert!(!app.get_match_can_fit());
+
+        st.camera_match.reading = None;
+        st.camera_match.failed = Some("/nas/shoot: Permission denied".into());
+        show(&st, &app);
+        assert_eq!(app.get_match_list_note(), "/nas/shoot: Permission denied");
+        assert_eq!(app.get_match_summary(), "");
+
+        st.camera_match.failed = None;
+        st.camera_match.survey = Some(Survey {
+            groups: Vec::new(),
+            unread: 0,
+            no_style: 3,
+        });
+        show(&st, &app);
+        assert_eq!(app.get_match_list_note(), NO_GROUP);
+        assert!(
+            app.get_match_summary()
+                .starts_with("3 raws have no fixed picture style"),
+            "{}",
+            app.get_match_summary()
+        );
+        assert!(!app.get_match_can_fit());
     }
 
     #[test]

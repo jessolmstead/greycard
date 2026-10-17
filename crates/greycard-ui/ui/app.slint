@@ -1359,6 +1359,7 @@ export component App inherits Window {
     in property <string> match-curve-note;
     in property <[MatchGroup]> match-groups;
     in property <string> match-summary;
+    in property <string> match-list-note;
     in property <bool> match-can-fit;
     /// The Fit button's words, which count the groups checked, and why
     /// it is off when it is.
@@ -3441,6 +3442,7 @@ export component App inherits Window {
         match-curve-note: root.match-curve-note;
         match-groups: root.match-groups;
         match-summary: root.match-summary;
+        match-list-note: root.match-list-note;
         match-can-fit: root.match-can-fit;
         match-fit-label: root.match-fit-label;
         match-fit-note: root.match-fit-note;

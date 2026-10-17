@@ -152,7 +152,10 @@ fn survey(out: &Path) -> Vec<Group> {
         .map(PathBuf::from)
         .collect();
     let started = Instant::now();
-    let parts: Vec<Survey> = files.par_chunks(32).map(survey_files).collect();
+    let parts: Vec<Survey> = files
+        .par_chunks(32)
+        .map(|chunk| survey_files(chunk, &|_, _| {}, &AtomicBool::new(false)))
+        .collect();
     let mut groups: BTreeMap<(String, String), Group> = BTreeMap::new();
     for s in parts {
         for g in s.groups {

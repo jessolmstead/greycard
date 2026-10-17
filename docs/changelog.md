@@ -43,6 +43,19 @@ note a first tester reads.
   look back; a click keeps it. Hovering adds no history step
   ([§327](https://github.com/jessolmstead/greycard/blob/master/docs/notes/327-a-look-previewed-under-the-pointer.md))
 
+### Cameras
+
+- "Fit this camera's look" on a folder with no library reads a CR3's
+  or RAF's metadata from the file's two ends rather than the whole file
+  (about 1.5 MB of a 27 MB CR3, 64 KB of a 100 MB RAF), four files at a
+  time, so a folder of them on a network share is surveyed in seconds;
+  NEF, ARW, RW2 and DNG are still read whole. The line under the groups
+  counts as it reads ("Reading picture styles: 120 of 800"), "No camera
+  with a fixed picture style here." shows only once the survey has
+  finished, reopening the sheet stops the survey it replaces, and
+  macOS's `._` files beside raws on exFAT and SMB volumes are skipped
+  ([§324](https://github.com/jessolmstead/greycard/blob/master/docs/notes/324-the-camera-matchs-survey-over-a-network-share.md))
+
 ### Fixes
 
 - A Lightroom preset's Tint came in with the wrong sign and too small:

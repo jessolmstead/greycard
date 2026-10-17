@@ -53,6 +53,13 @@ pub fn probe_path(path: impl AsRef<Path>) -> Result<Probe> {
     rawler_backend::probe_path(path.as_ref())
 }
 
+/// [`probe_path`] from the file's head and tail alone, where its format
+/// allows; the same answer, a fraction of the bytes read. See
+/// `rawler_backend::probe_ends_path`.
+pub fn probe_ends_path(path: impl AsRef<Path>) -> Result<Probe> {
+    rawler_backend::probe_ends_path(path.as_ref())
+}
+
 /// [`probe_path`] and the raw's kind of mosaic in one read of the file:
 /// see `rawler_backend::probe_and_mosaic_path`.
 pub fn probe_and_mosaic_path(path: impl AsRef<Path>) -> Result<(Probe, MosaicRead)> {

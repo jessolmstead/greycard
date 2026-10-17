@@ -765,6 +765,203 @@ mod tests {
         assert!(matches!(other, Error::Decode(_)), "{other}");
     }
 
+    /// The head of a sample CR3 through its `mdat` box's header with
+    /// every byte zeroed but the top-level boxes' headers and the `ftyp`
+    /// box, which is the brands: 82 bytes of 204,288 not zero, and no
+    /// picture, maker note or serial number in it. For the walk only:
+    /// rawler given a `moov` box that zeros cut short asked for 6 GiB.
+    fn cr3_head_fixture() -> Vec<u8> {
+        std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scrubbed-cr3-head.CR3"),
+        )
+        .unwrap()
+    }
+
+    /// The walk over a CR3's top-level boxes ends with the `mdat` box's
+    /// header, whether that box's size is 32 or 64 bits, whatever the
+    /// rest of the file; a file that is not boxes, or whose boxes do not
+    /// hold together or run out first, has no head to read.
+    #[test]
+    fn the_box_walk_ends_with_the_mdat_boxs_header() {
+        use std::io::Cursor;
+        let head = cr3_head_fixture();
+        // The camera's file ran 15,570,066 bytes; the walk reads none
+        // past the header.
+        let walk = |bytes: &[u8], len: u64| cr3_head(&mut Cursor::new(bytes), len).unwrap();
+        assert_eq!(walk(&head, 15_570_066), Some(204_288));
+        assert_eq!(walk(&head, head.len() as u64), Some(204_288));
+        // The camera wrote `mdat` with a 64-bit size; the same box with
+        // a 32-bit one has an 8-byte header.
+        let at = head.len() - 16;
+        assert_eq!(&head[at + 4..at + 8], b"mdat");
+        let mut short = head[..at].to_vec();
+        short.extend_from_slice(&[0, 0, 0, 8]);
+        short.extend_from_slice(b"mdat");
+        assert_eq!(walk(&short, 1 << 24), Some(at as u64 + 8));
+
+        // Not a CR3: no `ftyp` first.
+        let mut other = head.clone();
+        other[4..8].copy_from_slice(b"free");
+        assert_eq!(walk(&other, 15_570_066), None);
+        // A box smaller than its own header.
+        let mut broken = head.clone();
+        broken[24..28].copy_from_slice(&4u32.to_be_bytes());
+        assert_eq!(walk(&broken, 15_570_066), None);
+        // A file that ends before its `mdat`.
+        assert_eq!(walk(&head[..at], at as u64), None);
+        // A first box whose size reaches past the end of the file.
+        assert_eq!(walk(&head[..24], 20), None);
+    }
+
+    /// A RAF's head runs through its JPEG's EXIF segment, by the length
+    /// that segment gives; a file with another magic, or a JPEG that
+    /// does not open with EXIF, has none.
+    #[test]
+    fn a_rafs_head_is_its_jpegs_exif_segment() {
+        use std::io::Cursor;
+        let raf = |magic: &[u8], app: u8| {
+            let mut bytes = vec![0u8; 148];
+            bytes[..magic.len()].copy_from_slice(magic);
+            bytes[84..88].copy_from_slice(&148u32.to_be_bytes());
+            bytes.extend_from_slice(&[0xff, 0xd8, 0xff, app, 0xff, 0xa8]);
+            bytes.resize(1 << 20, 0);
+            bytes
+        };
+        let head = |bytes: &[u8]| raf_head(&mut Cursor::new(bytes), bytes.len() as u64).unwrap();
+        assert_eq!(
+            head(&raf(b"FUJIFILMCCD-RAW 0201", 0xe1)),
+            Some(148 + 4 + 0xffa8)
+        );
+        assert_eq!(head(&raf(b"FUJIFILMCCD-RAX 0201", 0xe1)), None);
+        assert_eq!(head(&raf(b"FUJIFILMCCD-RAW 0201", 0xdb)), None);
+        assert_eq!(head(&raf(b"FUJIFILMCCD-RAW 0201", 0xe1)[..100]), None);
+    }
+
+    /// Ends that do not parse fall back to the whole file and give its
+    /// answer; ends that do give the same answer from fewer bytes; a
+    /// file that is not of its extension's format is read whole.
+    #[test]
+    fn ends_that_do_not_parse_fall_back_to_the_whole_file() {
+        let dng = a_dng();
+        // Named as the picture probe's tests name theirs, so a run beside
+        // another, or after one that stopped short, has its own.
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-ends-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("frame.dng");
+        std::fs::write(&path, &dng).unwrap();
+        let len = dng.len() as u64;
+        let whole = probe_path(&path).unwrap();
+        assert_eq!(whole.make, "Test");
+
+        // Eight bytes of head: the TIFF header and nothing it points to.
+        let (probe, read) = probe_ends_with(&path, |_, _, _| Ok(Some((8, 0)))).unwrap();
+        assert_eq!((probe, read), (whole.clone(), len));
+        // The DNG writes its directory last, so its samples' first byte
+        // is not wanted for the probe.
+        let (probe, read) = probe_ends_with(&path, |_, _, len| Ok(Some((8, len - 9)))).unwrap();
+        assert_eq!((probe, read), (whole.clone(), len - 1));
+        // Called a CR3 or a RAF, it has neither one's head.
+        for name in ["frame.CR3", "frame.RAF"] {
+            let named = dir.join(name);
+            std::fs::write(&named, &dng).unwrap();
+            assert_eq!(probe_ends_counted(&named).unwrap(), (whole.clone(), len));
+        }
+        // Not a raw at all: the whole file's error.
+        let junk = dir.join("junk.CR3");
+        std::fs::write(&junk, b"not a raw").unwrap();
+        assert_eq!(
+            probe_ends_path(&junk).unwrap_err().to_string(),
+            probe_path(&junk).unwrap_err().to_string()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// With `GREYCARD_TEST_RAWS` a folder of raws: every raw in it and
+    /// its subfolders probed from its ends and whole, the two required
+    /// to agree, and the bytes each read printed, a file and a format
+    /// at a time. One file at a time, its buffers dropped before the
+    /// next. Ignored, since it wants the samples.
+    #[test]
+    #[ignore]
+    fn the_ends_give_the_whole_files_probe_on_the_samples() {
+        let Some(dir) = std::env::var_os("GREYCARD_TEST_RAWS") else {
+            eprintln!("GREYCARD_TEST_RAWS names no folder; nothing measured");
+            return;
+        };
+        let mut raws = Vec::new();
+        let mut folders = vec![std::path::PathBuf::from(dir)];
+        while let Some(folder) = folders.pop() {
+            for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+                let path = entry.path();
+                if entry.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                if path.is_dir() {
+                    folders.push(path);
+                } else if crate::decode::is_raw_path(&path) {
+                    raws.push(path);
+                }
+            }
+        }
+        raws.sort();
+        assert!(!raws.is_empty(), "no raws under GREYCARD_TEST_RAWS");
+        // By format: files, bytes the ends read, bytes in the files.
+        let mut totals: std::collections::BTreeMap<String, (usize, u64, u64)> = Default::default();
+        for path in &raws {
+            let len = std::fs::metadata(path).unwrap().len();
+            let whole = probe_path(path);
+            let ends = probe_ends_counted(path);
+            let format = path
+                .extension()
+                .unwrap()
+                .to_string_lossy()
+                .to_ascii_uppercase();
+            match (&whole, &ends) {
+                (Ok(whole), Ok((probe, read))) => {
+                    assert_eq!(probe, whole, "{}", path.display());
+                    println!(
+                        "{}: {read} of {len} bytes ({:.1}%)",
+                        path.display(),
+                        100.0 * *read as f64 / len as f64
+                    );
+                    let t = totals.entry(format).or_default();
+                    *t = (t.0 + 1, t.1 + read, t.2 + len);
+                }
+                (Err(a), Err(b)) => {
+                    assert_eq!(a.to_string(), b.to_string(), "{}", path.display());
+                    println!("{}: {a}, both ways", path.display());
+                }
+                _ => panic!(
+                    "{}: {whole:?} whole, {ends:?} from the ends",
+                    path.display()
+                ),
+            }
+        }
+        let (mut read, mut all) = (0, 0);
+        for (format, (n, r, l)) in &totals {
+            println!(
+                "{format}: {n} files, {:.1} MB read of {:.1} MB ({:.2}%)",
+                *r as f64 / 1e6,
+                *l as f64 / 1e6,
+                100.0 * *r as f64 / *l as f64
+            );
+            (read, all) = (read + r, all + l);
+        }
+        println!(
+            "all: {} files, {:.1} MB read of {:.1} MB",
+            raws.len(),
+            read as f64 / 1e6,
+            all as f64 / 1e6
+        );
+    }
+
     #[test]
     fn bayer_pattern_maps_color_indices() {
         let cfa = CFA::new("RGGB");
@@ -1086,10 +1283,218 @@ pub fn probe_path(path: &Path) -> Result<Probe> {
 }
 
 fn probe_unguarded(path: &Path) -> Result<Probe> {
-    let source = RawSource::new(path)?;
-    let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
+    probe_source(&RawSource::new(path)?)
+}
+
+fn probe_source(source: &RawSource) -> Result<Probe> {
+    let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
     let metadata = decoder
-        .raw_metadata(&source, &RawDecodeParams::default())
+        .raw_metadata(source, &RawDecodeParams::default())
         .map_err(decoder_error)?;
     Ok(Probe::from_metadata(&metadata))
+}
+
+/// [`probe_path`] from the file's two ends, not the whole of it.
+///
+/// rawler's `RawSource::new` maps a file with `populate()` and advises
+/// `WillNeed`, so `probe_path` reads every byte of it: 27 MB for a CR3
+/// whose metadata sits in a few hundred KB at its head and a record
+/// near its end, which over a share is a quarter of a second a frame
+/// on gigabit and more over Wi-Fi. Here the head and the tail are read
+/// into a buffer of the file's length, the gap left as zeros (which the
+/// allocator hands out as pages nobody has touched), and rawler is given
+/// that. What each format reads, against what the sample set's files
+/// needed for the whole file's probe:
+///
+/// | Format | Head | Tail | The samples needed |
+/// |---|---|---|---|
+/// | CR3 | through the `mdat` box's header (200 KB to 1 MB) | 1 MiB | that head and 115 to 120 KiB of tail |
+/// | RAF | through the embedded JPEG's EXIF segment (64 KiB) | none | 4 to 5 KiB of head |
+/// | NEF, ARW, RW2, DNG, the rest | the whole file | | |
+///
+/// A head ends where the format's own structure says the metadata
+/// does, never at a size cut through it: rawler reading a structure the
+/// gap has cut short does not always fail. On a DNG whose directory
+/// sits at its end and points into the middle, a gap of zeros has it
+/// ask for 3.6 GB at once, and an allocation that fails is an abort no
+/// guard catches. A CR3's head is its boxes up to the samples and a
+/// RAF's the header and the JPEG's EXIF; what the gap leaves rawler
+/// past them reads as an empty directory (the RAF's own tags and its
+/// sensor's directory) or a record of size nought, on which rawler
+/// panics (the CR3's CTMD, should it lie further from the end than the
+/// tail). The TIFF formats would want their directories walked for a
+/// head of the same kind; the samples' NEFs needed 255 to 272 KiB, the
+/// ARW 135 KiB, the RW2 5 KiB, and the DNGs every byte.
+///
+/// Any error, or a panic, from the ends falls back to the whole file,
+/// so a file this does not suit costs a little more than `probe_path`
+/// alone and never gives another answer.
+pub fn probe_ends_path(path: &Path) -> Result<Probe> {
+    probe_ends_counted(path).map(|(probe, _)| probe)
+}
+
+/// [`probe_ends_path`] and how many bytes of the file it read.
+fn probe_ends_counted(path: &Path) -> Result<(Probe, u64)> {
+    probe_ends_with(path, ends_of)
+}
+
+/// [`probe_ends_counted`] with the ends of the file to read given.
+fn probe_ends_with(path: &Path, ends: Ends) -> Result<(Probe, u64)> {
+    match read_ends(path, ends) {
+        Ok(Some((buf, read))) => {
+            let source = RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path);
+            match guarded(|| None, || probe_source(&source)) {
+                Ok(probe) => return Ok((probe, read)),
+                Err(e) => log::debug!("{}: from its ends: {e}; read whole", path.display()),
+            }
+        }
+        Ok(None) => {}
+        Err(e) => log::debug!("{}: its ends: {e}; read whole", path.display()),
+    }
+    let whole = std::fs::metadata(path).map_or(0, |m| m.len());
+    probe_path(path).map(|probe| (probe, whole))
+}
+
+/// A CR3's tail: the CTMD record rawler reads sits near the end of the
+/// `mdat` box, 115 to 120 KiB from the end on the samples.
+const CR3_TAIL: u64 = 1 << 20;
+
+/// How much of each end of the file at a path, open and `len` bytes
+/// long, to read: the head and the tail; `None` to read it whole.
+type Ends = fn(&Path, &mut std::fs::File, u64) -> std::io::Result<Option<(u64, u64)>>;
+
+/// The head and the tail of `path` in a buffer of its length, the gap
+/// zeroed, and the bytes read; `None` for a format read whole, or a
+/// file whose ends would be the whole of it anyway.
+fn read_ends(path: &Path, ends: Ends) -> std::io::Result<Option<(Vec<u8>, u64)>> {
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let Some((head, tail)) = ends(path, &mut file, len)? else {
+        return Ok(None);
+    };
+    read_ends_of(&mut file, len, head, tail)
+}
+
+/// The ends of each format, by the path's extension: see
+/// [`probe_ends_path`].
+fn ends_of(path: &Path, file: &mut std::fs::File, len: u64) -> std::io::Result<Option<(u64, u64)>> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    Ok(match ext.as_deref() {
+        Some("cr3") => cr3_head(file, len)?.map(|head| (head, CR3_TAIL)),
+        Some("raf") => raf_head(file, len)?.map(|head| (head, 0)),
+        _ => None,
+    })
+}
+
+/// The ends read: see [`read_ends`].
+fn read_ends_of(
+    file: &mut (impl std::io::Read + std::io::Seek),
+    len: u64,
+    head: u64,
+    tail: u64,
+) -> std::io::Result<Option<(Vec<u8>, u64)>> {
+    use std::io::SeekFrom;
+    if head.saturating_add(tail) >= len {
+        return Ok(None);
+    }
+    let Ok(size) = usize::try_from(len) else {
+        return Ok(None);
+    };
+    let mut buf = vec![0u8; size];
+    file.seek(SeekFrom::Start(0))?;
+    file.read_exact(&mut buf[..head as usize])?;
+    file.seek(SeekFrom::Start(len - tail))?;
+    file.read_exact(&mut buf[(len - tail) as usize..])?;
+    Ok(Some((buf, head + tail)))
+}
+
+/// Where a CR3's `mdat` box's header ends: the top-level boxes walked
+/// from the start, each header read and its body skipped. rawler's
+/// file box is not finished without that header. `None` for a file
+/// that does not start with `ftyp`, or whose boxes run out or do not
+/// hold together before an `mdat`.
+fn cr3_head(
+    file: &mut (impl std::io::Read + std::io::Seek),
+    len: u64,
+) -> std::io::Result<Option<u64>> {
+    use std::io::SeekFrom;
+    let mut at = 0u64;
+    while at.saturating_add(8) <= len {
+        let mut header = [0u8; 8];
+        file.seek(SeekFrom::Start(at))?;
+        file.read_exact(&mut header)?;
+        let size = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+        let kind = &header[4..8];
+        if at == 0 && kind != b"ftyp" {
+            return Ok(None);
+        }
+        // A size of 1 says a 64-bit size follows; 0, that the box runs
+        // to the end of the file.
+        let (size, header_len) = match size {
+            1 => {
+                if at.saturating_add(16) > len {
+                    return Ok(None);
+                }
+                let mut large = [0u8; 8];
+                file.read_exact(&mut large)?;
+                (u64::from_be_bytes(large), 16)
+            }
+            0 => (len - at, 8),
+            n => (u64::from(n), 8),
+        };
+        if kind == b"mdat" {
+            return Ok(Some(at + header_len));
+        }
+        if size < header_len {
+            return Ok(None);
+        }
+        at = at.saturating_add(size);
+    }
+    Ok(None)
+}
+
+/// Where a RAF's metadata ends: the embedded JPEG's EXIF segment, which
+/// a Fujifilm camera writes first in the JPEG, its length in its own
+/// header. rawler takes the camera, the EXIF and the maker note from
+/// it; the RAF's own tags and the sensor's directory, past the JPEG,
+/// are not in the probe. `None` for a file not laid out so.
+fn raf_head(
+    file: &mut (impl std::io::Read + std::io::Seek),
+    len: u64,
+) -> std::io::Result<Option<u64>> {
+    use std::io::SeekFrom;
+    const MAGIC: &[u8] = b"FUJIFILMCCD-RAW";
+    // Where the header keeps the JPEG's offset, big-endian.
+    const JPEG_AT: usize = 84;
+    let mut header = [0u8; JPEG_AT + 4];
+    if len < header.len() as u64 {
+        return Ok(None);
+    }
+    file.seek(SeekFrom::Start(0))?;
+    file.read_exact(&mut header)?;
+    if !header.starts_with(MAGIC) {
+        return Ok(None);
+    }
+    let jpeg = u64::from(u32::from_be_bytes([
+        header[JPEG_AT],
+        header[JPEG_AT + 1],
+        header[JPEG_AT + 2],
+        header[JPEG_AT + 3],
+    ]));
+    // The start of the image, then APP1 and its length, which counts
+    // its own two bytes.
+    let mut start = [0u8; 6];
+    if jpeg.saturating_add(6) > len {
+        return Ok(None);
+    }
+    file.seek(SeekFrom::Start(jpeg))?;
+    file.read_exact(&mut start)?;
+    if start[..4] != [0xff, 0xd8, 0xff, 0xe1] {
+        return Ok(None);
+    }
+    let segment = u64::from(u16::from_be_bytes([start[4], start[5]]));
+    Ok(Some(jpeg + 4 + segment).filter(|&head| head <= len))
 }
