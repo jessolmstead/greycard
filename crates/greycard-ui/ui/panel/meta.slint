@@ -1,0 +1,249 @@
+// The METADATA section: the selection's title and keywords, typed in
+// the window and written to every frame chosen, as a rating key
+// writes its stars (`panel/words.rs`).
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { KeywordChip } from "../structs.slint";
+import { Section } from "../controls.slint";
+
+// A keyword on the selection: the word, and a cross that takes it off
+// every frame. One that only some of the frames carry is dimmed, and
+// a click on its word puts it on the rest.
+component WordChip inherits Rectangle {
+    in property <string> word;
+    in property <bool> all;
+    callback removed();
+    callback spread();
+    height: Theme.control-height - 6px;
+    border-radius: self.height / 2;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.raised;
+    accessible-role: button;
+    accessible-label: "Keyword " + root.word;
+    accessible-action-default => { root.removed(); }
+    HorizontalLayout {
+        padding-left: Theme.space-2;
+        padding-right: 3px;
+        spacing: 2px;
+        // A long word is cut short rather than run past the left
+        // pane's edge, which is narrower than the panel.
+        Rectangle {
+            property <length> most: 150px;
+            min-width: min(word-text.preferred-width, self.most);
+            preferred-width: min(word-text.preferred-width, self.most);
+            max-width: self.most;
+            word-text := Text {
+                width: parent.width;
+                text: root.word;
+                color: root.all ? Theme.text : Theme.text-muted;
+                font-size: Theme.font-xs;
+                vertical-alignment: center;
+                overflow: elide;
+                height: 100%;
+            }
+            TouchArea {
+                enabled: !root.all;
+                mouse-cursor: root.all ? MouseCursor.default : MouseCursor.pointer;
+                clicked => { root.spread(); }
+            }
+        }
+        Rectangle {
+            width: 14px;
+            Image {
+                source: @image-url("../icons/x.svg");
+                colorize: cross.has-hover ? Theme.text : Theme.text-muted;
+                width: 10px;
+                height: 10px;
+            }
+            cross := TouchArea {
+                mouse-cursor: MouseCursor.pointer;
+                clicked => { root.removed(); }
+            }
+        }
+    }
+}
+
+export component MetaSection inherits Section {
+    /// Whether a frame is chosen at all: the fields are dead without.
+    in property <bool> frame-meta-on;
+    /// The title every frame chosen has, empty when they differ.
+    in property <string> frame-title;
+    in property <bool> frame-title-mixed;
+    /// The field's text and whether it was typed in since it was last
+    /// put out or sent; the window's own, so a click on a frame can
+    /// send it first (`commit-title` in app.slint).
+    in-out property <string> title-text;
+    in-out property <bool> title-dirty;
+    in property <[KeywordChip]> frame-keywords;
+    in-out property <string> keyword-text;
+    in-out property <[string]> keyword-completions;
+    /// The completion Up and Down are on; -1 for none.
+    in-out property <int> keyword-pick;
+    in property <int> set-count;
+    in-out property <bool> collapsed-metadata;
+    callback title-edited(string);
+    callback keyword-typed(string);
+    callback keyword-added(string);
+    callback keyword-removed(string);
+    callback keyword-focused();
+    callback focus-keys();
+
+    title: "METADATA";
+    icon: @image-url("../icons/pencil.svg");
+    collapsed <=> root.collapsed-metadata;
+
+    function send-title() {
+        if (root.title-dirty) {
+            root.title-dirty = false;
+            root.title-edited(root.title-text);
+        }
+    }
+    // The completion `i` or, below zero, what is typed: put on and
+    // the field emptied for the next.
+    function take(i: int) {
+        if (i >= 0 && i < root.keyword-completions.length) {
+            root.keyword-added(root.keyword-completions[i]);
+        } else if (root.keyword-text != "") {
+            root.keyword-added(root.keyword-text);
+        }
+        root.keyword-text = "";
+        root.keyword-completions = [];
+        root.keyword-pick = -1;
+    }
+
+    // Each name over its field rather than beside it: the left pane,
+    // where the section is over the grid, is narrower than the panel,
+    // and a field there beside its name would run past its edge.
+    Text {
+        text: "Title";
+        color: Theme.text;
+        font-size: Theme.font-sm;
+        vertical-alignment: center;
+    }
+    LineEdit {
+        text <=> root.title-text;
+        accessible-label: "Frame title";
+        enabled: root.frame-meta-on;
+        placeholder-text: root.frame-title-mixed ? "Mixed" : "";
+        edited(t) => { root.title-dirty = true; }
+        // Enter sends it and gives the keys back; the focus going
+        // elsewhere sends it too.
+        accepted(t) => { root.send-title(); root.focus-keys(); }
+        changed has-focus => {
+            if (!self.has-focus) { root.send-title(); }
+        }
+        key-pressed(e) => {
+            // Esc puts the title back as it was and gives the keys
+            // back, so the next 1 to 5 is a rating again.
+            if (e.text == Key.Escape) {
+                root.title-text = root.frame-title;
+                root.title-dirty = false;
+                root.focus-keys();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    Text {
+        text: "Keywords";
+        color: Theme.text;
+        font-size: Theme.font-sm;
+        vertical-alignment: center;
+    }
+    if root.frame-keywords.length > 0: FlexboxLayout {
+        spacing: Theme.space-1;
+        for chip in root.frame-keywords: WordChip {
+            word: chip.word;
+            all: chip.all;
+            removed => { root.keyword-removed(chip.word); root.focus-keys(); }
+            spread => { root.keyword-added(chip.word); root.focus-keys(); }
+        }
+    }
+    keyword-field := LineEdit {
+        text <=> root.keyword-text;
+        accessible-label: "Add keywords";
+        enabled: root.frame-meta-on;
+        placeholder-text: "Add keywords";
+        edited(t) => { root.keyword-typed(t); }
+        // Enter takes the completion picked, or what is typed; on an
+        // empty field it gives the keys back.
+        accepted(t) => {
+            if (root.keyword-text == "" && root.keyword-pick < 0) {
+                root.focus-keys();
+            } else {
+                root.take(root.keyword-pick);
+            }
+        }
+        changed has-focus => {
+            if (self.has-focus) {
+                root.keyword-focused();
+            } else {
+                root.keyword-completions = [];
+                root.keyword-pick = -1;
+            }
+        }
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                root.keyword-text = "";
+                root.keyword-completions = [];
+                root.keyword-pick = -1;
+                root.focus-keys();
+                return accept;
+            }
+            // Tab takes the completion picked, or the first; with
+            // nothing offered it is Tab as ever.
+            if (e.text == Key.Tab && root.keyword-completions.length > 0) {
+                root.take(max(0, root.keyword-pick));
+                return accept;
+            }
+            if (e.text == Key.DownArrow && root.keyword-completions.length > 0) {
+                root.keyword-pick = min(root.keyword-completions.length - 1, root.keyword-pick + 1);
+                return accept;
+            }
+            if (e.text == Key.UpArrow && root.keyword-completions.length > 0) {
+                root.keyword-pick = max(-1, root.keyword-pick - 1);
+                return accept;
+            }
+            return reject;
+        }
+    }
+    // The library's words that begin with what is typed, under the
+    // field while it has the keys: a click, Tab or Enter on the one
+    // Up and Down are on takes it.
+    if root.keyword-completions.length > 0 && keyword-field.has-focus: Rectangle {
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        background: Theme.raised;
+        VerticalLayout {
+            padding: 2px;
+            for word[i] in root.keyword-completions: Rectangle {
+                height: Theme.control-height - 6px;
+                border-radius: Theme.radius-sm;
+                background: i == root.keyword-pick ? Theme.selection : (row.has-hover ? Theme.hover : transparent);
+                Text {
+                    x: Theme.space-2;
+                    width: parent.width - 2 * Theme.space-2;
+                    text: word;
+                    color: Theme.text;
+                    font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                row := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => { root.take(i); keyword-field.focus(); }
+                }
+            }
+        }
+    }
+    if root.set-count > 1: Text {
+        text: "What is typed goes on all " + root.set-count
+            + " frames chosen; a dimmed word is on some of them.";
+        color: Theme.text-muted;
+        font-size: Theme.font-xs;
+        wrap: word-wrap;
+    }
+}

@@ -1155,6 +1155,36 @@ mod tests {
             .collect()
     }
 
+    /// A title typed for a frame and a folder picked before it was
+    /// sent: nothing is put on the new folder's frame, and the Title
+    /// field over it starts clean.
+    #[test]
+    fn a_folder_picked_under_a_typed_title_puts_nothing_on_its_frames() {
+        let dir = scratch("title");
+        let (app, state, worker) = archive(&dir, None);
+        pick(&app, "day");
+        land_sent(&state, &app, &worker);
+        app.invoke_select(0);
+        land_sent(&state, &app, &worker);
+        // Typed for d1, not sent: the pick's own path, which the field
+        // hears of only after the list has moved, and both frames'
+        // titles empty, so nothing about the title itself moves.
+        app.set_title_text("Dusk".into());
+        app.set_title_dirty(true);
+        pick(&app, "archive");
+        land_sent(&state, &app, &worker);
+        slint::platform::update_timers_and_animations();
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["r.tif"]);
+        app.invoke_select(0);
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().sidecars[0].meta.title, "", "not on r.tif");
+        assert_eq!(app.get_title_text(), "");
+        assert!(!app.get_title_dirty(), "the field starts clean");
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// The root's view shows its tree from the index, the root marked
     /// open; a folder chosen opens its own frames alone, and with the
     /// switch those under it too, the root's row lit throughout; the
@@ -1363,6 +1393,45 @@ mod tests {
         assert!(!app.get_folder_tree_shown());
         assert!(crate::testing::buttons(&app, "day").is_empty());
         state.borrow_mut().views.index_reader = None;
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A title typed for a frame, then a click on another folder in the
+    /// pane, as a hand does it: the click sends the title first, so it
+    /// is on the frame it was typed for, on disk, and not on the
+    /// frames of the folder clicked.
+    #[test]
+    fn a_click_on_a_folder_sends_the_title_typed_to_its_own_frame() {
+        let dir = scratch("click-title");
+        let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
+        let d1 = dir.join("archive").join("day").join("d1.tif");
+        pick(&app, "day");
+        land_sent(&state, &app, &worker);
+        app.invoke_select(0);
+        // The frame opened is read, as the window reads the one on
+        // screen.
+        crate::rows::land_pending(&state, &app, &worker);
+        assert_eq!(state.borrow().files[0], d1);
+        assert!(crate::rows::is_loaded(&state.borrow(), 0));
+        slint::platform::update_timers_and_animations();
+        let (at, size) = labeled(&app, "Frame title");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::type_text(&app, "Dusk");
+        assert!(app.get_title_dirty());
+        let archive = crate::testing::buttons(&app, "archive");
+        let (at, size) = archive.first().expect("the root's row");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        land_sent(&state, &app, &worker);
+        slint::platform::update_timers_and_animations();
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["r.tif"], "the click opened it");
+        let s = greycard_edit::Sidecar::load(&d1)
+            .unwrap()
+            .expect("d1's sidecar");
+        assert_eq!(s.meta.title, "Dusk");
+        assert_eq!(state.borrow().sidecars[0].meta.title, "", "not on r.tif");
+        assert_eq!(app.get_title_text(), "");
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }

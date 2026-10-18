@@ -55,6 +55,32 @@ Ratings, flags and labels are saved in the frame's `.gcd`. With
 XMP too, for Lightroom or darktable; picks and rejects stay in the
 `.gcd`.
 
+## Keywords and a title
+
+The **METADATA** section holds the frame's **Title** and its
+**Keywords**. It is under the CULLING section in culling mode, the
+last on the Develop tab, and in the left pane beside the grid,
+under the import buttons.
+
+Type a title and press **Enter** or **Tab**, or click a frame, to keep it;
+**Esc** puts back what was there. In the Keywords field a comma or
+**Enter** ends a word, which goes on at once and shows as a chip under
+the field's label; the **x** on a chip takes it off. As you type,
+words already in your library that start with the same letters are
+offered under the field: **Up** and **Down** move through them, and
+**Tab**, **Enter** or a click takes one. **Esc** leaves the field, and
+the keys are rating keys again.
+
+Both act on every selected frame, as a rating does. With several
+selected, a keyword only some of them carry is dimmed (click its word
+to put it on the rest), and titles that differ show as **Mixed**; a
+title typed there replaces all of them. In culling mode **Ctrl+Z**
+takes back a keyword or a title like a rating.
+
+Keywords and the title are saved in the `.gcd`, and with **Write XMP
+sidecars** on they go into the XMP as well. The filter's **Keyword**
+chips and its `keyword:` term find the words you add.
+
 ## Culling mode
 
 Press **C**, or click **Cull** in the grid's header, to cull. Culling

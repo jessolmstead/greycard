@@ -1715,15 +1715,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 mod tests {
     use super::*;
     use crate::panel::browser::open_row;
-    use crate::testing::{click, folder, press, state_for, window};
+    use crate::testing::{click, folder, press, state_for, strip_cell, window};
     use slint::platform::{Key, WindowEvent};
-
-    /// Where row `i` of the strip is, in a 1500 by 950 window: the
-    /// strip is the window's foot, 148 high, its cells 178 wide and
-    /// 186 apart after a pad of 12.
-    fn strip_cell(i: usize) -> (f32, f32) {
-        (12.0 + i as f32 * 186.0 + 89.0, 950.0 - 148.0 + 60.0)
-    }
 
     /// The sheet's headings as its rows read: each section's title
     /// and how its checks stand, 0 off, 1 some, 2 on.

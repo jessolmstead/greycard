@@ -152,4 +152,9 @@ pub(crate) struct Views {
     pub(crate) strip_shown: Option<(i32, i32)>,
     /// The frame the frame menu was opened over, for its Reveal.
     pub(crate) menu_file: Option<usize>,
+    /// The METADATA section's: the frames its fields show, and the
+    /// words its Keywords field completes from. Behind a cell, since
+    /// the fields are put out wherever the badges are, from a state
+    /// that is only read there.
+    pub(crate) words: std::cell::RefCell<panel::words::Words>,
 }

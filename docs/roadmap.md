@@ -363,14 +363,6 @@ Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
-- [ ] Keywords and a title typed in the window: a Keywords field in
-      the panel's metadata with completion from the index's words, a
-      Title field, both written to the sidecar's meta and to the XMP
-      as the rating is, over a selection as the rating is; today the
-      setters are reached only by the imports, the index and the
-      export, the filter finds keywords no one can add, and the guide
-      does not say so (an outside review; a 0.8.0 candidate, two
-      testers come from Lightroom)
 - [ ] The filter bar's last two chips: a "none" chip for frames with
       no value for a facet (decide it with a library of phone JPEGs in
       hand), and an error row in the index for a file whose hash fails

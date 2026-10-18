@@ -177,6 +177,13 @@ export struct FilterChip {
     code: int,
 }
 
+/// A keyword on the selection, in the METADATA section: the word, and
+/// whether every frame chosen carries it (one on only some is dimmed).
+export struct KeywordChip {
+    word: string,
+    all: bool,
+}
+
 /// One chip of an EXIF facet: what it shows, the value it hands
 /// back when pressed, how many frames hold that value among the
 /// frames the other tests leave, and whether it is on. The count is

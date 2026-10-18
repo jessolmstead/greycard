@@ -468,6 +468,7 @@ pub(crate) fn show_set(st: &mut State, app: &App) {
     }
     app.set_set_count(chosen_set.len().max(1) as i32);
     crate::panel::cull::show_back(st, app);
+    crate::panel::words::show_frame_words(st, app);
 }
 
 /// Put cell `c`'s meta and marks on its row in the strip and the grid,
@@ -518,8 +519,10 @@ pub(crate) fn show_badges_of_file(st: &State, app: &App, file: usize) {
 /// loupe's badge: the same three numbers its strip row carries, read
 /// off the same sidecar. Called when the selection lands on a frame
 /// and whenever that frame's badges are put out, so the two cannot
-/// say different things.
+/// say different things. The METADATA section's title and keywords
+/// are put out with them, over the whole selection.
 pub(crate) fn show_frame_tags(st: &State, app: &App) {
+    crate::panel::words::show_frame_words(st, app);
     let Some(meta) = st.current.and_then(|c| st.sidecar_at(c)).map(|s| &s.meta) else {
         return;
     };
@@ -615,6 +618,9 @@ fn tags_shown(
         show_badges_of_file(st, app, f);
     }
     app.set_reject_count(reject_count(st) as i32);
+    // The selection's words, whichever of its frames moved: the
+    // badges put them out only when the frame on screen did.
+    crate::panel::words::show_frame_words(st, app);
     if moved.is_empty() {
         return None;
     }
@@ -2185,9 +2191,9 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
     // the word; read before the frames are put back.
     let landed: Vec<Option<meta::Change>> = landing
         .iter()
-        .map(|&(f, tags)| tags::between(Tags::of(&st.sidecars[f].meta), tags))
+        .map(|(f, tags)| tags::between(&Tags::of(&st.sidecars[*f].meta), tags))
         .collect();
-    for &(f, tags) in &landing {
+    for (f, tags) in landing {
         tags.put(&mut st.sidecars[f].meta);
     }
     let next = tags_shown(st, app, &cells, &was_shown, &files);
@@ -2210,7 +2216,8 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
 }
 
 /// A culling key's change over the whole selection, as the key and
-/// the frame menu both ask for it; false when nothing is selected.
+/// the frame menu both ask for it, or a keyword or a title from the
+/// METADATA section's fields; false when nothing is selected.
 /// A frame that leaves the filtered list moves the selection on to
 /// the nearest, once the state is free.
 ///
@@ -2235,11 +2242,29 @@ pub(crate) fn meta_on_selection(
     // they are, in its turn otherwise.
     let paths: Vec<crate::versions::Key> = {
         let st = state.borrow();
-        chosen_frames(&st)
-            .into_iter()
-            .filter_map(|c| st.key_of(c))
-            .collect()
+        chosen_keys(&st)
     };
+    meta_on_keys(state, app, worker, paths, change)
+}
+
+/// The selection as keys, which outlive a change to the list: what
+/// a request names its frames by.
+pub(crate) fn chosen_keys(st: &State) -> Vec<crate::versions::Key> {
+    chosen_frames(st)
+        .into_iter()
+        .filter_map(|c| st.key_of(c))
+        .collect()
+}
+
+/// [`meta_on_selection`] over the frames `paths` name, chosen or not:
+/// for a title typed for a selection that has moved on since.
+pub(crate) fn meta_on_keys(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    paths: Vec<crate::versions::Key>,
+    change: meta::Change,
+) -> bool {
     if paths.is_empty() {
         return false;
     }
@@ -2249,9 +2274,13 @@ pub(crate) fn meta_on_selection(
     // own), so each key in a run of keys reaches its own frame. Stepped
     // when the key landed, every key pressed during the first frame's
     // read named that frame, and each stepped again.
+    //
+    // Not for words typed in the panel: the switch is for the keys,
+    // and a keyword that moved the selection on would leave the next
+    // one typed on another frame.
     let move_on = {
         let st = state.borrow();
-        st.culling.cull.is_some() && st.culling.cull_move_on && paths.len() == 1
+        st.culling.cull.is_some() && st.culling.cull_move_on && paths.len() == 1 && change.is_key()
     };
     // On the last row the step has nowhere to go, so a key that takes
     // the frame out of the filtered list leaves nothing on screen
@@ -2270,6 +2299,8 @@ pub(crate) fn meta_on_selection(
         meta::Change::Rating(_) => "rating key",
         meta::Change::Flag(_) => "flag key",
         meta::Change::Label(_) => "label key",
+        meta::Change::AddKeywords(_) | meta::Change::RemoveKeyword(_) => "keyword",
+        meta::Change::Title(_) => "title",
     };
     // The meta is the file's: a key on a version's cell whose line a
     // read just found gone still rates the file.
@@ -2333,7 +2364,7 @@ fn meta_on(
         .map(|(&i, _)| i)
         .collect();
     if st.culling.cull.is_some() {
-        let word = tags::notice(settled);
+        let word = tags::notice(&settled);
         let word = if hidden.is_empty() {
             word
         } else {
@@ -2344,13 +2375,13 @@ fn meta_on(
     let said = match hidden.as_slice() {
         [] => None,
         [c] => Some(tags::hidden_by_filter(
-            settled,
+            &settled,
             &file_name(st.path_of(*c)),
             false,
             &st.views.filter.describe(),
         )),
         many => Some(tags::hidden_by_filter(
-            settled,
+            &settled,
             &format!("{} frames", many.len()),
             true,
             &st.views.filter.describe(),

@@ -249,6 +249,13 @@ pub(crate) fn buttons(app: &App, label: &str) -> Vec<(slint::LogicalPosition, sl
     found
 }
 
+/// Where row `i` of the strip is, in a 1500 by 950 window: the strip
+/// is the window's foot, 148 high, its cells 178 wide and 186 apart
+/// after a pad of 12.
+pub(crate) fn strip_cell(i: usize) -> (f32, f32) {
+    (12.0 + i as f32 * 186.0 + 89.0, 950.0 - 148.0 + 60.0)
+}
+
 /// Type `text` a key at a time into whatever has the focus.
 pub(crate) fn type_text(app: &App, text: &str) {
     for c in text.chars() {

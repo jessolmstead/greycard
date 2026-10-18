@@ -840,6 +840,11 @@ pub(crate) const FOLDS: &[Fold] = &[
         App::set_collapsed_culling,
     ),
     (
+        "metadata",
+        App::get_collapsed_metadata,
+        App::set_collapsed_metadata,
+    ),
+    (
         "snapshots",
         App::get_collapsed_snapshots,
         App::set_collapsed_snapshots,

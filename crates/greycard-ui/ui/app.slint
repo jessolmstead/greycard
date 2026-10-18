@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow } from "structs.slint";
+import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, KeywordChip } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -52,6 +52,7 @@ import { FolderName, RecentMenu } from "panel/recent.slint";
 import { FoldersSection } from "panel/folders.slint";
 import { RootsSection } from "panel/roots.slint";
 import { CollectionsSection } from "panel/collections.slint";
+import { MetaSection } from "panel/meta.slint";
 import { CollectionSheet } from "panel/collection-sheet.slint";
 import { KeysSheet } from "panel/keys-sheet.slint";
 
@@ -549,6 +550,38 @@ export component App inherits Window {
     in property <int> frame-rating: 0;
     in property <int> frame-flag: 0;
     in property <int> frame-label: 0;
+    /// The METADATA section (`panel/words.rs`): whether a frame is
+    /// chosen, the title the selection shares (empty, and mixed, when
+    /// two differ) and its keywords, each marked for whether every
+    /// frame chosen has it.
+    in property <bool> frame-meta-on: false;
+    in property <string> frame-title: "";
+    in property <bool> frame-title-mixed: false;
+    in property <[KeywordChip]> frame-keywords: [];
+    /// The Title field's text and whether it was typed in since Rust
+    /// last put it out (`panel/words.rs` owns both, and which frames
+    /// the text is for). A click on a frame, a folder or a collection
+    /// sends what was typed before the selection moves under it.
+    in-out property <string> title-text: "";
+    in-out property <bool> title-dirty: false;
+    function commit-title() {
+        if (root.title-dirty) {
+            root.title-dirty = false;
+            root.title-edited(root.title-text);
+        }
+    }
+    /// The Keywords field's text, the completions offered for it and
+    /// the one Up and Down are on.
+    in-out property <string> keyword-text: "";
+    in-out property <[string]> keyword-completions: [];
+    in-out property <int> keyword-pick: -1;
+    in-out property <bool> collapsed-metadata: false;
+    callback title-edited(string);
+    callback keyword-typed(string);
+    callback keyword-added(string);
+    callback keyword-removed(string);
+    /// The Keywords field took the focus: its words are read then.
+    callback keyword-focused();
     /// The word over the picture for the culling key just pressed
     /// ("3 stars", "Rejected"): the text, and whether it is up. Rust
     /// puts it up and takes it down on a timer of its own; nothing
@@ -2659,6 +2692,28 @@ export component App inherits Window {
                             archive-rejects-asked(i) => { root.archive-rejects-asked(i); }
                             focus-keys => { keys.focus(); }
                         }
+                        // The selection's title and keywords, under
+                        // CULLING, whose keys and buttons keep their
+                        // place at the top.
+                        if root.panel-tab == "Cull": MetaSection {
+                            frame-meta-on: root.frame-meta-on;
+                            frame-title: root.frame-title;
+                            frame-title-mixed: root.frame-title-mixed;
+                            title-text <=> root.title-text;
+                            title-dirty <=> root.title-dirty;
+                            frame-keywords: root.frame-keywords;
+                            keyword-text <=> root.keyword-text;
+                            keyword-completions <=> root.keyword-completions;
+                            keyword-pick <=> root.keyword-pick;
+                            set-count: root.set-count;
+                            collapsed-metadata <=> root.collapsed-metadata;
+                            title-edited(t) => { root.title-edited(t); }
+                            keyword-typed(t) => { root.keyword-typed(t); }
+                            keyword-added(t) => { root.keyword-added(t); }
+                            keyword-removed(t) => { root.keyword-removed(t); }
+                            keyword-focused => { root.keyword-focused(); }
+                            focus-keys => { keys.focus(); }
+                        }
                         if root.panel-tab == "Masks" && root.target > 0: AdjustmentsSection {
                             adjustment-names <=> root.adjustment-names;
                             target <=> root.target;
@@ -3078,6 +3133,28 @@ export component App inherits Window {
                             menu-hint: root.demosaic-hint;
                             picked(v) => { root.demosaic-picked(v); }
                         }
+                        // The selection's title and keywords, last on
+                        // the Develop tab: not part of the develop, but
+                        // within reach of the frame being worked on.
+                        if root.panel-tab == "Develop": MetaSection {
+                            frame-meta-on: root.frame-meta-on;
+                            frame-title: root.frame-title;
+                            frame-title-mixed: root.frame-title-mixed;
+                            title-text <=> root.title-text;
+                            title-dirty <=> root.title-dirty;
+                            frame-keywords: root.frame-keywords;
+                            keyword-text <=> root.keyword-text;
+                            keyword-completions <=> root.keyword-completions;
+                            keyword-pick <=> root.keyword-pick;
+                            set-count: root.set-count;
+                            collapsed-metadata <=> root.collapsed-metadata;
+                            title-edited(t) => { root.title-edited(t); }
+                            keyword-typed(t) => { root.keyword-typed(t); }
+                            keyword-added(t) => { root.keyword-added(t); }
+                            keyword-removed(t) => { root.keyword-removed(t); }
+                            keyword-focused => { root.keyword-focused(); }
+                            focus-keys => { keys.focus(); }
+                        }
                         if root.panel-tab == "Retouch": RetouchSection {
                             retouch-enabled <=> root.retouch-enabled;
                             collapsed-retouch <=> root.collapsed-retouch;
@@ -3131,7 +3208,7 @@ export component App inherits Window {
             thumbs: root.thumbs;
             cells: root.strip-cells;
             selected <=> root.selected;
-            frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
+            frame-clicked(a, b, c) => { root.commit-title(); root.frame-clicked(a, b, c); }
             frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
             stack-clicked(r) => { root.stack-badge(r); }
             menu-shown => { return root.menu-shown(); }
@@ -3212,7 +3289,7 @@ export component App inherits Window {
         thumbs: root.thumbs;
         cells: root.grid-cells;
         selected <=> root.selected;
-        frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
+        frame-clicked(a, b, c) => { root.commit-title(); root.frame-clicked(a, b, c); }
         frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
         stack-clicked(r) => { root.stack-badge(r); }
         menu-shown => { return root.menu-shown(); }
@@ -3238,7 +3315,7 @@ export component App inherits Window {
         grid-top: root.grid-top;
         // No folder tiles in the lightbox: frames alone.
         tiles: root.lightbox ? [] : root.grid-tiles;
-        tile-picked(i) => { root.grid-tile-picked(i); }
+        tile-picked(i) => { root.commit-title(); root.grid-tile-picked(i); }
         tile-reveal(i) => { root.grid-tile-reveal(i); }
         menu-done => { root.menu-done(); }
         grid-wheel(a, b) => { root.grid-wheel(a, b); }
@@ -3482,6 +3559,28 @@ export component App inherits Window {
                         wrap: word-wrap;
                     }
                 }
+                // The selection's title and keywords, over the grid,
+                // which covers the panel where they are otherwise:
+                // the grid is where a set is chosen to be named.
+                if root.grid-open: MetaSection {
+                    frame-meta-on: root.frame-meta-on;
+                    frame-title: root.frame-title;
+                    frame-title-mixed: root.frame-title-mixed;
+                    title-text <=> root.title-text;
+                    title-dirty <=> root.title-dirty;
+                    frame-keywords: root.frame-keywords;
+                    keyword-text <=> root.keyword-text;
+                    keyword-completions <=> root.keyword-completions;
+                    keyword-pick <=> root.keyword-pick;
+                    set-count: root.set-count;
+                    collapsed-metadata <=> root.collapsed-metadata;
+                    title-edited(t) => { root.title-edited(t); }
+                    keyword-typed(t) => { root.keyword-typed(t); }
+                    keyword-added(t) => { root.keyword-added(t); }
+                    keyword-removed(t) => { root.keyword-removed(t); }
+                    keyword-focused => { root.keyword-focused(); }
+                    focus-keys => { keys.focus(); }
+                }
                 // The library's roots, with the grid: a row a root.
                 if root.grid-open: RootsSection {
                     roots: root.library-roots;
@@ -3491,7 +3590,7 @@ export component App inherits Window {
                     empty-note: root.library-note;
                     ctrl-click-menu: root.ctrl-click-menu;
                     collapsed-roots <=> root.collapsed-roots;
-                    picked(p) => { root.library-root-picked(p); }
+                    picked(p) => { root.commit-title(); root.library-root-picked(p); }
                     removed(p) => { root.library-root-removed(p); }
                     add => { root.library-root-add(); }
                     add-open => { root.library-root-add-open(); }
@@ -3508,7 +3607,7 @@ export component App inherits Window {
                     rows: root.folder-tree;
                     subfolders <=> root.folder-tree-subfolders;
                     collapsed-folders <=> root.collapsed-folders;
-                    picked(p) => { root.folder-tree-picked(p); }
+                    picked(p) => { root.commit-title(); root.folder-tree-picked(p); }
                     folded(p) => { root.folder-tree-folded(p); }
                     subfolders-changed => { root.folder-tree-subfolders-changed(); }
                     focus-keys => { keys.focus(); }
@@ -3518,7 +3617,7 @@ export component App inherits Window {
                     collections: root.collections;
                     ctrl-click-menu: root.ctrl-click-menu;
                     collapsed-collections <=> root.collapsed-collections;
-                    picked(id) => { root.collection-picked(id); }
+                    picked(id) => { root.commit-title(); root.collection-picked(id); }
                     rename(id) => { root.collection-rename(id); }
                     delete(id) => { root.collection-delete(id); }
                     capture-toggled(id) => { root.collection-capture(id); }

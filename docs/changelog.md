@@ -49,6 +49,11 @@ design note behind it.
   culling, the lightbox and `greycard library list --sort` follow the
   same order
   ([§339](https://github.com/jessolmstead/greycard/blob/master/docs/notes/339-a-sort-order-for-the-grid.md))
+- A METADATA section on the Develop tab, under CULLING when culling,
+  and beside the grid: a Title and a Keywords field, typed words
+  completed from the library's own, written to the sidecar and the
+  XMP over the whole selection as a rating is
+  ([§350](https://github.com/jessolmstead/greycard/blob/master/docs/notes/350-keywords-and-a-title-typed-in-the-window.md))
 
 ### Editing
 

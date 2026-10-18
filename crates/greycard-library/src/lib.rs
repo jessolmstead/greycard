@@ -1559,6 +1559,25 @@ impl Library {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Every keyword the library holds, each spelling with how many
+    /// files hold it, missing files' left out: the vocabulary the
+    /// panel's Keywords field completes from. One pass over the
+    /// table, read once and kept by the window, which folds the
+    /// spellings by the rule the meta keeps keywords apart by; the
+    /// order is the word's. A row is a file and a word, each pair
+    /// once (the table's key), so the rows a word has are its files.
+    pub fn keyword_counts(&self) -> Result<Vec<(String, usize)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT k.word, count(*) FROM keywords k \
+             JOIN files ON files.id = k.file \
+             WHERE files.missing_since IS NULL GROUP BY k.word ORDER BY k.word",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Every file with this content hash, missing ones included: a
     /// copy on two disks is two rows with one hash.
     pub fn by_hash(&self, hash: &str) -> Result<Vec<Entry>> {

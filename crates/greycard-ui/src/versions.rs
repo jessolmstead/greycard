@@ -397,10 +397,11 @@ impl State {
     /// acts on the file and not on a line of it (a move, a delete of the
     /// file, a turn, a write to the archive, a culling key).
     pub(crate) fn files_of(&self, cells: &[usize]) -> Vec<usize> {
+        let mut seen = std::collections::HashSet::with_capacity(cells.len());
         let mut out: Vec<usize> = Vec::new();
         for &c in cells {
             if let Some(f) = self.file_at(c)
-                && !out.contains(&f)
+                && seen.insert(f)
             {
                 out.push(f);
             }

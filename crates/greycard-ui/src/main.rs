@@ -887,6 +887,7 @@ impl State {
                 grid_shown: None,
                 strip_shown: None,
                 menu_file: None,
+                words: Default::default(),
             },
             develop: owners::Develop {
                 edit: Edit::default(),
@@ -1015,6 +1016,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::parts::install(app, &state);
     panel::landscape::install(app, &state);
     panel::browser::install(app, &state, &worker);
+    panel::words::install(app, &state, &worker);
     panel::color::install(app, &state, &worker);
     panel::viewport::install(app, &state, &worker);
     panel::deliver::install(app, &state, &worker);

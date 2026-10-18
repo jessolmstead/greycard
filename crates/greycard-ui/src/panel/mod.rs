@@ -31,3 +31,4 @@ pub(crate) mod startup;
 pub(crate) mod sync;
 pub(crate) mod versions;
 pub(crate) mod viewport;
+pub(crate) mod words;

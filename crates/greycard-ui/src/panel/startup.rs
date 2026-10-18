@@ -1529,6 +1529,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Err(e) = &ran {
         tracing::error!("the window's event loop: {e}");
     }
+    // A title typed and not yet sent, the window closed under it: it
+    // is the frames' it was typed for, as a click away would have
+    // made it. First, while the index is open to hear of the saves;
+    // a frame still standing in is read for it here.
+    crate::panel::words::send_title(&state, &app);
     // An import running stops as Stop stops it, after the file in
     // hand, which lands whole rather than being cut off with the
     // process.

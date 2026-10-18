@@ -261,7 +261,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{folder, state_for, window};
+    use crate::testing::{folder, state_for, strip_cell, window};
     use slint::platform::{PointerEventButton, WindowEvent};
 
     #[test]
@@ -272,6 +272,7 @@ mod tests {
                 Change::Rating(n) => menu_change("rating", i32::from(n)),
                 Change::Flag(f) => menu_change("flag", f.code()),
                 Change::Label(l) => menu_change("label", l.code()),
+                _ => unreachable!("no key types words"),
             };
             assert_eq!(got, Some(want), "{key}");
         }
@@ -368,11 +369,6 @@ mod tests {
         app.window().dispatch_event(WindowEvent::KeyReleased {
             text: slint::platform::Key::Escape.into(),
         });
-    }
-
-    /// Row `i` of the strip, in a 1500 by 950 window.
-    fn strip_cell(i: usize) -> (f32, f32) {
-        (12.0 + i as f32 * 186.0 + 89.0, 950.0 - 148.0 + 60.0)
     }
 
     #[test]

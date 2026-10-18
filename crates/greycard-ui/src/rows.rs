@@ -571,7 +571,7 @@ const FRAMES_STALLED: Duration = Duration::from_secs(10);
 /// laid on it or claimed of it. For a file action it is its file, which
 /// is there still: its cell while the cells have not followed, else the
 /// file's own cell.
-fn resolve(st: &State, frames: &[Key], scope: Scope) -> Vec<Option<usize>> {
+pub(crate) fn resolve(st: &State, frames: &[Key], scope: Scope) -> Vec<Option<usize>> {
     let file_at: HashMap<&Path, usize> = st
         .files
         .iter()

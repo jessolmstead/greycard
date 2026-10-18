@@ -606,18 +606,25 @@ pub fn join(a: Side, b: Side) -> (Facts, Times) {
     (facts, times)
 }
 
-/// What one key press does to the meta of the frames it is aimed at.
+/// What one key press, or one entry in the panel's Title and Keywords
+/// fields, does to the meta of the frames it is aimed at.
 ///
-/// A press carries a whole selection, even where there is only one
-/// frame under it today: the browser has no multi-select yet, and
-/// when it grows one nothing here has to change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A change carries a whole selection: every frame chosen takes it,
+/// as a rating key gives every one of them the same stars.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
     /// Stars, 0 for none.
     Rating(u8),
     Flag(Flag),
     /// A label key, which is a toggle: see [`Change::settled`].
     Label(Label),
+    /// Keywords put on every frame, at the end of each one's list; a
+    /// frame that has one already, in any case, keeps its own.
+    AddKeywords(Vec<String>),
+    /// A keyword taken off every frame, whatever its case there.
+    RemoveKeyword(String),
+    /// The title, the same on every frame; empty for none.
+    Title(String),
 }
 
 impl Change {
@@ -658,9 +665,16 @@ impl Change {
     /// half red and half bare, which is neither of the two things
     /// the press could have meant. Ratings and flags are not
     /// toggles: the key names the value it writes.
+    ///
+    /// Keywords and a title are settled to the form a file holds them
+    /// in: trimmed, the empty ones dropped, and each keyword once.
     pub fn settled<'a>(self, frames: impl IntoIterator<Item = &'a Meta>) -> Change {
-        let Change::Label(label) = self else {
-            return self;
+        let label = match self {
+            Change::Label(label) => label,
+            Change::AddKeywords(words) => return Change::AddKeywords(normalize(words)),
+            Change::RemoveKeyword(word) => return Change::RemoveKeyword(word.trim().to_string()),
+            Change::Title(text) => return Change::Title(text.trim().to_string()),
+            _ => return self,
         };
         if label == Label::None {
             return self;
@@ -679,17 +693,95 @@ impl Change {
 
     /// Put this change into one frame's meta; true when it changed
     /// anything.
-    pub fn apply(self, meta: &mut Meta) -> bool {
+    pub fn apply(&self, meta: &mut Meta) -> bool {
         let before = meta.rating;
         match self {
             Change::Rating(stars) => {
-                meta.set_rating(stars);
+                meta.set_rating(*stars);
                 meta.rating != before
             }
-            Change::Flag(flag) => std::mem::replace(&mut meta.flag, flag) != flag,
-            Change::Label(label) => std::mem::replace(&mut meta.label, label) != label,
+            Change::Flag(flag) => std::mem::replace(&mut meta.flag, *flag) != *flag,
+            Change::Label(label) => std::mem::replace(&mut meta.label, *label) != *label,
+            // Each word tried, so that one already there does not
+            // keep the next from going on.
+            Change::AddKeywords(words) => {
+                let mut moved = false;
+                for word in words {
+                    moved |= meta.add_keyword(word);
+                }
+                moved
+            }
+            Change::RemoveKeyword(word) => meta.remove_keyword(word),
+            Change::Title(text) => {
+                let was = std::mem::take(&mut meta.title);
+                meta.set_title(text);
+                meta.title != was
+            }
         }
     }
+
+    /// Whether this is one of the culling keys' changes, a rating, a
+    /// flag or a label, rather than words typed in the panel.
+    pub fn is_key(&self) -> bool {
+        matches!(self, Change::Rating(_) | Change::Flag(_) | Change::Label(_))
+    }
+}
+
+/// What a selection's frames say together, for the panel's Title and
+/// Keywords fields over all of them at once.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Shared {
+    /// Every keyword on any of the frames, once whatever its case, in
+    /// the order first met, with whether every frame carries it.
+    pub keywords: Vec<(String, bool)>,
+    /// The title they all have, empty included; `None` when two of
+    /// them differ.
+    pub title: Option<String>,
+}
+
+/// What `frames` say together ([`Shared`]). No frames at all share an
+/// empty title and no keywords.
+///
+/// One pass over every frame's keywords, each counted under its
+/// [`fold`]: a word is on every frame when its count is the number of
+/// frames, since a frame's keywords are each once under that fold.
+/// So a selection of thousands costs what reading its words does.
+pub fn shared<'a>(frames: impl IntoIterator<Item = &'a Meta>) -> Shared {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut words: Vec<(String, usize)> = Vec::new();
+    let mut count = 0usize;
+    let mut title: Option<Option<&str>> = None;
+    for meta in frames {
+        count += 1;
+        for word in &meta.keywords {
+            match seen.entry(fold(word)) {
+                std::collections::hash_map::Entry::Occupied(e) => words[*e.get()].1 += 1,
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(words.len());
+                    words.push((word.clone(), 1));
+                }
+            }
+        }
+        title = Some(match title {
+            None => Some(meta.title.as_str()),
+            Some(t) => t.filter(|t| *t == meta.title),
+        });
+    }
+    Shared {
+        keywords: words
+            .into_iter()
+            .map(|(word, n)| (word, n == count))
+            .collect(),
+        title: title.map_or(Some(String::new()), |t| t.map(str::to_string)),
+    }
+}
+
+/// A keyword under the rule that keeps two of them apart: ASCII's
+/// case folded, as [`Meta::add_keyword`] compares them, and nothing
+/// else, so a word met here and a word on a frame agree on whether
+/// they are one.
+pub fn fold(word: &str) -> String {
+    word.trim().to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -873,5 +965,85 @@ mod tests {
             Change::Label(Label::Red)
         );
         assert_eq!(Change::Rating(0).settled(all_red.iter()), Change::Rating(0));
+    }
+
+    /// The panel's words: keywords go on at the end and once whatever
+    /// their case, come off whatever their case, and a title is
+    /// trimmed; each says whether it moved the frame.
+    #[test]
+    fn typed_words_go_on_and_come_off_as_a_file_holds_them() {
+        let mut meta = Meta::default();
+        meta.set_keywords(vec!["Harbor".into()]);
+        let add = Change::AddKeywords(vec![
+            " sea ".into(),
+            "SEA".into(),
+            "harbor".into(),
+            "".into(),
+        ])
+        .settled(std::iter::empty());
+        assert_eq!(
+            add,
+            Change::AddKeywords(vec!["sea".into(), "harbor".into()])
+        );
+        assert!(add.apply(&mut meta));
+        assert_eq!(
+            meta.keywords,
+            ["Harbor", "sea"],
+            "the frame's own spelling kept"
+        );
+        assert!(!add.apply(&mut meta), "nothing new the second time");
+
+        assert!(Change::RemoveKeyword("HARBOR".into()).apply(&mut meta));
+        assert_eq!(meta.keywords, ["sea"]);
+        assert!(!Change::RemoveKeyword("harbor".into()).apply(&mut meta));
+
+        let title = Change::Title("  Evening tide ".into()).settled(std::iter::empty());
+        assert_eq!(title, Change::Title("Evening tide".into()));
+        assert!(title.apply(&mut meta));
+        assert_eq!(meta.title, "Evening tide");
+        assert!(!title.apply(&mut meta));
+        assert!(Change::Title(String::new()).apply(&mut meta));
+        assert_eq!(meta.title, "");
+
+        // Only the culling keys' changes are keys.
+        assert!(Change::Rating(3).is_key() && Change::Label(Label::Red).is_key());
+        assert!(!add.is_key() && !title.is_key());
+    }
+
+    /// A selection's keywords are the union, each marked for whether
+    /// every frame has it, and its title is the one they share or
+    /// none when two differ.
+    #[test]
+    fn a_selection_shares_the_union_of_its_keywords_and_a_title_or_none() {
+        let frame = |words: &[&str], title: &str| {
+            let mut m = Meta::default();
+            m.set_keywords(words.iter().map(|w| w.to_string()).collect());
+            m.set_title(title);
+            m
+        };
+        let frames = [
+            frame(&["Harbor", "sea"], "Dusk"),
+            frame(&["harbor", "boat"], "Dusk"),
+        ];
+        let s = shared(frames.iter());
+        assert_eq!(
+            s.keywords,
+            vec![
+                ("Harbor".to_string(), true),
+                ("sea".to_string(), false),
+                ("boat".to_string(), false)
+            ]
+        );
+        assert_eq!(s.title.as_deref(), Some("Dusk"));
+
+        let frames = [frame(&[], "Dusk"), frame(&[], "")];
+        assert_eq!(shared(frames.iter()).title, None, "mixed");
+        assert_eq!(
+            shared(std::iter::empty()),
+            Shared {
+                keywords: Vec::new(),
+                title: Some(String::new()),
+            }
+        );
     }
 }

@@ -209,7 +209,9 @@ Under them are chips read from the cameras' data: **Camera**,
 **Day** and **Keyword**. They fill in once greycard has indexed the
 folder. Beside them is **Kind**, from the file's name: **Raw**,
 **JPEG**, **PNG** or **TIFF**, shown when the frames shown hold more
-than one.
+than one. Keywords are added in the **METADATA** section (see
+[Keywords and a title](culling.md#keywords-and-a-title)) or brought
+in with a Lightroom catalog or an XMP.
 
 The count at the end of the row says how many frames are shown, for
 example "120 of 640". **Clear** shows the whole folder again.

@@ -2101,6 +2101,16 @@ pub(crate) fn told(app: &App, told: Told) {
     };
     // A reader that would not open is tried again at every word.
     open_reader(&mut state.borrow_mut(), app);
+    // A pass may have brought words in from files the window never
+    // wrote (an XMP, a catalog, another copy): the Keywords field's
+    // words are read again the next time it is used. A save's row is
+    // not such a pass; the words the window puts on it are its own.
+    if matches!(
+        told,
+        Told::Opened(_) | Told::Indexed { .. } | Told::Background { .. }
+    ) {
+        crate::panel::words::forget_vocabulary(&mut state.borrow_mut());
+    }
     match told {
         Told::Opened(path) => {
             tracing::info!("library index {}", path.display());

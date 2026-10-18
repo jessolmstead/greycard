@@ -2110,6 +2110,57 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The Keywords field's vocabulary: every spelling the library
+    /// holds, each with how many files hold it, and a missing file's
+    /// words gone with it. Spellings that differ in case are kept
+    /// apart here; the window folds them.
+    #[test]
+    fn the_library_counts_its_keywords_for_the_keywords_field() {
+        let dir = scratch("words");
+        let (_r5, _r6, a7) = shoot(&dir);
+        let mut s = Sidecar::default();
+        s.meta
+            .set_keywords(vec!["HARBOR".into(), "harvest".into(), "50%_off\\".into()]);
+        s.save(&a7).unwrap();
+        let gone = dir.join("gone.tif");
+        write_frame(&gone, &R6, 9);
+        let mut s = Sidecar::default();
+        s.meta
+            .set_keywords(vec!["Hartford".into(), "harvest".into()]);
+        s.save(&gone).unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let pairs = |want: &[(&str, usize)]| -> Vec<(String, usize)> {
+            want.iter().map(|(w, n)| (w.to_string(), *n)).collect()
+        };
+        assert_eq!(
+            lib.keyword_counts().unwrap(),
+            pairs(&[
+                ("50%_off\\", 1),
+                ("HARBOR", 1),
+                ("Harbor", 1),
+                ("Hartford", 1),
+                ("Wedding", 1),
+                ("harvest", 2),
+            ])
+        );
+
+        // The file gone from the disk: its words go with it.
+        std::fs::remove_file(&gone).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(
+            lib.keyword_counts().unwrap(),
+            pairs(&[
+                ("50%_off\\", 1),
+                ("HARBOR", 1),
+                ("Harbor", 1),
+                ("Wedding", 1),
+                ("harvest", 1),
+            ])
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// The filter bar's chips: a facet's values counted with one
     /// `GROUP BY`, and a chip pressed matches exactly the files its
     /// count counted, whatever the facet.
