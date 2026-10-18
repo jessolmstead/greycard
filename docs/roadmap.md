@@ -101,10 +101,17 @@ Look section's job.
       for the forest, the torii, the pagoda and the flowers. Start from
       §150: the set, `tools/reference/`, where each control stands and
       what is open
-- [ ] The baseline exposure per camera, from Adobe's `BaselineExposure`
-      per body: the Canons land within a tenth of a stop of Lightroom,
-      the GFX half a stop over (§141, §143). Waits on one DNG exported
-      from Lightroom per body (R6 II, R5 II, R8, GFX 100S II)
+- [ ] The baseline exposure per body in the default develop (0.8.0):
+      §342 measured the import's offset against Lightroom's exports
+      (R5 Mark II within a few hundredths, GFX 100S II 0.9 stops
+      bright), but a frame opened cold still gets §141's 0.8 stops
+      for every body. Measure the default develop's brightness
+      against the camera's own JPEG per body over the index, as the
+      camera match registers them, ship a per-body table beside the
+      import's, and make the import's offset the difference between
+      the two. Adobe's `BaselineExposure` per body, from one DNG
+      exported from Lightroom per body (R6 II, R5 II, R8, GFX 100S
+      II), as the check that the table generalizes (§141, §143)
 - [ ] Whites and shadows reshaped against the set: whites moves only
       the top where Lightroom's moves the mid-tones, and wants two more
       frames of whites exports; shadows over-lifts the mid-tones of a
@@ -365,11 +372,14 @@ comes across with its ratings and collections.
       texture, clarity and the lens flags (found by the §341 review)
 - [ ] The Lightroom mapper, after §342: the scales the fit proposes and
       did not ship (highlights, blacks, the curve, the mixer's bands)
-      wait on a second shoot with export history; a frame per body
-      exported from Lightroom at every slider zero, then with Shadows
-      alone moved, to tell the profile curve's shadow lift from the
-      sliders' reach (both bodies sit a stop under Lightroom below L
-      0.3); the mixer's green band against Lightroom's; Adobe's
+      wait on a second shoot with export history; six exports from
+      the catalog of about 280 (the user's, on Windows): a virtual
+      copy of one GFX frame and one R5 Mark II frame with every
+      develop setting reset, then each with Shadows +50 alone, then
+      Highlights -50 alone, into the shoot's export folder so the
+      history pairs them, to tell the profile curve's shadow lift
+      from the sliders' reach (both bodies sit a stop under Lightroom
+      below L 0.3); the mixer's green band against Lightroom's; Adobe's
       `BaselineExposure` from a DNG per body as the generalization
       check; whether an unedited frame of a body takes its offset on
       import (today only edited frames do, so neighbors land 0.9
