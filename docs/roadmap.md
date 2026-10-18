@@ -412,10 +412,6 @@ comes across with its ratings and collections.
       the camera wrote it, right for clock drift and wrong by the
       shift for a zone, which readers that combine the two will show
       (decided 2026-10-18, kept simple for 0.8.0)
-- [ ] A Lightroom catalog's corrected capture times carried across:
-      the import does not read `Adobe_images.captureTime`, so a time
-      fixed in Lightroom comes in at the raw's EXIF time; compare the
-      two and write the difference as the frame's shift
 - [ ] Lightroom catalog import follow-ups (§337): a catalog row for a
       camera's JPEG beside its raw mapped onto the raw's frame (wants a
       catalog made with JPEGs as separate photos; none held has one); a

@@ -62,7 +62,10 @@ design note behind it.
   with it, for a second body whose clock was off. The sort by
   capture time and the Day chips follow; the export's EXIF and the
   XMP carry the corrected time; Clear shift goes back to the camera's
-  ([§354](https://github.com/jessolmstead/greycard/blob/master/docs/notes/354-the-capture-time-shifted.md))
+  ([§354](https://github.com/jessolmstead/greycard/blob/master/docs/notes/354-the-capture-time-shifted.md)).
+  A capture time corrected in Lightroom comes across the catalog
+  import as that shift
+  ([§355](https://github.com/jessolmstead/greycard/blob/master/docs/notes/355-a-capture-time-corrected-in-lightroom.md))
 
 ### Editing
 

@@ -16,6 +16,9 @@ Press **Ctrl+Shift+I**, or click **Import...** at the top of the left
 pane while the grid is up and choose **From a card or folder...**. You
 don't need a folder open first. The same menu has **A Lightroom
 catalog...**.
+A capture time you corrected in Lightroom comes across as a shift on
+the frame, so it sorts and groups by the time you set there; the
+camera's own time stays in the file.
 
 When the sheet opens, greycard looks for a card: the first mounted
 drive with a `DCIM` folder on it. If it finds none, the **From** line

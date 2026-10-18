@@ -195,6 +195,10 @@ pub(crate) struct Image {
     /// The file's size in bytes when it was imported, as the catalog's
     /// `importHash` ends with it.
     pub(crate) size: Option<u64>,
+    /// `Adobe_images.captureTime`: Lightroom's capture time for the
+    /// image, local with no zone (`2022-11-02T09:05:33`), which differs
+    /// from the file's own when the time was corrected there.
+    pub(crate) captured: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -363,6 +367,11 @@ pub struct Written {
     pub stacks: usize,
     pub stacks_there: usize,
     pub stacks_not_written: BTreeMap<String, usize>,
+    /// Frames given the shift that carries the capture time corrected
+    /// in Lightroom, and those with a Lightroom time whose file's own
+    /// could not be read to compare it with.
+    pub time_shifted: usize,
+    pub time_unread: usize,
 }
 
 /// What an import found, and what it would do or did.
@@ -909,15 +918,37 @@ fn copy_name(image: &Image) -> String {
 /// file that will not probe), which the Lightroom mapper's offset is
 /// for; another importer takes the edit alone.
 pub(crate) fn starting_edit(raw: &Path) -> (Edit, Option<String>) {
+    let (edit, camera, _) = starting_probed(raw);
+    (edit, camera)
+}
+
+/// [`starting_edit`], and the file's own capture time as the one probe
+/// read it (EXIF's form), so a frame is opened once for both.
+fn starting_probed(raw: &Path) -> (Edit, Option<String>, Option<String>) {
     if greycard_core::picture::is_picture_path(raw) {
-        return (Edit::for_picture(), None);
+        let taken = greycard_core::picture::probe_path(raw)
+            .ok()
+            .and_then(|p| p.taken);
+        return (Edit::for_picture(), None, taken);
     }
     let probe = greycard_core::decode::probe_path(raw).ok();
     let iso = probe.as_ref().and_then(|p| p.iso);
+    let taken = probe.as_ref().and_then(|p| p.taken.clone());
     let camera = probe.map(|p| greycard_core::raw::camera_name(&p.make, &p.model));
     let mut edit = Edit::default();
     edit.noise.learned_strength = greycard_edit::Noise::blend_for_iso(iso);
-    (edit, camera)
+    (edit, camera, taken)
+}
+
+/// The shift in seconds that takes a file's own capture time to the one
+/// Lightroom holds for it: none when either does not read as a date,
+/// when they agree to within a second (Lightroom rounds), or when they
+/// are further apart than a shift can be (two dates that were never
+/// the same moment).
+fn catalog_shift(catalog: &str, file: &str) -> Option<i64> {
+    let by = greycard_core::exif::seconds_of(catalog)?
+        .checked_sub(greycard_core::exif::seconds_of(file)?)?;
+    (by.abs() >= 2 && by.abs() <= greycard_edit::meta::SHIFT_LIMIT).then_some(by)
 }
 
 /// The crop an image's develop settings hold, and whether Lightroom
@@ -1151,7 +1182,7 @@ fn write_frame(
     written: &mut Written,
 ) -> Result<FrameWritten, String> {
     let found = Sidecar::load(raw).map_err(|e| e.to_string())?;
-    let (starting, camera) = starting_edit(raw);
+    let (starting, camera, taken) = starting_probed(raw);
     let mut sidecar = found.unwrap_or_else(|| Sidecar {
         line: greycard_edit::Line::of(starting.clone()),
         ..Sidecar::default()
@@ -1167,12 +1198,27 @@ fn write_frame(
     }
     let mut changed = false;
     // The catalog's meta over the sidecar's, but for the capture time's
-    // shift: the import does not read Lightroom's corrected time, so it
-    // has no shift to say, and one set here stays.
-    let meta = Meta {
+    // shift. A catalog time that differs from the file's own is the
+    // shift, and wins over the sidecar's, since a forced import asks for
+    // Lightroom's state. A catalog with no corrected time (none held,
+    // the same as the file's, or the file's not readable) has no shift
+    // to say, and one set here stays.
+    let from_catalog = match (&image.captured, &taken) {
+        (Some(catalog), Some(file)) => catalog_shift(catalog, file),
+        (Some(_), None) => {
+            written.time_unread += 1;
+            None
+        }
+        _ => None,
+    };
+    written.time_shifted += usize::from(from_catalog.is_some());
+    let mut meta = Meta {
         time_shift: sidecar.meta.time_shift,
         ..image.meta.clone()
     };
+    if let Some(by) = from_catalog {
+        meta.set_time_shift(by);
+    }
     if sidecar.meta != meta {
         sidecar.meta = meta;
         changed = true;
@@ -2178,6 +2224,17 @@ pub(crate) fn read(path: &Path) -> Result<Catalog, ImportError> {
         Some((id, size))
     })
     .collect();
+    // Lightroom's capture time for each image, where it holds one.
+    let captured: HashMap<i64, String> = optional(
+        db.prepare("SELECT id_local, captureTime FROM Adobe_images WHERE captureTime IS NOT NULL")
+            .and_then(|mut st| {
+                st.query_map([], |r| Ok((r.get::<_, i64>(0)?, text(r, 1)?)))?
+                    .collect::<Result<Vec<_>, _>>()
+            }),
+    )?
+    .into_iter()
+    .filter(|(_, t)| !t.trim().is_empty())
+    .collect();
     let mut images = Vec::new();
     let mut stmt = db.prepare(
         "SELECT i.id_local, i.rootFile, i.masterImage, i.copyName, i.rating, i.pick, \
@@ -2239,6 +2296,7 @@ pub(crate) fn read(path: &Path) -> Result<Catalog, ImportError> {
             edited,
             shape,
             size: sizes.get(&r.get::<_, i64>(1)?).copied(),
+            captured: captured.get(&id).cloned(),
         });
     }
     drop(rows);
@@ -3099,6 +3157,19 @@ impl Report {
                     }
                     out.line("turns", &turns);
                 }
+                if w.time_shifted + w.time_unread > 0 {
+                    let mut times = format!(
+                        "{} frames keep the capture time corrected in Lightroom",
+                        w.time_shifted
+                    );
+                    if w.time_unread > 0 {
+                        times.push_str(&format!(
+                            "; {} could not be compared, the file's own time not read",
+                            w.time_unread
+                        ));
+                    }
+                    out.line("capture times", &times);
+                }
                 let mut stacks = format!("{} written, {} there already", w.stacks, w.stacks_there);
                 if !w.stacks_not_written.is_empty() {
                     stacks.push_str(&format!("; not: {}", counted(&w.stacks_not_written)));
@@ -3599,6 +3670,134 @@ pub(crate) mod tests {
         import(&s.catalog, &forced).unwrap();
         let a = Sidecar::load(&first).unwrap().unwrap();
         assert_eq!((a.meta.rating, a.meta.time_shift), (4, 300));
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// Five pictures whose own capture time is `2026:03:14 10:00:00`
+    /// and whose catalog times are, in order: five minutes later, the
+    /// same, none, one second later, and an hour earlier.
+    fn timed_shoot(what: &str) -> Setup {
+        let dir = scratch(&format!("lrcat-{what}"));
+        let catalog = dir.join("Times.lrcat");
+        let here = dir.join("photos");
+        std::fs::create_dir_all(&here).unwrap();
+        let db = empty_catalog(&catalog, "1504001");
+        db.execute_batch(
+            "ALTER TABLE Adobe_images ADD COLUMN captureTime;
+             INSERT INTO AgLibraryRootFolder VALUES (1, 'r', 'D:/Times/', 'Times', NULL);
+             INSERT INTO AgLibraryFolder VALUES (2, 'f', NULL, '', 1);",
+        )
+        .unwrap();
+        let times = [
+            Some("2026-03-14T10:05:00"),
+            Some("2026-03-14T10:00:00"),
+            None,
+            Some("2026-03-14T10:00:01"),
+            Some("2026-03-14T09:00:00"),
+        ];
+        let mut frame = crate::fixture::R5;
+        frame.taken = "2026:03:14 10:00:00";
+        for (n, time) in times.iter().enumerate() {
+            let id = n as i64 + 1;
+            crate::fixture::write_frame(&here.join(format!("f{id}.tif")), &frame, id as u16);
+            db.execute(
+                "INSERT INTO AgLibraryFile VALUES (?1, 'a', ?2, 'tif', 2)",
+                rusqlite::params![id * 10, format!("f{id}")],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO Adobe_images (id_local, id_global, rootFile, rating, pick, \
+                 captureTime) VALUES (?1, 'i', ?2, 1.0, 0.0, ?3)",
+                rusqlite::params![id * 100, id * 10, time],
+            )
+            .unwrap();
+        }
+        drop(db);
+        let options = Options {
+            roots: vec![("D:/Times".into(), here.clone())],
+            library: dir.join("library").join("library.sqlite"),
+            ..Options::default()
+        };
+        Setup {
+            dir,
+            catalog,
+            here,
+            options,
+        }
+    }
+
+    fn shift_of(s: &Setup, n: u32) -> i64 {
+        Sidecar::load(&s.here.join(format!("f{n}.tif")))
+            .unwrap()
+            .unwrap()
+            .meta
+            .time_shift
+    }
+
+    /// The catalog's capture time against the file's own: the
+    /// difference is the shift, a time the same, missing or a second
+    /// off is none, and the report counts the frames shifted.
+    #[test]
+    fn a_time_corrected_in_lightroom_comes_across_as_a_shift() {
+        let s = timed_shoot("times");
+        let report = import(&s.catalog, &writing(&s)).unwrap();
+        assert_eq!(shift_of(&s, 1), 300);
+        assert_eq!(shift_of(&s, 2), 0);
+        assert_eq!(shift_of(&s, 3), 0);
+        assert_eq!(shift_of(&s, 4), 0);
+        assert_eq!(shift_of(&s, 5), -3600);
+        // A zero shift writes no key at all.
+        let raw = std::fs::read_to_string(
+            Sidecar::find(&s.here.join("f2.tif")).expect("a sidecar for the rating"),
+        )
+        .unwrap();
+        assert!(!raw.contains("time_shift"), "{raw}");
+        let w = report.written.as_ref().unwrap();
+        assert_eq!((w.time_shifted, w.time_unread), (2, 0));
+        for voice in [Voice::Command, Voice::Sheet] {
+            let said = report.lines(voice);
+            assert!(
+                said.iter()
+                    .any(|(_, t)| t.starts_with("2 frames keep the capture time corrected")),
+                "{said:?}"
+            );
+        }
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// A forced import over a sidecar with a shift: the catalog's
+    /// corrected time wins where it has one, and a frame the catalog
+    /// has no correction for keeps the sidecar's.
+    #[test]
+    fn a_forced_import_takes_the_catalog_s_shift_where_it_has_one() {
+        let s = timed_shoot("times-force");
+        for n in [1, 2] {
+            let mut mine = Sidecar::default();
+            mine.meta.rating = 1;
+            mine.meta.set_time_shift(60);
+            mine.save(&s.here.join(format!("f{n}.tif"))).unwrap();
+        }
+        let forced = Options {
+            force: true,
+            ..writing(&s)
+        };
+        import(&s.catalog, &forced).unwrap();
+        assert_eq!(shift_of(&s, 1), 300, "the catalog's");
+        assert_eq!(shift_of(&s, 2), 60, "no correction there: the sidecar's");
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// A catalog time against a file whose own cannot be read is no
+    /// shift, and is counted.
+    #[test]
+    fn a_catalog_time_with_no_time_in_the_file_is_counted_not_carried() {
+        let s = timed_shoot("times-unread");
+        std::fs::write(s.here.join("f1.tif"), b"not a picture").unwrap();
+        let report = import(&s.catalog, &writing(&s)).unwrap();
+        let w = report.written.as_ref().unwrap();
+        assert_eq!(shift_of(&s, 1), 0);
+        // Frames 2, 4 and 5 hold a catalog time too; frame 5 shifts.
+        assert_eq!((w.time_shifted, w.time_unread), (1, 1));
         std::fs::remove_dir_all(&s.dir).unwrap();
     }
 
