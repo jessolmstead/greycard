@@ -40,9 +40,7 @@ edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
 - [ ] The window's structure: a render crate holding the finish and
-      the export (the Slint UI in a crate of its own landed as §351,
-      the window's own build from 115 s and 9 GB to 24 s and 2.3 GB;
-      the file chooser out of `export.rs` as §356; Pool)
+      the export (Pool)
 
 
 ## Tracks
