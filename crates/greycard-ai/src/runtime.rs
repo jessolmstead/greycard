@@ -28,9 +28,15 @@
 //! why, before any provider is tried. The provider-outcome record is
 //! not written then: it is about what a provider did with a model
 //! file, and none was tried; the line is the log's and the caller's.
+//!
+//! Where the processor is why, Linux and Windows on x86-64 have a way
+//! back: Microsoft's own CPU-only release ([`fetchable`] names it),
+//! fetched into the model store as a model is. Once it is there,
+//! [`refresh`] decides again and it is the library loaded, with the
+//! CPU the only provider ([`cpu_only`]).
 
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
@@ -38,7 +44,7 @@ use ort::session::builder::GraphOptimizationLevel;
 mod dylib;
 mod record;
 
-pub use dylib::{LIBRARY, Unavailable};
+pub use dylib::{FETCH_RUNTIME, LIBRARY, Unavailable};
 
 /// An execution provider, in the order they are tried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -72,15 +78,23 @@ impl Provider {
     /// a library named by hand lacks fails its session build in
     /// [`open`] and the next is tried, as a provider that cannot run a
     /// graph always has been.
+    ///
+    /// Microsoft's CPU-only runtime, fetched where the processor cannot
+    /// run greycard's own, offers the CPU alone: it carries no other
+    /// provider, and trying one would only fail a session build each
+    /// time a model is opened.
     pub fn available() -> Vec<Provider> {
         if status().is_err() {
             return Vec::new();
+        }
+        if cpu_only() {
+            return vec![Provider::Cpu];
         }
         Self::all()
     }
 
     pub fn is_available(self) -> bool {
-        status().is_ok() && Self::all().contains(&self)
+        Self::available().contains(&self)
     }
 
     pub fn name(self) -> &'static str {
@@ -88,6 +102,19 @@ impl Provider {
             Provider::Cuda => "CUDA",
             Provider::WebGpu => "WebGPU",
             Provider::Cpu => "CPU",
+        }
+    }
+
+    /// The provider as the window and the command line name it to the
+    /// user: its name, and for the CPU under the fetched CPU-only
+    /// runtime, that it is the slower way, since on such a machine
+    /// there is no other. Not for the provider-outcome record, which
+    /// keys by [`Provider::name`].
+    pub fn label(self) -> &'static str {
+        if self == Provider::Cpu && cpu_only() {
+            "CPU (slower)"
+        } else {
+            self.name()
         }
     }
 
@@ -233,12 +260,83 @@ pub fn status() -> std::result::Result<&'static Path, &'static Unavailable> {
     if let Some(Err(why)) = LOADED.get() {
         return Err(why);
     }
-    probed().as_deref()
+    probed().as_ref().map(|found| found.path.as_path())
 }
 
-fn probed() -> &'static std::result::Result<std::path::PathBuf, Unavailable> {
-    static PROBED: OnceLock<std::result::Result<std::path::PathBuf, Unavailable>> = OnceLock::new();
-    PROBED.get_or_init(dylib::probe)
+/// Whether the AI features run on Microsoft's CPU-only runtime, fetched
+/// because the processor cannot run greycard's own: the CPU is then
+/// the only provider, and the slower one.
+pub fn cpu_only() -> bool {
+    !matches!(LOADED.get(), Some(Err(_)))
+        && matches!(probed(), Ok(found) if found.from == dylib::Source::Fetched)
+}
+
+/// The CPU-only runtime that would turn the AI features on here, where
+/// that is why they are off: the processor cannot run greycard's own
+/// library and the registry has Microsoft's for this platform.
+pub fn fetchable() -> Option<&'static crate::Runtime> {
+    status().err().and_then(Unavailable::fetchable)
+}
+
+type Decision = std::result::Result<dylib::Found, Unavailable>;
+
+/// The decision, made once a process and again by [`refresh`]: each
+/// is kept for the rest of the process (a few bytes, made at most once
+/// for each fetch), so `status` can hand out a reference to it.
+static DECIDED: RwLock<Option<&'static Decision>> = RwLock::new(None);
+
+fn probed() -> &'static Decision {
+    if let Some(decided) = *DECIDED.read().unwrap_or_else(|e| e.into_inner()) {
+        return decided;
+    }
+    let mut decided = DECIDED.write().unwrap_or_else(|e| e.into_inner());
+    decided.get_or_insert_with(|| Box::leak(Box::new(dylib::probe())))
+}
+
+/// Decide again, for a CPU-only runtime just fetched into the store to
+/// be the one loaded; the new status. Only before a library has been
+/// loaded: once one is in the process, it is the one for the rest of
+/// it.
+pub fn refresh() -> std::result::Result<&'static Path, &'static Unavailable> {
+    if LOADED.get().is_none() {
+        let fresh: &'static Decision = Box::leak(Box::new(dylib::probe()));
+        *DECIDED.write().unwrap_or_else(|e| e.into_inner()) = Some(fresh);
+    }
+    status()
+}
+
+/// After a CPU-only runtime has been fetched into `store`: decide
+/// again and, where it is now the library to use, load it at once
+/// rather than at the first model, so a library that will not load on
+/// this machine is said where its download was asked for.
+/// `Ok(true)` when it is loaded and the AI features run on it;
+/// `Ok(false)` when another library comes first (one named by hand,
+/// or greycard's own on a processor that can run it), which is left
+/// for the first model to load.
+///
+/// One that arrived whole and will not load here (a glibc older than
+/// it needs, say) is removed from the store, so the next launch
+/// decides as before it was fetched and offers the download again,
+/// rather than taking it on its hash and offering models that cannot
+/// run. This process keeps the failure: the AI features are off with
+/// the loader's reason.
+pub fn load_fetched(
+    store: &crate::Store,
+    runtime: &crate::Runtime,
+) -> std::result::Result<bool, &'static Unavailable> {
+    refresh()?;
+    if !cpu_only() {
+        return Ok(false);
+    }
+    init().map(|()| true).inspect_err(|why| {
+        log::warn!("{why}; removing it from the store");
+        if let Err(e) = store.remove_runtime(runtime) {
+            log::warn!(
+                "{} could not be removed: {e}",
+                store.runtime_dir(runtime).display()
+            );
+        }
+    })
 }
 
 /// The outcome of loading the library, once a process.
@@ -306,9 +404,12 @@ pub fn absent_in_test(why: &Unavailable) {
 /// environment's options set; or why it cannot be. Nothing of the
 /// library is in the process before this returns `Ok` the first time.
 fn init() -> std::result::Result<(), &'static Unavailable> {
+    // Nothing to load is not an outcome to keep: a CPU-only runtime
+    // fetched later is decided again (`refresh`) and loaded then.
+    let found = probed().as_ref()?;
     LOADED
         .get_or_init(|| {
-            let path = probed().as_ref().map_err(Clone::clone)?;
+            let path = &found.path;
             let started = std::time::Instant::now();
             match ort::init_from(path) {
                 Ok(builder) => {

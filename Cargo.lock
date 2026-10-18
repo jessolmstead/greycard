@@ -1956,6 +1956,7 @@ name = "greycard-ai"
 version = "0.7.0"
 dependencies = [
  "dirs",
+ "flate2",
  "greycard-core",
  "half",
  "image",
@@ -1967,6 +1968,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "thiserror 2.0.20",
  "ureq",
  "wgpu",

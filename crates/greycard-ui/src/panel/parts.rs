@@ -99,6 +99,14 @@ pub(crate) fn chosen(st: &mut State, app: &App, label: &str, mode: &str) {
     }
     st.develop.part_pending = Some(Pending { id, part, mode });
     match part_step(st, part) {
+        // The model is here and the runtime can be fetched: offered
+        // first, the people found once it lands.
+        Some(Step::Ask(_))
+            if crate::panel::assets::runtime_first(
+                st,
+                app,
+                crate::panel::assets::AfterRuntime::Nothing,
+            ) => {}
         Some(Step::Ask(_)) => ask_people(app, part),
         Some(Step::Offer(model, falls_back)) => offer_model(st, app, model, falls_back),
         _ => {

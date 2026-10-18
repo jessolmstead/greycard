@@ -439,6 +439,16 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
             continue;
         };
         if let Step::Ask(model) = next {
+            // The model is here and the runtime is not, but can be
+            // fetched: that is offered first, and the mask is asked
+            // for once it lands.
+            if crate::panel::assets::runtime_first(
+                st,
+                app,
+                crate::panel::assets::AfterRuntime::Nothing,
+            ) {
+                continue;
+            }
             if let Shape::Part { route, .. } = &shape
                 && crate::ai::parts_on_cpu()
             {

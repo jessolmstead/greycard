@@ -20,10 +20,37 @@
 //! would hand an x86-64-v3 library to a processor that cannot run it.
 //! `ort` itself reads it only when nothing was loaded through
 //! `init_from`, which `runtime::init` always is.
+//!
+//! Where the processor cannot run the shipped library, Microsoft's own
+//! release for the CPU can (`registry::cpu_runtime`): fetched into the
+//! model store as a model is, and taken from there once it is, its
+//! hash checked again first since it is code to be run. Until then the
+//! AI features are off with a line that says it can be fetched. So the
+//! order is: the library named by hand, the shipped one where the
+//! processor can run it, a fetched one, and else off.
 
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::{Path, PathBuf};
+
+use crate::registry::Runtime;
+
+/// The library the decision found, and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Found {
+    pub path: PathBuf,
+    pub from: Source,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Source {
+    /// `GREYCARD_ORT_DYLIB`.
+    Named,
+    /// The one greycard ships, beside the executable.
+    Shipped,
+    /// Microsoft's CPU-only release, fetched into the model store.
+    Fetched,
+}
 
 /// The library's file name on this platform: what `scripts/ort-dylib.sh`
 /// makes and `scripts/package.sh` ships beside the executables.
@@ -46,6 +73,13 @@ pub enum Unavailable {
         /// The processor's own name, from CPUID, when it gives one.
         name: Option<String>,
     },
+    /// The same, where Microsoft's CPU-only runtime, which this
+    /// processor can run, can be fetched and has not been yet.
+    Fetchable {
+        missing: Vec<&'static str>,
+        name: Option<String>,
+        runtime: &'static Runtime,
+    },
     /// No library beside the executable (or, for a test or an
     /// example, in the profile directory above it): every place
     /// looked, empty when where greycard runs from is not known.
@@ -56,20 +90,57 @@ pub enum Unavailable {
     WouldNotLoad { path: PathBuf, why: String },
 }
 
+/// The command line's word for fetching the CPU-only runtime, which
+/// `greycard models` takes.
+pub const FETCH_RUNTIME: &str = "greycard models --fetch onnxruntime";
+
+impl Unavailable {
+    /// The CPU-only runtime that would turn the AI features on, where
+    /// that is why they are off.
+    pub fn fetchable(&self) -> Option<&'static Runtime> {
+        match self {
+            Unavailable::Fetchable { runtime, .. } => Some(runtime),
+            _ => None,
+        }
+    }
+
+    /// Why, without the opening "the AI features are off": for a sheet
+    /// that says the rest itself.
+    pub fn reason(&self) -> String {
+        let line = self.to_string();
+        let (_, why) = line.split_once(": ").unwrap_or(("", &line));
+        why.to_string()
+    }
+}
+
+/// "this processor (NAME) has no A, B or C".
+fn processor(f: &mut fmt::Formatter<'_>, missing: &[&str], name: &Option<String>) -> fmt::Result {
+    f.write_str("this processor")?;
+    if let Some(name) = name {
+        write!(f, " ({name})")?;
+    }
+    write!(f, " has no {}", listed(missing))
+}
+
 impl fmt::Display for Unavailable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("the AI features are off: ")?;
+        // The fetchable line opens with its remedy; the rest, plainly.
+        if !matches!(self, Unavailable::Fetchable { .. }) {
+            f.write_str("the AI features are off: ")?;
+        }
         match self {
-            Unavailable::Processor { missing, name } => {
-                f.write_str("this processor")?;
-                if let Some(name) = name {
-                    write!(f, " ({name})")?;
-                }
+            Unavailable::Fetchable { missing, name, .. } => {
                 write!(
                     f,
-                    " has no {}, which greycard's ONNX Runtime is built for",
-                    listed(missing)
-                )
+                    "the AI features are off until Microsoft's ONNX Runtime for the CPU is \
+                     downloaded ({FETCH_RUNTIME}): "
+                )?;
+                processor(f, missing, name)?;
+                f.write_str(", which greycard's ONNX Runtime is built for")
+            }
+            Unavailable::Processor { missing, name } => {
+                processor(f, missing, name)?;
+                f.write_str(", which greycard's ONNX Runtime is built for")
             }
             Unavailable::NotBeside { looked } if looked.is_empty() => {
                 write!(f, "no {LIBRARY}, and no knowing where greycard runs from")
@@ -124,17 +195,24 @@ pub(crate) struct Facts<'a> {
     pub env: Option<&'a OsStr>,
     /// The running executable.
     pub exe: Option<&'a Path>,
+    /// The CPU-only runtime the registry has for this platform, if it
+    /// has one.
+    pub runtime: Option<&'static Runtime>,
 }
 
 /// The library to load, or why there is none to: a library named by
-/// `GREYCARD_ORT_DYLIB` first, and taken on its word; otherwise the
-/// processor, then the library greycard ships, where `candidates`
-/// says it is. `exists` is asked of each path, so a test can lay out
-/// a directory that is not there.
+/// `GREYCARD_ORT_DYLIB` first, and taken on its word; then the library
+/// greycard ships, where `candidates` says it is, if the processor can
+/// run it; then a CPU-only runtime fetched into the store, which
+/// `fetched` answers with (asked only when it is reached, as it hashes
+/// the file); and else off, saying whether that runtime can be had.
+/// `exists` is asked of each path, so a test can lay out a directory
+/// that is not there.
 pub(crate) fn decide(
     facts: &Facts<'_>,
     exists: impl Fn(&Path) -> bool,
-) -> Result<PathBuf, Unavailable> {
+    fetched: impl FnOnce() -> Option<PathBuf>,
+) -> Result<Found, Unavailable> {
     let exe_dir = facts.exe.and_then(Path::parent);
     if let Some(env) = facts.env.filter(|e| !e.is_empty()) {
         let named = PathBuf::from(env);
@@ -146,25 +224,41 @@ pub(crate) fn decide(
             _ => named,
         };
         return if exists(&path) {
-            Ok(path)
+            Ok(Found {
+                path,
+                from: Source::Named,
+            })
         } else {
             Err(Unavailable::NotAt { path })
         };
     }
-    if !facts.missing.is_empty() {
-        return Err(Unavailable::Processor {
-            missing: facts.missing.clone(),
-            name: facts.processor.clone(),
+    let looked = facts.exe.map(candidates).unwrap_or_default();
+    if facts.missing.is_empty()
+        && let Some(path) = looked.iter().find(|p| exists(p))
+    {
+        return Ok(Found {
+            path: path.clone(),
+            from: Source::Shipped,
         });
     }
-    let Some(exe) = facts.exe else {
-        return Err(Unavailable::NotBeside { looked: Vec::new() });
-    };
-    let looked = candidates(exe);
-    match looked.iter().find(|p| exists(p)) {
-        Some(found) => Ok(found.clone()),
-        None => Err(Unavailable::NotBeside { looked }),
+    if let Some(path) = fetched() {
+        return Ok(Found {
+            path,
+            from: Source::Fetched,
+        });
     }
+    if facts.missing.is_empty() {
+        return Err(Unavailable::NotBeside { looked });
+    }
+    let (missing, name) = (facts.missing.clone(), facts.processor.clone());
+    Err(match facts.runtime {
+        Some(runtime) => Unavailable::Fetchable {
+            missing,
+            name,
+            runtime,
+        },
+        None => Unavailable::Processor { missing, name },
+    })
 }
 
 /// The executable as a file rather than a link to one: `current_exe`
@@ -219,7 +313,7 @@ pub(crate) fn candidates(exe: &Path) -> Vec<PathBuf> {
 }
 
 /// The decision for this machine and this process.
-pub(crate) fn probe() -> Result<PathBuf, Unavailable> {
+pub(crate) fn probe() -> Result<Found, Unavailable> {
     let env = std::env::var_os("GREYCARD_ORT_DYLIB");
     let exe = std::env::current_exe().ok().map(real_exe);
     let missing = missing_instructions();
@@ -228,14 +322,23 @@ pub(crate) fn probe() -> Result<PathBuf, Unavailable> {
     } else {
         processor_name()
     };
+    let runtime = crate::registry::cpu_runtime();
     decide(
         &Facts {
             missing,
             processor,
             env: env.as_deref(),
             exe: exe.as_deref(),
+            runtime,
         },
         Path::is_file,
+        || {
+            let runtime = runtime?;
+            let store = crate::Store::user().ok()?;
+            store
+                .have_runtime(runtime)
+                .then(|| store.runtime_library(runtime))
+        },
     )
 }
 
@@ -315,7 +418,145 @@ mod tests {
             processor: Some("Intel(R) Core(TM) i5-3450 CPU @ 3.10GHz".into()),
             env,
             exe: Some(exe),
+            runtime: None,
         }
+    }
+
+    /// The decision's path, with no CPU-only runtime fetched.
+    fn decided(facts: &Facts<'_>, exists: impl Fn(&Path) -> bool) -> Result<PathBuf, Unavailable> {
+        decide(facts, exists, || None).map(|f| f.path)
+    }
+
+    const RUNTIME: &Runtime = &crate::registry::ONNXRUNTIME_CPU_LINUX_X64;
+
+    /// A processor the shipped library cannot run on, where the
+    /// registry has Microsoft's CPU-only runtime: off until it is
+    /// fetched, and the line says so and how; once it is in the store,
+    /// that one, and said to be the fetched one.
+    #[test]
+    fn a_processor_short_of_v3_fetches_the_cpu_runtime_and_then_loads_it() {
+        let exe = Path::new("/opt/greycard/bin/greycard-ui");
+        let beside = Path::new("/opt/greycard/bin").join(LIBRARY);
+        let there = |p: &Path| p == beside;
+        let short = Facts {
+            runtime: Some(RUNTIME),
+            ..facts(&["AVX2", "BMI2"], None, exe)
+        };
+        // Not fetched yet: fetchable, whatever is beside.
+        let off = decide(&short, there, || None).unwrap_err();
+        assert_eq!(off.fetchable(), Some(RUNTIME));
+        let line = off.to_string();
+        assert!(line.starts_with("the AI features are off until"), "{line}");
+        assert!(
+            line.contains("Microsoft's ONNX Runtime for the CPU"),
+            "{line}"
+        );
+        assert!(line.contains(FETCH_RUNTIME), "{line}");
+        assert!(
+            line.contains("i5-3450") && line.contains("AVX2 or BMI2"),
+            "{line}"
+        );
+        assert!(!line.contains('\n'));
+        // The reason alone, for the sheet, without the opening.
+        assert!(
+            off.reason().starts_with("this processor (Intel"),
+            "{}",
+            off.reason()
+        );
+        // Without a runtime to fetch (a platform the registry has none
+        // for): off as before, and nothing offered.
+        let none = decide(&facts(&["AVX2"], None, exe), there, || None).unwrap_err();
+        assert!(matches!(none, Unavailable::Processor { .. }));
+        assert_eq!(none.fetchable(), None);
+        assert!(!none.to_string().contains(FETCH_RUNTIME));
+
+        // Fetched and its hash checked: that one, CPU only.
+        let store = PathBuf::from("/home/u/.cache/greycard/models/rt").join(LIBRARY);
+        let fetched = || Some(store.clone());
+        assert_eq!(
+            decide(&short, there, fetched),
+            Ok(Found {
+                path: store.clone(),
+                from: Source::Fetched
+            })
+        );
+    }
+
+    /// The order: the library named by hand, then the shipped one
+    /// where the processor can run it, then a fetched one, then off.
+    #[test]
+    fn the_preference_is_named_then_shipped_then_fetched_then_off() {
+        let exe = Path::new("/opt/greycard/bin/greycard-ui");
+        let beside = Path::new("/opt/greycard/bin").join(LIBRARY);
+        let named = PathBuf::from("/usr/lib/microsoft/libonnxruntime.so");
+        let store = PathBuf::from("/home/u/.cache/greycard/models/rt").join(LIBRARY);
+        let everything = |p: &Path| p == beside || p == named;
+        let only_beside = |p: &Path| p == beside;
+        let nothing = |_: &Path| false;
+        let with = |missing: &'static [&'static str], env: Option<&'static OsStr>| Facts {
+            runtime: Some(RUNTIME),
+            ..facts(missing, env, exe)
+        };
+        let env = Some(OsStr::new("/usr/lib/microsoft/libonnxruntime.so"));
+        let from = |r: Result<Found, Unavailable>| r.map(|f| f.from);
+
+        // Named beats all, on any processor, and the store is not asked.
+        let asked = std::cell::Cell::new(false);
+        let fetched = || {
+            asked.set(true);
+            Some(store.clone())
+        };
+        assert_eq!(
+            from(decide(&with(&[], env), everything, fetched)),
+            Ok(Source::Named)
+        );
+        assert!(
+            !asked.get(),
+            "the fetched one is not hashed when not wanted"
+        );
+        assert_eq!(
+            from(decide(&with(&["AVX2"], env), everything, || Some(
+                store.clone()
+            ))),
+            Ok(Source::Named)
+        );
+        // A processor that can run it: the shipped one before a
+        // fetched one, and the store not asked.
+        let asked = std::cell::Cell::new(false);
+        let fetched = || {
+            asked.set(true);
+            Some(store.clone())
+        };
+        assert_eq!(
+            from(decide(&with(&[], None), only_beside, fetched)),
+            Ok(Source::Shipped)
+        );
+        assert!(!asked.get());
+        // One that cannot: the fetched one, though the shipped is there.
+        assert_eq!(
+            from(decide(&with(&["BMI2"], None), only_beside, || Some(
+                store.clone()
+            ))),
+            Ok(Source::Fetched)
+        );
+        // A processor that can, with nothing beside (a build without
+        // the script): a fetched one still serves.
+        assert_eq!(
+            from(decide(&with(&[], None), nothing, || Some(store.clone()))),
+            Ok(Source::Fetched)
+        );
+        // Nothing anywhere: off, fetchable only where the processor is
+        // why; a build without its library is told how to make it.
+        assert!(
+            decide(&with(&["BMI2"], None), nothing, || None)
+                .unwrap_err()
+                .fetchable()
+                .is_some()
+        );
+        assert!(matches!(
+            decide(&with(&[], None), nothing, || None),
+            Err(Unavailable::NotBeside { .. })
+        ));
     }
 
     #[test]
@@ -326,9 +567,9 @@ mod tests {
         let nothing = |_: &Path| false;
 
         // A processor with every instruction, the library beside: load it.
-        assert_eq!(decide(&facts(&[], None, exe), there), Ok(beside.clone()));
+        assert_eq!(decided(&facts(&[], None, exe), there), Ok(beside.clone()));
         // Without them, off, whatever is beside; and named.
-        let short = decide(&facts(&["AVX2", "BMI2", "FMA"], None, exe), there).unwrap_err();
+        let short = decided(&facts(&["AVX2", "BMI2", "FMA"], None, exe), there).unwrap_err();
         assert!(matches!(short, Unavailable::Processor { .. }));
         let line = short.to_string();
         assert!(line.contains("i5-3450"), "{line}");
@@ -336,7 +577,7 @@ mod tests {
         assert!(!line.contains('\n'));
         // With them and nothing beside: off, and where it looked.
         assert_eq!(
-            decide(&facts(&[], None, exe), nothing),
+            decided(&facts(&[], None, exe), nothing),
             Err(Unavailable::NotBeside {
                 looked: vec![beside.clone()]
             })
@@ -348,7 +589,7 @@ mod tests {
     #[test]
     fn the_line_for_no_library_names_every_place_and_the_remedy() {
         let exe = Path::new("/t/debug/deps/models-0123");
-        let line = decide(&facts(&[], None, exe), |_| false)
+        let line = decided(&facts(&[], None, exe), |_| false)
             .unwrap_err()
             .to_string();
         assert!(line.contains("/t/debug/deps and /t/debug"), "{line}");
@@ -365,14 +606,14 @@ mod tests {
         // one named is somebody's own choice, a CPU-only build, say.
         let env = mine.as_os_str();
         assert_eq!(
-            decide(&facts(&["AVX2"], Some(env), exe), there),
+            decided(&facts(&["AVX2"], Some(env), exe), there),
             Ok(mine.clone())
         );
         // Named and not there: off, and said so, rather than falling
         // back to the shipped one the name was meant to replace.
         let gone = OsStr::new("/nowhere/libonnxruntime.so");
         assert_eq!(
-            decide(&facts(&[], Some(gone), exe), there),
+            decided(&facts(&[], Some(gone), exe), there),
             Err(Unavailable::NotAt {
                 path: PathBuf::from("/nowhere/libonnxruntime.so")
             })
@@ -380,14 +621,14 @@ mod tests {
         // Empty is unset.
         let beside = Path::new("/opt/greycard/bin").join(LIBRARY);
         assert_eq!(
-            decide(&facts(&[], Some(OsStr::new("")), exe), |p| p == beside),
+            decided(&facts(&[], Some(OsStr::new("")), exe), |p| p == beside),
             Ok(beside)
         );
         // Relative: beside the executable when it is there.
         let rel = OsStr::new("lib/custom.so");
         let under = PathBuf::from("/opt/greycard/bin/lib/custom.so");
         assert_eq!(
-            decide(&facts(&[], Some(rel), exe), |p| p == under),
+            decided(&facts(&[], Some(rel), exe), |p| p == under),
             Ok(under.clone())
         );
     }
@@ -412,11 +653,11 @@ mod tests {
         std::os::unix::fs::symlink(bundle.join("greycard"), bin.join("greycard")).unwrap();
 
         let exe = real_exe(bin.join("greycard"));
-        let found = decide(&facts(&[], None, &exe), Path::is_file).unwrap();
+        let found = decided(&facts(&[], None, &exe), Path::is_file).unwrap();
         assert_eq!(found, std::fs::canonicalize(bundle.join(LIBRARY)).unwrap());
         // Unfollowed, the link's own directory has nothing.
         let raw = bin.join("greycard");
-        assert!(decide(&facts(&[], None, &raw), Path::is_file).is_err());
+        assert!(decided(&facts(&[], None, &raw), Path::is_file).is_err());
         // A path that is not there is kept as given.
         assert_eq!(real_exe(dir.join("gone")), dir.join("gone"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -482,7 +723,7 @@ mod tests {
         let exe = Path::new("/t/debug/deps/models-0123");
         let above = Path::new("/t/debug").join(LIBRARY);
         assert_eq!(
-            decide(&facts(&[], None, exe), |p| p == above),
+            decided(&facts(&[], None, exe), |p| p == above),
             Ok(above.clone())
         );
         // Nowhere else: not a parent of an ordinary binary's directory.

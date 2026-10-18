@@ -320,6 +320,32 @@ impl Worker {
                 .expect("spawning the fetch");
             return;
         }
+        if let Job::FetchRuntime { runtime } = job {
+            let (deliver, reducer) = (self.deliver.clone(), self.reducer.clone());
+            std::thread::Builder::new()
+                .name("greycard runtime fetch".into())
+                .spawn(move || {
+                    let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        if fetch_runtime(runtime, &*deliver) {
+                            for frame in reducer.models_arrived() {
+                                deliver(Outcome::EditedKept { frame });
+                            }
+                        }
+                    }));
+                    if let Err(payload) = held {
+                        deliver(Outcome::FetchFailed {
+                            id: runtime.id,
+                            name: runtime.name,
+                            message: format!(
+                                "the fetch panicked: {}",
+                                panic_message(payload.as_ref())
+                            ),
+                        });
+                    }
+                })
+                .expect("spawning the runtime fetch");
+            return;
+        }
         if let Job::FetchLenses = job {
             let (deliver, queue) = (self.deliver.clone(), self.queue.clone());
             std::thread::Builder::new()
@@ -602,6 +628,73 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) -> bool 
         },
     });
     fetched
+}
+
+/// Fetch Microsoft's CPU-only ONNX Runtime into the store, saying how
+/// it goes as a model's fetch does, then decide again and load it, so
+/// a library that will not load here is said now; whether it is
+/// loaded.
+fn fetch_runtime(runtime: &'static greycard_ai::Runtime, deliver: &dyn Fn(Outcome)) -> bool {
+    let failed = |message: String| {
+        deliver(Outcome::FetchFailed {
+            id: runtime.id,
+            name: runtime.name,
+            message,
+        })
+    };
+    let store = match greycard_ai::Store::user() {
+        Ok(s) => s,
+        Err(e) => {
+            failed(e.to_string());
+            return false;
+        }
+    };
+    let mut last = Instant::now();
+    let fetched = store.fetch_runtime(runtime, |p| {
+        if p.done == 0 || p.done == p.total || last.elapsed().as_millis() > 200 {
+            last = Instant::now();
+            deliver(Outcome::Fetching {
+                name: runtime.name,
+                done: p.done,
+                total: p.total,
+            });
+        }
+    });
+    if let Err(e) = fetched {
+        failed(e.to_string());
+        return false;
+    }
+    match greycard_ai::runtime::load_fetched(&store, runtime) {
+        Ok(loaded) => {
+            tracing::info!(
+                "{} fetched{}",
+                runtime.name,
+                if loaded {
+                    " and loaded: the AI features run on the CPU"
+                } else {
+                    ", and another ONNX Runtime comes first here"
+                }
+            );
+            deliver(Outcome::RuntimeFetched { runtime });
+            true
+        }
+        // Here whole, and it will not load (or the decision still will
+        // not have it): said as that, not as a failed download. One
+        // that would not load is gone from the store again, so the
+        // next launch offers it afresh rather than trusting it.
+        Err(why) => {
+            deliver(Outcome::RuntimeUnusable {
+                id: runtime.id,
+                message: match why {
+                    greycard_ai::runtime::Unavailable::WouldNotLoad { .. } => {
+                        format!("{why}; it is removed again, and offered at the next start")
+                    }
+                    _ => why.to_string(),
+                },
+            });
+            false
+        }
+    }
 }
 
 /// Fetch the lens database, reporting as it comes, and hand it to the

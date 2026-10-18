@@ -316,6 +316,22 @@ session takes a few seconds while the model loads; after that, masks
 come quickly. Without the Object model, Sky still works, with a
 coarser edge, and clicks can only remove sky.
 
+### On an older processor
+
+The models run on ONNX Runtime, and the copy that comes with greycard
+needs a processor with AVX2 (most Intel Core processors from 2013 on, and
+AMD's from 2015 on). On an older one, on Linux or Windows, greycard
+still starts and edits as usual, but the first time you ask for a
+learned mask, the eraser or the learned denoiser, the same sheet
+offers Microsoft's own ONNX Runtime instead: about 9 MB on Linux and
+79 MB on Windows, under the MIT license, kept beside the models. It
+runs the models on the CPU alone, so they are slower than on a GPU,
+and the status line says so ("on CPU (slower)"). **Not now** leaves
+the AI features off for the session, and the status line says why.
+From the command line, `greycard models --fetch onnxruntime` fetches
+it; an `--export` on such a machine before it is fetched writes the
+picture without the learned masks and exits 2, naming it.
+
 ## Masks and other frames
 
 Masks are drawn around one picture, so syncing settings onto other

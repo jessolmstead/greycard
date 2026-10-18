@@ -42,6 +42,9 @@ pub(crate) struct Sheets {
     /// What the sheet offers to fetch, and whether something is coming.
     pub(crate) fetch: Option<Fetch>,
     pub(crate) fetching: bool,
+    /// What the CPU-only runtime's fetch, once accepted, holds up: the
+    /// model offer to make when it lands.
+    pub(crate) runtime_next: Option<panel::assets::AfterRuntime>,
     /// Models declined this session, not to be asked for again.
     pub(crate) declined: Vec<&'static str>,
     /// The Subject model declined this session as a Whole person's

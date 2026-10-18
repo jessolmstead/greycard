@@ -599,7 +599,7 @@ pub(super) fn run(
                                 shape,
                                 file: opened_path.clone(),
                                 raster: made.raster,
-                                provider: made.provider.map(|p| p.name()),
+                                provider: made.provider.map(|p| p.label()),
                                 seconds: made.seconds,
                                 note: made.note,
                                 part: made.part,
@@ -647,7 +647,7 @@ pub(super) fn run(
                 let people = match &base {
                     Some(b) => ai
                         .people(b.stamp, &b.image, b.source, b.turn)
-                        .map(|(found, provider, seconds)| (found, provider.name(), seconds)),
+                        .map(|(found, provider, seconds)| (found, provider.label(), seconds)),
                     None => Err("nothing developed yet".into()),
                 };
                 deliver(Outcome::People {
@@ -659,7 +659,7 @@ pub(super) fn run(
                 let offers = match &base {
                     Some(b) => ai
                         .landscape(b.stamp, &b.image, &b.edit, b.source)
-                        .map(|(found, provider, seconds)| (found, provider.name(), seconds)),
+                        .map(|(found, provider, seconds)| (found, provider.label(), seconds)),
                     None => Err("nothing developed yet".into()),
                 };
                 deliver(Outcome::Landscape {
@@ -668,6 +668,7 @@ pub(super) fn run(
                 });
             }
             Job::Fetch { .. }
+            | Job::FetchRuntime { .. }
             | Job::FetchLenses
             | Job::Gpu
             | Job::Thumbnail { .. }

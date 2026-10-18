@@ -204,14 +204,10 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       by its neighbors' labels; spires the labels' step under-covers;
       more hard negatives for every bar (fog, snowfields, beaches,
       interiors with plants)
-- [ ] The AI features on a CPU without AVX2: once the runtime is loaded
-      at first use rather than at exec, a machine without x86-64-v3
-      (Intel before Haswell, AMD before Zen, Pentium and Celeron parts
-      to 2021) runs the editor with the AI features off and a plain
-      word; the follow-up is to fetch Microsoft's own CPU-only build of
-      ONNX Runtime there, as a model is fetched, with its MIT license,
-      so Sky, Subject, Parts and the denoiser run on that CPU, slower
-      (issue #23)
+- [ ] The CPU-only ONNX Runtime (§358) run on a processor without
+      AVX2, under QEMU user mode with a pre-AVX processor model or on
+      a real machine from before 2013; built and reviewed on an AVX2
+      machine only (issue #23)
 - [ ] MediaPipe's iris landmarks as the CPU fallback for the Iris
       part, where the crop cascade takes about 15 s (§252)
 - [ ] Describe your own mask: a free-text field beside the presets,

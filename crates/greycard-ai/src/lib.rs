@@ -22,6 +22,7 @@ pub mod sam3;
 pub mod sky;
 pub mod store;
 pub mod subject;
+mod unpack;
 
 pub use cache::Cache as DenoiseCache;
 pub use denoise::Denoiser;
@@ -29,8 +30,8 @@ pub use fill::Fill;
 pub use image::{Mask, Rgb8, Rgbf};
 pub use refine::refine;
 pub use registry::{
-    DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISERS, FILL, MODELS, Model, SAM, SAM3, SKY,
-    SUBJECT, SUBJECT_WEBGPU, denoiser, model, tier_of,
+    DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISERS, FILL, MODELS, Model, Runtime, SAM,
+    SAM3, SKY, SUBJECT, SUBJECT_WEBGPU, cpu_runtime, denoiser, model, tier_of,
 };
 pub use runtime::Provider;
 pub use sam::{Prompt, Sam};

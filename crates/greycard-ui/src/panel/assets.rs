@@ -118,6 +118,11 @@ pub(crate) fn offered(
     model: &'static greycard_ai::Model,
     falls_back: bool,
 ) -> bool {
+    // Where the runtime can be fetched, it is offered first, and the
+    // model after it lands.
+    if runtime_first(st, app, AfterRuntime::Model(model, falls_back)) {
+        return true;
+    }
     if let Err(why) = greycard_ai::runtime::status() {
         if !st.sheets.declined.contains(&model.id) {
             st.sheets.declined.push(model.id);
@@ -169,6 +174,139 @@ Kept in {}.",
     true
 }
 
+/// What the CPU-only runtime's offer holds up, for when it lands: the
+/// offer of a model not in the store yet, the Subject model for a
+/// Whole person's edge, or nothing but the masks, the People run, the
+/// landscape and the develop already waiting, which are asked again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AfterRuntime {
+    Model(&'static greycard_ai::Model, bool),
+    Edge(&'static greycard_ai::Model),
+    Nothing,
+}
+
+/// The sheet's title for the CPU-only runtime.
+pub(crate) const RUNTIME_TITLE: &str = "Download ONNX Runtime for the CPU?";
+
+/// Where the AI features are off until Microsoft's CPU-only runtime is
+/// fetched, and it was neither declined nor failed to arrive this
+/// session: offer it in place of what `next` asks for. Whether the
+/// caller is to hold back, because the sheet opened or waits on
+/// another sheet or a download in hand; false where there is no such
+/// runtime to fetch, and the caller goes on as without the runtime.
+pub(crate) fn runtime_first(st: &mut State, app: &App, next: AfterRuntime) -> bool {
+    match greycard_ai::runtime::status() {
+        Err(why) => runtime_first_for(st, app, why, next),
+        Ok(_) => false,
+    }
+}
+
+/// [`runtime_first`] with why the AI features are off given.
+pub(crate) fn runtime_first_for(
+    st: &mut State,
+    app: &App,
+    why: &'static greycard_ai::runtime::Unavailable,
+    next: AfterRuntime,
+) -> bool {
+    let Some(runtime) = why.fetchable() else {
+        return false;
+    };
+    // A batch run has nobody to answer a sheet: off, as before.
+    if st.window.batch
+        || st.sheets.declined.contains(&runtime.id)
+        || st.sheets.fetch_failed.contains(&runtime.id)
+    {
+        return false;
+    }
+    if st.sheets.fetch.is_some() || st.sheets.fetching || app.invoke_sheet_open() {
+        return true;
+    }
+    offer_runtime(st, app, why, next);
+    true
+}
+
+/// Open the model sheet for the CPU-only runtime `why` names: why it
+/// is wanted, what it is, its size, Microsoft's license, and that it
+/// runs on the CPU alone.
+pub(crate) fn offer_runtime(
+    st: &mut State,
+    app: &App,
+    why: &'static greycard_ai::runtime::Unavailable,
+    next: AfterRuntime,
+) {
+    let Some(runtime) = why.fetchable() else {
+        return;
+    };
+    st.sheets.fetch = Some(Fetch::Runtime(why, next));
+    app.set_fetch_title(RUNTIME_TITLE.into());
+    let reason = why.reason();
+    let mut chars = reason.chars();
+    let reason = chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect::<String>())
+        .unwrap_or_default();
+    app.set_fetch_text(
+        format!(
+            "{reason}, so the AI features are off.
+
+{name} runs them on the CPU only, slower: {download} MB from {host}, {kept} MB kept.
+License: {license} ({url}).
+Kept in {kept_in}.",
+            name = runtime.name.split(',').next().unwrap_or(runtime.name),
+            download = mb(runtime.archive.bytes),
+            host = runtime.archive.url.split('/').nth(2).unwrap_or("its site"),
+            kept = mb(runtime.bytes()),
+            license = runtime.license.name,
+            url = runtime.license.url,
+            kept_in = st
+                .develop
+                .store
+                .as_ref()
+                .map_or("no cache directory".to_string(), |s| s
+                    .root()
+                    .display()
+                    .to_string()),
+        )
+        .into(),
+    );
+    app.set_fetch_note(
+        "Microsoft's own build, as published. Not now keeps the AI features off this session."
+            .into(),
+    );
+    app.set_fetch_open(true);
+}
+
+/// The CPU-only runtime's offer answered Not now: the AI features stay
+/// off this session, and the plain line says so, as it did before the
+/// runtime could be fetched. The model the offer held up is taken as
+/// declined, and a part or a landscape waiting is let go.
+fn runtime_declined(
+    st: &mut State,
+    app: &App,
+    why: &'static greycard_ai::runtime::Unavailable,
+    next: AfterRuntime,
+) {
+    if let Some(runtime) = why.fetchable()
+        && !st.sheets.declined.contains(&runtime.id)
+    {
+        st.sheets.declined.push(runtime.id);
+    }
+    match next {
+        AfterRuntime::Model(model, _) => {
+            if !st.sheets.declined.contains(&model.id) {
+                st.sheets.declined.push(model.id);
+            }
+        }
+        AfterRuntime::Edge(_) => st.sheets.edge_declined = true,
+        AfterRuntime::Nothing => {}
+    }
+    st.develop.part_pending = None;
+    st.develop.landscape_pending = None;
+    app.set_status(why.to_string().into());
+    // The masks waiting are asked again, and say the same line.
+    app.window().request_redraw();
+}
+
 /// The status line once the Subject model is declined for a Whole
 /// person's edge.
 pub(crate) const EDGE_DECLINED: &str =
@@ -178,6 +316,11 @@ pub(crate) const EDGE_DECLINED: &str =
 /// person's finer edge: the mask is made meanwhile with the coarser
 /// one, and the sheet says so.
 pub(crate) fn offer_edge(st: &mut State, app: &App, model: &'static greycard_ai::Model) {
+    // The runtime first where it can be fetched; the edge's own offer
+    // once it lands.
+    if runtime_first(st, app, AfterRuntime::Edge(model)) {
+        return;
+    }
     // Not offered (no runtime here): no sheet to dress.
     if !offered(st, app, model, false) {
         return;
@@ -748,6 +891,21 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         crate::panel::landscape::model_answered(&mut st, &app, false);
                     }
                 }
+                (Fetch::Runtime(why, next), true) => {
+                    if let Some(runtime) = why.fetchable() {
+                        st.sheets.fetching = true;
+                        st.sheets.runtime_next = Some(next);
+                        app.set_status(
+                            format!(
+                                "downloading {}",
+                                runtime.name.split(',').next().unwrap_or("")
+                            )
+                            .into(),
+                        );
+                        worker.send(Job::FetchRuntime { runtime });
+                    }
+                }
+                (Fetch::Runtime(why, next), false) => runtime_declined(&mut st, &app, why, next),
                 (Fetch::Lenses, true) => {
                     st.sheets.fetching = true;
                     worker.send(Job::FetchLenses);
@@ -1231,6 +1389,116 @@ mod tests {
             "a Subject shape is still offered"
         );
         assert_eq!(app.get_status(), EDGE_DECLINED);
+    }
+
+    /// Where the processor cannot run greycard's ONNX Runtime and the
+    /// registry has Microsoft's for the CPU, the model sheet offers
+    /// that first, as a model is offered: why, what it is, its size,
+    /// its license, and that it runs on the CPU alone and slower. Not
+    /// now keeps the plain line, takes the model it held up as
+    /// declined, and nothing offers the runtime again this session.
+    #[test]
+    fn the_cpu_runtime_is_offered_with_its_license_and_not_now_keeps_the_line() {
+        use greycard_ai::runtime::Unavailable;
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let runtime = &greycard_ai::registry::ONNXRUNTIME_CPU_LINUX_X64;
+        let name = Some("Intel(R) Core(TM) i5-3450 CPU @ 3.10GHz".to_string());
+        let missing = vec!["AVX2", "BMI2", "FMA"];
+        let why: &'static Unavailable = Box::leak(Box::new(Unavailable::Fetchable {
+            missing: missing.clone(),
+            name: name.clone(),
+            runtime,
+        }));
+        let sky = AfterRuntime::Model(&greycard_ai::SKY, false);
+
+        // Off for a reason a download does not mend: nothing offered,
+        // and the caller goes on as without the runtime.
+        let processor: &'static Unavailable =
+            Box::leak(Box::new(Unavailable::Processor { missing, name }));
+        assert!(!runtime_first_for(
+            &mut state.borrow_mut(),
+            &app,
+            processor,
+            sky
+        ));
+        assert!(!app.get_fetch_open());
+
+        // Another sheet up: held back, and that sheet left alone.
+        state.borrow_mut().sheets.fetch = Some(Fetch::Lenses);
+        assert!(runtime_first_for(&mut state.borrow_mut(), &app, why, sky));
+        assert_eq!(state.borrow().sheets.fetch, Some(Fetch::Lenses));
+        assert!(!app.get_fetch_open());
+        state.borrow_mut().sheets.fetch = None;
+
+        // Offered, in place of the Sky model's offer.
+        assert!(runtime_first_for(&mut state.borrow_mut(), &app, why, sky));
+        assert!(app.get_fetch_open());
+        assert_eq!(state.borrow().sheets.fetch, Some(Fetch::Runtime(why, sky)));
+        assert_eq!(app.get_fetch_title(), RUNTIME_TITLE);
+        let text = app.get_fetch_text().to_string();
+        for said in [
+            "This processor (Intel(R) Core(TM) i5-3450 CPU @ 3.10GHz) has no AVX2, BMI2 or FMA",
+            "the AI features are off",
+            "ONNX Runtime 1.28.0 by Microsoft runs them on the CPU only, slower",
+            "9 MB from github.com, 25 MB kept",
+            "License: MIT (https://github.com/microsoft/onnxruntime/blob/v1.28.0/LICENSE)",
+            "Kept in ",
+        ] {
+            assert!(text.contains(said), "{said:?} not in {text:?}");
+        }
+        assert!(
+            app.get_fetch_note()
+                .contains("Not now keeps the AI features off")
+        );
+
+        // Not now: the line as before, the model held up declined.
+        app.invoke_fetch_answered(false);
+        assert!(!app.get_fetch_open());
+        {
+            let st = state.borrow();
+            assert_eq!(st.sheets.fetch, None);
+            assert!(!st.sheets.fetching);
+            assert!(st.sheets.declined.contains(&runtime.id));
+            assert!(st.sheets.declined.contains(&greycard_ai::SKY.id));
+        }
+        assert_eq!(app.get_status(), why.to_string());
+        assert!(
+            app.get_status()
+                .contains(greycard_ai::runtime::FETCH_RUNTIME)
+        );
+        // Asked once a session.
+        assert!(!runtime_first_for(
+            &mut state.borrow_mut(),
+            &app,
+            why,
+            AfterRuntime::Nothing
+        ));
+        assert!(!app.get_fetch_open());
+    }
+
+    /// A batch run (a capture, an export with nobody at the window)
+    /// never opens the runtime's sheet: the AI features are off, as
+    /// without it.
+    #[test]
+    fn a_batch_run_is_not_offered_the_cpu_runtime() {
+        use greycard_ai::runtime::Unavailable;
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let why: &'static Unavailable = Box::leak(Box::new(Unavailable::Fetchable {
+            missing: vec!["AVX2"],
+            name: None,
+            runtime: &greycard_ai::registry::ONNXRUNTIME_CPU_WINDOWS_X64,
+        }));
+        state.borrow_mut().window.batch = true;
+        assert!(!runtime_first_for(
+            &mut state.borrow_mut(),
+            &app,
+            why,
+            AfterRuntime::Nothing
+        ));
+        assert!(!app.get_fetch_open());
+        assert_eq!(state.borrow().sheets.fetch, None);
     }
 
     #[test]

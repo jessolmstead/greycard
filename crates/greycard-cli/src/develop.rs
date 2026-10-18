@@ -508,7 +508,7 @@ fn develop_learned(
     tracing::info!(
         "learned denoiser {} on {} ({:.1} s to load)",
         denoiser.version(),
-        denoiser.provider().name(),
+        denoiser.provider().label(),
         start.elapsed().as_secs_f32()
     );
     let prepared = prepare(frame, settings, true)?;

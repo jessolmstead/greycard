@@ -406,6 +406,226 @@ pub fn model(id: &str) -> Option<&'static Model> {
     MODELS.iter().find(|m| m.id == id)
 }
 
+/// ONNX Runtime as Microsoft publishes it, for a processor the one
+/// greycard ships cannot run on: an archive fetched on first use, as a
+/// model is, from which the store keeps the library and the files
+/// that go with it. CPU only (Microsoft's releases carry no WebGPU),
+/// and built for baseline x86-64 with the faster kernels chosen at run
+/// time by CPUID, so it runs on any 64-bit Intel or AMD processor. The
+/// version is the one `ort` binds and greycard's own library is made
+/// from (pyke's `ms@1.28.0`), so either answers the same API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Runtime {
+    /// Stable, also the store directory: changes when the files do.
+    pub id: &'static str,
+    pub name: &'static str,
+    /// The release the archive is from.
+    pub source: &'static str,
+    pub license: License,
+    /// The license's text as the archive carries it, for the note.
+    pub notice: &'static str,
+    /// The archive as published: its name, URL, size and hash.
+    pub archive: File,
+    pub packing: Packing,
+    /// The library, kept as [`crate::runtime::LIBRARY`] is named.
+    pub library: Member,
+    /// The files kept beside it: the license and the third-party
+    /// notices, which go with every copy of the library.
+    pub kept: &'static [Member],
+}
+
+/// How a runtime's archive is packed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Packing {
+    /// A gzipped tar, as the Linux release is.
+    Tgz,
+    /// A zip of deflated members, as the Windows release is.
+    Zip,
+}
+
+/// One file inside a runtime's archive that the store keeps: its path
+/// in the archive, the name it keeps, and its size and hash, checked
+/// as it is taken out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Member {
+    pub path: &'static str,
+    pub name: &'static str,
+    pub bytes: u64,
+    pub sha256: &'static str,
+}
+
+impl Runtime {
+    /// What is kept once it is unpacked: the library and the files
+    /// beside it.
+    pub fn bytes(&self) -> u64 {
+        self.members().map(|m| m.bytes).sum()
+    }
+
+    /// Every member taken out of the archive, the library first.
+    pub fn members(&self) -> impl Iterator<Item = &Member> {
+        std::iter::once(&self.library).chain(self.kept)
+    }
+
+    /// The note written beside the files.
+    pub fn license_note(&self) -> String {
+        let members: Vec<String> = self
+            .members()
+            .map(|m| {
+                format!(
+                    "  {} ({} bytes, sha256 {})\n    {} in the archive",
+                    m.name, m.bytes, m.sha256, m.path
+                )
+            })
+            .collect();
+        format!(
+            "{name}\n\nLicense: {lic} <{licurl}>\nSource: {source}\n\nFrom {archive} ({bytes} bytes, sha256 {sha})\n  {url}\n\nFiles:\n{members}\n\nDownloaded by greycard and kept as Microsoft published it, to run the models on a processor greycard's own ONNX Runtime cannot run on (one without AVX2). greycard does not redistribute these files. The license:\n\n{notice}",
+            name = self.name,
+            lic = self.license.name,
+            licurl = self.license.url,
+            source = self.source,
+            archive = self.archive.name,
+            bytes = self.archive.bytes,
+            sha = self.archive.sha256,
+            url = self.archive.url,
+            members = members.join("\n"),
+            notice = self.notice,
+        )
+    }
+}
+
+/// ONNX Runtime's license, as Microsoft's archives carry it (`LICENSE`
+/// at the top of each; the Windows one has CRLF line ends).
+const ONNXRUNTIME_LICENSE: &str = "MIT License
+
+Copyright (c) Microsoft Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the \"Software\"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+";
+
+const ONNXRUNTIME_SOURCE: &str = "https://github.com/microsoft/onnxruntime/releases/tag/v1.28.0";
+const ONNXRUNTIME_MIT: License = License {
+    name: "MIT",
+    url: "https://github.com/microsoft/onnxruntime/blob/v1.28.0/LICENSE",
+};
+
+/// Microsoft's ONNX Runtime 1.28.0 for Linux on x86-64, glibc 2.27 or
+/// later. The library is `libonnxruntime.so.1.28.0` (the `.so` and
+/// `.so.1` beside it in the archive are links to it). Nothing else in
+/// the archive is wanted: the providers' shared library is for the
+/// CUDA and TensorRT plugins, which this build does not use.
+pub const ONNXRUNTIME_CPU_LINUX_X64: Runtime = Runtime {
+    id: "onnxruntime-1.28.0-cpu-linux-x64",
+    name: "ONNX Runtime 1.28.0 by Microsoft, for the CPU",
+    source: ONNXRUNTIME_SOURCE,
+    license: ONNXRUNTIME_MIT,
+    notice: ONNXRUNTIME_LICENSE,
+    archive: File {
+        name: "onnxruntime-linux-x64-1.28.0.tgz",
+        url: "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/onnxruntime-linux-x64-1.28.0.tgz",
+        bytes: 9_125_960,
+        sha256: "a3e1b79d7bb1bf09696ce675f49e4064e6c81f6202b8225624fff0e93f8d6407",
+    },
+    packing: Packing::Tgz,
+    library: Member {
+        path: "onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so.1.28.0",
+        name: "libonnxruntime.so",
+        bytes: 24_268_848,
+        sha256: "1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab",
+    },
+    kept: &[
+        Member {
+            path: "onnxruntime-linux-x64-1.28.0/LICENSE",
+            name: "LICENSE",
+            bytes: 1_073,
+            sha256: "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+        },
+        Member {
+            path: "onnxruntime-linux-x64-1.28.0/ThirdPartyNotices.txt",
+            name: "ThirdPartyNotices.txt",
+            bytes: 325_054,
+            sha256: "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
+        },
+    ],
+};
+
+/// The same for Windows on x86-64. The zip is mostly the library's
+/// debug symbols (`onnxruntime.pdb`, 408 MB unpacked), which are left
+/// in it; `onnxruntime.dll` needs nothing but the system's own DLLs
+/// and the C++ runtime greycard's package already ships.
+pub const ONNXRUNTIME_CPU_WINDOWS_X64: Runtime = Runtime {
+    id: "onnxruntime-1.28.0-cpu-windows-x64",
+    name: "ONNX Runtime 1.28.0 by Microsoft, for the CPU",
+    source: ONNXRUNTIME_SOURCE,
+    license: ONNXRUNTIME_MIT,
+    notice: ONNXRUNTIME_LICENSE,
+    archive: File {
+        name: "onnxruntime-win-x64-1.28.0.zip",
+        url: "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/onnxruntime-win-x64-1.28.0.zip",
+        bytes: 78_796_801,
+        sha256: "abef733dacbe2f571547a7150b479b5cb9cc0df22f96c24983a42cadb1b4f8bc",
+    },
+    packing: Packing::Zip,
+    library: Member {
+        path: "onnxruntime-win-x64-1.28.0/lib/onnxruntime.dll",
+        name: "onnxruntime.dll",
+        bytes: 15_809_848,
+        sha256: "18370c375f07357fa5874344a9d9ac17e6b6fe1eb18b1dd209d79483b4470257",
+    },
+    kept: &[
+        Member {
+            path: "onnxruntime-win-x64-1.28.0/LICENSE",
+            name: "LICENSE",
+            bytes: 1_094,
+            sha256: "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674",
+        },
+        Member {
+            path: "onnxruntime-win-x64-1.28.0/ThirdPartyNotices.txt",
+            name: "ThirdPartyNotices.txt",
+            bytes: 331_175,
+            sha256: "fb0af774b4d7cffc5b9d046f2aaeade2f37df2f80abf8033c95dfffcc77a8866",
+        },
+    ],
+};
+
+/// Every CPU-only runtime the registry knows, whatever this build is.
+pub const RUNTIMES: &[Runtime] = &[ONNXRUNTIME_CPU_LINUX_X64, ONNXRUNTIME_CPU_WINDOWS_X64];
+
+/// The CPU-only runtime for this build's platform, where the one
+/// greycard ships may not run: Linux and Windows on x86-64. None on a
+/// Mac, whose package is for Apple silicon alone (which lacks nothing
+/// greycard's library needs; Microsoft publishes no Intel Mac build of
+/// 1.28.0 either), and none on ARM, where nothing is missing.
+pub fn cpu_runtime() -> Option<&'static Runtime> {
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        Some(&ONNXRUNTIME_CPU_LINUX_X64)
+    } else if cfg!(all(windows, target_arch = "x86_64")) {
+        Some(&ONNXRUNTIME_CPU_WINDOWS_X64)
+    } else {
+        None
+    }
+}
+
+/// The runtime with this id, if the registry has one.
+pub fn runtime(id: &str) -> Option<&'static Runtime> {
+    RUNTIMES.iter().find(|r| r.id == id)
+}
+
 /// The denoiser tier a model is, if it is one.
 pub fn tier_of(model: &Model) -> Option<&'static str> {
     DENOISERS
@@ -514,5 +734,69 @@ mod tests {
         for f in SAM3.files {
             assert!(note.contains(f.sha256));
         }
+    }
+
+    /// The CPU-only runtimes are Microsoft's own releases of the
+    /// version greycard's library is made from, each keeping the
+    /// library under the name the decision looks for and the license
+    /// that goes with it.
+    #[test]
+    fn the_runtimes_are_microsofts_and_keep_the_library_and_its_license() {
+        let release = "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/";
+        let mut ids = std::collections::HashSet::new();
+        for r in RUNTIMES {
+            assert!(ids.insert(r.id), "duplicate id {}", r.id);
+            assert!(model(r.id).is_none(), "{} is also a model's id", r.id);
+            assert_eq!(runtime(r.id), Some(r));
+            assert!(r.archive.url.starts_with(release), "{}", r.archive.url);
+            assert!(r.archive.url.ends_with(r.archive.name));
+            assert!(r.archive.bytes > 0);
+            assert!(r.name.contains("1.28.0") && r.id.contains("1.28.0"));
+            assert_eq!(r.license.name, "MIT");
+            assert!(r.license.url.contains("microsoft/onnxruntime"));
+            assert!(r.notice.contains("Copyright (c) Microsoft Corporation"));
+            assert!(
+                r.notice
+                    .contains("The above copyright notice and this permission notice")
+            );
+            match r.packing {
+                Packing::Tgz => assert!(r.archive.name.ends_with(".tgz")),
+                Packing::Zip => assert!(r.archive.name.ends_with(".zip")),
+            }
+            let top = r.archive.name.rsplit_once('.').unwrap().0;
+            let mut names = std::collections::HashSet::new();
+            for m in r.members() {
+                assert!(names.insert(m.name), "{} kept twice", m.name);
+                assert!(m.path.starts_with(&format!("{top}/")), "{}", m.path);
+                assert!(!m.name.contains('/') && !m.name.contains('\\'));
+                assert!(m.bytes > 0);
+                assert_eq!(m.sha256.len(), 64);
+                assert!(
+                    m.sha256
+                        .chars()
+                        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+                );
+            }
+            assert!(r.kept.iter().any(|m| m.name == "LICENSE"));
+            assert!(r.bytes() > r.library.bytes);
+            let note = r.license_note();
+            assert!(note.contains(r.archive.sha256) && note.contains(r.library.sha256));
+            assert!(note.contains("Copyright (c) Microsoft Corporation"));
+            assert!(note.contains("does not redistribute"));
+        }
+        assert_eq!(ONNXRUNTIME_CPU_LINUX_X64.library.name, "libonnxruntime.so");
+        assert_eq!(ONNXRUNTIME_CPU_WINDOWS_X64.library.name, "onnxruntime.dll");
+        // Kept under the name greycard's own library has, on the
+        // platform it is offered on; none offered on a Mac.
+        if let Some(r) = cpu_runtime() {
+            assert_eq!(r.library.name, crate::runtime::LIBRARY);
+        }
+        assert_eq!(
+            cpu_runtime().is_some(),
+            cfg!(all(
+                any(target_os = "linux", windows),
+                target_arch = "x86_64"
+            ))
+        );
     }
 }

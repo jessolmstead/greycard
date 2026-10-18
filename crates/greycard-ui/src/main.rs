@@ -644,6 +644,14 @@ enum Fetch {
     Edge(&'static greycard_ai::Model),
     /// The lens database.
     Lenses,
+    /// Microsoft's CPU-only ONNX Runtime, where the processor cannot
+    /// run greycard's own: why the AI features are off (a fetchable
+    /// [`greycard_ai::runtime::Unavailable`]), and what was asked for
+    /// that it holds up.
+    Runtime(
+        &'static greycard_ai::runtime::Unavailable,
+        panel::assets::AfterRuntime,
+    ),
 }
 
 /// A change to one frame's sidecar, by its number in the list, made
@@ -790,6 +798,7 @@ impl State {
                 deleting: None,
                 fetch: None,
                 fetching: false,
+                runtime_next: None,
                 declined: Vec::new(),
                 edge_declined: false,
                 edge_offer_due: false,

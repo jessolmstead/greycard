@@ -64,8 +64,11 @@ enum Command {
         /// Fetch a denoiser tier (fast, balanced, best), a model by
         /// its id, or `all`, into the user's model store. Each
         /// model's license is printed before it is fetched, and the
-        /// published hash is checked when it arrives
-        #[arg(long, value_name = "TIER|ID|all")]
+        /// published hash is checked when it arrives. `onnxruntime`
+        /// fetches Microsoft's ONNX Runtime for the CPU, which runs the
+        /// models on a processor greycard's own cannot run on (one
+        /// without AVX2), slower
+        #[arg(long, value_name = "TIER|ID|all|onnxruntime")]
         fetch: Option<String>,
     },
     /// The library: an index of folders' files, their EXIF and their

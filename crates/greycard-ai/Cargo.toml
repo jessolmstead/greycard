@@ -43,6 +43,12 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = [
 half = "2"
 ureq = "3"
 sha2 = "0.10"
+# Microsoft's CPU-only ONNX Runtime, fetched where the processor cannot
+# run greycard's own, comes as a tgz on Linux and a zip on Windows; the
+# zip is read by hand (`unpack`) with flate2's deflate. Both already in
+# the tree.
+flate2 = "1"
+tar = "0.4"
 thiserror.workspace = true
 dirs.workspace = true
 serde.workspace = true

@@ -370,3 +370,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§355. A capture time corrected in Lightroom](notes/355-a-capture-time-corrected-in-lightroom.md) (2026-10-18)
 - [§356. The file chooser out of the export](notes/356-the-file-chooser-out-of-the-export.md) (2026-10-18)
 - [§357. Use this person on all the pictures](notes/357-use-this-person-on-all-the-pictures.md) (2026-10-18)
+- [§358. Microsoft's ONNX Runtime where ours cannot run](notes/358-microsofts-onnx-runtime-where-ours-cannot-run.md) (2026-10-18)

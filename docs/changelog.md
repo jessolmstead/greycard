@@ -131,6 +131,13 @@ design note behind it.
   gets a history step of its own; where the person is not found it
   keeps asking, and the status line says how many
   ([§357](https://github.com/jessolmstead/greycard/blob/master/docs/notes/357-use-this-person-on-all-the-pictures.md))
+- On a processor without AVX2, where greycard's own ONNX Runtime
+  cannot load, the first AI feature offers to download Microsoft's
+  CPU-only build of it, 9 MB on Linux and 79 MB on Windows, under its
+  MIT license. Once it is in, the models run on the CPU, slower, and
+  the status lines say so. `greycard models --fetch onnxruntime` does
+  the same from the command line
+  ([§358](https://github.com/jessolmstead/greycard/blob/master/docs/notes/358-microsofts-onnx-runtime-where-ours-cannot-run.md))
 
 ### Cameras
 

@@ -552,6 +552,36 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
                 None => String::new(),
             };
+            // The learned denoiser or a fill failed where the AI
+            // features are off until the CPU-only runtime is fetched
+            // (their models are not even asked for there): the runtime
+            // is offered, then the model if it is still to fetch, and
+            // the develop runs again once both are had.
+            let denoise_failed = matches!(learned, LearnedReport::Failed(_));
+            if (denoise_failed || !fills.failed.is_empty())
+                && greycard_ai::runtime::fetchable().is_some()
+            {
+                use crate::panel::assets::AfterRuntime;
+                let have =
+                    |m: &greycard_ai::Model| st.develop.store.as_ref().is_some_and(|s| s.have(m));
+                let tier = st
+                    .develop
+                    .edit
+                    .noise
+                    .learned
+                    .tier()
+                    .and_then(greycard_ai::denoiser);
+                let next = match tier {
+                    Some(model) if denoise_failed && !have(model) => {
+                        AfterRuntime::Model(model, false)
+                    }
+                    _ if !fills.failed.is_empty() && !have(&greycard_ai::FILL) => {
+                        AfterRuntime::Model(&greycard_ai::FILL, false)
+                    }
+                    _ => AfterRuntime::Nothing,
+                };
+                crate::panel::assets::runtime_first(&mut st, app, next);
+            }
             let learned_note = match learned {
                 LearnedReport::Off | LearnedReport::Kept => String::new(),
                 LearnedReport::Ran {
@@ -886,43 +916,29 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             }
             // A denoiser the edit is waiting for, or the fill model
             // with a fill to make: develop again with it.
-            let denoiser = st
-                .develop
-                .edit
-                .noise
-                .learned
-                .tier()
-                .and_then(greycard_ai::denoiser)
-                .is_some_and(|m| m.id == model.id);
-            let fill = model.id == greycard_ai::FILL.id
-                && st.develop.edit.retouch.enabled
-                && st
-                    .develop
-                    .edit
-                    .retouch
-                    .patches
-                    .iter()
-                    .any(|p| p.method == RetouchMethod::Fill);
-            if (denoiser || fill) && st.culling.cull.is_none() {
-                st.develop.generation += 1;
-                app.set_status("developing...".into());
-                app.set_busy(true);
-                let turn = current_turn(&st);
-                WORKER.with(|w| {
-                    if let Some(w) = &*w.borrow() {
-                        w.send(Job::Develop {
-                            edit: st.develop.edit.clone(),
-                            generation: st.develop.generation,
-                            turn,
-                        });
-                    }
-                });
-            }
+            develop_for(&mut st, app, |m| m.id == model.id);
+            app.window().request_redraw();
+        }
+        Outcome::RuntimeFetched { runtime } => {
+            let mut st = state.borrow_mut();
+            st.sheets.fetching = false;
+            st.sheets.fetch_failed.retain(|id| *id != runtime.id);
+            let short = runtime.name.split(',').next().unwrap_or(runtime.name);
+            app.set_status(
+                format!("{short} is ready: the AI features run on the CPU, slower").into(),
+            );
+            runtime_arrived(&mut st, app);
             app.window().request_redraw();
         }
         Outcome::FetchFailed { id, name, message } => {
             let mut st = state.borrow_mut();
             st.sheets.fetching = false;
+            // The runtime's fetch failed: what it held up is let go,
+            // and the AI features stay off this session.
+            if greycard_ai::registry::runtime(id).is_some() {
+                st.sheets.runtime_next = None;
+                st.develop.part_pending = None;
+            }
             tracing::error!("{name} could not be fetched: {message}");
             let status =
                 crate::panel::mask::fetch_failed(&mut st.sheets.fetch_failed, id, name, &message);
@@ -932,6 +948,21 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             }
             // The masks waiting on it are asked about again, and may
             // now turn to another model.
+            app.window().request_redraw();
+        }
+        Outcome::RuntimeUnusable { id, message } => {
+            let mut st = state.borrow_mut();
+            st.sheets.fetching = false;
+            tracing::error!("{message}");
+            // Not offered again this session; what it held up is let
+            // go, and the masks waiting meet the same line.
+            if !st.sheets.fetch_failed.contains(&id) {
+                st.sheets.fetch_failed.push(id);
+            }
+            st.sheets.runtime_next = None;
+            st.develop.part_pending = None;
+            st.develop.landscape_pending = None;
+            app.set_status(message.into());
             app.window().request_redraw();
         }
         Outcome::LensesFetching { done, total } => {
@@ -1075,6 +1106,76 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             crate::panel::export_queue::set_done(&mut st, app, &set, &line);
         }
     }
+}
+
+/// Develop again for a model that has become usable, when the edit is
+/// waiting on one `arrived` takes: the learned denoiser its tier names,
+/// or the fill model with a fill to make. Not while culling.
+fn develop_for(st: &mut State, app: &App, arrived: impl Fn(&greycard_ai::Model) -> bool) {
+    let denoiser = st
+        .develop
+        .edit
+        .noise
+        .learned
+        .tier()
+        .and_then(greycard_ai::denoiser)
+        .is_some_and(&arrived);
+    let fill = arrived(&greycard_ai::FILL)
+        && st.develop.edit.retouch.enabled
+        && st
+            .develop
+            .edit
+            .retouch
+            .patches
+            .iter()
+            .any(|p| p.method == RetouchMethod::Fill);
+    if (denoiser || fill) && st.culling.cull.is_none() {
+        st.develop.generation += 1;
+        app.set_status("developing...".into());
+        app.set_busy(true);
+        let turn = current_turn(st);
+        WORKER.with(|w| {
+            if let Some(w) = &*w.borrow() {
+                w.send(Job::Develop {
+                    edit: st.develop.edit.clone(),
+                    generation: st.develop.generation,
+                    turn,
+                });
+            }
+        });
+    }
+}
+
+/// Microsoft's CPU-only runtime has arrived and loaded: what its offer
+/// held up goes on. The model offer it stood in for is made now, if
+/// the model is still to fetch; the masks are asked again; a part or a
+/// landscape waiting is asked for, or its model offered; and an edit
+/// asking for the learned denoiser or a fill is developed again.
+fn runtime_arrived(st: &mut State, app: &App) {
+    st.develop.asked.clear();
+    st.develop.masks_failed.clear();
+    let store = st.develop.store.clone();
+    let have = |m: &greycard_ai::Model| store.as_ref().is_some_and(|s| s.have(m));
+    match st.sheets.runtime_next.take() {
+        Some(crate::panel::assets::AfterRuntime::Model(model, falls_back)) if !have(model) => {
+            offer_model(st, app, model, falls_back);
+        }
+        Some(crate::panel::assets::AfterRuntime::Edge(model)) if !have(model) => {
+            crate::panel::assets::offer_edge(st, app, model);
+        }
+        _ => {}
+    }
+    if st.develop.part_pending.is_some() {
+        if have(&greycard_ai::SAM3) {
+            crate::panel::parts::model_answered(st, app, true);
+        } else if st.sheets.fetch.is_none() && !st.sheets.declined.contains(&greycard_ai::SAM3.id) {
+            offer_model(st, app, &greycard_ai::SAM3, false);
+        }
+    }
+    crate::panel::landscape::resume(st, app);
+    // A learned denoiser or a fill the edit asks for: developed again,
+    // which runs it, or offers its model where it is still to fetch.
+    develop_for(st, app, |_| true);
 }
 
 /// The frames an export takes as a set, in file order: each file with
@@ -2361,6 +2462,53 @@ mod tests {
             Some(format!("{} is not a folder", written.display()))
         );
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Microsoft's runtime that arrived and would not load is said as
+    /// that, not as a download that failed, lets go of what it held
+    /// up, and is not offered again this session.
+    #[test]
+    fn a_runtime_that_would_not_load_is_said_so_and_not_offered_again() {
+        use crate::panel::assets::{AfterRuntime, runtime_first_for};
+        use greycard_ai::runtime::Unavailable;
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        let runtime = &greycard_ai::registry::ONNXRUNTIME_CPU_LINUX_X64;
+        {
+            let mut st = state.borrow_mut();
+            st.sheets.fetching = true;
+            st.sheets.runtime_next = Some(AfterRuntime::Model(&greycard_ai::SKY, false));
+        }
+        let message = "the AI features are off: ONNX Runtime at /c/libonnxruntime.so would not \
+                       load: GLIBC_2.27 not found; it is removed again, and offered at the next \
+                       start";
+        deliver(
+            &app,
+            Outcome::RuntimeUnusable {
+                id: runtime.id,
+                message: message.to_string(),
+            },
+        );
+        assert_eq!(app.get_status(), message);
+        assert!(!app.get_status().contains("could not be fetched"));
+        {
+            let st = state.borrow();
+            assert!(!st.sheets.fetching);
+            assert_eq!(st.sheets.runtime_next, None);
+            assert!(st.sheets.fetch_failed.contains(&runtime.id));
+        }
+        let why: &'static Unavailable = Box::leak(Box::new(Unavailable::Fetchable {
+            missing: vec!["AVX2"],
+            name: None,
+            runtime,
+        }));
+        assert!(!runtime_first_for(
+            &mut state.borrow_mut(),
+            &app,
+            why,
+            AfterRuntime::Nothing
+        ));
+        assert!(!app.get_fetch_open());
     }
 
     /// A set is read as each frame's own edit, the one on screen as

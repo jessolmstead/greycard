@@ -92,6 +92,14 @@ pub(crate) fn resume(st: &mut State, app: &App) {
         return;
     }
     match model_step(st) {
+        // The model is here and the runtime can be fetched: offered
+        // first, and this goes on again once it lands.
+        Some(Step::Ask(_))
+            if crate::panel::assets::runtime_first(
+                st,
+                app,
+                crate::panel::assets::AfterRuntime::Nothing,
+            ) => {}
         Some(Step::Ask(_)) => ask(app),
         Some(Step::Offer(model, falls_back)) => offer_model(st, app, model, falls_back),
         _ if st.sheets.declined.contains(&greycard_ai::SKY.id) => {

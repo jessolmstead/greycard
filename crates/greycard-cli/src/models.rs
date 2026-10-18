@@ -47,6 +47,41 @@ fn model_lines(
     ]
 }
 
+/// What `--fetch` takes for Microsoft's CPU-only ONNX Runtime, besides
+/// its id.
+const RUNTIME_WORD: &str = "onnxruntime";
+
+/// Whether `--fetch WHAT` names the CPU-only runtime.
+fn names_runtime(what: &str) -> bool {
+    what == RUNTIME_WORD || greycard_ai::registry::runtime(what).is_some()
+}
+
+/// The CPU-only runtime's two lines in the listing.
+fn runtime_lines(
+    runtime: &greycard_ai::Runtime,
+    store: &greycard_ai::Store,
+    width: usize,
+) -> [String; 2] {
+    [
+        format!(
+            "{:width$}  the models on a processor greycard's own ONNX Runtime cannot run on, \
+             on the CPU only",
+            runtime.id
+        ),
+        format!(
+            "{:width$}  `--fetch {RUNTIME_WORD}`, {} MB, {}, {}",
+            "",
+            megabytes(runtime.archive.bytes),
+            runtime.license.name,
+            if store.have_runtime(runtime) {
+                "in the store"
+            } else {
+                "not fetched"
+            }
+        ),
+    ]
+}
+
 /// The `models` command: the registry, and fetching from it.
 pub(crate) fn models(fetch: Option<&str>) -> Result<()> {
     let store = greycard_ai::Store::user().context("finding the model store")?;
@@ -55,16 +90,27 @@ pub(crate) fn models(fetch: Option<&str>) -> Result<()> {
     if let Err(why) = greycard_ai::runtime::status() {
         eprintln!("{why}");
     }
+    // The CPU-only runtime is listed where it is wanted or had, and
+    // `all` takes it where it is wanted.
+    let runtime = greycard_ai::cpu_runtime()
+        .filter(|r| greycard_ai::runtime::fetchable().is_some() || store.runtime_dir(r).is_dir());
     println!("store         {}", store.root().display());
     let Some(what) = fetch else {
         let width = greycard_ai::MODELS
             .iter()
             .map(|m| m.id.len())
+            .chain(runtime.map(|r| r.id.len()))
             .max()
             .unwrap_or(0);
         for model in greycard_ai::MODELS {
             println!();
             for line in model_lines(model, &store, width) {
+                println!("{line}");
+            }
+        }
+        if let Some(runtime) = runtime {
+            println!();
+            for line in runtime_lines(runtime, &store, width) {
                 println!("{line}");
             }
         }
@@ -74,7 +120,16 @@ pub(crate) fn models(fetch: Option<&str>) -> Result<()> {
         }
         return Ok(());
     };
-    let failed = fetch_models(&store, &models_named(what)?);
+    if names_runtime(what) {
+        return fetch_runtime(&store, runtime_for(what)?);
+    }
+    let mut failed = fetch_models(&store, &models_named(what)?);
+    if what == "all"
+        && greycard_ai::runtime::fetchable().is_some()
+        && let Err(e) = runtime_for(RUNTIME_WORD).and_then(|r| fetch_runtime(&store, r))
+    {
+        failed.push((RUNTIME_WORD, e.to_string()));
+    }
     if !failed.is_empty() {
         anyhow::bail!(
             "{} of the models could not be fetched: {}",
@@ -136,6 +191,91 @@ fn fetch_models(
         }
     }
     failed
+}
+
+/// The CPU-only runtime `--fetch WHAT` asks for, which must be this
+/// platform's: another platform's id is refused by name rather than
+/// taken as this one's.
+fn runtime_for(what: &str) -> Result<&'static greycard_ai::Runtime> {
+    let ours = greycard_ai::cpu_runtime();
+    match ours {
+        Some(r) if what == RUNTIME_WORD || what == r.id => Ok(r),
+        _ if what != RUNTIME_WORD => anyhow::bail!(
+            "{what} is ONNX Runtime for another platform; {}",
+            match ours {
+                Some(r) => format!("this one's is {} (`--fetch {RUNTIME_WORD}`)", r.id),
+                None => "this one has none to fetch".to_string(),
+            }
+        ),
+        _ => anyhow::bail!(
+            "no CPU-only ONNX Runtime is offered for this platform: greycard's own runs on \
+             every processor it is built for"
+        ),
+    }
+}
+
+/// Fetch Microsoft's CPU-only ONNX Runtime for this platform into the
+/// store, printing what it is first as a model's fetch does, then load
+/// it where it is the one to use, and say whether the AI features now
+/// run here. One that will not load is an error, and is removed from
+/// the store again (`runtime::load_fetched`).
+fn fetch_runtime(store: &greycard_ai::Store, runtime: &'static greycard_ai::Runtime) -> Result<()> {
+    println!();
+    println!("{}", runtime.id);
+    println!("  is          {}", runtime.name);
+    println!(
+        "  for         the models on a processor greycard's own ONNX Runtime cannot run on \
+         (one without AVX2), on the CPU only, slower"
+    );
+    println!(
+        "  license     {} <{}>",
+        runtime.license.name, runtime.license.url
+    );
+    println!("  source      {}", runtime.source);
+    println!(
+        "  size        {} MB to download, {} MB kept",
+        megabytes(runtime.archive.bytes),
+        megabytes(runtime.bytes())
+    );
+    // Fetched on request wherever it is asked for, to carry to
+    // another machine, but said first when it would not be used here.
+    if let Ok(first) = greycard_ai::runtime::status()
+        && !greycard_ai::runtime::cpu_only()
+    {
+        println!(
+            "  note        {} comes first on this machine, so this one will not be used here",
+            first.display()
+        );
+    }
+    // Asked every time: it downloads nothing when everything is here,
+    // and puts back a license or notices file that has gone.
+    let start = std::time::Instant::now();
+    let mut reporter = FetchReport::new();
+    let mut downloaded = false;
+    let fetched = store.fetch_runtime(runtime, |p| {
+        downloaded = true;
+        reporter.report(p)
+    });
+    reporter.done();
+    let path = fetched.context("fetching ONNX Runtime")?;
+    if downloaded {
+        println!(
+            "  fetched     {} in {:.1} s",
+            path.display(),
+            start.elapsed().as_secs_f32()
+        );
+    } else {
+        println!("  already in  {}", store.runtime_dir(runtime).display());
+    }
+    match greycard_ai::runtime::load_fetched(store, runtime) {
+        Ok(true) => println!("the AI features run here now, on the CPU only, slower"),
+        Ok(false) => println!("another ONNX Runtime comes first here; this one is kept unused"),
+        Err(why @ greycard_ai::runtime::Unavailable::WouldNotLoad { .. }) => {
+            anyhow::bail!("{why}; removed from the store again")
+        }
+        Err(why) => anyhow::bail!("{why}"),
+    }
+    Ok(())
 }
 
 /// The download's progress on stderr: a line rewritten in place at a
@@ -233,6 +373,41 @@ mod tests {
         let ids: Vec<_> = failed.iter().map(|(id, _)| *id).collect();
         assert_eq!(ids, vec!["unreachable-first", "unreachable-second"]);
         let _ = std::fs::remove_dir_all(store.root());
+    }
+
+    /// `--fetch onnxruntime`, or the runtime's id, is the CPU-only
+    /// runtime and not a model.
+    #[test]
+    fn the_fetch_argument_names_the_cpu_runtime_by_word_or_id() {
+        assert!(names_runtime(RUNTIME_WORD));
+        for r in greycard_ai::registry::RUNTIMES {
+            assert!(names_runtime(r.id), "{}", r.id);
+        }
+        for other in ["all", "fast", greycard_ai::SKY.id, "onnx"] {
+            assert!(!names_runtime(other), "{other}");
+        }
+        assert!(
+            greycard_ai::runtime::FETCH_RUNTIME.ends_with(&format!("--fetch {RUNTIME_WORD}")),
+            "the line names the word this takes"
+        );
+    }
+
+    /// Another platform's runtime is refused by its id, not fetched
+    /// as this platform's in its place.
+    #[test]
+    fn another_platforms_runtime_is_refused_by_name() {
+        let ours = greycard_ai::cpu_runtime();
+        for r in greycard_ai::registry::RUNTIMES {
+            match runtime_for(r.id) {
+                Ok(got) => assert_eq!(Some(got), ours, "{}", r.id),
+                Err(e) => {
+                    assert_ne!(Some(r), ours);
+                    let e = e.to_string();
+                    assert!(e.starts_with(r.id) && e.contains("another platform"), "{e}");
+                }
+            }
+        }
+        assert_eq!(runtime_for(RUNTIME_WORD).ok(), ours);
     }
 
     /// `--fetch` takes a tier, an id or `all`, and says so when it is

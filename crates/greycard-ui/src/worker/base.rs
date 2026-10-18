@@ -237,7 +237,7 @@ fn run_learned(
             )?;
             let report = LearnedReport::Ran {
                 version: denoiser.version().to_string(),
-                provider: denoiser.provider().name(),
+                provider: denoiser.provider().label(),
                 seconds: start.elapsed().as_secs_f64(),
             };
             if let Some((c, k)) = key

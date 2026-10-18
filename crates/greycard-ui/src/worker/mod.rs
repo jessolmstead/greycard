@@ -229,6 +229,11 @@ pub enum Job {
     PersonOn(Box<PersonJob>),
     /// Fetch a model into the store; on its own thread.
     Fetch { model: &'static greycard_ai::Model },
+    /// Fetch Microsoft's CPU-only ONNX Runtime into the store, and load
+    /// it; on its own thread.
+    FetchRuntime {
+        runtime: &'static greycard_ai::Runtime,
+    },
     /// Fetch the lens database into its store; on its own thread.
     FetchLenses,
     /// The worker's own: a device arrived and nothing else is queued.
@@ -529,6 +534,19 @@ pub enum Outcome {
     },
     Fetched {
         model: &'static greycard_ai::Model,
+    },
+    /// Microsoft's CPU-only ONNX Runtime arrived and is loaded: the AI
+    /// features are on, on the CPU.
+    RuntimeFetched {
+        runtime: &'static greycard_ai::Runtime,
+    },
+    /// Microsoft's CPU-only ONNX Runtime arrived whole and cannot be
+    /// used: it would not load here. The line says so, not that the
+    /// download failed.
+    RuntimeUnusable {
+        /// The runtime's registry id.
+        id: &'static str,
+        message: String,
     },
     FetchFailed {
         /// The model's registry id.
@@ -831,6 +849,7 @@ impl Blame {
             Job::Thumbnail { .. }
             | Job::CachedThumbnail { .. }
             | Job::Fetch { .. }
+            | Job::FetchRuntime { .. }
             | Job::FetchLenses
             | Job::Gpu
             | Job::MasksFor(_)

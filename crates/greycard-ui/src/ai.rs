@@ -36,9 +36,14 @@ use greycard_edit::retouch::Patch;
 /// A learned component: its adjustment's id and its index in the mask.
 pub type Key = (u64, usize);
 
-/// The providers this build offers on this machine, asked once.
+/// The providers this build offers on this machine, asked once they
+/// are known: none while ONNX Runtime cannot be had, which is not kept,
+/// as Microsoft's CPU-only runtime fetched meanwhile brings the CPU.
 pub fn providers() -> &'static [Provider] {
     static PROVIDERS: std::sync::OnceLock<Vec<Provider>> = std::sync::OnceLock::new();
+    if greycard_ai::runtime::status().is_err() {
+        return &[];
+    }
     PROVIDERS.get_or_init(Provider::available)
 }
 
@@ -1211,7 +1216,7 @@ impl Ai {
                     tracing::info!("Whole person keeps SAM's edge: {}", e.why);
                     Some(format!(
                         "whole person found on {} in {seconds:.2} s, with a coarser edge: {}",
-                        provider.name(),
+                        provider.label(),
                         e.why
                     ))
                 }
