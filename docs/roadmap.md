@@ -41,6 +41,9 @@ ours, so a tester brings a library over in one go.
 
 - [ ] The window no longer dies when its surface is reconfigured
       while the worker is on the GPU (issue #27)
+- [ ] A frame switch no longer shows the last frame's picture through
+      the new frame's rendering, nor the old develop in place of a
+      held placeholder (a tester's flash of contrast)
 
 
 ## Tracks
