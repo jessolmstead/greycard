@@ -1161,7 +1161,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                             Ok(paths) => import_presets(&mut st, &app, &paths),
                             Err(e) => {
                                 tracing::warn!("file chooser: {e:#}");
-                                app.set_status("the desktop offered no file chooser".into());
+                                app.set_status(export::chooser_failed(&e).into());
                             }
                         }
                     });

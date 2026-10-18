@@ -618,7 +618,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
                             Ok(None) => app.set_status("import canceled".into()),
                             Err(e) => {
                                 tracing::warn!("file chooser: {e:#}");
-                                app.set_status("the desktop offered no file chooser".into());
+                                app.set_status(export::chooser_failed(&e).into());
                             }
                         }
                     });
@@ -665,7 +665,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
                         Ok(None) => {}
                         Err(e) => {
                             tracing::warn!("folder chooser: {e:#}");
-                            app.set_lr_note("the desktop offered no folder chooser".into());
+                            app.set_lr_note(export::chooser_failed(&e).into());
                         }
                     }
                 });

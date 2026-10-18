@@ -1475,7 +1475,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // where the empty editor's user is looking.
                         Err(e) => {
                             tracing::warn!("file chooser: {e:#}");
-                            app.set_status("the desktop offered no file chooser".into());
+                            app.set_status(export::chooser_failed(&e).into());
                         }
                     }
                 });

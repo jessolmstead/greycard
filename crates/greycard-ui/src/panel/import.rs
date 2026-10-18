@@ -758,7 +758,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                         Ok(None) => {}
                         Err(e) => {
                             tracing::warn!("folder chooser: {e:#}");
-                            app.set_import_note("the desktop offered no folder chooser".into());
+                            app.set_import_note(export::chooser_failed(&e).into());
                         }
                     }
                     show(&st, &app);

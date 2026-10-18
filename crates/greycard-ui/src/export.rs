@@ -996,8 +996,203 @@ fn ask(request: Ask, done: impl FnOnce(Result<Vec<PathBuf>>) + Send + 'static) {
     std::thread::spawn(move || {
         let mut request = request;
         request.folder = nearest_folder(&request.folder);
-        done(portal(request))
+        done(choose(&request))
     });
+}
+
+/// The portal, or zenity and then kdialog when the portal could not
+/// be asked at all: a window manager started bare, as i3 often is,
+/// has no session bus or no portal on it, and either program draws
+/// a chooser of its own. A portal that was asked and failed is not
+/// asked again elsewhere, since the user may have seen its dialog.
+/// With neither program there, the portal's error stands, and
+/// `chooser_failed` says what to install.
+#[cfg(target_os = "linux")]
+fn choose(request: &Ask) -> Result<Vec<PathBuf>> {
+    let e = match portal(request) {
+        Err(e) if e.downcast_ref::<Unreached>().is_some() => e,
+        answer => return answer,
+    };
+    tracing::info!("file chooser: {e:#}; trying zenity, then kdialog");
+    for helper in [Helper::Zenity, Helper::Kdialog] {
+        if let Some(answer) = helper.ask(request) {
+            return answer;
+        }
+    }
+    Err(e)
+}
+
+/// Why the portal could not be asked, as against a portal asked that
+/// then failed: only this sends the request to a helper instead.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Unreached {
+    /// No session bus: `DBUS_SESSION_BUS_ADDRESS` unset and nothing at
+    /// `$XDG_RUNTIME_DIR/bus`.
+    Bus,
+    /// A bus, but no portal on it with a file chooser behind it.
+    Portal,
+}
+
+#[cfg(target_os = "linux")]
+impl std::fmt::Display for Unreached {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(match self {
+            Unreached::Bus => "no D-Bus session bus",
+            Unreached::Portal => "no file chooser portal on the session bus",
+        })
+    }
+}
+
+/// The status line for a chooser that answered with an error: what
+/// was missing and what to install when it was the desktop's
+/// plumbing, the error itself otherwise.
+pub fn chooser_failed(e: &anyhow::Error) -> String {
+    #[cfg(target_os = "linux")]
+    match e.downcast_ref::<Unreached>() {
+        Some(Unreached::Bus) => {
+            return "no file chooser: there is no D-Bus session bus; \
+                    install zenity, or see the user guide"
+                .into();
+        }
+        Some(Unreached::Portal) => {
+            return "no file chooser: no desktop portal answered; \
+                    install xdg-desktop-portal-gtk or zenity"
+                .into();
+        }
+        None => {}
+    }
+    format!("the file chooser failed: {e}")
+}
+
+/// A program that draws a file chooser and prints the paths picked,
+/// one a line: GNOME's zenity, KDE's kdialog.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Helper {
+    Zenity,
+    Kdialog,
+}
+
+#[cfg(target_os = "linux")]
+impl Helper {
+    fn program(self) -> &'static str {
+        match self {
+            Helper::Zenity => "zenity",
+            Helper::Kdialog => "kdialog",
+        }
+    }
+
+    /// The request as the program's arguments. Both take the folder
+    /// to open on as a path, with the offered name on the end for a
+    /// save; zenity wants the trailing slash to open inside a folder
+    /// rather than offer it as the name.
+    fn args(self, request: &Ask) -> Vec<std::ffi::OsString> {
+        use std::ffi::OsString;
+        let mut start = request.folder.clone().into_os_string();
+        match &request.name {
+            Some(name) => {
+                start.push("/");
+                start.push(name);
+            }
+            None if self == Helper::Zenity => start.push("/"),
+            None => {}
+        }
+        let (name, globs) = &request.filter;
+        let globs: Vec<&str> = globs
+            .iter()
+            .map(String::as_str)
+            .filter(|g| !g.is_empty())
+            .collect();
+        let filter = (!name.is_empty() && !globs.is_empty()).then(|| (name, globs.join(" ")));
+        let mut args: Vec<OsString> = Vec::new();
+        match self {
+            Helper::Zenity => {
+                args.push("--file-selection".into());
+                args.push(format!("--title={}", request.title).into());
+                let mut filename = OsString::from("--filename=");
+                filename.push(&start);
+                args.push(filename);
+                if request.name.is_some() {
+                    args.push("--save".into());
+                    args.push("--confirm-overwrite".into());
+                }
+                if request.directory {
+                    args.push("--directory".into());
+                }
+                if request.multiple {
+                    args.push("--multiple".into());
+                    args.push("--separator=\n".into());
+                }
+                if let Some((name, globs)) = filter {
+                    args.push(format!("--file-filter={name} | {globs}").into());
+                }
+            }
+            Helper::Kdialog => {
+                args.push("--title".into());
+                args.push(request.title.into());
+                args.push(
+                    if request.directory {
+                        "--getexistingdirectory"
+                    } else if request.name.is_some() {
+                        "--getsavefilename"
+                    } else {
+                        "--getopenfilename"
+                    }
+                    .into(),
+                );
+                args.push(start);
+                if let Some((name, globs)) = filter
+                    && !request.directory
+                {
+                    args.push(format!("{globs}|{name}").into());
+                }
+                if request.multiple {
+                    args.push("--multiple".into());
+                    args.push("--separate-output".into());
+                }
+            }
+        }
+        args
+    }
+
+    /// The chooser, waited on: the paths picked, none for a cancel
+    /// (both programs exit 1 for one), and nothing at all when the
+    /// program is not installed, so the next is tried.
+    fn ask(self, request: &Ask) -> Option<Result<Vec<PathBuf>>> {
+        let program = self.program();
+        let output = match std::process::Command::new(program)
+            .args(self.args(request))
+            .stdin(std::process::Stdio::null())
+            .output()
+        {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(e) => return Some(Err(e).with_context(|| format!("starting {program}"))),
+            Ok(output) => output,
+        };
+        Some(match output.status.code() {
+            Some(0) => Ok(helper_paths(&output.stdout)),
+            Some(1) => Ok(Vec::new()),
+            _ => {
+                tracing::warn!(
+                    "file chooser: {program}: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
+                Err(anyhow::anyhow!("{program} {}", output.status))
+            }
+        })
+    }
+}
+
+/// A helper's output as paths: one a line, the blank ones dropped.
+#[cfg(target_os = "linux")]
+fn helper_paths(stdout: &[u8]) -> Vec<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    stdout
+        .split(|&b| b == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| PathBuf::from(std::ffi::OsString::from_vec(line.to_vec())))
+        .collect()
 }
 
 /// `start` if it is a folder, else the nearest of its parents that
@@ -1127,7 +1322,7 @@ fn portal_filters(filter: (String, Vec<String>)) -> Option<PortalFilters> {
 /// `multiple` for as many files as the user picks. Nothing picked is
 /// a cancel.
 #[cfg(target_os = "linux")]
-fn portal(request: Ask) -> Result<Vec<PathBuf>> {
+fn portal(request: &Ask) -> Result<Vec<PathBuf>> {
     use std::collections::HashMap;
     use std::os::unix::ffi::OsStrExt;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -1159,10 +1354,10 @@ fn portal(request: Ask) -> Result<Vec<PathBuf>> {
     } else {
         "OpenFile"
     };
-    let conn = Connection::session().context("the session bus")?;
+    let conn = Connection::session().context(Unreached::Bus)?;
     let sender = conn
         .unique_name()
-        .context("no name on the bus")?
+        .context(Unreached::Bus)?
         .trim_start_matches(':')
         .replace('.', "_");
     let token = format!(
@@ -1178,28 +1373,34 @@ fn portal(request: Ask) -> Result<Vec<PathBuf>> {
         PORTAL,
         request_path.as_str(),
         "org.freedesktop.portal.Request",
-    )?;
-    let mut responses = signals.receive_signal("Response")?;
+    )
+    .context(Unreached::Portal)?;
+    let mut responses = signals
+        .receive_signal("Response")
+        .context(Unreached::Portal)?;
     let chooser = Proxy::new(
         &conn,
         PORTAL,
         "/org/freedesktop/portal/desktop",
         "org.freedesktop.portal.FileChooser",
-    )?;
+    )
+    .context(Unreached::Portal)?;
     let mut folder = request.folder.as_os_str().as_bytes().to_vec();
     folder.push(0);
     let options = Options {
         handle_token: token,
         modal: true,
-        current_name: request.name,
+        current_name: request.name.clone(),
         current_folder: folder,
-        filters: portal_filters(request.filter),
+        filters: portal_filters(request.filter.clone()),
         directory: request.directory.then_some(true),
         multiple: request.multiple.then_some(true),
     };
     let handle: OwnedObjectPath = chooser
         .call(method, &("", request.title, options))
-        .context("the file chooser portal")?;
+        // Nothing is on the screen until the call returns, so its
+        // failing is the portal not being there to ask.
+        .context(Unreached::Portal)?;
     if handle.as_str() != request_path {
         // An old portal names the request itself.
         let signals = Proxy::new(&conn, PORTAL, handle, "org.freedesktop.portal.Request")?;
@@ -1302,6 +1503,135 @@ mod tests {
             let globs = f.globs().iter().map(|g| g.to_string()).collect();
             assert!(portal_filters((f.name().to_string(), globs)).is_some());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn asking(name: Option<&str>, directory: bool, multiple: bool) -> Ask {
+        Ask {
+            title: "Pick",
+            folder: PathBuf::from("/home/me/My Pictures"),
+            name: name.map(str::to_string),
+            filter: if directory {
+                (String::new(), Vec::new())
+            } else {
+                ("JPEG".into(), vec!["*.jpg".into(), "*.jpeg".into()])
+            },
+            directory,
+            multiple,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn strings(args: Vec<std::ffi::OsString>) -> Vec<String> {
+        args.into_iter().map(|a| a.into_string().unwrap()).collect()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn zenity_is_asked_what_the_portal_would_be() {
+        let zenity = |ask: Ask| strings(Helper::Zenity.args(&ask));
+        // A folder opens inside the folder, with no filter.
+        assert_eq!(
+            zenity(asking(None, true, false)),
+            [
+                "--file-selection",
+                "--title=Pick",
+                "--filename=/home/me/My Pictures/",
+                "--directory"
+            ]
+        );
+        // A save offers its name and confirms a replace.
+        assert_eq!(
+            zenity(asking(Some("a.jpg"), false, false)),
+            [
+                "--file-selection",
+                "--title=Pick",
+                "--filename=/home/me/My Pictures/a.jpg",
+                "--save",
+                "--confirm-overwrite",
+                "--file-filter=JPEG | *.jpg *.jpeg"
+            ]
+        );
+        // Several files come back one a line.
+        assert_eq!(
+            zenity(asking(None, false, true)),
+            [
+                "--file-selection",
+                "--title=Pick",
+                "--filename=/home/me/My Pictures/",
+                "--multiple",
+                "--separator=\n",
+                "--file-filter=JPEG | *.jpg *.jpeg"
+            ]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn kdialog_is_asked_what_the_portal_would_be() {
+        let kdialog = |ask: Ask| strings(Helper::Kdialog.args(&ask));
+        assert_eq!(
+            kdialog(asking(None, true, false)),
+            [
+                "--title",
+                "Pick",
+                "--getexistingdirectory",
+                "/home/me/My Pictures"
+            ]
+        );
+        assert_eq!(
+            kdialog(asking(Some("a.jpg"), false, false)),
+            [
+                "--title",
+                "Pick",
+                "--getsavefilename",
+                "/home/me/My Pictures/a.jpg",
+                "*.jpg *.jpeg|JPEG"
+            ]
+        );
+        assert_eq!(
+            kdialog(asking(None, false, true)),
+            [
+                "--title",
+                "Pick",
+                "--getopenfilename",
+                "/home/me/My Pictures",
+                "*.jpg *.jpeg|JPEG",
+                "--multiple",
+                "--separate-output"
+            ]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_helpers_answer_is_one_path_a_line() {
+        assert_eq!(
+            helper_paths(b"/a/b c.jpg\n/d/e.jpg\n"),
+            [PathBuf::from("/a/b c.jpg"), PathBuf::from("/d/e.jpg")]
+        );
+        assert_eq!(helper_paths(b""), Vec::<PathBuf>::new());
+        assert_eq!(helper_paths(b"\n"), Vec::<PathBuf>::new());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_missing_bus_or_portal_says_what_to_install() {
+        let no_bus = Err::<(), _>(anyhow::anyhow!("connection refused"))
+            .context(Unreached::Bus)
+            .unwrap_err();
+        assert!(chooser_failed(&no_bus).contains("no D-Bus session bus"));
+        assert!(chooser_failed(&no_bus).contains("zenity"));
+        let no_portal = Err::<(), _>(anyhow::anyhow!("ServiceUnknown"))
+            .context(Unreached::Portal)
+            .unwrap_err();
+        assert!(chooser_failed(&no_portal).contains("xdg-desktop-portal-gtk"));
+        // A portal that was asked and failed says so as it is.
+        let failed = anyhow::anyhow!("the file chooser went away");
+        assert_eq!(
+            chooser_failed(&failed),
+            "the file chooser failed: the file chooser went away"
+        );
     }
 
     #[cfg(not(target_os = "linux"))]

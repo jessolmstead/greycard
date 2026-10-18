@@ -21,6 +21,13 @@ expect, please [report it](#reporting-a-problem).
   ([building.md](building.md)).
 - **Copies or a backup.** greycard never changes a raw file, but it is
   a test build.
+- **On Linux, a file chooser.** greycard asks the desktop's file
+  chooser portal, which GNOME, KDE and most desktops run. On a window
+  manager such as i3 started without one, install `zenity` (or
+  `kdialog`) and greycard uses it instead, or run the session under
+  `dbus-run-session` with `xdg-desktop-portal` and
+  `xdg-desktop-portal-gtk` installed. A folder named on the command
+  line, `greycard-ui ~/Pictures/shoot`, opens without either.
 
 ## Installing
 

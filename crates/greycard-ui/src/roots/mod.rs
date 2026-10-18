@@ -734,7 +734,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         Ok(None) => app.set_status("nothing added".into()),
                         Err(e) => {
                             tracing::warn!("file chooser: {e:#}");
-                            app.set_status("the desktop offered no file chooser".into());
+                            app.set_status(export::chooser_failed(&e).into());
                         }
                     }
                 });

@@ -1507,7 +1507,7 @@ fn choose_export_folder(state: &Rc<RefCell<State>>, app: &App) {
             Ok(None) => "the export folder is as it was".to_string(),
             Err(e) => {
                 tracing::warn!("folder chooser: {e:#}");
-                "the desktop offered no folder chooser".to_string()
+                export::chooser_failed(&e)
             }
         };
         if let Some(waiting) = overtaken {
@@ -1670,7 +1670,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         Ok(None) => {}
                         Err(e) => {
                             tracing::warn!("file chooser: {e:#}");
-                            app.set_status("the desktop offered no file chooser".into());
+                            app.set_status(export::chooser_failed(&e).into());
                         }
                     });
                 },
@@ -1914,8 +1914,7 @@ fn export_gathered(state: &Rc<RefCell<State>>, app: &App, raw: PathBuf, frames: 
                 Err(e) => {
                     tracing::warn!("folder chooser: {e:#}");
                     app.set_status(
-                        format!("not exported: {why}, and the desktop offered no folder chooser")
-                            .into(),
+                        format!("not exported: {why}; {}", export::chooser_failed(&e)).into(),
                     );
                 }
             }

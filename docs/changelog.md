@@ -110,6 +110,11 @@ design note behind it.
   as before. The binaries shrink by 26 MB each; a build from source
   makes the runtime with `scripts/ort-dylib.sh`
   ([§338](https://github.com/jessolmstead/greycard/blob/master/docs/notes/338-onnx-runtime-at-first-use-and-the-processors-it-cannot-run-on.md))
+- Open folder and every other file chooser work on a Linux session
+  with no desktop portal, such as i3 started bare: greycard uses
+  zenity or kdialog instead, and with neither it says what is missing
+  and what to install
+  ([§346](https://github.com/jessolmstead/greycard/blob/master/docs/notes/346-a-file-chooser-without-a-portal.md))
 
 ## 0.7.0, 2026-10-15
 
