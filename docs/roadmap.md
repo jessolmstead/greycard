@@ -610,10 +610,13 @@ clears or a tester asks for it.
       correction's were, with captured models re-read per pixel; the
       lens gain (§165) says they are the next place to look
 - [ ] The X-Trans CA correction's shortfall against Bayer's (86% and
-      99% of the error left where Bayer leaves 80% and 90%, §331):
-      plane-exact weights for the color difference's read in place of
-      the tent, and the stand-in mosaic's vote, read at 0.77 of a true
-      Bayer one, weighted back; a GPU version if the CPU's 0.84 s
+      98% of the error left where Bayer leaves 80% and 90%, §343): the
+      green the resample reads is the limit, a demosaic's green gains
+      0.4-0.9 dB in experiments; a sharper green that uses the red and
+      blue around each site as Markesteijn's first step does, at a
+      cost the correction can carry, then the vote again (the
+      stand-in's 0.77 under-read; a gain and votes on the sites were
+      both measured and not kept); a GPU version if the CPU's 0.65 s
       becomes what a develop waits on
 - [ ] The noise estimate on a frame of texture with no flat area, on
       any mosaic (§331)

@@ -49,13 +49,21 @@
 //!   the site's light came from, the color difference there, and
 //!   interpolates those differences back to the site from its
 //!   neighbors of the same color two photosites away, which on Bayer
-//!   sit on a lattice. Here they sit where the pattern puts them, so
-//!   the differences are read with a tent of radius two over the
-//!   site's color round the point, green is the plane-exact estimate,
-//!   and the guard's weighted mean is the reference's weights times the
-//!   tent. The point is the site moved back by the whole shift; the
-//!   reference moves it by the shift's fractional part, which is the
-//!   same for the shifts under a pixel that nearly all frames have.
+//!   sit on a lattice, and are read bilinearly: exact on a plane, and
+//!   the site's own difference when the point is on it. Here they sit
+//!   where the pattern puts them, so the differences are read from the
+//!   site's color round the point with weights that are exact on a
+//!   plane and held to a kernel ([`super::sites::planar_weights_kernel`]):
+//!   a tent over the square of side five round the point, divided by
+//!   the squared distance, so the read leans on the nearest sites and
+//!   is the site's own difference as the point reaches it. A tile's
+//!   shift is one for all its sites, so each tile reads by a table, a
+//!   read for each site of the period. Green is the plane-exact
+//!   estimate, and the guard's weighted mean is the reference's weights
+//!   times the read's positive part. The point is the site moved back
+//!   by the whole shift; the reference moves it by the shift's
+//!   fractional part, which is the same for the shifts under a pixel
+//!   that nearly all frames have.
 //!   Each site's color difference is taken once, by its own tile's
 //!   shift; the reference's tile buffers take a site near a seam by the
 //!   shift of the tile being corrected, so the two part by the
@@ -72,10 +80,10 @@
 use rayon::prelude::*;
 
 use super::ca::{
-    CaOptions, CaStats, EPS, Fit, MIN_SIDE, SHIFT_BLUR_SIGMA, STEP, fit_votes,
+    CaOptions, CaStats, EPS, Fit, MIN_SIDE, SHIFT_BLUR_SIGMA, SHIFT_LIMIT, STEP, fit_votes,
     gaussian_blur_approx, measure_votes, origins, shift_factor,
 };
-use super::sites::{Phases, Tap, interpolation};
+use super::sites::{Phases, Tap, interpolation, planar_weights_kernel};
 use crate::error::{Error, Result};
 use crate::raw::CfaPattern;
 
@@ -137,8 +145,7 @@ pub fn correct_ca(
 }
 
 /// The pattern's colors as RGB indices, read with the period of six
-/// known to the compiler: the resample asks a site's neighborhood for
-/// its colors sixteen times a site.
+/// known to the compiler.
 struct Colors([[u8; 6]; 6]);
 
 impl Colors {
@@ -232,6 +239,103 @@ fn green_at(green: &[f32], width: usize, height: usize, y: f32, x: f32) -> f32 {
     top + fy * (bottom - top)
 }
 
+/// More than the most sites a read takes: those of one color in the
+/// open square of side `2 * READ_RADIUS` round the point, four to six
+/// on X-Trans (a test holds every phase and shift to it).
+const MAX_TAPS: usize = 12;
+
+/// Half the side of the square of sites a read takes, and the radius of
+/// its tent.
+const READ_RADIUS: f64 = 2.5;
+
+/// A read of the color difference at the point a red or blue site's
+/// light came from: the sites of the site's color round the point, by
+/// their offsets from the site, and their weights; and the shift, so a
+/// site by the frame's edge can weigh its sites inside the frame anew.
+#[derive(Clone, Copy)]
+struct Read {
+    n: usize,
+    taps: [(isize, isize, f32); MAX_TAPS],
+    shift: [f64; 2],
+}
+
+/// The read's kernel at offset (`oy`, `ox`) from the point: the tent
+/// over the square of side `2 * READ_RADIUS`, divided by the squared
+/// distance.
+#[inline]
+fn read_kernel(oy: f64, ox: f64) -> f64 {
+    (1.0 - oy.abs() / READ_RADIUS).max(0.0) * (1.0 - ox.abs() / READ_RADIUS).max(0.0)
+        / (oy * oy + ox * ox + 1e-6)
+}
+
+impl Read {
+    const NONE: Self = Self {
+        n: 0,
+        taps: [(0, 0, 0.0); MAX_TAPS],
+        shift: [0.0; 2],
+    };
+
+    fn taps(&self) -> &[(isize, isize, f32)] {
+        &self.taps[..self.n]
+    }
+}
+
+/// The read for a site at period position (`py`, `px`) of color
+/// `color` (an RGB index), its light come from `shift` (vertical,
+/// horizontal) away: the color's sites in the open square of side
+/// `2 * READ_RADIUS` round the point the site less the shift, weighted
+/// exact on a plane and held to a kernel ([`planar_weights_kernel`]):
+/// the tent over that square divided by the squared distance to the
+/// point. The read is exact on any plane of color difference, where a
+/// tent's own weights read the plane at their centroid, which on
+/// X-Trans is off the point; and the kernel's pole makes it the site's
+/// own difference when the point is on a site, as Bayer's bilinear read
+/// is, so a shift near zero moves the site by near nothing. Empty when
+/// the sites do not span a plane, which the square of side five always
+/// does on X-Trans. Only the sites `keep` takes, by their offsets from
+/// the site, are read: every one inside the frame.
+fn read_for(
+    colors: &Colors,
+    (py, px): (usize, usize),
+    color: u8,
+    shift: [f64; 2],
+    keep: impl Fn(isize, isize) -> bool,
+) -> Read {
+    let [sv, sh] = shift;
+    let reach = (READ_RADIUS + SHIFT_LIMIT).ceil() as isize;
+    let (mut offsets, mut sites, mut kernel) = (Vec::new(), Vec::new(), Vec::new());
+    for dy in -reach..=reach {
+        for dx in -reach..=reach {
+            // From the point, which is the site less the shift.
+            let (oy, ox) = (dy as f64 + sv, dx as f64 + sh);
+            let k = read_kernel(oy, ox);
+            if k <= 0.0 {
+                continue;
+            }
+            let (y, x) = (py as isize + dy + 6 * reach, px as isize + dx + 6 * reach);
+            if colors.at(y as usize, x as usize) != color || !keep(dy, dx) {
+                continue;
+            }
+            offsets.push((oy, ox));
+            sites.push((dy, dx));
+            kernel.push(k);
+        }
+    }
+    assert!(sites.len() <= MAX_TAPS, "{} sites", sites.len());
+    let mut read = Read {
+        shift,
+        ..Read::NONE
+    };
+    let Some(weights) = planar_weights_kernel(&offsets, &kernel) else {
+        return read;
+    };
+    for ((&(dy, dx), w), slot) in sites.iter().zip(weights).zip(read.taps.iter_mut()) {
+        *slot = (dy, dx, w);
+        read.n += 1;
+    }
+    read
+}
+
 /// One pass's resample of red and blue by the shifts `fit` gives each
 /// tile, kept at or above zero; green as it was.
 fn resample(
@@ -246,11 +350,12 @@ fn resample(
     // block is its index over the interior plus one, as the fit counts
     // them.
     let (down, across) = (origins(height).len(), origins(width).len());
-    let shifts: Vec<[[f32; 2]; 2]> = (1..=down)
+    let shifts: Vec<[[f64; 2]; 2]> = (1..=down)
         .flat_map(|v| (1..=across).map(move |h| (v, h)))
-        .map(|(v, h)| fit.shift_at(v, h).map(|c| c.map(|s| s as f32)))
+        .map(|(v, h)| fit.shift_at(v, h))
         .collect();
-    let shift_of = |y: usize, x: usize, c: usize| shifts[(y / STEP) * across + x / STEP][c];
+    let tile_of = |y: usize, x: usize| (y / STEP) * across + x / STEP;
+    let shift_of = |y: usize, x: usize, c: usize| shifts[tile_of(y, x)][c].map(|s| s as f32);
     // Each red and blue site's green at the point its light came from,
     // by its tile's shift, and the color difference there: read by the
     // resample of every site round it, made once.
@@ -270,38 +375,76 @@ fn resample(
                 *out = (gs, gs - samples[y * width + x]);
             }
         });
+    // Each tile's reads, one for each site of the period, made by the
+    // band of rows that tile is in.
     let mut out = samples.to_vec();
-    out.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
-        for (x, value) in row.iter_mut().enumerate() {
-            let (c, color) = match colors.at(y, x) {
-                0 => (0, 0),
-                2 => (1, 2),
-                _ => continue,
-            };
-            let site = Site {
-                y,
-                x,
-                color,
-                shift: shift_of(y, x, c),
-            };
-            *value = site
-                .resample(samples, green, &shifted, (width, height), colors)
-                .max(0.0);
-        }
-    });
+    out.par_chunks_mut(width * STEP)
+        .enumerate()
+        .for_each(|(band, rows)| {
+            let reads: Vec<[Read; 36]> = (0..across)
+                .map(|h| {
+                    let tile = shifts[band * across + h];
+                    std::array::from_fn(|k| {
+                        let (py, px) = (k / 6, k % 6);
+                        match colors.at(py, px) {
+                            0 => read_for(colors, (py, px), 0, tile[0], |_, _| true),
+                            2 => read_for(colors, (py, px), 2, tile[1], |_, _| true),
+                            _ => Read::NONE,
+                        }
+                    })
+                })
+                .collect();
+            for (r, row) in rows.chunks_mut(width).enumerate() {
+                let y = band * STEP + r;
+                for (x, value) in row.iter_mut().enumerate() {
+                    let color = colors.at(y, x);
+                    if color == 1 {
+                        continue;
+                    }
+                    let read = &reads[x / STEP][(y % 6) * 6 + x % 6];
+                    let site = Site { y, x, read };
+                    *value = site
+                        .resample(samples, green, &shifted, colors, (width, height))
+                        .max(0.0);
+                }
+            }
+        });
     out
 }
 
-/// A red or blue site, its color's RGB index and its tile's shift
-/// (vertical, horizontal).
-struct Site {
+/// A red or blue site and its read.
+struct Site<'a> {
     y: usize,
     x: usize,
-    color: u8,
-    shift: [f32; 2],
+    read: &'a Read,
 }
 
-impl Site {
+impl Site<'_> {
+    /// Whether the site at offset (`dy`, `dx`) from this one is inside
+    /// the frame.
+    fn inside(&self, (dy, dx): (isize, isize), (width, height): (usize, usize)) -> bool {
+        let (jy, jx) = (self.y as isize + dy, self.x as isize + dx);
+        jy >= 0 && jx >= 0 && jy < height as isize && jx < width as isize
+    }
+
+    /// The read for a site by the frame's edge whose tile's read reaches
+    /// past it: the color's sites inside the frame round the point held
+    /// inside the frame (as the tent's read held it), weighed exact on a
+    /// plane anew. Empty where they do not span one.
+    fn edge_read(&self, colors: &Colors, size: (usize, usize)) -> Read {
+        let (width, height) = size;
+        let [sv, sh] = self.read.shift;
+        let py = (self.y as f64 - sv).clamp(0.0, (height - 1) as f64);
+        let px = (self.x as f64 - sh).clamp(0.0, (width - 1) as f64);
+        read_for(
+            colors,
+            (self.y % 6, self.x % 6),
+            colors.at(self.y, self.x),
+            [self.y as f64 - py, self.x as f64 - px],
+            |dy, dx| self.inside((dy, dx), size),
+        )
+    }
+
     /// The site's value after the resample, before it is kept at or
     /// above zero: the reference's guards on color differences read
     /// from the site's color round the point its light came from.
@@ -310,44 +453,47 @@ impl Site {
         samples: &[f32],
         green: &[f32],
         shifted: &[(f32, f32)],
-        (width, height): (usize, usize),
         colors: &Colors,
+        (width, height): (usize, usize),
     ) -> f32 {
         let i = self.y * width + self.x;
-        let [sv, sh] = self.shift;
         let g0 = green[i];
         let cur = samples[i];
         let old = g0 - cur;
-        // The point this site's light came from; each site of its color
-        // round it gives the color difference at its own such point.
-        let py = (self.y as f32 - sv).clamp(0.0, (height - 1) as f32);
-        let px = (self.x as f32 - sh).clamp(0.0, (width - 1) as f32);
-        let (y0, x0) = (py.floor() as isize - 1, px.floor() as isize - 1);
-        // (tent weight, color difference, green there) of each.
-        let mut taps = [(0.0f32, 0.0f32, 0.0f32); 16];
-        let mut n = 0;
-        for jy in y0..y0 + 4 {
-            for jx in x0..x0 + 4 {
-                if jy < 0 || jx < 0 || jy >= height as isize || jx >= width as isize {
-                    continue;
-                }
-                let (jy, jx) = (jy as usize, jx as usize);
-                if colors.at(jy, jx) != self.color {
-                    continue;
-                }
-                let tent = (1.0 - (jy as f32 - py).abs() * 0.5).max(0.0)
-                    * (1.0 - (jx as f32 - px).abs() * 0.5).max(0.0);
-                if tent <= 0.0 {
-                    continue;
-                }
-                let (gs, d) = shifted[jy * width + jx];
-                taps[n] = (tent, d, gs);
-                n += 1;
+        // Near an edge some of the tile's read's sites are past it: the
+        // sites inside are read anew, exact on a plane where they span
+        // one; where they do not, the tile's read's sites inside, their
+        // weights scaled to one below, unless they held less than half
+        // the weight.
+        let size = (width, height);
+        let edge;
+        let mut read = self.read;
+        if !read
+            .taps()
+            .iter()
+            .all(|&(dy, dx, _)| self.inside((dy, dx), size))
+        {
+            edge = self.edge_read(colors, size);
+            if edge.n > 0 {
+                read = &edge;
             }
+        }
+        // (weight, color difference, green there) of each site of the
+        // read inside the frame.
+        let mut taps = [(0.0f32, 0.0f32, 0.0f32); MAX_TAPS];
+        let mut n = 0;
+        for &(dy, dx, w) in read.taps() {
+            if !self.inside((dy, dx), size) {
+                continue;
+            }
+            let (jy, jx) = (self.y as isize + dy, self.x as isize + dx);
+            let (gs, d) = shifted[jy as usize * width + jx as usize];
+            taps[n] = (w, d, gs);
+            n += 1;
         }
         let taps = &taps[..n];
         let total: f32 = taps.iter().map(|t| t.0).sum();
-        if total <= 0.0 {
+        if total <= 0.5 {
             return cur;
         }
         let mut int = taps.iter().map(|t| t.0 * t.1).sum::<f32>() / total;
@@ -361,8 +507,8 @@ impl Site {
             // Weight by how far green at the shifted points is from
             // green here.
             let (mut num, mut den) = (0.0f32, 0.0f32);
-            for &(tent, d, gs) in taps {
-                let p = tent / (EPS + (g0 - gs).abs());
+            for &(w, d, gs) in taps {
+                let p = w.max(0.0) / (EPS + (g0 - gs).abs());
                 num += p * d;
                 den += p;
             }
@@ -543,6 +689,165 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The resample's read of a field sampled at a color's sites, at the
+    /// point a site's light came from: each site of the period at
+    /// every phase, for red and blue, over shifts out to the largest
+    /// the correction applies either way.
+    fn each_read(mut check: impl FnMut((usize, usize), [f64; 2], &Read)) {
+        let shift = |s: i32, off: f64| (s as f64 * 0.25 + off).clamp(-SHIFT_LIMIT, SHIFT_LIMIT);
+        for dy in 0..6 {
+            for dx in 0..6 {
+                let colors = Colors::of(&CfaPattern::xtrans().shifted(dx, dy));
+                for k in 0..36 {
+                    let (py, px) = (k / 6, k % 6);
+                    let color = colors.at(py, px);
+                    if color == 1 {
+                        continue;
+                    }
+                    for sy in -16..=16 {
+                        for sx in -16..=16 {
+                            let shift = [shift(sy, 0.01), shift(sx, -0.02)];
+                            let read = read_for(&colors, (py, px), color, shift, |_, _| true);
+                            for &(ty, tx, _) in read.taps() {
+                                let (y, x) = (
+                                    (py as isize + ty + 12) as usize,
+                                    (px as isize + tx + 12) as usize,
+                                );
+                                assert_eq!(colors.at(y, x), color, "a tap of another color");
+                            }
+                            check((py, px), shift, &read);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A flat field read back is the field, and a ramp read back is the
+    /// ramp at the point: the read is exact on a plane wherever the
+    /// point falls, which a tent's weights are not on X-Trans.
+    #[test]
+    fn a_plane_read_back_is_the_plane() {
+        let ramp = |y: f64, x: f64| 0.3 + 0.011 * y - 0.017 * x;
+        let mut least = 0.0f32;
+        each_read(|(py, px), [sv, sh], read| {
+            assert!(
+                (4..=6).contains(&read.n),
+                "({py}, {px}) {sv} {sh}: {} sites",
+                read.n
+            );
+            let flat: f32 = read.taps().iter().map(|t| t.2 * 0.42).sum();
+            assert!((flat - 0.42).abs() < 1e-5, "flat: {flat}");
+            let (y, x) = (py as f64 - sv, px as f64 - sh);
+            let got: f64 = read
+                .taps()
+                .iter()
+                .map(|&(ty, tx, w)| {
+                    f64::from(w) * ramp(py as f64 + ty as f64, px as f64 + tx as f64)
+                })
+                .sum();
+            assert!(
+                (got - ramp(y, x)).abs() < 1e-5,
+                "ramp at ({y}, {x}): {got} vs {}",
+                ramp(y, x)
+            );
+            // Nearly every weight is positive, and none below -0.02:
+            // the guard's mean, which takes the positive part, reads
+            // nearly the same sites.
+            least = read.taps().iter().map(|t| t.2).fold(least, f32::min);
+        });
+        assert!(least > -0.025, "least weight {least}");
+    }
+
+    /// By the frame's edge a read whose sites reach past it weighs the
+    /// sites inside anew: a ramp read back there is the ramp at the
+    /// point held inside the frame, on every row and column within
+    /// three of each edge.
+    #[test]
+    fn a_ramp_read_back_at_the_edge_is_the_ramp() {
+        let (w, h) = (40, 34);
+        let ramp = |y: f64, x: f64| 0.3 + 0.011 * y - 0.017 * x;
+        let (mut checked, mut dropped) = (0, 0);
+        for (dx, dy) in PHASES {
+            let colors = Colors::of(&CfaPattern::xtrans().shifted(dx, dy));
+            for shift in [[0.7, -1.3], [-2.2, 0.4], [3.99, 3.99], [-1.1, -3.5]] {
+                for y in 0..h {
+                    for x in 0..w {
+                        let color = colors.at(y, x);
+                        if color == 1 || y.min(x).min(h - 1 - y).min(w - 1 - x) >= 3 {
+                            continue;
+                        }
+                        let read = read_for(&colors, (y % 6, x % 6), color, shift, |_, _| true);
+                        let site = Site { y, x, read: &read };
+                        if read.taps().iter().all(|t| site.inside((t.0, t.1), (w, h))) {
+                            continue;
+                        }
+                        dropped += 1;
+                        let edge = site.edge_read(&colors, (w, h));
+                        if edge.n == 0 {
+                            continue;
+                        }
+                        assert!(edge.taps().iter().all(|t| site.inside((t.0, t.1), (w, h))));
+                        let py = (y as f64 - shift[0]).clamp(0.0, (h - 1) as f64);
+                        let px = (x as f64 - shift[1]).clamp(0.0, (w - 1) as f64);
+                        let got: f64 = edge
+                            .taps()
+                            .iter()
+                            .map(|&(ty, tx, wt)| {
+                                f64::from(wt) * ramp(y as f64 + ty as f64, x as f64 + tx as f64)
+                            })
+                            .sum();
+                        assert!(
+                            (got - ramp(py, px)).abs() < 1e-5,
+                            "({y}, {x}) {shift:?}: {got} vs {}",
+                            ramp(py, px)
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        // Most reads that lose sites keep enough to span a plane (1,136
+        // of 1,280 here); the rest are at the corners.
+        assert!(checked * 10 >= dropped * 8, "{checked} of {dropped}");
+    }
+
+    /// With no shift the read is the site's own color difference, as
+    /// Bayer's bilinear read is: a fit that finds nothing moves nothing.
+    #[test]
+    fn a_read_with_no_shift_is_the_site() {
+        let colors = Colors::of(&CfaPattern::xtrans());
+        for k in 0..36 {
+            let (py, px) = (k / 6, k % 6);
+            let color = colors.at(py, px);
+            if color == 1 {
+                continue;
+            }
+            let read = read_for(&colors, (py, px), color, [0.0, 0.0], |_, _| true);
+            for &(ty, tx, w) in read.taps() {
+                let want = if (ty, tx) == (0, 0) { 1.0 } else { 0.0 };
+                assert!((w - want).abs() < 1e-4, "({py}, {px}): ({ty}, {tx}) {w}");
+            }
+        }
+    }
+
+    /// The Bayer correction is not this file's: a Bayer frame through
+    /// the engine's entry point gives the same bits it gave before the
+    /// X-Trans read changed (the digest is of that build).
+    #[test]
+    fn a_bayer_frame_s_correction_is_the_same_bits() {
+        let (w, h) = (400, 320);
+        let p = CfaPattern::rggb();
+        let (_, shifted) = aberrated(w, h, &p, 0.005, -0.004);
+        let (out, stats) =
+            crate::develop::ca::correct_ca(&shifted, w, h, &p, &CaOptions::default()).unwrap();
+        assert!(stats.corrected);
+        let digest = out.iter().fold(0xcbf2_9ce4_8422_2325u64, |d, v| {
+            (d ^ u64::from(v.to_bits())).wrapping_mul(0x0100_0000_01b3)
+        });
+        assert_eq!(digest, 0xe656_0455_a985_3fe1, "digest {digest:#018x}");
     }
 
     /// The stand-in Bayer mosaic of a plane is the plane: every

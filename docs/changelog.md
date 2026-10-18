@@ -72,9 +72,11 @@ design note behind it.
 ### Cameras
 
 - Fujifilm X-Trans raws get the hot pixel repair, Denoise and the
-  chromatic aberration correction. The learned denoiser is still not
-  on X-Trans
-  ([§331](https://github.com/jessolmstead/greycard/blob/master/docs/notes/331-x-trans-step-2-noise-hot-pixels-and-chromatic-aberration.md))
+  chromatic aberration correction, which reads the mosaic exactly and
+  runs a fifth faster than its first build. The learned denoiser is
+  still not on X-Trans
+  ([§331](https://github.com/jessolmstead/greycard/blob/master/docs/notes/331-x-trans-step-2-noise-hot-pixels-and-chromatic-aberration.md),
+  [§343](https://github.com/jessolmstead/greycard/blob/master/docs/notes/343-x-trans-ca-the-read-the-vote-and-the-green-that-limits-both.md))
 - "Fit this camera's look" on a folder on a network share surveys the
   cameras in seconds rather than minutes, reading only the ends of
   each CR3 and RAF, and says how far it has got. macOS `._` files
