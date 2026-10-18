@@ -1970,6 +1970,39 @@ pub(crate) mod tests {
         |_| {}
     }
 
+    /// The lens database's name is one value for the whole process
+    /// (`crate::set_lens_database`), and a develop key takes it in
+    /// whenever the lens profile is on, which it is by default. A test
+    /// that sets the name, and a test that compares a key the index
+    /// made with one it makes itself, hold this for their whole run,
+    /// or they race each other across threads: the index reads the
+    /// name at one moment and the test at another.
+    static LENS_NAME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lens_name_held() -> std::sync::MutexGuard<'static, ()> {
+        LENS_NAME.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Names the lens database for the test, and names none again when
+    /// the test ends, however it ends.
+    struct LensNamed {
+        _held: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl LensNamed {
+        fn new(name: &str) -> Self {
+            let held = lens_name_held();
+            crate::set_lens_database(Some(name.into()));
+            Self { _held: held }
+        }
+    }
+
+    impl Drop for LensNamed {
+        fn drop(&mut self) {
+            crate::set_lens_database(None);
+        }
+    }
+
     #[test]
     fn a_folder_is_indexed_and_a_second_pass_reads_nothing() {
         let dir = scratch("index");
@@ -4682,6 +4715,7 @@ pub(crate) mod tests {
     #[test]
     fn a_row_mirrors_an_export_and_a_reset_is_not_a_develop() {
         use greycard_edit::{Edit, Exported};
+        let _held = lens_name_held();
         let dir = scratch("exported");
         let names = [
             "plain", "reset", "now", "behind", "undone", "capped", "seeded", "blended", "legacy",
@@ -4794,6 +4828,7 @@ pub(crate) mod tests {
     #[test]
     fn a_schema_8_library_fills_its_develop_keys_on_the_next_pass() {
         use greycard_edit::Edit;
+        let held = lens_name_held();
         let dir = scratch("schema8");
         // The frames are pictures: the second's sidecar carries a raw's
         // default edit, which on a picture is an edit, so two rows are
@@ -4851,7 +4886,8 @@ pub(crate) mod tests {
         assert_eq!(report.meta_refreshed, 0, "{report:?}");
         // The lens database changing clears the keys, and the pass
         // after fills them under its name.
-        crate::set_lens_database(Some("elsewhere 2026".into()));
+        drop(held);
+        let named = LensNamed::new("elsewhere 2026");
         assert_eq!(lib.clear_develop_keys().unwrap(), 2);
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.meta_refreshed, 2, "{report:?}");
@@ -4859,7 +4895,7 @@ pub(crate) mod tests {
             key_of(&mut lib, &edited),
             Some(brightened.develop_key(Some("elsewhere 2026")) as i64)
         );
-        crate::set_lens_database(None);
+        drop(named);
         drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -4903,6 +4939,7 @@ pub(crate) mod tests {
     /// the file.
     #[test]
     fn a_sidecar_with_two_versions_gives_two_version_rows() {
+        let _held = lens_name_held();
         let dir = scratch("versions");
         let (r5, _r6, _a7) = shoot(&dir);
         let (_s, warm, fresh, brightened) = with_versions(&r5);
