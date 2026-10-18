@@ -702,7 +702,7 @@ fn the_light_switch_off_keeps_the_base_curve_on_the_gpu() {
         .iter()
         .map(|v| half::f16::from_f32(*v).to_f32())
         .collect();
-    let global = Baked::global(&greycard_edit::Edit::default(), Source::Scene);
+    let global = Baked::global(&greycard_edit::Edit::default(), Source::SCENE);
     let to_out = crate::export::Space::Srgb.matrix();
     let mut worst = 0.0f32;
     for y in 0..h {
@@ -780,7 +780,7 @@ fn a_fitted_table_is_off_under_another_curve_on_both_sides() {
         let cpu = crate::finish::finish_with(
             &seen,
             None,
-            &Baked::global(edit, Source::Scene),
+            &Baked::global(edit, Source::SCENE),
             &[],
             |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
             |_, _| (0.0, None),
@@ -853,53 +853,59 @@ fn a_display_curve_on_the_gpu_is_the_cpus(curve: greycard_edit::DisplayCurve, wh
         display_curve: curve,
         ..Default::default()
     };
-    let mut worst = (0.0f32, [0.0f32; 3], [0.0f32; 3], [0.0f32; 3], 0.0f32);
-    // The signed difference's mean and its root mean square over
-    // the channels not at either end, in levels: the GPU is read
-    // back in 8 bits, so the square root of a twelfth (0.29) is
-    // the quantization's own, and a mean well under a hundredth of
-    // a level says the curve on the GPU has no bias against the
-    // CPU's that the quantization could hide.
-    let (mut sum, mut sq, mut n) = (0.0f64, 0.0f64, 0usize);
-    for stops in [-3.0f32, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0] {
-        edit.light.exposure = stops;
-        let view = View {
-            center: (w as f32 / 2.0, h as f32 / 2.0),
-            plane: (w as f32, h as f32),
-            frame_size: (w as f32, h as f32),
-            ..View::with_look(&edit)
-        };
-        let target = renderer.render(w as u32, h as u32, &view).0;
-        let shown = renderer.read_back(&target).expect("read back");
-        let global = Baked::global(&edit, Source::Scene);
-        for y in 0..h {
-            for x in 0..w {
-                let i = (y * w + x) * 3;
-                let px = [seen[i], seen[i + 1], seen[i + 2]];
-                let cpu = crate::finish::finish_pixel(px, &global, &[], &to_out);
-                let gpu = shown.get_pixel(x as u32, y as u32);
-                let gpu = [0, 1, 2].map(|k| f32::from(gpu[k]) / 255.0);
-                for k in 0..3 {
-                    let d = (cpu[k] - gpu[k]).abs();
-                    if d > worst.0 {
-                        worst = (d, px, cpu, gpu, stops);
-                    }
-                    if cpu[k] > 0.02 && cpu[k] < 0.98 {
-                        let signed = f64::from(gpu[k] - cpu[k]) * 255.0;
-                        sum += signed;
-                        sq += signed * signed;
-                        n += 1;
+    // At the default baseline and at a body's own, whose display white
+    // and AgX's fit reach the shader through its uniforms.
+    let (make, model) = crate::testing::GFX;
+    for source in [Source::SCENE, Source::raw(make, model)] {
+        let mut worst = (0.0f32, [0.0f32; 3], [0.0f32; 3], [0.0f32; 3], 0.0f32);
+        // The signed difference's mean and its root mean square over
+        // the channels not at either end, in levels: the GPU is read
+        // back in 8 bits, so the square root of a twelfth (0.29) is
+        // the quantization's own, and a mean well under a hundredth of
+        // a level says the curve on the GPU has no bias against the
+        // CPU's that the quantization could hide.
+        let (mut sum, mut sq, mut n) = (0.0f64, 0.0f64, 0usize);
+        for stops in [-3.0f32, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0] {
+            edit.light.exposure = stops;
+            let view = View {
+                center: (w as f32 / 2.0, h as f32 / 2.0),
+                plane: (w as f32, h as f32),
+                frame_size: (w as f32, h as f32),
+                source,
+                ..View::with_look(&edit)
+            };
+            let target = renderer.render(w as u32, h as u32, &view).0;
+            let shown = renderer.read_back(&target).expect("read back");
+            let global = Baked::global(&edit, source);
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) * 3;
+                    let px = [seen[i], seen[i + 1], seen[i + 2]];
+                    let cpu = crate::finish::finish_pixel(px, &global, &[], &to_out);
+                    let gpu = shown.get_pixel(x as u32, y as u32);
+                    let gpu = [0, 1, 2].map(|k| f32::from(gpu[k]) / 255.0);
+                    for k in 0..3 {
+                        let d = (cpu[k] - gpu[k]).abs();
+                        if d > worst.0 {
+                            worst = (d, px, cpu, gpu, stops);
+                        }
+                        if cpu[k] > 0.02 && cpu[k] < 0.98 {
+                            let signed = f64::from(gpu[k] - cpu[k]) * 255.0;
+                            sum += signed;
+                            sq += signed * signed;
+                            n += 1;
+                        }
                     }
                 }
             }
         }
+        eprintln!(
+            "{what} from {source:?}, GPU against CPU: {worst:?}; over {n} channels mean {:+.4} levels, rms {:.3}",
+            sum / n as f64,
+            (sq / n as f64).sqrt()
+        );
+        assert!(worst.0 < 1.5 / 255.0, "{source:?}: {worst:?}");
     }
-    eprintln!(
-        "{what}, GPU against CPU: {worst:?}; over {n} channels mean {:+.4} levels, rms {:.3}",
-        sum / n as f64,
-        (sq / n as f64).sqrt()
-    );
-    assert!(worst.0 < 1.5 / 255.0, "{worst:?}");
 }
 
 /// How far each display curve's value on the GPU is from the CPU's
@@ -956,7 +962,7 @@ fn a_display_curves_gap_before_the_point_curves() {
                 };
                 let target = renderer.render(w as u32, h as u32, &view).0;
                 let shown = renderer.read_back(&target).expect("read back");
-                let global = Baked::global(&edit, Source::Scene);
+                let global = Baked::global(&edit, Source::SCENE);
                 let look = edit.look();
                 for y in 0..h {
                     for x in 0..w {
@@ -970,7 +976,7 @@ fn a_display_curves_gap_before_the_point_curves() {
                             &edit.bw,
                             &look.tint,
                             &global.curves,
-                            Source::Scene,
+                            Source::SCENE,
                             curve,
                         )
                         .encoded;
@@ -1141,7 +1147,7 @@ fn a_rendered_picture_takes_a_clip_on_the_gpu_as_on_the_cpu() {
         worst
     };
     let display = worst_of(Source::Display);
-    let scene = worst_of(Source::Scene);
+    let scene = worst_of(Source::SCENE);
     eprintln!("GPU against CPU: rendered {display:.4}, raw {scene:.4}");
     assert!(display < 2.5 / 255.0, "{display}");
     assert!(scene < 2.5 / 255.0, "{scene}");
@@ -1198,7 +1204,7 @@ fn a_real_frames_range_masks() {
     // And what an export's finish pays whole, the least of five:
     // with no local, a luminance window alone (no mean), a color
     // window.
-    let global = Baked::global(&greycard_edit::Edit::default(), Source::Scene);
+    let global = Baked::global(&greycard_edit::Edit::default(), Source::SCENE);
     let to_out = crate::export::Space::Srgb.matrix();
     let once = |locals: &[Local]| {
         let start = std::time::Instant::now();
@@ -1846,7 +1852,7 @@ fn random_case(
         source: if display && has("display source") {
             Source::Display
         } else {
-            Source::Scene
+            Source::SCENE
         },
         guide: (guide && has("guide plane")).then_some(usize::from(coarse)),
         space: if has("output space") {
@@ -2154,7 +2160,7 @@ fn both_sides_with(
     let cpu = crate::finish::finish_with(
         image,
         None,
-        &Baked::global(edit, Source::Scene),
+        &Baked::global(edit, Source::SCENE),
         &locals,
         |x, y| ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / iw),
         |x, y| {
@@ -2503,7 +2509,7 @@ fn a_masks_white_balance_holds_under_a_moving_global() {
         crate::finish::finish_with(
             &developed,
             None,
-            &Baked::global(&edit, Source::Scene),
+            &Baked::global(&edit, Source::SCENE),
             locals,
             |x, y| ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / iw),
             |_, _| (0.0, None),
@@ -2751,7 +2757,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
             // A raw's locals have their white balance; a picture
             // already rendered has none to move (`local_white_shift`).
             .map(|(a, rasters)| {
-                let white = (case.source == Source::Scene).then_some(&shift);
+                let white = (case.source.is_scene()).then_some(&shift);
                 Local::of(a, rasters.clone(), white)
             })
             .collect();

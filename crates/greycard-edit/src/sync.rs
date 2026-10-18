@@ -4548,13 +4548,16 @@ mod tests {
         assert_eq!(exposures(&joined), [0.0, 0.5, 1.0]);
         assert_eq!(joined.current_label, None);
 
-        // Saved, it is ahead of both, and written at schema 5.
+        // Saved, it is ahead of both, and written at the current schema.
         let mut joined = joined;
         save(&mut joined, &local, 400, "desk");
         assert_eq!(compare(&a, &joined), Compared::Behind(Side::Local));
         assert_eq!(compare(&b, &joined), Compared::Behind(Side::Local));
         let text = std::fs::read_to_string(Sidecar::path_for(&local)).unwrap();
-        assert!(text.contains("\"version\": 5") && !text.contains("\"version\": 4"));
+        assert!(
+            text.contains(&format!("\"version\": {}", crate::VERSION))
+                && !text.contains("\"version\": 4")
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -374,3 +374,67 @@ pub(crate) fn rest_on(app: &App, label: &str) -> (f32, f32) {
     slint::platform::update_timers_and_animations();
     (x, y)
 }
+
+/// A linear DNG of our own writing from a body of `make` and `model`, a
+/// textured scene of `width` by `height` with a ramp across it: a raw
+/// the engine opens and names by its body, which no sample raw in the
+/// repository may stand in for.
+pub(crate) fn linear_dng(
+    path: &std::path::Path,
+    width: usize,
+    height: usize,
+    make: &str,
+    model: &str,
+) {
+    use greycard_core::raw::{
+        Calibration, CfaPattern, LevelPattern, Levels, Orientation, Samples, SensorLayout,
+    };
+    let m = greycard_core::color::WORKING_SPACE
+        .from_xyz_matrix()
+        .expect("the working space has a matrix");
+    let frame = greycard_core::RawFrame {
+        make: make.into(),
+        model: model.into(),
+        width,
+        height,
+        channels: 1,
+        layout: SensorLayout::Cfa(CfaPattern::rggb()),
+        samples: Samples::U16(Vec::new()),
+        levels: Levels {
+            black: LevelPattern::uniform(0.0, 1),
+            white: LevelPattern::uniform(65535.0, 1),
+        },
+        as_shot_coefficients: Some([2.0, 1.0, 1.6]),
+        calibrations: vec![Calibration {
+            illuminant: 21,
+            color_matrix: m.rows.iter().flatten().map(|v| *v as f32).collect(),
+            forward_matrix: None,
+        }],
+        crop: None,
+        orientation: Orientation::Normal,
+        shot: Default::default(),
+    };
+    let mut data = Vec::with_capacity(width * height * 3);
+    for y in 0..height {
+        for x in 0..width {
+            let (fx, fy) = (x as f32, y as f32);
+            let v =
+                0.5 + 0.2 * (fx * 0.13).sin() * (fy * 0.09).cos() + 0.1 * ((fx + fy) * 0.031).sin();
+            let ramp = 0.02 + 0.6 * fx / width as f32;
+            data.extend_from_slice(&[ramp * v * 0.5, ramp * v, ramp * v * 0.6]);
+        }
+    }
+    let image = greycard_core::CameraImage::from_data(width, height, data).unwrap();
+    let mut file = std::fs::File::create(path).unwrap();
+    greycard_core::dng::write_linear_dng(
+        &mut file,
+        &frame,
+        &image,
+        [2.0, 1.0, 1.6],
+        &Default::default(),
+    )
+    .unwrap();
+}
+
+/// The body the GFX 100S II's raws name, as the decoder reads them.
+pub(crate) const GFX: (&str, &str) = ("FUJIFILM", "GFX100S II");

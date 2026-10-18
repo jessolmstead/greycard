@@ -391,7 +391,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             app.set_shot_exposure(shot.exposure.as_str().into());
             match &kind {
                 SourceKind::Raw => {
-                    st.develop.source = finish::Source::Scene;
+                    // The body's baseline, from the camera the file names.
+                    let (make, model) = &st.develop.camera;
+                    st.develop.source = finish::Source::raw(make, model);
                     app.set_raw_input(true);
                     app.set_source_note("".into());
                     // The learned denoiser has no X-Trans version yet:

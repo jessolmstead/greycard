@@ -54,37 +54,89 @@ pub struct Baked {
 }
 
 /// What the finish is handed. A raw's develop is a scene, which the
-/// finish brightens by [`BASELINE_EXPOSURE`] and takes to a display
+/// finish brightens by its body's baseline and takes to a display
 /// through the curve. A JPEG, PNG or TIFF is a picture something has
 /// already rendered for a display (§50): it takes neither, so a
 /// picture with nothing done to it comes out as it went in, and the
 /// Light sliders act on it as they do on a scene, clipped at white
 /// where the curve would have rolled off.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    #[default]
-    Scene,
+    /// A raw's develop, and its body's baseline.
+    Scene(Baseline),
     Display,
 }
 
+impl Default for Source {
+    fn default() -> Self {
+        Source::SCENE
+    }
+}
+
+/// A body's baseline ([`greycard_edit::baseline`]) in hundredths of a
+/// stop, so that a source compares as a whole number does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Baseline(i16);
+
+impl Baseline {
+    /// A body not in the table's: [`BASELINE_EXPOSURE`].
+    pub const DEFAULT: Baseline = Baseline(80);
+
+    pub fn of_stops(stops: f32) -> Baseline {
+        Baseline((stops * 100.0).round() as i16)
+    }
+
+    /// The baseline of a raw from this make and model.
+    pub fn of_body(make: &str, model: &str) -> Baseline {
+        Baseline::of_stops(greycard_edit::baseline::for_make_model(make, model))
+    }
+
+    pub fn stops(self) -> f32 {
+        f32::from(self.0) / 100.0
+    }
+}
+
 impl Source {
-    /// Stops the exposure slider's zero stands for.
-    pub fn baseline(self) -> f32 {
+    /// A raw's develop from a body with the default baseline.
+    pub const SCENE: Source = Source::Scene(Baseline::DEFAULT);
+
+    /// A raw's develop from this make and model.
+    pub fn raw(make: &str, model: &str) -> Source {
+        Source::Scene(Baseline::of_body(make, model))
+    }
+
+    /// Stops the exposure slider's zero stands for under `light` (the
+    /// picture's): the zero an older edit was made against where it
+    /// keeps one, else the body's; nothing for a picture.
+    pub fn baseline(self, light: &Light) -> f32 {
         match self {
-            Source::Scene => BASELINE_EXPOSURE,
+            Source::Scene(b) => light.baseline.unwrap_or(b.stops()),
             Source::Display => 0.0,
         }
     }
 
+    pub fn is_scene(self) -> bool {
+        matches!(self, Source::Scene(_))
+    }
+
     /// The display curve, per channel or AgX as `how` says,
     /// or a clip at white for a picture that has been through one
-    /// already.
-    #[inline]
+    /// already, at the default baseline's white.
+    #[cfg(test)]
     pub(crate) fn curve(self, c: [f32; 3], how: DisplayCurve) -> [f32; 3] {
+        self.curve_at(c, how, &White::default_white())
+    }
+
+    /// The display curve, per channel or AgX as `how` says, reaching
+    /// white at `white`, the frame's; a clip at white for a picture.
+    #[inline]
+    pub(crate) fn curve_at(self, c: [f32; 3], how: DisplayCurve, white: &White) -> [f32; 3] {
         match (self, how) {
             (Source::Display, _) => c.map(|x| x.clamp(0.0, 1.0)),
-            (Source::Scene, DisplayCurve::Channels) => c.map(tone),
-            (Source::Scene, DisplayCurve::Agx) => crate::agx::tone_agx(c),
+            (Source::Scene(_), DisplayCurve::Channels) => {
+                c.map(|x| tone_at(x, white.stops, white.white, white.gain))
+            }
+            (Source::Scene(_), DisplayCurve::Agx) => white.agx.apply(c),
         }
     }
 }
@@ -100,7 +152,7 @@ impl Baked {
             bw: BlackWhite::OFF,
             tint: look.tint,
             curves: look.curves.bake_with(&look.grading),
-            source: Source::Scene,
+            source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: if look.detail.enabled {
@@ -266,15 +318,19 @@ pub const MAX_LOCALS: usize = 16;
 
 const MID_GREY: f32 = 0.18;
 
-/// Stops every raw is brightened by before its own exposure: the
-/// exposure slider at zero is this, so a raw with nothing done to it
-/// lands where the camera's JPEG and Lightroom put it rather than 0.8
-/// stops under both (notes §141). Added where the exposure turns into
-/// a gain, here, in [`pick`] and in the viewport's uniform, so it acts
+/// Stops a raw is brightened by before its own exposure: the exposure
+/// slider at zero is this, so a raw with nothing done to it lands
+/// where the camera's JPEG and Lightroom put it rather than 0.8 stops
+/// under both (notes §141). This is the default; a body measured apart
+/// from the rest has its own ([`greycard_edit::baseline`]), which its
+/// develop's [`Source`] carries. Added where the exposure turns into a
+/// gain, here, in [`pick`] and in the viewport's uniform, so it acts
 /// exactly as the slider does, the guide plane included. Never to a
 /// picture that is not a raw, which is the camera's JPEG or the like
-/// already ([`Source::baseline`]).
-pub const BASELINE_EXPOSURE: f32 = 0.8;
+/// already ([`Source::baseline`]). The display curve's white is placed
+/// from this one, not from a body's.
+pub const BASELINE_EXPOSURE: f32 = greycard_edit::baseline::DEFAULT;
+
 /// Luminance weights of the working space, Rec.2020.
 const LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];
 
@@ -510,7 +566,9 @@ pub fn finish_pixel_with(
         Some(m) => rebalanced(px, reference, &m),
         None => (px, reference),
     };
-    let mut exposure = global.source.baseline() + global.light.exposure + stops;
+    let mut exposure = global.source.baseline(&global.light) + global.light.exposure + stops;
+    // The display white where the frame's baseline puts the clip.
+    let white = White::of(global.source, &global.light);
     let mut t = global.light.tone;
     let mut mixer = global.mixer.effective();
     let mut color = global.color.effective();
@@ -565,12 +623,14 @@ pub fn finish_pixel_with(
     let g = guide.map(|(g, _)| t.contrast * (g + exposure));
     let span = highlights_span(
         guide.map_or(FRAME_TYPICAL, |(_, range)| range),
-        global.source.baseline() + global.light.exposure,
+        global.source.baseline(&global.light) + global.light.exposure,
         global.light.tone.contrast,
     );
-    c = global
-        .source
-        .curve(shape(c, &t, g, span), global.display_curve);
+    c = global.source.curve_at(
+        shape_at(c, &t, g, span, white.stops),
+        global.display_curve,
+        &white,
+    );
     c = [0, 1, 2].map(|k| {
         let x = encode(c[k].clamp(0.0, 1.0));
         let mut x2 = x;
@@ -610,7 +670,7 @@ pub fn finish_pixel_with(
     // (`agx::output_rail`). Nothing to do in Rec.2020, where the
     // formation leaves nothing under zero, and nothing on the other
     // curves. The weights are the matrix's, kept from the last pixel.
-    if global.source == Source::Scene && global.display_curve == DisplayCurve::Agx {
+    if global.source.is_scene() && global.display_curve == DisplayCurve::Agx {
         s = crate::agx::output_rail(s, rail_weights(to_out));
     }
     let e = s.map(|v| encode(v.clamp(0.0, 1.0)));
@@ -720,7 +780,7 @@ pub fn pick(
     // And the tint through the vector the finish blends looks with,
     // so the dropper reads the tint the render applies.
     let tint = Tint::from_vector(tint.vector());
-    let gain = 2f32.powf(source.baseline() + light.exposure);
+    let gain = 2f32.powf(source.baseline(light) + light.exposure);
     let mut c = px.map(|v| v * gain);
     let hue = oklab(c)[2].atan2(oklab(c)[1]).to_degrees();
     if oklab_pass_acts(&mixer, &color, &bw, &tint) {
@@ -728,10 +788,15 @@ pub fn pick(
     }
     let span = highlights_span(
         FRAME_TYPICAL,
-        source.baseline() + light.exposure,
+        source.baseline(light) + light.exposure,
         light.tone.contrast,
     );
-    c = source.curve(shape(c, &light.tone, None, span), display_curve);
+    let white = White::of(source, light);
+    c = source.curve_at(
+        shape_at(c, &light.tone, None, span, white.stops),
+        display_curve,
+        &white,
+    );
     let encoded = c.map(|v| encode(v.clamp(0.0, 1.0)));
     let luma = encode((LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]).clamp(0.0, 1.0));
     let shaded = [0, 1, 2].map(|k| decode(lookup(curves, k, encoded[k])));
@@ -1099,6 +1164,11 @@ const SCENE_WHITE_STOPS: f32 = 2.47;
 /// eased exponent's slope first reaches zero, which the monotonic
 /// test's arithmetic puts at 0.407, an exponent a whites of -4.76
 /// gives. Held at -3.5, where it is 0.48.
+///
+/// The display white is the frame's ([`White`]): a body with a lower
+/// baseline than the default brings it, and the pole with it, nearer
+/// grey: at a baseline `b` the slider's top is `0.47 + b` stops short
+/// of the pole, 0.99 at the GFX 100S II's 0.52.
 const WHITES_RANGE: (f32, f32) = (-3.5, 2.0);
 
 /// Where the white point pivots, in stops over mid grey as [`shape`]
@@ -1150,8 +1220,11 @@ fn whites_pivot(span: [f32; 2]) -> f32 {
 ///
 /// The whites it is given is held to [`WHITES_RANGE`] first, because
 /// the value that reaches it is not the slider's.
+///
+/// Display white is `white_stops` over mid grey: the frame's
+/// ([`White`]).
 #[inline]
-fn white_point(c: [f32; 3], whites: f32, pivot: f32) -> [f32; 3] {
+fn white_point(c: [f32; 3], whites: f32, pivot: f32, white_stops: f32) -> [f32; 3] {
     if whites == 0.0 {
         return c;
     }
@@ -1161,7 +1234,7 @@ fn white_point(c: [f32; 3], whites: f32, pivot: f32) -> [f32; 3] {
         return c;
     }
     let w = whites.clamp(WHITES_RANGE.0, WHITES_RANGE.1);
-    let reach = DISPLAY_WHITE_STOPS - pivot;
+    let reach = white_stops - pivot;
     let p = reach / (reach - w);
     let p = 1.0 + (p - 1.0) * smoothstep(0.0, 1.0, u);
     let gain = 2f32.powf(u * (p - 1.0));
@@ -1192,7 +1265,21 @@ fn white_point(c: [f32; 3], whites: f32, pivot: f32) -> [f32; 3] {
 /// highlights ramp (§250). Added side by side, as §98 had them, that
 /// held only while the two ramps were fixed.
 #[inline]
+#[cfg(test)]
 fn shape(c: [f32; 3], t: &greycard_edit::Tone, guide: Option<f32>, span: [f32; 2]) -> [f32; 3] {
+    shape_at(c, t, guide, span, DISPLAY_WHITE_STOPS)
+}
+
+/// [`shape`] with its white point aiming at a display white
+/// `white_stops` over mid grey: a [`White`]'s.
+#[inline]
+fn shape_at(
+    c: [f32; 3],
+    t: &greycard_edit::Tone,
+    guide: Option<f32>,
+    span: [f32; 2],
+    white_stops: f32,
+) -> [f32; 3] {
     let c = c.map(|v| MID_GREY * (v.max(0.0) / MID_GREY).powf(t.contrast));
     let g = guide.unwrap_or_else(|| {
         let y = LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2];
@@ -1202,7 +1289,12 @@ fn shape(c: [f32; 3], t: &greycard_edit::Tone, guide: Option<f32>, span: [f32; 2
     let shifted = lifted + t.highlights * highlights_weight(lifted, span);
     let gain = 2f32.powf(shifted - g);
     black_point(
-        white_point(c.map(|v| v * gain), t.whites, whites_pivot(span)),
+        white_point(
+            c.map(|v| v * gain),
+            t.whites,
+            whites_pivot(span),
+            white_stops,
+        ),
         t.blacks,
     )
 }
@@ -1255,15 +1347,95 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 }
 
 /// Where the display curve reaches white, in stops over mid grey: the
-/// sensor's clip, scene white, where the baseline puts it. A channel
-/// the raw clipped shows as white, as a camera's JPEG and Lightroom
-/// show it, and not as the pale grey Narkowicz's fit gives it (§145).
+/// sensor's clip, scene white, where the default baseline puts it. A
+/// channel the raw clipped shows as white, as a camera's JPEG and
+/// Lightroom show it, and not as the pale grey Narkowicz's fit gives
+/// it (§145). A body with a baseline of its own has its own
+/// ([`White`]).
 const DISPLAY_WHITE_STOPS: f32 = SCENE_WHITE_STOPS + BASELINE_EXPOSURE;
 /// `MID_GREY * 2^DISPLAY_WHITE_STOPS`, and the gain that takes the fit
 /// there to one. Constants because `powf` is not `const`; a test holds
 /// them to what they name.
 pub(crate) const DISPLAY_WHITE: f32 = 1.736_363;
 const SHOULDER_GAIN: f32 = 1.114_332;
+
+/// The display curve's white for the stops a frame renders at: where
+/// the sensor's clip lands once the frame's baseline is on it, so a
+/// channel the raw clipped is white whatever its body's baseline. In
+/// stops over mid grey (where the shoulder reaches one and the white
+/// point aims), as scene light, and the gain that takes the fit there
+/// to one; and AgX with its white relative exposure fitted to it.
+///
+/// At [`BASELINE_EXPOSURE`] it is the constants above, to the bit, so a
+/// body with the default baseline, and an older edit that keeps it,
+/// renders as it did before the bodies had their own.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct White {
+    pub stops: f32,
+    pub white: f32,
+    pub gain: f32,
+    pub agx: &'static crate::agx::Agx,
+}
+
+impl White {
+    /// The default baseline's white.
+    pub fn default_white() -> White {
+        White {
+            stops: DISPLAY_WHITE_STOPS,
+            white: DISPLAY_WHITE,
+            gain: SHOULDER_GAIN,
+            agx: crate::agx::punchy(),
+        }
+    }
+
+    /// The white for a raw brightened by `baseline` stops. Made once a
+    /// value for the process (AgX's fit is a bisection) and held a
+    /// value a thread, since the finish asks it of every pixel.
+    pub fn at(baseline: f32) -> White {
+        if baseline == BASELINE_EXPOSURE {
+            return White::default_white();
+        }
+        thread_local! {
+            static LAST: std::cell::Cell<Option<(u32, White)>> =
+                const { std::cell::Cell::new(None) };
+        }
+        let key = baseline.to_bits();
+        if let Some((k, w)) = LAST.with(|l| l.get())
+            && k == key
+        {
+            return w;
+        }
+        static MADE: std::sync::Mutex<Vec<(u32, White)>> = std::sync::Mutex::new(Vec::new());
+        let mut made = MADE.lock().unwrap_or_else(|e| e.into_inner());
+        let w = match made.iter().find(|(k, _)| *k == key) {
+            Some((_, w)) => *w,
+            None => {
+                let stops = SCENE_WHITE_STOPS + baseline;
+                let white = MID_GREY * 2f32.powf(stops);
+                let w = White {
+                    stops,
+                    white,
+                    gain: 1.0 / aces(white),
+                    agx: crate::agx::punchy_at(white),
+                };
+                made.push((key, w));
+                w
+            }
+        };
+        LAST.with(|l| l.set(Some((key, w))));
+        w
+    }
+
+    /// The white a frame of `source` renders at under `light` (the
+    /// picture's): the default's for a picture, whose curve is a clip
+    /// and whose white point aims where it always has.
+    pub fn of(source: Source, light: &Light) -> White {
+        match source {
+            Source::Scene(_) => White::at(source.baseline(light)),
+            Source::Display => White::default_white(),
+        }
+    }
+}
 
 /// Narkowicz's fit of the ACES output transform.
 fn aces(x: f32) -> f32 {
@@ -1280,14 +1452,21 @@ fn aces(x: f32) -> f32 {
 /// meets white with is the fit's there, a tenth of a display stop per
 /// scene stop, so the clip is a soft corner.
 pub(crate) fn tone(x: f32) -> f32 {
+    tone_at(x, DISPLAY_WHITE_STOPS, DISPLAY_WHITE, SHOULDER_GAIN)
+}
+
+/// [`tone`] reaching one at `white` (`stops` over mid grey), its gain
+/// there `gain`: a [`White`]'s.
+#[inline]
+pub(crate) fn tone_at(x: f32, stops: f32, white: f32, gain: f32) -> f32 {
     if x <= MID_GREY {
         return aces(x).max(0.0);
     }
-    if x >= DISPLAY_WHITE {
+    if x >= white {
         return 1.0;
     }
     let u = (x / MID_GREY).log2();
-    let gain = 1.0 + (SHOULDER_GAIN - 1.0) * smoothstep(0.0, DISPLAY_WHITE_STOPS, u);
+    let gain = 1.0 + (gain - 1.0) * smoothstep(0.0, stops, u);
     (aces(x) * gain).min(1.0)
 }
 
@@ -1553,7 +1732,7 @@ mod tests {
             bw: BlackWhite::OFF,
             tint: Tint::OFF,
             curves: *curves,
-            source: Source::Scene,
+            source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 3],
@@ -1566,6 +1745,7 @@ mod tests {
     fn plain_look() -> Baked {
         Baked {
             light: Light {
+                baseline: None,
                 enabled: true,
                 exposure: 0.0,
                 tone: Tone::default(),
@@ -1575,7 +1755,7 @@ mod tests {
             bw: BlackWhite::OFF,
             tint: Tint::OFF,
             curves: identity(),
-            source: Source::Scene,
+            source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 3],
@@ -1702,6 +1882,7 @@ mod tests {
         // The curve itself, so the baseline is taken back out: a scene
         // value here is where it meets the curve.
         let light = Light {
+            baseline: None,
             enabled: true,
             exposure: -BASELINE_EXPOSURE,
             tone: Tone::default(),
@@ -1725,6 +1906,7 @@ mod tests {
         assert!(under[1] > 0.9 && under[1] < 0.99, "{under:?}");
         // Contrast leaves mid grey where it was and moves a stop above it.
         let hard = Light {
+            baseline: None,
             enabled: true,
             exposure: -BASELINE_EXPOSURE,
             tone: Tone {
@@ -1787,7 +1969,7 @@ mod tests {
         let m = crate::export::Space::Rec2020.matrix();
         let plain = finish_pixel(
             [0.0, 4.2, 0.0],
-            &Baked::global(&corner, Source::Scene),
+            &Baked::global(&corner, Source::SCENE),
             &[],
             &m,
         );
@@ -1809,7 +1991,7 @@ mod tests {
         };
         let mut edit = Edit::default();
         edit.set_look(flat(0.5));
-        let global = Baked::global(&edit, Source::Scene);
+        let global = Baked::global(&edit, Source::SCENE);
         let local = Baked::of(&flat(0.5));
         for n in [1, 2] {
             let on = vec![(&local, 1.0); n];
@@ -1829,7 +2011,7 @@ mod tests {
     fn the_light_switch_off_keeps_the_base_curve() {
         let m = crate::export::Space::Srgb.matrix();
         let render = |edit: &Edit| {
-            let global = Baked::global(edit, Source::Scene);
+            let global = Baked::global(edit, Source::SCENE);
             [
                 [0.0; 3],
                 [0.01, 0.02, 0.005],
@@ -1872,7 +2054,7 @@ mod tests {
                 &e.bw,
                 &e.tint,
                 &e.curves.bake_with(&e.grading),
-                Source::Scene,
+                Source::SCENE,
                 DisplayCurve::Channels,
             )
             .encoded
@@ -1889,6 +2071,7 @@ mod tests {
         let (no_mix, id) = (Mixer::default(), identity());
         let at = |exposure: f32, px: f32| {
             let light = Light {
+                baseline: None,
                 enabled: true,
                 exposure,
                 tone: Tone::default(),
@@ -1901,6 +2084,191 @@ mod tests {
         assert!((at(1.0, MID_GREY) - at(0.0, MID_GREY * 2.0)).abs() < 1e-5);
     }
 
+    /// A body with a baseline of its own is the default's picture with
+    /// the difference on the slider under the shoulder (over it the
+    /// display white is the body's, [`White`]); an edit that keeps the
+    /// zero it was made against renders on any body as it did before
+    /// the bodies had their own; a picture takes none.
+    #[test]
+    fn a_body_s_baseline_is_the_slider_s_zero() {
+        let (make, model) = crate::testing::GFX;
+        let gfx = Source::raw(make, model);
+        let b = greycard_edit::baseline::for_make_model(make, model);
+        assert_eq!(
+            b,
+            greycard_edit::baseline::for_body(Some("Fujifilm GFX 100S II"))
+        );
+        assert_ne!(b, BASELINE_EXPOSURE, "the GFX is in the table");
+        assert_eq!(gfx, Source::Scene(Baseline::of_stops(b)));
+        assert_eq!(Source::raw("Canon", "Canon EOS R5 Mark II"), Source::SCENE);
+        assert_eq!(Baseline::DEFAULT.stops(), BASELINE_EXPOSURE);
+        assert_eq!(Source::default(), Source::SCENE);
+        let plain = Light::default();
+        let kept = Light {
+            baseline: Some(greycard_edit::baseline::BEFORE_BODIES),
+            ..Light::default()
+        };
+        assert!((gfx.baseline(&plain) - b).abs() < 1e-6);
+        assert_eq!(gfx.baseline(&kept), BASELINE_EXPOSURE);
+        assert_eq!(Source::SCENE.baseline(&plain), BASELINE_EXPOSURE);
+        assert_eq!(Source::Display.baseline(&kept), 0.0);
+
+        let m = crate::export::Space::Srgb.matrix();
+        // Under the shoulder at either baseline: under mid grey once
+        // brightened by the larger.
+        let under = [[0.01, 0.02, 0.005], [0.05, 0.04, 0.03], [0.09, 0.08, 0.1]];
+        let render = |edit: &Edit, source: Source| {
+            let global = Baked::global(edit, source);
+            under.map(|px| finish_pixel(px, &global, &[], &m))
+        };
+        let mut moved = Edit::default();
+        moved.light.exposure = b - BASELINE_EXPOSURE;
+        let (a, z) = (render(&Edit::default(), gfx), render(&moved, Source::SCENE));
+        for (p, q) in a.iter().zip(&z) {
+            for k in 0..3 {
+                assert!((p[k] - q[k]).abs() < 1e-5, "{a:?} against {z:?}");
+            }
+        }
+        // A sidecar from before at +0.3 on a GFX frame: as it was.
+        let mut before = Edit::default();
+        before.light.exposure = 0.3;
+        let mut kept_edit = before.clone();
+        kept_edit.light.baseline = Some(greycard_edit::baseline::BEFORE_BODIES);
+        assert_eq!(render(&kept_edit, gfx), render(&before, Source::SCENE));
+    }
+
+    /// The display white is placed where the frame's baseline puts the
+    /// sensor's clip: on a GFX 100S II frame at its default a channel
+    /// at the clip is white under either curve, as it is on a body at
+    /// the default baseline, and as it was not when the white stayed at
+    /// the default's. At the default it is the constants, to the bit.
+    /// With the clip lower the Whites slider's pole comes nearer: at +2
+    /// the white sits 0.99 stops short of it (1.27 at the default),
+    /// still past the slider's top.
+    #[test]
+    fn a_body_s_clip_is_white_at_its_baseline() {
+        let (make, model) = crate::testing::GFX;
+        let gfx = Source::raw(make, model);
+        let b = greycard_edit::baseline::for_make_model(make, model);
+        assert_eq!(White::at(BASELINE_EXPOSURE), White::default_white());
+        let w = White::at(b);
+        assert!((w.stops - (SCENE_WHITE_STOPS + b)).abs() < 1e-6);
+        assert!((tone_at(w.white * 0.9999, w.stops, w.white, w.gain) - 1.0).abs() < 1e-3);
+        assert_eq!(White::at(b), w, "made once and kept");
+        assert!(
+            w.stops - WHITES_RANGE.1 - WHITES_PIVOT.1 > 0.25,
+            "the pole held off"
+        );
+        let m = crate::export::Space::Srgb.matrix();
+        let clip = MID_GREY * 2f32.powf(SCENE_WHITE_STOPS);
+        for curve in DisplayCurve::ALL {
+            let edit = Edit {
+                display_curve: curve,
+                ..Edit::default()
+            };
+            let at = |source: Source, px: [f32; 3]| {
+                finish_pixel(px, &Baked::global(&edit, source), &[], &m)
+            };
+            for source in [gfx, Source::SCENE] {
+                let out = at(source, [clip; 3]);
+                assert!(
+                    out.iter().all(|v| *v >= 1.0 - 0.5 / 255.0),
+                    "{curve:?} {out:?}"
+                );
+            }
+            if curve == DisplayCurve::Channels {
+                let out = at(gfx, [clip, 0.3, 0.2]);
+                assert!(out[0] >= 1.0 - 0.5 / 255.0, "{out:?}");
+            }
+            // Through the default's white, a GFX clip fell short.
+            let short =
+                Source::SCENE.curve_at([clip * 2f32.powf(b); 3], curve, &White::default_white());
+            assert!(short[1] < 0.99, "{curve:?} {short:?}");
+        }
+    }
+
+    /// A body at the default baseline, and an older edit that keeps it
+    /// on a body with its own, render as before the bodies had their
+    /// own, to the bit: the same whites, the same curve, everywhere up
+    /// to past the clip, under both curves and with the tone sliders
+    /// set.
+    #[test]
+    fn the_default_baseline_renders_to_the_bit_as_before() {
+        let (make, model) = crate::testing::GFX;
+        let m = crate::export::Space::Srgb.matrix();
+        let pixels: Vec<[f32; 3]> = (0..60)
+            .map(|i| {
+                let v = 0.002 * 1.17f32.powi(i);
+                [v, v * 0.7, v * 1.3]
+            })
+            .collect();
+        for curve in DisplayCurve::ALL {
+            let mut edit = Edit {
+                display_curve: curve,
+                ..Edit::default()
+            };
+            edit.light.exposure = 0.4;
+            edit.light.tone.whites = 1.5;
+            edit.light.tone.highlights = -0.7;
+            let mut kept = edit.clone();
+            kept.light.baseline = Some(greycard_edit::baseline::BEFORE_BODIES);
+            let bits = |edit: &Edit, source: Source| -> Vec<u32> {
+                let global = Baked::global(edit, source);
+                pixels
+                    .iter()
+                    .flat_map(|px| finish_pixel(*px, &global, &[], &m))
+                    .map(f32::to_bits)
+                    .collect()
+            };
+            let before = bits(&edit, Source::SCENE);
+            assert_eq!(
+                bits(&edit, Source::raw("Canon", "Canon EOS R5 Mark II")),
+                before
+            );
+            assert_eq!(bits(&kept, Source::raw(make, model)), before);
+            // The reference: the default's constants, through the
+            // functions that never take a white.
+            let global = Baked::global(&edit, Source::SCENE);
+            for px in &pixels {
+                let p = pick(
+                    *px,
+                    &global.light,
+                    &global.mixer,
+                    &global.color,
+                    &global.bw,
+                    &global.tint,
+                    &global.curves,
+                    Source::SCENE,
+                    curve,
+                );
+                let q = pick(
+                    *px,
+                    &kept.light,
+                    &global.mixer,
+                    &global.color,
+                    &global.bw,
+                    &global.tint,
+                    &global.curves,
+                    Source::raw(make, model),
+                    curve,
+                );
+                assert_eq!(p, q);
+            }
+            let tone_ref = shape([0.9, 0.5, 0.2], &edit.light.tone, None, typical())
+                .map(|x| tone(x).to_bits());
+            let white = White::default_white();
+            let tone_new = shape_at(
+                [0.9, 0.5, 0.2],
+                &edit.light.tone,
+                None,
+                typical(),
+                white.stops,
+            )
+            .map(|x| tone_at(x, white.stops, white.white, white.gain).to_bits());
+            assert_eq!(tone_ref, tone_new);
+        }
+    }
+
     /// A picture that is not a raw has had its baseline and its curve
     /// from whatever rendered it: with nothing done to it, it comes out
     /// as it went in; a stop of exposure is still a stop; the Light
@@ -1910,6 +2278,7 @@ mod tests {
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let picture = |tone: Tone, exposure: f32| Baked {
             light: Light {
+                baseline: None,
                 enabled: true,
                 exposure,
                 tone,
@@ -1957,7 +2326,7 @@ mod tests {
         assert!(a[1] > encode(MID_GREY * 2.0) + 0.02, "{a:?}");
         // The same scene as a raw is brighter and through the curve.
         let raw = Baked {
-            source: Source::Scene,
+            source: Source::SCENE,
             ..plain.clone()
         };
         assert!(finish_pixel([MID_GREY; 3], &raw, &[], &m)[1] > encode(MID_GREY) + 0.05);
@@ -2111,11 +2480,18 @@ mod tests {
         // shoulder rises. So it holds on all sixteen corners, read
         // from the pixel's own luminance, which is the fallback path
         // and the one that can fold at all: read from the guide, a
-        // shift is one constant across a region.
+        // shift is one constant across a region. At the default's
+        // display white and at the GFX 100S II's, nearer grey, under
+        // both curves.
         let m = crate::export::Space::Srgb.matrix();
         let no_mix = Mixer::default();
         let id = identity();
-        for corner in 0..16u32 {
+        let (make, model) = crate::testing::GFX;
+        for (source, curve, corner) in [Source::SCENE, Source::raw(make, model)]
+            .into_iter()
+            .flat_map(|s| DisplayCurve::ALL.map(|c| (s, c)))
+            .flat_map(|(s, c)| (0..16u32).map(move |k| (s, c, k)))
+        {
             let sign = |bit: u32| if corner & (1 << bit) != 0 { 1.0 } else { -1.0 };
             let tone = Tone {
                 highlights: 2.0 * sign(0),
@@ -2125,15 +2501,31 @@ mod tests {
                 ..Tone::default()
             };
             let light = Light {
+                baseline: None,
                 enabled: true,
                 exposure: 0.0,
                 tone,
             };
+            let global = Baked {
+                light,
+                mixer: no_mix,
+                color: Color::default(),
+                bw: BlackWhite::OFF,
+                tint: Tint::OFF,
+                curves: id,
+                source,
+                display_curve: curve,
+                white: None,
+                detail: [0.0; 3],
+            };
             let mut last = -1.0;
             for i in 0..=1400 {
                 let stops = -8.0 + i as f32 * 0.01;
-                let v = fp(grey_at(stops), &light, &no_mix, &id, &m)[1];
-                assert!(v + 1e-6 >= last, "{tone:?} turns back at {stops} stops");
+                let v = finish_pixel(grey_at(stops), &global, &[], &m)[1];
+                assert!(
+                    v + 1e-6 >= last,
+                    "{source:?} {curve:?} {tone:?} turns back at {stops} stops"
+                );
                 last = v;
             }
         }
@@ -2151,8 +2543,14 @@ mod tests {
         // held, a power with an exponent over 0.41 wherever that is,
         // so the four corners of highlights and whites, with shadows
         // either way, hold too. Read from the pixel's own luminance,
-        // the path that can fold.
-        for corner in 0..8u32 {
+        // the path that can fold. At the default's display white and at
+        // the GFX 100S II's, nearer grey, where the whites' pole is.
+        let (make, model) = crate::testing::GFX;
+        let gfx = White::at(greycard_edit::baseline::for_make_model(make, model)).stops;
+        for (white, corner) in [DISPLAY_WHITE_STOPS, gfx]
+            .into_iter()
+            .flat_map(|w| (0..8u32).map(move |k| (w, k)))
+        {
             let sign = |bit: u32| if corner & (1 << bit) != 0 { 1.0 } else { -1.0 };
             let tone = Tone {
                 highlights: 2.0 * sign(0),
@@ -2166,10 +2564,10 @@ mod tests {
                     let mut last = -1.0;
                     for i in 0..=1400 {
                         let stops = -8.0 + i as f32 * 0.01;
-                        let v = shape(grey_at(stops), &tone, None, span)[1];
+                        let v = shape_at(grey_at(stops), &tone, None, span, white)[1];
                         assert!(
                             v >= last,
-                            "{tone:?} at {span:?} turns back at {stops} stops"
+                            "{tone:?} at {span:?}, white {white}, turns back at {stops} stops"
                         );
                         last = v;
                     }
@@ -2382,6 +2780,7 @@ mod tests {
     fn at(image: &WorkingImage, guide: Option<&Guide>, tone: Tone, x: usize, y: usize) -> f32 {
         let global = Baked {
             light: Light {
+                baseline: None,
                 enabled: true,
                 exposure: 0.0,
                 tone,
@@ -2391,7 +2790,7 @@ mod tests {
             bw: BlackWhite::OFF,
             tint: Tint::OFF,
             curves: identity(),
-            source: Source::Scene,
+            source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 3],
@@ -2958,7 +3357,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
-            Source::Scene,
+            Source::SCENE,
             DisplayCurve::Channels,
         );
         // The baseline is in the pick as it is in the render.
@@ -2986,7 +3385,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
-            Source::Scene,
+            Source::SCENE,
             DisplayCurve::Channels,
         );
         let (band, w) = nearest_band(red.hue);
@@ -3003,7 +3402,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
-            Source::Scene,
+            Source::SCENE,
             DisplayCurve::Channels,
         );
         assert!((red2.hue - red.hue).abs() < 1e-3, "{red:?} {red2:?}");
@@ -3039,7 +3438,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
-            Source::Scene,
+            Source::SCENE,
             DisplayCurve::Channels,
         );
         // Every section's sliders wound right up, every switch off:
@@ -3064,7 +3463,7 @@ mod tests {
             &off_bw,
             &Tint::OFF,
             &curves,
-            Source::Scene,
+            Source::SCENE,
             DisplayCurve::Channels,
         );
         let bare = pick(
@@ -3081,7 +3480,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
-            Source::Scene,
+            Source::SCENE,
             DisplayCurve::Channels,
         );
         assert_eq!(held, bare);
@@ -3110,7 +3509,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
-            Source::Scene,
+            Source::SCENE,
             DisplayCurve::Channels,
         );
         assert!(moved.encoded[0] != plain.encoded[0], "{moved:?} {plain:?}");
@@ -3122,7 +3521,7 @@ mod tests {
             &BlackWhite::with_filter(greycard_edit::bw::Filter::Red, true),
             &Tint::OFF,
             &curves,
-            Source::Scene,
+            Source::SCENE,
             DisplayCurve::Channels,
         );
         assert!((mono.encoded[0] - mono.encoded[2]).abs() < 1e-4, "{mono:?}");
@@ -3376,19 +3775,19 @@ mod tests {
             bw: BlackWhite::with_filter(Filter::None, true),
             ..Edit::default()
         };
-        let bare = finish_pixel(sky, &Baked::global(&edit, Source::Scene), &[], &m);
+        let bare = finish_pixel(sky, &Baked::global(&edit, Source::SCENE), &[], &m);
         edit.mixer.luminance = [0.8; BANDS];
         edit.mixer.saturation = [-0.5; BANDS];
-        let wound_up = finish_pixel(sky, &Baked::global(&edit, Source::Scene), &[], &m);
+        let wound_up = finish_pixel(sky, &Baked::global(&edit, Source::SCENE), &[], &m);
         assert_eq!(bare, wound_up, "the mixer is stood down");
         // With the conversion off it acts as it always did, and the
         // settings were never touched.
         edit.bw.enabled = false;
-        let color = finish_pixel(sky, &Baked::global(&edit, Source::Scene), &[], &m);
+        let color = finish_pixel(sky, &Baked::global(&edit, Source::SCENE), &[], &m);
         edit.mixer.enabled = false;
         assert_ne!(
             color,
-            finish_pixel(sky, &Baked::global(&edit, Source::Scene), &[], &m)
+            finish_pixel(sky, &Baked::global(&edit, Source::SCENE), &[], &m)
         );
         assert_eq!(edit.mixer.luminance[0], 0.8);
     }
@@ -3422,7 +3821,7 @@ mod tests {
             bw,
             tint: Tint::OFF,
             curves: identity(),
-            source: Source::Scene,
+            source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 3],
@@ -3463,7 +3862,7 @@ mod tests {
             bw: BlackWhite::OFF,
             tint: Tint::OFF,
             curves: identity(),
-            source: Source::Scene,
+            source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 3],
@@ -3546,7 +3945,7 @@ mod tests {
             bw: BlackWhite::OFF,
             tint: Tint::OFF,
             curves: identity(),
-            source: Source::Scene,
+            source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 3],
@@ -4121,7 +4520,7 @@ mod shipped_presets {
         finish_with(
             &a_frame(),
             None,
-            &Baked::global(edit, Source::Scene),
+            &Baked::global(edit, Source::SCENE),
             &[],
             |_, _| (0.0, 0.0),
             |_, _| (0.0, None),

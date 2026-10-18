@@ -43,6 +43,7 @@ mod library;
 mod lightbox;
 mod log;
 mod match_compare;
+mod measure_baseline;
 mod measure_crop;
 mod measure_lightroom;
 mod mounts;
@@ -250,6 +251,29 @@ struct Cli {
     /// analysis: after a change to the develop, let them be made again
     #[arg(long, value_name = "BUILD", requires = "match_compare")]
     match_reuse_records: Vec<String>,
+    /// Measure the default develop's brightness against the camera's
+    /// own JPEG per body, with no window, and write a report
+    /// (report.md, report.json, frames.jsonl) into this folder: per
+    /// body a sample spread over ISO, folders and dates, from the
+    /// library (--library, --roots) or from the folder given as the
+    /// path, each frame laid under its camera's JPEG and matched in
+    /// lightness as the camera match matches it, and under the body's
+    /// fitted look where the store has one. Writes nothing else
+    #[arg(long, value_name = "DIR")]
+    measure_baseline: Option<PathBuf>,
+    /// With --measure-baseline, sample each body down to this many
+    /// frames rather than 32
+    #[arg(long, value_name = "N", requires = "measure_baseline")]
+    baseline_frames: Option<usize>,
+    /// With --measure-baseline, only the bodies whose name contains
+    /// this; repeatable
+    #[arg(long, value_name = "TEXT", requires = "measure_baseline")]
+    baseline_body: Vec<String>,
+    /// With --measure-baseline, measure every body at the one baseline
+    /// every body had before the table of bodies, as that build
+    /// rendered them
+    #[arg(long, requires = "measure_baseline")]
+    baseline_before: bool,
     /// Measure how close the Lightroom import's mapping lands on
     /// Lightroom's own exports of this catalog, with no window, and
     /// print the report: each image paired with its export (by the
@@ -871,7 +895,7 @@ impl State {
                 frame: None,
                 panel_mosaic: None,
                 mosaics: HashMap::new(),
-                source: finish::Source::Scene,
+                source: finish::Source::SCENE,
                 as_shot_white: None,
                 white_cache: None,
                 shown_white: None,

@@ -318,7 +318,12 @@ fn render(frame: &Frame, scales: &Scales, offset: f32) -> Option<Vec<[f32; 3]>> 
     let imported = lightroom::read_table_with(&frame.rec.settings, "", scales, offset).ok()?;
     let mut edit = imported.preset.applied(&Edit::default());
     edit.display_curve = frame.curve;
-    let global = finish::Baked::global(&edit, finish::Source::Scene);
+    // The body's baseline, as the measurement's develop had it.
+    let baseline = greycard_edit::baseline::for_body(Some(&frame.rec.camera));
+    let global = finish::Baked::global(
+        &edit,
+        finish::Source::Scene(finish::Baseline::of_stops(baseline)),
+    );
     let m = crate::export::Space::Srgb.matrix();
     let look = frame.look.as_ref();
     let range = frame.rec.range;
@@ -1511,7 +1516,7 @@ mod tests {
     fn the_body_s_offset_darkens_the_rendered_blocks() {
         let camera = "Fujifilm GFX 100S II";
         let want = lightroom::body_offset(Some(camera));
-        assert_eq!(want, -0.90);
+        assert!(want < -0.1, "the GFX takes an offset: {want}");
         let settings = "s = { Exposure2012 = 0.3, Highlights2012 = -30 }";
         let f = frame_at(camera, 0.0, settings);
         let e = evaluate(&f, &Scales::DEFAULT, want).unwrap();
@@ -1519,7 +1524,12 @@ mod tests {
         // takes it back.
         assert!(e.offset > 0.3 && e.offset < 1.5, "{e:?}");
         assert!((e.matched_offset + want).abs() < 0.1, "{e:?}");
-        assert!(e.matched_de < 0.003, "{e:?}");
+        // 0.005 where it was 0.003: the match lands the blocks' median,
+        // and under Highlights at -30 the slider's stop is not a stop
+        // at every block, so at the GFX's offset since its baseline
+        // moved it stops a few hundredths of a stop short and leaves
+        // about 0.0034 of ΔE; at the earlier -0.90 it left under 0.003.
+        assert!(e.matched_de < 0.005, "{e:?}");
         let none = evaluate(&f, &Scales::DEFAULT, lightroom::body_offset(None)).unwrap();
         assert!(none.de < 0.003, "{none:?}");
     }

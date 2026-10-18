@@ -544,7 +544,7 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
             white: WhiteBase::IDENTITY,
             radius: None,
             clip_level: 1.0,
-            source: crate::finish::Source::Scene,
+            source: crate::finish::Source::SCENE,
             stamp: 1,
             patched: None,
             pre: None,
@@ -588,7 +588,7 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
         white: WhiteBase::IDENTITY,
         radius: None,
         clip_level: 1.0,
-        source: crate::finish::Source::Scene,
+        source: crate::finish::Source::SCENE,
         stamp: 1,
         patched: None,
         pre: None,
@@ -690,7 +690,7 @@ fn a_planes_thread_that_declines_or_dies_lands_the_develop_without_them() {
         white: WhiteBase::IDENTITY,
         radius: None,
         clip_level: 1.0,
-        source: crate::finish::Source::Scene,
+        source: crate::finish::Source::SCENE,
         stamp: 0,
         patched: None,
         pre: None,
@@ -2153,4 +2153,24 @@ pub(super) fn read_viewport(
         }
     }
     WorkingImage::from_data(w as usize, h as usize, data).unwrap()
+}
+
+/// A raw's develop names its body's baseline to everything finished
+/// from it (the viewport, the export, the camera match): the GFX 100S
+/// II's own, and the default for a body not in the table.
+#[test]
+fn a_raw_s_develop_carries_its_body_s_baseline() {
+    let mut frame = aberrated_frame(120, 80);
+    (frame.make, frame.model) = (crate::testing::GFX.0.into(), crate::testing::GFX.1.into());
+    let mut base = None;
+    develop_once(&Arc::new(frame.clone()), &mut base, &mut None);
+    let b = greycard_edit::baseline::for_body(Some("Fujifilm GFX 100S II"));
+    assert_eq!(
+        base.as_ref().expect("a base").source,
+        crate::finish::Source::Scene(crate::finish::Baseline::of_stops(b))
+    );
+    (frame.make, frame.model) = ("Canon".into(), "Canon EOS R5 Mark II".into());
+    let mut base = None;
+    develop_once(&Arc::new(frame), &mut base, &mut None);
+    assert_eq!(base.expect("a base").source, crate::finish::Source::SCENE);
 }

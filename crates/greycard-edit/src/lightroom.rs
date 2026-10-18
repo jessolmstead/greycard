@@ -179,9 +179,14 @@ impl Default for Scales {
 /// tables as the user's store has them, the fit-1 tables. A look
 /// table carries some brightness of its own, so installing refitted
 /// tables means measuring again and changing the constant in the same
-/// commit. A body not here takes [`UNKNOWN_BODY_OFFSET`]. The names
-/// are as the library names a camera (`camera_name`), compared with
-/// case, spaces and punctuation dropped.
+/// commit. Measured against a default develop of
+/// [`crate::baseline::BEFORE_BODIES`] for every body; [`body_offset`]
+/// takes off the change of a body's own baseline
+/// ([`crate::baseline::BODIES`]), so an imported frame lands where it
+/// did before and a change to that table is the one change to make. A
+/// body not here takes [`UNKNOWN_BODY_OFFSET`]. The names are as the
+/// library names a camera (`camera_name`), compared with case, spaces
+/// and punctuation dropped.
 pub const BODY_OFFSETS: &[(&str, f32)] = &[
     ("Fujifilm GFX 100S II", -0.90),
     ("Canon EOS R5 Mark II", 0.0),
@@ -194,15 +199,11 @@ pub const BODY_OFFSETS: &[(&str, f32)] = &[
 pub const UNKNOWN_BODY_OFFSET: f32 = 0.0;
 
 /// The stops the Exposure slider is moved by for `camera` (as the
-/// library names one); [`UNKNOWN_BODY_OFFSET`] for none or one not
-/// measured.
+/// library names one): its measured offset less the change of its
+/// baseline since the measurement; [`UNKNOWN_BODY_OFFSET`] for none or
+/// one not measured.
 pub fn body_offset(camera: Option<&str>) -> f32 {
-    let key = |s: &str| -> String {
-        s.chars()
-            .filter(char::is_ascii_alphanumeric)
-            .map(|c| c.to_ascii_lowercase())
-            .collect()
-    };
+    let key = crate::baseline::key;
     let Some(camera) = camera else {
         return UNKNOWN_BODY_OFFSET;
     };
@@ -210,7 +211,9 @@ pub fn body_offset(camera: Option<&str>) -> f32 {
     BODY_OFFSETS
         .iter()
         .find(|(name, _)| key(name) == want)
-        .map_or(UNKNOWN_BODY_OFFSET, |(_, o)| *o)
+        .map_or(UNKNOWN_BODY_OFFSET, |(_, measured)| {
+            measured - (crate::baseline::for_body(Some(camera)) - crate::baseline::BEFORE_BODIES)
+        })
 }
 
 /// Read a Lightroom preset or a picture's XMP sidecar. `fallback` is
@@ -1328,6 +1331,29 @@ mod tests {
         assert!(read_table("not a table", "x").is_err());
     }
 
+    /// An imported frame lands where it did before the bodies had
+    /// baselines of their own: the baseline its develop now starts from
+    /// and the offset the import puts on the slider add up to the 0.8
+    /// stops every body started from and Lightroom's measured offset,
+    /// for every body measured. A GFX frame at Lightroom's zero renders
+    /// at the same stops over the scene as it did.
+    #[test]
+    fn an_imported_frame_lands_where_it_did_before_the_baselines() {
+        for (body, measured) in BODY_OFFSETS {
+            let now = crate::baseline::for_body(Some(body)) + body_offset(Some(body));
+            let before = crate::baseline::BEFORE_BODIES + measured;
+            assert!(
+                (now - before).abs() < 1e-6,
+                "{body}: {now} against {before}"
+            );
+        }
+        let gfx = "Fujifilm GFX 100S II";
+        let at_zero = read_table_for("s = { Exposure2012 = 0 }", "x", Some(gfx)).unwrap();
+        let stops = crate::baseline::for_body(Some(gfx)) + at_zero.preset.edit.light.exposure;
+        assert!((stops - (0.8 - 0.90)).abs() < 1e-6, "{stops}");
+        assert_eq!(at_zero.preset.edit.light.baseline, None);
+    }
+
     /// A body in the table moves the Exposure slider by its offset,
     /// however its name is spelled; one not in it, or none, by the
     /// fallback; the Light section is carried for the offset alone.
@@ -1335,7 +1361,11 @@ mod tests {
     fn a_body_s_offset_goes_onto_the_exposure() {
         let gfx = "Fujifilm GFX 100S II";
         let want = body_offset(Some(gfx));
-        assert_eq!(want, -0.90, "the GFX offset as measured");
+        let moved = crate::baseline::for_body(Some(gfx)) - crate::baseline::BEFORE_BODIES;
+        assert!(
+            (want - (BODY_OFFSETS[0].1 - moved)).abs() < 1e-6,
+            "the GFX offset"
+        );
         assert_eq!(body_offset(Some("fujifilm gfx-100s ii")), want);
         assert_eq!(body_offset(Some("Some Other Body")), UNKNOWN_BODY_OFFSET);
         assert_eq!(body_offset(None), UNKNOWN_BODY_OFFSET);

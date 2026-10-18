@@ -113,6 +113,14 @@ design note behind it.
   each CR3 and RAF, and says how far it has got. macOS `._` files
   beside raws are skipped
   ([§324](https://github.com/jessolmstead/greycard/blob/master/docs/notes/324-the-camera-matchs-survey-over-a-network-share.md))
+- Each camera body gets a default exposure of its own, measured
+  against its camera's JPEG over the library: the Fujifilm GFX 100S II
+  opened about a third of a stop brighter than the Canons and now
+  opens at 0.52 stops instead of 0.8; every other body is unchanged to
+  the bit. Older edits keep their brightness. Sidecars written by this
+  build are refused by 0.7.x, and the thumbnails of edited frames are
+  remade once
+  ([§348](https://github.com/jessolmstead/greycard/blob/master/docs/notes/348-the-baseline-per-body.md))
 - A Lightroom import lands closer to Lightroom's own render: the
   Fujifilm GFX 100S II came in about a stop bright, measured from a
   catalog's exports and now corrected per body on import, and the

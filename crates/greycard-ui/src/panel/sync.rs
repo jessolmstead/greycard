@@ -560,7 +560,7 @@ pub(crate) fn sync_onto(
     let Some(from_edit) = source_edit(st, app, from) else {
         return (Synced::default(), Shift::default());
     };
-    let preset = Preset::from_choice("", &from_edit, choice);
+    let preset = Preset::between_frames(&from_edit, choice);
     // The source's frame is read for its mosaic only when the demosaic
     // goes.
     let preset = if preset.sections.contains(&Section::Demosaic) {
@@ -769,6 +769,9 @@ pub(crate) fn shifted(
     }
     if let Some(by) = shift.exposure {
         p.edit.light.exposure = (target.light.exposure + by).clamp(-5.0, 5.0);
+        // A shift moves the target's own exposure, so it stays against
+        // the target's own zero, not the source's.
+        p.edit.light.baseline = target.light.baseline;
     }
     p
 }
@@ -2046,6 +2049,118 @@ mod tests {
             st.sidecars[2].current.noise.learned_strength,
             st.sidecars[0].current.noise.learned_strength
         );
+    }
+
+    /// A sync of the Light section, or of its exposure alone, from an
+    /// older edit that keeps the zero it was made against takes that
+    /// zero with it, so the target lands where the source sits; from a
+    /// frame read off its sidecar as from the one on screen. A new edit
+    /// has none to give, and the target's exposure counts from its own
+    /// body's default. A shift moves the target's own exposure, so the
+    /// target keeps its own zero.
+    #[test]
+    fn a_sync_carries_the_exposure_s_zero_with_the_exposure() {
+        use greycard_edit::preset::{Choice, Part};
+        let older = Some(greycard_edit::baseline::BEFORE_BODIES);
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars[0].current.light.exposure = 0.3;
+            st.sidecars[0].current.light.baseline = older;
+        }
+        let none = |_: &State, _: usize| None;
+        let exposure = Choice {
+            sections: Vec::new(),
+            parts: vec![Part::LightExposure],
+            masks: None,
+            masks_land: Default::default(),
+        };
+        for choice in [Choice::whole(&[Section::Light]), exposure] {
+            {
+                let mut st = state.borrow_mut();
+                for f in [1, 2] {
+                    st.sidecars[f] = Sidecar::default();
+                }
+            }
+            let (synced, _) = sync_onto(
+                &mut state.borrow_mut(),
+                &app,
+                0,
+                &[1],
+                &choice,
+                Default::default(),
+                &[],
+                none,
+            );
+            assert_eq!(synced.moved, [1]);
+            let st = state.borrow();
+            assert_eq!(st.sidecars[1].current.light.exposure, 0.3);
+            assert_eq!(st.sidecars[1].current.light.baseline, older, "{choice:?}");
+        }
+        // From the frame on screen, through the panel.
+        open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
+        state.borrow_mut().sidecars[2] = Sidecar::default();
+        let choice = Choice::whole(&[Section::Light]);
+        sync_onto(
+            &mut state.borrow_mut(),
+            &app,
+            0,
+            &[2],
+            &choice,
+            Default::default(),
+            &[],
+            none,
+        );
+        assert_eq!(state.borrow().sidecars[2].current.light.baseline, older);
+        // A new edit carries none, over an older one's.
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars[1].current.light.baseline = older;
+            st.sidecars[2].current.light.baseline = None;
+            st.sidecars[2].current.light.exposure = 0.5;
+        }
+        sync_onto(
+            &mut state.borrow_mut(),
+            &app,
+            2,
+            &[1],
+            &choice,
+            Default::default(),
+            &[],
+            none,
+        );
+        {
+            let st = state.borrow();
+            assert_eq!(st.sidecars[1].current.light.exposure, 0.5);
+            assert_eq!(st.sidecars[1].current.light.baseline, None);
+        }
+        // Shifted: the older source's +0.3 moves a new frame's own +0.2
+        // to +0.5 from that frame's own zero, not the source's.
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars[1] = Sidecar::default();
+            st.sidecars[1].current.light.exposure = 0.2;
+        }
+        let shift = SyncShift {
+            exposure: true,
+            ..Default::default()
+        };
+        let (synced, moved) = sync_onto(
+            &mut state.borrow_mut(),
+            &app,
+            0,
+            &[1],
+            &choice,
+            shift,
+            &[],
+            none,
+        );
+        assert_eq!(synced.moved, [1]);
+        assert_eq!(moved.exposure, Some(0.3));
+        let st = state.borrow();
+        assert!((st.sidecars[1].current.light.exposure - 0.5).abs() < 1e-6);
+        assert_eq!(st.sidecars[1].current.light.baseline, None);
     }
 
     /// The demosaic goes as the source frame runs it, and only to the
@@ -3668,7 +3783,7 @@ mod tests {
             &Default::default(),
             developed.clip_level,
             None,
-            crate::finish::Source::Scene,
+            crate::finish::Source::SCENE,
             None,
             None,
         );

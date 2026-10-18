@@ -1054,7 +1054,19 @@ pub(crate) fn pairs_at(
 ) -> Pairs {
     let mut at = fit_edit(curve);
     at.light.exposure += offset;
-    let render = picture_of(&developed.finish(&at, &settings()));
+    pairs_under(developed, laid, &at)
+}
+
+/// The block pairs of `developed` finished under `edit` against the
+/// JPEG `laid` holds: [`pairs_at`] for an edit other than the fit's,
+/// such as one carrying a look. The registration holds for any edit
+/// that moves no pixel.
+pub(crate) fn pairs_under(
+    developed: &mut crate::worker::FrameDevelop,
+    laid: &Laid,
+    edit: &Edit,
+) -> Pairs {
+    let render = picture_of(&developed.finish(edit, &settings()));
     greycard_match::pairs::pairs(&render, &laid.laid, &laid.coverage)
 }
 

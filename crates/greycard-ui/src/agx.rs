@@ -459,7 +459,7 @@ impl Agx {
     /// them are held to these by `mid_grey_through_agx_is_per_channels`,
     /// which prints them.
     pub fn blender_punchy() -> Self {
-        Self::fitted(false)
+        Self::fitted(false, crate::finish::DISPLAY_WHITE)
     }
 
     /// The second construction, a look call left open for the user:
@@ -470,16 +470,17 @@ impl Agx {
     /// `GREYCARD_AGX_SOFT` environment variable for the comparison
     /// renders, and the shader's literals are the first construction's.
     pub fn blender_punchy_soft() -> Self {
-        Self::fitted(true)
+        Self::fitted(true, crate::finish::DISPLAY_WHITE)
     }
 
     /// The white relative exposure found: the largest at which the
-    /// sensor's clip still renders white (under it the clip is past
-    /// the curve's top and clipped to one, over it the curve has not
-    /// got there), with the gain found inside each step; the slope
-    /// Blender's, or scaled by the range if `soft`.
-    fn fitted(soft: bool) -> Self {
-        let white = [crate::finish::DISPLAY_WHITE; 3];
+    /// sensor's clip, at `white` in scene light once the baseline is on
+    /// it, still renders white (under it the clip is past the curve's
+    /// top and clipped to one, over it the curve has not got there),
+    /// with the gain found inside each step; the slope Blender's, or
+    /// scaled by the range if `soft`.
+    fn fitted(soft: bool, white: f32) -> Self {
+        let white = [white; 3];
         // The bracket's bottom is where the sigmoid still reaches its
         // ends: the shoulder's chord, `(1 - pivot_y) / (1 - pivot_x)`,
         // is `(1 - 0.489) (w + 10) / w`, under Blender's slope of 2.4
@@ -646,9 +647,47 @@ static BLENDER_PUNCHY: LazyLock<Agx> = LazyLock::new(|| {
     }
 });
 
+/// The pipeline's transform for the default baseline.
+pub fn punchy() -> &'static Agx {
+    &BLENDER_PUNCHY
+}
+
+/// The pipeline's transform with its white relative exposure fitted so
+/// a clip at `white` in scene light renders white: a body with a
+/// baseline of its own (`finish::White`). Fitted once a value and kept
+/// for the process; there are as many as there are baselines.
+pub fn punchy_at(white: f32) -> &'static Agx {
+    if white == crate::finish::DISPLAY_WHITE {
+        return punchy();
+    }
+    static MADE: std::sync::Mutex<Vec<(u32, &'static Agx)>> = std::sync::Mutex::new(Vec::new());
+    let mut made = MADE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, a)) = made.iter().find(|(k, _)| *k == white.to_bits()) {
+        return a;
+    }
+    let soft = std::env::var_os("GREYCARD_AGX_SOFT").is_some_and(|v| !v.is_empty());
+    let a: &'static Agx = Box::leak(Box::new(Agx::fitted(soft, white)));
+    made.push((white.to_bits(), a));
+    a
+}
+
+/// What the shader takes of a transform that changes with the white:
+/// the gain, the range, the pivot and the sigmoid's two scales.
+pub fn shader_params(agx: &Agx) -> [f32; 5] {
+    [
+        agx.gain,
+        agx.log_range,
+        agx.curve.pivot_x,
+        agx.curve.toe_scale,
+        agx.curve.shoulder_scale,
+    ]
+}
+
 /// The display curve as AgX with the Punchy look, on a linear scene
 /// color: display-linear working-space values, where `finish::tone`
-/// leaves its. The shader's `tone_agx` is this.
+/// leaves its. The shader's `tone_agx` is this, at the default
+/// baseline.
+#[cfg(test)]
 #[inline]
 pub fn tone_agx(c: [f32; 3]) -> [f32; 3] {
     BLENDER_PUNCHY.apply(c)
@@ -892,8 +931,8 @@ mod tests {
     fn mid_grey_through_agx_is_per_channels() {
         use greycard_edit::DisplayCurve;
         let grey = [MID; 3];
-        let agx = crate::finish::Source::Scene.curve(grey, DisplayCurve::Agx);
-        let channels = crate::finish::Source::Scene.curve(grey, DisplayCurve::Channels);
+        let agx = crate::finish::Source::SCENE.curve(grey, DisplayCurve::Agx);
+        let channels = crate::finish::Source::SCENE.curve(grey, DisplayCurve::Channels);
         for k in 0..3 {
             let stops = (agx[k] / channels[k]).log2().abs();
             assert!(stops < 1e-3, "{agx:?} against {channels:?}");
@@ -915,17 +954,22 @@ mod tests {
                 255.0 * encode(soft.apply([x; 3])[1])
             );
         }
-        // The shader's literals are the CPU's: the gain, the range and
-        // the pivot the white sets, and the two scales that follow.
+        // The gain, the range and the pivot the white sets, and the two
+        // scales that follow, reach the shader with the frame's white
+        // (`shader_params`), held on the GPU at two baselines by the
+        // render tests; what is left a literal is the CPU's.
+        assert_eq!(
+            shader_params(agx),
+            [
+                agx.gain,
+                agx.log_range,
+                agx.curve.pivot_x,
+                agx.curve.toe_scale,
+                agx.curve.shoulder_scale
+            ]
+        );
         let shader = include_str!("viewport.wgsl");
-        let wanted = [
-            ("AGX_GAIN", agx.gain),
-            ("AGX_LOG_RANGE", agx.log_range),
-            ("AGX_PIVOT_X", agx.curve.pivot_x),
-            ("AGX_TOE_SCALE", agx.curve.toe_scale),
-            ("AGX_SHOULDER_SCALE", agx.curve.shoulder_scale),
-            ("AGX_WHITE_PAST", WHITE_PAST),
-        ];
+        let wanted = [("AGX_WHITE_PAST", WHITE_PAST)];
         let literals: Vec<f32> = wanted
             .iter()
             .map(|(name, value)| {

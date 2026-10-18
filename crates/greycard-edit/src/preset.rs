@@ -196,7 +196,13 @@ impl Section {
     /// Whether this section reads the same in both edits.
     pub fn same(self, a: &Edit, b: &Edit) -> bool {
         match self {
-            Section::Light => a.light == b.light,
+            // Not the zero an older edit keeps, which no slider shows: a
+            // preset whose sliders match reads as applied.
+            Section::Light => {
+                let (mut a, mut b) = (a.light, b.light);
+                (a.baseline, b.baseline) = (None, None);
+                a == b
+            }
             Section::WhiteBalance => a.white_balance == b.white_balance,
             // As `copy`: the learned tier and its blend are not part
             // of what a preset carries or compares.
@@ -521,7 +527,13 @@ impl Part {
             return;
         }
         match self {
-            LightExposure => o.light.exposure = f.light.exposure,
+            // The zero the exposure was set against goes with it: none
+            // from a preset, the source frame's from a paste or a sync
+            // (`Preset::between_frames`).
+            LightExposure => {
+                o.light.exposure = f.light.exposure;
+                o.light.baseline = f.light.baseline;
+            }
             LightContrast => o.light.tone.contrast = f.light.tone.contrast,
             LightHighlights => o.light.tone.highlights = f.light.tone.highlights,
             LightShadows => o.light.tone.shadows = f.light.tone.shadows,
@@ -590,6 +602,8 @@ impl Part {
     pub fn same(self, a: &Edit, b: &Edit) -> bool {
         let mut laid = b.clone();
         self.copy(a, &mut laid);
+        // The light's zero is not a setting a preset is said to have.
+        laid.light.baseline = b.light.baseline;
         laid == *b
     }
 }
@@ -807,6 +821,9 @@ impl Preset {
         for p in &parts {
             p.copy(source, &mut kept);
         }
+        // A preset's exposure is from the default of whatever frame it
+        // lands on, not from the zero its source frame rested at.
+        kept.light.baseline = None;
         // How masks land says something only when masks go.
         let masks = if sections.contains(&Section::Adjustments) {
             choice.masks_land
@@ -821,6 +838,22 @@ impl Preset {
             masks,
             edit: kept,
         }
+    }
+
+    /// What `choice` picks of a frame's edit to lay over other frames,
+    /// a paste or a sync: [`Preset::from_choice`], and where the Light
+    /// section or its exposure goes, the zero the source's exposure was
+    /// set against goes with it ([`crate::Light::baseline`]), so an
+    /// older edit synced onto a frame of its body lands where the
+    /// source sits. A new edit has none to carry, so its exposure lands
+    /// from the target's body's default. A preset saved to a file is
+    /// made by [`Preset::from_choice`] and carries none.
+    pub fn between_frames(edit: &Edit, choice: &Choice) -> Self {
+        let mut p = Self::from_choice("", edit, choice);
+        if p.sections.contains(&Section::Light) || p.parts.contains(&Part::LightExposure) {
+            p.edit.light.baseline = edit.light.baseline;
+        }
+        p
     }
 
     /// Whether it carries nothing.
@@ -906,6 +939,9 @@ impl Preset {
         if !preset.sections.contains(&Section::Adjustments) {
             preset.masks = Masks::Replace;
         }
+        // The migration keeps the zero an older edit was made against;
+        // a preset carries none ([`Preset::from_choice`]).
+        preset.edit.light.baseline = None;
         Ok(preset)
     }
 
@@ -2011,7 +2047,7 @@ mod tests {
         .unwrap();
         assert_eq!(p.to_json(), golden);
         assert!(p.to_json().starts_with(
-            "{\n  \"version\": 5,\n  \"name\": \"Warm\",\n  \"sections\": [\n    \"look\",\n    \"light\"\n  ],\n  \"edit\": {"
+            "{\n  \"version\": 6,\n  \"name\": \"Warm\",\n  \"sections\": [\n    \"look\",\n    \"light\"\n  ],\n  \"edit\": {"
         ));
     }
 

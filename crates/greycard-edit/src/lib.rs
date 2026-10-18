@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod baseline;
 pub mod brush;
 pub mod bw;
 pub mod camera;
@@ -73,7 +74,7 @@ use greycard_core::develop::{DemosaicMethod, DevelopSettings};
 use greycard_core::raw::{CfaPattern, Mosaic};
 
 /// The schema version this build writes.
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -283,7 +284,11 @@ impl Edit {
     }
 
     pub fn set_look(&mut self, look: Look) {
+        // The zero the exposure rests at is the edit's, not the look's:
+        // a look read off the panel's sliders knows nothing of it.
+        let baseline = self.light.baseline;
         self.light = look.light;
+        self.light.baseline = baseline;
         self.curves = look.curves;
         self.mixer = look.mixer;
         self.color = look.color;
@@ -448,6 +453,18 @@ pub struct Light {
     /// Exposure, in stops.
     pub exposure: f32,
     pub tone: Tone,
+    /// The baseline this exposure's zero stands for, in stops, where it
+    /// is not the body's own ([`baseline::for_body`]): an edit written
+    /// before the bodies had baselines of their own was made against
+    /// [`baseline::BEFORE_BODIES`] and keeps it ([`migrate`]), so its
+    /// picture does not move. `None`, the default and what a new edit
+    /// has, is the body's. The global light's alone: a mask's exposure
+    /// adds to the global's and has no zero of its own. Carried with
+    /// the section from frame to frame, since its numbers were set
+    /// against it; never by a preset, whose exposure is meant from the
+    /// default of whatever frame it lands on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<f32>,
 }
 
 impl Default for Light {
@@ -456,6 +473,7 @@ impl Default for Light {
             enabled: true,
             exposure: 0.0,
             tone: Tone::default(),
+            baseline: None,
         }
     }
 }
@@ -473,6 +491,8 @@ impl Light {
                 enabled: false,
                 exposure: 0.0,
                 tone: Tone::default(),
+                // Not a slider: the zero the picture rests at.
+                baseline: self.baseline,
             }
         }
     }
@@ -1273,6 +1293,14 @@ pub fn overlay_changes(before: &Edit, touched: &Edit, onto: &Edit) -> Result<Edi
 /// identity; the bump is there so that a build from before versions,
 /// which would read version 0 and drop the rest at its next save,
 /// refuses the sidecar whole instead.
+///
+/// Version 6 is the baseline per body ([`baseline`]): the exposure's
+/// zero is the body's own baseline, where it was 0.8 stops for every
+/// body. An edit written before that develops anything keeps the
+/// number it was made against, as [`Light::baseline`], so its picture
+/// is the one it was; an edit that develops nothing is the default and
+/// takes its body's. A build from before would drop the field and
+/// brighten or darken the picture, so it refuses the sidecar instead.
 pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
     let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
     if version > VERSION {
@@ -1303,6 +1331,22 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
                 detail.insert("dehaze".into(), amount.into());
             }
         }
+        // Version 6 gave each body a baseline of its own
+        // (`baseline::for_body`). An edit written before was made
+        // against one number for every body and keeps it, so a picture
+        // someone developed does not move; one that develops nothing
+        // (a frame only rated, say) is the default and takes its
+        // body's, as a frame with no sidecar does.
+        if version < 6 && !develops_nothing(obj) {
+            let light = obj
+                .entry("light")
+                .or_insert_with(|| serde_json::Value::Object(Default::default()));
+            if let Some(light) = light.as_object_mut()
+                && !light.contains_key("baseline")
+            {
+                light.insert("baseline".into(), f64::from(baseline::BEFORE_BODIES).into());
+            }
+        }
         // Version 4's step needs the frame's shape, which is not in
         // here: an edit that wants it stays at 3 until someone who
         // knows the frame calls `Edit::migrate_with_frame`. Only an
@@ -1319,6 +1363,22 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
         obj.insert("version".into(), if waiting { 3 } else { VERSION }.into());
     }
     Ok(value)
+}
+
+/// Whether a stored edit, its earlier steps already brought up, is a
+/// raw's or a picture's default: nothing in it but the version and the
+/// learned denoiser's blend, which the first open seeds from the ISO
+/// and which moves no brightness. One that will not read is not.
+fn develops_nothing(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let Ok(mut edit) = serde_json::from_value::<Edit>(serde_json::Value::Object(obj.clone()))
+    else {
+        return false;
+    };
+    edit.version = VERSION;
+    [Edit::default(), Edit::for_picture()].into_iter().any(|d| {
+        edit.noise.learned_strength = d.noise.learned_strength;
+        edit == d
+    })
 }
 
 /// What sits beside a file: the current edit, the ones before it,
@@ -3718,7 +3778,7 @@ mod tests {
     /// to schema 4, and every write of this build is at 5.
     #[test]
     fn a_markesteijn_sidecar_is_schema_five() {
-        assert_eq!(VERSION, 5);
+        const { assert!(VERSION >= 5) };
         let json = r#"{"version": 5, "demosaic": "markesteijn-3"}"#;
         assert_eq!(
             Edit::from_json(json).unwrap().demosaic,
@@ -4853,7 +4913,11 @@ mod tests {
         .unwrap();
         let odd = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!(odd.current_label, None);
-        assert_eq!(odd.history[0], exposed(1.0));
+        // Written before the baselines per body, it keeps the zero it
+        // was made against.
+        let mut want = exposed(1.0);
+        want.light.baseline = Some(baseline::BEFORE_BODIES);
+        assert_eq!(odd.history[0], want);
         assert_eq!(odd.history[0].label, None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -5371,8 +5435,24 @@ mod before_versions {
         // their words and records, the snapshots, the file's own facts.
         let made = pinned();
         assert!(read.edits().all(|e| e.version == VERSION));
-        assert_eq!(states(&read.line), states(&made.line));
-        assert_eq!(read.snapshots, made.snapshots);
+        // Every state that develops something keeps the zero it was
+        // made against; the default state takes its body's.
+        let kept_zero = |mut e: Edit| {
+            if e != Edit::default() {
+                e.light.baseline = Some(baseline::BEFORE_BODIES);
+            }
+            e
+        };
+        let made_states: Vec<_> = states(&made.line)
+            .into_iter()
+            .map(|(e, l, x)| (kept_zero(e), l, x))
+            .collect();
+        assert_eq!(states(&read.line), made_states);
+        let mut made_snapshots = made.snapshots.clone();
+        for s in &mut made_snapshots {
+            s.edit = kept_zero(s.edit.clone());
+        }
+        assert_eq!(read.snapshots, made_snapshots);
         assert_eq!(read.last_export, made.last_export);
         assert_eq!(read.meta, made.meta);
         let raw: Sidecar = serde_json::from_str(BEFORE_VERSIONS).unwrap();
@@ -5395,13 +5475,157 @@ mod before_versions {
             assert_eq!(h.id.as_deref(), v["id"].as_str());
         }
 
-        // Written, every edit says 5; read again and written again, the
-        // same bytes.
+        // Written, every edit says the current version; read again and
+        // written again, the same bytes.
         let written = read.to_json();
-        assert!(written.contains("\"version\": 5"));
+        assert!(written.contains(&format!("\"version\": {VERSION}")));
         assert!(!written.contains("\"version\": 4"));
         let again = Sidecar::from_json(&written).unwrap();
         assert_eq!(again, read);
         assert_eq!(again.to_json(), written);
+    }
+}
+
+#[cfg(test)]
+mod baselines {
+    use super::*;
+
+    /// An edit as a build before the baselines per body wrote it.
+    fn written_before(edit: &serde_json::Value) -> Edit {
+        let mut v = edit.clone();
+        v["version"] = 5.into();
+        Edit::from_json(&v.to_string()).unwrap()
+    }
+
+    #[test]
+    fn an_edit_written_before_keeps_the_zero_it_was_made_against() {
+        let edit = written_before(&serde_json::json!({"light": {"exposure": 0.3}}));
+        assert_eq!(edit.light.exposure, 0.3);
+        assert_eq!(edit.light.baseline, Some(baseline::BEFORE_BODIES));
+        assert_eq!(edit.version, VERSION);
+        // With no light in it at all, but a turn: the same.
+        let edit = written_before(&serde_json::json!({"geometry": {"turns": 1}}));
+        assert_eq!(edit.light.baseline, Some(baseline::BEFORE_BODIES));
+        assert_eq!(edit.light.exposure, 0.0);
+        // Read and written again, it is kept, and read again it is
+        // what was written.
+        let again = Edit::from_json(&edit.to_json()).unwrap();
+        assert_eq!(again, edit);
+    }
+
+    #[test]
+    fn an_edit_written_before_that_develops_nothing_takes_its_body_s() {
+        assert_eq!(written_before(&serde_json::json!({})).light.baseline, None);
+        // The learned blend the first open seeds is not a develop.
+        let seeded = written_before(&serde_json::json!({"noise": {"learned_strength": 0.6}}));
+        assert_eq!(seeded.light.baseline, None);
+        assert_eq!(seeded.noise.learned_strength, 0.6);
+        let picture = serde_json::to_value(Edit::for_picture()).unwrap();
+        assert_eq!(written_before(&picture).light.baseline, None);
+    }
+
+    #[test]
+    fn an_edit_written_now_has_no_zero_of_its_own_and_one_kept_is_not_moved() {
+        let mut e = Edit::default();
+        e.light.exposure = 0.3;
+        assert!(!e.to_json().contains("baseline"));
+        assert_eq!(Edit::from_json(&e.to_json()).unwrap().light.baseline, None);
+        let kept = serde_json::json!({"version": 5, "light": {"exposure": 0.3, "baseline": 0.5}});
+        assert_eq!(
+            Edit::from_json(&kept.to_string()).unwrap().light.baseline,
+            Some(0.5)
+        );
+    }
+
+    #[test]
+    fn a_sidecar_written_before_keeps_it_on_every_state() {
+        let json = serde_json::json!({
+            "version": 5,
+            "current": {"version": 5, "light": {"exposure": 0.5}},
+            "history": [{"version": 5}, {"version": 5, "light": {"exposure": 0.2}}],
+        });
+        let s = Sidecar::from_json(&json.to_string()).unwrap();
+        assert_eq!(s.line.current.light.baseline, Some(baseline::BEFORE_BODIES));
+        assert_eq!(s.line.history.len(), 2);
+        assert_eq!(s.line.history[0].edit.light.baseline, None);
+        assert_eq!(
+            s.line.history[1].edit.light.baseline,
+            Some(baseline::BEFORE_BODIES)
+        );
+    }
+
+    #[test]
+    fn the_panel_s_light_leaves_the_zero_alone_and_the_switch_keeps_it() {
+        let mut e = Edit::default();
+        e.light.baseline = Some(0.8);
+        let mut look = Edit::default().look();
+        look.light.exposure = 1.0;
+        e.set_look(look);
+        assert_eq!(e.light.exposure, 1.0);
+        assert_eq!(e.light.baseline, Some(0.8));
+        e.light.enabled = false;
+        assert_eq!(e.light.effective().baseline, Some(0.8));
+        assert_eq!(e.light.effective().exposure, 0.0);
+    }
+
+    #[test]
+    fn a_preset_carries_no_zero_and_one_that_resets_the_exposure_lands_on_the_body_s() {
+        let mut old = Edit::default();
+        old.light.exposure = 0.4;
+        old.light.baseline = Some(baseline::BEFORE_BODIES);
+        let reset = Preset::from_edit("Reset light", &Edit::default(), &[Section::Light]);
+        assert_eq!(reset.edit.light.baseline, None);
+        let laid = reset.applied(&old);
+        assert_eq!(laid.light.exposure, 0.0);
+        assert_eq!(
+            laid.light.baseline, None,
+            "the frame's own zero, its body's"
+        );
+        // Made from an older edit, or read from a file made before.
+        let from_old = Preset::from_edit("Bright", &old, &[Section::Light]);
+        assert_eq!(from_old.edit.light.baseline, None);
+        assert_eq!(from_old.edit.light.exposure, 0.4);
+        let file = serde_json::json!({
+            "version": 5, "name": "Bright", "sections": ["light"],
+            "edit": {"light": {"exposure": 0.4}},
+        });
+        let read = Preset::from_json(&file.to_string()).unwrap();
+        assert_eq!(read.edit.light.baseline, None);
+        assert_eq!(read.edit.light.exposure, 0.4);
+        // Between frames the section carries the zero its numbers were
+        // set against.
+        let mut onto = Edit::default();
+        Section::Light.copy(&old, &mut onto);
+        assert_eq!(onto.light.baseline, Some(baseline::BEFORE_BODIES));
+    }
+
+    #[test]
+    fn between_frames_the_zero_goes_with_the_exposure_and_is_no_setting_to_match() {
+        use preset::{Choice, Part};
+        let mut old = Edit::default();
+        old.light.exposure = 0.3;
+        old.light.baseline = Some(baseline::BEFORE_BODIES);
+        let exposure = Choice {
+            sections: Vec::new(),
+            parts: vec![Part::LightExposure],
+            masks: None,
+            masks_land: Default::default(),
+        };
+        for choice in [Choice::whole(&[Section::Light]), exposure] {
+            let p = Preset::between_frames(&old, &choice);
+            assert_eq!(p.edit.light.baseline, old.light.baseline);
+            let laid = p.applied(&Edit::default());
+            assert_eq!(laid.light.exposure, 0.3);
+            assert_eq!(laid.light.baseline, old.light.baseline);
+            // Saved, the same choice carries none, and lays none.
+            let saved = Preset::from_choice("x", &old, &choice);
+            assert_eq!(saved.edit.light.baseline, None);
+            assert_eq!(saved.applied(&old).light.baseline, None);
+            // A preset whose sliders an older edit matches is applied.
+            assert!(saved.is_applied(&old), "{choice:?}");
+        }
+        // Without the light, nothing of it goes.
+        let color = Preset::between_frames(&old, &Choice::whole(&[Section::Color]));
+        assert_eq!(color.edit.light.baseline, None);
     }
 }

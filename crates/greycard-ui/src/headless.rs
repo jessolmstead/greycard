@@ -967,6 +967,78 @@ mod tests {
         );
     }
 
+    /// The export of a frame nobody has developed is at its body's
+    /// baseline: a GFX 100S II frame comes out, under the shoulder, as
+    /// the same pixels from a body with the default baseline at the
+    /// difference on the slider (over it the display white is the
+    /// body's own). A sidecar written before the bodies had baselines of
+    /// their own comes out as it did: on the GFX frame at +0.3, the
+    /// default body's at +0.3.
+    #[test]
+    fn an_unedited_frame_exports_at_its_body_s_baseline_and_an_older_sidecar_as_it_was() {
+        let scratch = Scratch::new("baseline");
+        let gfx = scratch.0.join("gfx.dng");
+        let other = scratch.0.join("other.dng");
+        let (make, model) = crate::testing::GFX;
+        crate::testing::linear_dng(&gfx, 96, 64, make, model);
+        crate::testing::linear_dng(&other, 96, 64, "Test", "Cam");
+        let b = greycard_edit::baseline::for_body(Some("Fujifilm GFX 100S II"));
+        let remembered = settings::Settings::default();
+        let export = |source: &Path, name: &str| {
+            let out = scratch.0.join(name);
+            let planned = plan(
+                &cli(&[source.as_os_str(), "--export".as_ref(), out.as_os_str()]),
+                &out,
+                &remembered,
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(run(planned).succeeded());
+            image::open(&out).unwrap().to_rgb16()
+        };
+        let save = |source: &Path, exposure: f32| {
+            let mut sidecar = Sidecar::default();
+            sidecar.current.light.exposure = exposure;
+            sidecar
+                .save_in(source, greycard_edit::Placement::Beside)
+                .unwrap();
+        };
+        let unedited = export(&gfx, "gfx.tif");
+        save(&other, b - crate::finish::BASELINE_EXPOSURE);
+        let moved = export(&other, "other.tif");
+        assert_eq!(unedited.dimensions(), moved.dimensions());
+        // Under the shoulder, where the display white (the body's) has
+        // no say: every channel under half of white on both sides,
+        // which is under mid grey in the scene.
+        let under: Vec<(u16, u16)> = unedited
+            .pixels()
+            .zip(moved.pixels())
+            .filter(|(p, q)| p.0.iter().chain(q.0.iter()).all(|v| *v < 32768))
+            .flat_map(|(p, q)| (0..3).map(move |k| (p[k], q[k])))
+            .collect();
+        assert!(under.len() > 3 * 1000, "{} channels under", under.len());
+        let worst = under.iter().map(|(p, q)| p.abs_diff(*q)).max().unwrap();
+        assert!(worst <= 1, "{worst} levels apart");
+        // And not the default body's picture as it is.
+        std::fs::remove_file(Sidecar::path_for(&other)).unwrap();
+        assert_ne!(export(&other, "plain.tif"), unedited);
+
+        // A sidecar as a build before wrote it, at +0.3, beside each.
+        for source in [&gfx, &other] {
+            save(source, 0.3);
+            let path = Sidecar::path_for(source);
+            let text = std::fs::read_to_string(&path).unwrap();
+            let now = format!("\"version\": {}", greycard_edit::VERSION);
+            assert!(text.contains(&now));
+            std::fs::write(&path, text.replace(&now, "\"version\": 5")).unwrap();
+        }
+        assert_eq!(
+            export(&gfx, "gfx-before.tif"),
+            export(&other, "other-before.tif")
+        );
+    }
+
     /// `--version-name NAME`: the frame goes out under that version's
     /// edit, with the name in the file's, and the export is recorded on
     /// the version's line and not the file's own; a name the sidecar

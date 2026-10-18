@@ -35,6 +35,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(out) = cli.match_compare.as_deref() {
         return crate::match_compare::headless(&cli, out);
     }
+    // `--measure-baseline` likewise: the default develop against the
+    // camera's JPEG, per body.
+    if let Some(out) = cli.measure_baseline.as_deref() {
+        return crate::measure_baseline::headless(&cli, out);
+    }
     // `--fit-lightroom` likewise: the mapper fitted to the blocks the
     // measurement kept.
     if !cli.fit_lightroom.is_empty() {
@@ -2272,7 +2277,7 @@ mod tests {
             &Default::default(),
             1.0,
             None,
-            finish::Source::Scene,
+            finish::Source::SCENE,
             None,
             None,
         );

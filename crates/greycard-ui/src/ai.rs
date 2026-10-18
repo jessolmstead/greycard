@@ -2458,7 +2458,7 @@ mod tests {
                 5,
                 &image,
                 &edit,
-                crate::finish::Source::Scene,
+                crate::finish::Source::SCENE,
                 0,
                 (1, 0),
                 &Shape::Background {},
@@ -2479,7 +2479,7 @@ mod tests {
                 5,
                 &image,
                 &edit,
-                crate::finish::Source::Scene,
+                crate::finish::Source::SCENE,
                 0,
                 (1, 1),
                 &Shape::Subject {},
@@ -2494,7 +2494,7 @@ mod tests {
             6,
             &image,
             &edit,
-            crate::finish::Source::Scene,
+            crate::finish::Source::SCENE,
             0,
             (1, 2),
             &Shape::Background {},
@@ -2554,7 +2554,7 @@ mod tests {
                 1,
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
-                crate::finish::Source::Scene,
+                crate::finish::Source::SCENE,
                 0,
                 (7, 0),
                 &shape,
@@ -2600,7 +2600,7 @@ mod tests {
                 1,
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
-                crate::finish::Source::Scene,
+                crate::finish::Source::SCENE,
                 0,
                 (9, 0),
                 &shape,
@@ -2614,7 +2614,7 @@ mod tests {
                 1,
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
-                crate::finish::Source::Scene,
+                crate::finish::Source::SCENE,
                 0,
                 (9, 0),
                 &shape,
@@ -2656,7 +2656,7 @@ mod tests {
         }
         let mut edit = Edit::default();
         edit.light.exposure = 0.4;
-        let kind = crate::finish::Source::Scene;
+        let kind = crate::finish::Source::SCENE;
         let whole = preview(&image, &edit, kind);
         assert_eq!((whole.width, whole.height), (w, h));
         let rect = sam3::Rect {
@@ -3017,7 +3017,7 @@ mod tests {
                 1,
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
-                crate::finish::Source::Scene,
+                crate::finish::Source::SCENE,
                 turn,
                 (3, 0),
                 &shape,
@@ -3287,7 +3287,7 @@ mod tests {
             });
         }
         let edit = Edit::default();
-        let kind = crate::finish::Source::Scene;
+        let kind = crate::finish::Source::SCENE;
         ai.preview_of(1, &image, &edit, kind);
         let (pw, ph) = {
             let p = &ai.preview.as_ref().unwrap().1;

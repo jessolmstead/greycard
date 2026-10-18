@@ -729,6 +729,12 @@ impl FrameDevelop {
         }
     }
 
+    /// What the finish is handed: a raw's develop and its body's
+    /// baseline, as the export finishes it.
+    pub(crate) fn source(&self) -> crate::finish::Source {
+        self.base.as_ref().map(|b| b.source).unwrap_or_default()
+    }
+
     /// The developed picture finished under `edit` (whose develop is
     /// the one this was made under) and `settings`, as an export
     /// finishes it.

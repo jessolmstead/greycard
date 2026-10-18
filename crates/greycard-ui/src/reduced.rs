@@ -284,7 +284,7 @@ pub(crate) fn develop(
                 (r.full.0 as u32, r.full.1 as u32),
                 r.bin,
                 d.clip_level,
-                crate::finish::Source::Scene,
+                crate::finish::Source::raw(&frame.make, &frame.model),
                 white,
                 (frame.make.clone(), frame.model.clone(), frame.shot.clone()),
             )
@@ -876,6 +876,30 @@ mod tests {
         assert!(r.pool.get().is_some());
     }
     use super::*;
+
+    /// The kept pictures of an edited frame are finished at its body's
+    /// baseline, as the open frame and its export are.
+    #[test]
+    fn the_reduced_develop_carries_the_body_s_baseline() {
+        let dir = scratch("baseline");
+        let at = |name: &str, (make, model): (&str, &str)| {
+            let path = dir.join(name);
+            crate::testing::linear_dng(&path, 96, 64, make, model);
+            develop(&path, &Edit::default(), 0, None)
+                .expect("it develops")
+                .kind
+        };
+        let b = greycard_edit::baseline::for_body(Some("Fujifilm GFX 100S II"));
+        assert_eq!(
+            at("gfx.dng", crate::testing::GFX),
+            crate::finish::Source::Scene(crate::finish::Baseline::of_stops(b))
+        );
+        assert_eq!(
+            at("r5.dng", ("Canon", "Canon EOS R5 Mark II")),
+            crate::finish::Source::SCENE
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn the_settings_leave_the_sharpen_the_denoisers_and_the_dehaze_out() {

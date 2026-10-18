@@ -167,6 +167,14 @@ struct Params {
     detail: vec4<f32>,
     detail_k: vec4<f32>,
     detail_clip: vec4<f32>,
+    // The display curve's white where the frame's baseline puts the
+    // sensor's clip (`finish::White`): in scene light in x, in stops
+    // over mid grey in y, the shoulder's gain there in z, and AgX's
+    // shoulder scale in w.
+    white: vec4<f32>,
+    // AgX fitted to that white (`agx::shader_params`): its gain, its
+    // range, its pivot and its toe scale.
+    agx: vec4<f32>,
 };
 
 // A local adjustment: its look's parameters as the global ones are
@@ -962,7 +970,7 @@ const WHITES_PIVOT: vec2<f32> = vec2<f32>(-2.5, 0.0);
 // the pivot (the foot of the frame's span, held; `whites_pivot`) on the luminance
 // over it, its exponent eased in over the
 // first stop, that brings a luminance `whites` stops under display white
-// (the shoulder's `DISPLAY_WHITE_STOPS`, where the raw clips) to display
+// (the shoulder's, `p.white.y`, where the raw clips) to display
 // white; nothing at or under the pivot. A gain on all three
 // channels, so hue holds.
 fn white_point(c: vec3<f32>, whites: f32, pivot: f32) -> vec3<f32> {
@@ -972,10 +980,10 @@ fn white_point(c: vec3<f32>, whites: f32, pivot: f32) -> vec3<f32> {
         return c;
     }
     let w = clamp(whites, WHITES_RANGE.x, WHITES_RANGE.y);
-    let reach = DISPLAY_WHITE_STOPS - pivot;
-    var p = reach / (reach - w);
-    p = 1.0 + (p - 1.0) * smoothstep(0.0, 1.0, u);
-    return c * exp2(u * (p - 1.0));
+    let reach = p.white.y - pivot;
+    var power = reach / (reach - w);
+    power = 1.0 + (power - 1.0) * smoothstep(0.0, 1.0, u);
+    return c * exp2(u * (power - 1.0));
 }
 
 // The edit's shape of the scene before the curve, as `shape` in
@@ -1418,11 +1426,11 @@ fn look_at(c: vec3<f32>) -> vec3<f32> {
 // baseline puts it, and clipped past that. Mid grey rises by about
 // half a stop and a channel the raw clipped is white. Not the engine's
 // business (§5): a consumer's choice, and this consumer's default.
-const DISPLAY_WHITE_STOPS: f32 = 3.27;
-const SHOULDER_GAIN: f32 = 1.114332;
-// `MID_GREY * 2^DISPLAY_WHITE_STOPS`, where the curve is one, as
-// `DISPLAY_WHITE` in `finish.rs`.
-const DISPLAY_WHITE: f32 = 1.736363;
+//
+// Where the curve is one, in scene light (`p.white.x`) and in stops
+// over mid grey (`p.white.y`), and the gain the fit takes there
+// (`p.white.z`): the frame's `finish::White`, the sensor's clip where
+// the frame's baseline puts it.
 
 fn tone(scene: vec3<f32>) -> vec3<f32> {
     // Held at display white, where the CPU returns one, so the fit's
@@ -1435,7 +1443,7 @@ fn tone(scene: vec3<f32>) -> vec3<f32> {
     // still overflow on its own and hand this an inf or a NaN.
     let bits = bitcast<vec3<u32>>(scene) & vec3<u32>(0x7fffffffu);
     let nan = bits > vec3<u32>(0x7f800000u);
-    let x = select(min(scene, vec3<f32>(DISPLAY_WHITE)), vec3<f32>(DISPLAY_WHITE), nan);
+    let x = select(min(scene, vec3<f32>(p.white.x)), vec3<f32>(p.white.x), nan);
     let a = 2.51;
     let b = 0.03;
     let c = 2.43;
@@ -1443,7 +1451,7 @@ fn tone(scene: vec3<f32>) -> vec3<f32> {
     let e = 0.14;
     let fit = (x * (a * x + b)) / (x * (c * x + d) + e);
     let u = log2(max(x, vec3<f32>(1e-9)) / MID_GREY);
-    let gain = 1.0 + (SHOULDER_GAIN - 1.0) * smoothstep(vec3<f32>(0.0), vec3<f32>(DISPLAY_WHITE_STOPS), u);
+    let gain = 1.0 + (p.white.z - 1.0) * smoothstep(vec3<f32>(0.0), vec3<f32>(p.white.y), u);
     return clamp(fit * gain, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
@@ -1457,23 +1465,20 @@ fn tone(scene: vec3<f32>) -> vec3<f32> {
 // 2.4-encoded value and the decode, forty percent of the per-channel
 // hue shift kept against the HSV hue before the curve, and the outset.
 // The constants are what `Agx::blender_punchy` computes; `agx.rs` says
-// where each comes from. Anything not finite, found by its bits as
+// where each comes from. The five the white sets (the gain, the range,
+// the pivot and the sigmoid's two scales) come with the frame's white,
+// `p.agx` and `p.white.w` (`agx::shader_params`). Anything not finite, found by its bits as
 // `tone` finds a NaN, is white, and so is a channel at or past
 // `AGX_WHITE_PAST` (`agx::WHITE_PAST`, 2^64): white long before it, and
 // past f32 inside the look long after.
-const AGX_GAIN: f32 = 2.4658713;
 const AGX_WHITE_PAST: f32 = 18446744073709551616.0;
 const AGX_LOG_MIN: f32 = -12.4739312;
-const AGX_LOG_RANGE: f32 = 13.872135;
 const AGX_LOOK_LOG_MIN: f32 = -12.47393;
 const AGX_LOOK_LOG_RANGE: f32 = 24.9999988;
-const AGX_PIVOT_X: f32 = 0.72086954;
 const AGX_PIVOT_Y: f32 = 0.48943709;
 const AGX_SLOPE: f32 = 2.4;
 const AGX_TOE_POWER: f32 = 1.5;
 const AGX_SHOULDER_POWER: f32 = 1.5;
-const AGX_TOE_SCALE: f32 = -0.54564518;
-const AGX_SHOULDER_SCALE: f32 = 1.0592132;
 const AGX_GAMMA: f32 = 2.4;
 const AGX_HUE_KEPT: f32 = 0.4;
 const AGX_LOOK_POWER: f32 = 1.0912;
@@ -1592,13 +1597,13 @@ fn agx_shadows(t: f32, m0: f32, y1: f32) -> f32 {
 }
 
 fn agx_sigmoid(x: vec3<f32>) -> vec3<f32> {
-    let run = AGX_SLOPE * (x - AGX_PIVOT_X);
-    let tt = max(run / AGX_TOE_SCALE, vec3<f32>(0.0));
-    let ts = max(run / AGX_SHOULDER_SCALE, vec3<f32>(0.0));
+    let run = AGX_SLOPE * (x - p.agx.z);
+    let tt = max(run / p.agx.w, vec3<f32>(0.0));
+    let ts = max(run / p.white.w, vec3<f32>(0.0));
     // Both powers are 1.5: `t^1.5` as `t * sqrt(t)`, as the CPU has it.
-    let toe = AGX_TOE_SCALE * (tt / pow(1.0 + tt * sqrt(tt), vec3<f32>(1.0 / AGX_TOE_POWER))) + AGX_PIVOT_Y;
-    let shoulder = AGX_SHOULDER_SCALE * (ts / pow(1.0 + ts * sqrt(ts), vec3<f32>(1.0 / AGX_SHOULDER_POWER))) + AGX_PIVOT_Y;
-    return max(select(shoulder, toe, x < vec3<f32>(AGX_PIVOT_X)), vec3<f32>(0.0));
+    let toe = p.agx.w * (tt / pow(1.0 + tt * sqrt(tt), vec3<f32>(1.0 / AGX_TOE_POWER))) + AGX_PIVOT_Y;
+    let shoulder = p.white.w * (ts / pow(1.0 + ts * sqrt(ts), vec3<f32>(1.0 / AGX_SHOULDER_POWER))) + AGX_PIVOT_Y;
+    return max(select(shoulder, toe, x < vec3<f32>(p.agx.z)), vec3<f32>(0.0));
 }
 
 // The look in the inset space, as `Agx::look_inset`: in the 25-stop
@@ -1620,7 +1625,7 @@ fn agx_look_log2(scene: vec3<f32>) -> vec3<f32> {
 // cube.
 fn agx_form_inset(inset: vec3<f32>, l: vec3<f32>) -> vec3<f32> {
     let before = agx_hsv(inset);
-    let x = max((l - AGX_LOG_MIN) / AGX_LOG_RANGE, vec3<f32>(0.0));
+    let x = max((l - AGX_LOG_MIN) / p.agx.y, vec3<f32>(0.0));
     let lin = pow(agx_sigmoid(x), vec3<f32>(AGX_GAMMA));
     let after = agx_hsv(lin);
     let mixed = agx_hsv_to_rgb(agx_lerp_hue(before.x, after.x, AGX_HUE_KEPT), after.y, after.z);
@@ -1643,7 +1648,7 @@ fn tone_agx(scene: vec3<f32>) -> vec3<f32> {
     if (any(bits >= vec3<u32>(0x7f800000u)) || any(scene >= vec3<f32>(AGX_WHITE_PAST))) {
         return vec3<f32>(1.0);
     }
-    let l = agx_look_log2(scene * AGX_GAIN);
+    let l = agx_look_log2(scene * p.agx.x);
     let inset = exp2(l);
     let back = agx_mat(AGX_UNINSET_0, AGX_UNINSET_1, AGX_UNINSET_2, inset);
     if (all(back >= vec3<f32>(0.0))) {

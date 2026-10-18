@@ -113,6 +113,13 @@ struct Params {
     detail: [f32; 4],
     detail_k: [f32; 4],
     detail_clip: [f32; 4],
+    /// The display curve's white where the frame's baseline puts the
+    /// sensor's clip (`finish::White`): in scene light, in stops over
+    /// mid grey, the shoulder's gain there, and AgX's shoulder scale.
+    white: [f32; 4],
+    /// AgX fitted to that white (`agx::shader_params`): its gain, its
+    /// range, its pivot and its toe scale.
+    agx: [f32; 4],
 }
 
 impl Renderer {
@@ -168,6 +175,8 @@ impl Renderer {
         let m = self.output;
         let rail = crate::agx::rail_weights_for(&m);
         let w = v.white;
+        let display = crate::finish::White::of(v.source, &v.light);
+        let agx = crate::agx::shader_params(display.agx);
         let params = Params {
             view: [tw as f32, th as f32],
             image,
@@ -186,13 +195,13 @@ impl Renderer {
             ],
             clip: [v.warn.bits() as f32, 0.0, 0.0, 0.0],
             zoom: v.zoom,
-            exposure: v.source.baseline() + v.light.exposure,
+            exposure: v.source.baseline(&v.light) + v.light.exposure,
             // The shape, then 0 the display curve per channel, 1 a
             // clip, for a picture that has had its curve, 2 AgX.
             curve: match (v.source, v.display_curve) {
-                (Source::Scene, greycard_edit::DisplayCurve::Channels) => 0.0,
+                (Source::Scene(_), greycard_edit::DisplayCurve::Channels) => 0.0,
                 (Source::Display, _) => 1.0,
-                (Source::Scene, greycard_edit::DisplayCurve::Agx) => 2.0,
+                (Source::Scene(_), greycard_edit::DisplayCurve::Agx) => 2.0,
             },
             contrast: v.light.tone.contrast,
             highlights: v.light.tone.highlights,
@@ -280,6 +289,8 @@ impl Renderer {
                 greycard_core::develop::dehaze::MIN_TRANSMISSION,
             ],
             detail_clip: self.detail_clip,
+            white: [display.white, display.stops, display.gain, agx[4]],
+            agx: [agx[0], agx[1], agx[2], agx[3]],
         };
         // Each draw has its own uniform buffer, since two draws share a
         // submission.

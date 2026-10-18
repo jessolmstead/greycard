@@ -469,17 +469,17 @@ mod tests {
         // A build before versions refuses an edit past its 4, and its
         // read migrates version 0's current first.
         assert_eq!(value["current"]["version"], VERSION);
-        assert_eq!(VERSION, 5);
+        const { assert!(VERSION >= 5) };
         for h in value["history"].as_array().unwrap() {
-            assert_eq!(h["version"], 5);
+            assert_eq!(h["version"], VERSION);
         }
         for snap in value["snapshots"].as_array().unwrap() {
-            assert_eq!(snap["edit"]["version"], 5);
+            assert_eq!(snap["edit"]["version"], VERSION);
         }
-        assert_eq!(value["versions"][0]["line"]["current"]["version"], 5);
-        // A sidecar without versions is written at 5 all the same.
+        assert_eq!(value["versions"][0]["line"]["current"]["version"], VERSION);
+        // A sidecar without versions is written at it all the same.
         let value: serde_json::Value = serde_json::from_str(&developed().to_json()).unwrap();
-        assert_eq!(value["current"]["version"], 5);
+        assert_eq!(value["current"]["version"], VERSION);
     }
 
     #[test]
@@ -500,7 +500,7 @@ mod tests {
         assert!(back.needs_frame());
         let value: serde_json::Value = serde_json::from_str(&s.to_json()).unwrap();
         assert_eq!(value["history"][0]["version"], 3);
-        assert_eq!(value["current"]["version"], 5);
+        assert_eq!(value["current"]["version"], VERSION);
         // A version-4 edit is not waiting on anything.
         let four = Edit {
             version: 4,
@@ -514,12 +514,15 @@ mod tests {
         let mut s = developed();
         s.new_version(None, Some("Warm")).unwrap();
         let mut future: serde_json::Value = serde_json::from_str(&s.to_json()).unwrap();
-        future["versions"][0]["line"]["current"]["version"] = 6.into();
+        future["versions"][0]["line"]["current"]["version"] = (VERSION + 1).into();
         let err = Sidecar::from_json(&future.to_string()).unwrap_err();
-        assert!(matches!(err, Error::Newer(6)));
+        assert!(matches!(err, Error::Newer(v) if v == VERSION + 1));
         assert_eq!(
             err.to_string(),
-            "sidecar is schema version 6, this build reads up to 5"
+            format!(
+                "sidecar is schema version {}, this build reads up to {VERSION}",
+                VERSION + 1
+            )
         );
     }
 

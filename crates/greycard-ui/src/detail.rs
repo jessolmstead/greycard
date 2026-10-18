@@ -434,7 +434,7 @@ mod tests {
             &Default::default(),
             CLIP,
             None,
-            crate::finish::Source::Scene,
+            crate::finish::Source::SCENE,
             white,
             bands.as_ref().zip(planes.map(|p| &p.meta)),
         ))
@@ -633,7 +633,7 @@ mod tests {
         let m = identity();
         let plain = crate::finish::Baked::global(
             &greycard_edit::Edit::default(),
-            crate::finish::Source::Scene,
+            crate::finish::Source::SCENE,
         );
         for (texture, clarity, dehaze) in [(0.8, 0.0, 0.0), (0.0, -0.7, 0.0), (0.0, 0.0, 0.8)] {
             let d = Detail {

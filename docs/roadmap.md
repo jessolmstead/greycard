@@ -23,11 +23,13 @@ None at present.
   Having to bump the exposure on every single frame can be a bit annoying,
   and it seems to *roughly* match Lightroom's default exposure. Decides
   the feel track's baseline exposure item (§231)
-  §342 measured it: against Lightroom's exports the R5 Mark II sits
-  within a few hundredths of a stop and the GFX 100S II about 0.9
-  stops bright, so one constant for every body is wrong by most of a
-  stop on the GFX; the import now corrects per body, the default
-  develop does not yet
+  §342 measured it against Lightroom's exports (the R5 Mark II within
+  a few hundredths, the GFX 100S II about 0.9 stops bright) and §348
+  against each body's own camera JPEG: every body opens brighter than
+  its JPEG, by a quarter stop (R5 Mark II) to half (R6 Mark II, GFX).
+  The GFX now opens at 0.52, anchored to the Canons; whether the
+  anchor should be the camera JPEG, and every body come down, is the
+  open call (§348's table)
 
 ## Next: 0.8.0
 
@@ -98,17 +100,19 @@ Look section's job.
       for the forest, the torii, the pagoda and the flowers. Start from
       §150: the set, `tools/reference/`, where each control stands and
       what is open
-- [ ] The baseline exposure per body in the default develop (0.8.0):
-      §342 measured the import's offset against Lightroom's exports
-      (R5 Mark II within a few hundredths, GFX 100S II 0.9 stops
-      bright), but a frame opened cold still gets §141's 0.8 stops
-      for every body. Measure the default develop's brightness
-      against the camera's own JPEG per body over the index, as the
-      camera match registers them, ship a per-body table beside the
-      import's, and make the import's offset the difference between
-      the two. Adobe's `BaselineExposure` per body, from one DNG
-      exported from Lightroom per body (R6 II, R5 II, R8, GFX 100S
-      II), as the check that the table generalizes (§141, §143)
+- [ ] The baseline per body, after §348: the anchor is the user's call
+      (the Canons pooled by session gives the GFX 100S II 0.52, equal
+      weights 0.59, the R6 Mark II alone leaves it at 0.8, the camera
+      JPEG itself takes every body down a quarter to half a stop:
+      R5 0.76, R5 Mark II 0.54, R6 0.51, R6 Mark II 0.33, GFX 0.22,
+      Z 6 III 0.66); the R6 Mark III and Z 6 III sit past the line by
+      frame and want more sessions, the Z 6 III its High Efficiency
+      raws; the two anchors read 0.21 apart by session, which §143
+      also says, and whether the R6 Mark II's 0.8 is right is
+      Lightroom's to say from history pairs of that body; Adobe's
+      `BaselineExposure` from a DNG per body as the second yardstick;
+      the fitted looks' own brightness (the GFX's 0.16 most); the
+      import's offset on unedited frames (now 0.62 stops apart, §342)
 - [ ] Whites and shadows reshaped against the set: whites moves only
       the top where Lightroom's moves the mid-tones, and wants two more
       frames of whites exports; shadows over-lifts the mid-tones of a

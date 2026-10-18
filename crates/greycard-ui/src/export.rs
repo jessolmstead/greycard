@@ -2068,11 +2068,11 @@ mod tests {
                     &Default::default(),
                     1.0,
                     None,
-                    finish::Source::Scene,
+                    finish::Source::SCENE,
                     None,
                     None,
                 );
-                let global = finish::Baked::global(&edit, finish::Source::Scene);
+                let global = finish::Baked::global(&edit, finish::Source::SCENE);
                 let m = space.matrix();
                 let plain = |q: &(dyn Fn(f32) -> u32 + Sync)| -> Vec<u32> {
                     finish::finish_with(
@@ -2128,7 +2128,7 @@ mod tests {
                 &Default::default(),
                 1.0,
                 None,
-                finish::Source::Scene,
+                finish::Source::SCENE,
                 None,
                 None,
             );
@@ -2230,7 +2230,7 @@ mod tests {
             &Default::default(),
             1.0,
             None,
-            finish::Source::Scene,
+            finish::Source::SCENE,
             None,
             None,
         );
@@ -2316,7 +2316,7 @@ mod tests {
                 &Default::default(),
                 1.0,
                 None,
-                finish::Source::Scene,
+                finish::Source::SCENE,
                 None,
                 None,
             );
@@ -2403,7 +2403,7 @@ mod tests {
             &Default::default(),
             1.0,
             None,
-            finish::Source::Scene,
+            finish::Source::SCENE,
             None,
             None,
         );
@@ -2432,7 +2432,7 @@ mod tests {
                 &Default::default(),
                 1.0,
                 None,
-                finish::Source::Scene,
+                finish::Source::SCENE,
                 None,
                 None,
             ),
@@ -2488,7 +2488,7 @@ mod tests {
                 &Default::default(),
                 1.0,
                 None,
-                finish::Source::Scene,
+                finish::Source::SCENE,
                 None,
                 None,
             );
@@ -2600,7 +2600,7 @@ mod tests {
                 &Default::default(),
                 1.0,
                 None,
-                finish::Source::Scene,
+                finish::Source::SCENE,
                 None,
                 None,
             );
@@ -2669,7 +2669,7 @@ mod tests {
                 &Default::default(),
                 1.0,
                 None,
-                finish::Source::Scene,
+                finish::Source::SCENE,
                 None,
                 None,
             );
@@ -2754,7 +2754,7 @@ mod tests {
                 &Default::default(),
                 1.0,
                 None,
-                finish::Source::Scene,
+                finish::Source::SCENE,
                 None,
                 None,
             );

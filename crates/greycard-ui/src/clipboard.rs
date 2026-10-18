@@ -84,11 +84,11 @@ impl Clipboard {
     }
 
     /// What `choice` picks of the copied edit, as the preset a paste
-    /// lays over each frame: `Preset::from_choice`, as a sync builds
+    /// lays over each frame: `Preset::between_frames`, as a sync builds
     /// its own, so a section, a part or a mask means the same thing
-    /// either way.
+    /// either way, and the exposure's zero goes with the exposure.
     pub(crate) fn preset(&self, choice: &Choice) -> Preset {
-        Preset::from_choice("", &self.edit, choice)
+        Preset::between_frames(&self.edit, choice)
     }
 
     /// The source a paste's Noise carries the learned denoiser from,
@@ -180,6 +180,40 @@ mod tests {
         let version = Key::of(&files[1], Some("abcd"));
         let one = move |i: usize| (i == 1).then(|| version.clone());
         assert_eq!(clip.targets_by(&[1], one), vec![1]);
+    }
+
+    /// A paste of the Light section, or of its exposure alone, from an
+    /// older edit takes the zero its exposure was set against; one of a
+    /// new edit's lays none, so the target counts from its own body's
+    /// default; a preset saved from the same edit carries none.
+    #[test]
+    fn a_paste_carries_the_exposure_s_zero_and_a_saved_preset_does_not() {
+        use greycard_edit::preset::Part;
+        let older = Some(greycard_edit::baseline::BEFORE_BODIES);
+        let mut kept = source();
+        kept.light.baseline = older;
+        let clip = Clipboard::copy_file(kept.clone(), "/shoot/IMG_0001.CR3");
+        let exposure = Choice {
+            sections: Vec::new(),
+            parts: vec![Part::LightExposure],
+            masks: None,
+            masks_land: Default::default(),
+        };
+        for choice in [Choice::whole(&[Section::Light]), exposure] {
+            let out = clip.applied(&clip.preset(&choice), &Edit::default());
+            assert_eq!(out.light.exposure, 0.7);
+            assert_eq!(out.light.baseline, older);
+        }
+        let saved = Preset::from_choice("Bright", &kept, &Choice::whole(&[Section::Light]));
+        assert_eq!(saved.edit.light.baseline, None);
+        let new = Clipboard::copy_file(source(), "/shoot/IMG_0002.CR3");
+        let mut onto = Edit::default();
+        onto.light.baseline = older;
+        let light = new.preset(&Choice::whole(&[Section::Light]));
+        assert_eq!(new.applied(&light, &onto).light.baseline, None);
+        // Nothing of the Light chosen: the target keeps its own.
+        let color = clip.preset(&Choice::whole(&[Section::Color]));
+        assert_eq!(new.applied(&color, &onto).light.baseline, older);
     }
 
     #[test]

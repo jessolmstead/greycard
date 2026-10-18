@@ -203,7 +203,7 @@ impl View {
             grain: Grain::default(),
             warn: Warn::default(),
             canvas: [0.0; 3],
-            source: Source::Scene,
+            source: Source::SCENE,
             display_curve: greycard_edit::DisplayCurve::Channels,
             source_turn: 0,
         }
