@@ -247,6 +247,19 @@ mod tests {
         sidecar_mtime: Option<i64>,
     }
 
+    /// A test path spelled with the platform's separator, so the
+    /// folder prefix the query appends matches the rows on Windows too.
+    fn sep(path: &str) -> String {
+        path.replace('/', std::path::MAIN_SEPARATOR_STR)
+    }
+
+    /// A row's path back in the test's spelling.
+    fn unsep(path: &Path) -> String {
+        path.display()
+            .to_string()
+            .replace(std::path::MAIN_SEPARATOR, "/")
+    }
+
     fn put(lib: &crate::Library, rows: &[Row]) {
         let mut stmt = lib
             .conn
@@ -256,7 +269,8 @@ mod tests {
             )
             .unwrap();
         for r in rows {
-            let path = Path::new(r.path);
+            let spelled = sep(r.path);
+            let path = Path::new(&spelled);
             let folder = path.parent().unwrap();
             stmt.execute(rusqlite::params![
                 crate::path_bytes(path),
@@ -357,13 +371,13 @@ mod tests {
     }
 
     fn names(rows: &[(std::path::PathBuf, crate::RowMeta)]) -> Vec<String> {
-        rows.iter().map(|(p, _)| p.display().to_string()).collect()
+        rows.iter().map(|(p, _)| unsep(p)).collect()
     }
 
     #[test]
     fn each_order_lists_the_index_as_its_comparison_sorts() {
         let lib = fixture();
-        let roots = [std::path::PathBuf::from("/p")];
+        let roots = [std::path::PathBuf::from(sep("/p"))];
         for by in SortBy::ALL {
             for descending in [false, true] {
                 let order = Order::new(by, descending);
@@ -376,11 +390,8 @@ mod tests {
                 let mut by_entry = entries.clone();
                 by_entry.reverse();
                 by_entry.sort_by(|a, b| order.compare(&a.sort_key(), &b.sort_key()));
-                let paths = |e: &[crate::Entry]| {
-                    e.iter()
-                        .map(|e| e.path.display().to_string())
-                        .collect::<Vec<_>>()
-                };
+                let paths =
+                    |e: &[crate::Entry]| e.iter().map(|e| unsep(&e.path)).collect::<Vec<_>>();
                 assert_eq!(
                     paths(&entries),
                     names(&listed),
@@ -398,7 +409,7 @@ mod tests {
     #[test]
     fn capture_time_runs_across_folders_with_the_burst_by_name_and_the_undated_last() {
         let lib = fixture();
-        let roots = [std::path::PathBuf::from("/p")];
+        let roots = [std::path::PathBuf::from(sep("/p"))];
         let listed = lib.rows_under_canonical(&roots, Order::TAKEN).unwrap();
         assert_eq!(
             names(&listed),
@@ -438,7 +449,7 @@ mod tests {
     #[test]
     fn name_rating_and_date_edited_break_ties_by_name_then_path() {
         let lib = fixture();
-        let roots = [std::path::PathBuf::from("/p")];
+        let roots = [std::path::PathBuf::from(sep("/p"))];
         // One name in two folders: the path decides.
         let by_name = names(&lib.rows_under_canonical(&roots, Order::NAME).unwrap());
         assert_eq!(&by_name[..2], ["/p/a/IMG_0001.CR3", "/p/b/IMG_0001.CR3"]);
@@ -513,9 +524,13 @@ mod tests {
                 )
                 .unwrap();
             for i in 0..100_000u32 {
-                let folder = format!("/archive/{:04}/shoot{:03}", 2000 + i % 25, i % 200);
+                let folder = sep(&format!(
+                    "/archive/{:04}/shoot{:03}",
+                    2000 + i % 25,
+                    i % 200
+                ));
                 let name = format!("{}_{:05}.CR3", if i % 2 == 0 { "IMG" } else { "_DSC" }, i);
-                let path = format!("{folder}/{name}");
+                let path = format!("{folder}{}{name}", std::path::MAIN_SEPARATOR);
                 // Scattered, so the taken order is no other order; one
                 // in fifty undated.
                 let s = i.wrapping_mul(2_654_435_761) % 31_536_000;
@@ -544,7 +559,7 @@ mod tests {
             tx.commit().unwrap();
         }
         lib.conn.execute_batch("ANALYZE").unwrap();
-        let roots = [std::path::PathBuf::from("/archive")];
+        let roots = [std::path::PathBuf::from(sep("/archive"))];
         let time = |order: Order| {
             // The first read warms the statement's cache; the best of
             // three after it is what is kept.
