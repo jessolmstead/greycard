@@ -3559,28 +3559,6 @@ export component App inherits Window {
                         wrap: word-wrap;
                     }
                 }
-                // The selection's title and keywords, over the grid,
-                // which covers the panel where they are otherwise:
-                // the grid is where a set is chosen to be named.
-                if root.grid-open: MetaSection {
-                    frame-meta-on: root.frame-meta-on;
-                    frame-title: root.frame-title;
-                    frame-title-mixed: root.frame-title-mixed;
-                    title-text <=> root.title-text;
-                    title-dirty <=> root.title-dirty;
-                    frame-keywords: root.frame-keywords;
-                    keyword-text <=> root.keyword-text;
-                    keyword-completions <=> root.keyword-completions;
-                    keyword-pick <=> root.keyword-pick;
-                    set-count: root.set-count;
-                    collapsed-metadata <=> root.collapsed-metadata;
-                    title-edited(t) => { root.title-edited(t); }
-                    keyword-typed(t) => { root.keyword-typed(t); }
-                    keyword-added(t) => { root.keyword-added(t); }
-                    keyword-removed(t) => { root.keyword-removed(t); }
-                    keyword-focused => { root.keyword-focused(); }
-                    focus-keys => { keys.focus(); }
-                }
                 // The library's roots, with the grid: a row a root.
                 if root.grid-open: RootsSection {
                     roots: root.library-roots;
@@ -3627,6 +3605,30 @@ export component App inherits Window {
                     focus-keys => { keys.focus(); }
                     menu-done => { root.menu-done(); }
                     menu-shown => { return root.menu-shown(); }
+                }
+                // The selection's title and keywords, over the grid,
+                // which covers the panel where they are otherwise:
+                // the grid is where a set is chosen to be named. Below
+                // the roots, folders and collections, which say where
+                // the user is; this says what is chosen there.
+                if root.grid-open: MetaSection {
+                    frame-meta-on: root.frame-meta-on;
+                    frame-title: root.frame-title;
+                    frame-title-mixed: root.frame-title-mixed;
+                    title-text <=> root.title-text;
+                    title-dirty <=> root.title-dirty;
+                    frame-keywords: root.frame-keywords;
+                    keyword-text <=> root.keyword-text;
+                    keyword-completions <=> root.keyword-completions;
+                    keyword-pick <=> root.keyword-pick;
+                    set-count: root.set-count;
+                    collapsed-metadata <=> root.collapsed-metadata;
+                    title-edited(t) => { root.title-edited(t); }
+                    keyword-typed(t) => { root.keyword-typed(t); }
+                    keyword-added(t) => { root.keyword-added(t); }
+                    keyword-removed(t) => { root.keyword-removed(t); }
+                    keyword-focused => { root.keyword-focused(); }
+                    focus-keys => { keys.focus(); }
                 }
                 // The presets: a click lays one over the edit, the
                 // bin removes it, and the edit is saved or a
