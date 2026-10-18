@@ -55,8 +55,36 @@ pub(crate) fn curve_points(app: &App, channel: Channel) -> Vec<Point> {
     }
 }
 
+/// `points` as the panel holds them: in order of In, so the first is
+/// the black point and the last the white, whatever order a sidecar
+/// wrote them in; fewer than two, the channel's line that does
+/// nothing, as the spline takes them.
+pub(crate) fn shown_points(channel: Channel, points: &[Point]) -> Vec<Point> {
+    if points.len() < 2 {
+        return channel.identity();
+    }
+    let mut sorted = points.to_vec();
+    sorted.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    sorted
+}
+
+/// A channel's points read off the panel, or `was` itself when they
+/// are only `was` as the panel shows it: a sidecar's points out of
+/// order are put in order on the way in, and that alone is no edit.
+pub(crate) fn unless_unmoved(channel: Channel, read: Vec<Point>, was: &[Point]) -> Vec<Point> {
+    if read == shown_points(channel, was) {
+        was.to_vec()
+    } else {
+        read
+    }
+}
+
+/// Put `points` on the panel for `channel`, in order of In.
 pub(crate) fn set_curve_points(app: &App, channel: Channel, points: &[Point]) {
-    let flat: Vec<f32> = points.iter().flat_map(|p| [p[0], p[1]]).collect();
+    let flat: Vec<f32> = shown_points(channel, points)
+        .iter()
+        .flat_map(|p| [p[0], p[1]])
+        .collect();
     let model = ModelRc::new(VecModel::from(flat));
     match channel {
         Channel::Rgb => app.set_curve_rgb(model),
@@ -68,23 +96,52 @@ pub(crate) fn set_curve_points(app: &App, channel: Channel, points: &[Point]) {
     }
 }
 
-/// Where point `i` of `points` goes when moved to (x, y): the ends
-/// stay at the ends, the rest keep their order with a gap to their
-/// neighbors' In, and Out stays within 0 to 1. A drag and a typed
-/// In or Out both land through this.
+/// Where point `i` of `points` goes when moved to (x, y): every
+/// point keeps its order with a gap to its neighbors' In, the ends
+/// sliding along their edges, the black point from 0 and the white
+/// point to 1, everything past an end taking its Out; Out stays
+/// within 0 to 1. A drag and a typed In or Out both land through
+/// this.
 pub(crate) fn moved_point(points: &[Point], i: usize, x: f32, y: f32) -> Point {
     let last = points.len().saturating_sub(1);
-    let x = if i == 0 {
+    let lo = if i == 0 {
         0.0
-    } else if i >= last {
+    } else {
+        (points[i - 1][0] + curve::MIN_GAP).min(1.0)
+    };
+    let hi = if i >= last {
         1.0
     } else {
-        x.clamp(
-            points[i - 1][0] + curve::MIN_GAP,
-            points[i + 1][0] - curve::MIN_GAP,
-        )
+        (points[i + 1][0] - curve::MIN_GAP).max(lo)
     };
-    [x, y.clamp(0.0, 1.0)]
+    [x.clamp(lo, hi), y.clamp(0.0, 1.0)]
+}
+
+/// The point the curve dropper takes for a picked tone `value`, added
+/// to `points` (in order of In) when none is near: a tone past an end
+/// slid in is that end's, the curve there being its Out; else the
+/// nearest point within twice the gap; else a new one on the curve as
+/// it is, so the picture holds still until the drag.
+pub(crate) fn picked_point(points: &mut Vec<Point>, value: f32) -> usize {
+    let last = points.len() - 1;
+    if value <= points[0][0] {
+        return 0;
+    }
+    if value >= points[last][0] {
+        return last;
+    }
+    let near = points
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (i, (p[0] - value).abs()))
+        .filter(|(_, d)| *d < curve::MIN_GAP * 2.0)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i);
+    near.unwrap_or_else(|| {
+        let at = points.partition_point(|p| p[0] < value);
+        points.insert(at, [value, curve::evaluate(points, value)]);
+        at
+    })
 }
 
 /// The selected point, if there is one and the current channel has it.
@@ -375,10 +432,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 Some(i) => i,
                 None => {
                     let x = x.clamp(0.0, 1.0);
-                    // Not on top of another point's x: a press that
+                    // Not on top of another point's x, nor past an
+                    // end slid in, where the curve is that end's Out
+                    // and a point would be a new end: a press that
                     // neither takes a point nor adds one lets the
                     // selected one go.
-                    if points.iter().any(|p| (p[0] - x).abs() < curve::MIN_GAP) {
+                    let (first, last) = (points[0][0], points[points.len() - 1][0]);
+                    if x < first
+                        || x > last
+                        || points.iter().any(|p| (p[0] - x).abs() < curve::MIN_GAP)
+                    {
                         select_point(&app, None);
                         app.set_curve_image(draw_curve(
                             &app,
@@ -571,7 +634,8 @@ mod tests {
     use std::cell::Cell;
 
     /// A point moved, by a drag or a typed number, keeps between its
-    /// neighbors' In with a gap to each; the ends keep to the ends;
+    /// neighbors' In with a gap to each; the ends slide along their
+    /// edges, kept a gap from their one neighbor and inside 0 to 1;
     /// Out keeps to 0 to 1.
     #[test]
     fn a_moved_point_keeps_between_its_neighbors() {
@@ -588,9 +652,165 @@ mod tests {
         assert_eq!(moved_point(&points, 1, 0.0, 0.3), [curve::MIN_GAP, 0.3]);
         assert_eq!(moved_point(&points, 1, 0.3, 2.0), [0.3, 1.0]);
         assert_eq!(moved_point(&points, 1, 0.3, -1.0), [0.3, 0.0]);
-        // The ends: In is theirs, Out is free.
-        assert_eq!(moved_point(&points, 0, 0.4, 0.2), [0.0, 0.2]);
-        assert_eq!(moved_point(&points, 3, 0.4, 0.8), [1.0, 0.8]);
+        // The black point slides right along the bottom, up to a gap
+        // from its neighbor, and no further left than 0.
+        assert_eq!(moved_point(&points, 0, 0.1, 0.0), [0.1, 0.0]);
+        assert_eq!(
+            moved_point(&points, 0, 0.4, 0.2),
+            [0.25 - curve::MIN_GAP, 0.2]
+        );
+        assert_eq!(moved_point(&points, 0, -0.3, -0.5), [0.0, 0.0]);
+        // The white point slides left along the top, down to a gap
+        // from its neighbor, and no further right than 1.
+        assert_eq!(moved_point(&points, 3, 0.8, 1.0), [0.8, 1.0]);
+        assert_eq!(
+            moved_point(&points, 3, 0.4, 0.8),
+            [0.5 + curve::MIN_GAP, 0.8]
+        );
+        assert_eq!(moved_point(&points, 3, 1.5, 1.4), [1.0, 1.0]);
+        // With nothing between them, each keeps a gap from the other.
+        let two = [[0.0, 0.0], [1.0, 1.0]];
+        assert_eq!(moved_point(&two, 0, 1.2, 0.0), [1.0 - curve::MIN_GAP, 0.0]);
+        assert_eq!(moved_point(&two, 1, -1.0, 1.0), [curve::MIN_GAP, 1.0]);
+        // A sidecar's ends nearer than the gap: kept in the box, no
+        // panic.
+        let close = [[0.0, 0.0], [0.004, 0.5], [1.0, 1.0]];
+        assert_eq!(moved_point(&close, 0, 0.5, 0.1), [0.0, 0.1]);
+    }
+
+    /// The black point dragged right along the bottom sets where black
+    /// begins, and its In reads it; the white point's In typed sets
+    /// where white begins, kept a gap from the black point. A press
+    /// past an end adds no point there; a double-click does not remove
+    /// an end; Reset puts both back at the corners.
+    #[test]
+    fn the_end_points_slide_along_their_edges() {
+        use crate::testing;
+        use slint::platform::Key;
+
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_curve_mode("Point".into());
+        app.set_curve_channel("RGB".into());
+        let changes = Rc::new(Cell::new(0));
+        {
+            let changes = changes.clone();
+            app.on_view_changed(move || changes.set(changes.get() + 1));
+        }
+        let points = || curve_points(&app, Channel::Rgb);
+        let type_into = |label: &str, text: &str| {
+            let (at, size) = testing::labeled(&app, label);
+            testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+            testing::type_text(&app, text);
+            testing::press(&app, Key::Return);
+        };
+
+        // The black point taken and dragged right along the bottom.
+        app.invoke_curve_press(0.0, 0.0);
+        assert_eq!(app.get_curve_selected(), 0);
+        assert_eq!(app.get_curve_point_in(), "0");
+        app.invoke_curve_move(0.2, 0.0);
+        app.invoke_curve_release();
+        assert_eq!(points(), vec![[0.2, 0.0], [1.0, 1.0]]);
+        assert_eq!(app.get_curve_point_in(), "51");
+        assert_eq!(app.get_curve_point_out(), "0");
+        assert_eq!(changes.get(), 1, "the drag is one change");
+        assert_eq!(curve::evaluate(&points(), 0.1), 0.0, "under it is black");
+
+        // A press past the black point adds nothing and lets go.
+        app.invoke_curve_press(0.1, 0.5);
+        app.invoke_curve_release();
+        assert_eq!(points().len(), 2);
+        assert_eq!(app.get_curve_selected(), -1);
+
+        // The white point's In typed: it moves left along the top,
+        // and no nearer the black point than the gap.
+        app.invoke_curve_press(1.0, 1.0);
+        app.invoke_curve_release();
+        assert_eq!(app.get_curve_selected(), 1);
+        type_into("Point in", "200");
+        assert_eq!(points()[1], [200.0 / 255.0, 1.0]);
+        assert_eq!(app.get_curve_point_in(), "200");
+        type_into("Point in", "10");
+        assert_eq!(points()[1][0], 0.2 + curve::MIN_GAP);
+        assert_eq!(app.get_curve_point_in(), "54");
+        type_into("Point in", "200");
+        // The drag, the press on the white point, three typed.
+        assert_eq!(changes.get(), 5);
+
+        // A press past the white point adds nothing and lets go.
+        app.invoke_curve_press(0.9, 0.5);
+        app.invoke_curve_release();
+        assert_eq!(points().len(), 2);
+        assert_eq!(app.get_curve_selected(), -1);
+        assert_eq!(changes.get(), 5);
+
+        // A double-click on either end removes neither.
+        app.invoke_curve_double(0.2, 0.0);
+        app.invoke_curve_double(200.0 / 255.0, 1.0);
+        assert_eq!(points(), vec![[0.2, 0.0], [200.0 / 255.0, 1.0]]);
+        assert_eq!(changes.get(), 5);
+
+        // Reset: the corners again.
+        app.invoke_curve_reset();
+        assert_eq!(points(), curve::identity());
+        assert_eq!(app.get_curve_selected(), -1);
+    }
+
+    /// The dropper on a tone past an end slid in takes that end and
+    /// adds nothing; past the white point with a point just inside
+    /// it, the white point still; within reach of two points, the
+    /// nearer; near none, a new one on the curve.
+    #[test]
+    fn the_dropper_takes_an_end_for_a_tone_past_it() {
+        let mut points = vec![[0.2, 0.0], [0.5, 0.5], [1.0, 1.0]];
+        assert_eq!(picked_point(&mut points, 0.1), 0);
+        assert_eq!(picked_point(&mut points, 0.0), 0);
+        assert_eq!(points.len(), 3);
+
+        let mut points = vec![[0.0, 0.0], [0.785, 0.7], [0.8, 1.0]];
+        assert_eq!(picked_point(&mut points, 0.95), 2);
+        assert_eq!(picked_point(&mut points, 0.795), 2, "the nearer");
+        assert_eq!(picked_point(&mut points, 0.79), 1, "the nearer");
+        assert_eq!(points.len(), 3);
+
+        let y = curve::evaluate(&points, 0.4);
+        assert_eq!(picked_point(&mut points, 0.4), 1);
+        assert_eq!(points, vec![[0.0, 0.0], [0.4, y], [0.785, 0.7], [0.8, 1.0]]);
+    }
+
+    /// A sidecar's points out of order: the panel holds them in order,
+    /// so the black point is the first and a press between the ends
+    /// adds a point; read back unmoved they are the sidecar's as
+    /// written, so showing them is no edit; a point added is.
+    #[test]
+    fn a_curve_out_of_order_is_shown_in_order_and_is_no_edit() {
+        use crate::panel::edit::{read_edit, show_edit};
+        use crate::testing;
+
+        let app = testing::window(1);
+        let (state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_curve_mode("Point".into());
+        app.set_curve_channel("RGB".into());
+        let mut edit = state.borrow().develop.edit.clone();
+        edit.curves.rgb = vec![[1.0, 1.0], [0.5, 0.6], [0.0, 0.0]];
+        show_edit(&state.borrow(), &edit, &app, None);
+        let points = || curve_points(&app, Channel::Rgb);
+        assert_eq!(points(), vec![[0.0, 0.0], [0.5, 0.6], [1.0, 1.0]]);
+        assert_eq!(read_edit(&app, &edit, None), edit, "showing it is no edit");
+
+        app.invoke_curve_press(0.25, 0.3);
+        app.invoke_curve_release();
+        assert_eq!(points().len(), 4);
+        assert_eq!(points()[1], [0.25, 0.3]);
+        assert_eq!(
+            read_edit(&app, &edit, None).curves.rgb,
+            vec![[0.0, 0.0], [0.25, 0.3], [0.5, 0.6], [1.0, 1.0]]
+        );
     }
 
     /// A point pressed is selected and stays so after the release;

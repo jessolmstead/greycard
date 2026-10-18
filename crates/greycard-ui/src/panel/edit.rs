@@ -8,7 +8,7 @@ use crate::panel::crop::{read_geometry, show_geometry};
 use crate::panel::cull::{control_over_frame, leave_cull};
 use crate::panel::curve::{
     current_channel, curve_points, draw_curve, panel_parametric, select_point, set_curve_points,
-    set_panel_parametric,
+    set_panel_parametric, unless_unmoved,
 };
 use crate::panel::history::show_history;
 use crate::panel::mask::{
@@ -534,7 +534,16 @@ pub(crate) fn read_demosaic(app: &App) -> Demosaic {
 
 pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     let mut edit = base.clone();
-    edit.set_target_look(target, read_look(app));
+    // A curve the panel holds in order that `base` has out of order,
+    // and is otherwise the same, is `base`'s: no edit by itself.
+    let mut look = read_look(app);
+    let was = base.target_look(target);
+    for channel in Channel::ALL {
+        let read = std::mem::take(look.curves.channel_mut(channel));
+        *look.curves.channel_mut(channel) =
+            unless_unmoved(channel, read, was.curves.channel(channel));
+    }
+    edit.set_target_look(target, look);
     if let Some(a) = target.and_then(|i| edit.adjustments.get_mut(i)) {
         a.enabled = app.get_adjustment_enabled();
         a.mask.invert = app.get_mask_invert();

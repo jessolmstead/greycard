@@ -2645,6 +2645,77 @@ fn a_masks_white_balance_agrees_on_both_sides() {
     assert!(moved >= Some(20), "{moved:?}");
 }
 
+/// Point curves with their ends slid in along their edges, on both
+/// sides: the global master's black past 0.15 and white past 0.85,
+/// red's white past 0.7, and a mask over everything whose blue curve
+/// has its black past 0.3. Past an end both sides read the end's Out
+/// from the same table. Each slid end is seen to bite: against the
+/// same curves with their ends at the corners, more of the picture is
+/// black and white, more red is white with red's end slid, and more
+/// blue black with the mask's.
+#[test]
+fn slid_curve_ends_agree_on_both_sides() {
+    let Some((device, queue)) = device("the slid curve ends' check") else {
+        return;
+    };
+    let image = parity_frame();
+    // The edit with the named curves' ends at the corners.
+    let corners = |rgb: bool, red: bool, blue: bool| {
+        let mut edit = greycard_edit::Edit::default();
+        edit.curves.rgb = if rgb {
+            vec![[0.0, 0.0], [0.5, 0.45], [1.0, 1.0]]
+        } else {
+            vec![[0.15, 0.0], [0.5, 0.45], [0.85, 1.0]]
+        };
+        edit.curves.red = if red {
+            vec![[0.0, 0.0], [1.0, 1.0]]
+        } else {
+            vec![[0.0, 0.0], [0.7, 1.0]]
+        };
+        let mut look = Look::default();
+        look.curves.blue = if blue {
+            vec![[0.0, 0.0], [1.0, 1.0]]
+        } else {
+            vec![[0.3, 0.0], [1.0, 1.0]]
+        };
+        edit.adjustments.push(everywhere(look));
+        edit
+    };
+    let (cpu, gpu) = both_sides(&device, &queue, &image, &corners(false, false, false));
+    let worst = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+    assert!(worst <= Some(1), "{worst:?}");
+    // How many of channel `c` (all three for None) are at `v`.
+    let count = |px: &[u8], c: Option<usize>, v: u8| {
+        px.iter()
+            .enumerate()
+            .filter(|(i, p)| c.is_none_or(|c| i % 3 == c) && **p == v)
+            .count()
+    };
+    let (cornered, _) = both_sides(&device, &queue, &image, &corners(true, true, true));
+    let (red_cornered, _) = both_sides(&device, &queue, &image, &corners(false, true, false));
+    let (blue_cornered, _) = both_sides(&device, &queue, &image, &corners(false, false, true));
+    let pixels = cpu.len() / 3;
+    let more = |slid: usize, at_corners: usize, what: &str| {
+        eprintln!("{what}: {slid} slid, {at_corners} at the corners");
+        assert!(
+            slid > at_corners + pixels / 50,
+            "{what}: {slid} against {at_corners}"
+        );
+    };
+    more(count(&cpu, None, 0), count(&cornered, None, 0), "black");
+    more(count(&cpu, None, 255), count(&cornered, None, 255), "white");
+    more(
+        count(&cpu, Some(0), 255),
+        count(&red_cornered, Some(0), 255),
+        "red's white",
+    );
+    more(
+        count(&cpu, Some(2), 0),
+        count(&blue_cornered, Some(2), 0),
+        "the mask's blue black",
+    );
+}
+
 /// A mask's own white balance while the global's slider is moving:
 /// the view previews 6500 K over a develop at 5500 K, and a mask
 /// over everything names 3200 K with the mixer moved under it. The

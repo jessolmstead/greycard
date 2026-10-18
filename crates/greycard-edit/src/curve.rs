@@ -291,16 +291,6 @@ pub fn flat() -> Vec<Point> {
 }
 
 impl Curves {
-    pub fn is_identity(&self) -> bool {
-        !self.enabled
-            || (self.parametric.is_identity()
-                && [&self.rgb, &self.red, &self.green, &self.blue]
-                    .iter()
-                    .all(|c| is_straight(c))
-                && is_flat(&self.red_green)
-                && is_flat(&self.blue_yellow))
-    }
-
     pub fn channel(&self, channel: Channel) -> &Vec<Point> {
         match channel {
             Channel::Rgb => &self.rgb,
@@ -386,14 +376,6 @@ impl Curves {
     }
 }
 
-fn is_straight(points: &[Point]) -> bool {
-    points.len() < 2 || points.iter().all(|p| (p[0] - p[1]).abs() < 1e-6)
-}
-
-fn is_flat(points: &[Point]) -> bool {
-    points.len() < 2 || points.iter().all(|p| (p[1] - 0.5).abs() < 1e-6)
-}
-
 /// The value of a curve through `points` at `x`, in 0 to 1.
 pub fn evaluate(points: &[Point], x: f32) -> f32 {
     Spline::new(points).at(x)
@@ -401,7 +383,9 @@ pub fn evaluate(points: &[Point], x: f32) -> f32 {
 
 /// A monotone cubic through points sorted by x: Fritsch and Carlson's
 /// tangents, so the curve never overshoots between two points and a
-/// rising set of points gives a rising curve. Flat beyond the ends.
+/// rising set of points gives a rising curve. Flat beyond the ends:
+/// an end slid in along its edge sets where black or white begins,
+/// everything past it taking its Out.
 struct Spline {
     xs: Vec<f32>,
     ys: Vec<f32>,
@@ -541,7 +525,6 @@ mod tests {
     #[test]
     fn the_straight_line_is_the_identity() {
         let curves = Curves::default();
-        assert!(curves.is_identity());
         let lut = curves.bake();
         for (i, entry) in lut.tone.iter().enumerate() {
             let x = i as f32 / 255.0;
@@ -558,7 +541,6 @@ mod tests {
             rgb: vec![[0.0, 0.0], [0.5, 0.9], [1.0, 1.0]],
             ..Default::default()
         };
-        assert!(off.is_identity());
         assert!((lookup(&off.bake(), 3, 0.5) - 0.5).abs() < 1e-6);
     }
 
@@ -590,7 +572,6 @@ mod tests {
             rgb: vec![[0.0, 0.0], [0.25, 0.5], [1.0, 1.0]],
             ..Default::default()
         };
-        assert!(!curves.is_identity());
         let lut = curves.bake();
         // Red: 0.5 -> 0.25 by its own, then 0.25 -> 0.5 by the master.
         assert!(
@@ -612,7 +593,6 @@ mod tests {
             red_green: vec![[0.0, 0.5], [0.5, 1.0], [1.0, 0.5]],
             ..Default::default()
         };
-        assert!(!curves.is_identity());
         let lut = curves.bake();
         assert!(lut.shaded);
         let mid = color_shift(&lut, 0.5);
@@ -639,7 +619,7 @@ mod tests {
             enabled: false,
             ..curves
         };
-        assert!(off.is_identity() && !off.bake().shaded);
+        assert!(!off.bake().shaded);
     }
 
     #[test]
@@ -688,6 +668,78 @@ mod tests {
         assert_eq!(Channel::Red.identity(), identity());
     }
 
+    #[test]
+    fn an_end_slid_in_holds_its_out_beyond_it() {
+        // The black point slid right along the bottom to 0.2, the
+        // white point left along the top to 0.8: under 0.2 is black,
+        // over 0.8 white, and the curve between rises through them.
+        let points = vec![[0.2, 0.0], [0.5, 0.5], [0.8, 1.0]];
+        for x in [0.0, 0.05, 0.1, 0.199, 0.2] {
+            assert_eq!(evaluate(&points, x), 0.0, "at {x}");
+        }
+        for x in [0.8, 0.85, 0.9, 1.0] {
+            assert_eq!(evaluate(&points, x), 1.0, "at {x}");
+        }
+        assert!((evaluate(&points, 0.5) - 0.5).abs() < 1e-6);
+        let mut last = 0.0;
+        for i in 0..=1000 {
+            let y = evaluate(&points, i as f32 / 1000.0);
+            assert!(y >= last, "turns back at {i}");
+            last = y;
+        }
+        // The tables hold the same: 0.2 of 255 is 51, 0.8 is 204.
+        let lut = Curves {
+            rgb: points.clone(),
+            ..Default::default()
+        }
+        .bake();
+        assert!(lut.tone[..51].iter().all(|e| *e == [0.0; 4]));
+        assert!(lut.tone[205..].iter().all(|e| *e == [1.0; 4]));
+        assert!(lut.tone[52][3] > 0.0 && lut.tone[203][3] < 1.0);
+        // The ends slid with their Out kept on the diagonal: under
+        // 0.2 comes out at 0.2, over 0.8 at 0.8.
+        let clipped = Curves {
+            rgb: vec![[0.2, 0.2], [0.8, 0.8]],
+            ..Default::default()
+        }
+        .bake();
+        assert!((lookup(&clipped, 3, 0.1) - 0.2).abs() < 1e-6);
+        assert!((lookup(&clipped, 3, 0.9) - 0.8).abs() < 1e-6);
+        // A color curve level at the neutral is level whatever its
+        // ends: held at 0.5 beyond them, still no shift.
+        let level = Curves {
+            red_green: vec![[0.3, 0.5], [0.7, 0.5]],
+            ..Default::default()
+        };
+        assert!(!level.bake().shaded);
+    }
+
+    /// A few values of curves with their ends at the corners, pinned
+    /// as the spline gave them before the ends could slide.
+    #[test]
+    fn curves_with_their_ends_at_the_corners_keep_their_values() {
+        let s = vec![[0.0, 0.0], [0.25, 0.15], [0.75, 0.9], [1.0, 1.0]];
+        let lifted = vec![[0.0, 0.1], [1.0, 1.0]];
+        let five = vec![
+            [0.0, 0.04],
+            [0.13, 0.09],
+            [0.31, 0.27],
+            [0.72, 0.8],
+            [1.0, 0.97],
+        ];
+        for (points, x, y) in [
+            (&s, 0.1, 0.049200006),
+            (&s, 0.5, 0.53125),
+            (&s, 0.9, 0.97319996),
+            (&lifted, 0.3, 0.37),
+            (&five, 0.2, 0.14952181),
+            (&five, 0.55, 0.59417236),
+            (&five, 0.85, 0.8917169),
+        ] {
+            assert_eq!(evaluate(points, x), y, "{points:?} at {x}");
+        }
+    }
+
     /// The parametric curve sampled finely.
     fn samples(p: &Parametric) -> Vec<f32> {
         (0..=1000).map(|i| p.at(i as f32 / 1000.0)).collect()
@@ -712,7 +764,6 @@ mod tests {
             parametric: moved,
             ..Default::default()
         };
-        assert!(curves.is_identity());
         assert!((lookup(&curves.bake(), 3, 0.7) - 0.7).abs() < 1e-6);
         // An amount is not.
         let lifted = Curves {
@@ -722,13 +773,13 @@ mod tests {
             },
             ..Default::default()
         };
-        assert!(!lifted.is_identity());
+        assert!(lookup(&lifted.bake(), 3, 0.625) > 0.64);
         // Off is the identity whatever the amounts say.
         let off = Curves {
             enabled: false,
             ..lifted
         };
-        assert!(off.is_identity() && (lookup(&off.bake(), 3, 0.6) - 0.6).abs() < 1e-6);
+        assert!((lookup(&off.bake(), 3, 0.6) - 0.6).abs() < 1e-6);
     }
 
     #[test]

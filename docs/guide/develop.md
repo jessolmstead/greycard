@@ -204,6 +204,10 @@ Pick a channel: **RGB**, **Red**, **Green**, **Blue**, **R/G** or
 
 - Click the curve to add a point, and drag it to move it.
 - Double-click a point to remove it.
+- Drag the black point right along the bottom, or the white point
+  left along the top, and every tone beyond it takes that point's
+  Out. You can also type an end point's **In**. A click past a slid
+  end point adds no point there.
 - **Pick** gives you a dropper: click a tone in the picture to add a
   point there, then drag up or down to move it.
 - The point you last pressed stays selected. Type its position into

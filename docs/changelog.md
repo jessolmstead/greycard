@@ -81,6 +81,12 @@ design note behind it.
 
 ### Editing
 
+- The tone curve's black and white points slide along their edges:
+  the black point dragged right sets the input black, the white point
+  dragged left the input white, and the tones past them take that
+  end's value. A click past a slid end adds no point, and an end's In
+  can be typed. Issue 28
+  ([§362](https://github.com/jessolmstead/greycard/blob/master/docs/notes/362-the-curves-ends-slide-along-their-edges.md))
 - Point at the picture and the scopes show that spot: its R, G, B and
   luma levels at the top of the scope, lines through them on the
   histogram, a dot per channel at its column on Wave and Parade, and a
