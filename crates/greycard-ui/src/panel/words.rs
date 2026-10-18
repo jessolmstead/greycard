@@ -781,9 +781,8 @@ mod tests {
         );
         let indexer = state.borrow_mut().views.index.take().unwrap();
         indexer.stop(Duration::from_secs(20));
-        drop(state);
         drop(worker);
-        testing::remove_dir_retry(&dir);
+        testing::remove_scratch(state, &dir);
     }
 
     /// The fields typed in, as a hand does: a click in the Keywords

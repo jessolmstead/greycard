@@ -1181,8 +1181,7 @@ mod tests {
         assert_eq!(state.borrow().sidecars[0].meta.title, "", "not on r.tif");
         assert_eq!(app.get_title_text(), "");
         assert!(!app.get_title_dirty(), "the field starts clean");
-        drop(state);
-        crate::testing::remove_dir_retry(&dir);
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// The root's view shows its tree from the index, the root marked
@@ -1432,8 +1431,7 @@ mod tests {
         assert_eq!(s.meta.title, "Dusk");
         assert_eq!(state.borrow().sidecars[0].meta.title, "", "not on r.tif");
         assert_eq!(app.get_title_text(), "");
-        drop(state);
-        crate::testing::remove_dir_retry(&dir);
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// A click on a folder in the pane, found by its name, opens its
