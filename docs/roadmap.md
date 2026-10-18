@@ -447,9 +447,10 @@ the user.
       metadata) belongs to the window, not a mode. Compare and
       versions side by side stay Loupe variants; the lightbox is a
       view beside Grid and Loupe; Rejects is a folder. The controls:
-      Grid | Loupe where Library | Develop sit now, Cull | Develop in
-      the Loupe. Decide after using it; a tester asked for a Library
-      tab and three asked for faster culling
+      Library | Loupe where Library | Develop sit now (the Library
+      name and its icon stay), Cull | Develop in the Loupe. Decide
+      after using it; a tester asked for a Library tab and three
+      asked for faster culling
 - [ ] Bursts and near-duplicates grouped: frames seconds apart with
       near-identical previews put in one stack, its sharpest frame on
       top (§334)
