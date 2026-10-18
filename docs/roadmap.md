@@ -50,7 +50,10 @@ ours, so a tester brings a library over in one go.
 - [ ] Import a folder in place: the Import sheet opens with Add in
       place (any folder, its subfolders kept, added as a root: Add a
       root behind the door a Lightroom user looks for) beside Copy
-      (today's card import), and Copy's Folders pattern gains a
+      (today's card import, unchanged and still the sheet's opening
+      choice: the card found by its DCIM folder, From filled in, the
+      count, the rename, the preset, the verified backup, the card
+      never written), and Copy's Folders pattern gains a
       `{folder}` token, the frame's path under the source, so a
       copied job keeps its camera subfolders (a tester asked to
       import a folder with its subfolders)
