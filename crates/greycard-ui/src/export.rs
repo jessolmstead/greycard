@@ -1035,54 +1035,39 @@ fn route(
 /// take it: no portal on the bus, one that would not start, or no
 /// file chooser behind it. Any other error is a portal that took the
 /// request and refused it, our mistake (§88's empty filter was one)
-/// and not a reason to ask zenity. A call that timed out is not one
-/// of these either: the portal may be slow to start and still put
-/// its dialog up.
+/// and not a reason to ask zenity. zbus hands every error reply over
+/// as a `MethodError`, by its D-Bus name.
 #[cfg(target_os = "linux")]
 fn absent(e: &zbus::Error) -> bool {
     match e {
         zbus::Error::MethodError(name, _, _) => absent_name(name.as_str()),
-        zbus::Error::FDO(e) => {
-            use zbus::fdo::Error as F;
-            matches!(
-                **e,
-                F::ServiceUnknown(_)
-                    | F::NameHasNoOwner(_)
-                    | F::UnknownMethod(_)
-                    | F::UnknownObject(_)
-                    | F::UnknownInterface(_)
-                    | F::SpawnExecFailed(_)
-                    | F::SpawnForkFailed(_)
-                    | F::SpawnChildExited(_)
-                    | F::SpawnChildSignaled(_)
-                    | F::SpawnFailed(_)
-                    | F::SpawnFailedToSetup(_)
-                    | F::SpawnConfigInvalid(_)
-                    | F::SpawnServiceNotValid(_)
-                    | F::SpawnServiceNotFound(_)
-                    | F::SpawnPermissionsInvalid(_)
-                    | F::SpawnFileInvalid(_)
-                    | F::SpawnNoMemory(_)
-            )
-        }
         _ => false,
     }
 }
 
-/// `absent` by the error's D-Bus name.
+/// `absent` by the error's D-Bus name. The bus's own: no owner, no
+/// such method, a start that failed (`Spawn.*`), or a start that
+/// timed out, which the bus answers before the call reaches the
+/// portal. systemd's, where the bus starts the portal as a unit: none
+/// installed, masked, or one that would not load. `NoReply` is not
+/// one: the call did reach a portal, which may yet show its dialog.
 #[cfg(target_os = "linux")]
 fn absent_name(name: &str) -> bool {
-    let Some(name) = name.strip_prefix("org.freedesktop.DBus.Error.") else {
-        return false;
-    };
-    matches!(
-        name,
-        "ServiceUnknown"
-            | "NameHasNoOwner"
-            | "UnknownMethod"
-            | "UnknownObject"
-            | "UnknownInterface"
-    ) || name.starts_with("Spawn.")
+    if let Some(name) = name.strip_prefix("org.freedesktop.DBus.Error.") {
+        matches!(
+            name,
+            "ServiceUnknown"
+                | "NameHasNoOwner"
+                | "UnknownMethod"
+                | "UnknownObject"
+                | "UnknownInterface"
+                | "TimedOut"
+        ) || name.starts_with("Spawn.")
+    } else if let Some(name) = name.strip_prefix("org.freedesktop.systemd1.") {
+        matches!(name, "NoSuchUnit" | "UnitMasked" | "LoadFailed")
+    } else {
+        false
+    }
 }
 
 /// Why the portal could not be asked, as against a portal asked that
@@ -1126,7 +1111,7 @@ pub fn chooser_failed(e: &anyhow::Error) -> String {
         }
         None => {}
     }
-    format!("the file chooser failed: {e}")
+    format!("the file chooser failed: {e:#}")
 }
 
 /// A program that draws a file chooser and prints the paths picked,
@@ -1232,7 +1217,8 @@ impl Helper {
 
     /// `ask` with the program named by path, for the tests' stand-ins.
     /// Both programs exit 1 for a cancel, but GTK exits 1 too when it
-    /// cannot open the display, which is told apart by what it says.
+    /// cannot open the display, which is told apart by what it says
+    /// (`display_failure`).
     /// zenity takes its exit codes from `ZENITY_OK` and the like when
     /// they are set, so they are not passed on. A path picked to open
     /// that is not there was mangled on its way back (kdialog prints
@@ -1273,19 +1259,29 @@ impl Helper {
                     None => Ok(paths),
                 }
             }
-            Some(1) if !stderr.to_lowercase().contains("display") => Ok(Vec::new()),
+            Some(1) if display_failure(stderr).is_none() => Ok(Vec::new()),
             _ => {
                 tracing::warn!("file chooser: {name}: {stderr}");
-                match stderr
-                    .lines()
-                    .find(|l| l.to_lowercase().contains("display"))
-                {
-                    Some(line) => Err(anyhow::anyhow!("{name}: {}", line.trim())),
+                match display_failure(stderr) {
+                    Some(line) => Err(anyhow::anyhow!("{name}: {line}")),
                     None => Err(anyhow::anyhow!("{name} {}", output.status)),
                 }
             }
         })
     }
+}
+
+/// The line of a helper's stderr that says it could not reach the
+/// display: GTK's "cannot open display" before it exits 1, Qt's
+/// "could not connect to display" before it aborts. Only those: GTK
+/// mentions the display in warnings it prints on a dialog that works,
+/// as Xlib's missing RANDR under Xvfb.
+#[cfg(target_os = "linux")]
+fn display_failure(stderr: &str) -> Option<&str> {
+    stderr.lines().map(str::trim).find(|line| {
+        let line = line.to_lowercase();
+        line.contains("cannot open display") || line.contains("could not connect to display")
+    })
 }
 
 /// A helper's output as paths: one a line, the blank ones dropped.
@@ -1511,17 +1507,22 @@ fn portal(request: &Ask) -> Result<Vec<PathBuf>> {
     }
     let message = responses.next().context("the file chooser went away")?;
     let (code, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize()?;
-    // 1 is the user's cancel. 2 is the portal's backend failing after
-    // the call returned, as xdg-desktop-portal-gtk does when it cannot
-    // reach the display; it may follow a dialog that was shown, so it
-    // is said rather than asked again elsewhere.
+    // 1 is the Cancel button. 2 is the chooser ended some other way:
+    // its window closed or Escape pressed, which the GTK and GNOME
+    // backends answer with 2, or the backend failing after the call
+    // returned. The two cannot be told apart from here, and the first
+    // is the common one, so 2 is a cancel too, with a line in the log
+    // for the second; the portal's own log says which it was.
     match code {
         0 => {}
         1 => return Ok(Vec::new()),
-        _ => anyhow::bail!(
-            "the desktop portal's chooser ended without an answer \
-             (its backend may not run here; the log says more)"
-        ),
+        _ => {
+            tracing::warn!(
+                "file chooser: the portal ended it without an answer (response {code}): \
+                 its window closed, or its backend failed"
+            );
+            return Ok(Vec::new());
+        }
     }
     let uris = results.get("uris").context("a reply without a file")?;
     let uris = Vec::<String>::try_from(uris.clone()).context("the reply's file")?;
@@ -1740,20 +1741,23 @@ mod tests {
         ] {
             assert!(absent_name(&format!("org.freedesktop.DBus.Error.{name}")));
         }
+        // The bus timing out a start answers before the portal.
+        assert!(absent_name("org.freedesktop.DBus.Error.TimedOut"));
+        // A portal started as a systemd unit that is not there.
+        for name in ["NoSuchUnit", "UnitMasked", "LoadFailed"] {
+            assert!(absent_name(&format!("org.freedesktop.systemd1.{name}")));
+        }
         // A portal that took the request and refused it is ours to
-        // hear, and one that timed out may yet show its dialog.
+        // hear, and one that did not reply may yet show its dialog.
         for name in [
             "org.freedesktop.DBus.Error.InvalidArgs",
             "org.freedesktop.DBus.Error.NoReply",
-            "org.freedesktop.DBus.Error.TimedOut",
             "org.freedesktop.portal.Error.InvalidArgument",
+            "org.freedesktop.systemd1.JobFailed",
             "ServiceUnknown",
         ] {
             assert!(!absent_name(name), "{name}");
         }
-        let fdo = |e| zbus::Error::FDO(Box::new(e));
-        assert!(absent(&fdo(zbus::fdo::Error::ServiceUnknown("x".into()))));
-        assert!(!absent(&fdo(zbus::fdo::Error::InvalidArgs("x".into()))));
         assert!(!absent(&zbus::Error::InvalidReply));
     }
 
@@ -1805,10 +1809,24 @@ mod tests {
         let dir = crate::testing::scratch_dir("helper-exits");
         std::fs::create_dir_all(dir.join("a b")).unwrap();
         std::fs::create_dir_all(dir.join("c")).unwrap();
-        let run = |body: &str, name: &str| {
+        let run_asking = |body: &str, name: &str, ask: Ask| {
             let program = stub(&dir, name, body);
-            Helper::Zenity.run(program.as_os_str(), &asking(None, false, true))
+            // A script just written can be busy for a moment, while a
+            // child another test forked still holds it open to write.
+            for _ in 0..50 {
+                let answer = Helper::Zenity.run(program.as_os_str(), &ask);
+                let busy = matches!(&answer, Some(Err(e)) if e
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::ExecutableFileBusy));
+                if !busy {
+                    return answer;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            panic!("{name} stayed busy");
         };
+        let run = |body: &str, name: &str| run_asking(body, name, asking(None, false, true));
         // Two picked, one a line.
         let two = format!(
             "printf '%s\\n%s\\n' '{}' '{}'",
@@ -1832,6 +1850,16 @@ mod tests {
         .unwrap()
         .unwrap_err();
         assert!(no_display.to_string().contains("cannot open display"));
+        // A warning that mentions the display is still a cancel.
+        assert_eq!(
+            run(
+                "echo 'Xlib:  extension \"RANDR\" missing on display \":1\".' >&2; exit 1",
+                "randr",
+            )
+            .unwrap()
+            .unwrap(),
+            Vec::<PathBuf>::new()
+        );
         // Anything else is an error.
         assert!(run("exit 255", "crash").unwrap().is_err());
         // A path that is not there came back mangled.
@@ -1839,6 +1867,18 @@ mod tests {
             run(&format!("echo '{}'", dir.join("gone").display()), "mangled")
                 .unwrap()
                 .is_err()
+        );
+        // A save names a file not there yet, and is not checked.
+        let new = dir.join("new.jpg");
+        assert_eq!(
+            run_asking(
+                &format!("echo '{}'", new.display()),
+                "save",
+                asking(Some("new.jpg"), false, false)
+            )
+            .unwrap()
+            .unwrap(),
+            [new]
         );
         // Not installed: the next helper is tried.
         assert!(

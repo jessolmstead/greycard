@@ -27,8 +27,11 @@ manager tends to have one or the other, zenity far more often; rfd
 falls back to zenity alone.
 
 Exit 1 is a cancel, except that GTK also exits 1 when it cannot
-open the display, which it says on stderr: that is an error naming
-the line. zenity takes its exit codes from `ZENITY_OK` and the like
+open the display, and says "cannot open display" on stderr (Qt says
+"could not connect to display" and aborts): that is an error naming
+the line. Only those phrases count, since GTK mentions the display
+in warnings on a dialog that works, as Xlib's missing RANDR under
+Xvfb does on every run. zenity takes its exit codes from `ZENITY_OK` and the like
 when they are set, so the child gets none of them. A path picked to
 open comes back through the helper's stdout, one a line, and a name
 with a newline in it splits in two; kdialog prints in the locale's
@@ -43,24 +46,29 @@ helper. `Unreached::Bus` is no session bus to connect to.
 a D-Bus error that means nothing was there to take it:
 `ServiceUnknown` or `NameHasNoOwner` (no portal), `UnknownMethod`,
 `UnknownInterface` or `UnknownObject` (a portal with no file chooser
-backend configured), or a `Spawn.*` error (a portal that would not
-start). Nothing is on the screen until that call returns, so the
+backend configured), a `Spawn.*` error or `TimedOut` (a portal the
+bus could not start, or not in time), or systemd's `NoSuchUnit`,
+`UnitMasked` or `LoadFailed`, where the bus starts the portal as a
+unit (masked by hand, as some i3 users do to skip its start-up
+wait). Nothing is on the screen until that call returns, so the
 user has seen no dialog. Any other error from the call is a portal
 that took the request and refused it, as `InvalidArgument` for
 §88's empty filter: that is our mistake, and a helper answering
-instead would hide it. `NoReply` is not on the list either, since a
-portal slow to start may still put its dialog up.
+instead would hide it. `NoReply` is not on the list: the call
+reached a portal, which may still put its dialog up.
 
 A portal that answered and then failed is reported as it is rather
-than asked again in another program: the chooser went away, a reply
-without a file, or the `Response` code 2. The portal replies to the
-call as soon as it has handed the request to its backend, and when
-the backend then fails, as xdg-desktop-portal-gtk does when it
-cannot reach the display, the response is 2. We used to read every
-code but 0 as a cancel, so that showed as "canceled"; only 1 is a
-cancel now, and 2 says the portal's chooser ended without an answer.
-It is not sent to a helper because 2 can also end a dialog that was
-shown.
+than asked again in another program: the chooser went away, or a
+reply without a file. The `Response` code is the exception. 1 is the
+Cancel button, but 2, "ended some other way", is what the GTK and
+GNOME backends send when the chooser's window is closed or Escape is
+pressed, and also what the portal sends when its backend fails after
+the call returned, as xdg-desktop-portal-gtk does when it cannot
+reach the display. From here the two look the same, and the first
+is the everyday one, so 2 is a cancel with a warning in the log;
+the portal's own log says which it was. (A first pass made 2 an
+error, which turned every Escape on GNOME into "the file chooser
+failed"; the review caught it before it shipped.)
 
 ## Saying what is missing
 
@@ -70,7 +78,7 @@ cause: the empty filter of §88 and a missing bus read the same.
 error is shown: no session bus says to install zenity or see the
 user guide, no portal says to install xdg-desktop-portal-gtk or
 zenity, and anything else is "the file chooser failed:" and the
-error. The monitor and soft-proof profile pickers, which only logged
+error with its causes, so a refused call names the D-Bus error. The monitor and soft-proof profile pickers, which only logged
 a failure, show it too. The user guide's Before you start has the
 Linux line: a portal, or zenity, or a folder named on the command
 line.
@@ -93,6 +101,7 @@ unreached error and its line come back. `absent_name` is tested
 against the names above and against `InvalidArgs`, `NoReply` and
 the portal's own `InvalidArgument`. `Helper::run` takes the program
 by path, so shell-script stand-ins check the exits: two paths, a
-cancel, GTK's display failure, a crash, a path not there, and a
-program not installed, which is skipped. The arguments for each
+cancel, a cancel with a display warning, GTK's display failure, a
+crash, a path not there, a save's new file, which is not checked,
+and a program not installed, which is skipped. The arguments for each
 mode are tested against what zenity and kdialog document.
