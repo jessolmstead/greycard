@@ -256,6 +256,14 @@ A camera's own profile and look are a picker away, and a chart shot
 makes a new one. This and the library can swap order on what testers
 ask for first.
 
+- [ ] A DNG's `ForwardMatrix` read on decode: the color code already
+      takes one when present, the rawler backend fills it with none,
+      so a DNG meant to go through its forward matrix gets the
+      inverted color matrix instead. Then the DNG opcodes, which
+      rawler copies through on write and applies on neither side:
+      gain maps first (phone DNGs, some Fuji and Leica), then the
+      rectilinear warp and the bad-pixel list (an outside review)
+
 - [ ] Color accuracy against a chart: a 48-patch chart shot per camera in
       daylight and under tungsten, kept with the samples, and an ignored
       test that develops each at the default edit and prints the mean and
@@ -355,6 +363,14 @@ Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
+- [ ] Keywords and a title typed in the window: a Keywords field in
+      the panel's metadata with completion from the index's words, a
+      Title field, both written to the sidecar's meta and to the XMP
+      as the rating is, over a selection as the rating is; today the
+      setters are reached only by the imports, the index and the
+      export, the filter finds keywords no one can add, and the guide
+      does not say so (an outside review; a 0.8.0 candidate, two
+      testers come from Lightroom)
 - [ ] The filter bar's last two chips: a "none" chip for frames with
       no value for a facet (decide it with a library of phone JPEGs in
       hand), and an error row in the index for a file whose hash fails
@@ -522,7 +538,14 @@ clears or a tester asks for it.
       carved into a crate of their own that owns their state and hands
       the develop side a selection, halving the 148,000-line crate's
       compile (7.5 GB for rustc) and giving its 1,300 tests two
-      processes. The crate tree itself stays as it is: core knows
+      processes; and, if that pass's measurement names it, a fourth:
+      the finish (the viewport's CPU reference with the edit schema
+      in it, 4,200 lines) and the export (3,000) carved into a render
+      crate between edit and the window, which the CLI and a headless
+      worker would use without the window (an outside review asked
+      why they sit in the window crate; keeping the edit schema and
+      the tone choice out of core is deliberate, the crate between is
+      the answer). The crate tree otherwise stays as it is: core knows
       nothing, edit and library sit on it, the window on everything
 - [ ] Every test's scratch folder removed through the testing helpers
       (`remove_scratch` where the state holds the index open,
@@ -639,6 +662,15 @@ clears or a tester asks for it.
 
 #### Engine
 
+- [ ] Samples below black kept through the demosaic: `normalize_levels`
+      clamps every photosite at zero after the black is taken off, so
+      read noise's negative half is cut and the deepest shadows' mean
+      rises and can tint, worst at high ISO (darktable keeps them).
+      Measure first on an ISO 12800 frame (shadow mean and noise
+      before and after), then drop the lower clamp there and clamp
+      after the denoise, checking what the hot pixel repair, the
+      learned denoiser's packed input and the GPU path assume of the
+      range (an outside review)
 - [ ] `stack.rs` and `register.rs` warps: rows written the way the lens
       correction's were, with captured models re-read per pixel; the
       lens gain (§165) says they are the next place to look
