@@ -52,6 +52,12 @@ ours, so a tester brings a library over in one go.
       the exposure and look like a broken render (it cost an hour on
       2026-10-18; the scopes bin the painted picture too, so the
       histogram grew a spike at mid grey)
+- [ ] The capture time shifted on a selection, for a second body
+      whose clock was off (two testers, wedding work): a shift kept
+      in the sidecar's meta beside the rating, never a rewrite of the
+      raw, read by the index as the frame's time, sorted and filtered
+      by, and written to the export's EXIF and XMP as the corrected
+      time
 
 
 ## Tracks
@@ -421,13 +427,6 @@ comes across with its ratings and collections.
 - [ ] The RawTherapee sheet: a menu entry back into it for a folder
       already answered, and its frame list laid out lazily rather than
       capped at 200 (§340)
-- [ ] The capture time shifted on a selection, for a second body
-      (two testers now, wedding work; a 0.8.0 candidate)
-      whose clock was off (a wedding's two cameras sorted together):
-      a shift kept in the sidecar's meta beside the rating, never a
-      rewrite of the raw, read by the index as the frame's time, sorted
-      and filtered by, and written to the export's EXIF and XMP as the
-      corrected time; a tester asked to change the shot time
 - [ ] Lightroom catalog import follow-ups (§337): a catalog row for a
       camera's JPEG beside its raw mapped onto the raw's frame (wants a
       catalog made with JPEGs as separate photos; none held has one); a
