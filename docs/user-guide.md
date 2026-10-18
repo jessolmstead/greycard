@@ -48,12 +48,13 @@ unpack it.
 
 1. **Open a folder** with **Ctrl+O** or **Open folder...**. The
    filmstrip along the bottom holds the folder's frames.
-2. **Browse** with the arrow keys. **Library** and **Develop** at the
-   top of the left pane (or **G**) switch between the grid and one
-   frame. You see the camera's own preview first; greycard's
-   develop replaces it a moment later.
-3. **Edit** in the right panel's tabs: **Develop**, **Crop**,
-   **Masks** and **Retouch**.
+2. **Browse** with the arrow keys. **Library** and **Loupe** at the
+   top of the left pane (or **G**) switch between the grid
+   and one frame. The loupe has two modes, **Cull** and **Develop**,
+   first in the right panel's tab row. You see the camera's own preview
+   first; greycard's develop replaces it a moment later.
+3. **Edit** in the right panel's tabs after **Cull**: **Develop**,
+   **Crop**, **Masks** and **Retouch**.
 4. **Export** with **Export...** or **Ctrl+Shift+E**.
 
 Your edits are saved as you go, in a `.gcd` file beside each raw. Copy
@@ -111,11 +112,13 @@ bug form.
 
 | Key | Does |
 |---|---|
-| G | Library (the grid) or Develop (one frame) |
+| G | Library (the grid), and back to the loupe as it was left |
+| E | The loupe (one frame), in the mode it was left in: Cull or Develop |
+| D | Develop: the loupe with the edit panel |
 | L | The lightbox, and back |
-| C | Culling mode |
-| V | In culling, compare two or four frames |
-| Enter | Open the frame chosen in the grid or the lightbox; leave culling |
+| C | Cull; in the loupe, Cull or Develop in turn |
+| V | In Cull, compare two or four frames |
+| Enter | Open the frame chosen in the grid or the lightbox; from Cull, Develop |
 | + − | Bigger or smaller tiles in the grid (Ctrl+wheel too); fewer or more across the lightbox |
 | Tab | Hide the panels, the filmstrip and the status line, and bring them back (in the grid, the left pane) |
 | F6, F7, F8 | The filmstrip, the left pane or the develop panel alone |

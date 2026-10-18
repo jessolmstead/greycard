@@ -5,6 +5,18 @@ design note behind it.
 
 ## 0.8.0, unreleased
 
+### Culling and the window
+
+- The window has two views, Library and Loupe, where Library and
+  Develop were, and the Loupe has two modes, Cull and Develop. Cull is
+  the first entry of the panel's tab row, before Develop, Crop, Masks
+  and Retouch; inside it a Picture switch in CULLING shows the camera
+  JPEG or the developed picture. G goes between Library and the Loupe
+  and comes back in the mode the Loupe was left in; C goes between
+  Cull and Develop; D goes to Develop from anywhere. The mode is
+  remembered across runs
+  ([§359](https://github.com/jessolmstead/greycard/blob/master/docs/notes/359-two-views-and-two-modes.md))
+
 ### Library
 
 - Stacks: select frames of one folder and press Ctrl+G to put them

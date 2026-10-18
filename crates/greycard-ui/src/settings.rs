@@ -92,6 +92,12 @@ pub struct Settings {
     /// selection on to the next frame. Off by default: the key and
     /// the arrow are two presses until a culler asks for one.
     pub cull_move_on: bool,
+    /// The Loupe's mode the last run left it in: Cull (true) or
+    /// Develop. Library has no mode of its own. Written as it changes.
+    pub loupe_cull: bool,
+    /// Whether Cull shows the developed picture rather than the
+    /// camera's JPEG. Written as the switch is flipped.
+    pub cull_developed: bool,
     /// Whether the lens profiles' download, offered unprompted the
     /// first time a picture opens with no database on the machine,
     /// was answered Not now. It is asked once: from then on the LENS
@@ -274,6 +280,8 @@ impl Default for Settings {
             sidecars_in_folder: false,
             jpegs_apart: false,
             cull_move_on: false,
+            loupe_cull: false,
+            cull_developed: false,
             lenses_declined: false,
             rawtherapee_answered: Vec::new(),
             last_file: String::new(),
@@ -454,6 +462,8 @@ mod tests {
             sidecars_in_folder: true,
             jpegs_apart: true,
             cull_move_on: true,
+            loupe_cull: true,
+            cull_developed: true,
             lenses_declined: true,
             rawtherapee_answered: vec!["/home/x/Pictures/rt".into()],
             export_last_folder: "/home/x/Pictures/out".into(),

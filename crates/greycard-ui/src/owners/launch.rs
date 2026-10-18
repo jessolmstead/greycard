@@ -50,6 +50,13 @@ pub(crate) struct Launch {
     /// Open in culling mode, with the compare view at this many
     /// frames, once the first file is chosen (`--cull`).
     pub(crate) cull_at_start: Option<usize>,
+    /// Open in Cull drawn developed once the first file is chosen: the
+    /// Loupe's mode the last run left, with its Developed switch on.
+    pub(crate) developed_at_start: bool,
+    /// The command line owns the start (`startup::scripted_start`): a
+    /// capture or a timing run. The Loupe's remembered mode is neither
+    /// taken nor kept.
+    pub(crate) scripted: bool,
     /// `--filter`'s facet terms, chosen when the pass is done.
     pub(crate) facets_wanted: Vec<filter::Wanted>,
     /// A capture waits for those to be chosen.

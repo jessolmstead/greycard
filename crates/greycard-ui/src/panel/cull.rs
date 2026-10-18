@@ -159,22 +159,9 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     if st.culling.cull.is_some() {
         return;
     }
-    st.develop.turn_pressed = None;
-    crate::panel::look_preview::end(st, app);
-    st.develop.placing = None;
-    app.set_placing("".into());
-    st.develop.retouching = None;
-    app.set_retouch_mode("".into());
-    st.develop.picking = None;
-    app.set_picking("".into());
-    st.develop.guiding.clear();
-    app.set_guide_mode("".into());
-    app.set_level_mode(false);
-    app.set_crop_mode(false);
-    st.develop.crop_drag = None;
-    st.develop.crop_draw = None;
-    st.develop.mask_drag = None;
-    st.develop.patch_drag = None;
+    // Out of Cull drawn developed first: its tab is the one to keep.
+    leave_developed(st, app);
+    put_tools_down(st, app);
     if st.current.is_some() {
         let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
         save_edit(st, outgoing);
@@ -215,6 +202,7 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     app.set_compare_text(cull.compare.to_string().into());
     let reach = cull.reach;
     st.culling.cull = Some(cull);
+    set_loupe_cull(st, true);
     // No frame is being edited while culling.
     if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
         worker.set_open_frame(None);
@@ -241,6 +229,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     let Some(mut cull) = st.culling.cull.take() else {
         return;
     };
+    set_loupe_cull(st, false);
     // A pick whose sidecar was on its way is left with the mode: the
     // frame stays current, and the open that would have followed
     // finds it no longer the pick.
@@ -320,6 +309,161 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     app.set_status("developing...".into());
     app.set_busy(true);
     worker.send(crate::panel::browser::open_job(st, c, edit));
+}
+
+/// Whatever is in hand put down, as a mode with no tools of its own
+/// is entered: a placing, a retouch, a pick, a guide, the level, the
+/// crop and any drag.
+fn put_tools_down(st: &mut State, app: &App) {
+    st.develop.turn_pressed = None;
+    crate::panel::look_preview::end(st, app);
+    st.develop.placing = None;
+    app.set_placing("".into());
+    st.develop.retouching = None;
+    app.set_retouch_mode("".into());
+    st.develop.picking = None;
+    app.set_picking("".into());
+    st.develop.guiding.clear();
+    app.set_guide_mode("".into());
+    app.set_level_mode(false);
+    app.set_crop_mode(false);
+    st.develop.crop_drag = None;
+    st.develop.crop_draw = None;
+    st.develop.mask_drag = None;
+    st.develop.patch_drag = None;
+}
+
+/// Whether the Loupe is in Cull now, from the camera's JPEG or
+/// developed: the culling keys' rules hold there (Move on, the word
+/// over the picture, culling's own undo).
+pub(crate) fn cull_mode(st: &State) -> bool {
+    st.culling.cull.is_some() || st.culling.developed.is_some()
+}
+
+/// The Loupe's mode and Cull's switch, kept for the next run as they
+/// change, as the Move on switch is. Not from a run whose start is the
+/// command line's: its mode is its flags', not the user's.
+fn keep_mode(st: &State) {
+    if st.launch.scripted {
+        return;
+    }
+    let (cull, developed) = (st.culling.loupe_cull, st.culling.show_developed);
+    crate::panel::prefs::keep(st, |s| {
+        s.loupe_cull = cull;
+        s.cull_developed = developed;
+    });
+}
+
+fn set_loupe_cull(st: &mut State, on: bool) {
+    if st.culling.loupe_cull != on {
+        st.culling.loupe_cull = on;
+        keep_mode(st);
+    }
+}
+
+/// The mode the last run left the Loupe in, at startup: the first frame
+/// chosen opens in Cull, from the camera's JPEG or developed as its
+/// switch was. Not for a run whose start is the command line's (a
+/// capture, a timing run), which is its flags' alone, nor over a
+/// `--cull` that asked for its own.
+pub(crate) fn take_remembered_mode(st: &mut State, loupe_cull: bool, show_developed: bool) {
+    if st.launch.scripted {
+        return;
+    }
+    st.culling.loupe_cull = loupe_cull;
+    st.culling.show_developed = show_developed;
+    if !loupe_cull || st.launch.cull_at_start.is_some() {
+        return;
+    }
+    if show_developed {
+        st.launch.developed_at_start = true;
+    } else {
+        st.launch.cull_at_start = Some(1);
+    }
+}
+
+/// Into Cull drawn developed, from the develop view: the frame stays
+/// open and developed as it is, and every frame chosen after it opens
+/// as it does in Develop, but whatever was in hand is put down and the
+/// panel shows the CULLING section in place of the edit's. The keys
+/// are culling's: Move on, the word over the picture, its own undo.
+pub(crate) fn enter_developed(st: &mut State, app: &App) {
+    if st.culling.developed.is_some() || st.culling.cull.is_some() {
+        return;
+    }
+    let cropping = app.get_crop_mode();
+    put_tools_down(st, app);
+    if cropping {
+        // The frame is shown cropped again, fitted.
+        st.develop.zoom = 0.0;
+        st.develop.image_size = (0, 0);
+    }
+    // A mask chosen is let go, as a tab away from Masks lets it go.
+    if st.develop.target.is_some() {
+        let edit = read_edit(app, &st.develop.edit, st.develop.target);
+        st.develop.target = None;
+        app.set_component(0);
+        show_edit(st, &edit, app, None);
+        st.develop.edit = edit;
+    }
+    st.culling.developed = Some(app.get_panel_tab());
+    app.set_panel_tab(CULL_TAB.into());
+    app.set_cull_developed(true);
+    set_loupe_cull(st, true);
+    tracing::info!("culling: on, developed");
+    app.window().request_redraw();
+}
+
+/// Out of Cull drawn developed, to Develop: the panel's tab comes
+/// back, and the frame on screen is the one open, already developed.
+/// False when it was not on.
+pub(crate) fn leave_developed(st: &mut State, app: &App) -> bool {
+    let Some(tab) = st.culling.developed.take() else {
+        return false;
+    };
+    app.set_cull_developed(false);
+    app.set_panel_tab(tab);
+    set_loupe_cull(st, false);
+    // The word for the last key goes with the mode.
+    st.culling.notice_timer.stop();
+    app.set_notice_on(false);
+    tracing::info!("culling: off, developed");
+    true
+}
+
+/// The Loupe in Cull, from the camera's JPEG or developed as Cull's
+/// switch says, from either of the other two states.
+pub(crate) fn to_cull(st: &mut State, app: &App, worker: &Worker) {
+    if st.culling.show_developed {
+        if st.culling.cull.is_some() {
+            leave_cull(st, app, worker, None);
+        }
+        enter_developed(st, app);
+    } else if st.culling.cull.is_none() {
+        enter_cull(st, app, 1);
+    }
+}
+
+/// The Loupe in Develop: out of either Cull, the frame developed and
+/// the edit panel back.
+pub(crate) fn to_develop(st: &mut State, app: &App, worker: &Worker) {
+    if st.culling.cull.is_some() {
+        leave_cull(st, app, worker, None);
+    } else {
+        leave_developed(st, app);
+    }
+}
+
+/// Cull's switch: the developed picture or the camera's JPEG, kept,
+/// and in Cull the picture swapped to it at once.
+pub(crate) fn set_cull_source(st: &mut State, app: &App, worker: &Worker, developed: bool) {
+    if st.culling.show_developed != developed {
+        st.culling.show_developed = developed;
+        keep_mode(st);
+    }
+    if cull_mode(st) {
+        to_cull(st, app, worker);
+    }
 }
 
 /// A control reached in culling, as the edit to leave with: the
@@ -2166,27 +2310,73 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     // filter, and the rejects moved out.
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        // C: from Library (not the lightbox, a view of its own) the
+        // Loupe in Cull, since Cull is a mode of the Loupe; in the Loupe
+        // Cull and Develop in turn.
         app.on_cull_toggled(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let mut st = state.borrow_mut();
-            if st.culling.cull.is_some() {
-                leave_cull(&mut st, &app, &worker, None);
-            } else if st.current.is_some() {
-                enter_cull(&mut st, &app, 1);
-            } else {
+            let library = app.get_grid_open() && !app.get_lightbox();
+            // In the Loupe's Cull (or the lightbox over it) C leaves,
+            // with a frame or without one.
+            if !library && cull_mode(&state.borrow()) {
+                to_develop(&mut state.borrow_mut(), &app, &worker);
+                return;
+            }
+            if state.borrow().current.is_none() {
                 app.set_status("nothing to cull: open a folder".into());
+                return;
+            }
+            if library {
+                app.set_grid_open(false);
+            }
+            // A Cull already on under the grid stays as it is: a
+            // compare it holds is not ended.
+            let mut st = state.borrow_mut();
+            if !cull_mode(&st) {
+                to_cull(&mut st, &app, &worker);
             }
         });
     }
+    // Develop: Return or Escape in Cull, the CULLING section's Develop,
+    // the Loupe's Develop and the Develop button's way from Library.
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_cull_leave(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            leave_cull(&mut state.borrow_mut(), &app, &worker, None);
+            to_develop(&mut state.borrow_mut(), &app, &worker);
+        });
+    }
+    // The Loupe's Cull.
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_cull_asked(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            // Already lit: a compare Cull holds is not ended.
+            if cull_mode(&st) {
+                return;
+            }
+            if st.current.is_none() {
+                app.set_status("nothing to cull: open a folder".into());
+                return;
+            }
+            to_cull(&mut st, &app, &worker);
+        });
+    }
+    // Cull's switch: Camera JPEG or Developed.
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_cull_source_asked(move |developed| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            set_cull_source(&mut state.borrow_mut(), &app, &worker, developed);
         });
     }
     {
@@ -4998,5 +5188,683 @@ mod tests {
             "a's is as it was"
         );
         crate::testing::remove_scratch(state, &dir);
+    }
+
+    // The window's two views, Library and Loupe, and the Loupe's two
+    // modes, Cull and Develop; Library has no mode of its own.
+
+    /// Whether the control a screen reader knows as `label` is
+    /// pressed; None when there is no such control.
+    fn pressed(app: &App, label: &str) -> Option<bool> {
+        crate::testing::count_labeled(app, label);
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, label)
+            .next()
+            .and_then(|e| e.accessible_checked())
+    }
+
+    fn click_labeled(app: &App, label: &str) {
+        let (at, size) = crate::testing::labeled(app, label);
+        click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    }
+
+    /// A click on the rightmost of the elements labeled `label`: the
+    /// grid header's Loupe, not the pane's.
+    fn click_rightmost(app: &App, label: &str) {
+        crate::testing::count_labeled(app, label);
+        let (at, size) =
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, label)
+                .map(|e| (e.absolute_position(), e.size()))
+                .max_by(|a, b| a.0.x.total_cmp(&b.0.x))
+                .expect("the label is there");
+        click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    }
+
+    /// A click on the panel's tab `label`: the element so named in the
+    /// row the Cull tab is in (CULLING ends in a Develop button of its
+    /// own, lower down).
+    fn click_tab(app: &App, label: &str) {
+        let (row, height) = {
+            let (at, size) = crate::testing::labeled(app, "Cull mode");
+            (at.y, size.height)
+        };
+        crate::testing::count_labeled(app, label);
+        let (at, size) =
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, label)
+                .map(|e| (e.absolute_position(), e.size()))
+                .find(|(at, size)| at.y >= row && at.y + size.height <= row + height)
+                .expect("the tab is there");
+        click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    }
+
+    /// A tall window over six frames, the third one open in Develop.
+    fn modes_window() -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, worker) = state_for(&app, folder(6));
+        app.invoke_select(2);
+        (app, state, worker)
+    }
+
+    /// The selection: the frame open, its row and the set.
+    fn chosen(app: &App, state: &Rc<RefCell<State>>) -> (Option<usize>, i32, Vec<usize>) {
+        let st = state.borrow();
+        (st.current, app.get_selected(), st.views.picked.clone())
+    }
+
+    /// Which state the window is in, as the controls and the state
+    /// both say it: Library, the Loupe in Cull from the camera's JPEG,
+    /// the Loupe in Cull developed, or the Loupe in Develop.
+    #[derive(Debug, PartialEq)]
+    enum Seen {
+        Library,
+        CullCamera,
+        CullDeveloped,
+        Develop,
+    }
+
+    fn seen(app: &App, state: &Rc<RefCell<State>>) -> Seen {
+        let st = state.borrow();
+        // Never both at once.
+        assert!(!(st.culling.cull.is_some() && st.culling.developed.is_some()));
+        assert_eq!(app.get_culling(), st.culling.cull.is_some());
+        assert_eq!(app.get_cull_developed(), st.culling.developed.is_some());
+        if app.get_grid_open() {
+            return Seen::Library;
+        }
+        if st.culling.cull.is_some() {
+            assert_eq!(app.get_panel_tab(), CULL_TAB);
+            Seen::CullCamera
+        } else if st.culling.developed.is_some() {
+            assert_eq!(app.get_panel_tab(), CULL_TAB);
+            Seen::CullDeveloped
+        } else {
+            assert_ne!(app.get_panel_tab(), CULL_TAB);
+            Seen::Develop
+        }
+    }
+
+    /// Library is the grid with the left pane, Loupe the one frame:
+    /// the header's own buttons are there in the one and not the
+    /// other, and the pane's Library | Loupe say which is on.
+    #[test]
+    fn library_shows_the_grid_and_the_left_pane_and_the_loupe_one_picture() {
+        let (app, state, _worker) = modes_window();
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert_eq!(pressed(&app, "Loupe view"), Some(true));
+        assert_eq!(crate::testing::count_labeled(&app, "Lightbox"), 0);
+        click_labeled(&app, "Library view");
+        assert_eq!(seen(&app, &state), Seen::Library);
+        assert!(!app.get_left_hidden(), "the left pane is the library's");
+        assert_eq!(pressed(&app, "Library view"), Some(true));
+        assert_eq!(pressed(&app, "Loupe view"), Some(false));
+        assert_eq!(
+            crate::testing::count_labeled(&app, "Lightbox"),
+            1,
+            "the grid's header"
+        );
+        click_labeled(&app, "Loupe view");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert_eq!(chosen(&app, &state), (Some(2), 2, vec![2]));
+    }
+
+    /// The Loupe comes back from Library in the mode it was left in,
+    /// Cull or Develop, by the pane's Loupe, the grid's Loupe, a
+    /// double-click on a cell, Return in the grid, G or E.
+    #[test]
+    fn the_loupe_comes_back_from_library_in_the_mode_it_was_left_in() {
+        let (app, state, _worker) = modes_window();
+        click_labeled(&app, "Cull mode");
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        assert_eq!(pressed(&app, "Cull mode"), Some(true));
+        assert_eq!(
+            crate::testing::count_labeled(&app, "Develop mode"),
+            0,
+            "no row of its own"
+        );
+        assert!(state.borrow().culling.loupe_cull);
+        for back in ["pane", "header", "double-click", "return", "g", "e"] {
+            click_labeled(&app, "Library view");
+            assert_eq!(seen(&app, &state), Seen::Library, "{back}");
+            // The old Cull toggle is gone from the grid's header.
+            assert_eq!(crate::testing::count_labeled(&app, "Culling"), 0);
+            match back {
+                "pane" => click_labeled(&app, "Loupe view"),
+                "header" => click_rightmost(&app, "Loupe"),
+                "double-click" => {
+                    // The cell's name (the test window's names, not the
+                    // files'), as wide as the grid's cell: not the
+                    // header's word for the frame, nor the strip's.
+                    crate::testing::count_labeled(&app, "f02.CR3");
+                    let (at, size) =
+                        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                            &app, "f02.CR3",
+                        )
+                        .map(|e| (e.absolute_position(), e.size()))
+                        .find(|(_, size)| size.width == app.get_grid_cell())
+                        .expect("the grid's cell");
+                    let (x, y) = (at.x + size.width / 2.0, at.y - 40.0);
+                    let position = slint::LogicalPosition::new(x, y);
+                    let button = slint::platform::PointerEventButton::Left;
+                    app.window()
+                        .dispatch_event(WindowEvent::PointerMoved { position });
+                    for _ in 0..2 {
+                        app.window()
+                            .dispatch_event(WindowEvent::PointerPressed { position, button });
+                        app.window()
+                            .dispatch_event(WindowEvent::PointerReleased { position, button });
+                    }
+                }
+                "return" => press(&app, Key::Return),
+                "g" => press(&app, "g"),
+                _ => press(&app, "e"),
+            }
+            assert_eq!(seen(&app, &state), Seen::CullCamera, "{back}");
+            assert_eq!(chosen(&app, &state), (Some(2), 2, vec![2]), "{back}");
+        }
+        // Develop is kept the same way.
+        click_tab(&app, "Develop");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert!(!state.borrow().culling.loupe_cull);
+        click_labeled(&app, "Library view");
+        click_labeled(&app, "Loupe view");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert_eq!(chosen(&app, &state), (Some(2), 2, vec![2]));
+    }
+
+    /// Develop from Library is the Loupe in Develop, the edit panel
+    /// up, whatever mode the Loupe was left in: D from the grid.
+    #[test]
+    fn develop_from_library_lands_in_the_loupe_in_develop_with_the_edit_panel() {
+        let (app, state, _worker) = modes_window();
+        app.set_panel_tab("Crop".into());
+        press(&app, "c");
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        press(&app, "g");
+        assert_eq!(seen(&app, &state), Seen::Library);
+        press(&app, "d");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert_eq!(app.get_panel_tab(), "Crop", "the tab Cull was entered from");
+        assert_eq!(pressed(&app, "Cull mode"), Some(false));
+        assert_eq!(chosen(&app, &state), (Some(2), 2, vec![2]));
+        // From the developed Cull too.
+        press(&app, "c");
+        click_labeled(&app, "Developed pictures");
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        press(&app, "g");
+        press(&app, "d");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert_eq!(app.get_panel_tab(), "Crop");
+    }
+
+    /// D is Develop from anywhere: from Cull on either picture, from
+    /// Library over either, and from the lightbox, the selection
+    /// carried; in Develop it changes nothing. Under a sheet it is the
+    /// sheet's, and with the filter's field focused it is typed.
+    #[test]
+    fn d_goes_straight_to_develop_from_cull_library_and_the_lightbox() {
+        let (app, state, _worker) = modes_window();
+        press(&app, "d");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        for developed in [false, true] {
+            press(&app, "c");
+            let cull = if developed {
+                click_labeled(&app, "Developed pictures");
+                Seen::CullDeveloped
+            } else {
+                Seen::CullCamera
+            };
+            assert_eq!(seen(&app, &state), cull);
+            press(&app, "d");
+            assert_eq!(seen(&app, &state), Seen::Develop, "{developed}");
+            press(&app, "c");
+            press(&app, "g");
+            assert_eq!(seen(&app, &state), Seen::Library);
+            press(&app, "d");
+            assert_eq!(seen(&app, &state), Seen::Develop, "{developed}");
+            assert_eq!(chosen(&app, &state), (Some(2), 2, vec![2]));
+        }
+        press(&app, "c");
+        app.invoke_lightbox_enter();
+        assert!(app.get_lightbox());
+        press(&app, "d");
+        assert!(!app.get_lightbox());
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        // A sheet takes it.
+        press(&app, "c");
+        app.set_keys_open(true);
+        press(&app, "d");
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped, "the sheet's key");
+        app.set_keys_open(false);
+        // Typed into the filter, not a key of the window's.
+        press(&app, "g");
+        app.set_filter_focus(true);
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+        press(&app, "d");
+        assert_eq!(seen(&app, &state), Seen::Library);
+        assert_eq!(app.get_filter_text(), "d");
+    }
+
+    /// The Loupe's Cull | Develop: Cull draws the camera's JPEG (a step
+    /// develops nothing) with the CULLING section in place of the edit
+    /// panel; Develop develops the frame and brings the panel back.
+    #[test]
+    fn the_cull_and_develop_switch_changes_the_picture_and_the_panel() {
+        let (app, state, _worker) = modes_window();
+        assert_eq!(crate::testing::count_labeled(&app, "Exposure value"), 1);
+        click_labeled(&app, "Cull mode");
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        assert_eq!(pressed(&app, "Camera JPEG pictures"), Some(true));
+        assert_eq!(pressed(&app, "Developed pictures"), Some(false));
+        // The camera's picture: a step reaches the next frame without a
+        // develop.
+        let generation = state.borrow().develop.generation;
+        press(&app, Key::RightArrow);
+        assert_eq!(state.borrow().current, Some(3));
+        assert_eq!(
+            state.borrow().develop.generation,
+            generation,
+            "nothing developed"
+        );
+        assert!(!app.get_busy());
+        click_tab(&app, "Develop");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert_eq!(app.get_panel_tab(), "Develop");
+        assert!(
+            state.borrow().develop.generation > generation,
+            "the frame develops"
+        );
+        assert_eq!(chosen(&app, &state), (Some(3), 3, vec![3]));
+        // C is the same switch in the Loupe.
+        press(&app, "c");
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        press(&app, "c");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+    }
+
+    /// Cull's Developed switch: the developed picture, each frame
+    /// developed as it is reached, still with the CULLING section and
+    /// no edit panel, the key's word over the picture, Move on and
+    /// culling's own undo; Camera JPEG goes back. The switch is kept
+    /// for the next Cull.
+    #[test]
+    fn the_developed_switch_inside_cull_shows_the_developed_picture_with_no_edit_panel() {
+        let (app, state, _worker) = modes_window();
+        click_labeled(&app, "Cull mode");
+        click_labeled(&app, "Developed pictures");
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        assert!(state.borrow().culling.show_developed);
+        assert!(state.borrow().culling.loupe_cull);
+        assert_eq!(pressed(&app, "Developed pictures"), Some(true));
+        assert_eq!(pressed(&app, "Cull mode"), Some(true));
+        assert_eq!(
+            crate::testing::count_labeled(&app, "Exposure value"),
+            0,
+            "no edit panel"
+        );
+        assert_eq!(chosen(&app, &state), (Some(2), 2, vec![2]));
+        // A step develops the next frame: the develop view's own path.
+        let generation = state.borrow().develop.generation;
+        press(&app, Key::RightArrow);
+        assert_eq!(state.borrow().current, Some(3));
+        assert!(state.borrow().develop.generation > generation, "developed");
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        // The culling keys: the word, and Move on.
+        app.set_cull_move_on(true);
+        app.invoke_cull_move_on_changed();
+        app.invoke_meta_key("4".into());
+        assert_eq!(state.borrow().sidecars[3].meta.rating, 4);
+        assert_eq!(app.get_notice(), "4 stars");
+        assert!(app.get_notice_on());
+        assert_eq!(state.borrow().current, Some(4), "moved on");
+        // Culling's undo: the rating, and back to its frame; the mode
+        // stays.
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[3].meta.rating, 0);
+        assert_eq!(state.borrow().current, Some(3));
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        // Camera JPEG, and back.
+        click_labeled(&app, "Camera JPEG pictures");
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        assert!(!state.borrow().culling.show_developed);
+        click_labeled(&app, "Developed pictures");
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        // Develop, then Cull again: developed, as the switch was left.
+        click_tab(&app, "Develop");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert_eq!(app.get_panel_tab(), "Develop");
+        assert!(!app.get_notice_on(), "the word goes with the mode");
+        click_labeled(&app, "Cull mode");
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        // A tab of the edit is the way out, as it is from Cull on the
+        // camera's JPEG.
+        app.invoke_tab_changed("Crop".into());
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert_eq!(app.get_panel_tab(), "Crop");
+        assert_eq!(chosen(&app, &state), (Some(3), 3, vec![3]));
+    }
+
+    /// In Library the culling keys are culling's whatever the Loupe's
+    /// mode: a rating lands, and with the switch on moves on along the
+    /// grid, by culling's rules (one frame chosen, not past the end);
+    /// with the switch off it stays. Over Develop, so no Cull is on.
+    #[test]
+    fn a_rating_in_library_works_and_moves_on_with_no_toggle() {
+        let (app, state, _worker) = modes_window();
+        click_labeled(&app, "Library view");
+        assert_eq!(seen(&app, &state), Seen::Library);
+        assert!(state.borrow().culling.cull.is_none());
+        press(&app, "3");
+        assert_eq!(state.borrow().sidecars[2].meta.rating, 3);
+        assert_eq!(state.borrow().current, Some(2), "the switch is off");
+        app.set_cull_move_on(true);
+        app.invoke_cull_move_on_changed();
+        press(&app, "4");
+        assert_eq!(state.borrow().sidecars[2].meta.rating, 4);
+        assert_eq!(state.borrow().current, Some(3), "moved on");
+        assert_eq!(app.get_selected(), 3);
+        press(&app, "p");
+        assert_eq!(state.borrow().current, Some(4));
+        // A set of two is rated together and left where it is.
+        app.invoke_frame_clicked(5, true, false);
+        press(&app, "2");
+        assert_eq!(state.borrow().sidecars[4].meta.rating, 2);
+        assert_eq!(state.borrow().sidecars[5].meta.rating, 2);
+        assert_eq!(state.borrow().current, Some(4));
+        // At the end, nothing past it.
+        press(&app, Key::Escape);
+        app.invoke_select(5);
+        press(&app, "1");
+        assert_eq!(state.borrow().current, Some(5));
+        assert_eq!(seen(&app, &state), Seen::Library, "still the grid");
+        // The lightbox is a view apart: no Move on there over Develop.
+        app.invoke_select(0);
+        app.invoke_lightbox_enter();
+        press(&app, "5");
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 5);
+        assert_eq!(state.borrow().current, Some(0));
+    }
+
+    /// A rating in the Loupe's Cull moves on, from the button's way in.
+    #[test]
+    fn a_rating_in_the_loupes_cull_moves_on() {
+        let (app, state, _worker) = modes_window();
+        app.set_cull_move_on(true);
+        app.invoke_cull_move_on_changed();
+        click_labeled(&app, "Cull mode");
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        press(&app, "5");
+        assert_eq!(state.borrow().sidecars[2].meta.rating, 5);
+        assert_eq!(state.borrow().current, Some(3));
+        assert_eq!(app.get_notice(), "5 stars");
+        // In Develop it does not: the switch is culling's.
+        click_tab(&app, "Develop");
+        press(&app, "1");
+        assert_eq!(state.borrow().sidecars[3].meta.rating, 1);
+        assert_eq!(state.borrow().current, Some(3));
+    }
+
+    /// The Loupe's mode and Cull's switch are kept in the settings, and
+    /// the next run's first frame opens in them; not for a capture, and
+    /// not over a `--cull` that asked for its own.
+    #[test]
+    fn the_loupes_mode_is_kept_across_a_settings_round_trip() {
+        let kept = crate::settings::Settings {
+            loupe_cull: true,
+            cull_developed: true,
+            ..Default::default()
+        };
+        let text = serde_json::to_string(&kept).unwrap();
+        let read: crate::settings::Settings = serde_json::from_str(&text).unwrap();
+        assert!(read.loupe_cull && read.cull_developed);
+        let old: crate::settings::Settings = serde_json::from_str("{}").unwrap();
+        assert!(!old.loupe_cull && !old.cull_developed, "Develop by default");
+
+        // Cull on the camera's JPEG: the first frame culls.
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, folder(3));
+        take_remembered_mode(&mut state.borrow_mut(), true, false);
+        assert_eq!(state.borrow().launch.cull_at_start, Some(1));
+        app.invoke_select(0);
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+
+        // Developed: the first frame opens under the CULLING section.
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, folder(3));
+        take_remembered_mode(
+            &mut state.borrow_mut(),
+            read.loupe_cull,
+            read.cull_developed,
+        );
+        assert!(state.borrow().launch.developed_at_start);
+        assert_eq!(state.borrow().launch.cull_at_start, None);
+        app.invoke_select(0);
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        assert_eq!(state.borrow().current, Some(0));
+
+        // Develop, a run the command line starts and a `--cull` leave
+        // the start alone.
+        for (cull, scripted, flag) in [
+            (false, false, None),
+            (true, true, None),
+            (true, false, Some(2)),
+        ] {
+            let app = window(3);
+            let (state, _worker) = state_for(&app, folder(3));
+            {
+                let mut st = state.borrow_mut();
+                st.launch.scripted = scripted;
+                st.launch.cull_at_start = flag;
+                take_remembered_mode(&mut st, cull, true);
+                assert!(!st.launch.developed_at_start, "{cull} {scripted} {flag:?}");
+                assert_eq!(st.launch.cull_at_start, flag, "{cull} {scripted} {flag:?}");
+            }
+        }
+    }
+
+    /// The keys: G is a round trip, Library from the Loupe and back to
+    /// the Loupe in its mode; E the Loupe in its mode; D Develop; C Cull
+    /// from Library and Cull or Develop in turn in the Loupe; Return and
+    /// Escape in Cull are Develop. The selection and the set ride
+    /// through every one.
+    #[test]
+    fn g_e_and_c_switch_the_views_and_the_modes_and_carry_the_selection() {
+        let (app, state, _worker) = modes_window();
+        app.invoke_frame_clicked(3, true, false);
+        let set = chosen(&app, &state);
+        assert_eq!(set.2.len(), 2, "a set of two");
+        let steps: [(&str, Seen); 14] = [
+            ("g", Seen::Library),
+            ("g", Seen::Develop),
+            ("g", Seen::Library),
+            ("e", Seen::Develop),
+            ("c", Seen::CullCamera),
+            ("g", Seen::Library),
+            ("g", Seen::CullCamera),
+            ("g", Seen::Library),
+            ("e", Seen::CullCamera),
+            ("g", Seen::Library),
+            ("d", Seen::Develop),
+            ("g", Seen::Library),
+            ("c", Seen::CullCamera),
+            ("c", Seen::Develop),
+        ];
+        for (key, then) in steps {
+            press(&app, key);
+            assert_eq!(seen(&app, &state), then, "{key}");
+            assert_eq!(chosen(&app, &state), set, "{key}: the selection carries");
+        }
+        // Return in Cull is Develop, from either picture.
+        press(&app, "c");
+        press(&app, Key::Return);
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        press(&app, "c");
+        click_labeled(&app, "Developed pictures");
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        assert_eq!(chosen(&app, &state), set);
+        // Escape lets go of the set first, then leaves Cull.
+        press(&app, Key::Escape);
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        press(&app, Key::Escape);
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        // E in the Loupe stays in the Loupe.
+        press(&app, "e");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+    }
+
+    /// The command line owns the start of a capture or a timing run:
+    /// the mode the last session left is not taken for it (a timing run
+    /// opened in Cull would wait for a develop that never comes), and
+    /// nothing it does to the mode is kept.
+    #[test]
+    fn a_timing_run_or_a_capture_opens_in_no_remembered_mode() {
+        use clap::Parser;
+        let parse = |args: &[&str]| {
+            let mut all = vec!["greycard-ui"];
+            all.extend_from_slice(args);
+            crate::Cli::try_parse_from(all).unwrap()
+        };
+        let runs: [&[&str]; 9] = [
+            &["--snapshot", "a.png", "x"],
+            &["--screenshot", "a.png", "x"],
+            &["--time-sharpen", "3", "x"],
+            &["--time-clarity", "3", "x"],
+            &["--time-dehaze", "3", "x"],
+            &["--time-texture", "3", "x"],
+            &["--time-cull", "3", "x"],
+            &["--time-select", "3", "x"],
+            &["--time-scroll", "3", "x"],
+        ];
+        for args in runs {
+            assert!(
+                crate::panel::startup::scripted_start(&parse(args)),
+                "{args:?}"
+            );
+        }
+        assert!(!crate::panel::startup::scripted_start(&parse(&["x"])));
+        assert!(!crate::panel::startup::scripted_start(&parse(&[
+            "--cull", "x"
+        ])));
+
+        let app = window(3);
+        let (state, _worker) = state_for(&app, folder(3));
+        state.borrow_mut().launch.scripted = true;
+        take_remembered_mode(&mut state.borrow_mut(), true, false);
+        assert_eq!(state.borrow().launch.cull_at_start, None);
+        assert!(!state.borrow().culling.loupe_cull);
+        app.invoke_select(0);
+        assert_eq!(seen(&app, &state), Seen::Develop, "the timing run develops");
+    }
+
+    /// `--cull-developed` is refused beside every flag that asks for
+    /// Cull on the camera's JPEG, as `--cull` and `--cull-compare` are.
+    #[test]
+    fn cull_developed_is_refused_beside_the_camera_culls_flags() {
+        use clap::Parser;
+        let parse = |args: &[&str]| {
+            let mut all = vec!["greycard-ui", "--cull-developed"];
+            all.extend_from_slice(args);
+            crate::Cli::try_parse_from(all)
+        };
+        assert!(parse(&["x"]).is_ok());
+        let others: [&[&str]; 7] = [
+            &["--cull"],
+            &["--cull-compare", "2"],
+            &["--cull-key", "3"],
+            &["--ask-rejects"],
+            &["--move-rejects"],
+            &["--cull-develop"],
+            &["--time-cull", "3"],
+        ];
+        for other in others {
+            let mut args = other.to_vec();
+            args.push("x");
+            assert!(parse(&args).is_err(), "{other:?}");
+        }
+    }
+
+    /// With Developed on, a Cull a compare put up on the camera's JPEG
+    /// (Compare versions and Compare stack enter it directly) holds
+    /// through a click on the lit Cull tab, and through G and then C:
+    /// neither ends the compare nor develops.
+    #[test]
+    fn a_compare_on_the_camera_jpeg_holds_through_cull_asked_again() {
+        let (app, state, _worker) = modes_window();
+        click_labeled(&app, "Cull mode");
+        click_labeled(&app, "Developed pictures");
+        assert!(state.borrow().culling.show_developed);
+        click_tab(&app, "Develop");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        // As Compare stack puts it up.
+        enter_cull(&mut state.borrow_mut(), &app, 2);
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        let generation = state.borrow().develop.generation;
+        click_labeled(&app, "Cull mode");
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        assert_eq!(app.get_compare(), 2, "the compare stands");
+        press(&app, "g");
+        press(&app, "c");
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        assert_eq!(app.get_compare(), 2);
+        assert_eq!(
+            state.borrow().develop.generation,
+            generation,
+            "nothing developed"
+        );
+    }
+
+    /// C in Cull leaves it even with no frame open, as after a folder
+    /// with no pictures in it.
+    #[test]
+    fn c_leaves_cull_with_no_frame_open() {
+        let (app, state, _worker) = modes_window();
+        press(&app, "c");
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        state.borrow_mut().current = None;
+        press(&app, "c");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        // And with no frame, C has nothing to cull.
+        press(&app, "c");
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert_eq!(app.get_status(), "nothing to cull: open a folder");
+    }
+
+    /// An edit made in Cull drawn developed (a preset clicked) leaves to
+    /// Develop as one made in Cull on the camera's JPEG does: the panel
+    /// shows the edit, and Ctrl+Z takes back the preset, not a rating.
+    #[test]
+    fn an_edit_in_developed_cull_leaves_to_develop() {
+        use greycard_edit::preset::{Entry, Preset, Section};
+        let (app, state, _worker) = modes_window();
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        state.borrow_mut().develop.presets = vec![Entry {
+            path: PathBuf::new(),
+            preset: Preset::from_edit("Bright", &edit, &[Section::Light]),
+        }];
+        click_labeled(&app, "Cull mode");
+        click_labeled(&app, "Developed pictures");
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        app.invoke_meta_key("3".into());
+        assert_eq!(state.borrow().sidecars[2].meta.rating, 3);
+        app.invoke_preset_applied(0);
+        assert_eq!(seen(&app, &state), Seen::Develop, "the edit is the way out");
+        assert_eq!(app.get_panel_tab(), "Develop");
+        assert_eq!(state.borrow().sidecars[2].current.light.exposure, 0.5);
+        assert_eq!(app.get_exposure(), 0.5, "on the panel");
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[2].current.light.exposure, 0.0);
+        assert_eq!(
+            state.borrow().sidecars[2].meta.rating,
+            3,
+            "the rating stays"
+        );
+        // The switch is still on for the next Cull.
+        click_labeled(&app, "Cull mode");
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
     }
 }

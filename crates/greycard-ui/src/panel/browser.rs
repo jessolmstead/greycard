@@ -1859,6 +1859,11 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
     if let Some(compare) = st.launch.cull_at_start.take() {
         enter_cull(st, app, compare);
     }
+    // The last run's Cull drawn developed: the frame opens as in
+    // Develop, under the CULLING section.
+    if std::mem::take(&mut st.launch.developed_at_start) {
+        crate::panel::cull::enter_developed(st, app);
+    }
     if !crate::rows::is_loaded(st, i) && !crate::rows::is_offline(st, i) {
         pick_pending(st, app, i, row);
         return;
@@ -2295,9 +2300,18 @@ pub(crate) fn meta_on_keys(
     // Not for words typed in the panel, nor a time shift from its
     // sheet: the switch is for the keys, and a keyword that moved the
     // selection on would leave the next one typed on another frame.
+    //
+    // In the Loupe's Cull, either picture, and in Library whatever
+    // mode the Loupe is in: the grid has no mode of its own, and its
+    // keys are culling's. The lightbox is a view apart, and moves on
+    // only over Cull, as it always has.
     let move_on = {
         let st = state.borrow();
-        st.culling.cull.is_some() && st.culling.cull_move_on && paths.len() == 1 && change.is_key()
+        let library = app.get_grid_open() && !app.get_lightbox();
+        (crate::panel::cull::cull_mode(&st) || library)
+            && st.culling.cull_move_on
+            && paths.len() == 1
+            && change.is_key()
     };
     // On the last row the step has nowhere to go, so a key that takes
     // the frame out of the filtered list leaves nothing on screen
@@ -2381,7 +2395,7 @@ fn meta_on(
         .filter(|&(&i, was)| was && !filter_shows(&st, i))
         .map(|(&i, _)| i)
         .collect();
-    if st.culling.cull.is_some() {
+    if crate::panel::cull::cull_mode(&st) {
         let word = tags::notice(&settled);
         let word = if hidden.is_empty() {
             word

@@ -10,6 +10,20 @@ pub(crate) struct Culling {
     /// Whether a culling key moves the selection on to the next
     /// frame: the CULLING section's switch, `settings.cull_move_on`.
     pub(crate) cull_move_on: bool,
+    /// The Loupe's mode, Cull or Develop: the one it comes back in from
+    /// Library, kept in the settings (`settings.loupe_cull`). Every way
+    /// into Cull sets it and every way out (a slider reached, the tab
+    /// bar, Develop) clears it, so it says what the Loupe last was.
+    pub(crate) loupe_cull: bool,
+    /// The switch inside Cull: the developed picture rather than the
+    /// camera's JPEG (`settings.cull_developed`).
+    pub(crate) show_developed: bool,
+    /// Cull drawn developed, while it is on: the develop view's own
+    /// path (each frame opens and develops), with the CULLING section
+    /// in place of the edit panel and the culling keys' rules. Holds
+    /// the panel's tab to give back on the way out. Never on while
+    /// `cull` is.
+    pub(crate) developed: Option<slint::SharedString>,
     /// Takes the word over the picture for the last culling key down
     /// again; nothing else does, so an arrow pressed after the key
     /// leaves the word up for its second.

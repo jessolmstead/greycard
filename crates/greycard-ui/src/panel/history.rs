@@ -427,6 +427,10 @@ pub(crate) fn take_current_with(st: &mut State, app: &App, worker: &Worker, save
         leave_cull(st, app, worker, None);
         return;
     }
+    // In Cull drawn developed the panel is the frame's already: the
+    // edit changed, so the mode ends as camera Cull's does, and the
+    // state made current goes on the panel and develops below.
+    crate::panel::cull::leave_developed(st, app);
     take_current_settled_with(st, app, worker, save);
 }
 
@@ -506,8 +510,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // and touches no develop, and culling stays up. A request
             // like a key's, with nothing to read, so it queues behind
             // the keys still waiting on their reads and takes back the
-            // last key the user pressed, not the last that landed.
-            if st.culling.cull.is_some() {
+            // last key the user pressed, not the last that landed. The
+            // same in Cull drawn developed, whose keys are culling's.
+            if crate::panel::cull::cull_mode(&st) {
                 drop(st);
                 crate::rows::request(
                     &state,

@@ -459,6 +459,9 @@ pub(crate) fn develop_soon(
         leave_cull(st, &app, &worker, None);
         return;
     }
+    // In Cull drawn developed the panel is the frame's: the mode ends,
+    // and the change develops as it would in Develop.
+    crate::panel::cull::leave_developed(st, &app);
     app.window().request_redraw();
     schedule_save(st, app_weak.clone());
     st.develop.debounce.start(
@@ -991,6 +994,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 leave_cull(&mut st, &app, &worker, with);
                 return;
             }
+            crate::panel::cull::leave_developed(&mut st, &app);
             st.develop.edit = read_edit(&app, &st.develop.edit, st.develop.target);
             app.window().request_redraw();
             schedule_save(&mut st, app.as_weak());

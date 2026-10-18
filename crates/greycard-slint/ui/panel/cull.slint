@@ -7,6 +7,10 @@ import { Section, PanelButton, Segmented, Toggle } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 
 export component CullSection inherits Section {
+    /// Drawn developed rather than from the camera's JPEG, and the
+    /// switch between the two.
+    in property <bool> developed;
+    callback source-asked(bool);
     callback frame-turned(int);
     in-out property <bool> grid-open;
     callback cull-leave();
@@ -54,14 +58,32 @@ export component CullSection inherits Section {
     icon: @image-url("../icons/image.svg");
     hint: "C";
     collapsed <=> root.collapsed-culling;
-    Text {
-        text: "Camera JPEG. Enter develops.";
-        font-size: Theme.font-xs;
-        color: Theme.text-secondary;
-        wrap: word-wrap;
+    // What the picture is drawn from: the camera's JPEG, instant from
+    // frame to frame, or the frame developed, for checking edits at
+    // full size without the edit panel.
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        Text { text: "Picture"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        PanelButton {
+            text: "Camera JPEG";
+            primary: !root.developed;
+            accessible-role: button;
+            accessible-label: "Camera JPEG pictures";
+            accessible-checked: !root.developed;
+            clicked => { root.focus-keys(); root.source-asked(false); }
+        }
+        PanelButton {
+            text: "Developed";
+            primary: root.developed;
+            accessible-role: button;
+            accessible-label: "Developed pictures";
+            accessible-checked: root.developed;
+            clicked => { root.focus-keys(); root.source-asked(true); }
+        }
     }
     Text {
-        text: "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · V compare";
+        text: root.developed ? "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · Enter develops"
+            : "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · V compare · Enter develops";
         font-size: Theme.font-xs;
         color: Theme.text-secondary;
         wrap: word-wrap;
@@ -120,7 +142,8 @@ export component CullSection inherits Section {
         sort-picked(i) => { root.sort-picked(i); }
         sort-turned(d) => { root.sort-turned(d); }
     }
-    HorizontalLayout {
+    // The compare view is the camera JPEG's alone.
+    if !root.developed: HorizontalLayout {
         spacing: Theme.space-2;
         Text { text: "Compare"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Segmented {

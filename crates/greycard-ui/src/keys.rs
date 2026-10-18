@@ -113,14 +113,22 @@ pub(crate) const TABLE: &[Group] = &[
     Group {
         title: "Views",
         lines: &[
-            line(&["G"], "Library (the grid) or Develop (one frame)"),
+            line(
+                &["G"],
+                "Library (the grid), and back to the Loupe as it was left",
+            ),
+            line(
+                &["E"],
+                "The Loupe (one frame), in the mode it was left in: Cull or Develop",
+            ),
+            line(&["D"], "Develop: the Loupe with the edit panel"),
             line(&["L"], "The lightbox, and back"),
-            line(&["C"], "Culling mode"),
-            line(&["V"], "In culling, compare two or four frames"),
+            line(&["C"], "Cull; in the Loupe, Cull or Develop in turn"),
+            line(&["V"], "In Cull, compare two or four frames"),
             shown(
                 &["Return"],
                 "Enter",
-                "Open the frame chosen in the grid or the lightbox; leave culling",
+                "Open the frame chosen in the grid or the lightbox; from Cull, Develop",
             ),
             shown(
                 // The grid's with Ctrl too, as a browser's zoom is.

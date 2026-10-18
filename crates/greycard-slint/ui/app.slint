@@ -535,8 +535,26 @@ export component App inherits Window {
     // corner says what it is.
     in property <bool> placeholder: false;
     callback cull-toggled();
-    /// Leave the mode and develop the frame the selection is on.
+    /// Leave the mode and develop the frame the selection is on: the
+    /// Loupe in Develop, from either Cull.
     callback cull-leave();
+    /// The Loupe has two modes, Cull and Develop; Library (the grid)
+    /// has none. Cull draws the camera's JPEG (`culling`) or, with its
+    /// switch on Developed, the frame developed with the CULLING
+    /// section in place of the edit panel (`cull-developed`, Rust's).
+    in property <bool> cull-developed: false;
+    out property <bool> cull-mode: root.culling || root.cull-developed;
+    /// The Loupe's Cull asked for, by its button.
+    callback cull-asked();
+    /// The Loupe from Library, the one way every way back takes (the
+    /// pane's Loupe, the grid's, a double-click on a cell, Return or
+    /// Escape in the grid, G, E): the grid goes, and the Loupe shows in
+    /// the mode it was left in, which stays on under the grid.
+    function show-loupe() {
+        root.grid-open = false;
+    }
+    /// Cull's switch: true for the developed picture.
+    callback cull-source-asked(bool);
     /// How many frames the compare view shows: 1, 2 or 4, and the
     /// same as the panel's row spells it.
     in property <int> compare: 1;
@@ -2215,7 +2233,7 @@ export component App inherits Window {
             if (root.grid-open && !root.sheet-open()) {
                 // Held, one step out and no further.
                 if (chord == "Esc" || chord == "Return") {
-                    if (!e.repeat) { root.grid-open = false; }
+                    if (!e.repeat) { root.show-loupe(); }
                     return accept;
                 }
                 if (chord == "Left" || chord == "Shift+Left") { root.grid-step(-1, 0, root.grid-cols, e.modifiers.shift); return accept; }
@@ -2281,8 +2299,30 @@ export component App inherits Window {
                 if (chord == "F8") { root.right-hidden = !root.right-hidden; }
                 return accept;
             }
+            // G: a round trip, Library from the Loupe and back to the
+            // Loupe in the mode it was left in. E: the Loupe in that
+            // mode, as Lightroom has E for its loupe. D: Develop from
+            // anywhere, the Loupe with the edit panel, as Lightroom has
+            // D for its Develop.
             if (chord == "G" && !root.sheet-open()) {
-                root.grid-open = !root.grid-open;
+                if (root.grid-open) {
+                    root.show-loupe();
+                } else {
+                    root.grid-open = true;
+                }
+                return accept;
+            }
+            if (chord == "E" && !root.sheet-open()) {
+                root.lightbox-leave();
+                if (root.grid-open) {
+                    root.show-loupe();
+                }
+                return accept;
+            }
+            if (chord == "D" && !root.sheet-open()) {
+                root.lightbox-leave();
+                root.grid-open = false;
+                root.cull-leave();
                 return accept;
             }
             // Stacks, as Lightroom has them: Ctrl+G the selection into
@@ -2310,7 +2350,7 @@ export component App inherits Window {
             // Culling: Return or Escape leaves it on the frame the
             // selection is on and develops that; V cycles the compare
             // view; C is the way in and out.
-            if (root.culling && !root.sheet-open() && (chord == "Return" || chord == "Esc")) {
+            if (root.cull-mode && !root.sheet-open() && (chord == "Return" || chord == "Esc")) {
                 root.cull-leave();
                 return accept;
             }
@@ -2500,7 +2540,8 @@ export component App inherits Window {
                 hovered(a, b, c) => { root.view-hovered(a, b, c); }
                 placeholder: root.placeholder;
                 compare-tiles: root.compare-tiles;
-                culling: root.culling;
+                // The badge and the key's word: either Cull's.
+                culling: root.cull-mode;
                 proof-badge: root.proof-badge;
                 proof-off => { root.proofing = false; root.proof-changed(); }
                 frame-rating: root.frame-rating;
@@ -2630,10 +2671,34 @@ export component App inherits Window {
                 // masks and the retouch on tabs of their own. The bar
                 // stays put above the sections, so it is always within
                 // reach however far a tab has scrolled.
-                tabs := VerticalLayout {
+                // The Loupe's two modes, Cull first and Develop's four
+                // tabs after a gap, the pressed one the mode: Cull hands
+                // the keys to the ratings and puts the CULLING section
+                // here, any of the four the edit on that tab (a click on
+                // one from Cull is the way out to it).
+                tabs := HorizontalLayout {
                     padding-left: Theme.space-4;
                     padding-right: Theme.space-4;
                     padding-top: Theme.space-2;
+                    spacing: Theme.space-2;
+                    Segmented {
+                        width: 56px;
+                        options: ["Cull"];
+                        // Rust enters Cull, or says why not.
+                        picks: false;
+                        current: root.cull-mode ? "Cull" : "";
+                        accessible-role: button;
+                        accessible-label: "Cull mode";
+                        accessible-checked: root.cull-mode;
+                        accessible-action-default => {
+                            keys.focus();
+                            root.cull-asked();
+                        }
+                        selected(t) => {
+                            keys.focus();
+                            root.cull-asked();
+                        }
+                    }
                     Segmented {
                         options: ["Develop", "Crop", "Masks", "Retouch"];
                         current <=> root.panel-tab;
@@ -2697,6 +2762,8 @@ export component App inherits Window {
                         // filter, the compare view, and the two ways
                         // out of it, one of them for the rejects.
                         if root.panel-tab == "Cull": CullSection {
+                            developed: root.cull-developed;
+                            source-asked(d) => { root.cull-source-asked(d); }
                             frame-turned(a) => { root.frame-turned(a); }
                             grid-open <=> root.grid-open;
                             cull-leave => { root.cull-leave(); }
@@ -3319,7 +3386,7 @@ export component App inherits Window {
         // held there for the whole of culling so the card does not jump
         // as the notice comes and goes.
         y: root.height - root.strip-h - self.height
-            - (root.culling ? 56px + 40px + Theme.space-2 : 24px + Theme.space-3 + Theme.space-4);
+            - (root.cull-mode ? 56px + 40px + Theme.space-2 : 24px + Theme.space-3 + Theme.space-4);
         fraction: root.loading-fraction;
         line: root.loading-line;
     }
@@ -3373,8 +3440,7 @@ export component App inherits Window {
         bar-offset(a, b, c) => { return root.bar-offset(a, b, c); }
         bar-drag(a, b, c, d) => { return root.bar-drag(a, b, c, d); }
         bar-awake <=> root.grid-bar-awake;
-        culling <=> root.culling;
-        cull-toggled => { root.cull-toggled(); }
+        loupe-asked => { root.show-loupe(); }
         filter-stars <=> root.filter-stars;
         filter-flags <=> root.filter-flags;
         filter-labels <=> root.filter-labels;
@@ -3452,10 +3518,11 @@ export component App inherits Window {
         }
         Rectangle { x: parent.width - 1px; width: 1px; height: 100%; background: Theme.border; }
         VerticalLayout {
-        // Library and Develop: the grid and the one frame, as G has
-        // them, the one on screen pressed. At the pane's top in both,
-        // above what scrolls, so a hand from Lightroom looking for its
-        // modules finds the way to the other from either.
+        // Library and Loupe: the grid and the one frame, the one on
+        // screen pressed. At the pane's top in both, above what
+        // scrolls, so a hand from Lightroom looking for its modules
+        // finds the way to the other from either. The Loupe comes back
+        // in the mode it was left in, Cull or Develop.
         HorizontalLayout {
             padding: Theme.space-4;
             padding-top: Theme.space-3;
@@ -3477,17 +3544,17 @@ export component App inherits Window {
                 }
             }
             PanelButton {
-                text: "Develop";
-                icon: @image-url("icons/sliders-horizontal.svg");
+                text: "Loupe";
+                icon: @image-url("icons/image.svg");
                 primary: !root.grid-open;
                 accessible-role: button;
-                accessible-label: "Develop view";
+                accessible-label: "Loupe view";
                 accessible-checked: !root.grid-open;
                 // Out of the lightbox and its loupe both, to the frame.
                 clicked => {
                     keys.focus();
                     root.lightbox-leave();
-                    root.grid-open = false;
+                    root.show-loupe();
                 }
             }
         }
@@ -3702,7 +3769,7 @@ export component App inherits Window {
                 // bin removes it, and the edit is saved or a
                 // Lightroom preset brought in below the list. Not
                 // in culling, as the snapshots and the history.
-                if !root.culling && !root.grid-open: PresetsSection {
+                if !root.cull-mode && !root.grid-open: PresetsSection {
                     selected <=> root.selected;
                     collapsed-presets <=> root.collapsed-presets;
                     preset-names <=> root.preset-names;
@@ -3719,7 +3786,7 @@ export component App inherits Window {
                 // renames it; the bin removes it.
                 // Not in culling, where the panel is not the
                 // frame's and a step is the way out of the mode.
-                if !root.culling && !root.grid-open: SnapshotsSection {
+                if !root.cull-mode && !root.grid-open: SnapshotsSection {
                     selected <=> root.selected;
                     snapshot-names <=> root.snapshot-names;
                     snapshot-editing <=> root.snapshot-editing;
@@ -3734,7 +3801,7 @@ export component App inherits Window {
                 // current one lit and the undone ones muted. A
                 // click makes a step current; what lies past it
                 // stays until the next change.
-                if !root.culling && !root.grid-open: HistorySection {
+                if !root.cull-mode && !root.grid-open: HistorySection {
                     history-rows <=> root.history-rows;
                     hint: root.history-version;
                     history-current <=> root.history-current;

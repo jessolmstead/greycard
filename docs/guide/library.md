@@ -33,11 +33,25 @@ unplugged, "isn't reachable; is its drive connected?".
   ground, for judging a set side by side. Press **L**. See
   [the lightbox](culling.md#the-lightbox).
 
-**Library** and **Develop** at the top of the left pane switch
-between the grid and the loupe, and the one you are in is lit. **G**
-does the same. In the grid, **Loupe** in the header, a double-click on
-a frame, **Enter** or **Esc** also go back to the loupe. (With several
-frames selected, the first **Esc** clears the selection.)
+**Library** and **Loupe** at the top of the left pane switch
+between the grid and the loupe, and the one you are in is lit. In the
+grid, **Loupe** in the header, a double-click on a frame, **E**,
+**Enter** or **Esc** also go to the loupe. (With several frames
+selected, the first **Esc** clears the selection.)
+
+The loupe has two modes, **Cull** and **Develop**, first in the right
+panel's tab row (Cull, then Develop's tabs): Cull for rating a shoot
+fast, Develop for editing (see
+[Culling mode](culling.md#culling-mode)). The loupe comes back in the
+mode you left it in, and greycard remembers it for the next session.
+The grid has no mode of its own: the rating, flag and label keys, and
+**Move on**, work there whichever mode the loupe is in.
+
+**G** goes from the loupe to the grid, and from the grid back to the
+loupe in the mode you left it in; **E** goes from the grid to the loupe
+the same way. **D** goes straight to Develop, from the grid or the
+loupe. **C** goes from the grid to the loupe in Cull; in the loupe it
+switches between Cull and Develop.
 
 In the grid:
 

@@ -13,8 +13,8 @@ Every frame can carry:
 - **a flag**: pick, reject, or none
 - **a color label**: red, yellow, green, blue or purple
 
-Set them with the keys, from the frame menu, or in culling mode. The
-keys work in the loupe, the grid and culling alike.
+Set them with the keys, from the frame menu, or in Cull. The keys
+work in the loupe, the grid and Cull alike.
 
 | Key | Does |
 |---|---|
@@ -84,9 +84,9 @@ XMP too, for Lightroom or darktable; picks and rejects stay in the
 ## Keywords and a title
 
 The **METADATA** section holds the frame's **Title** and its
-**Keywords**. It is under the CULLING section in culling mode, the
-last on the Develop tab, and in the left pane beside the grid,
-under the import buttons.
+**Keywords**. It is under the CULLING section in Cull, the last on
+the Develop tab, and in the left pane beside the grid, under the
+import buttons.
 
 Type a title and press **Enter** or **Tab**, or click a frame, to keep it;
 **Esc** puts back what was there. In the Keywords field a comma or
@@ -100,7 +100,7 @@ the keys are rating keys again.
 Both act on every selected frame, as a rating does. With several
 selected, a keyword only some of them carry is dimmed (click its word
 to put it on the rest), and titles that differ show as **Mixed**; a
-title typed there replaces all of them. In culling mode **Ctrl+Z**
+title typed there replaces all of them. In Cull **Ctrl+Z**
 takes back a keyword or a title like a rating.
 
 Keywords and the title are saved in the `.gcd`, and with **Write XMP
@@ -109,11 +109,40 @@ chips and its `keyword:` term find the words you add.
 
 ## Culling mode
 
-Press **C**, or click **Cull** in the grid's header, to cull. Culling
-shows each frame's own embedded camera JPEG instead of developing the
-raw, so moving from frame to frame is instant. A frame you have
+The loupe has two modes, **Cull** and **Develop**. The right panel's
+tab row reads **Cull** | **Develop**, **Crop**, **Masks**,
+**Retouch**: Cull first, then after a gap the four tabs of Develop,
+and the one you are on is lit. Click **Cull**, or press **C**, to
+cull; from the grid, **C** opens the loupe in Cull. A click on any of
+the four tabs goes back to Develop on that tab.
+Cull shows each frame's own embedded camera JPEG instead of developing
+the raw, so moving from frame to frame is instant. A frame you have
 edited shows its edit instead, as it does in the grid. The right
 panel shows the **CULLING** section in place of the develop tools.
+
+Leave the loupe in Cull for the grid and come back (**Loupe**, **G**,
+**E** or **Enter**), and it is still in Cull; greycard remembers the
+mode for the next session too. **D** goes straight to Develop, from
+the grid or the loupe.
+
+The grid has no culling mode of its own. The rating, flag and label
+keys work there as everywhere, and with **Move on** turned on in the
+CULLING section a key moves to the next frame in the grid too.
+
+### The developed picture
+
+**Picture** at the top of the CULLING section switches between
+**Camera JPEG** and **Developed**. Developed shows each frame as
+greycard develops it, still without the edit panel and with the same
+keys: **Move on**, the word over the picture and Ctrl+Z for your
+ratings. Use it to check your edits at full size, or for a second pass
+over a shoot you have edited. Each frame takes a moment to develop, as
+in Develop, and the camera's JPEG stands in until it does. greycard
+remembers the switch.
+
+Compare (**V**, and the **Compare** buttons) is the camera JPEG's
+alone, and is not offered while Developed is on: switch back to
+**Camera JPEG** to compare frames side by side.
 
 Under the file name at the top of the panel, culling shows the body
 and lens, then the focal length, aperture, shutter and ISO, as
@@ -128,8 +157,10 @@ They fill in once greycard has indexed the folder.
   in the compare view to choose it.
 - **Ctrl+Z** and **Ctrl+Shift+Z** undo and redo your rating, flag and
   label changes from this session. They don't touch any edit.
-- **Enter** or **Esc**, or the **Develop** button, leave culling and
-  develop the frame you are on. **C** leaves too.
+- **Enter**, **Esc** or **D**, or **Develop** at the CULLING
+  section's foot, go to Develop on the frame you are on, on the tab
+  you were on before Cull. **C** does too, and so does a click on one
+  of Develop's tabs, on that tab.
 
 A word over the picture confirms each key, such as the new rating.
 When the key makes the frame fall outside the filter, the word says
@@ -168,7 +199,9 @@ that aren't reachable right now, or are slow to read.
   same filter as the grid's header. See [the library](library.md).
 - **Move on after a rating, flag or label** steps to the next frame
   after each key, so rating a shoot is one key a frame. It is off
-  until you turn it on, and acts only when one frame is selected.
+  until you turn it on, and acts only when one frame is selected. It
+  acts in Cull, either picture, and in the grid, but not in Develop.
+  In the lightbox it acts only while the loupe is in Cull.
 - The rejects buttons and **Delete selection...**, described below.
 
 ## The lightbox
@@ -206,6 +239,8 @@ as the filter leaves it and in the grid's
 - **Esc**, **G** or **L** leave for the grid, as does **Leave
   lightbox** on the frame menu. With several frames selected, the
   first **Esc** goes back to one.
+- **E** leaves for the loupe on the frame you are on, in the mode you
+  left it in, and **D** for the loupe in Develop.
 
 A frame you have edited shows its edit; one you haven't shows the
 camera's JPEG. While a new picture of an edit is being made, after a
@@ -257,7 +292,7 @@ deleted.
 
 The same actions are in two places:
 
-- the **CULLING** section, in culling mode
+- the **CULLING** section, in Cull
 - the **Rejects** menu in the grid's header. The button shows the
   count, such as "12 rejects", or just "Rejects" when there are none.
 

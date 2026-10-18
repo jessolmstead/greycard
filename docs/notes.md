@@ -371,3 +371,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§356. The file chooser out of the export](notes/356-the-file-chooser-out-of-the-export.md) (2026-10-18)
 - [§357. Use this person on all the pictures](notes/357-use-this-person-on-all-the-pictures.md) (2026-10-18)
 - [§358. Microsoft's ONNX Runtime where ours cannot run](notes/358-microsofts-onnx-runtime-where-ours-cannot-run.md) (2026-10-18)
+- [§359. Two views and two modes](notes/359-two-views-and-two-modes.md) (2026-10-18)

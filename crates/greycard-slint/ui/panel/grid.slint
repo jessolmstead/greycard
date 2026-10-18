@@ -128,8 +128,9 @@ export component GridSheet inherits Rectangle {
     /// Whether the scroll bar is awake after a scroll: it fades once
     /// the sheet has been still a moment.
     in-out property <bool> bar-awake;
-    in-out property <bool> culling;
-    callback cull-toggled();
+    /// The Loupe asked for, by the header's button or a double-click on
+    /// a cell: the window's one way back to it.
+    callback loupe-asked();
     in-out property <[FilterChip]> filter-stars;
     in-out property <[FilterChip]> filter-flags;
     in-out property <[FilterChip]> filter-labels;
@@ -369,12 +370,6 @@ export component GridSheet inherits Rectangle {
                         }
                     }
                     PanelButton {
-                        text: root.culling ? "Culling" : "Cull";
-                        icon: @image-url("../icons/flag.svg");
-                        primary: root.culling;
-                        clicked => { root.focus-keys(); root.cull-toggled(); }
-                    }
-                    PanelButton {
                         text: "Lightbox";
                         icon: @image-url("../icons/grid-2x2.svg");
                         clicked => { root.focus-keys(); root.lightbox-asked(); }
@@ -382,7 +377,7 @@ export component GridSheet inherits Rectangle {
                     PanelButton {
                         text: "Loupe";
                         icon: @image-url("../icons/image.svg");
-                        clicked => { root.focus-keys(); root.grid-open = false; }
+                        clicked => { root.focus-keys(); root.loupe-asked(); }
                     }
                 }
                 FilterBar {
@@ -757,7 +752,7 @@ export component GridSheet inherits Rectangle {
                             root.frame-clicked(i, self.ctrl, self.shift);
                         }
                         // The frame under the pointer, in the loupe.
-                        double-clicked => { if (!self.menu) { root.grid-open = false; } }
+                        double-clicked => { if (!self.menu) { root.loupe-asked(); } }
                     }
                     // The stack's badge on the picture's bottom right,
                     // held inside the cell as the marks are; after the

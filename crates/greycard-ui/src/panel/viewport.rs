@@ -1540,6 +1540,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 leave_cull(&mut st, &app, &worker, with);
                 return;
             }
+            crate::panel::cull::leave_developed(&mut st, &app);
             crate::panel::mask::look_edited(&mut st, &app);
             crate::panel::look_preview::panel_moved(&st, &app);
             // A mask's Detail that needs a plane the develop has not
@@ -3477,11 +3478,11 @@ mod tests {
         assert_ne!(state.borrow().develop.center, before);
     }
 
-    /// Library and Develop at the left pane's top: the grid and the
-    /// one frame, as G has them, the one on screen pressed, in the
-    /// same place in both.
+    /// Library and Loupe at the left pane's top: the grid and the
+    /// one frame, the one on screen pressed, in the same place in
+    /// both. The Loupe's modes are `panel::cull`'s tests.
     #[test]
-    fn library_and_develop_switch_the_view_and_the_one_on_screen_is_pressed() {
+    fn library_and_loupe_switch_the_view_and_the_one_on_screen_is_pressed() {
         use i_slint_backend_testing::ElementHandle;
         let app = window(6);
         app.window()
@@ -3499,7 +3500,7 @@ mod tests {
             (at.x + size.width / 2.0, at.y + size.height / 2.0, at)
         };
         assert!(!app.get_grid_open());
-        assert_eq!(pressed("Develop view"), Some(true));
+        assert_eq!(pressed("Loupe view"), Some(true));
         assert_eq!(pressed("Library view"), Some(false));
         let (lx, ly, library_at) = middle("Library view");
         // The pane's top left, above everything that scrolls.
@@ -3510,22 +3511,22 @@ mod tests {
         click(&app, lx, ly);
         assert!(app.get_grid_open());
         assert_eq!(pressed("Library view"), Some(true));
-        assert_eq!(pressed("Develop view"), Some(false));
+        assert_eq!(pressed("Loupe view"), Some(false));
         // Where it was in the loupe.
         let (_, _, there) = middle("Library view");
         assert_eq!((there.x, there.y), (library_at.x, library_at.y));
         // Library again is still the library; G agrees with the two.
         click(&app, lx, ly);
         assert!(app.get_grid_open());
-        let (dx, dy, _) = middle("Develop view");
+        let (dx, dy, _) = middle("Loupe view");
         click(&app, dx, dy);
         assert!(!app.get_grid_open());
         crate::testing::press(&app, "g");
         assert!(app.get_grid_open());
         assert_eq!(pressed("Library view"), Some(true));
-        // From the lightbox with the pane brought back: Develop leaves
+        // From the lightbox with the pane brought back: Loupe leaves
         // it for the frame, Library for the grid, as its own ways out.
-        for (label, grid) in [("Develop view", false), ("Library view", true)] {
+        for (label, grid) in [("Loupe view", false), ("Library view", true)] {
             app.invoke_lightbox_enter();
             assert!(app.get_lightbox());
             app.set_left_hidden(false);

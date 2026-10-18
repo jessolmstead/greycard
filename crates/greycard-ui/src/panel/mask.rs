@@ -662,6 +662,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if st.culling.cull.is_some() {
                 leave_cull(&mut st, &app, &worker, None);
                 app.set_panel_tab(tab.clone());
+            } else if crate::panel::cull::leave_developed(&mut st, &app) {
+                app.set_panel_tab(tab.clone());
             }
             if tab != "Masks" {
                 if st.develop.placing.take().is_some() || st.develop.choosing.is_some() {

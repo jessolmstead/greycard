@@ -421,22 +421,6 @@ and a picture found across the library by a phrase or by a person.
 A model suggests; a flag, a rating or a keyword is only ever set by
 the user.
 
-- [ ] The window's modes tried in a workflow before they are named
-      (a design to play with, 2026-10-18): two views, Grid and Loupe,
-      and in the Loupe two modes, Cull and Develop, so three states
-      and not four. Grid has no mode of its own (its thumbnails are
-      the cache's either way; the culling toggle there only sets what
-      the keys do and what the Loupe shows). Cull draws the camera
-      JPEG by default and can be told to show developed pictures,
-      which is the developed loupe without the edit panel; Develop
-      implies Loupe. The left pane (tree, collections, filter,
-      metadata) belongs to the window, not a mode. Compare and
-      versions side by side stay Loupe variants; the lightbox is a
-      view beside Grid and Loupe; Rejects is a folder. The controls:
-      Library | Loupe where Library | Develop sit now (the Library
-      name and its icon stay), Cull | Develop in the Loupe. Decide
-      after using it; a tester asked for a Library tab and three
-      asked for faster culling
 - [ ] Bursts and near-duplicates grouped: frames seconds apart with
       near-identical previews put in one stack, its sharpest frame on
       top (§334)

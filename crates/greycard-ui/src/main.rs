@@ -538,6 +538,21 @@ struct Cli {
     /// develop until Enter
     #[arg(long)]
     cull: bool,
+    /// Open the Loupe in Cull with its Developed switch on: each frame
+    /// developed, under the CULLING section, with no edit panel
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "cull",
+            "cull_compare",
+            "cull_key",
+            "ask_rejects",
+            "move_rejects",
+            "cull_develop",
+            "time_cull",
+        ]
+    )]
+    cull_developed: bool,
     /// Open the culling mode's compare view with this many frames, 2
     /// or 4 (implies --cull)
     #[arg(long, value_name = "N")]
@@ -756,6 +771,8 @@ impl State {
                 ask_rejects: false,
                 move_rejects: false,
                 cull_at_start: None,
+                developed_at_start: false,
+                scripted: false,
                 facets_wanted: Vec::new(),
                 awaiting_index: false,
                 select_at_start: None,
@@ -834,6 +851,9 @@ impl State {
             culling: owners::Culling {
                 cull: None,
                 cull_move_on: false,
+                loupe_cull: false,
+                show_developed: false,
+                developed: None,
                 notice_timer: slint::Timer::default(),
                 tags: tags::History::default(),
                 hold: None,

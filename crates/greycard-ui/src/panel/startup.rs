@@ -394,6 +394,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         let write_sidecars = !cli.no_sidecars;
         let xmp_sidecars = cli.xmp_sidecars || remembered.xmp_sidecars;
         let cull_move_on = remembered.cull_move_on;
+        let (loupe_cull, show_developed) = (remembered.loupe_cull, remembered.cull_developed);
         let jpegs_apart = remembered.jpegs_apart;
         let sort = remembered.sort.clone();
         let zoom = cli.zoom.max(0.0);
@@ -423,15 +424,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         // Only a session someone is at deletes: never a capture or a
         // timing run, which have nobody to have confirmed. (An export
         // from the command line has no window: `headless`.)
-        let deletes_allowed = cli.snapshot.is_none()
-            && cli.screenshot.is_none()
-            && cli.time_sharpen.is_none()
-            && cli.time_clarity.is_none()
-            && cli.time_dehaze.is_none()
-            && cli.time_texture.is_none()
-            && cli.time_cull.is_none()
-            && cli.time_select.is_none()
-            && cli.time_scroll.is_none();
+        let scripted = scripted_start(&cli);
+        let deletes_allowed = !scripted;
         let time_sharpen = cli.time_sharpen.map(|n| (n, None, Vec::new()));
         let time_clarity = cli.time_clarity.map(|n| (n, None, Vec::new()));
         let time_dehaze = cli.time_dehaze.map(|n| (n, None, Vec::new()));
@@ -496,10 +490,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.window.placement = placement;
         st.window.settings_file = settings_file;
         st.window.deletes_allowed = deletes_allowed;
+        st.launch.scripted = scripted;
         st.sheets.lenses_declined = lenses_declined;
         st.work.export_presets = export_presets;
         st.work.export_last_folder = export_last_folder;
         st.culling.cull_move_on = cull_move_on;
+        crate::panel::cull::take_remembered_mode(&mut st, loupe_cull, show_developed);
+        // `--cull-developed`, over whatever the last run left.
+        if cli.cull_developed {
+            st.culling.show_developed = true;
+            st.launch.cull_at_start = None;
+            st.launch.developed_at_start = true;
+        }
         st.views.jpegs_apart = jpegs_apart;
         st.views.sort = sort;
         st.views.filter = filter;
@@ -1578,6 +1580,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.sidecars_in_folder = kept.sidecars_in_folder;
         settings.jpegs_apart = kept.jpegs_apart;
         settings.cull_move_on = kept.cull_move_on;
+        settings.loupe_cull = kept.loupe_cull;
+        settings.cull_developed = kept.cull_developed;
         settings.sort = kept.sort;
         settings.lenses_declined = kept.lenses_declined;
         settings.rawtherapee_answered = kept.rawtherapee_answered;
@@ -2089,6 +2093,9 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         sidecars_in_folder: false,
         jpegs_apart: false,
         cull_move_on: false,
+        // Written as the Loupe's mode and Cull's switch change.
+        loupe_cull: false,
+        cull_developed: false,
         lenses_declined: false,
         // Written as the RawTherapee offer is answered.
         rawtherapee_answered: Vec::new(),
@@ -2123,9 +2130,24 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
     }
 }
 
+/// Whether the command line owns this run's start: a capture or a
+/// timing run, which nobody is at. Such a run deletes nothing, opens in
+/// no mode the last session left, and keeps none for the next.
+pub(crate) fn scripted_start(cli: &crate::Cli) -> bool {
+    cli.snapshot.is_some()
+        || cli.screenshot.is_some()
+        || cli.time_sharpen.is_some()
+        || cli.time_clarity.is_some()
+        || cli.time_dehaze.is_some()
+        || cli.time_texture.is_some()
+        || cli.time_cull.is_some()
+        || cli.time_select.is_some()
+        || cli.time_scroll.is_some()
+}
+
 /// The status line on a first run.
-pub(crate) const FIRST_RUN: &str = "Library and Develop, top left (or G), switch between the grid \
-     and one frame; ? lists the keys";
+pub(crate) const FIRST_RUN: &str = "Library and Loupe, top left (or G), switch between the grid \
+     and one frame; Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys";
 
 /// The absolute path of the file now open, kept for the next run to
 /// jump back to; skipped for a screenshot, a snapshot or a one-shot

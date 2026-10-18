@@ -715,6 +715,9 @@ export component Segmented inherits Rectangle {
     in property <[string]> options;
     in-out property <string> current;
     in property <bool> enabled: true;
+    /// Whether a click makes its option current itself; false for a
+    /// row whose current the host sets once it has acted on the click.
+    in property <bool> picks: true;
     callback selected(string);
     height: Theme.control-height;
     border-radius: Theme.radius-md;
@@ -741,7 +744,11 @@ export component Segmented inherits Rectangle {
             t := TouchArea {
                 enabled: root.enabled;
                 mouse-cursor: MouseCursor.pointer;
-                clicked => { Typing.close-all(); root.current = option; root.selected(option); }
+                clicked => {
+                    Typing.close-all();
+                    if (root.picks) { root.current = option; }
+                    root.selected(option);
+                }
             }
         }
     }

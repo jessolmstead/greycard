@@ -1065,6 +1065,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 leave_cull(&mut st, &app, &worker, with);
                 return;
             }
+            crate::panel::cull::leave_developed(&mut st, &app);
             st.develop.edit = read_edit(&app, &st.develop.edit, st.develop.target);
             show_looks(&st, &st.develop.edit.look_lut, &app);
             schedule_save(&mut st, app.as_weak());
