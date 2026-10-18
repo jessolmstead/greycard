@@ -91,6 +91,7 @@ pub(crate) fn note_text(scan: &Scan) -> String {
 fn options(st: &State, app: &App) -> Option<Options> {
     let preset_name = app.get_import_preset();
     let preset = st
+        .develop
         .presets
         .iter()
         .find(|e| e.preset.name == preset_name.as_str())
@@ -102,10 +103,10 @@ fn options(st: &State, app: &App) -> Option<Options> {
         name: app.get_import_name().to_string(),
         preset,
         backup: st.import.backup.clone(),
-        library: st.index_path.clone(),
+        library: st.views.index_path.clone(),
         verify: app.get_import_verify(),
-        placement: st.write_sidecars.then_some(st.placement),
-        profiles: st.profiles.clone(),
+        placement: st.window.write_sidecars.then_some(st.window.placement),
+        profiles: st.develop.profiles.clone(),
     })
 }
 
@@ -336,6 +337,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         // From the file this run writes to, so a snapshot or a test
         // shows the defaults and never the user's.
         let kept = st
+            .window
             .settings_file
             .as_deref()
             .map(settings::Settings::load_from)
@@ -367,7 +369,8 @@ pub(crate) fn ask(st: &mut State, app: &App) {
     }
     let mut names = vec![slint::SharedString::from(NONE)];
     names.extend(
-        st.presets
+        st.develop
+            .presets
             .iter()
             .map(|e| slint::SharedString::from(e.preset.name.as_str())),
     );
@@ -440,7 +443,7 @@ pub(crate) fn start(st: &mut State, app: &App) {
     }
     // Kept for next time now, not at the close: a run that ends
     // badly still remembers where its frames went.
-    if let Some(file) = &st.settings_file {
+    if let Some(file) = &st.window.settings_file {
         let mut kept = settings::Settings::load_from(file);
         kept.import = settings::ImportChoices {
             destination: opts.destination.to_string_lossy().into_owned(),
@@ -943,7 +946,7 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
         let mut edit = Edit::default();
         edit.light.exposure = 0.3;
-        state.borrow_mut().presets = vec![Entry {
+        state.borrow_mut().develop.presets = vec![Entry {
             path: PathBuf::from("x.gcp"),
             preset: Preset::from_edit("Warm", &edit, &[Section::Light]),
         }];

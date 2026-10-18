@@ -103,7 +103,7 @@ pub(crate) fn state_for(
     files: Vec<std::path::PathBuf>,
 ) -> (Rc<RefCell<State>>, Rc<Worker>) {
     let state = Rc::new(RefCell::new(State::empty(files, app)));
-    app.set_patch_handles(ModelRc::from(state.borrow().patch_handles.clone()));
+    app.set_patch_handles(ModelRc::from(state.borrow().develop.patch_handles.clone()));
     let worker = Rc::new(Worker::new(|_| {}));
     install_callbacks(app, state.clone(), worker.clone());
     (state, worker)
@@ -279,7 +279,7 @@ pub(crate) fn rename_away(from: &std::path::Path, to: &std::path::Path) {
 /// an open file. The removal is tried again for a while, as
 /// [`rename_away`] is, for the pool's reads still in flight.
 pub(crate) fn remove_scratch(state: Rc<RefCell<State>>, dir: &std::path::Path) {
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     remove_dir_retry(dir);
 }

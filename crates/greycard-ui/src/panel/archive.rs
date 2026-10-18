@@ -156,6 +156,7 @@ pub(crate) enum Side {
 fn keyed(st: &State, f: &Path) -> PathBuf {
     match (f.parent(), f.file_name()) {
         (Some(dir), Some(name)) => st
+            .views
             .library
             .canonical
             .get(dir)
@@ -169,7 +170,8 @@ fn keyed(st: &State, f: &Path) -> PathBuf {
 fn open_folder(st: &State) -> Option<PathBuf> {
     let dir = st.files.first()?.parent()?;
     Some(
-        st.library
+        st.views
+            .library
             .canonical
             .get(dir)
             .cloned()
@@ -180,7 +182,7 @@ fn open_folder(st: &State) -> Option<PathBuf> {
 /// Where a path is: under an archive, a local root, or a folder of no
 /// root's (`folder`, its own base).
 fn side_of_path(st: &State, path: &Path, folder: Option<PathBuf>) -> Side {
-    let roots = &st.library.roots;
+    let roots = &st.views.library.roots;
     if let Some(archive) = roots.archive_of(path) {
         return Side::Archive {
             archive: archive.to_path_buf(),
@@ -204,7 +206,7 @@ fn side_of_path(st: &State, path: &Path, folder: Option<PathBuf>) -> Side {
 
 /// Where the view is.
 pub(crate) fn side(st: &State) -> Side {
-    match &st.view {
+    match &st.views.view {
         View::Folder => match open_folder(st) {
             Some(dir) => side_of_path(st, &dir.clone(), Some(dir)),
             None => Side::None,
@@ -221,7 +223,7 @@ fn side_of_frames(st: &State, frames: &[PathBuf]) -> Side {
     let view = side(st);
     let mut out: Option<Side> = None;
     for f in frames {
-        let here = match (&view, st.library.roots.root_of(f)) {
+        let here = match (&view, st.views.library.roots.root_of(f)) {
             // A folder of no root's: its own base.
             (Side::Local { base, .. }, None) if f.starts_with(base) => Side::Local {
                 base: base.clone(),
@@ -249,8 +251,8 @@ fn side_of_frames(st: &State, frames: &[PathBuf]) -> Side {
 /// roots from an archive.
 fn choices(st: &State, side: &Side) -> Vec<PathBuf> {
     match side {
-        Side::Local { .. } => st.library.roots.archives().to_vec(),
-        Side::Archive { .. } => st.library.roots.locals(),
+        Side::Local { .. } => st.views.library.roots.archives().to_vec(),
+        Side::Archive { .. } => st.views.library.roots.locals(),
         Side::None => Vec::new(),
     }
 }
@@ -258,7 +260,7 @@ fn choices(st: &State, side: &Side) -> Vec<PathBuf> {
 fn labels(st: &State, roots: &[PathBuf]) -> ModelRc<slint::SharedString> {
     let names: Vec<slint::SharedString> = roots
         .iter()
-        .map(|r| st.library.roots.label(r).into())
+        .map(|r| st.views.library.roots.label(r).into())
         .collect();
     ModelRc::new(VecModel::from(names))
 }
@@ -276,13 +278,13 @@ fn frames_word(n: usize) -> String {
 pub(crate) fn show(st: &State, app: &App) {
     let side = side(st);
     let choices = choices(st, &side);
-    let roots = &st.library.roots;
+    let roots = &st.views.library.roots;
     // The counts as last taken over this list, by archive.
     let counts: Vec<(PathBuf, (usize, usize))> = st
         .archive
         .count
         .as_ref()
-        .filter(|(generation, _)| *generation == st.view_generation)
+        .filter(|(generation, _)| *generation == st.views.view_generation)
         .map(|(_, c)| {
             c.iter()
                 .filter_map(|(a, n)| n.map(|n| (a.clone(), n)))
@@ -395,7 +397,7 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
     let selection: Vec<PathBuf> = chosen
         .into_iter()
         .flat_map(|f| {
-            let with = st.companions.get(f).cloned().unwrap_or_default();
+            let with = st.views.companions.get(f).cloned().unwrap_or_default();
             std::iter::once(f.clone()).chain(with)
         })
         .map(|f| keyed(&st, &f))
@@ -444,13 +446,13 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
         app.set_status(
             format!(
                 "still waiting on {}; try again shortly",
-                st.library.roots.label(&archive)
+                st.views.library.roots.label(&archive)
             )
             .into(),
         );
         return;
     }
-    let roots = &st.library.roots;
+    let roots = &st.views.library.roots;
     let label = roots.label(&other);
     // The folder the copy is over (§219: the pairing is its): the
     // folder walked, or the chosen frames' common folder.
@@ -472,12 +474,12 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
                     direction: Direction::BackUp,
                     frames,
                     include_rejects: false,
-                    sidecars: st.write_sidecars,
+                    sidecars: st.window.write_sidecars,
                     base: folder.clone(),
                     dest,
                     other_side: vec![other.clone()],
                     skip: roots.archives().to_vec(),
-                    index: st.index_path.clone(),
+                    index: st.views.index_path.clone(),
                 },
                 other,
                 label,
@@ -501,12 +503,12 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
                     direction: Direction::BringBack,
                     frames,
                     include_rejects: false,
-                    sidecars: st.write_sidecars,
+                    sidecars: st.window.write_sidecars,
                     base,
                     dest,
                     other_side: roots.locals(),
                     skip: roots.locals(),
-                    index: st.index_path.clone(),
+                    index: st.views.index_path.clone(),
                 },
                 other: other.clone(),
                 label,
@@ -678,7 +680,7 @@ fn look(st: &mut State, app: &App) {
     };
     st.archive.look_token += 1;
     let token = st.archive.look_token;
-    let roots = &st.library.roots;
+    let roots = &st.views.library.roots;
     let mut looked: Vec<(PathBuf, String)> = vec![(asked.other.clone(), asked.label.clone())];
     let source = match asked.ask.direction {
         Direction::BackUp => roots.root_of(&asked.ask.base),
@@ -792,7 +794,7 @@ fn land_look(
             asked.unpaired = looked.unpaired;
             asked.settle = None;
             fill(app, &asked, &looked.plan);
-            let archive_label = st.library.roots.label(&asked.archive);
+            let archive_label = st.views.library.roots.label(&asked.archive);
             st.archive.asked = Some(asked);
             st.archive.plan = Some(looked.plan);
             app.set_status(gone_words(&looked.gone, &archive_label).into());
@@ -1000,7 +1002,7 @@ pub(crate) fn answered(state: &Rc<RefCell<State>>, app: &App, yes: bool) {
         );
         return;
     }
-    if !st.deletes_allowed {
+    if !st.window.deletes_allowed {
         let why = "not copied: a capture, an export or a timing run never copies";
         tracing::info!("{why}");
         app.set_status(why.into());
@@ -1227,7 +1229,7 @@ fn land_run(
             app.set_status(words.into());
             // The folders written to, passed over now rather than at the
             // next poll.
-            if let Some(indexer) = &st.index
+            if let Some(indexer) = &st.views.index
                 && !report.folders.is_empty()
             {
                 indexer
@@ -1330,7 +1332,7 @@ pub(crate) fn want_count(st: &mut State, app: &App) {
     else {
         return;
     };
-    let roots = &st.library.roots;
+    let roots = &st.views.library.roots;
     let paired: Vec<PathBuf> = roots
         .archives()
         .iter()
@@ -1348,8 +1350,8 @@ pub(crate) fn want_count(st: &mut State, app: &App) {
     st.archive.count_stop = Some(stop.clone());
     st.archive.count_token += 1;
     let token = st.archive.count_token;
-    let generation = st.view_generation;
-    let index = st.index_path.clone();
+    let generation = st.views.view_generation;
+    let index = st.views.index_path.clone();
     send(
         app,
         "archive count",
@@ -1418,7 +1420,7 @@ fn land_count(
 /// The Delete sheet's line: whether the frames are on an archive, by
 /// the same lookup, off the window's thread. A line, not a refusal.
 pub(crate) fn delete_line(st: &mut State, app: &App, frames: &[PathBuf]) {
-    let mut archives = st.library.roots.archives().to_vec();
+    let mut archives = st.views.library.roots.archives().to_vec();
     if archives.is_empty() || frames.is_empty() {
         app.set_delete_archive("".into());
         return;
@@ -1430,11 +1432,12 @@ pub(crate) fn delete_line(st: &mut State, app: &App, frames: &[PathBuf]) {
     // are then every root but the archives the frames are on.
     let own: Vec<PathBuf> = frames
         .iter()
-        .filter_map(|f| st.library.roots.archive_of(f).map(Path::to_path_buf))
+        .filter_map(|f| st.views.library.roots.archive_of(f).map(Path::to_path_buf))
         .collect();
     let elsewhere = frames.len() == own.len();
     if elsewhere {
         archives = st
+            .views
             .library
             .roots
             .list()
@@ -1462,8 +1465,11 @@ pub(crate) fn delete_line(st: &mut State, app: &App, frames: &[PathBuf]) {
     st.archive.delete_token += 1;
     let token = st.archive.delete_token;
     let frames: Vec<PathBuf> = frames.iter().map(|f| keyed(st, f)).collect();
-    let labels: Vec<String> = archives.iter().map(|a| st.library.roots.label(a)).collect();
-    let index = st.index_path.clone();
+    let labels: Vec<String> = archives
+        .iter()
+        .map(|a| st.views.library.roots.label(a))
+        .collect();
+    let index = st.views.index_path.clone();
     send(
         app,
         "archive delete look",
@@ -1592,7 +1598,7 @@ pub(crate) fn delete_words(
 pub(crate) fn toggle(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     let refresh = {
         let mut st = state.borrow_mut();
-        let on = !st.library.roots.is_archive(dir);
+        let on = !st.views.library.roots.is_archive(dir);
         match crate::roots::edit_roots(&mut st, |r| r.set_archive(dir, on)) {
             Ok(true) => {}
             Ok(false) => {
@@ -1605,7 +1611,7 @@ pub(crate) fn toggle(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>,
                 return;
             }
         }
-        let name = crate::roots::said(&st.library.roots, dir);
+        let name = crate::roots::said(&st.views.library.roots, dir);
         tracing::info!(
             "library: {} {}",
             dir.display(),
@@ -1626,7 +1632,7 @@ pub(crate) fn toggle(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>,
         st.archive.count = None;
         crate::roots::show(&st, app);
         want_count(&mut st, app);
-        matches!(st.view, View::Roots(None))
+        matches!(st.views.view, View::Roots(None))
     };
     // All roots leaves the archive's copies of local frames out.
     if refresh {
@@ -1975,18 +1981,18 @@ pub(crate) mod tests {
         let (state, worker) = state_for(app, files);
         {
             let mut st = state.borrow_mut();
-            st.deletes_allowed = true;
+            st.window.deletes_allowed = true;
             st.current = (!st.files.is_empty()).then_some(0);
-            st.index_path = Some(db.to_path_buf());
-            st.index_reader = Some(greycard_library::Library::open_read_only(db).unwrap());
+            st.views.index_path = Some(db.to_path_buf());
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(db).unwrap());
             let file = dir.join("roots.json");
             let mut roots = greycard_library::Roots::default();
             roots.add(local).unwrap();
             roots.add(nas).unwrap();
             roots.set_archive(nas, true);
             roots.save(&file).unwrap();
-            st.library.roots = roots;
-            st.library.file = Some(file);
+            st.views.library.roots = roots;
+            st.views.library.file = Some(file);
             crate::panel::browser::rebuild_browser(&mut st, app);
             show(&st, app);
         }
@@ -2005,14 +2011,14 @@ pub(crate) mod tests {
         let (state, _worker) = opened(&app, &dir, files, &local, &nas, &db);
         // Off, from the chip's menu, and on again.
         app.invoke_library_root_archive(nas.to_string_lossy().into_owned().into());
-        assert!(!state.borrow().library.roots.is_archive(&nas));
+        assert!(!state.borrow().views.library.roots.is_archive(&nas));
         let text = std::fs::read_to_string(dir.join("roots.json")).unwrap();
         assert!(!text.contains("\"archives\""), "{text}");
         app.invoke_library_root_archive(nas.to_string_lossy().into_owned().into());
-        assert!(state.borrow().library.roots.is_archive(&nas));
+        assert!(state.borrow().views.library.roots.is_archive(&nas));
         let text = std::fs::read_to_string(dir.join("roots.json")).unwrap();
         assert!(text.contains("\"archives\""), "{text}");
-        let chips: Vec<RootChip> = state.borrow().library.rows.iter().collect();
+        let chips: Vec<RootChip> = state.borrow().views.library.rows.iter().collect();
         assert_eq!(
             chips.iter().map(|c| c.archive).collect::<Vec<_>>(),
             [false, true]
@@ -2137,7 +2143,7 @@ pub(crate) mod tests {
         assert_eq!(app.get_archive_header(), "Bring back...");
         {
             let mut st = state.borrow_mut();
-            st.picked.clear();
+            st.views.picked.clear();
         }
         app.invoke_archive_header_pressed(0);
         assert_eq!(land_sent(&state, &app, &worker), 1);
@@ -2167,7 +2173,7 @@ pub(crate) mod tests {
         index(&db, &[&local, &nas]);
         let app = window(files.len());
         let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
-        state.borrow_mut().picked = vec![0, 1];
+        state.borrow_mut().views.picked = vec![0, 1];
         app.invoke_delete_asked("selection".into());
         assert!(app.get_delete_open());
         assert_eq!(
@@ -2179,7 +2185,7 @@ pub(crate) mod tests {
         assert!(app.get_delete_trash(), "a line, not a refusal");
         app.invoke_delete_answered(0);
 
-        state.borrow_mut().picked = vec![0];
+        state.borrow_mut().views.picked = vec![0];
         app.invoke_delete_asked("selection".into());
         land_sent(&state, &app, &worker);
         assert_eq!(app.get_delete_archive(), "It is on nas.");
@@ -2356,7 +2362,7 @@ pub(crate) mod tests {
     #[test]
     fn with_sidecars_off_the_sheet_says_so() {
         let (dir, _local, _nas, app, state, worker) = shoot_window("no-sidecars");
-        state.borrow_mut().write_sidecars = false;
+        state.borrow_mut().window.write_sidecars = false;
         app.invoke_archive_header_pressed(0);
         land_sent(&state, &app, &worker);
         let text = app.get_archive_text();
@@ -2422,7 +2428,7 @@ pub(crate) mod tests {
         );
         crate::roots::land_sent(state, app, worker);
         land_sent(state, app, worker);
-        state.borrow_mut().picked.clear();
+        state.borrow_mut().views.picked.clear();
     }
 
     /// The sheet opened from the header and its look landed: the field.
@@ -2592,7 +2598,7 @@ pub(crate) mod tests {
         crate::roots::open_view(&state, &app, &worker, View::Roots(Some(local.clone())));
         crate::roots::land_sent(&state, &app, &worker);
         land_sent(&state, &app, &worker);
-        state.borrow_mut().picked.clear();
+        state.borrow_mut().views.picked.clear();
         assert_eq!(
             sheet_dest(&state, &app, &worker),
             nas.join("local").to_string_lossy()
@@ -2648,7 +2654,7 @@ pub(crate) mod tests {
         crate::roots::open_view(&state, &app, &worker, View::Roots(Some(local.clone())));
         crate::roots::land_sent(&state, &app, &worker);
         land_sent(&state, &app, &worker);
-        state.borrow_mut().picked.clear();
+        state.borrow_mut().views.picked.clear();
         assert_eq!(
             sheet_dest(&state, &app, &worker),
             nas.join("local").to_string_lossy()
@@ -2661,7 +2667,7 @@ pub(crate) mod tests {
             let at = |d: &Path| st.files.iter().position(|f| f.starts_with(d)).unwrap();
             (at(&shoot), at(&local.join("other")))
         };
-        state.borrow_mut().picked = vec![in_shoot.min(in_other), in_shoot.max(in_other)];
+        state.borrow_mut().views.picked = vec![in_shoot.min(in_other), in_shoot.max(in_other)];
         assert_eq!(
             sheet_dest(&state, &app, &worker),
             nas.join("local").to_string_lossy()
@@ -2686,7 +2692,7 @@ pub(crate) mod tests {
         // The pairings the file keeps, and the window agrees.
         let pairings = |state: &Rc<RefCell<State>>| {
             let file = greycard_library::Roots::load(&dir.join("roots.json")).unwrap();
-            assert_eq!(file.backups(), state.borrow().library.roots.backups());
+            assert_eq!(file.backups(), state.borrow().views.library.roots.backups());
             file.backups().len()
         };
         // The destination gone from the archive.

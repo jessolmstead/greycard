@@ -59,7 +59,7 @@ fn a_folder_unreadable_for_a_moment_is_back_at_the_next_read() {
 #[test]
 fn an_edit_made_while_a_read_is_out_survives_its_landing() {
     let mut s = Shoot::new("rv-edit");
-    s.state.borrow_mut().write_sidecars = true;
+    s.state.borrow_mut().window.write_sidecars = true;
     let d1 = s.d.join("d1.tif");
     let mut on_disk = Sidecar::default();
     on_disk.meta.rating = 1;
@@ -137,17 +137,17 @@ fn watched_window(dir: &Path, roots: &[PathBuf]) -> (App, Rc<RefCell<State>>, Rc
     let indexer = crate::library::Indexer::start(db, |_| {}).expect("the indexer starts");
     {
         let mut st = state.borrow_mut();
-        st.index = Some(indexer);
-        st.library.roots = Roots::from_list(roots.to_vec());
+        st.views.index = Some(indexer);
+        st.views.library.roots = Roots::from_list(roots.to_vec());
     }
     (app, state, worker)
 }
 
 fn leave(state: &Rc<RefCell<State>>, dir: &Path) {
     let mut st = state.borrow_mut();
-    st.library.watcher = None;
-    st.library.poll = None;
-    if let Some(indexer) = st.index.take() {
+    st.views.library.watcher = None;
+    st.views.library.poll = None;
+    if let Some(indexer) = st.views.index.take() {
         indexer.stop(Duration::from_secs(20));
     }
     drop(st);
@@ -155,7 +155,8 @@ fn leave(state: &Rc<RefCell<State>>, dir: &Path) {
 }
 
 fn watched(st: &State) -> Vec<PathBuf> {
-    st.library
+    st.views
+        .library
         .watcher
         .as_ref()
         .map(|w| w.watched.clone())
@@ -175,8 +176,8 @@ fn a_watcher_built_for_roots_since_changed_is_dropped() {
     on(&b, None);
     watch(&mut state.borrow_mut(), &app);
     // Nothing is watched until the build lands.
-    assert!(state.borrow().library.watcher.is_none());
-    state.borrow_mut().library.roots = Roots::from_list(vec![a.clone(), b.clone()]);
+    assert!(state.borrow().views.library.watcher.is_none());
+    state.borrow_mut().views.library.roots = Roots::from_list(vec![a.clone(), b.clone()]);
     watch(&mut state.borrow_mut(), &app);
     let plans = builds();
     assert_eq!(plans.len(), 2);
@@ -242,18 +243,22 @@ fn a_late_launch_look_does_not_undo_a_newer_one() {
     std::fs::create_dir_all(&a).unwrap();
     let (app, state, _worker) = watched_window(&dir, &[a.clone(), gone.clone()]);
     start(&mut state.borrow_mut(), &app);
-    assert!(state.borrow().library.starting);
-    state.borrow_mut().library.roots = Roots::from_list(vec![a.clone()]);
+    assert!(state.borrow().views.library.starting);
+    state.borrow_mut().views.library.roots = Roots::from_list(vec![a.clone()]);
     watch(&mut state.borrow_mut(), &app);
     let mut plans = builds().into_iter();
     let (launch, newer) = (plans.next().unwrap(), plans.next().unwrap());
     assert!(build_in_place(&mut state.borrow_mut(), newer));
-    assert!(state.borrow().library.offline.is_empty());
+    assert!(state.borrow().views.library.offline.is_empty());
     assert!(!build_in_place(&mut state.borrow_mut(), launch));
     let st = state.borrow();
-    assert!(!st.library.starting);
-    assert!(st.library.offline.is_empty(), "{:?}", st.library.offline);
-    assert_eq!(st.library.launch_left, 1, "the pass over a, not gone");
+    assert!(!st.views.library.starting);
+    assert!(
+        st.views.library.offline.is_empty(),
+        "{:?}",
+        st.views.library.offline
+    );
+    assert_eq!(st.views.library.launch_left, 1, "the pass over a, not gone");
     drop(st);
     leave(&state, &dir);
 }
@@ -271,10 +276,10 @@ fn a_root_added_is_watched_when_its_build_lands() {
     // Through a path that is not canonical.
     add(&state, &app, &worker, &a.join("day").join(".."));
     assert_eq!(
-        state.borrow().library.roots.list(),
+        state.borrow().views.library.roots.list(),
         std::slice::from_ref(&a)
     );
-    assert!(state.borrow().library.watcher.is_none());
+    assert!(state.borrow().views.library.watcher.is_none());
     let plans = builds();
     assert_eq!(plans.len(), 1);
     assert!(build_in_place(
@@ -306,7 +311,7 @@ fn a_remove_by_an_unseen_path_is_made_canonical_off_the_window_s_thread() {
     HOLD_CHECKS.with(|h| *h.borrow_mut() = true);
     remove(&state, &app, &worker, &link);
     assert_eq!(
-        state.borrow().library.roots.list(),
+        state.borrow().views.library.roots.list(),
         [a.clone(), b.clone()],
         "nothing changed on the window's thread"
     );
@@ -317,7 +322,7 @@ fn a_remove_by_an_unseen_path_is_made_canonical_off_the_window_s_thread() {
     assert!(builds().is_empty());
     assert_eq!(run_checks(&state, &app, &worker), 1);
     assert_eq!(
-        state.borrow().library.roots.list(),
+        state.borrow().views.library.roots.list(),
         std::slice::from_ref(&b)
     );
     assert!(app.get_status().contains("is out of the library"));
@@ -327,7 +332,7 @@ fn a_remove_by_an_unseen_path_is_made_canonical_off_the_window_s_thread() {
     remove(&state, &app, &worker, &dir.join("share").join("b"));
     assert_eq!(run_checks(&state, &app, &worker), 1);
     assert_eq!(
-        state.borrow().library.roots.list(),
+        state.borrow().views.library.roots.list(),
         std::slice::from_ref(&b)
     );
     assert!(
@@ -337,7 +342,7 @@ fn a_remove_by_an_unseen_path_is_made_canonical_off_the_window_s_thread() {
     );
     // The list's own spelling goes at once, nothing sent.
     remove(&state, &app, &worker, &b);
-    assert!(state.borrow().library.roots.is_empty());
+    assert!(state.borrow().views.library.roots.is_empty());
     assert_eq!(run_checks(&state, &app, &worker), 0);
     HOLD_CHECKS.with(|h| *h.borrow_mut() = false);
     NOT_ANSWERING.with(|n| n.borrow_mut().clear());
@@ -363,20 +368,20 @@ fn add_this_folder_on_an_unseen_folder_looks_off_the_window_s_thread() {
     {
         let mut st = state.borrow_mut();
         st.files = vec![link.join("x.tif")];
-        assert!(st.library.canonical.is_empty(), "no read has seen it");
+        assert!(st.views.library.canonical.is_empty(), "no read has seen it");
     }
     show(&state.borrow(), &app);
     assert!(app.get_library_can_add_open());
     HOLD_CHECKS.with(|h| *h.borrow_mut() = true);
     app.invoke_library_root_add_open();
-    assert!(state.borrow().library.roots.is_empty());
+    assert!(state.borrow().views.library.roots.is_empty());
     assert_eq!(
         CHECKS_SENT.with(|c| c.borrow().clone()),
         vec![(link.clone(), Check::Add)]
     );
     assert_eq!(run_checks(&state, &app, &worker), 1);
     assert_eq!(
-        state.borrow().library.roots.list(),
+        state.borrow().views.library.roots.list(),
         std::slice::from_ref(&real)
     );
     builds();
@@ -395,6 +400,7 @@ fn add_this_folder_on_an_unseen_folder_looks_off_the_window_s_thread() {
     // A read that made it canonical: not offered.
     state
         .borrow_mut()
+        .views
         .library
         .canonical
         .insert(link.clone(), real.clone());
@@ -410,7 +416,7 @@ fn add_this_folder_on_an_unseen_folder_looks_off_the_window_s_thread() {
         app.get_status()
     );
     assert_eq!(
-        state.borrow().library.roots.list(),
+        state.borrow().views.library.roots.list(),
         std::slice::from_ref(&real)
     );
     HOLD_CHECKS.with(|h| *h.borrow_mut() = false);
@@ -430,7 +436,7 @@ fn a_root_on_a_network_mount_is_not_watched_but_polled() {
     std::fs::create_dir_all(&b).unwrap();
     let (app, state, worker) = watched_window(&dir, &[a.clone(), b.clone()]);
     on(&b, Some("nfs4"));
-    state.borrow_mut().library.poll_every = Some(Duration::from_secs(600));
+    state.borrow_mut().views.library.poll_every = Some(Duration::from_secs(600));
     watch(&mut state.borrow_mut(), &app);
     let plan = builds().into_iter().next().unwrap();
     assert!(build_in_place(&mut state.borrow_mut(), plan));
@@ -438,38 +444,44 @@ fn a_root_on_a_network_mount_is_not_watched_but_polled() {
         let st = state.borrow();
         if WATCH_REMOTE {
             assert_eq!(watched(&st), vec![a.clone(), b.clone()]);
-            assert!(st.library.poll.is_none());
+            assert!(st.views.library.poll.is_none());
         } else {
             assert_eq!(watched(&st), vec![a.clone()]);
-            assert!(st.library.poll.is_some());
+            assert!(st.views.library.poll.is_some());
         }
-        assert_eq!(st.library.remote, vec![(b.clone(), "nfs4".to_string())]);
-        assert!(st.library.said_remote.contains(&b));
+        assert_eq!(
+            st.views.library.remote,
+            vec![(b.clone(), "nfs4".to_string())]
+        );
+        assert!(st.views.library.said_remote.contains(&b));
     }
     // The network root taken out: its timer goes at once, before
     // the new watcher lands. Put back for the rest.
     remove(&state, &app, &worker, &b);
-    assert!(state.borrow().library.poll.is_none());
-    assert!(state.borrow().library.remote.is_empty());
+    assert!(state.borrow().views.library.poll.is_none());
+    assert!(state.borrow().views.library.remote.is_empty());
     builds();
-    state.borrow_mut().library.roots = Roots::from_list(vec![a.clone(), b.clone()]);
+    state.borrow_mut().views.library.roots = Roots::from_list(vec![a.clone(), b.clone()]);
     // With the timer off, none; and with no root on a network
     // mount, none either.
-    state.borrow_mut().library.poll_every = None;
+    state.borrow_mut().views.library.poll_every = None;
     watch(&mut state.borrow_mut(), &app);
     let plan = builds().into_iter().next().unwrap();
     assert!(build_in_place(&mut state.borrow_mut(), plan));
-    assert!(state.borrow().library.poll.is_none());
+    assert!(state.borrow().views.library.poll.is_none());
     on(&b, None);
-    state.borrow_mut().library.poll_every = Some(Duration::from_secs(600));
+    state.borrow_mut().views.library.poll_every = Some(Duration::from_secs(600));
     watch(&mut state.borrow_mut(), &app);
     let plan = builds().into_iter().next().unwrap();
     assert!(build_in_place(&mut state.borrow_mut(), plan));
     {
         let st = state.borrow();
         assert_eq!(watched(&st), vec![a, b]);
-        assert!(st.library.remote.is_empty());
-        assert!(st.library.poll.is_none(), "a local root is never polled");
+        assert!(st.views.library.remote.is_empty());
+        assert!(
+            st.views.library.poll.is_none(),
+            "a local root is never polled"
+        );
     }
     leave(&state, &dir);
 }
@@ -498,32 +510,35 @@ fn a_network_mount_below_a_local_root_is_not_watched_but_polled() {
             ],
         )
     });
-    state.borrow_mut().library.poll_every = Some(Duration::from_secs(600));
+    state.borrow_mut().views.library.poll_every = Some(Duration::from_secs(600));
     watch(&mut state.borrow_mut(), &app);
     let plan = builds().into_iter().next().unwrap();
     assert!(build_in_place(&mut state.borrow_mut(), plan));
     {
         let st = state.borrow();
-        let watcher = st.library.watcher.as_ref().expect("a watcher");
+        let watcher = st.views.library.watcher.as_ref().expect("a watcher");
         if WATCH_REMOTE {
             assert!(watcher.except.is_empty());
-            assert!(st.library.poll.is_none());
+            assert!(st.views.library.poll.is_none());
         } else {
             assert_eq!(watcher.watched, vec![a.clone(), b.clone()]);
             // The automount not mounted yet left out of the watch
             // too, and not polled: what it mounts is not known.
             assert_eq!(watcher.except, vec![nas.clone(), auto.clone()]);
-            assert_eq!(st.library.remote, vec![(nas.clone(), "cifs".to_string())]);
-            let poll = st.library.poll.as_ref().expect("the mount is polled");
+            assert_eq!(
+                st.views.library.remote,
+                vec![(nas.clone(), "cifs".to_string())]
+            );
+            let poll = st.views.library.poll.as_ref().expect("the mount is polled");
             assert_eq!(poll.roots, std::slice::from_ref(&nas));
-            assert!(st.library.said_remote.contains(&nas));
+            assert!(st.views.library.said_remote.contains(&nas));
         }
     }
     // The root taken out: the mount below it goes off the timer at
     // once, before the new watcher lands.
     remove(&state, &app, &worker, &a);
-    assert!(state.borrow().library.poll.is_none());
-    assert!(state.borrow().library.remote.is_empty());
+    assert!(state.borrow().views.library.poll.is_none());
+    assert!(state.borrow().views.library.remote.is_empty());
     builds();
     REMOTE_UNDER.with(|r| r.borrow_mut().clear());
     leave(&state, &dir);
@@ -562,7 +577,7 @@ fn an_automount_below_a_root_is_mounted_on_purpose_and_classified() {
     });
     NOT_ANSWERING.with(|n| n.borrow_mut().push(dead.clone()));
     LOOKED.with(|l| l.borrow_mut().clear());
-    state.borrow_mut().library.poll_every = Some(Duration::from_secs(600));
+    state.borrow_mut().views.library.poll_every = Some(Duration::from_secs(600));
     watch(&mut state.borrow_mut(), &app);
     let plan = builds().into_iter().next().unwrap();
     assert!(build_in_place(&mut state.borrow_mut(), plan));
@@ -572,10 +587,13 @@ fn an_automount_below_a_root_is_mounted_on_purpose_and_classified() {
         for d in [&share, &disk, &dead] {
             assert!(looked.contains(d), "{} looked into", d.display());
         }
-        let watcher = st.library.watcher.as_ref().expect("a watcher");
+        let watcher = st.views.library.watcher.as_ref().expect("a watcher");
         assert_eq!(watcher.except, vec![share.clone(), dead.clone()]);
-        assert_eq!(st.library.remote, vec![(share.clone(), "nfs4".to_string())]);
-        let poll = st.library.poll.as_ref().expect("the share is polled");
+        assert_eq!(
+            st.views.library.remote,
+            vec![(share.clone(), "nfs4".to_string())]
+        );
+        let poll = st.views.library.poll.as_ref().expect("the share is polled");
         assert_eq!(poll.roots, std::slice::from_ref(&share));
     }
     REMOTE_UNDER.with(|r| r.borrow_mut().clear());

@@ -33,8 +33,8 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
         let st = state.borrow();
         // A read given up on brings nothing: another is out for it.
         let given_up = match purpose {
-            Purpose::Merge => token != st.library.merge_token,
-            Purpose::Open { .. } => st.view_generation != generation,
+            Purpose::Merge => token != st.views.library.merge_token,
+            Purpose::Open { .. } => st.views.view_generation != generation,
         };
         if given_up {
             tracing::debug!("library: a read given up on, or overtaken, came in; dropped");
@@ -46,8 +46,8 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
     // whose cells are each file's own and all its versions.
     {
         let mut st = state.borrow_mut();
-        if st.view_generation == generation && files.is_some() {
-            st.collection_frames = frames;
+        if st.views.view_generation == generation && files.is_some() {
+            st.views.collection_frames = frames;
         }
     }
     // The camera's JPEGs beside the list's raws, as the same read found
@@ -55,7 +55,7 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
     // tiles are made again for its mark all the same.
     let paired = {
         let mut st = state.borrow_mut();
-        if st.view_generation == generation
+        if st.views.view_generation == generation
             && let Some(listed) = &files
         {
             // A JPEG that is a frame of this list itself (a collection
@@ -72,8 +72,8 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
                 })
                 .filter(|(_, with)| !with.is_empty())
                 .collect();
-            let changed = st.companions != next;
-            st.companions = next;
+            let changed = st.views.companions != next;
+            st.views.companions = next;
             changed
         } else {
             false
@@ -88,19 +88,19 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
         // What it found missing is kept for the menu's Forget missing
         // only from a read of the view the window holds now: an older
         // one landing after a forget would bring the old count back.
-        if st.view_generation == generation {
+        if st.views.view_generation == generation {
             // Those under a network mount are kept by a forget, so not
             // offered.
-            let far = &st.library.remote;
+            let far = &st.views.library.remote;
             let gone = gone
                 .iter()
                 .filter(|h| !far.iter().any(|(m, _)| Path::new(h).starts_with(m)))
                 .count();
-            st.collections.missing = Some((id.clone(), lost, gone));
+            st.views.collections.missing = Some((id.clone(), lost, gone));
         }
         // Into the collection the read was of, by its id: a merge read
         // of one that lands after another was opened is still its own.
-        if st.collections.apply(&id, &changes) {
+        if st.views.collections.apply(&id, &changes) {
             crate::panel::collections::members_changed(&mut st, app);
         }
     }
@@ -108,18 +108,18 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
     // holds now; a merge read overtaken by a view opened since still
     // clears `merging` below.
     let mut dimmed = false;
-    if state.borrow().view_generation == generation {
+    if state.borrow().views.view_generation == generation {
         let mut st = state.borrow_mut();
-        st.library.canonical.extend(canonical);
+        st.views.library.canonical.extend(canonical);
         for dir in &readable {
-            st.library.unreadable.remove(dir);
+            st.views.library.unreadable.remove(dir);
         }
-        st.library.unreadable.extend(unreadable);
+        st.views.library.unreadable.extend(unreadable);
         // What the read saw of a folder is kept unless a pass has gone
         // over the folder since the read was asked for, or the window
         // no longer remembers the passes back that far.
-        if epoch >= st.library.passes_from {
-            let lib = &mut st.library;
+        if epoch >= st.views.library.passes_from {
+            let lib = &mut st.views.library;
             for dir in readable {
                 let passed = lib
                     .passes
@@ -136,12 +136,12 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
             crate::sync::heard_over(&mut st, app, offline);
         }
         if let Some(offline) = offline
-            && st.library.offline != offline
+            && st.views.library.offline != offline
         {
             // The tiles' dimming follows, and a root back online has
             // its frames' pictures asked for again.
-            let was = std::mem::replace(&mut st.library.offline, offline);
-            let now = st.library.offline.clone();
+            let was = std::mem::replace(&mut st.views.library.offline, offline);
+            let now = st.views.library.offline.clone();
             rows::roots_changed(&mut st, worker, &was, &now);
             // The frame on screen follows to the archive's copy when
             // its own root went (§233).
@@ -153,7 +153,7 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
     match purpose {
         Purpose::Open { view, asked, .. } => {
             // A later list owns `loading`, and clears it itself.
-            if state.borrow().view_generation != generation {
+            if state.borrow().views.view_generation != generation {
                 return;
             }
             // No list to be had (a folder with nothing in it, or not a
@@ -161,8 +161,8 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
             // it was.
             let Some(files) = files.filter(|f| view != View::Folder || !f.is_empty()) else {
                 let mut st = state.borrow_mut();
-                loading_done(&mut st.library, app);
-                st.library.awaiting = false;
+                loading_done(&mut st.views.library, app);
+                st.views.library.awaiting = false;
                 let why = said.unwrap_or_else(|| "nothing to open".to_string());
                 tracing::warn!("{why}");
                 app.set_status(why.into());
@@ -190,13 +190,13 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
             }
             {
                 let mut st = state.borrow_mut();
-                st.view = view;
-                loading_done(&mut st.library, app);
+                st.views.view = view;
+                loading_done(&mut st.views.library, app);
             }
             open_loaded(state, app, worker, files, held, rows.is_some(), select);
             let mut st = state.borrow_mut();
-            st.library.awaiting = false;
-            st.library.painted = Some((asked, "the list asked for"));
+            st.views.library.awaiting = false;
+            st.views.library.painted = Some((asked, "the list asked for"));
             tracing::info!(
                 "library: the list in the browser {:.0} ms after it was asked for",
                 asked.elapsed().as_secs_f64() * 1e3
@@ -212,23 +212,23 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
             // A sort chosen while this read was out (it could not be
             // read again then, the view still opening): read again in
             // it now, the frame on screen kept and brought into view.
-            let stale = read_order(&st, &st.view) != order;
+            let stale = read_order(&st, &st.views.view) != order;
             drop(st);
             if stale {
-                state.borrow_mut().sort_reveal = true;
+                state.borrow_mut().views.sort_reveal = true;
                 if !refresh_view(state, app, worker) {
-                    state.borrow_mut().sort_reveal = false;
+                    state.borrow_mut().views.sort_reveal = false;
                 }
             }
         }
         Purpose::Merge => {
             let mut again = {
                 let mut st = state.borrow_mut();
-                st.library.merging = false;
-                st.library.merge_since = None;
-                std::mem::take(&mut st.library.stale)
+                st.views.library.merging = false;
+                st.views.library.merge_since = None;
+                std::mem::take(&mut st.views.library.stale)
             };
-            let ours = state.borrow().view_generation == generation;
+            let ours = state.borrow().views.view_generation == generation;
             let mut rebuilt = false;
             if let (true, Some(files)) = (ours, files) {
                 let read: HashMap<PathBuf, Held> = fresh.into_iter().zip(held).collect();
@@ -283,11 +283,11 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
             // capture waiting on the view ends.
             let empty = {
                 let st = state.borrow();
-                matches!(st.view, View::Roots(_))
+                matches!(st.views.view, View::Roots(_))
                     && st.files.is_empty()
-                    && st.library.launch_left == 0
-                    && !st.library.starting
-                    && !st.library.loading
+                    && st.views.library.launch_left == 0
+                    && !st.views.library.starting
+                    && !st.views.library.loading
             };
             if empty {
                 empty_view(&mut state.borrow_mut(), app);
@@ -311,13 +311,13 @@ fn take_empty(
     let collection = view.collection().is_some();
     let passing = {
         let mut st = state.borrow_mut();
-        st.view = view;
-        st.library.launch_left > 0 || st.library.starting
+        st.views.view = view;
+        st.views.library.launch_left > 0 || st.views.library.starting
     };
     open_loaded(state, app, worker, Vec::new(), Vec::new(), true, 0);
     let mut st = state.borrow_mut();
-    loading_done(&mut st.library, app);
-    st.library.painted = Some((asked, "the view asked for"));
+    loading_done(&mut st.views.library, app);
+    st.views.library.painted = Some((asked, "the view asked for"));
     crate::tree::want(&mut st, app);
     show(&st, app);
     if collection {
@@ -325,7 +325,7 @@ fn take_empty(
         // capture waiting on it ends as an empty folder's would.
         let words = crate::panel::collections::opened_words(&st, missing).unwrap_or_default();
         app.set_status(words.into());
-        st.library.awaiting = false;
+        st.views.library.awaiting = false;
     } else if passing {
         app.set_status("Nothing indexed under the roots yet; the pass is running".into());
     } else {

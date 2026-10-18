@@ -195,7 +195,7 @@ fn children<'a>(nodes: &'a [Node], folder: &Path) -> Vec<&'a Node> {
 /// a view with no tree, or before the tree for its root has landed.
 pub(crate) fn tiles_for(st: &State) -> Vec<&Node> {
     if let Some(dir) = loose_for(st) {
-        return match &st.tree.loose {
+        return match &st.views.tree.loose {
             Some((have, nodes)) if have == dir => nodes.iter().collect(),
             _ => Vec::new(),
         };
@@ -203,26 +203,26 @@ pub(crate) fn tiles_for(st: &State) -> Vec<&Node> {
     let Some((root, folder)) = shown_for(st) else {
         return Vec::new();
     };
-    if st.tree.root.as_deref() != Some(root) {
+    if st.views.tree.root.as_deref() != Some(root) {
         return Vec::new();
     }
-    let deep = match &st.view {
+    let deep = match &st.views.view {
         View::Branch { deep, .. } => *deep,
-        View::Roots(_) => st.tree.subfolders,
+        View::Roots(_) => st.views.tree.subfolders,
         View::Folder | View::Collection { .. } => false,
     };
     if deep {
         return Vec::new();
     }
-    children(&st.tree.nodes, folder)
+    children(&st.views.tree.nodes, folder)
 }
 
 /// The grid's tiles as the state has them, replaced only when they
 /// change.
 fn show_tiles(st: &State) {
     let nodes = tiles_for(st);
-    let offline = shown_for(st).is_some_and(|(r, _)| st.library.offline.contains(r));
-    *st.tree.tile_folders.borrow_mut() = nodes.iter().map(|n| n.path.clone()).collect();
+    let offline = shown_for(st).is_some_and(|(r, _)| st.views.library.offline.contains(r));
+    *st.views.tree.tile_folders.borrow_mut() = nodes.iter().map(|n| n.path.clone()).collect();
     let tiles: Vec<FolderTile> = nodes
         .into_iter()
         .map(|n| FolderTile {
@@ -231,7 +231,7 @@ fn show_tiles(st: &State) {
             offline,
         })
         .collect();
-    let model = &st.tree.tiles;
+    let model = &st.views.tree.tiles;
     if !model.iter().eq(tiles.iter().cloned()) {
         model.set_vec(tiles);
     }
@@ -258,13 +258,13 @@ pub(crate) fn view_for(root: &Path, folder: &Path, deep: bool) -> View {
 /// itself marked. None for all the roots, files from several folders,
 /// or a folder under no root.
 pub(crate) fn shown_for(st: &State) -> Option<(&Path, &Path)> {
-    match &st.view {
+    match &st.views.view {
         View::Branch { root, folder, .. } => Some((root, folder)),
         View::Roots(Some(r)) => Some((r, r)),
         View::Roots(None) | View::Collection { .. } => None,
         View::Folder => {
-            let dir = st.recent.open.as_deref()?;
-            let root = st.library.roots.root_of(dir)?;
+            let dir = st.views.recent.open.as_deref()?;
+            let root = st.views.library.roots.root_of(dir)?;
             Some((root, dir))
         }
     }
@@ -273,11 +273,11 @@ pub(crate) fn shown_for(st: &State) -> Option<(&Path, &Path)> {
 /// The folder open from the disk when it lies under no root: its
 /// tiles are its own folders, read from the disk.
 fn loose_for(st: &State) -> Option<&Path> {
-    if st.view != View::Folder {
+    if st.views.view != View::Folder {
         return None;
     }
-    let dir = st.recent.open.as_deref()?;
-    st.library.roots.root_of(dir).is_none().then_some(dir)
+    let dir = st.views.recent.open.as_deref()?;
+    st.views.library.roots.root_of(dir).is_none().then_some(dir)
 }
 
 /// The folders in `dir`, as tiles have them: each that is not hidden
@@ -321,7 +321,7 @@ fn loose_nodes(dir: &Path, apart: bool) -> std::io::Result<Vec<Node>> {
 /// lost one: opened again, or a move or a delete in it. Its tiles read
 /// again, when the view is such a folder.
 pub(crate) fn loose_changed(st: &mut State, app: &App) {
-    st.tree.loose_stale = true;
+    st.views.tree.loose_stale = true;
     want(st, app);
 }
 
@@ -329,8 +329,8 @@ pub(crate) fn loose_changed(st: &mut State, app: &App) {
 /// beside raws counted as frames, or not): the tree and the tiles made
 /// again.
 pub(crate) fn recounted(st: &mut State, app: &App) {
-    st.tree.stale = true;
-    st.tree.loose_stale = true;
+    st.views.tree.stale = true;
+    st.views.tree.loose_stale = true;
     want(st, app);
 }
 
@@ -338,17 +338,17 @@ pub(crate) fn recounted(st: &mut State, app: &App) {
 /// ones held; dropped when the view is not such a folder.
 fn want_loose(st: &mut State, app: &App) {
     let Some(dir) = loose_for(st).map(Path::to_path_buf) else {
-        if st.tree.loose.is_some() || st.tree.loose_asked.is_some() {
-            st.tree.loose = None;
-            st.tree.loose_asked = None;
-            st.tree.loose_token += 1;
+        if st.views.tree.loose.is_some() || st.views.tree.loose_asked.is_some() {
+            st.views.tree.loose = None;
+            st.views.tree.loose_asked = None;
+            st.views.tree.loose_token += 1;
             show_tiles(st);
         }
         return;
     };
-    let held = st.tree.loose.as_ref().is_some_and(|(d, _)| *d == dir);
-    let asked = st.tree.loose_asked.as_ref() == Some(&dir);
-    if (held || asked) && !st.tree.loose_stale {
+    let held = st.views.tree.loose.as_ref().is_some_and(|(d, _)| *d == dir);
+    let asked = st.views.tree.loose_asked.as_ref() == Some(&dir);
+    if (held || asked) && !st.views.tree.loose_stale {
         return;
     }
     // A read still out is let finish, and asked again when it lands:
@@ -358,23 +358,23 @@ fn want_loose(st: &mut State, app: &App) {
         return;
     }
     if !held {
-        st.tree.loose = None;
+        st.views.tree.loose = None;
         show_tiles(st);
     }
-    st.tree.loose_stale = false;
-    st.tree.loose_token += 1;
-    st.tree.loose_asked = Some(dir.clone());
+    st.views.tree.loose_stale = false;
+    st.views.tree.loose_token += 1;
+    st.views.tree.loose_asked = Some(dir.clone());
     let build = Build {
-        token: st.tree.loose_token,
+        token: st.views.tree.loose_token,
         root: dir,
         count: None,
         index: None,
         counts: None,
         loose: true,
-        apart: st.jpegs_apart,
+        apart: st.views.jpegs_apart,
     };
     if !send(app, build) {
-        st.tree.loose_asked = None;
+        st.views.tree.loose_asked = None;
     }
 }
 
@@ -395,8 +395,14 @@ pub(crate) fn nothing_in(folder: &Path, deep: bool) -> String {
 /// The root's count as the index last said, for knowing when the tree
 /// is behind it.
 fn root_count(st: &State, root: &Path) -> Option<usize> {
-    let i = st.library.roots.list().iter().position(|r| r == root)?;
-    st.library.counts.get(i).copied()
+    let i = st
+        .views
+        .library
+        .roots
+        .list()
+        .iter()
+        .position(|r| r == root)?;
+    st.views.library.counts.get(i).copied()
 }
 
 /// The tree the view wants, asked for when it is not the one held: a
@@ -409,36 +415,36 @@ pub(crate) fn want(st: &mut State, app: &App) {
     want_loose(st, app);
     reveal(st);
     let Some(root) = shown_for(st).map(|(r, _)| r.to_path_buf()) else {
-        if st.tree.root.is_some() || st.tree.asked.is_some() {
-            st.tree.root = None;
-            st.tree.nodes.clear();
-            st.tree.built_at = None;
-            st.tree.asked = None;
-            st.tree.token += 1;
+        if st.views.tree.root.is_some() || st.views.tree.asked.is_some() {
+            st.views.tree.root = None;
+            st.views.tree.nodes.clear();
+            st.views.tree.built_at = None;
+            st.views.tree.asked = None;
+            st.views.tree.token += 1;
         }
         return;
     };
     let count = root_count(st, &root);
-    let held = st.tree.root.as_ref() == Some(&root) && st.tree.built_at == count;
-    if held && !st.tree.stale {
+    let held = st.views.tree.root.as_ref() == Some(&root) && st.views.tree.built_at == count;
+    if held && !st.views.tree.stale {
         return;
     }
-    let asked = st.tree.asked.as_ref() == Some(&(root.clone(), count));
-    if asked && !st.tree.stale {
+    let asked = st.views.tree.asked.as_ref() == Some(&(root.clone(), count));
+    if asked && !st.views.tree.stale {
         return;
     }
-    if st.tree.root.as_ref() != Some(&root) {
-        st.tree.root = None;
-        st.tree.nodes.clear();
-        st.tree.built_at = None;
+    if st.views.tree.root.as_ref() != Some(&root) {
+        st.views.tree.root = None;
+        st.views.tree.nodes.clear();
+        st.views.tree.built_at = None;
     }
     // The counts off the window's thread when the index's path is
     // known; a window with a reader and no path (the tests') reads
     // them here.
-    let counts = if st.index_path.is_some() {
+    let counts = if st.views.index_path.is_some() {
         None
     } else {
-        let Some(lib) = &st.index_reader else {
+        let Some(lib) = &st.views.index_reader else {
             return;
         };
         match lib.folder_counts_under_canonical(&root) {
@@ -449,20 +455,20 @@ pub(crate) fn want(st: &mut State, app: &App) {
             }
         }
     };
-    st.tree.stale = false;
-    st.tree.token += 1;
-    st.tree.asked = Some((root.clone(), count));
+    st.views.tree.stale = false;
+    st.views.tree.token += 1;
+    st.views.tree.asked = Some((root.clone(), count));
     let build = Build {
-        token: st.tree.token,
+        token: st.views.tree.token,
         root,
         count,
-        index: st.index_path.clone(),
+        index: st.views.index_path.clone(),
         counts,
         loose: false,
-        apart: st.jpegs_apart,
+        apart: st.views.jpegs_apart,
     };
     if !send(app, build) {
-        st.tree.asked = None;
+        st.views.tree.asked = None;
     }
 }
 
@@ -472,10 +478,10 @@ pub(crate) fn want(st: &mut State, app: &App) {
 /// folded year.
 fn reveal(st: &mut State) {
     let Some((root, folder)) = shown_for(st) else {
-        st.tree.revealed = None;
+        st.views.tree.revealed = None;
         return;
     };
-    if st.tree.revealed.as_deref() == Some(folder) {
+    if st.views.tree.revealed.as_deref() == Some(folder) {
         return;
     }
     let (root, folder) = (root.to_path_buf(), folder.to_path_buf());
@@ -483,9 +489,9 @@ fn reveal(st: &mut State) {
         if !above.starts_with(&root) {
             break;
         }
-        st.tree.expanded.insert(above.to_path_buf());
+        st.views.tree.expanded.insert(above.to_path_buf());
     }
-    st.tree.revealed = Some(folder);
+    st.views.tree.revealed = Some(folder);
 }
 
 /// A pass in the background changed something under `path`: the tree
@@ -494,14 +500,15 @@ pub(crate) fn passed(st: &mut State, path: &Path) {
     // The root held, or the one whose first build is out: a pass that
     // lands meanwhile may have moved what that build read.
     let root = st
+        .views
         .tree
         .root
         .as_ref()
-        .or(st.tree.asked.as_ref().map(|(r, _)| r));
+        .or(st.views.tree.asked.as_ref().map(|(r, _)| r));
     if let Some(r) = root
         && (path.starts_with(r) || r.starts_with(path))
     {
-        st.tree.stale = true;
+        st.views.tree.stale = true;
     }
 }
 
@@ -625,24 +632,24 @@ fn send(_app: &App, build: Build) -> bool {
 /// for last, and shown.
 fn land(st: &mut State, app: &App, built: Built) {
     if built.loose {
-        if built.token != st.tree.loose_token {
+        if built.token != st.views.tree.loose_token {
             return;
         }
-        st.tree.loose_asked = None;
+        st.views.tree.loose_asked = None;
         // A folder that cannot be read (gone, or its share away) shows
         // no tiles rather than the ones it had.
-        st.tree.loose = Some((built.root, built.nodes.unwrap_or_default()));
+        st.views.tree.loose = Some((built.root, built.nodes.unwrap_or_default()));
         show_tiles(st);
-        if st.tree.loose_stale {
+        if st.views.tree.loose_stale {
             want_loose(st, app);
         }
         return;
     }
-    if built.token != st.tree.token {
+    if built.token != st.views.tree.token {
         tracing::debug!("library: a folder tree asked for before another came in; dropped");
         return;
     }
-    st.tree.asked = None;
+    st.views.tree.asked = None;
     let Some(nodes) = built.nodes else {
         return;
     };
@@ -652,12 +659,12 @@ fn land(st: &mut State, app: &App, built: Built) {
         built.root.display(),
         built.seconds * 1e3
     );
-    if st.tree.seen.insert(built.root.clone()) {
-        st.tree.expanded.insert(built.root.clone());
+    if st.views.tree.seen.insert(built.root.clone()) {
+        st.views.tree.expanded.insert(built.root.clone());
     }
-    st.tree.root = Some(built.root);
-    st.tree.built_at = built.count;
-    st.tree.nodes = nodes;
+    st.views.tree.root = Some(built.root);
+    st.views.tree.built_at = built.count;
+    st.views.tree.nodes = nodes;
     show(st, app);
 }
 
@@ -684,25 +691,25 @@ pub(crate) fn show(st: &State, app: &App) {
     // Over a folder from the disk the list is its own frames whatever
     // the switch was left at, so it shows off; turned on, it opens the
     // folder with those under it.
-    let switch = st.tree.subfolders && st.view != View::Folder;
+    let switch = st.views.tree.subfolders && st.views.view != View::Folder;
     if app.get_folder_tree_subfolders() != switch {
         app.set_folder_tree_subfolders(switch);
     }
     let open = shown.map(|(_, f)| f);
-    let nodes: Vec<&Node> = match (root, &st.tree.root) {
+    let nodes: Vec<&Node> = match (root, &st.views.tree.root) {
         (Some(want), Some(have)) if want == have.as_path() => {
-            visible(&st.tree.nodes, &st.tree.expanded)
+            visible(&st.views.tree.nodes, &st.views.tree.expanded)
         }
         _ => Vec::new(),
     };
-    *st.tree.shown.borrow_mut() = nodes.iter().map(|n| n.path.clone()).collect();
+    *st.views.tree.shown.borrow_mut() = nodes.iter().map(|n| n.path.clone()).collect();
     let rows: Vec<FolderRow> = nodes
         .into_iter()
         .map(|n| {
-            let expanded = st.tree.expanded.contains(&n.path);
+            let expanded = st.views.tree.expanded.contains(&n.path);
             FolderRow {
                 name: if n.depth == 0 {
-                    st.library.roots.label(&n.path)
+                    st.views.library.roots.label(&n.path)
                 } else {
                     n.name.clone()
                 }
@@ -716,7 +723,7 @@ pub(crate) fn show(st: &State, app: &App) {
             }
         })
         .collect();
-    let model = &st.tree.rows;
+    let model = &st.views.tree.rows;
     if !model.iter().eq(rows.iter().cloned()) {
         model.set_vec(rows);
     }
@@ -726,13 +733,13 @@ pub(crate) fn show(st: &State, app: &App) {
 /// The folder of the row shown at `row`.
 fn row_folder(st: &State, row: i32) -> Option<PathBuf> {
     let row = usize::try_from(row).ok()?;
-    st.tree.shown.borrow().get(row).cloned()
+    st.views.tree.shown.borrow().get(row).cloned()
 }
 
 /// The folder of the grid's tile at `tile`.
 fn tile_folder(st: &State, tile: i32) -> Option<PathBuf> {
     let tile = usize::try_from(tile).ok()?;
-    st.tree.tile_folders.borrow().get(tile).cloned()
+    st.views.tree.tile_folders.borrow().get(tile).cloned()
 }
 
 /// A folder of the tree chosen, by its row: opened as [`open`] has it.
@@ -769,14 +776,14 @@ fn tile_picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, tile:
 fn open(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, folder: &Path, from: &str) {
     let view = {
         let st = state.borrow();
-        let Some(root) = st.tree.root.clone() else {
+        let Some(root) = st.views.tree.root.clone() else {
             return;
         };
         if !folder.starts_with(&root) {
             return;
         }
         tracing::info!("library: {} opened from {from}", folder.display());
-        view_for(&root, folder, st.tree.subfolders)
+        view_for(&root, folder, st.views.tree.subfolders)
     };
     crate::roots::open_view(state, app, worker, view);
 }
@@ -784,7 +791,7 @@ fn open(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, folder: &Pat
 /// The folder a tile's Reveal shows: the tile's, while its root is
 /// online; none while it is offline, or for no such tile.
 fn reveal_target(st: &State, tile: i32) -> Option<PathBuf> {
-    if shown_for(st).is_some_and(|(r, _)| st.library.offline.contains(r)) {
+    if shown_for(st).is_some_and(|(r, _)| st.views.library.offline.contains(r)) {
         return None;
     }
     tile_folder(st, tile)
@@ -810,8 +817,8 @@ fn folded(st: &mut State, app: &App, row: i32) {
     let Some(folder) = row_folder(st, row) else {
         return;
     };
-    if !st.tree.expanded.remove(&folder) {
-        st.tree.expanded.insert(folder);
+    if !st.views.tree.expanded.remove(&folder) {
+        st.views.tree.expanded.insert(folder);
     }
     show(st, app);
 }
@@ -822,15 +829,17 @@ fn subfolders_changed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>
     let on = app.get_folder_tree_subfolders();
     let again = {
         let mut st = state.borrow_mut();
-        st.tree.subfolders = on;
+        st.views.tree.subfolders = on;
         crate::panel::prefs::keep(&st, |s| s.folder_tree_subfolders = on);
         // None to open when it is the view open already: the root's
         // own view, the switch turned on over it; or a folder opened
         // from the disk, the switch turned off, which lists its own
         // frames already.
         match shown_for(&st) {
-            Some(_) if st.view == View::Folder && !on => None,
-            Some((root, folder)) => Some(view_for(root, folder, on)).filter(|v| *v != st.view),
+            Some(_) if st.views.view == View::Folder && !on => None,
+            Some((root, folder)) => {
+                Some(view_for(root, folder, on)).filter(|v| *v != st.views.view)
+            }
             None => None,
         }
     };
@@ -851,9 +860,9 @@ impl Tree {
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
-    app.set_folder_tree(ModelRc::from(state.borrow().tree.rows.clone()));
-    app.set_grid_tiles(ModelRc::from(state.borrow().tree.tiles.clone()));
-    app.set_folder_tree_subfolders(state.borrow().tree.subfolders);
+    app.set_folder_tree(ModelRc::from(state.borrow().views.tree.rows.clone()));
+    app.set_grid_tiles(ModelRc::from(state.borrow().views.tree.tiles.clone()));
+    app.set_folder_tree_subfolders(state.borrow().views.tree.subfolders);
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_folder_tree_picked(move |row| {
@@ -1105,14 +1114,14 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
             // By name over the folders: the frames are told apart by their
             // place in the list this built, in that order.
-            st.sort = crate::sort::Kept::by_name();
+            st.views.sort = crate::sort::Kept::by_name();
             // Sidecars as the editor keeps them, so a frame listed
             // from its row stands in until its sidecar is wanted.
-            st.write_sidecars = true;
-            st.library.roots.add(&root).unwrap();
+            st.window.write_sidecars = true;
+            st.views.library.roots.add(&root).unwrap();
             crate::roots::recount(&mut st);
         }
         open_view(&state, &app, &worker, View::Roots(Some(root.clone())));
@@ -1162,13 +1171,13 @@ mod tests {
             [("archive".into(), 0, 1, true), ("day".into(), 1, 3, false)],
             "the root unfolded, the day folded with the three under it"
         );
-        assert!(!state.borrow().tree.subfolders, "off by default");
+        assert!(!state.borrow().views.tree.subfolders, "off by default");
 
         pick(&app, "day");
         land_sent(&state, &app, &worker);
         assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
         assert_eq!(
-            state.borrow().view,
+            state.borrow().views.view,
             View::Branch {
                 root: root.clone(),
                 folder: day.clone(),
@@ -1187,17 +1196,17 @@ mod tests {
         app.set_folder_tree_subfolders(true);
         app.invoke_folder_tree_subfolders_changed();
         land_sent(&state, &app, &worker);
-        assert!(state.borrow().tree.subfolders);
+        assert!(state.borrow().views.tree.subfolders);
         assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
         assert!(matches!(
-            state.borrow().view,
+            state.borrow().views.view,
             View::Branch { deep: true, .. }
         ));
 
         // The root, with the switch on: the root's view, as its row.
         pick(&app, "archive");
         land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().view, View::Roots(Some(root.clone())));
+        assert_eq!(state.borrow().views.view, View::Roots(Some(root.clone())));
         // By name across the folders (a test's window lists a view of
         // several folders by name), the root's own frame among them.
         assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif", "r.tif"]);
@@ -1210,12 +1219,12 @@ mod tests {
 
         // A folder with nothing of its own opens empty and says why.
         std::fs::remove_file(root.join("r.tif")).unwrap();
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         greycard_library::Library::open(&dir.join("index").join("library.sqlite"))
             .unwrap()
             .index_folder(&root, &mut |_| {})
             .unwrap();
-        state.borrow_mut().index_reader = Some(
+        state.borrow_mut().views.index_reader = Some(
             greycard_library::Library::open_read_only(&dir.join("index").join("library.sqlite"))
                 .unwrap(),
         );
@@ -1227,7 +1236,7 @@ mod tests {
             "{}",
             app.get_status()
         );
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -1246,7 +1255,7 @@ mod tests {
         let day = root.join("day");
         crate::panel::browser::open_folder(&state, &app, &worker, &day);
         land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(state.borrow().views.view, View::Folder);
         assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
         assert!(app.get_folder_tree_shown());
         assert_eq!(
@@ -1274,7 +1283,7 @@ mod tests {
         land_sent(&state, &app, &worker);
         assert_eq!(listed(&state), ["m.tif"]);
         assert!(matches!(
-            state.borrow().view,
+            state.borrow().views.view,
             View::Branch { deep: false, .. }
         ));
         assert!(app.get_library_roots().row_data(0).unwrap().on);
@@ -1283,12 +1292,12 @@ mod tests {
         // it: the day with the folders under it, from the index.
         crate::panel::browser::open_folder(&state, &app, &worker, &day);
         land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(state.borrow().views.view, View::Folder);
         app.set_folder_tree_subfolders(true);
         app.invoke_folder_tree_subfolders_changed();
         land_sent(&state, &app, &worker);
         assert_eq!(
-            state.borrow().view,
+            state.borrow().views.view,
             View::Branch {
                 root: root.clone(),
                 folder: day.clone(),
@@ -1302,15 +1311,15 @@ mod tests {
         // on it opens the day with those under it again.
         crate::panel::browser::open_folder(&state, &app, &worker, &day);
         land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(state.borrow().views.view, View::Folder);
         assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
-        assert!(state.borrow().tree.subfolders, "the setting kept");
+        assert!(state.borrow().views.tree.subfolders, "the setting kept");
         assert!(!app.get_folder_tree_subfolders(), "shown off");
         app.set_folder_tree_subfolders(true);
         app.invoke_folder_tree_subfolders_changed();
         land_sent(&state, &app, &worker);
         assert!(matches!(
-            state.borrow().view,
+            state.borrow().views.view,
             View::Branch { deep: true, .. }
         ));
         assert!(app.get_folder_tree_subfolders());
@@ -1320,7 +1329,7 @@ mod tests {
         land_sent(&state, &app, &worker);
         crate::panel::browser::open_folder(&state, &app, &worker, &day);
         land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(state.borrow().views.view, View::Folder);
 
         // A folder deeper down, opened from the disk with the day
         // folded over it: the day unfolded to show it, marked.
@@ -1329,7 +1338,7 @@ mod tests {
         assert_eq!(rows(&app).len(), 2, "the day folded");
         crate::panel::browser::open_folder(&state, &app, &worker, &day.join("more"));
         land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(state.borrow().views.view, View::Folder);
         assert_eq!(
             rows(&app),
             [
@@ -1353,7 +1362,7 @@ mod tests {
         assert_eq!(listed(&state), ["e.tif"]);
         assert!(!app.get_folder_tree_shown());
         assert!(crate::testing::buttons(&app, "day").is_empty());
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -1371,9 +1380,18 @@ mod tests {
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         land_sent(&state, &app, &worker);
         assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
-        assert_eq!(state.borrow().recent.open.as_deref(), Some(day.as_path()));
         assert_eq!(
-            state.borrow().recent.folders.first().map(String::as_str),
+            state.borrow().views.recent.open.as_deref(),
+            Some(day.as_path())
+        );
+        assert_eq!(
+            state
+                .borrow()
+                .views
+                .recent
+                .folders
+                .first()
+                .map(String::as_str),
             day.to_str()
         );
         assert_eq!(app.get_open_folder_name(), "day");
@@ -1388,7 +1406,7 @@ mod tests {
         assert_eq!(rows(&app)[1], ("day".into(), 1, 2, true));
         assert_eq!(rows(&app)[2], ("more".into(), 2, 1, false));
         assert_eq!(listed(&state), ["d1.tif", "d2.tif"], "still the day's");
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -1400,14 +1418,18 @@ mod tests {
         let dir = scratch("pass");
         let (app, state, worker) = archive(&dir, None);
         let root = dir.join("archive");
-        let token = state.borrow().tree.token;
+        let token = state.borrow().views.tree.token;
         let quiet = greycard_library::Report {
             meta_refreshed: 1,
             ..Default::default()
         };
         crate::roots::background_done(&state, &app, &root, &quiet, false, false);
         land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().tree.token, token, "no build for a rating");
+        assert_eq!(
+            state.borrow().views.tree.token,
+            token,
+            "no build for a rating"
+        );
 
         frames(&root.join("later"), &["l1.tif", "l2.tif"]);
         let report = greycard_library::Library::open(&dir.join("index").join("library.sqlite"))
@@ -1425,7 +1447,7 @@ mod tests {
                 ("later".into(), 1, 2, false)
             ]
         );
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -1450,11 +1472,11 @@ mod tests {
                 // The view left and come back to: a build asked for, the
                 // tree not held yet.
                 let mut st = state.borrow_mut();
-                st.view = View::Folder;
+                st.views.view = View::Folder;
                 want(&mut st, &app);
-                st.view = View::Roots(Some(root.clone()));
+                st.views.view = View::Roots(Some(root.clone()));
                 want(&mut st, &app);
-                assert!(st.tree.root.is_none() && st.tree.asked.is_some());
+                assert!(st.views.tree.root.is_none() && st.views.tree.asked.is_some());
             }
             std::fs::create_dir_all(root.join("later")).unwrap();
             std::fs::rename(
@@ -1475,7 +1497,7 @@ mod tests {
             crate::roots::background_done(&state, &app, &root, &report, false, false);
             land_sent(&state, &app, &worker);
             assert_eq!(rows(&app), moved_tree, "first build out: {first_build_out}");
-            state.borrow_mut().index_reader = None;
+            state.borrow_mut().views.index_reader = None;
             drop(state);
             crate::testing::remove_dir_retry(&dir);
         }
@@ -1492,7 +1514,7 @@ mod tests {
         // The tree built again with the root away.
         {
             let mut st = state.borrow_mut();
-            st.tree.stale = true;
+            st.views.tree.stale = true;
             want(&mut st, &app);
         }
         land_sent(&state, &app, &worker);
@@ -1500,9 +1522,9 @@ mod tests {
         pick(&app, "day");
         land_sent(&state, &app, &worker);
         assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
-        assert!(state.borrow().library.offline.contains(&root));
+        assert!(state.borrow().views.library.offline.contains(&root));
         assert!(app.get_thumbs().row_data(0).unwrap().offline);
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -1530,7 +1552,7 @@ mod tests {
     }
 
     fn done(dir: &Path, state: Rc<RefCell<State>>) {
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1571,7 +1593,7 @@ mod tests {
         // and its tiles with it.
         crate::panel::browser::open_folder(&state, &app, &worker, &dir.join("archive").join("day"));
         land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(state.borrow().views.view, View::Folder);
         assert_eq!(tiles(&app), [("more".into(), 1)]);
         // A folder under no root: no tree, and its own folders' tiles
         // from the disk.
@@ -1613,7 +1635,7 @@ mod tests {
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         land_sent(&state, &app, &worker);
         let inner = birch.join("birch");
-        let by_tile = state.borrow().view.clone();
+        let by_tile = state.borrow().views.view.clone();
         assert_eq!(
             by_tile,
             View::Branch {
@@ -1624,9 +1646,18 @@ mod tests {
         );
         assert_eq!(listed(&state), ["b1.tif", "b2.tif"]);
         assert!(tiles(&app).is_empty());
-        assert_eq!(state.borrow().recent.open.as_deref(), Some(inner.as_path()));
         assert_eq!(
-            state.borrow().recent.folders.first().map(String::as_str),
+            state.borrow().views.recent.open.as_deref(),
+            Some(inner.as_path())
+        );
+        assert_eq!(
+            state
+                .borrow()
+                .views
+                .recent
+                .folders
+                .first()
+                .map(String::as_str),
             inner.to_str()
         );
         let marked: Vec<String> = rows(&app)
@@ -1647,7 +1678,7 @@ mod tests {
             .unwrap();
         app.invoke_folder_tree_picked(row as i32);
         land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().view, by_tile);
+        assert_eq!(state.borrow().views.view, by_tile);
         done(&dir, state);
     }
 
@@ -1671,7 +1702,7 @@ mod tests {
         assert!(tiles(&app).is_empty());
         pick(&app, "studio");
         land_sent(&state, &app, &worker);
-        assert!(matches!(state.borrow().view, View::Roots(Some(_))));
+        assert!(matches!(state.borrow().views.view, View::Roots(Some(_))));
         assert!(tiles(&app).is_empty());
         // Off again over the root: its first-level folders.
         app.set_folder_tree_subfolders(false);
@@ -1805,7 +1836,7 @@ mod tests {
         land_sent(&state, &app, &worker);
         assert!(!app.get_menu_up(), "the press closed the menu");
         assert!(
-            matches!(state.borrow().view, View::Roots(Some(_))),
+            matches!(state.borrow().views.view, View::Roots(Some(_))),
             "and opened nothing"
         );
         // What the menu's Reveal shows: each tile's own folder, online.
@@ -1819,20 +1850,20 @@ mod tests {
             assert_eq!(reveal_target(&st, -1), None);
         }
         app.invoke_grid_tile_reveal(0);
-        assert!(matches!(state.borrow().view, View::Roots(Some(_))));
+        assert!(matches!(state.borrow().views.view, View::Roots(Some(_))));
 
         // The root away: its tree and tiles from the index, dimmed, no
         // menu.
         crate::testing::rename_away(&root, &dir.join("away"));
         {
             let mut st = state.borrow_mut();
-            st.tree.stale = true;
+            st.views.tree.stale = true;
             want(&mut st, &app);
         }
         land_sent(&state, &app, &worker);
         pick(&app, "birch");
         land_sent(&state, &app, &worker);
-        assert!(state.borrow().library.offline.contains(&root));
+        assert!(state.borrow().views.library.offline.contains(&root));
         assert_eq!(tiles(&app), [("birch".into(), 2), ("export".into(), 1)]);
         assert!(app.get_grid_tiles().iter().all(|t| t.offline));
         right(&app, "Folder export");
@@ -1890,7 +1921,7 @@ mod tests {
         };
         wait(&|t| matches!(t, Told::Opened(_)));
         crate::STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
-        state.borrow_mut().index = Some(indexer);
+        state.borrow_mut().views.index = Some(indexer);
 
         pick(&app, "day");
         land_sent(&state, &app, &worker);
@@ -1922,8 +1953,9 @@ mod tests {
         // offers the permanent delete.
         {
             let mut st = state.borrow_mut();
-            st.deletes_allowed = true;
-            st.trash_refused
+            st.window.deletes_allowed = true;
+            st.sheets
+                .trash_refused
                 .insert(dunce::canonicalize(day.join("rejects")).unwrap());
         }
         app.invoke_delete_asked("rejects".into());
@@ -1946,7 +1978,7 @@ mod tests {
         let names: Vec<String> = rows(&app).into_iter().map(|r| r.0).collect();
         assert_eq!(names, ["archive", "day", "more"]);
 
-        let indexer = state.borrow_mut().index.take().unwrap();
+        let indexer = state.borrow_mut().views.index.take().unwrap();
         indexer.stop(Duration::from_secs(20));
         crate::STATE.with(|s| *s.borrow_mut() = None);
         drop(worker);
@@ -2005,8 +2037,9 @@ mod tests {
         assert_eq!(tiles(&app), [("Birch".into(), 1), ("rejects".into(), 2)]);
         {
             let mut st = state.borrow_mut();
-            st.deletes_allowed = true;
-            st.trash_refused
+            st.window.deletes_allowed = true;
+            st.sheets
+                .trash_refused
                 .insert(dunce::canonicalize(loose.join("rejects")).unwrap());
         }
         app.invoke_delete_asked("rejects".into());
@@ -2020,7 +2053,7 @@ mod tests {
 
         app.invoke_grid_tile_picked(1);
         land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(state.borrow().views.view, View::Folder);
         assert_eq!(listed(&state), ["a.tif", "b.tif"]);
         assert!(tiles(&app).is_empty(), "the rejects folder has none");
 

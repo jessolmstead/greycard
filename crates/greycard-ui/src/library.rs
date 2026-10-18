@@ -1579,7 +1579,7 @@ pub(crate) fn folders_of(files: &[PathBuf]) -> Vec<PathBuf> {
 /// are not read again here.
 pub(crate) fn index_open_folder(st: &mut State, ids: Option<Vec<Option<i64>>>) {
     match ids {
-        Some(ids) if ids.len() == st.files.len() => st.index_ids = ids,
+        Some(ids) if ids.len() == st.files.len() => st.views.index_ids = ids,
         // Each folder's canonical form as the read that brought the
         // list made it, off the window's thread: a folder opened by
         // hand is made canonical again by every read of it, so a link
@@ -1588,7 +1588,7 @@ pub(crate) fn index_open_folder(st: &mut State, ids: Option<Vec<Option<i64>>>) {
             refresh_ids(st);
         }
     }
-    let Some(indexer) = &st.index else {
+    let Some(indexer) = &st.views.index else {
         return;
     };
     // The all-roots view's list came from the index: the launch pass
@@ -1596,22 +1596,22 @@ pub(crate) fn index_open_folder(st: &mut State, ids: Option<Vec<Option<i64>>>) {
     // under every root for it would be the launch pass again. A folder
     // pass still running for the list before is dropped, by the
     // generation, so it does not report over the view.
-    if st.view.lists_rows() {
-        st.index_generation += 1;
-        st.index_progress = None;
-        indexer.folders(Vec::new(), st.index_generation);
+    if st.views.view.lists_rows() {
+        st.views.index_generation += 1;
+        st.views.index_progress = None;
+        indexer.folders(Vec::new(), st.views.index_generation);
         return;
     }
-    st.index_generation += 1;
-    st.index_progress = Some((0, st.files.len()));
-    indexer.folders(folders_of(&st.files), st.index_generation);
+    st.views.index_generation += 1;
+    st.views.index_progress = Some((0, st.files.len()));
+    indexer.folders(folders_of(&st.files), st.views.index_generation);
 }
 
 /// A file's sidecar was written: its row is brought up to date on
 /// the indexer's thread, and the window hears when it is; and its
 /// write to the archive's copy is queued (§233, [`crate::sync`]).
 pub(crate) fn sidecar_written(st: &mut State, file: usize) {
-    if let (Some(indexer), Some(path)) = (&st.index, st.files.get(file)) {
+    if let (Some(indexer), Some(path)) = (&st.views.index, st.files.get(file)) {
         indexer.file(path.clone());
     }
     // The pictures made from the edits, a cell at a time: the open
@@ -1628,10 +1628,10 @@ pub(crate) fn sidecar_written(st: &mut State, file: usize) {
 /// made the file, and tried again at each word from the indexer
 /// while it will not open.
 pub(crate) fn open_reader(st: &mut State, app: &App) {
-    let Some(path) = st.index_path.clone() else {
+    let Some(path) = st.views.index_path.clone() else {
         return;
     };
-    if st.index_reader.is_some() {
+    if st.views.index_reader.is_some() {
         return;
     }
     let opened = Library::open_read_only(&path).and_then(|lib| {
@@ -1640,10 +1640,10 @@ pub(crate) fn open_reader(st: &mut State, app: &App) {
     });
     match opened {
         Ok(mut lib) => {
-            lib.set_jpegs_apart(st.jpegs_apart);
-            st.index_reader = Some(lib);
-            if st.index_error.as_deref() == Some(READER_UNAVAILABLE) {
-                st.index_error = None;
+            lib.set_jpegs_apart(st.views.jpegs_apart);
+            st.views.index_reader = Some(lib);
+            if st.views.index_error.as_deref() == Some(READER_UNAVAILABLE) {
+                st.views.index_error = None;
             }
             // The saves made before the reader was open are queued
             // now, and what waits for the archives is read from the
@@ -1653,7 +1653,7 @@ pub(crate) fn open_reader(st: &mut State, app: &App) {
         }
         Err(e) => {
             tracing::warn!("library index {}: {e}", path.display());
-            st.index_error = Some(READER_UNAVAILABLE.to_string());
+            st.views.index_error = Some(READER_UNAVAILABLE.to_string());
         }
     }
 }
@@ -1677,11 +1677,11 @@ const READER_UNAVAILABLE: &str = "The library index could not be read";
 /// window's thread (`roots::background_done`).
 pub(crate) fn refresh_ids(st: &mut State) -> bool {
     let started = Instant::now();
-    if st.index_reader.is_none() {
-        st.index_ids = vec![None; st.files.len()];
+    if st.views.index_reader.is_none() {
+        st.views.index_ids = vec![None; st.files.len()];
         return false;
     }
-    let standing: Vec<usize> = if st.view.lists_rows() {
+    let standing: Vec<usize> = if st.views.view.lists_rows() {
         Vec::new()
     } else {
         (0..st.files.len())
@@ -1690,12 +1690,16 @@ pub(crate) fn refresh_ids(st: &mut State) -> bool {
     };
     let paths: Vec<PathBuf> = standing.iter().map(|&i| st.files[i].clone()).collect();
     let (ids, rows) = {
-        let lib = st.index_reader.as_ref().expect("a reader, looked at above");
+        let lib = st
+            .views
+            .index_reader
+            .as_ref()
+            .expect("a reader, looked at above");
         // Each folder's canonical form as the window has kept it: a
         // read off the window's thread hands them over with the list,
         // so the disk is asked here only for a folder no read has seen
         // yet.
-        let known = &mut st.library.canonical;
+        let known = &mut st.views.library.canonical;
         let mut canonical = |dir: &std::path::Path| {
             known
                 .entry(dir.to_path_buf())
@@ -1711,11 +1715,11 @@ pub(crate) fn refresh_ids(st: &mut State) -> bool {
         (ids, rows)
     };
     match ids {
-        Ok(ids) => st.index_ids = ids,
+        Ok(ids) => st.views.index_ids = ids,
         Err(e) => {
             tracing::debug!("index: {e}; keeping the last answer");
-            if st.index_ids.len() != st.files.len() {
-                st.index_ids = vec![None; st.files.len()];
+            if st.views.index_ids.len() != st.files.len() {
+                st.views.index_ids = vec![None; st.files.len()];
             }
             return false;
         }
@@ -1734,7 +1738,7 @@ pub(crate) fn refresh_ids(st: &mut State) -> bool {
     }
     tracing::debug!(
         "index: {} of {} frames have rows, read in {:.1} ms{}",
-        st.index_ids.iter().flatten().count(),
+        st.views.index_ids.iter().flatten().count(),
         st.files.len(),
         started.elapsed().as_secs_f64() * 1e3,
         if moved { "; some meta moved" } else { "" }
@@ -1748,17 +1752,17 @@ pub(crate) fn refresh_ids(st: &mut State) -> bool {
 /// and a frame with none passes until it has one. A failed read
 /// keeps the last answer.
 pub(crate) fn index_pass(st: &State) -> Vec<bool> {
-    let typed = st.filter.typed();
+    let typed = st.views.filter.typed();
     let everyone = vec![true; st.files.len()];
-    let Some(lib) = &st.index_reader else {
+    let Some(lib) = &st.views.index_reader else {
         return everyone;
     };
-    if !st.filter.asks_index(&typed) || st.index_ids.len() != st.files.len() {
+    if !st.views.filter.asks_index(&typed) || st.views.index_ids.len() != st.files.len() {
         return everyone;
     }
     let started = Instant::now();
-    let ids: Vec<i64> = st.index_ids.iter().flatten().copied().collect();
-    match lib.ids_passing(&ids, &st.filter.index_filter(&typed, None)) {
+    let ids: Vec<i64> = st.views.index_ids.iter().flatten().copied().collect();
+    match lib.ids_passing(&ids, &st.views.filter.index_filter(&typed, None)) {
         Ok(passing) => {
             tracing::debug!(
                 "index: {} of {} rows pass in {:.1} ms",
@@ -1766,15 +1770,16 @@ pub(crate) fn index_pass(st: &State) -> Vec<bool> {
                 ids.len(),
                 started.elapsed().as_secs_f64() * 1e3
             );
-            st.index_ids
+            st.views
+                .index_ids
                 .iter()
                 .map(|id| id.is_none_or(|id| passing.contains(&id)))
                 .collect()
         }
         Err(e) => {
             tracing::debug!("index: {e}; keeping the last answer");
-            if st.index_passed.len() == st.files.len() {
-                st.index_passed.clone()
+            if st.views.index_passed.len() == st.files.len() {
+                st.views.index_passed.clone()
             } else {
                 everyone
             }
@@ -1802,9 +1807,9 @@ fn counts_in_hand(
         let frame = filter::Frame {
             path,
             meta: &s.meta,
-            index: st.index_passed.get(i).copied().unwrap_or(true),
+            index: st.views.index_passed.get(i).copied().unwrap_or(true),
         };
-        if !frame.index || !st.filter.shows_meta(typed, frame, Some(facet)) {
+        if !frame.index || !st.views.filter.shows_meta(typed, frame, Some(facet)) {
             continue;
         }
         if facet == Facet::Kind {
@@ -1844,7 +1849,7 @@ fn counts_in_hand(
 /// counted in hand, with or without an index. A read that fails
 /// keeps the last answer.
 pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
-    let typed = st.filter.typed();
+    let typed = st.views.filter.typed();
     // A closed stack is its top: the frames behind it are not counted.
     let behind = crate::stacks::behind(st);
     let in_hand: Vec<(Facet, Vec<FacetCount>)> = Facet::ALL
@@ -1852,17 +1857,17 @@ pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
         .filter(|f| filter::in_hand(*f))
         .map(|f| (f, counts_in_hand(st, &typed, f, behind.as_deref())))
         .collect();
-    let Some(lib) = &st.index_reader else {
+    let Some(lib) = &st.views.index_reader else {
         return in_hand;
     };
-    if st.index_ids.len() != st.files.len() {
+    if st.views.index_ids.len() != st.files.len() {
         return in_hand;
     }
     let within: Vec<i64> = st
         .files
         .iter()
         .zip(&st.sidecars)
-        .zip(&st.index_ids)
+        .zip(&st.views.index_ids)
         .enumerate()
         .filter(|(i, _)| !behind.as_ref().is_some_and(|b| b[*i]))
         .filter_map(|(_, ((path, s), id))| {
@@ -1871,7 +1876,7 @@ pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
                 meta: &s.meta,
                 index: true,
             };
-            id.filter(|_| st.filter.shows_meta(&typed, frame, None))
+            id.filter(|_| st.views.filter.shows_meta(&typed, frame, None))
         })
         .collect();
     // The index's rows and the ones in hand, back in the bar's order.
@@ -1885,19 +1890,19 @@ pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
         if filter::in_hand(facet) {
             continue;
         }
-        let asked = st.filter.index_filter(&typed, Some(facet));
+        let asked = st.views.filter.index_filter(&typed, Some(facet));
         match lib.facet_counts(facet, Some(&within), &asked) {
             Ok(counts) => rows.push((facet, counts)),
             Err(e) => {
                 tracing::debug!("index: {facet:?}: {e}; keeping the last answer");
-                let mut last = st.facets_last.borrow().clone();
+                let mut last = st.views.facets_last.borrow().clone();
                 last.retain(|(f, _)| !filter::in_hand(*f));
                 return in_order(last, in_hand);
             }
         }
     }
     let rows = in_order(rows, in_hand);
-    *st.facets_last.borrow_mut() = rows.clone();
+    *st.views.facets_last.borrow_mut() = rows.clone();
     rows
 }
 
@@ -1964,7 +1969,7 @@ pub(crate) fn chips_of(
 pub(crate) fn facet_rows(st: &State) -> Vec<FacetRow> {
     let started = Instant::now();
     let counts = facet_counts(st);
-    if st.index_reader.is_some() {
+    if st.views.index_reader.is_some() {
         tracing::debug!(
             "index: {} facets counted over {} frames in {:.1} ms",
             Facet::ALL.len(),
@@ -1985,7 +1990,7 @@ pub(crate) fn facet_rows(st: &State) -> Vec<FacetRow> {
     counts
         .into_iter()
         .filter_map(|(facet, counts)| {
-            let on = st.filter.chosen(facet);
+            let on = st.views.filter.chosen(facet);
             let chips = if facet == Facet::Keyword {
                 chips_of(facet, &counts, on, &label_of)
             } else {
@@ -2022,14 +2027,14 @@ pub(crate) fn split_facet_rows(rows: &[FacetRow]) -> (Vec<FacetRow>, Vec<FacetRo
 /// has its kind's row before the index has a row of its own — and,
 /// with no rows at all, that the files have no EXIF to count.
 pub(crate) fn facet_note(st: &State, rows: bool) -> String {
-    if let Some(e) = &st.index_error {
+    if let Some(e) = &st.views.index_error {
         return e.clone();
     }
-    match (&st.index_reader, st.index_progress) {
+    match (&st.views.index_reader, st.views.index_progress) {
         (_, Some((done, total))) => format!("Indexing the folder: {done} of {total}"),
         (Some(_), None) if rows => String::new(),
         (Some(_), None) => "No camera, lens or date in these files' EXIF".to_string(),
-        (None, None) if st.index.is_some() => "Opening the library index".to_string(),
+        (None, None) if st.views.index.is_some() => "Opening the library index".to_string(),
         (None, None) => String::new(),
     }
 }
@@ -2040,14 +2045,14 @@ pub(crate) fn facet_note(st: &State, rows: bool) -> String {
 /// is, case aside; a number's by what it equals either way. True
 /// when something was chosen.
 pub(crate) fn choose_wanted(st: &mut State) -> bool {
-    let wanted = std::mem::take(&mut st.facets_wanted);
-    let ids: Vec<i64> = st.index_ids.iter().flatten().copied().collect();
+    let wanted = std::mem::take(&mut st.launch.facets_wanted);
+    let ids: Vec<i64> = st.views.index_ids.iter().flatten().copied().collect();
     let mut chose = false;
     for want in wanted {
         let counts = if filter::in_hand(want.facet) {
             counts_in_hand(st, &filter::Typed::default(), want.facet, None)
         } else {
-            let Some(lib) = &st.index_reader else {
+            let Some(lib) = &st.views.index_reader else {
                 continue;
             };
             match lib.facet_counts(want.facet, Some(&ids), &greycard_library::Filter::default()) {
@@ -2080,8 +2085,8 @@ pub(crate) fn choose_wanted(st: &mut State) -> bool {
             );
         }
         for value in hits {
-            if !st.filter.chosen(want.facet).contains(&value) {
-                st.filter.toggle_facet(want.facet, &value);
+            if !st.views.filter.chosen(want.facet).contains(&value) {
+                st.views.filter.toggle_facet(want.facet, &value);
                 chose = true;
             }
         }
@@ -2100,7 +2105,7 @@ pub(crate) fn told(app: &App, told: Told) {
         Told::Opened(path) => {
             tracing::info!("library index {}", path.display());
             let mut st = state.borrow_mut();
-            st.index_path = Some(path);
+            st.views.index_path = Some(path);
             open_reader(&mut st, app);
             crate::roots::recount(&mut st);
             crate::panel::collections::members_changed(&mut st, app);
@@ -2108,7 +2113,7 @@ pub(crate) fn told(app: &App, told: Told) {
             // root's tree once the index can be read.
             crate::tree::want(&mut st, app);
             crate::roots::show(&st, app);
-            let wanted = st.library.wanted.take();
+            let wanted = st.views.library.wanted.take();
             drop(st);
             reread(&state, app, false);
             if let (Some(view), Some(worker)) = (wanted, crate::WORKER.with(|w| w.borrow().clone()))
@@ -2157,7 +2162,13 @@ pub(crate) fn told(app: &App, told: Told) {
             // A pass over an archive is its answer: its queued moves run.
             if error.is_none() {
                 let mut st = state.borrow_mut();
-                if let Some(archive) = st.library.roots.archive_of(&path).map(Path::to_path_buf) {
+                if let Some(archive) = st
+                    .views
+                    .library
+                    .roots
+                    .archive_of(&path)
+                    .map(Path::to_path_buf)
+                {
                     crate::panel::archive::rejects::heard_from(&mut st, app, &archive, true);
                     crate::sync::heard_from(&mut st, app, &archive, true);
                 }
@@ -2183,7 +2194,7 @@ pub(crate) fn told(app: &App, told: Told) {
         } => {
             crate::panel::archive::rejects::heard_from(&mut state.borrow_mut(), app, &root, false);
             crate::sync::heard_from(&mut state.borrow_mut(), app, &root, false);
-            let words = skipped_words(&state.borrow().library.roots, &root);
+            let words = skipped_words(&state.borrow().views.library.roots, &root);
             if first {
                 app.set_status(words.clone().into());
             }
@@ -2192,12 +2203,12 @@ pub(crate) fn told(app: &App, told: Told) {
                 // filter's line, and the rows the window has are kept.
                 Some(generation) => {
                     let mut st = state.borrow_mut();
-                    if generation != st.index_generation {
+                    if generation != st.views.index_generation {
                         return;
                     }
-                    st.index_progress = None;
-                    st.awaiting_index = false;
-                    st.index_error = Some(words);
+                    st.views.index_progress = None;
+                    st.launch.awaiting_index = false;
+                    st.views.index_error = Some(words);
                     crate::panel::cull::show_filter(&st, app);
                 }
                 // A pass in the background: as one that found nothing,
@@ -2220,13 +2231,13 @@ pub(crate) fn told(app: &App, told: Told) {
         Told::Failed(message) => {
             tracing::warn!("no library index: {message}");
             let mut st = state.borrow_mut();
-            st.index = None;
+            st.views.index = None;
             // The view of the roots asked for will not come, and a
             // folder opened meanwhile is recorded as any other.
-            st.library.wanted = None;
-            st.index_progress = None;
-            st.index_error = Some(format!("No library index: {message}"));
-            st.awaiting_index = false;
+            st.views.library.wanted = None;
+            st.views.index_progress = None;
+            st.views.index_error = Some(format!("No library index: {message}"));
+            st.launch.awaiting_index = false;
             crate::panel::cull::show_filter(&st, app);
             app.window().request_redraw();
         }
@@ -2235,10 +2246,10 @@ pub(crate) fn told(app: &App, told: Told) {
             done,
             total,
         } => {
-            if generation != state.borrow().index_generation {
+            if generation != state.borrow().views.index_generation {
                 return;
             }
-            state.borrow_mut().index_progress = Some((done, total));
+            state.borrow_mut().views.index_progress = Some((done, total));
             reread(&state, app, false);
         }
         Told::Indexed {
@@ -2253,7 +2264,7 @@ pub(crate) fn told(app: &App, told: Told) {
             crate::panel::collections::healed(&state, app, &report.rehashed);
             crate::panel::collections::report_landed(&mut state.borrow_mut(), app, &report);
             crate::panel::stacks::healed(&state, app, &report.moved_files, &report.rehashed);
-            if generation != state.borrow().index_generation {
+            if generation != state.borrow().views.index_generation {
                 return;
             }
             tracing::info!(
@@ -2277,12 +2288,12 @@ pub(crate) fn told(app: &App, told: Told) {
             }
             let mut st = state.borrow_mut();
             if let Some(e) = error {
-                st.index_tries += 1;
-                if st.index_tries <= RETRIES {
+                st.views.index_tries += 1;
+                if st.views.index_tries <= RETRIES {
                     // Busy, most likely: said, and asked again in a
                     // moment. A capture waiting on the chips waits on.
-                    st.index_error = Some(format!("Library index busy; trying again ({e})"));
-                    st.index_progress = None;
+                    st.views.index_error = Some(format!("Library index busy; trying again ({e})"));
+                    st.views.index_progress = None;
                     let app_weak = app.as_weak();
                     slint::Timer::single_shot(RETRY_AFTER, move || {
                         let Some(app) = app_weak.upgrade() else {
@@ -2292,7 +2303,7 @@ pub(crate) fn told(app: &App, told: Told) {
                             return;
                         };
                         let mut st = state.borrow_mut();
-                        if st.index_generation == generation {
+                        if st.views.index_generation == generation {
                             index_open_folder(&mut st, None);
                             crate::panel::cull::show_filter(&st, &app);
                         }
@@ -2301,20 +2312,20 @@ pub(crate) fn told(app: &App, told: Told) {
                     return;
                 }
                 tracing::warn!("index: giving up on the folder after {RETRIES} tries: {e}");
-                st.index_error = Some(format!("Library index unavailable: {e}"));
+                st.views.index_error = Some(format!("Library index unavailable: {e}"));
             } else {
-                st.index_tries = 0;
-                st.index_error = None;
+                st.views.index_tries = 0;
+                st.views.index_error = None;
             }
-            st.index_progress = None;
+            st.views.index_progress = None;
             let moved = refresh_ids(&mut st);
-            let chose = !st.facets_wanted.is_empty() && choose_wanted(&mut st);
-            st.awaiting_index = false;
+            let chose = !st.launch.facets_wanted.is_empty() && choose_wanted(&mut st);
+            st.launch.awaiting_index = false;
             // A folder sorted by what only its rows say (its capture
             // times, its ratings) and read before the index had them is
             // read again in that order once the pass has written them.
-            let resort = st.view == crate::roots::View::Folder
-                && st.sort.choice(&st.view).order().map(|o| o.by)
+            let resort = st.views.view == crate::roots::View::Folder
+                && st.views.sort.choice(&st.views.view).order().map(|o| o.by)
                     != Some(greycard_library::SortBy::Name)
                 && report.added + report.changed + report.meta_refreshed > 0;
             drop(st);
@@ -2375,10 +2386,10 @@ fn reread(state: &Rc<RefCell<State>>, app: &App, changed: bool) {
     let mut st = state.borrow_mut();
     let moved = refresh_ids(&mut st);
     let pass = index_pass(&st);
-    if changed || moved || pass != st.index_passed {
+    if changed || moved || pass != st.views.index_passed {
         // The list is made from this answer, not asked again.
-        st.index_passed = pass;
-        st.index_pass_ready = true;
+        st.views.index_passed = pass;
+        st.views.index_pass_ready = true;
         drop(st);
         crate::panel::cull::refilter(state, app, changed);
     } else {
@@ -2481,7 +2492,7 @@ mod tests {
         let (files, sidecars, reader) = folder(dir);
         let mut st = State::empty(files, app);
         st.sidecars = sidecars;
-        st.index_reader = Some(reader);
+        st.views.index_reader = Some(reader);
         refresh_ids(&mut st);
         st
     }
@@ -2499,14 +2510,14 @@ mod tests {
                 index,
             })
             .collect();
-        st.filter.apply(&frames)
+        st.views.filter.apply(&frames)
     }
 
     /// A facet's counts, the index's answer brought up to the filter
     /// first, as `rebuild_browser` brings it before the chips are
     /// shown.
     fn counts(st: &mut State, facet: Facet) -> Vec<(String, usize)> {
-        st.index_passed = index_pass(st);
+        st.views.index_passed = index_pass(st);
         facet_counts(st)
             .into_iter()
             .find(|(f, _)| *f == facet)
@@ -2525,31 +2536,33 @@ mod tests {
         let dir = scratch("chip");
         let app = crate::testing::window(5);
         let mut st = state(&app, &dir);
-        assert_eq!(st.index_ids.iter().filter(|i| i.is_some()).count(), 4);
-        assert_eq!(st.index_ids[4], None, "the fifth has no row");
+        assert_eq!(st.views.index_ids.iter().filter(|i| i.is_some()).count(), 4);
+        assert_eq!(st.views.index_ids[4], None, "the fifth has no row");
         assert_eq!(shown(&st), [0, 1, 2, 3, 4]);
 
-        st.filter.toggle_facet(Facet::Camera, "Canon EOS R6m2");
+        st.views
+            .filter
+            .toggle_facet(Facet::Camera, "Canon EOS R6m2");
         // The two R6s, and the fifth, which the index cannot yet say
         // is an R6 or not.
         assert_eq!(shown(&st), [0, 1, 4]);
         // Two chips of a facet are either.
-        st.filter.toggle_facet(Facet::Camera, "Canon EOS R5");
+        st.views.filter.toggle_facet(Facet::Camera, "Canon EOS R5");
         assert_eq!(shown(&st), [0, 1, 2, 4]);
         // A second facet narrows.
-        st.filter.toggle_facet(Facet::Iso, "100");
+        st.views.filter.toggle_facet(Facet::Iso, "100");
         assert_eq!(shown(&st), [2, 4]);
 
         // Once the fifth has a row the index's word stands.
-        let db = st.index_reader.as_ref().unwrap().path().to_path_buf();
+        let db = st.views.index_reader.as_ref().unwrap().path().to_path_buf();
         Library::open(&db)
             .unwrap()
             .index_file(&st.files[4])
             .unwrap();
         refresh_ids(&mut st);
-        assert!(st.index_ids[4].is_some());
+        assert!(st.views.index_ids[4].is_some());
         assert_eq!(shown(&st), [2]);
-        st.filter.toggle_facet(Facet::Iso, "100");
+        st.views.filter.toggle_facet(Facet::Iso, "100");
         assert_eq!(shown(&st), [0, 1, 2, 4]);
         drop(st);
         crate::testing::remove_dir_retry(&dir);
@@ -2564,6 +2577,7 @@ mod tests {
         let app = crate::testing::window(5);
         let mut st = state(&app, &dir);
         let sony = st
+            .views
             .index_reader
             .as_ref()
             .unwrap()
@@ -2586,16 +2600,18 @@ mod tests {
         );
 
         // Three stars or more: the meta test narrows every facet.
-        st.filter.stars = filter::Stars::AtLeast(3);
+        st.views.filter.stars = filter::Stars::AtLeast(3);
         assert_eq!(
             counts(&mut st, Facet::Camera),
             pairs(&[("Canon EOS R5", 1), ("Canon EOS R6m2", 1)])
         );
-        st.filter.stars = filter::Stars::default();
+        st.views.filter.stars = filter::Stars::default();
 
         // An R6 chip on: the camera row is unmoved, since its own
         // group is set aside; the others narrow to the R6s.
-        st.filter.toggle_facet(Facet::Camera, "Canon EOS R6m2");
+        st.views
+            .filter
+            .toggle_facet(Facet::Camera, "Canon EOS R6m2");
         assert_eq!(
             counts(&mut st, Facet::Camera),
             pairs(&[("Canon EOS R6m2", 2), ("Canon EOS R5", 1), (&sony, 1)])
@@ -2606,20 +2622,20 @@ mod tests {
         // And the rule itself, chip by chip: a count is what that
         // chip alone, the other groups as they stand, would list of
         // the frames the index has rows for.
-        st.filter.stars = filter::Stars::AtLeast(1);
-        st.index_passed = index_pass(&st);
+        st.views.filter.stars = filter::Stars::AtLeast(1);
+        st.views.index_passed = index_pass(&st);
         for facet in Facet::ALL {
             let rows = facet_counts(&st);
             let (_, chips) = rows.iter().find(|(f, _)| *f == facet).unwrap();
             for chip in chips {
-                let mut alone = st.filter.clone();
+                let mut alone = st.views.filter.clone();
                 alone.facets[filter::facet_slot(facet)] = vec![chip.value.clone()];
-                let saved = std::mem::replace(&mut st.filter, alone);
+                let saved = std::mem::replace(&mut st.views.filter, alone);
                 let listed = shown(&st)
                     .into_iter()
-                    .filter(|&i| st.index_ids[i].is_some())
+                    .filter(|&i| st.views.index_ids[i].is_some())
                     .count();
-                st.filter = saved;
+                st.views.filter = saved;
                 assert_eq!(listed, chip.count, "{facet:?} {}", chip.value);
             }
         }
@@ -2627,11 +2643,11 @@ mod tests {
         // The keyword is counted from the sidecars in hand: a keyword
         // taken off in memory is off the count before any row knows,
         // which is also what `--no-sidecars` needs.
-        st.filter = filter::Filter::default();
+        st.views.filter = filter::Filter::default();
         st.sidecars[2].meta.set_keywords(Vec::new());
         assert_eq!(counts(&mut st, Facet::Keyword), pairs(&[("harbor", 1)]));
         // And it needs no index at all.
-        st.index_reader = None;
+        st.views.index_reader = None;
         refresh_ids(&mut st);
         assert_eq!(counts(&mut st, Facet::Keyword), pairs(&[("harbor", 1)]));
         drop(st);
@@ -2646,20 +2662,20 @@ mod tests {
         let dir = scratch("typed");
         let app = crate::testing::window(5);
         let mut st = state(&app, &dir);
-        st.filter.text = "camera:R6".into();
+        st.views.filter.text = "camera:R6".into();
         assert_eq!(shown(&st), [0, 1, 4]);
-        st.filter.text = "camera:R6 rating>=3".into();
+        st.views.filter.text = "camera:R6 rating>=3".into();
         assert_eq!(shown(&st), [0]);
-        st.filter.text = "iso>=3200 harbor".into();
+        st.views.filter.text = "iso>=3200 harbor".into();
         assert_eq!(shown(&st), [0]);
         // The sidecar's word, not the row's: a rating set in memory
         // counts before any index_file has run.
         st.sidecars[1].meta.rating = 5;
-        st.filter.text = "rating=5".into();
+        st.views.filter.text = "rating=5".into();
         assert_eq!(shown(&st), [1]);
         // A term that does not parse is the word it was, and says so.
-        st.filter.text = "rating>=9".into();
-        assert_eq!(st.filter.typed().errors.len(), 1);
+        st.views.filter.text = "rating>=9".into();
+        assert_eq!(st.views.filter.typed().errors.len(), 1);
         assert_eq!(shown(&st), Vec::<usize>::new());
         drop(st);
         crate::testing::remove_dir_retry(&dir);
@@ -2689,7 +2705,7 @@ mod tests {
         let rows = facet_rows(&st);
         assert!(rows.iter().any(|r| r.name == "Camera"));
         assert!(kind_row(&rows).is_none());
-        st.filter.toggle_facet(Facet::Kind, "tiff");
+        st.views.filter.toggle_facet(Facet::Kind, "tiff");
         let row = kind_row(&facet_rows(&st)).expect("a kind on");
         // The fifth, which the index has not reached, among them.
         assert_eq!(chips(&row), [("TIFF".to_string(), 5, true)]);
@@ -2719,9 +2735,9 @@ mod tests {
         let app = crate::testing::window(4);
         let mut st = State::empty(files, &app);
         st.sidecars = vec![Sidecar::default(); 4];
-        st.index_reader = Some(Library::open_read_only(&db).unwrap());
+        st.views.index_reader = Some(Library::open_read_only(&db).unwrap());
         refresh_ids(&mut st);
-        assert_eq!(st.index_ids[3], None, "the JPEG has no row");
+        assert_eq!(st.views.index_ids[3], None, "the JPEG has no row");
         let rows = facet_rows(&st);
         let (long, short) = split_facet_rows(&rows);
         assert!(kind_row(&long).is_none());
@@ -2738,11 +2754,11 @@ mod tests {
         // While the index is at work its progress stays up beside the
         // kind's row, which a mixed folder has from the start; with
         // rows and the index done, there is nothing to say.
-        st.index_progress = Some((1, 4));
+        st.views.index_progress = Some((1, 4));
         crate::panel::cull::show_filter(&st, &app);
         assert!(app.get_filter_facets().iter().any(|r| r.name == "Kind"));
         assert_eq!(app.get_filter_facet_note(), "Indexing the folder: 1 of 4");
-        st.index_progress = None;
+        st.views.index_progress = None;
         crate::panel::cull::show_filter(&st, &app);
         assert_eq!(app.get_filter_facet_note(), "");
         assert_eq!(
@@ -2754,17 +2770,17 @@ mod tests {
         // and the JPEG the index has not reached is not shown.
         let (text, wanted) = filter::from_cli("kind:raw");
         assert!(text.is_empty());
-        st.filter = filter::Filter::default();
-        assert!(st.filter.choose_at_once(wanted).is_empty());
-        assert_eq!(st.filter.chosen(Facet::Kind), ["raw".to_string()]);
+        st.views.filter = filter::Filter::default();
+        assert!(st.views.filter.choose_at_once(wanted).is_empty());
+        assert_eq!(st.views.filter.chosen(Facet::Kind), ["raw".to_string()]);
         assert_eq!(shown(&st), [0]);
         // The JPEG chip the bar hands back, the same.
-        st.filter.toggle_facet(Facet::Kind, "raw");
-        st.filter.toggle_facet(Facet::Kind, "jpeg");
+        st.views.filter.toggle_facet(Facet::Kind, "raw");
+        st.views.filter.toggle_facet(Facet::Kind, "jpeg");
         assert_eq!(shown(&st), [3]);
 
         // With no index at all the row is there and the chip holds.
-        st.index_reader = None;
+        st.views.index_reader = None;
         refresh_ids(&mut st);
         let row = kind_row(&facet_rows(&st)).expect("a kind row with no index");
         assert_eq!(row.chips.row_count(), 3);
@@ -2785,7 +2801,7 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.sidecars = sidecars;
-            st.index_reader = Some(reader);
+            st.views.index_reader = Some(reader);
             refresh_ids(&mut st);
             crate::panel::browser::rebuild_browser(&mut st, &app);
         }
@@ -2797,7 +2813,7 @@ mod tests {
             filter::facet_slot(Facet::Camera) as i32,
             "Canon EOS R6m2".into(),
         );
-        assert_eq!(state.borrow().shown, [0, 1, 4]);
+        assert_eq!(state.borrow().views.shown, [0, 1, 4]);
         assert_eq!(app.get_filter_shown(), 3);
         assert!(app.get_filter_on());
         let camera = app.get_filter_facets().row_data(0).unwrap();
@@ -2808,9 +2824,9 @@ mod tests {
         );
         // Clear lets it go with the rest.
         app.invoke_filter_cleared();
-        assert_eq!(state.borrow().shown, [0, 1, 2, 3, 4]);
+        assert_eq!(state.borrow().views.shown, [0, 1, 2, 3, 4]);
         // The callbacks hold the state too; its connection goes here.
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -2932,7 +2948,7 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.sidecars = sidecars;
-            st.index_reader = Some(reader);
+            st.views.index_reader = Some(reader);
             refresh_ids(&mut st);
             crate::panel::browser::rebuild_browser(&mut st, &app);
         }
@@ -2952,7 +2968,7 @@ mod tests {
             long.len() + short.len(),
             app.get_filter_facets().row_count()
         );
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -3278,11 +3294,11 @@ mod tests {
         let (state, _worker) = state_for(&app, Vec::new());
         let root = {
             let mut st = state.borrow_mut();
-            st.library.roots.add(&root).unwrap();
-            let root = st.library.roots.list()[0].clone();
-            st.library.roots.set_name(&root, "Archive");
-            st.library.launch_left = 1;
-            st.library.awaiting = true;
+            st.views.library.roots.add(&root).unwrap();
+            let root = st.views.library.roots.list()[0].clone();
+            st.views.library.roots.set_name(&root, "Archive");
+            st.views.library.launch_left = 1;
+            st.views.library.awaiting = true;
             root
         };
         let skipped = |first: bool, launch: bool, generation: Option<u64>| Told::Skipped {
@@ -3298,23 +3314,24 @@ mod tests {
             "{}",
             app.get_status()
         );
-        assert_eq!(state.borrow().library.launch_left, 0);
-        assert!(!state.borrow().library.awaiting);
+        assert_eq!(state.borrow().views.library.launch_left, 0);
+        assert!(!state.borrow().views.library.awaiting);
         app.set_status("something else".into());
         told(&app, skipped(false, false, None));
         assert_eq!(app.get_status(), "something else", "said once");
         {
             let mut st = state.borrow_mut();
-            st.index_generation = 9;
-            st.awaiting_index = true;
-            st.index_progress = Some((0, 3));
+            st.views.index_generation = 9;
+            st.launch.awaiting_index = true;
+            st.views.index_progress = Some((0, 3));
         }
         told(&app, skipped(false, false, Some(9)));
         let st = state.borrow();
-        assert!(!st.awaiting_index);
-        assert_eq!(st.index_progress, None);
+        assert!(!st.launch.awaiting_index);
+        assert_eq!(st.views.index_progress, None);
         assert!(
-            st.index_error
+            st.views
+                .index_error
                 .as_deref()
                 .is_some_and(|e| e.starts_with("Archive isn't reachable"))
         );

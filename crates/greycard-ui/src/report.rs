@@ -326,7 +326,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
         let report = Report {
             version: env!("CARGO_PKG_VERSION").into(),
             os: os(),
-            gpu: state.borrow().gpu.clone().unwrap_or_default(),
+            gpu: state.borrow().develop.gpu.clone().unwrap_or_default(),
             log: log
                 .as_deref()
                 .map(|p| log_note(&log_shown(p)))

@@ -133,9 +133,9 @@ fn mark_png(entry: &Entry) -> Option<PathBuf> {
 
 /// The count at the sheet's foot.
 pub(crate) fn show_queue(st: &State, app: &App) {
-    app.set_export_queue_sets(st.export_queue.len() as i32);
-    app.set_export_queue_line(export_queue::count_line(&st.export_queue).into());
-    app.set_export_queue_running(st.queue_run.as_ref().is_some_and(|r| r.set.is_some()));
+    app.set_export_queue_sets(st.work.export_queue.len() as i32);
+    app.set_export_queue_line(export_queue::count_line(&st.work.export_queue).into());
+    app.set_export_queue_running(st.work.queue_run.as_ref().is_some_and(|r| r.set.is_some()));
 }
 
 /// Write the queue now, as it is: every change is kept at once. While
@@ -144,12 +144,12 @@ pub(crate) fn show_queue(st: &State, app: &App) {
 /// place), so a window closed or a crash mid-entry does not send them
 /// again at the next run.
 pub(crate) fn keep(st: &State) {
-    let Some(path) = &st.export_queue_file else {
+    let Some(path) = &st.work.export_queue_file else {
         return;
     };
-    match &st.queue_run {
+    match &st.work.queue_run {
         Some(run) if run.done.iter().any(|d| *d) => {
-            let mut queue = st.export_queue.clone();
+            let mut queue = st.work.export_queue.clone();
             if let Some(entry) = queue.get_mut(run.entry) {
                 let mut done = run.done.iter();
                 entry
@@ -161,7 +161,7 @@ pub(crate) fn keep(st: &State) {
             }
             export_queue::save(path, &queue);
         }
-        _ => export_queue::save(path, &st.export_queue),
+        _ => export_queue::save(path, &st.work.export_queue),
     }
 }
 
@@ -180,12 +180,12 @@ fn left_behind(n: usize) -> String {
 /// run).
 pub(crate) fn open_at_launch(st: &mut State, app: &App, settings: Option<&Path>, write: bool) {
     let path = settings.map(export_queue::path_beside);
-    st.export_queue = path.as_deref().map(export_queue::load).unwrap_or_default();
-    st.export_queue_file = path.filter(|_| write);
-    if !st.export_queue.is_empty() {
+    st.work.export_queue = path.as_deref().map(export_queue::load).unwrap_or_default();
+    st.work.export_queue_file = path.filter(|_| write);
+    if !st.work.export_queue.is_empty() {
         tracing::info!(
             "export queue: {}, waiting",
-            export_queue::count_line(&st.export_queue)
+            export_queue::count_line(&st.work.export_queue)
         );
     }
     show_queue(st, app);
@@ -201,7 +201,7 @@ fn queue_pressed(
     pressed: &crate::versions::Key,
     frames: &[usize],
 ) {
-    if state.borrow().export_choosing {
+    if state.borrow().work.export_choosing {
         return;
     }
     let Some((raw, _, frames, _)) = pressed_frames(state, app, pressed, frames) else {
@@ -265,7 +265,7 @@ fn entry_of(frames: SetFrames, sheet: crate::sheet::Sheet, preset: Option<String
 
 /// Append `entry`, keep the file, and say where the queue stands.
 pub(crate) fn add(st: &mut State, app: &App, entry: Entry) {
-    st.export_choosing = false;
+    st.work.export_choosing = false;
     let n = entry.frames.len();
     tracing::info!(
         "queued {} {}: {}",
@@ -276,14 +276,14 @@ pub(crate) fn add(st: &mut State, app: &App, entry: Entry) {
         ),
         entry.sheet.settings().describe()
     );
-    st.export_queue.push(entry);
+    st.work.export_queue.push(entry);
     keep(st);
     show_queue(st, app);
     app.set_status(
         format!(
             "{} queued; {} in the queue",
             queue::frames(n),
-            export_queue::sets(st.export_queue.len())
+            export_queue::sets(st.work.export_queue.len())
         )
         .into(),
     );
@@ -291,11 +291,11 @@ pub(crate) fn add(st: &mut State, app: &App, entry: Entry) {
 
 /// Export the queue: its entries in order, from the first.
 pub(crate) fn run(st: &mut State, app: &App) {
-    if st.exporting.is_some() || st.export_choosing || st.queue_run.is_some() {
+    if st.work.exporting.is_some() || st.work.export_choosing || st.work.queue_run.is_some() {
         app.set_status("an export is running; the queue waits for it".into());
         return;
     }
-    if st.export_queue.is_empty() {
+    if st.work.export_queue.is_empty() {
         app.set_status("nothing queued".into());
         return;
     }
@@ -307,8 +307,8 @@ pub(crate) fn run(st: &mut State, app: &App) {
 /// run is over. `left_behind` counts the frames earlier entries left
 /// queued for not being there.
 fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize) {
-    let Some(entry) = st.export_queue.get(index) else {
-        st.queue_run = None;
+    let Some(entry) = st.work.export_queue.get(index) else {
+        st.work.queue_run = None;
         show_queue(st, app);
         return;
     };
@@ -330,9 +330,9 @@ fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize) {
         .collect();
     let folder = entry.folder.clone();
     let png = mark_png(entry);
-    st.queue_probes += 1;
-    let probe = st.queue_probes;
-    st.queue_run = Some(Run {
+    st.work.queue_probes += 1;
+    let probe = st.work.queue_probes;
+    st.work.queue_run = Some(Run {
         entry: index,
         set: None,
         at: Vec::new(),
@@ -368,6 +368,7 @@ fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize) {
 /// is not there.
 fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
     let Some(run) = st
+        .work
         .queue_run
         .as_ref()
         .filter(|r| r.probe == probe && r.set.is_none())
@@ -375,25 +376,25 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
         return;
     };
     let (index, mut left) = (run.entry, run.left_behind);
-    let Some(entry) = st.export_queue.get(index) else {
-        st.queue_run = None;
+    let Some(entry) = st.work.export_queue.get(index) else {
+        st.work.queue_run = None;
         show_queue(st, app);
         return;
     };
     let stop = |st: &mut State, why: String| {
-        st.queue_run = None;
+        st.work.queue_run = None;
         show_queue(st, app);
         tracing::warn!("export queue stopped: {why}");
         app.set_status(
             format!(
                 "the queue stopped: {why}; {} left in the queue",
-                export_queue::count_line(&st.export_queue)
+                export_queue::count_line(&st.work.export_queue)
             )
             .into(),
         );
     };
     // An export begun while the files were looked for has the worker.
-    if st.exporting.is_some() {
+    if st.work.exporting.is_some() {
         stop(st, "another export began".into());
         return;
     }
@@ -474,19 +475,19 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
     // stand in the queue with no frame to run.
     let mut emptied = false;
     if !deleted.is_empty() {
-        if let Some(entry) = st.export_queue.get_mut(index) {
+        if let Some(entry) = st.work.export_queue.get_mut(index) {
             for &i in deleted.iter().rev() {
                 entry.frames.remove(i);
             }
             emptied = entry.frames.is_empty();
         }
         if emptied {
-            st.export_queue.remove(index);
+            st.work.export_queue.remove(index);
         }
         for a in &mut at {
             *a -= deleted.iter().filter(|&&d| d < *a).count();
         }
-        if let Some(run) = st.queue_run.as_mut() {
+        if let Some(run) = st.work.queue_run.as_mut() {
             run.done = vec![false; run.done.len() - deleted.len()];
         }
         keep(st);
@@ -515,17 +516,17 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
         return;
     }
     let count = frames.len();
-    let after = st.export_queue.len() - index - 1;
+    let after = st.work.export_queue.len() - index - 1;
     #[cfg(test)]
     let sent: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
     let Some(set) =
         crate::panel::deliver::start_set(st, app, frames, folder, sub, settings, on_exists, preset)
     else {
-        st.queue_run = None;
+        st.work.queue_run = None;
         show_queue(st, app);
         return;
     };
-    if let Some(run) = st.queue_run.as_mut() {
+    if let Some(run) = st.work.queue_run.as_mut() {
         run.set = Some(set);
         run.at = at;
         run.left_behind = left;
@@ -549,7 +550,7 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
 /// passed over by a cancel. A frame begun is done with, however it
 /// went, and the file says so at once.
 pub(crate) fn frame_done(st: &mut State, set: &Arc<queue::Set>, index: usize, ran: bool) {
-    if let Some(run) = st.queue_run.as_mut()
+    if let Some(run) = st.work.queue_run.as_mut()
         && run.is(set)
         && ran
         && let Some(&i) = run.at.get(index)
@@ -564,17 +565,17 @@ pub(crate) fn frame_done(st: &mut State, set: &Arc<queue::Set>, index: usize, ra
 /// queue's, what is left of its entry stays queued, and the next entry
 /// goes unless the set was stopped.
 pub(crate) fn set_done(st: &mut State, app: &App, set: &Arc<queue::Set>, line: &str) {
-    let Some(run) = st.queue_run.take_if(|r| r.is(set)) else {
+    let Some(run) = st.work.queue_run.take_if(|r| r.is(set)) else {
         return;
     };
     let mut next = run.entry + 1;
-    if let Some(entry) = st.export_queue.get_mut(run.entry) {
+    if let Some(entry) = st.work.export_queue.get_mut(run.entry) {
         let mut done = run.done.iter();
         entry
             .frames
             .retain(|_| !done.next().copied().unwrap_or(false));
         if entry.frames.is_empty() {
-            st.export_queue.remove(run.entry);
+            st.work.export_queue.remove(run.entry);
             next = run.entry;
         }
     }
@@ -582,23 +583,23 @@ pub(crate) fn set_done(st: &mut State, app: &App, set: &Arc<queue::Set>, line: &
     show_queue(st, app);
     let behind = left_behind(run.left_behind);
     if set.is_canceled() {
-        let left = match st.export_queue.len() {
+        let left = match st.work.export_queue.len() {
             0 => "nothing left in the queue".to_string(),
             _ => format!(
                 "{} left in the queue",
-                export_queue::count_line(&st.export_queue)
+                export_queue::count_line(&st.work.export_queue)
             ),
         };
         app.set_status(format!("{line}{behind}; {left}").into());
         return;
     }
-    if next >= st.export_queue.len() {
-        let end = if st.export_queue.is_empty() {
+    if next >= st.work.export_queue.len() {
+        let end = if st.work.export_queue.is_empty() {
             "the queue is done".to_string()
         } else {
             format!(
                 "{} left in the queue",
-                export_queue::count_line(&st.export_queue)
+                export_queue::count_line(&st.work.export_queue)
             )
         };
         app.set_status(format!("{line}{behind}; {end}").into());
@@ -611,13 +612,13 @@ pub(crate) fn set_done(st: &mut State, app: &App, set: &Arc<queue::Set>, line: &
 /// exported; while its files are still being looked for, the look is
 /// let go of.
 pub(crate) fn clear(st: &mut State, app: &App) {
-    if st.queue_run.as_ref().is_some_and(|r| r.set.is_some()) {
+    if st.work.queue_run.as_ref().is_some_and(|r| r.set.is_some()) {
         app.set_status("the queue is running; stop it first".into());
         return;
     }
-    let n = st.export_queue.len();
-    st.queue_run = None;
-    st.export_queue.clear();
+    let n = st.work.export_queue.len();
+    st.work.queue_run = None;
+    st.work.export_queue.clear();
     keep(st);
     show_queue(st, app);
     app.set_status(format!("export queue cleared ({})", export_queue::sets(n)).into());
@@ -754,8 +755,8 @@ mod tests {
     fn frame(app: &App, state: &Rc<RefCell<State>>, index: usize, done: queue::Done) {
         let (set, source, edit) = {
             let st = state.borrow();
-            let run = st.queue_run.as_ref().expect("the queue runs");
-            let f = &st.export_queue[run.entry].frames[run.at[index]];
+            let run = st.work.queue_run.as_ref().expect("the queue runs");
+            let f = &st.work.export_queue[run.entry].frames[run.at[index]];
             // The name the worker was sent, as it hands it back.
             let set = run.set.clone().expect("the entry was sent");
             (set, run.sent[index].clone(), f.edit.clone())
@@ -777,6 +778,7 @@ mod tests {
     fn finish(app: &App, state: &Rc<RefCell<State>>) {
         let set = state
             .borrow()
+            .work
             .queue_run
             .as_ref()
             .unwrap()
@@ -805,11 +807,11 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.picked = vec![0, 2];
+            st.views.picked = vec![0, 2];
             st.sidecars[2].current.light.exposure = 1.0;
             st.sidecars[2].turn = 3;
-            st.export_queue_file = Some(queue_file(&dir));
-            st.export_presets = vec![ExportPreset {
+            st.work.export_queue_file = Some(queue_file(&dir));
+            st.work.export_presets = vec![ExportPreset {
                 name: "Web".into(),
                 sheet: web.clone(),
             }];
@@ -817,12 +819,12 @@ mod tests {
         app.invoke_export_preset_chosen("Web".into());
         app.set_exposure(0.5);
         // The folder the sheet's row shows, last chosen: no chooser.
-        state.borrow_mut().export_last_folder = Some(dir.join("out"));
+        state.borrow_mut().work.export_last_folder = Some(dir.join("out"));
         app.invoke_export_queue_add();
 
         let st = state.borrow();
-        assert_eq!(st.export_queue.len(), 1);
-        let e = &st.export_queue[0];
+        assert_eq!(st.work.export_queue.len(), 1);
+        let e = &st.work.export_queue[0];
         let got: Vec<(PathBuf, f32, u8)> = e
             .frames
             .iter()
@@ -835,12 +837,12 @@ mod tests {
         assert!(e.sheet.same(&web));
         assert_eq!(e.preset.as_deref(), Some("Web"));
         assert_eq!(e.folder.as_deref(), Some(dir.join("out").as_path()));
-        assert_eq!(export_queue::load(&queue_file(&dir)), st.export_queue);
+        assert_eq!(export_queue::load(&queue_file(&dir)), st.work.export_queue);
         assert_eq!(app.get_export_queue_sets(), 1);
         assert_eq!(app.get_export_queue_line(), "1 set, 2 frames queued");
         assert_eq!(app.get_status(), "2 frames queued; 1 set in the queue");
         // Nothing was exported.
-        assert!(st.exporting.is_none() && st.queue_run.is_none());
+        assert!(st.work.exporting.is_none() && st.work.queue_run.is_none());
         assert!(!dir.join("out").exists());
         // The panel's edit was made a state, as Export makes it.
         assert_eq!(st.sidecars[0].current.light.exposure, 0.5);
@@ -850,7 +852,7 @@ mod tests {
         app.set_export_size("1024".into());
         app.invoke_export_sheet_changed();
         state.borrow_mut().sidecars[2].current.light.exposure = -1.0;
-        let queued = state.borrow().export_queue[0].clone();
+        let queued = state.borrow().work.export_queue[0].clone();
         assert_eq!(queued.sheet.size, "2048");
         assert_eq!(queued.frames[1].edit.light.exposure, 1.0);
         assert_eq!(export_queue::load(&queue_file(&dir))[0], queued);
@@ -859,13 +861,13 @@ mod tests {
         // None chosen: the frame's own folder, as the row shows it.
         {
             let mut st = state.borrow_mut();
-            st.picked = vec![0];
-            st.export_last_folder = None;
+            st.views.picked = vec![0];
+            st.work.export_last_folder = None;
         }
         app.invoke_export_queue_add();
         assert_eq!(app.get_export_queue_line(), "2 sets, 3 frames queued");
         assert_eq!(app.get_status(), "1 frame queued; 2 sets in the queue");
-        let second = state.borrow().export_queue[1].clone();
+        let second = state.borrow().work.export_queue[1].clone();
         assert_eq!(second.sheet.size, "1024");
         assert_eq!(second.preset, None, "an edited sheet names no preset");
         assert_eq!(second.folder.as_deref(), Some(dir.as_path()));
@@ -874,7 +876,7 @@ mod tests {
         // frame, into it.
         app.set_export_subfolder("export".into());
         app.invoke_export_queue_add();
-        let third = state.borrow().export_queue[2].clone();
+        let third = state.borrow().work.export_queue[2].clone();
         assert_eq!(third.folder, None);
         assert_eq!(
             third.sheet.subfolder().unwrap().as_deref(),
@@ -894,7 +896,7 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         {
             let mut st = state.borrow_mut();
-            st.export_queue_file = Some(queue_file(&dir));
+            st.work.export_queue_file = Some(queue_file(&dir));
             give_edits(&mut st);
             let a = entry(&st, &[0, 1], Some("Web"), "2048");
             let b = entry(&st, &[2], Some("Print"), "Full");
@@ -904,7 +906,7 @@ mod tests {
         app.invoke_export_queue_run();
         {
             let st = state.borrow();
-            let set = st.exporting.as_ref().expect("the first set runs");
+            let set = st.work.exporting.as_ref().expect("the first set runs");
             assert_eq!(set.total, 2);
             assert_eq!(set.preset.as_deref(), Some("Web"));
             assert_eq!(set.settings.long_edge, Some(2048));
@@ -916,10 +918,10 @@ mod tests {
         finish(&app, &state);
         {
             let st = state.borrow();
-            assert_eq!(st.export_queue.len(), 1, "the first entry is done");
-            assert_eq!(st.export_queue[0].preset.as_deref(), Some("Print"));
-            assert_eq!(export_queue::load(&queue_file(&dir)), st.export_queue);
-            let set = st.exporting.as_ref().expect("the second set runs");
+            assert_eq!(st.work.export_queue.len(), 1, "the first entry is done");
+            assert_eq!(st.work.export_queue[0].preset.as_deref(), Some("Print"));
+            assert_eq!(export_queue::load(&queue_file(&dir)), st.work.export_queue);
+            let set = st.work.exporting.as_ref().expect("the second set runs");
             assert_eq!(set.total, 1);
             assert_eq!(set.preset.as_deref(), Some("Print"));
             assert_eq!(set.settings.long_edge, None);
@@ -928,8 +930,8 @@ mod tests {
         frame(&app, &state, 0, exported("/nowhere/out/IMG_0002.jpg"));
         finish(&app, &state);
         let st = state.borrow();
-        assert!(st.export_queue.is_empty());
-        assert!(st.exporting.is_none() && st.queue_run.is_none());
+        assert!(st.work.export_queue.is_empty());
+        assert!(st.work.exporting.is_none() && st.work.queue_run.is_none());
         assert!(!queue_file(&dir).exists(), "an empty queue leaves no file");
         assert_eq!(app.get_export_queue_sets(), 0);
         assert!(!app.get_export_running());
@@ -963,7 +965,7 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         {
             let mut st = state.borrow_mut();
-            st.export_queue_file = Some(queue_file(&dir));
+            st.work.export_queue_file = Some(queue_file(&dir));
             give_edits(&mut st);
             let a = entry(&st, &[0, 1, 2], None, "2048");
             let b = entry(&st, &[3], None, "2048");
@@ -977,16 +979,16 @@ mod tests {
         frame(&app, &state, 2, queue::Done::Canceled);
         finish(&app, &state);
         let st = state.borrow();
-        assert!(st.exporting.is_none() && st.queue_run.is_none());
-        assert_eq!(st.export_queue.len(), 2);
-        let left: Vec<&Path> = st.export_queue[0]
+        assert!(st.work.exporting.is_none() && st.work.queue_run.is_none());
+        assert_eq!(st.work.export_queue.len(), 2);
+        let left: Vec<&Path> = st.work.export_queue[0]
             .frames
             .iter()
             .map(|f| f.source.as_path())
             .collect();
         assert_eq!(left, vec![files[1].as_path(), files[2].as_path()]);
-        assert_eq!(st.export_queue[1].frames.len(), 1);
-        assert_eq!(export_queue::load(&queue_file(&dir)), st.export_queue);
+        assert_eq!(st.work.export_queue[1].frames.len(), 1);
+        assert_eq!(export_queue::load(&queue_file(&dir)), st.work.export_queue);
         assert!(
             app.get_status()
                 .ends_with("; 2 sets, 3 frames queued left in the queue"),
@@ -1025,8 +1027,12 @@ mod tests {
         frame(&app, &state, 1, exported("/nowhere/out/IMG_0001.jpg"));
         finish(&app, &state);
         let st = state.borrow();
-        assert_eq!(st.export_queue.len(), 1, "the failed frame's entry is done");
-        assert!(st.queue_run.is_some(), "and the next entry runs");
+        assert_eq!(
+            st.work.export_queue.len(),
+            1,
+            "the failed frame's entry is done"
+        );
+        assert!(st.work.queue_run.is_some(), "and the next entry runs");
         assert!(st.sidecars[0].current_exports.is_empty());
         assert_eq!(st.sidecars[1].current_exports.len(), 1);
         drop(st);
@@ -1044,30 +1050,30 @@ mod tests {
             let (state, _worker) = crate::testing::state_for(&app, files.clone());
             let mut st = state.borrow_mut();
             open_at_launch(&mut st, &app, Some(&settings), true);
-            assert!(st.export_queue.is_empty());
+            assert!(st.work.export_queue.is_empty());
             give_edits(&mut st);
             let a = entry(&st, &[0], Some("Web"), "2048");
             let b = entry(&st, &[0, 1], None, "Full");
             add(&mut st, &app, a);
             add(&mut st, &app, b);
-            st.export_queue.clone()
+            st.work.export_queue.clone()
         };
         let app = crate::testing::window(2);
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         open_at_launch(&mut state.borrow_mut(), &app, Some(&settings), true);
         let st = state.borrow();
-        assert_eq!(st.export_queue, queued);
-        assert_eq!(st.export_queue[1].frames[1].edit.light.exposure, 0.5);
+        assert_eq!(st.work.export_queue, queued);
+        assert_eq!(st.work.export_queue[1].frames[1].edit.light.exposure, 0.5);
         assert_eq!(app.get_export_queue_sets(), 2);
         assert_eq!(app.get_export_queue_line(), "2 sets, 3 frames queued");
-        assert!(st.exporting.is_none() && st.queue_run.is_none());
+        assert!(st.work.exporting.is_none() && st.work.queue_run.is_none());
         assert!(!app.get_export_running());
         drop(st);
         // A run that may not write (a snapshot) reads it and leaves it.
         let app = crate::testing::window(2);
         let (state, _worker) = crate::testing::state_for(&app, files);
         open_at_launch(&mut state.borrow_mut(), &app, Some(&settings), false);
-        assert_eq!(state.borrow().export_queue, queued);
+        assert_eq!(state.borrow().work.export_queue, queued);
         clear(&mut state.borrow_mut(), &app);
         assert_eq!(export_queue::load(&queue_file(&dir)), queued);
         crate::testing::remove_dir_retry(&dir);
@@ -1084,7 +1090,7 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         {
             let mut st = state.borrow_mut();
-            st.export_queue_file = Some(queue_file(&dir));
+            st.work.export_queue_file = Some(queue_file(&dir));
             give_edits(&mut st);
             let a = entry(&st, &[0], None, "2048");
             let b = entry(&st, &[1, 2], None, "2048");
@@ -1096,8 +1102,8 @@ mod tests {
         app.invoke_export_queue_run();
         {
             let st = state.borrow();
-            assert_eq!(st.export_queue.len(), 2, "nothing is dropped");
-            let run = st.queue_run.as_ref().expect("the next entry runs");
+            assert_eq!(st.work.export_queue.len(), 2, "nothing is dropped");
+            let run = st.work.queue_run.as_ref().expect("the next entry runs");
             assert_eq!(run.entry, 1);
             assert_eq!(run.set.as_ref().unwrap().total, 1);
             assert_eq!(run.at, vec![1]);
@@ -1105,8 +1111,9 @@ mod tests {
         frame(&app, &state, 0, exported("/nowhere/out/IMG_0002.jpg"));
         finish(&app, &state);
         let st = state.borrow();
-        assert!(st.queue_run.is_none());
+        assert!(st.work.queue_run.is_none());
         let left: Vec<Vec<&Path>> = st
+            .work
             .export_queue
             .iter()
             .map(|e| e.frames.iter().map(|f| f.source.as_path()).collect())
@@ -1115,7 +1122,7 @@ mod tests {
             left,
             vec![vec![files[0].as_path()], vec![files[1].as_path()]]
         );
-        assert_eq!(export_queue::load(&queue_file(&dir)), st.export_queue);
+        assert_eq!(export_queue::load(&queue_file(&dir)), st.work.export_queue);
         let status = app.get_status().to_string();
         assert!(
             status.contains("; 2 frames not there, left queued; 2 sets, 2 frames queued left"),
@@ -1142,8 +1149,8 @@ mod tests {
         app.invoke_export_queue_run();
         {
             let st = state.borrow();
-            assert!(st.queue_run.is_none() && st.exporting.is_none());
-            assert_eq!(st.export_queue[0].frames.len(), 2);
+            assert!(st.work.queue_run.is_none() && st.work.exporting.is_none());
+            assert_eq!(st.work.export_queue[0].frames.len(), 2);
         }
         let status = app.get_status().to_string();
         assert!(status.starts_with("the queue stopped: "), "{status}");
@@ -1153,12 +1160,13 @@ mod tests {
         std::fs::create_dir_all(dir.join("unplugged")).unwrap();
         {
             let mut st = state.borrow_mut();
-            st.export_queue[0].sheet.mark = crate::sheet::MARK_IMAGE.into();
-            st.export_queue[0].sheet.mark_image = dir.join("logo.png").to_string_lossy().into();
+            st.work.export_queue[0].sheet.mark = crate::sheet::MARK_IMAGE.into();
+            st.work.export_queue[0].sheet.mark_image =
+                dir.join("logo.png").to_string_lossy().into();
         }
         app.invoke_export_queue_run();
-        assert!(state.borrow().queue_run.is_none());
-        assert_eq!(state.borrow().export_queue[0].frames.len(), 2);
+        assert!(state.borrow().work.queue_run.is_none());
+        assert_eq!(state.borrow().work.export_queue[0].frames.len(), 2);
         let status = app.get_status().to_string();
         assert!(status.contains("the watermark's PNG"), "{status}");
 
@@ -1167,7 +1175,16 @@ mod tests {
             .save(dir.join("logo.png"))
             .unwrap();
         app.invoke_export_queue_run();
-        assert!(state.borrow().queue_run.as_ref().unwrap().set.is_some());
+        assert!(
+            state
+                .borrow()
+                .work
+                .queue_run
+                .as_ref()
+                .unwrap()
+                .set
+                .is_some()
+        );
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -1182,7 +1199,7 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         {
             let mut st = state.borrow_mut();
-            st.export_queue_file = Some(queue_file(&dir));
+            st.work.export_queue_file = Some(queue_file(&dir));
             give_edits(&mut st);
             let a = entry(&st, &[0, 1, 2], None, "2048");
             let b = entry(&st, &[0], None, "Full");
@@ -1192,7 +1209,7 @@ mod tests {
         app.invoke_export_queue_run();
         frame(&app, &state, 0, exported("/nowhere/out/IMG_0000.jpg"));
         // No SetDone: the window goes away here.
-        assert_eq!(state.borrow().export_queue[0].frames.len(), 3);
+        assert_eq!(state.borrow().work.export_queue[0].frames.len(), 3);
         let on_disk = export_queue::load(&queue_file(&dir));
         assert_eq!(on_disk.len(), 2);
         let left: Vec<&Path> = on_disk[0]
@@ -1248,7 +1265,10 @@ mod tests {
             add(&mut st, &app, e);
         }
         app.invoke_export_queue_run();
-        assert_eq!(state.borrow().queue_run.as_ref().unwrap().sent, vec![rel]);
+        assert_eq!(
+            state.borrow().work.queue_run.as_ref().unwrap().sent,
+            vec![rel]
+        );
         frame(&app, &state, 0, exported("/nowhere/out/IMG_0000.jpg"));
         finish(&app, &state);
         assert_eq!(state.borrow().sidecars[0].current_exports.len(), 1);
@@ -1267,7 +1287,7 @@ mod tests {
         app.set_export_mark_image("".into());
         app.set_export_open(false);
         app.invoke_export_queue_add();
-        assert!(state.borrow().export_queue.is_empty());
+        assert!(state.borrow().work.export_queue.is_empty());
         assert!(app.get_export_open());
         assert!(
             app.get_status().starts_with("not queued: "),
@@ -1316,10 +1336,14 @@ mod tests {
             },
         );
         let st = state.borrow();
-        let run = st.queue_run.as_ref().expect("the queue's entry still runs");
+        let run = st
+            .work
+            .queue_run
+            .as_ref()
+            .expect("the queue's entry still runs");
         assert!(run.done.iter().all(|d| !d));
-        assert!(st.exporting.is_some());
-        assert_eq!(st.export_queue[0].frames.len(), 2);
+        assert!(st.work.exporting.is_some());
+        assert_eq!(st.work.export_queue[0].frames.len(), 2);
         drop(st);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -1344,7 +1368,7 @@ mod tests {
         app.invoke_export_queue_run();
         let (set, source) = {
             let st = state.borrow();
-            let run = st.queue_run.as_ref().unwrap();
+            let run = st.work.queue_run.as_ref().unwrap();
             (run.set.clone().unwrap(), run.sent[0].clone())
         };
         let mut rendered = queued.clone();
@@ -1382,7 +1406,7 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files);
         {
             let mut st = state.borrow_mut();
-            st.export_queue_file = Some(queue_file(&dir));
+            st.work.export_queue_file = Some(queue_file(&dir));
             let a = entry(&st, &[0, 1], None, "2048");
             let b = entry(&st, &[1], None, "2048");
             add(&mut st, &app, a);
@@ -1391,14 +1415,18 @@ mod tests {
         assert!(queue_file(&dir).exists());
         app.invoke_export_queue_run();
         app.invoke_export_queue_clear();
-        assert_eq!(state.borrow().export_queue.len(), 2, "not while it runs");
+        assert_eq!(
+            state.borrow().work.export_queue.len(),
+            2,
+            "not while it runs"
+        );
         app.invoke_export_stop();
         frame(&app, &state, 0, queue::Done::Canceled);
         frame(&app, &state, 1, queue::Done::Canceled);
         finish(&app, &state);
-        assert_eq!(state.borrow().export_queue.len(), 2);
+        assert_eq!(state.borrow().work.export_queue.len(), 2);
         app.invoke_export_queue_clear();
-        assert!(state.borrow().export_queue.is_empty());
+        assert!(state.borrow().work.export_queue.is_empty());
         assert!(!queue_file(&dir).exists());
         assert_eq!(app.get_export_queue_sets(), 0);
         assert_eq!(app.get_status(), "export queue cleared (2 sets)");
@@ -1465,9 +1493,9 @@ mod tests {
         }
         app.invoke_export_queue_run();
         let st = state.borrow();
-        assert_eq!(st.export_queue.len(), 1, "left queued");
-        assert_eq!(st.export_queue[0].frames.len(), 1);
-        assert!(st.queue_run.is_none());
+        assert_eq!(st.work.export_queue.len(), 1, "left queued");
+        assert_eq!(st.work.export_queue[0].frames.len(), 1);
+        assert!(st.work.queue_run.is_none());
         assert!(
             app.get_status().contains("not there; left queued"),
             "{}",
@@ -1498,9 +1526,10 @@ mod tests {
         }
         app.invoke_export_queue_run();
         let st = state.borrow();
-        assert_eq!(st.export_queue.len(), 1, "the emptied entry went");
-        assert_eq!(st.export_queue[0].frames[0].version, None);
+        assert_eq!(st.work.export_queue.len(), 1, "the emptied entry went");
+        assert_eq!(st.work.export_queue[0].frames[0].version, None);
         let run = st
+            .work
             .queue_run
             .as_ref()
             .expect("the run went on to the next entry");
@@ -1532,12 +1561,13 @@ mod tests {
         app.invoke_export_queue_run();
         let st = state.borrow();
         let run = st
+            .work
             .queue_run
             .as_ref()
             .expect("the run began on the file's own");
         assert_eq!(run.sent.len(), 1, "the file's own frame alone");
         assert_eq!(
-            st.export_queue[0].frames.len(),
+            st.work.export_queue[0].frames.len(),
             1,
             "the version's out of the entry"
         );

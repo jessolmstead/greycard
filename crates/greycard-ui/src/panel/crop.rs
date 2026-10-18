@@ -184,10 +184,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             let mut st = state.borrow_mut();
-            st.zoom = 0.0;
-            st.image_size = (0, 0); // re-centered on the next frame
-            st.crop_drag = None;
-            st.crop_draw = None;
+            st.develop.zoom = 0.0;
+            st.develop.image_size = (0, 0); // re-centered on the next frame
+            st.develop.crop_drag = None;
+            st.develop.crop_draw = None;
             app.window().request_redraw();
         });
     }
@@ -198,8 +198,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             let mut st = state.borrow_mut();
-            let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
-            st.crop_drag = Some(read_geometry(&app).effective_crop(sw, sh));
+            let (sw, sh) = (
+                st.develop.source_size.0 as f32,
+                st.develop.source_size.1 as f32,
+            );
+            st.develop.crop_drag = Some(read_geometry(&app).effective_crop(sw, sh));
         });
     }
     {
@@ -209,10 +212,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             let st = state.borrow();
-            let (Some(start), Some(handle)) = (st.crop_drag, Handle::from_index(handle)) else {
+            let (Some(start), Some(handle)) = (st.develop.crop_drag, Handle::from_index(handle))
+            else {
                 return;
             };
-            let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+            let (sw, sh) = (
+                st.develop.source_size.0 as f32,
+                st.develop.source_size.1 as f32,
+            );
             let (vw, vh) = (
                 app.get_view_width().max(1) as u32,
                 app.get_view_height().max(1) as u32,
@@ -241,7 +248,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            if state.borrow_mut().crop_drag.take().is_some() {
+            if state.borrow_mut().develop.crop_drag.take().is_some() {
                 app.invoke_view_changed();
             }
         });
@@ -257,7 +264,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             let st = state.borrow();
-            let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+            let (sw, sh) = (
+                st.develop.source_size.0 as f32,
+                st.develop.source_size.1 as f32,
+            );
             let raw = view_to_plane(&st, &app, x, y);
             drop(st);
             // Off the source (the letterbox, or a wedge a turn cut
@@ -265,7 +275,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             // no anchor at all and so no draw, rather than a zero-size
             // crop that would wipe out today's.
             let geometry = read_geometry(&app);
-            state.borrow_mut().crop_draw = geometry.anchored(raw, sw, sh);
+            state.borrow_mut().develop.crop_draw = geometry.anchored(raw, sw, sh);
         });
     }
     {
@@ -275,10 +285,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             let st = state.borrow();
-            let Some(anchor) = st.crop_draw else {
+            let Some(anchor) = st.develop.crop_draw else {
                 return;
             };
-            let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+            let (sw, sh) = (
+                st.develop.source_size.0 as f32,
+                st.develop.source_size.1 as f32,
+            );
             let to = view_to_plane(&st, &app, x, y);
             drop(st);
             let geometry = read_geometry(&app);
@@ -297,7 +310,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            if state.borrow_mut().crop_draw.take().is_some() {
+            if state.borrow_mut().develop.crop_draw.take().is_some() {
                 app.invoke_view_changed();
             }
         });
@@ -311,9 +324,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let (sw, sh, settled) = {
                 let st = state.borrow();
                 (
-                    st.source_size.0 as f32,
-                    st.source_size.1 as f32,
-                    !st.edit.needs_frame(),
+                    st.develop.source_size.0 as f32,
+                    st.develop.source_size.1 as f32,
+                    !st.develop.edit.needs_frame(),
                 )
             };
             pick_aspect(&app, sw, sh);
@@ -338,7 +351,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             app.set_portrait(false);
             app.set_level_mode(false);
             app.set_guide_mode("".into());
-            state.borrow_mut().guiding.clear();
+            state.borrow_mut().develop.guiding.clear();
             app.invoke_view_changed();
         });
     }
@@ -353,9 +366,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let (sw, sh, settled) = {
                 let st = state.borrow();
                 (
-                    st.source_size.0 as f32,
-                    st.source_size.1 as f32,
-                    !st.edit.needs_frame(),
+                    st.develop.source_size.0 as f32,
+                    st.develop.source_size.1 as f32,
+                    !st.develop.edit.needs_frame(),
                 )
             };
             show_geometry(&read_geometry(&app).turned(quarters), &app);
@@ -372,9 +385,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let (sw, sh, settled) = {
                 let st = state.borrow();
                 (
-                    st.source_size.0 as f32,
-                    st.source_size.1 as f32,
-                    !st.edit.needs_frame(),
+                    st.develop.source_size.0 as f32,
+                    st.develop.source_size.1 as f32,
+                    !st.develop.edit.needs_frame(),
                 )
             };
             show_geometry(&read_geometry(&app).flipped(vertical), &app);
@@ -400,9 +413,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let (sw, sh, settled) = {
                 let st = state.borrow();
                 (
-                    st.source_size.0 as f32,
-                    st.source_size.1 as f32,
-                    !st.edit.needs_frame(),
+                    st.develop.source_size.0 as f32,
+                    st.develop.source_size.1 as f32,
+                    !st.develop.edit.needs_frame(),
                 )
             };
             refit_crop(&app, sw, sh, settled);
@@ -425,8 +438,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             };
             let (sw, sh, settled, pair) = {
                 let mut st = state.borrow_mut();
-                let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
-                let settled = !st.edit.needs_frame();
+                let (sw, sh) = (
+                    st.develop.source_size.0 as f32,
+                    st.develop.source_size.1 as f32,
+                );
+                let settled = !st.develop.edit.needs_frame();
                 if sw < 1.0 || sh < 1.0 {
                     return;
                 }
@@ -437,7 +453,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                     (u * sw, v * sw)
                 };
                 let ends = [at(&st, x0, y0), at(&st, x1, y1)];
-                (sw, sh, settled, st.guiding.stroke(axis, ends))
+                (sw, sh, settled, st.develop.guiding.stroke(axis, ends))
             };
             let Some((a, b)) = pair else {
                 // The first of the two: it is drawn from now on.
@@ -453,7 +469,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             app.set_guide_mode("".into());
-            state.borrow_mut().guiding.clear();
+            state.borrow_mut().develop.guiding.clear();
             app.set_geo_angle(got.angle);
             match axis {
                 Guide::Vertical => app.set_geo_vertical(got.tilt),
@@ -466,7 +482,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_guide_dropped(move || {
-            state.borrow_mut().guiding.clear();
+            state.borrow_mut().develop.guiding.clear();
             if let Some(app) = app_weak.upgrade() {
                 app.window().request_redraw();
             }
@@ -513,8 +529,8 @@ mod tests {
         let (state, _worker) = retouch_state(app);
         {
             let mut st = state.borrow_mut();
-            st.source_size = (SW as u32, SH as u32);
-            st.zoom = 1.0;
+            st.develop.source_size = (SW as u32, SH as u32);
+            st.develop.zoom = 1.0;
         }
         app.set_crop_mode(true);
         app.set_geo_has_crop(true);
@@ -722,7 +738,7 @@ mod tests {
                 position: slint::LogicalPosition::new(to.0, to.1),
             });
         assert!(
-            state.borrow().crop_draw.is_some(),
+            state.borrow().develop.crop_draw.is_some(),
             "the drag cleared the threshold and started a draw"
         );
         // The window lets go of the gesture instead of a release
@@ -731,7 +747,7 @@ mod tests {
         app.window()
             .dispatch_event(slint::platform::WindowEvent::PointerExited);
         assert!(
-            state.borrow().crop_draw.is_none(),
+            state.borrow().develop.crop_draw.is_none(),
             "the cancel let go of the anchor"
         );
     }
@@ -938,13 +954,13 @@ mod tests {
             "crop":{"x":0.0,"y":0.0,"w":1.0,"h":1.0}}}"#;
         let waiting = greycard_edit::Edit::from_json(stored).expect("an older sidecar reads");
         assert!(waiting.needs_frame());
-        state.borrow_mut().source_size = (4000, 6000);
+        state.borrow_mut().develop.source_size = (4000, 6000);
 
         // One move of the panel, as the Crop tab makes it: the edit
         // on show, the geometry on the controls, then whatever was
         // touched, then the callback the controls invoke.
         let moved = |edit: &greycard_edit::Edit, angle: f32, aspect: &str| {
-            state.borrow_mut().edit = edit.clone();
+            state.borrow_mut().develop.edit = edit.clone();
             show_geometry(&edit.geometry, &app);
             app.set_geo_angle(angle);
             app.set_aspect_name(aspect.into());
@@ -1028,7 +1044,7 @@ mod tests {
     fn original_on_an_upright_frame_crops_it_upright() {
         let app = window(1);
         let (state, _worker) = retouch_state(&app);
-        state.borrow_mut().source_size = (5464, 8192);
+        state.borrow_mut().develop.source_size = (5464, 8192);
         app.set_aspect_name("Original".into());
         assert!(!app.get_portrait());
         app.invoke_geometry_changed();
@@ -1078,7 +1094,7 @@ mod tests {
         let app = window(1);
         let (state, _worker) = retouch_state(&app);
         let (sw, sh) = (4000.0, 6000.0);
-        state.borrow_mut().source_size = (4000, 6000);
+        state.borrow_mut().develop.source_size = (4000, 6000);
         app.set_panel_tab("Crop".into());
         assert!(!app.get_portrait());
 
@@ -1125,7 +1141,7 @@ mod tests {
         // A landscape frame takes the switch off.
         let app = window(1);
         let (state, _worker) = retouch_state(&app);
-        state.borrow_mut().source_size = (6000, 4000);
+        state.borrow_mut().develop.source_size = (6000, 4000);
         app.set_portrait(true);
         pick(&app, "3:2");
         assert!(!app.get_portrait());
@@ -1154,7 +1170,7 @@ mod tests {
         ] {
             let app = window(1);
             let (state, _worker) = retouch_state(&app);
-            state.borrow_mut().source_size = source;
+            state.borrow_mut().develop.source_size = source;
             let (sw, sh) = (source.0 as f32, source.1 as f32);
             app.set_panel_tab("Crop".into());
             if let Some(c) = start {
@@ -1194,7 +1210,7 @@ mod tests {
         // width, turned wide.
         let app = window(1);
         let (state, _worker) = retouch_state(&app);
-        state.borrow_mut().source_size = (4000, 6000);
+        state.borrow_mut().develop.source_size = (4000, 6000);
         app.set_panel_tab("Crop".into());
         pick(&app, "3:2");
         super::set_crop(
@@ -1250,7 +1266,7 @@ mod tests {
         let upright = orient(WorkingImage::new(6, 4), tag);
         let size = (upright.width as u32 * 1000, upright.height as u32 * 1000);
         assert_eq!(size, (4000, 6000));
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(
             &app,
             crate::worker::Outcome::Developed {
@@ -1278,10 +1294,10 @@ mod tests {
         // What the render does with a develop that has landed.
         {
             let mut st = state.borrow_mut();
-            st.pending.take().expect("the develop landed");
-            st.source_size = st.shown_size;
+            st.develop.pending.take().expect("the develop landed");
+            st.develop.source_size = st.develop.shown_size;
             crate::panel::viewport::settle_source_size(&mut st);
-            assert_eq!(st.source_size, (4000, 6000));
+            assert_eq!(st.develop.source_size, (4000, 6000));
         }
         app.set_crop_mode(true);
         app.set_panel_tab("Crop".into());
@@ -1322,7 +1338,7 @@ mod tests {
         let app = window(1);
         let (state, _worker) = retouch_state(&app);
         let (sw, sh) = (4000.0, 6000.0);
-        state.borrow_mut().source_size = (4000, 6000);
+        state.borrow_mut().develop.source_size = (4000, 6000);
         app.set_panel_tab("Crop".into());
 
         pick(&app, "Original");
@@ -1346,7 +1362,7 @@ mod tests {
         // frame, as it rendered when it was saved.
         let app = window(1);
         let (state, _worker) = retouch_state(&app);
-        state.borrow_mut().source_size = (4000, 6000);
+        state.borrow_mut().develop.source_size = (4000, 6000);
         app.set_panel_tab("Crop".into());
         let stored = Crop {
             x: 0.0,
@@ -1382,7 +1398,7 @@ mod tests {
     fn a_custom_ratio_typed_key_by_key_keeps_a_switch_set_by_hand() {
         let app = window(1);
         let (state, _worker) = retouch_state(&app);
-        state.borrow_mut().source_size = (4000, 6000);
+        state.borrow_mut().develop.source_size = (4000, 6000);
         app.set_panel_tab("Crop".into());
         pick(&app, "3:2");
         assert!(app.get_portrait());
@@ -1409,7 +1425,7 @@ mod tests {
         let app = window(4);
         let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(4));
         app.invoke_select(1);
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(
             &app,
             crate::worker::Outcome::Developed {
@@ -1436,8 +1452,8 @@ mod tests {
         );
         {
             let mut st = state.borrow_mut();
-            st.pending.take().expect("the develop landed");
-            st.source_size = st.shown_size;
+            st.develop.pending.take().expect("the develop landed");
+            st.develop.source_size = st.develop.shown_size;
             crate::panel::viewport::settle_source_size(&mut st);
             crate::panel::viewport::show_source_shape(&st, &app);
         }

@@ -144,7 +144,7 @@ pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
     let file = {
         let st = state.borrow();
         match usize::try_from(row) {
-            Ok(r) => st.shown.get(r).copied(),
+            Ok(r) => st.views.shown.get(r).copied(),
             Err(_) => st.current,
         }
     };
@@ -153,14 +153,14 @@ pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
     };
     let click = {
         let st = state.borrow();
-        selection::right_click(&st.picked, st.current, file)
+        selection::right_click(&st.views.picked, st.current, file)
     };
     if let selection::Click::Open(_) = click {
         // Opened, and the set collapsed to it, as a plain click does.
         app.invoke_select(row);
     }
     let mut st = state.borrow_mut();
-    st.menu_file = Some(file);
+    st.views.menu_file = Some(file);
     let frames = chosen_frames(&st);
     let metas: Vec<&Meta> = frames
         .iter()
@@ -220,7 +220,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            match st.menu_file.or(st.current) {
+            match st.views.menu_file.or(st.current) {
                 Some(f) => crate::panel::sync::copy_settings_of(&mut st, &app, f),
                 None => crate::panel::sync::copy_settings(&mut st, &app),
             }
@@ -233,7 +233,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let st = state.borrow();
-            let Some(path) = st.menu_file.or(st.current).and_then(|f| st.path_at(f)) else {
+            let Some(path) = st
+                .views
+                .menu_file
+                .or(st.current)
+                .and_then(|f| st.path_at(f))
+            else {
                 return;
             };
             if let Err(e) = reveal(path) {
@@ -373,7 +378,7 @@ mod tests {
         app.invoke_select(1);
         {
             let mut st = state.borrow_mut();
-            st.picked = vec![1, 3];
+            st.views.picked = vec![1, 3];
             st.sidecars[1].meta.rating = 4;
             st.sidecars[3].meta.rating = 4;
             st.sidecars[3].meta.label = Label::Red;
@@ -385,7 +390,7 @@ mod tests {
         right_click(&app, x, y);
         assert_eq!(state.borrow().current, Some(1));
         assert_eq!(chosen_frames(&state.borrow()), vec![1, 3]);
-        assert_eq!(state.borrow().menu_file, Some(3));
+        assert_eq!(state.borrow().views.menu_file, Some(3));
         assert_eq!(app.get_menu_count(), 2);
         assert_eq!(app.get_menu_rating(), 4);
         assert_eq!(app.get_menu_flag(), 0);
@@ -423,7 +428,7 @@ mod tests {
         // What `install` sets on a Mac, set here on any platform.
         app.set_ctrl_click_menu(true);
         app.invoke_select(1);
-        state.borrow_mut().picked = vec![1, 3];
+        state.borrow_mut().views.picked = vec![1, 3];
         // A Mac's Control is Slint's `meta`.
         let meta = slint::platform::Key::Meta;
         app.window()
@@ -434,7 +439,7 @@ mod tests {
             .dispatch_event(WindowEvent::KeyReleased { text: meta.into() });
         // The menu, over the set: a plain click would have opened
         // frame 3 and collapsed the set to it.
-        assert_eq!(state.borrow().menu_file, Some(3));
+        assert_eq!(state.borrow().views.menu_file, Some(3));
         assert_eq!(state.borrow().current, Some(1));
         assert_eq!(chosen_frames(&state.borrow()), vec![1, 3]);
         // Off (Linux, Windows), the same is a plain click.
@@ -463,14 +468,14 @@ mod tests {
             st.sidecars[3].record(edit);
         }
         app.invoke_select(1);
-        state.borrow_mut().picked = vec![1, 3];
+        state.borrow_mut().views.picked = vec![1, 3];
         let (x, y) = strip_cell(3);
         right_click(&app, x, y);
         assert_eq!(app.get_menu_file(), "IMG_0003.CR3");
         app.invoke_menu_copy();
         {
             let st = state.borrow();
-            let clip = st.clipboard.as_ref().expect("a copy");
+            let clip = st.sheets.clipboard.as_ref().expect("a copy");
             assert_eq!(clip.from.path, files[3]);
             assert_eq!(clip.edit.light.exposure, 0.9);
         }
@@ -482,6 +487,7 @@ mod tests {
         assert_eq!(
             state
                 .borrow()
+                .sheets
                 .clipboard
                 .as_ref()
                 .map(|c| c.edit.light.exposure),
@@ -494,6 +500,7 @@ mod tests {
         assert_eq!(
             state
                 .borrow()
+                .sheets
                 .clipboard
                 .as_ref()
                 .map(|c| c.from.path.clone()),
@@ -613,11 +620,11 @@ mod tests {
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (state, _worker) = state_for(&app, folder(4));
         app.invoke_select(2);
-        state.borrow_mut().picked = vec![0, 2];
+        state.borrow_mut().views.picked = vec![0, 2];
         app.invoke_frame_menu_asked(-1);
         assert_eq!(state.borrow().current, Some(2));
         assert_eq!(chosen_frames(&state.borrow()), vec![0, 2]);
-        assert_eq!(state.borrow().menu_file, Some(2));
+        assert_eq!(state.borrow().views.menu_file, Some(2));
         assert_eq!(app.get_menu_count(), 2);
     }
 }

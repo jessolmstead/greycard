@@ -101,7 +101,7 @@ fn names(names: &[String]) -> String {
 
 /// The CULLING section's entries: one an archive, by name.
 pub(crate) fn show(st: &State, app: &App) {
-    let roots = &st.library.roots;
+    let roots = &st.views.library.roots;
     let items: Vec<slint::SharedString> = roots
         .archives()
         .iter()
@@ -119,15 +119,15 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, choice: usize) {
         app.set_status("a job on an archive is still under way".into());
         return;
     }
-    let Some(archive) = st.library.roots.archives().get(choice).cloned() else {
+    let Some(archive) = st.views.library.roots.archives().get(choice).cloned() else {
         app.set_status("there is no archive: mark a root as one from its menu".into());
         return;
     };
-    let label = st.library.roots.label(&archive);
+    let label = st.views.library.roots.label(&archive);
     // One folder's rejects folder: the open folder's, or the one a
     // folder of the tree shows alone. A view over many folders has
     // many, and each is weighed against the archive on its own.
-    let branch = match &st.view {
+    let branch = match &st.views.view {
         View::Folder => None,
         View::Branch {
             folder,
@@ -152,7 +152,7 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, choice: usize) {
     // to say where it is; Recently opened still has it.
     let Some(open) = branch
         .or_else(|| super::open_folder(&st))
-        .or_else(|| st.recent.open.clone())
+        .or_else(|| st.views.recent.open.clone())
     else {
         app.set_status("nothing is open".into());
         return;
@@ -183,7 +183,7 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, choice: usize) {
         dir: dir.clone(),
     });
     r.look = None;
-    let index = st.index_path.clone();
+    let index = st.views.index_path.clone();
     app.set_status(format!("looking for the rejects on {label}...").into());
     let sent = send(
         app,
@@ -263,7 +263,7 @@ fn land_look(
                 .flat_map(|r| r.found.copies.iter())
                 .filter_map(|c| c.parent().map(Path::to_path_buf))
                 .collect();
-            let refused_here = folders.iter().any(|f| st.trash_refused.contains(f));
+            let refused_here = folders.iter().any(|f| st.sheets.trash_refused.contains(f));
             let offer = delete::offer(TRASH_SUPPORTED, refused_here);
             fill(app, &asked, &look, offer);
             st.archive.rejects.look = Some(look);
@@ -416,7 +416,7 @@ pub(crate) fn answered(state: &Rc<RefCell<State>>, app: &App, answer: i32) {
         run_due(&mut st, app);
         return;
     };
-    if !st.deletes_allowed {
+    if !st.window.deletes_allowed {
         let why = "nothing done: a capture, an export or a timing run never moves or deletes";
         tracing::info!("{why}");
         app.set_status(why.into());
@@ -469,7 +469,7 @@ fn start(
     app.set_archive_fraction(0.0);
     app.set_archive_line(format!("{doing} {label}...").into());
     app.set_archive_running(true);
-    let index = st.index_path.clone();
+    let index = st.views.index_path.clone();
     let sent = send(
         app,
         "archive rejects",
@@ -618,7 +618,7 @@ fn landed(st: &mut State, done: Done, late: bool) -> String {
 
 /// `entries` added to `archive`'s queue; what was dropped from it said.
 fn enqueue(st: &State, archive: &Path, entries: &[Entry]) -> Result<String, String> {
-    let Some(file) = st.library.file.as_deref().map(core::queue_path) else {
+    let Some(file) = st.views.library.file.as_deref().map(core::queue_path) else {
         return Err("there is no library to keep the queue beside".into());
     };
     core::edit_queue(&file, |q| core::enqueue(q, archive, entries))
@@ -688,7 +688,7 @@ fn landed_words(
             // `land_run`.)
             // The queue: what was done taken out of it, the rest left and
             // named.
-            let Some(file) = st.library.file.as_deref().map(core::queue_path) else {
+            let Some(file) = st.views.library.file.as_deref().map(core::queue_path) else {
                 return words;
             };
             let edited = core::edit_queue(&file, |q| core::dequeue(q, &archive, &moves.done));
@@ -720,13 +720,13 @@ fn landed_words(
             words
         }
         (_, Ran::Deleted(deletes)) => {
-            if let Some(indexer) = &st.index {
+            if let Some(indexer) = &st.views.index {
                 indexer.forget(deletes.deleted.frames.clone());
             }
             if let Some(r) = &deletes.deleted.trash_refused
                 && let Some(dir) = r.frame.parent()
             {
-                st.trash_refused.insert(dir.to_path_buf());
+                st.sheets.trash_refused.insert(dir.to_path_buf());
             }
             for (f, why) in deletes.refused.iter().chain(&deletes.deleted.failed) {
                 tracing::warn!("{}: not deleted: {why}", f.display());
@@ -744,7 +744,7 @@ fn landed_words(
 /// The folders a run touched, passed over now rather than at the next
 /// poll.
 fn hand_folders(st: &State, folders: &[PathBuf]) {
-    if let Some(indexer) = &st.index
+    if let Some(indexer) = &st.views.index
         && !folders.is_empty()
     {
         indexer
@@ -840,7 +840,7 @@ pub(crate) fn deletes_words(d: &Deletes, how: How, label: &str) -> String {
 /// and its queue has not been run since it last did not, the queue is
 /// run; when it did not, its queue is due again for the next answer.
 pub(crate) fn heard_from(st: &mut State, app: &App, archive: &Path, answered: bool) {
-    if !st.library.roots.is_archive(archive) {
+    if !st.views.library.roots.is_archive(archive) {
         return;
     }
     if !answered {
@@ -856,7 +856,7 @@ pub(crate) fn heard_from(st: &mut State, app: &App, archive: &Path, answered: bo
 /// The archives the roots' look found, one way or the other: those in
 /// `offline` did not answer, the rest did. For a look over every root.
 pub(crate) fn heard_over(st: &mut State, app: &App, offline: &HashSet<PathBuf>) {
-    let archives = st.library.roots.archives().to_vec();
+    let archives = st.views.library.roots.archives().to_vec();
     for a in archives {
         let answered = !offline.contains(&a);
         heard_from(st, app, &a, answered);
@@ -867,7 +867,7 @@ pub(crate) fn heard_over(st: &mut State, app: &App, offline: &HashSet<PathBuf>) 
 /// on: the archives that answered are due, those that did not are not
 /// tried.
 pub(crate) fn heard_at_launch(st: &mut State, offline: &HashSet<PathBuf>) {
-    let archives = st.library.roots.archives().to_vec();
+    let archives = st.views.library.roots.archives().to_vec();
     for a in archives {
         if offline.contains(&a) {
             st.archive.rejects.tried.remove(&a);
@@ -893,10 +893,10 @@ pub(crate) fn run_due(st: &mut State, app: &App) {
 /// archive looked at again first. Waits for a job under way, or one set
 /// aside on that archive. Never in a run nobody is at.
 fn run_queue(st: &mut State, app: &App, archive: &Path) {
-    if !st.deletes_allowed {
+    if !st.window.deletes_allowed {
         return;
     }
-    let Some(file) = st.library.file.as_deref().map(core::queue_path) else {
+    let Some(file) = st.views.library.file.as_deref().map(core::queue_path) else {
         return;
     };
     let sheet_up = st.archive.asked.is_some() || st.archive.rejects.asked.is_some();
@@ -936,7 +936,7 @@ fn run_queue(st: &mut State, app: &App, archive: &Path) {
     if entries.is_empty() {
         return;
     }
-    let label = st.library.roots.label(archive);
+    let label = st.views.library.roots.label(archive);
     app.set_status(
         format!(
             "{label} is back: moving its {} queued...",
@@ -1056,18 +1056,18 @@ mod tests {
         let (state, worker) = state_for(&app, files);
         {
             let mut st = state.borrow_mut();
-            st.deletes_allowed = true;
+            st.window.deletes_allowed = true;
             st.current = Some(0);
-            st.index_path = Some(db.clone());
-            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.views.index_path = Some(db.clone());
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
             let file = dir.join("roots.json");
             let mut roots = greycard_library::Roots::default();
             roots.add(&local).unwrap();
             roots.add(&nas).unwrap();
             roots.set_archive(&nas, true);
             roots.save(&file).unwrap();
-            st.library.roots = roots;
-            st.library.file = Some(file);
+            st.views.library.roots = roots;
+            st.views.library.file = Some(file);
             crate::panel::browser::rebuild_browser(&mut st, &app);
             super::super::show(&st, &app);
         }
@@ -1172,7 +1172,11 @@ mod tests {
         assert_eq!(c.land(), 0);
         assert!(c.there.join("a.tif").is_file());
         // The trash refused these folders earlier: both offered.
-        c.state.borrow_mut().trash_refused.insert(c.there.clone());
+        c.state
+            .borrow_mut()
+            .sheets
+            .trash_refused
+            .insert(c.there.clone());
         c.sheet();
         assert_eq!(
             c.app.get_archive_rejects_trash(),
@@ -1348,12 +1352,12 @@ mod tests {
         let c = culled("launch");
         queued(&c);
         // A capture: nothing moves.
-        c.state.borrow_mut().deletes_allowed = false;
+        c.state.borrow_mut().window.deletes_allowed = false;
         heard_at_launch(&mut c.state.borrow_mut(), &HashSet::new());
         run_due(&mut c.state.borrow_mut(), &c.app);
         assert_eq!(c.land(), 0);
         assert!(c.there.join("a.tif").is_file());
-        c.state.borrow_mut().deletes_allowed = true;
+        c.state.borrow_mut().window.deletes_allowed = true;
         // The sheet up: the queue waits for it, and runs when it closes.
         c.sheet();
         heard_at_launch(&mut c.state.borrow_mut(), &HashSet::new());
@@ -1442,7 +1446,7 @@ mod tests {
         let shoot = c.rejects.parent().unwrap().to_path_buf();
         {
             let mut st = c.state.borrow_mut();
-            st.view = View::Branch {
+            st.views.view = View::Branch {
                 root: c.dir.join("local"),
                 folder: shoot,
                 deep: false,
@@ -1456,7 +1460,7 @@ mod tests {
                 .starts_with("2 rejects here have 2 copies on nas")
         );
         c.app.invoke_archive_rejects_answered(0);
-        c.state.borrow_mut().view = View::Roots(None);
+        c.state.borrow_mut().views.view = View::Roots(None);
         c.app.invoke_archive_rejects_asked(0);
         assert_eq!(c.land(), 0);
         assert_eq!(
@@ -1630,7 +1634,11 @@ mod tests {
             let (at, size) = crate::testing::labeled(&c.app, label);
             crate::testing::click(&c.app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         };
-        c.state.borrow_mut().trash_refused.insert(c.there.clone());
+        c.state
+            .borrow_mut()
+            .sheets
+            .trash_refused
+            .insert(c.there.clone());
         click("Remove rejects from nas...");
         assert_eq!(c.land(), 1);
         assert!(c.app.get_archive_rejects_open());

@@ -29,15 +29,21 @@ use crate::*;
 /// the two a quarter apart.
 pub(crate) fn drawn_picture(st: &State) -> ((u32, u32), u8) {
     match own_develop(st) {
-        Some(lag) => (placeholder::turned_size(st.shown_size, lag), lag),
-        None => (placeholder::drawn_source(st.source_size, st.shown_size), 0),
+        Some(lag) => (placeholder::turned_size(st.develop.shown_size, lag), lag),
+        None => (
+            placeholder::drawn_source(st.develop.source_size, st.develop.shown_size),
+            0,
+        ),
     }
 }
 
 /// The turn the develop on the GPU lags the open frame by, when that
 /// develop is the open frame's own; none for another frame's.
 fn own_develop(st: &State) -> Option<u8> {
-    let shown = st.shown_turn.filter(|_| st.held.is_none())?;
+    let shown = st
+        .develop
+        .shown_turn
+        .filter(|_| st.develop.held.is_none())?;
     (Some(shown.0) == st.current)
         .then(|| placeholder::lagging_turn(Some(shown), st.current, current_turn(st)))
 }
@@ -80,7 +86,7 @@ impl NeutralMiss {
 /// texture and the base are still the last frame's.
 fn own_white(st: &State) -> Result<WhiteBase, NeutralMiss> {
     own_develop(st)
-        .and(st.base_white)
+        .and(st.develop.base_white)
         .ok_or(NeutralMiss::Waiting)
 }
 
@@ -101,7 +107,7 @@ pub(crate) fn white_from_neutral(
     // temperature, and the patch the user clicked would not go
     // neutral.
     let profile = white_profile(&mut st).ok_or(NeutralMiss::NoProfile)?;
-    let (frame, _) = st.frame.as_ref().ok_or(NeutralMiss::NoProfile)?;
+    let (frame, _) = st.develop.frame.as_ref().ok_or(NeutralMiss::NoProfile)?;
     let gains = greycard_core::color::neutral_gains(px, base.gains, base.matrix)
         .ok_or(NeutralMiss::NoWhite)?;
     let wb =
@@ -114,7 +120,7 @@ pub(crate) fn white_from_neutral(
     // grey is the light there, the same answer whatever the global
     // says, since a mask's white is absolute. Under the mask at full
     // weight the patch is then grey.
-    if st.target.is_some() && app.get_panel_tab() == "Masks" {
+    if st.develop.target.is_some() && app.get_panel_tab() == "Masks" {
         app.set_local_wb_on(true);
         app.set_local_wb_kept(true);
         app.set_local_temperature((tt.cct as f32).clamp(2000.0, 12000.0));
@@ -159,7 +165,7 @@ fn auto_white_grid(st: &State) -> Option<(Vec<[f32; 3]>, usize)> {
         return Some(grid);
     }
     let started = std::time::Instant::now();
-    let grid = match st.renderer.as_ref()?.sample_grid(AUTO_WHITE_ACROSS) {
+    let grid = match st.develop.renderer.as_ref()?.sample_grid(AUTO_WHITE_ACROSS) {
         Ok(grid) => grid,
         Err(e) => {
             tracing::warn!("auto white balance: {e:#}");
@@ -180,7 +186,7 @@ pub(crate) fn auto_white(mut st: std::cell::RefMut<'_, State>, app: &App) {
     let found = (|| {
         let base = own_white(&st)?;
         let profile = white_profile(&mut st).ok_or(NeutralMiss::NoProfile)?;
-        let (frame, _) = st.frame.as_ref().ok_or(NeutralMiss::NoProfile)?;
+        let (frame, _) = st.develop.frame.as_ref().ok_or(NeutralMiss::NoProfile)?;
         let as_shot = resolve_white_balance(frame, &profile, WhitePoint::AsShot)
             .map_err(|e| NeutralMiss::Unresolved(e.to_string()))?
             .coefficients_f32();
@@ -214,7 +220,7 @@ pub(crate) fn auto_white(mut st: std::cell::RefMut<'_, State>, app: &App) {
 /// develop's frame.
 pub(crate) fn settle_source_size(st: &mut State) {
     if let Some(lag) = own_develop(st) {
-        st.source_size = placeholder::turned_size(st.shown_size, lag);
+        st.develop.source_size = placeholder::turned_size(st.develop.shown_size, lag);
     }
 }
 
@@ -249,8 +255,8 @@ pub(crate) fn show_crop_on_view(st: &State, app: &App, geometry: &Geometry) {
     let (pw, ph) = geometry.plane_size(sw, sh);
     let to_view = |fx: f32, fy: f32| {
         (
-            ((fx - frame.origin.0 - st.center.0) * zoom + vw as f32 / 2.0) / scale,
-            ((fy - frame.origin.1 - st.center.1) * zoom + vh as f32 / 2.0) / scale,
+            ((fx - frame.origin.0 - st.develop.center.0) * zoom + vw as f32 / 2.0) / scale,
+            ((fy - frame.origin.1 - st.develop.center.1) * zoom + vh as f32 / 2.0) / scale,
         )
     };
     let (l, t) = to_view(c.x * pw, c.y * ph);
@@ -329,7 +335,10 @@ impl ViewMap {
             app.get_view_width().max(1) as u32,
             app.get_view_height().max(1) as u32,
         );
-        let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+        let (sw, sh) = (
+            st.develop.source_size.0 as f32,
+            st.develop.source_size.1 as f32,
+        );
         let geometry = read_geometry(app);
         let frame = if app.get_crop_mode() {
             geometry.bounds(sw, sh)
@@ -343,7 +352,7 @@ impl ViewMap {
             source: (sw, sh),
             geometry,
             origin: frame.origin,
-            center: st.center,
+            center: st.develop.center,
         }
     }
 
@@ -367,7 +376,10 @@ pub(crate) fn view_to_source(st: &State, app: &App, x: f32, y: f32) -> (f32, f32
         app.get_view_height().max(1) as u32,
     );
     let zoom = effective_zoom(st, vw, vh);
-    let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+    let (sw, sh) = (
+        st.develop.source_size.0 as f32,
+        st.develop.source_size.1 as f32,
+    );
     let geometry = read_geometry(app);
     let frame = if app.get_crop_mode() {
         geometry.bounds(sw, sh)
@@ -375,8 +387,8 @@ pub(crate) fn view_to_source(st: &State, app: &App, x: f32, y: f32) -> (f32, f32
         geometry.frame(sw, sh)
     };
     let r = (
-        (x * scale - vw as f32 / 2.0) / zoom + st.center.0 + frame.origin.0,
-        (y * scale - vh as f32 / 2.0) / zoom + st.center.1 + frame.origin.1,
+        (x * scale - vw as f32 / 2.0) / zoom + st.develop.center.0 + frame.origin.0,
+        (y * scale - vh as f32 / 2.0) / zoom + st.develop.center.1 + frame.origin.1,
     );
     let at = geometry.to_source(r, sw, sh);
     (at.0 / sw, at.1 / sw)
@@ -392,7 +404,10 @@ pub(crate) fn view_on_picture(st: &State, app: &App, x: f32, y: f32) -> bool {
         app.get_view_height().max(1) as u32,
     );
     let zoom = effective_zoom(st, vw, vh);
-    let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+    let (sw, sh) = (
+        st.develop.source_size.0 as f32,
+        st.develop.source_size.1 as f32,
+    );
     let geometry = read_geometry(app);
     let frame = if app.get_crop_mode() {
         geometry.bounds(sw, sh)
@@ -400,8 +415,8 @@ pub(crate) fn view_on_picture(st: &State, app: &App, x: f32, y: f32) -> bool {
         geometry.frame(sw, sh)
     };
     let (fx, fy) = (
-        (x * scale - vw as f32 / 2.0) / zoom + st.center.0,
-        (y * scale - vh as f32 / 2.0) / zoom + st.center.1,
+        (x * scale - vw as f32 / 2.0) / zoom + st.develop.center.0,
+        (y * scale - vh as f32 / 2.0) / zoom + st.develop.center.1,
     );
     (0.0..=frame.size.0).contains(&fx) && (0.0..=frame.size.1).contains(&fy)
 }
@@ -418,7 +433,10 @@ pub(crate) fn view_to_plane(st: &State, app: &App, x: f32, y: f32) -> (f32, f32)
         app.get_view_height().max(1) as u32,
     );
     let zoom = effective_zoom(st, vw, vh);
-    let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+    let (sw, sh) = (
+        st.develop.source_size.0 as f32,
+        st.develop.source_size.1 as f32,
+    );
     let geometry = read_geometry(app);
     let frame = if app.get_crop_mode() {
         geometry.bounds(sw, sh)
@@ -427,8 +445,8 @@ pub(crate) fn view_to_plane(st: &State, app: &App, x: f32, y: f32) -> (f32, f32)
     };
     let (pw, ph) = geometry.plane_size(sw, sh);
     let r = (
-        (x * scale - vw as f32 / 2.0) / zoom + st.center.0 + frame.origin.0,
-        (y * scale - vh as f32 / 2.0) / zoom + st.center.1 + frame.origin.1,
+        (x * scale - vw as f32 / 2.0) / zoom + st.develop.center.0 + frame.origin.0,
+        (y * scale - vh as f32 / 2.0) / zoom + st.develop.center.1 + frame.origin.1,
     );
     (r.0 / pw, r.1 / ph)
 }
@@ -451,7 +469,7 @@ pub(crate) fn sample_view_at(
     reach: u32,
 ) -> Option<[f32; 3]> {
     let (u, v) = view_to_source(st, app, x, y);
-    let sw = st.source_size.0 as f32;
+    let sw = st.develop.source_size.0 as f32;
     let (px, py) = ((u * sw).round() as i64, (v * sw).round() as i64);
     let (size, lag) = drawn_picture(st);
     if px < 0 || py < 0 || px >= i64::from(size.0) || py >= i64::from(size.1) {
@@ -460,7 +478,7 @@ pub(crate) fn sample_view_at(
     // The texture may still be the develop at the turn before; the
     // pixel is read where it holds this one.
     let (px, py) = placeholder::texel_of((px, py), size, lag);
-    match st.renderer.as_ref()?.sample(px, py, reach) {
+    match st.develop.renderer.as_ref()?.sample(px, py, reach) {
         Ok(sample) => sample,
         Err(e) => {
             tracing::warn!("pick: {e:#}");
@@ -475,7 +493,7 @@ pub(crate) fn pick_stages(st: &mut State, app: &App, px: [f32; 3]) -> finish::Pi
     let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
     let m = preview_white(st, key);
     let px: [f32; 3] = std::array::from_fn(|r| m[r][0] * px[0] + m[r][1] * px[1] + m[r][2] * px[2]);
-    let edit = read_edit(app, &st.edit, st.target);
+    let edit = read_edit(app, &st.develop.edit, st.develop.target);
     finish::pick(
         px,
         &edit.light.effective(),
@@ -484,7 +502,7 @@ pub(crate) fn pick_stages(st: &mut State, app: &App, px: [f32; 3]) -> finish::Pi
         &edit.bw,
         &edit.tint,
         &edit.curves.bake_with(&edit.grading),
-        st.source,
+        st.develop.source,
         edit.display_curve,
     )
 }
@@ -501,16 +519,21 @@ pub(crate) fn zoom_label(zoom: f32) -> slint::SharedString {
 /// [`zoom::effective`] for the state: the zoom it holds, the cell
 /// the compare view gives, and the size of the picture on the GPU.
 pub(crate) fn effective_zoom(st: &State, vw: u32, vh: u32) -> f32 {
-    zoom::effective(st.zoom, view_cell(st, vw, vh), st.image_size)
+    zoom::effective(
+        st.develop.zoom,
+        view_cell(st, vw, vh),
+        st.develop.image_size,
+    )
 }
 
 /// [`zoom::cell`] for the state: how many frames the compare view
 /// is showing, if it is showing any.
 pub(crate) fn view_cell(st: &State, vw: u32, vh: u32) -> (u32, u32) {
     let compare = st
+        .culling
         .cull
         .as_ref()
-        .or(st.hold.as_ref())
+        .or(st.culling.hold.as_ref())
         .map_or(1, |c| c.compare);
     zoom::cell(vw, vh, compare)
 }
@@ -882,7 +905,7 @@ impl Shown {
             Self::RawTherapee(step) => {
                 if let Some(state) = STATE.with(|s| s.borrow().clone()) {
                     let mut st = state.borrow_mut();
-                    match (step, st.recent.open.clone()) {
+                    match (step, st.views.recent.open.clone()) {
                         (_, None) => {
                             tracing::warn!("--sheet rawtherapee wants a folder open")
                         }
@@ -906,8 +929,8 @@ impl Shown {
                     && let Some(state) = STATE.with(|s| s.borrow().clone())
                 {
                     let mut st = state.borrow_mut();
-                    st.looks = greycard_edit::look::list();
-                    if let Some(first) = st.looks.first().map(|e| e.name.clone()) {
+                    st.develop.looks = greycard_edit::look::list();
+                    if let Some(first) = st.develop.looks.first().map(|e| e.name.clone()) {
                         app.set_look_name(first.into());
                     }
                 }
@@ -969,9 +992,9 @@ pub(crate) static SNAPSHOT_KEYS: std::sync::OnceLock<String> = std::sync::OnceLo
 /// second later, for the frame that shows what came.
 fn when_quiet(state: Rc<RefCell<State>>, then: impl FnOnce() + 'static, tries: u32) {
     let quiet = state.try_borrow().is_ok_and(|st| {
-        st.asked.is_empty()
-            && st.part_pending.is_none()
-            && st.landscape_pending.is_none()
+        st.develop.asked.is_empty()
+            && st.develop.part_pending.is_none()
+            && st.develop.landscape_pending.is_none()
             && !st.lightroom.busy()
             && !st.rawtherapee.busy()
     });
@@ -1056,7 +1079,7 @@ pub(crate) fn schedule_snapshot(
             // The picture asked for is not there: a failed run,
             // whatever stopped it.
             if !wrote {
-                state.borrow_mut().failed = true;
+                state.borrow_mut().launch.failed = true;
             }
             if then_quit {
                 let _ = slint::quit_event_loop();
@@ -1305,7 +1328,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let mut st = state.borrow_mut();
             // A look control reached in culling: out of it, and the
             // frame develops so the control has a picture to act on.
-            if st.cull.is_some() {
+            if st.culling.cull.is_some() {
                 let with = control_over_frame(&mut st, &app);
                 leave_cull(&mut st, &app, &worker, with);
                 return;
@@ -1316,7 +1339,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // made: the panel's edit is the develop's, once the
             // pointer has rested, as a develop slider's is.
             if crate::panel::mask::detail_asks(&mut st, &app) {
-                st.edit = read_edit(&app, &st.edit, st.target);
+                st.develop.edit = read_edit(&app, &st.develop.edit, st.develop.target);
                 crate::panel::edit::develop_soon(
                     &mut st,
                     state.clone(),
@@ -1338,7 +1361,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             if let Some(chosen) = scope::Scope::from_name(name.as_str()) {
-                state.borrow_mut().scope = chosen;
+                state.borrow_mut().develop.scope = chosen;
                 app.window().request_redraw();
             }
         });
@@ -1485,16 +1508,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                             at
                         }
                     };
-                    st.picking = Some(Picking::Curve {
+                    st.develop.picking = Some(Picking::Curve {
                         channel,
                         index,
                         y0: points[index][1],
                         at: y,
                     });
-                    st.curve_drag = Some(index);
+                    st.develop.curve_drag = Some(index);
                     set_curve_points(&app, channel, &points);
                     select_point(&app, Some(index));
-                    app.set_curve_image(draw_curve(&app, st.bins.as_deref()));
+                    app.set_curve_image(draw_curve(&app, st.develop.bins.as_deref()));
                     app.window().request_redraw();
                 }
                 "Defringe" => {
@@ -1550,7 +1573,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     let m = preview_white(&mut st, key);
                     let px: [f32; 3] =
                         std::array::from_fn(|r| m[r][0] * px[0] + m[r][1] * px[1] + m[r][2] * px[2]);
-                    let edit = read_edit(&app, &st.edit, st.target);
+                    let edit = read_edit(&app, &st.develop.edit, st.develop.target);
                     let s = finish::sample(px, None, edit.light.effective().exposure);
                     app.set_range_hue(s.hue());
                     // Under the floor the hue is the pixel's noise, and
@@ -1577,7 +1600,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     let (band, _) = finish::nearest_band(picked.hue);
                     app.set_mixer_band(band as i32);
                     show_mixer_band(&app);
-                    st.picking = Some(Picking::Mixer {
+                    st.develop.picking = Some(Picking::Mixer {
                         band,
                         hue0: app.get_mixer_hue(),
                         sat0: app.get_mixer_saturation(),
@@ -1596,7 +1619,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let st = state.borrow();
-            match st.picking {
+            match st.develop.picking {
                 Some(Picking::Curve {
                     channel,
                     index,
@@ -1610,7 +1633,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     points[index][1] = (y0 + (at - y) / PICK_DRAG).clamp(0.0, 1.0);
                     set_curve_points(&app, channel, &points);
                     show_selected(&app);
-                    app.set_curve_image(draw_curve(&app, st.bins.as_deref()));
+                    app.set_curve_image(draw_curve(&app, st.develop.bins.as_deref()));
                 }
                 Some(Picking::Mixer {
                     band,
@@ -1637,10 +1660,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some(picked) = st.picking.take() else {
+            let Some(picked) = st.develop.picking.take() else {
                 return;
             };
-            st.curve_drag = None;
+            st.develop.curve_drag = None;
             drop(st);
             app.invoke_view_changed();
             // The mixer's dropper is one pick, as the white's is: the
@@ -1675,9 +1698,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let new = (old * factor).clamp(0.02, 16.0);
             // The image pixel under the cursor stays under the cursor.
             let (px, py) = (x * scale - vw as f32 / 2.0, y * scale - vh as f32 / 2.0);
-            st.center.0 += px / old - px / new;
-            st.center.1 += py / old - py / new;
-            st.zoom = new;
+            st.develop.center.0 += px / old - px / new;
+            st.develop.center.1 += py / old - py / new;
+            st.develop.zoom = new;
             app.window().request_redraw();
         });
     }
@@ -1693,9 +1716,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let mut st = state.borrow_mut();
             if level <= 0.0 {
-                st.zoom = 0.0;
-                let (iw, ih) = st.image_size;
-                st.center = (iw as f32 / 2.0, ih as f32 / 2.0);
+                st.develop.zoom = 0.0;
+                let (iw, ih) = st.develop.image_size;
+                st.develop.center = (iw as f32 / 2.0, ih as f32 / 2.0);
             } else {
                 let scale = app.window().scale_factor();
                 let (vw, vh) = (
@@ -1704,9 +1727,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 );
                 let old = effective_zoom(&st, vw, vh);
                 let (px, py) = (x * scale - vw as f32 / 2.0, y * scale - vh as f32 / 2.0);
-                st.center.0 += px / old - px / level;
-                st.center.1 += py / old - py / level;
-                st.zoom = level;
+                st.develop.center.0 += px / old - px / level;
+                st.develop.center.1 += py / old - py / level;
+                st.develop.zoom = level;
             }
             app.window().request_redraw();
         };
@@ -1727,12 +1750,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.get_view_height().max(1) as u32,
             );
             // In the compare view a click chooses the frame under it.
-            if let Some(cull) = st.cull.as_ref()
+            if let Some(cull) = st.culling.cull.as_ref()
                 && cull.compare > 1
             {
                 // As many tiles as the frame drew: a set of four at
                 // the end of a short folder is fewer.
-                let rows = cull.rows(&st.shown);
+                let rows = cull.rows(&st.views.shown);
                 let tile = cull::tile_at(vw, vh, rows.len(), x * scale, y * scale);
                 let row = tile.and_then(|k| rows.get(k).copied());
                 drop(st);
@@ -1743,17 +1766,17 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 }
                 return;
             }
-            let (iw, ih) = st.image_size;
+            let (iw, ih) = st.develop.image_size;
             if iw == 0 || ih == 0 {
                 return;
             }
             let zoom = effective_zoom(&st, vw, vh);
-            let u = (x * scale - vw as f32 / 2.0) / zoom + st.center.0;
-            let v = (y * scale - vh as f32 / 2.0) / zoom + st.center.1;
+            let u = (x * scale - vw as f32 / 2.0) / zoom + st.develop.center.0;
+            let v = (y * scale - vh as f32 / 2.0) / zoom + st.develop.center.1;
             if u < 0.0 || v < 0.0 || u > iw as f32 || v > ih as f32 {
                 return;
             }
-            let fitted = st.zoom == 0.0;
+            let fitted = st.develop.zoom == 0.0;
             drop(st);
             zoom_to2(if fitted { 1.0 } else { 0.0 }, x, y);
         });
@@ -1762,7 +1785,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let at_level = (state.borrow().zoom - level).abs() < 1e-3;
+            let at_level = (state.borrow().develop.zoom - level).abs() < 1e-3;
             let scale = app.window().scale_factor();
             let (cx, cy) = (
                 app.get_view_width().max(1) as f32 / 2.0 / scale,
@@ -1786,7 +1809,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.get_view_height().max(1) as u32,
             );
             let zoom = effective_zoom(&st, vw, vh);
-            let (fw, fh) = (st.image_size.0 as f32, st.image_size.1 as f32);
+            let (fw, fh) = (
+                st.develop.image_size.0 as f32,
+                st.develop.image_size.1 as f32,
+            );
             let (shown_w, shown_h) = (vw as f32 / zoom, vh as f32 / zoom);
             let place = |f: f32, frame: f32, shown: f32| {
                 if shown >= frame {
@@ -1795,7 +1821,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     (f * frame).clamp(shown / 2.0, frame - shown / 2.0)
                 }
             };
-            st.center = (place(fx, fw, shown_w), place(fy, fh, shown_h));
+            st.develop.center = (place(fx, fw, shown_w), place(fy, fh, shown_h));
             app.window().request_redraw();
         });
     }
@@ -1813,8 +1839,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.get_view_height().max(1) as u32,
             );
             let zoom = effective_zoom(&st, vw, vh);
-            st.center.0 -= dx * scale / zoom;
-            st.center.1 -= dy * scale / zoom;
+            st.develop.center.0 -= dx * scale / zoom;
+            st.develop.center.1 -= dy * scale / zoom;
             app.window().request_redraw();
         });
     }
@@ -1835,13 +1861,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             );
             let at = effective_zoom(&st, vw, vh);
             let (cw, ch) = view_cell(&st, vw, vh);
-            let (fw, fh) = (st.image_size.0 as f32, st.image_size.1 as f32);
-            let center = (
-                zoom::wheel_pan(st.center.0, dx * scale / at, cw as f32 / at, fw),
-                zoom::wheel_pan(st.center.1, dy * scale / at, ch as f32 / at, fh),
+            let (fw, fh) = (
+                st.develop.image_size.0 as f32,
+                st.develop.image_size.1 as f32,
             );
-            if center != st.center {
-                st.center = center;
+            let center = (
+                zoom::wheel_pan(st.develop.center.0, dx * scale / at, cw as f32 / at, fw),
+                zoom::wheel_pan(st.develop.center.1, dy * scale / at, ch as f32 / at, fh),
+            );
+            if center != st.develop.center {
+                st.develop.center = center;
                 app.window().request_redraw();
             }
         });
@@ -1853,9 +1882,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            st.zoom = 0.0;
-            let (iw, ih) = st.image_size;
-            st.center = (iw as f32 / 2.0, ih as f32 / 2.0);
+            st.develop.zoom = 0.0;
+            let (iw, ih) = st.develop.image_size;
+            st.develop.center = (iw as f32 / 2.0, ih as f32 / 2.0);
             app.window().request_redraw();
         });
     }
@@ -1917,7 +1946,7 @@ mod tests {
 
         app.invoke_pick_started("Mixer".into());
         assert_eq!(app.get_picking(), "Mixer", "the button puts it in hand");
-        state.borrow_mut().picking = Some(Picking::Mixer {
+        state.borrow_mut().develop.picking = Some(Picking::Mixer {
             band: 2,
             hue0: 0.0,
             sat0: 0.0,
@@ -1927,7 +1956,7 @@ mod tests {
         assert!(app.get_mixer_hue() > 0.0, "the drag moved the band");
         app.invoke_pick_released();
         assert_eq!(app.get_picking(), "", "the pick put the dropper down");
-        assert!(state.borrow().picking.is_none());
+        assert!(state.borrow().develop.picking.is_none());
 
         // Its button again, before a pick, takes it back.
         app.invoke_pick_started("Mixer".into());
@@ -1941,7 +1970,7 @@ mod tests {
 
         // The Curve's dropper is a point a click and stays in hand.
         app.invoke_pick_started("Curve".into());
-        state.borrow_mut().picking = Some(Picking::Curve {
+        state.borrow_mut().develop.picking = Some(Picking::Curve {
             channel: Channel::Rgb,
             index: 0,
             y0: 0.5,
@@ -2148,8 +2177,8 @@ mod tests {
         let shot = resolve_white_balance(&frame, &profile, WhitePoint::AsShot).unwrap();
         {
             let mut st = state.borrow_mut();
-            st.base_white = Some(WhiteBase::from(&shot, 1.0));
-            st.frame = Some((Arc::new(frame), Box::new(profile)));
+            st.develop.base_white = Some(WhiteBase::from(&shot, 1.0));
+            st.develop.frame = Some((Arc::new(frame), Box::new(profile)));
         }
         let wait = || {
             i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
@@ -2179,7 +2208,7 @@ mod tests {
         AUTO_WHITE_GRID.with(|g| g.borrow_mut().take());
         {
             let mut st = state.borrow_mut();
-            st.shown_turn = Some((0, current_turn(&st)));
+            st.develop.shown_turn = Some((0, current_turn(&st)));
         }
         // A neutral that names no white says so, in each one's words.
         assert_eq!(
@@ -2233,20 +2262,20 @@ mod tests {
         let profile = profile_from_frame(&frame).unwrap();
         let shot = resolve_white_balance(&frame, &profile, WhitePoint::AsShot).unwrap();
         let mut st = state.borrow_mut();
-        st.base_white = Some(WhiteBase::from(&shot, 1.0));
-        st.frame = Some((Arc::new(frame), Box::new(profile)));
+        st.develop.base_white = Some(WhiteBase::from(&shot, 1.0));
+        st.develop.frame = Some((Arc::new(frame), Box::new(profile)));
         let own = crate::panel::color::local_white_shift(&mut st).expect("a raw's");
         // The next file chosen: the picture held, the frame gone and
         // the develop's white not yet the next one's.
-        st.held = Some(st.edit.clone());
-        st.frame = None;
-        st.base_white = None;
+        st.develop.held = Some(st.develop.edit.clone());
+        st.develop.frame = None;
+        st.develop.base_white = None;
         let held = crate::panel::color::local_white_shift(&mut st).expect("the held one's");
         assert_eq!((held.gains, held.rows), (own.gains, own.rows));
         // Its develop landed: the next frame's own, here none.
-        st.held = None;
+        st.develop.held = None;
         assert!(crate::panel::color::local_white_shift(&mut st).is_none());
-        st.held = Some(st.edit.clone());
+        st.develop.held = Some(st.develop.edit.clone());
         assert!(crate::panel::color::local_white_shift(&mut st).is_none());
     }
 
@@ -2264,15 +2293,15 @@ mod tests {
         let shot = resolve_white_balance(&frame, &profile, WhitePoint::AsShot).unwrap();
         {
             let mut st = state.borrow_mut();
-            st.base_white = Some(WhiteBase::from(&shot, 1.0));
-            st.frame = Some((Arc::new(frame), Box::new(profile)));
-            st.shown_turn = Some((0, current_turn(&st)));
-            st.edit.adjustments.push(greycard_edit::Adjustment {
+            st.develop.base_white = Some(WhiteBase::from(&shot, 1.0));
+            st.develop.frame = Some((Arc::new(frame), Box::new(profile)));
+            st.develop.shown_turn = Some((0, current_turn(&st)));
+            st.develop.edit.adjustments.push(greycard_edit::Adjustment {
                 id: 1,
                 name: "Lamp".into(),
                 ..Default::default()
             });
-            st.target = Some(0);
+            st.develop.target = Some(0);
         }
         app.set_panel_tab("Masks".into());
         app.set_target(1);
@@ -2305,7 +2334,7 @@ mod tests {
         app.invoke_local_wb_toggled();
         assert_eq!(app.get_local_temperature(), 4100.0);
         assert_eq!(app.get_local_tint(), 0.003);
-        let edit = read_edit(&app, &state.borrow().edit, Some(0));
+        let edit = read_edit(&app, &state.borrow().develop.edit, Some(0));
         assert_eq!(
             edit.adjustments[0].look.white_balance,
             greycard_edit::LocalWhite::Absolute {
@@ -2328,10 +2357,10 @@ mod tests {
         // Off, the mask's light reaches nothing, and the global look
         // never carries one.
         app.set_local_wb_on(false);
-        let edit = read_edit(&app, &state.borrow().edit, Some(0));
+        let edit = read_edit(&app, &state.borrow().develop.edit, Some(0));
         assert!(edit.adjustments[0].look.white_balance.temp_tint().is_none());
         app.set_local_wb_on(true);
-        let edit = read_edit(&app, &state.borrow().edit, None);
+        let edit = read_edit(&app, &state.borrow().develop.edit, None);
         assert!(edit.look().white_balance.is_off());
     }
 
@@ -2406,7 +2435,7 @@ mod tests {
         app.set_local_wb_kept(false);
         {
             let mut st = state.borrow_mut();
-            st.edit = read.current.clone();
+            st.develop.edit = read.current.clone();
             crate::panel::edit::show_edit(&st, &read.current, &app, Some(0));
         }
         assert!(!app.get_local_wb_on());
@@ -2446,9 +2475,9 @@ mod tests {
         let (state, worker) = crate::testing::retouch_state(&app);
         {
             let mut st = state.borrow_mut();
-            st.image_size = (6000, 4000);
-            st.center = (3000.0, 2000.0);
-            st.zoom = zoom;
+            st.develop.image_size = (6000, 4000);
+            st.develop.center = (3000.0, 2000.0);
+            st.develop.zoom = zoom;
         }
         (app, state, worker)
     }
@@ -2469,15 +2498,15 @@ mod tests {
     fn a_wheel_click_over_the_picture_zooms() {
         let (app, state, _worker) = scrolled_view(1.0);
         scroll(&app, 0.0, 60.0);
-        assert_eq!(state.borrow().zoom, 1.25);
+        assert_eq!(state.borrow().develop.zoom, 1.25);
         scroll(&app, 0.0, -60.0);
-        assert_eq!(state.borrow().zoom, 1.0);
+        assert_eq!(state.borrow().develop.zoom, 1.0);
 
         let (app, state, _worker) = scrolled_view(0.0);
         let (vw, vh) = (app.get_view_width() as u32, app.get_view_height() as u32);
         let fit = effective_zoom(&state.borrow(), vw, vh);
         scroll(&app, 0.0, 60.0);
-        assert!((state.borrow().zoom - fit * 1.25).abs() < 1e-6);
+        assert!((state.borrow().develop.zoom - fit * 1.25).abs() < 1e-6);
     }
 
     /// With the brush or the retouch patch in hand the wheel sizes it
@@ -2535,22 +2564,25 @@ mod tests {
         scroll(&app, 0.0, 10.0);
         {
             let st = state.borrow();
-            assert_eq!(st.zoom, 1.0, "a small delta does not zoom");
-            assert_eq!(st.center, (3000.0, 2000.0 - 10.0 * scale));
+            assert_eq!(st.develop.zoom, 1.0, "a small delta does not zoom");
+            assert_eq!(st.develop.center, (3000.0, 2000.0 - 10.0 * scale));
         }
         for _ in 0..5 {
             scroll(&app, 3.0, -4.0);
         }
         {
             let st = state.borrow();
-            assert_eq!(st.zoom, 1.0);
-            assert_eq!(st.center, (3000.0 - 15.0 * scale, 2000.0 + 10.0 * scale));
+            assert_eq!(st.develop.zoom, 1.0);
+            assert_eq!(
+                st.develop.center,
+                (3000.0 - 15.0 * scale, 2000.0 + 10.0 * scale)
+            );
         }
         scroll(&app, 60.0, 60.0);
-        assert_eq!(state.borrow().zoom, 1.0);
+        assert_eq!(state.borrow().develop.zoom, 1.0);
         scroll(&app, 60.0, 0.0);
-        assert_eq!(state.borrow().zoom, 1.0);
-        assert_eq!(state.borrow().center.0, 3000.0 - 135.0 * scale);
+        assert_eq!(state.borrow().develop.zoom, 1.0);
+        assert_eq!(state.borrow().develop.center.0, 3000.0 - 135.0 * scale);
     }
 
     /// A touchpad's fast flick carries deltas of a click's size and
@@ -2564,8 +2596,8 @@ mod tests {
         scroll(&app, 0.0, 72.0);
         {
             let st = state.borrow();
-            assert_eq!(st.zoom, 1.0, "72 px is no whole click");
-            assert_eq!(st.center.1, 2000.0 - 72.0 * scale);
+            assert_eq!(st.develop.zoom, 1.0, "72 px is no whole click");
+            assert_eq!(st.develop.center.1, 2000.0 - 72.0 * scale);
         }
         // Well after that: a flick's ramp, which lands on a whole click
         // on its way up.
@@ -2575,17 +2607,17 @@ mod tests {
         }
         {
             let st = state.borrow();
-            assert_eq!(st.zoom, 1.0, "a click's size mid-pan pans");
-            assert_eq!(st.center.1, 2000.0 - 212.0 * scale);
+            assert_eq!(st.develop.zoom, 1.0, "a click's size mid-pan pans");
+            assert_eq!(st.develop.center.1, 2000.0 - 212.0 * scale);
         }
         // Still within the quarter second of the last pan.
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(200));
         scroll(&app, 0.0, -120.0);
-        assert_eq!(state.borrow().zoom, 1.0);
+        assert_eq!(state.borrow().develop.zoom, 1.0);
         // A quiet spell, and the same click zooms.
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(300));
         scroll(&app, 0.0, 60.0);
-        assert_eq!(state.borrow().zoom, 1.25);
+        assert_eq!(state.borrow().develop.zoom, 1.25);
     }
 
     /// A high-resolution wheel's fragments pan a little, and its whole
@@ -2598,10 +2630,10 @@ mod tests {
         for _ in 0..3 {
             scroll(&app, 0.0, 15.0);
         }
-        assert_eq!(state.borrow().zoom, 1.0);
-        assert_eq!(state.borrow().center.1, 2000.0 - 45.0 * scale);
+        assert_eq!(state.borrow().develop.zoom, 1.0);
+        assert_eq!(state.borrow().develop.center.1, 2000.0 - 45.0 * scale);
         scroll(&app, 0.0, 60.0);
-        assert_eq!(state.borrow().zoom, 1.25);
+        assert_eq!(state.borrow().develop.zoom, 1.25);
     }
 
     /// A zoom by nothing (Ctrl and a purely sideways scroll; a gesture
@@ -2611,7 +2643,7 @@ mod tests {
         use slint::platform::{Key, WindowEvent};
         let (app, state, _worker) = scrolled_view(0.0);
         app.invoke_zoom(1.0, 600.0, 400.0);
-        assert_eq!(state.borrow().zoom, 0.0);
+        assert_eq!(state.borrow().develop.zoom, 0.0);
         app.window().dispatch_event(WindowEvent::KeyPressed {
             text: Key::Control.into(),
         });
@@ -2620,8 +2652,8 @@ mod tests {
             text: Key::Control.into(),
         });
         let st = state.borrow();
-        assert_eq!(st.zoom, 0.0, "still the fit");
-        assert_eq!(st.center, (3000.0, 2000.0));
+        assert_eq!(st.develop.zoom, 0.0, "still the fit");
+        assert_eq!(st.develop.center, (3000.0, 2000.0));
     }
 
     /// Where the whole picture is in view a pan has nowhere to go: the
@@ -2633,8 +2665,8 @@ mod tests {
             scroll(&app, 7.0, -12.0);
         }
         let st = state.borrow();
-        assert_eq!(st.zoom, 0.0);
-        assert_eq!(st.center, (3000.0, 2000.0));
+        assert_eq!(st.develop.zoom, 0.0);
+        assert_eq!(st.develop.center, (3000.0, 2000.0));
     }
 
     /// With Ctrl held a touchpad's delta zooms, by as much of a step as
@@ -2647,7 +2679,7 @@ mod tests {
             text: Key::Control.into(),
         });
         scroll(&app, 0.0, 10.0);
-        let zoomed = state.borrow().zoom;
+        let zoomed = state.borrow().develop.zoom;
         assert!(
             (zoomed - 1.25f32.powf(10.0 / 60.0)).abs() < 1e-5,
             "zoomed to {zoomed}"
@@ -2656,15 +2688,15 @@ mod tests {
         for _ in 0..5 {
             scroll(&app, 0.0, 10.0);
         }
-        assert!((state.borrow().zoom - 1.25).abs() < 1e-4);
+        assert!((state.borrow().develop.zoom - 1.25).abs() < 1e-4);
         app.window().dispatch_event(WindowEvent::KeyReleased {
             text: Key::Control.into(),
         });
         // Let go of Ctrl and the same delta pans again.
-        let before = state.borrow().center;
+        let before = state.borrow().develop.center;
         scroll(&app, 0.0, 10.0);
-        assert!((state.borrow().zoom - 1.25).abs() < 1e-4);
-        assert_ne!(state.borrow().center, before);
+        assert!((state.borrow().develop.zoom - 1.25).abs() < 1e-4);
+        assert_ne!(state.borrow().develop.center, before);
     }
 
     /// The edge arrows and the undo and redo buttons show a picture

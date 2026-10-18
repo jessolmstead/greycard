@@ -8,7 +8,7 @@ use super::*;
 fn roots_of(st: &State, view: &View) -> Vec<PathBuf> {
     match view {
         View::Folder => Vec::new(),
-        View::Roots(None) | View::Collection { .. } => st.library.roots.list().to_vec(),
+        View::Roots(None) | View::Collection { .. } => st.views.library.roots.list().to_vec(),
         View::Roots(Some(r)) | View::Branch { root: r, .. } => vec![r.clone()],
     }
 }
@@ -18,7 +18,7 @@ fn roots_of(st: &State, view: &View) -> Vec<PathBuf> {
 /// alone shows all of it.
 fn hidden_under(st: &State, view: &View) -> Vec<PathBuf> {
     match view {
-        View::Roots(None) => st.library.roots.archives().to_vec(),
+        View::Roots(None) => st.views.library.roots.archives().to_vec(),
         _ => Vec::new(),
     }
 }
@@ -26,7 +26,7 @@ fn hidden_under(st: &State, view: &View) -> Vec<PathBuf> {
 /// Every root, and the view's own if it is not among them: each is
 /// looked at off the window's thread, for its row.
 fn every_root(st: &State, view: &View) -> Vec<PathBuf> {
-    let mut all = st.library.roots.list().to_vec();
+    let mut all = st.views.library.roots.list().to_vec();
     for r in roots_of(st, view) {
         if !all.contains(&r) {
             all.push(r);
@@ -38,7 +38,7 @@ fn every_root(st: &State, view: &View) -> Vec<PathBuf> {
 /// The order `view` is read in, its choice as kept: none for a
 /// collection in its own order.
 fn order_of(st: &State, view: &View) -> Option<greycard_library::Order> {
-    st.sort.choice(view).order()
+    st.views.sort.choice(view).order()
 }
 
 /// The order a list that is not a collection's is read in. Its choice
@@ -67,35 +67,35 @@ pub(super) fn read_order(st: &State, view: &View) -> Option<greycard_library::Or
 /// is looked at again.
 pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>, view: View) {
     let mut st = state.borrow_mut();
-    let Some(lib) = &st.index_reader else {
+    let Some(lib) = &st.views.index_reader else {
         // Asked before the indexer has opened the library: done when
         // it has.
-        st.library.wanted = Some(view);
+        st.views.library.wanted = Some(view);
         app.set_status("opening the library index...".into());
         return;
     };
     let asked = Instant::now();
     let order = order_of(&st, &view);
     if let View::Collection { id } = &view {
-        let Some(c) = st.collections.collection(id) else {
+        let Some(c) = st.views.collections.collection(id) else {
             app.set_status("that collection is gone".into());
             return;
         };
         let refs = c.refs.clone();
-        let archives = st.library.roots.archives().to_vec();
+        let archives = st.views.library.roots.archives().to_vec();
         // Found off the window's thread when the window knows where the
         // index is; here only for a window with a reader and no path
         // (the tests').
-        let shown = if st.index_path.is_some() {
+        let shown = if st.views.index_path.is_some() {
             None
         } else {
-            let away: Vec<PathBuf> = st.library.offline.iter().cloned().collect();
+            let away: Vec<PathBuf> = st.views.library.offline.iter().cloned().collect();
             match crate::collections::resolve(lib, &refs, &away, &archives, order) {
                 Ok(shown) => Some(shown),
                 Err(e) => {
                     tracing::warn!("library: {e}");
                     app.set_status(format!("the library index could not be read: {e}").into());
-                    loading_done(&mut st.library, app);
+                    loading_done(&mut st.views.library, app);
                     return;
                 }
             }
@@ -112,16 +112,16 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         return;
     }
     let order = listed_order(&st, &view);
-    let (roots, only) = view.listed(st.library.roots.list());
+    let (roots, only) = view.listed(st.views.library.roots.list());
     let at = match roots.as_slice() {
-        [one] => one_root_named(&st.library.roots, [one.as_path()]),
+        [one] => one_root_named(&st.views.library.roots, [one.as_path()]),
         _ => None,
     };
     // The rows are read off the window's thread, on a connection of the
     // read's own, when the window knows where the index is; here only
     // their count, for the status line, from the folder index's range.
     // A window with a reader and no path (the tests') reads them here.
-    let (rows, count) = if st.index_path.is_some() {
+    let (rows, count) = if st.views.index_path.is_some() {
         (None, count_listed(lib, &roots, only))
     } else {
         match rows_listed(lib, &roots, only, order) {
@@ -132,8 +132,8 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
             Err(e) => {
                 tracing::warn!("library: {e}");
                 app.set_status(format!("the library index could not be read: {e}").into());
-                st.library.awaiting = false;
-                loading_done(&mut st.library, app);
+                st.views.library.awaiting = false;
+                loading_done(&mut st.views.library, app);
                 return;
             }
         }
@@ -169,7 +169,7 @@ fn send_view(
     order: Option<greycard_library::Order>,
 ) {
     let mut st = state.borrow_mut();
-    st.view_generation += 1;
+    st.views.view_generation += 1;
     // The frame on screen stays on screen when it is in the new list;
     // else the last one open, as a folder's open does.
     let last = if count == 0 {
@@ -180,25 +180,25 @@ fn send_view(
             (!last.is_empty()).then(|| PathBuf::from(last))
         })
     };
-    st.library.readable.clear();
-    st.library.readable_epoch += 1;
+    st.views.library.readable.clear();
+    st.views.library.readable_epoch += 1;
     app.set_status(format!("reading {} frames...", count).into());
     // No sidecar is read for a view of the roots; the count is the
     // roots' and the folders' looks until the read says otherwise.
     let progress = Arc::new(Progress::default());
     let look = Look {
-        generation: st.view_generation,
+        generation: st.views.view_generation,
         token: 0,
-        epoch: st.library.readable_epoch,
+        epoch: st.views.library.readable_epoch,
         roots: every_root(&st, &view),
         source,
         known: HashSet::new(),
         have: HashSet::new(),
-        write: st.write_sidecars,
+        write: st.window.write_sidecars,
         on_screen: None,
-        index: st.index_path.clone(),
+        index: st.views.index_path.clone(),
         progress: Some(progress.clone()),
-        apart: st.jpegs_apart,
+        apart: st.views.jpegs_apart,
         order,
         purpose: Purpose::Open {
             view,
@@ -210,8 +210,8 @@ fn send_view(
     loading_started(state, app, progress, at);
     if !send_off(app, look) {
         let mut st = state.borrow_mut();
-        st.library.awaiting = false;
-        loading_done(&mut st.library, app);
+        st.views.library.awaiting = false;
+        loading_done(&mut st.views.library, app);
     }
 }
 
@@ -233,8 +233,8 @@ pub(crate) fn open_listing(
     let asked = Instant::now();
     // A view of the roots still being read is dropped by the
     // generation, and nothing is loading any more.
-    st.view_generation += 1;
-    loading_done(&mut st.library, app);
+    st.views.view_generation += 1;
+    loading_done(&mut st.views.library, app);
     let (source, what) = match listing {
         Listing::Folder(dir) => {
             let what = dir.display().to_string();
@@ -250,9 +250,9 @@ pub(crate) fn open_listing(
     };
     app.set_status(format!("opening {what}...").into());
     let at = match &source {
-        Source::Folder(dir) => one_root_named(&st.library.roots, [dir.as_path()]),
+        Source::Folder(dir) => one_root_named(&st.views.library.roots, [dir.as_path()]),
         Source::Files(files) => {
-            one_root_named(&st.library.roots, files.iter().map(PathBuf::as_path))
+            one_root_named(&st.views.library.roots, files.iter().map(PathBuf::as_path))
         }
         _ => None,
     };
@@ -267,18 +267,18 @@ pub(crate) fn open_listing(
         read: AtomicUsize::new(0),
     });
     let look = Look {
-        generation: st.view_generation,
+        generation: st.views.view_generation,
         token: 0,
-        epoch: st.library.readable_epoch,
+        epoch: st.views.library.readable_epoch,
         roots: Vec::new(),
         source,
         known: HashSet::new(),
         have: HashSet::new(),
-        write: st.write_sidecars,
+        write: st.window.write_sidecars,
         on_screen: None,
-        index: st.index_path.clone(),
+        index: st.views.index_path.clone(),
         progress: Some(progress.clone()),
-        apart: st.jpegs_apart,
+        apart: st.views.jpegs_apart,
         order: Some(listed_order(&st, &View::Folder)),
         purpose: Purpose::Open {
             view: View::Folder,
@@ -290,7 +290,7 @@ pub(crate) fn open_listing(
     loading_started(state, app, progress, at);
     if !send_off(app, look) {
         let mut st = state.borrow_mut();
-        loading_done(&mut st.library, app);
+        loading_done(&mut st.views.library, app);
         app.set_status("the folder could not be read: no thread to read it on".into());
     }
 }
@@ -307,7 +307,7 @@ fn loading_started(
     at: Option<String>,
 ) {
     let mut st = state.borrow_mut();
-    let lib = &mut st.library;
+    let lib = &mut st.views.library;
     let now = Instant::now();
     lib.loading = true;
     lib.loading_since = Some(now);
@@ -337,7 +337,7 @@ fn loading_started(
 /// in [`LOADING_STALLED`] is given up on here as `refresh_view` would,
 /// since with no report coming nothing else would.
 pub(crate) fn loading_tick(st: &mut State, app: &App, now: Instant) {
-    let lib = &mut st.library;
+    let lib = &mut st.views.library;
     let (true, Some(since), Some(progress)) = (lib.loading, lib.loading_since, &lib.progress)
     else {
         loading_done(lib, app);
@@ -398,9 +398,9 @@ pub(crate) fn loading_done(lib: &mut Library, app: &App) {
 /// go, and the read dropped by its generation if it ever lands.
 fn give_up_view(st: &mut State, app: &App) {
     tracing::warn!("library: the view's read has not come in; given up");
-    loading_done(&mut st.library, app);
-    st.library.awaiting = false;
-    st.view_generation += 1;
+    loading_done(&mut st.views.library, app);
+    st.views.library.awaiting = false;
+    st.views.view_generation += 1;
     app.set_status("the library's frames did not come in; the list is as it was".into());
 }
 
@@ -434,7 +434,7 @@ pub(super) fn grouped(n: usize) -> String {
 /// The read for the browser's list as it is, from the folder or from
 /// the index. None when there is nothing to read it from.
 pub(super) fn ask(st: &State) -> Option<Look> {
-    let (source, roots) = match &st.view {
+    let (source, roots) = match &st.views.view {
         View::Folder => {
             let dir = st
                 .files
@@ -461,14 +461,14 @@ pub(super) fn ask(st: &State) -> Option<Look> {
             (Source::Folder(dir), Vec::new())
         }
         View::Roots(_) | View::Branch { .. } => {
-            let lib = st.index_reader.as_ref()?;
-            let (roots, only) = st.view.listed(st.library.roots.list());
+            let lib = st.views.index_reader.as_ref()?;
+            let (roots, only) = st.views.view.listed(st.views.library.roots.list());
             // The rows off the window's thread when the index's path is
             // known, as `open_view` has them; else read here.
-            let rows = if st.index_path.is_some() {
+            let rows = if st.views.index_path.is_some() {
                 None
             } else {
-                match rows_listed(lib, &roots, only, listed_order(st, &st.view)) {
+                match rows_listed(lib, &roots, only, listed_order(st, &st.views.view)) {
                     Ok(rows) => Some(rows),
                     Err(e) => {
                         tracing::debug!("library: {e}; the list kept");
@@ -481,20 +481,20 @@ pub(super) fn ask(st: &State) -> Option<Look> {
                     roots,
                     only,
                     rows,
-                    hide: hidden_under(st, &st.view),
+                    hide: hidden_under(st, &st.views.view),
                 },
-                every_root(st, &st.view),
+                every_root(st, &st.views.view),
             )
         }
         View::Collection { id } => {
-            let lib = st.index_reader.as_ref()?;
-            let refs = st.collections.collection(id)?.refs.clone();
-            let archives = st.library.roots.archives().to_vec();
-            let shown = if st.index_path.is_some() {
+            let lib = st.views.index_reader.as_ref()?;
+            let refs = st.views.collections.collection(id)?.refs.clone();
+            let archives = st.views.library.roots.archives().to_vec();
+            let shown = if st.views.index_path.is_some() {
                 None
             } else {
-                let away: Vec<PathBuf> = st.library.offline.iter().cloned().collect();
-                let order = order_of(st, &st.view);
+                let away: Vec<PathBuf> = st.views.library.offline.iter().cloned().collect();
+                let order = order_of(st, &st.views.view);
                 match crate::collections::resolve(lib, &refs, &away, &archives, order) {
                     Ok(shown) => Some(shown),
                     Err(e) => {
@@ -510,34 +510,34 @@ pub(super) fn ask(st: &State) -> Option<Look> {
                     archives,
                     shown,
                 },
-                every_root(st, &st.view),
+                every_root(st, &st.views.view),
             )
         }
     };
     let known = match source {
-        Source::Roots { .. } | Source::Collection { .. } => st.library.readable.clone(),
+        Source::Roots { .. } | Source::Collection { .. } => st.views.library.readable.clone(),
         Source::Folder(_) | Source::Files(_) => HashSet::new(),
     };
     Some(Look {
         purpose: Purpose::Merge,
-        generation: st.view_generation,
-        token: st.library.merge_token,
-        epoch: st.library.readable_epoch,
+        generation: st.views.view_generation,
+        token: st.views.library.merge_token,
+        epoch: st.views.library.readable_epoch,
         source,
         roots,
         known,
         have: st.files.iter().cloned().collect(),
-        write: st.write_sidecars,
+        write: st.window.write_sidecars,
         on_screen: st.current.and_then(|c| {
             Some((
                 st.path_at(c)?.clone(),
-                st.index_ids.get(st.file_at(c)?).copied().flatten(),
+                st.views.index_ids.get(st.file_at(c)?).copied().flatten(),
             ))
         }),
-        index: st.index_path.clone(),
+        index: st.views.index_path.clone(),
         progress: None,
-        apart: st.jpegs_apart,
-        order: read_order(st, &st.view),
+        apart: st.views.jpegs_apart,
+        order: read_order(st, &st.views.view),
     })
 }
 
@@ -553,34 +553,34 @@ pub(crate) fn refresh_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<W
     let look = {
         let mut st = state.borrow_mut();
         let late = |since: Option<Instant>| since.is_some_and(|t| t.elapsed() > READ_GIVES_UP);
-        if st.library.loading {
-            if !late(st.library.loading_since) {
+        if st.views.library.loading {
+            if !late(st.views.library.loading_since) {
                 return false;
             }
             give_up_view(&mut st, app);
         }
-        if st.library.merging {
-            if !late(st.library.merge_since) {
-                st.library.stale = true;
+        if st.views.library.merging {
+            if !late(st.views.library.merge_since) {
+                st.views.library.stale = true;
                 return true;
             }
             tracing::warn!("library: a read of the list has not come in; another sent");
         }
-        st.library.merge_token += 1;
+        st.views.library.merge_token += 1;
         let Some(look) = ask(&st) else {
-            st.library.merging = false;
-            st.library.merge_since = None;
+            st.views.library.merging = false;
+            st.views.library.merge_since = None;
             return false;
         };
-        st.library.merging = true;
-        st.library.merge_since = Some(Instant::now());
-        st.library.stale = false;
+        st.views.library.merging = true;
+        st.views.library.merge_since = Some(Instant::now());
+        st.views.library.stale = false;
         look
     };
     if !send_off(app, look) {
         let mut st = state.borrow_mut();
-        st.library.merging = false;
-        st.library.merge_since = None;
+        st.views.library.merging = false;
+        st.views.library.merge_since = None;
         return false;
     }
     true

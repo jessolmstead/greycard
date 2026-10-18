@@ -172,7 +172,7 @@ impl ThumbRun {
 /// Count a thumbnail into the folder's run. The log hears of the
 /// last at the end of the turn that took it in ([`end_thumb_turn`]).
 pub(crate) fn count_thumb(st: &mut State, index: usize, cached: Option<bool>, seconds: f64) {
-    let Some(run) = st.thumb_run.as_mut() else {
+    let Some(run) = st.views.thumb_run.as_mut() else {
         return;
     };
     if let Some(t) = run.arrived(index, cached, seconds) {
@@ -184,7 +184,7 @@ pub(crate) fn count_thumb(st: &mut State, index: usize, cached: Option<bool>, se
 /// is over: counted into the run, and when the run's last has come,
 /// the run said in the log and closed.
 pub(crate) fn end_thumb_turn(st: &mut State, started: std::time::Instant) {
-    let Some(run) = st.thumb_run.as_mut() else {
+    let Some(run) = st.views.thumb_run.as_mut() else {
         return;
     };
     run.turn(started.elapsed().as_secs_f64());
@@ -214,7 +214,7 @@ pub(crate) fn end_thumb_turn(st: &mut State, started: std::time::Instant) {
             .map_or("none".to_string(), |s| format!("at {s:.2} s")),
         w.longest_gap * 1e3,
     );
-    st.thumb_run = None;
+    st.views.thumb_run = None;
 }
 
 /// `--time-scroll`: the moves left, which way the next goes, and for
@@ -317,7 +317,7 @@ fn scroll_step(app: &App) {
         return;
     };
     let mut st = state.borrow_mut();
-    let Some(timing) = st.time_scroll.as_mut() else {
+    let Some(timing) = st.launch.time_scroll.as_mut() else {
         return;
     };
     if timing.left == 0 {
@@ -333,7 +333,7 @@ fn scroll_step(app: &App) {
             tracing::info!("{line}");
             eprintln!("{line}");
         }
-        st.time_scroll = None;
+        st.launch.time_scroll = None;
         let _ = slint::quit_event_loop();
         return;
     }
@@ -344,7 +344,7 @@ fn scroll_step(app: &App) {
         by = -by;
         app.invoke_scroll_by(by);
     }
-    if let Some(timing) = state.borrow_mut().time_scroll.as_mut() {
+    if let Some(timing) = state.borrow_mut().launch.time_scroll.as_mut() {
         timing.by = by;
         timing.moved = Some(std::time::Instant::now());
     }
@@ -356,16 +356,16 @@ fn scroll_step(app: &App) {
 /// False while neither has said what it shows.
 pub(crate) fn screen_filled(st: &State, app: &App) -> bool {
     let range = if app.get_grid_open() {
-        st.grid_shown
+        st.views.grid_shown
     } else {
-        st.strip_shown
+        st.views.strip_shown
     };
     let Some((first, last)) = range else {
         return false;
     };
     (first.max(0) as usize..=last.max(0) as usize)
-        .filter_map(|r| st.shown.get(r))
-        .all(|&f| st.thumb_base[f].is_some() || st.thumb_failed[f])
+        .filter_map(|r| st.views.shown.get(r))
+        .all(|&f| st.views.thumb_base[f].is_some() || st.views.thumb_failed[f])
 }
 
 /// The name of the frame on screen over the panel, and under it the
@@ -382,7 +382,7 @@ pub(crate) fn show_file_name(st: &State, app: &App, path: Option<&Path>) {
 /// The camera's JPEGs beside the raw at `path`, in the panel's words:
 /// "With the camera's JPEG, IMG_0001.JPG"; empty for a frame with none.
 pub(crate) fn companion_words(st: &State, path: &Path) -> String {
-    match st.companions.get(path).map(Vec::as_slice) {
+    match st.views.companions.get(path).map(Vec::as_slice) {
         None | Some([]) => String::new(),
         Some(with) => {
             let names: Vec<String> = with.iter().map(|p| file_name(p)).collect();
@@ -444,7 +444,7 @@ pub(crate) fn frame_marks(st: &State, c: usize) -> (bool, bool) {
 /// not reach a frame nobody can see is chosen. Empty with nothing
 /// open.
 pub(crate) fn chosen_frames(st: &State) -> Vec<usize> {
-    selection::frames(&st.picked, st.current)
+    selection::frames(&st.views.picked, st.current)
         .into_iter()
         .filter(|&f| row_of(st, f).is_some())
         .collect()
@@ -457,7 +457,7 @@ pub(crate) fn chosen_frames(st: &State) -> Vec<usize> {
 pub(crate) fn show_set(st: &mut State, app: &App) {
     let chosen_set = chosen_frames(st);
     let model = app.get_thumbs();
-    for (row, &f) in st.shown.iter().enumerate() {
+    for (row, &f) in st.views.shown.iter().enumerate() {
         let chosen = chosen_set.binary_search(&f).is_ok();
         if let Some(mut t) = model.row_data(row)
             && t.chosen != chosen
@@ -593,7 +593,7 @@ pub(crate) fn set_meta(
             after: Tags::of(&st.sidecars[f].meta),
         })
         .collect();
-    st.tags.record(step);
+    st.culling.tags.record(step);
     (settled, tags_shown(st, app, cells, &was_shown, &moved))
 }
 
@@ -628,7 +628,7 @@ fn tags_shown(
     }
     let next = rebuild_browser(st, app);
     if next.is_none()
-        && st.cull.is_some()
+        && st.culling.cull.is_some()
         && let Some(c) = st.current
     {
         // The rows moved under the window: decode about them anew.
@@ -671,11 +671,11 @@ pub(crate) fn turn_frames(
     // The frame whose edit the panel owns: the open one, and not
     // while culling, where the panel still holds the last-opened
     // frame's edit and the sidecars are the truth.
-    let panel_frame = st.current.filter(|_| st.cull.is_none());
+    let panel_frame = st.current.filter(|_| st.culling.cull.is_none());
     // The turn is the file's and turns every line of it: a file once,
     // from the panel's own cell when that is one of its.
     let frames = &st.once_a_file(frames, panel_frame);
-    if let Some(cull) = st.cull.as_mut() {
+    if let Some(cull) = st.culling.cull.as_mut() {
         cull.turned = Some(std::time::Instant::now());
     }
     let mut developing = false;
@@ -699,7 +699,7 @@ pub(crate) fn turn_frames(
             // The panel owns the open frame's edit, so what it is
             // holding is recorded first and the sidecar's states are
             // then turned together; the turn itself records nothing.
-            let pending = read_edit(app, &st.edit, st.target);
+            let pending = read_edit(app, &st.develop.edit, st.develop.target);
             save_edit(st, pending);
             st.sidecar_mut(f).turn_by(quarters, aspect);
             let edit = st.line(f).map(|l| l.current.clone()).unwrap_or_default();
@@ -708,15 +708,15 @@ pub(crate) fn turn_frames(
             // adjustment's tab up, which a turn pressed on the Crop
             // tab has not asked for, so the tab is kept.
             let tab = app.get_panel_tab();
-            show_edit(st, &edit, app, st.target);
+            show_edit(st, &edit, app, st.develop.target);
             app.set_panel_tab(tab);
-            st.edit = edit;
+            st.develop.edit = edit;
             // The developed size stands on end now, and the develop
             // that will say so is a second away: a second turn
             // pressed before it lands would otherwise measure the
             // frame by the shape it used to be.
             if quarters.rem_euclid(2) == 1 {
-                st.source_size = (st.source_size.1, st.source_size.0);
+                st.develop.source_size = (st.develop.source_size.1, st.develop.source_size.0);
             }
             developing = true;
         } else {
@@ -735,10 +735,10 @@ pub(crate) fn turn_frames(
     // rather than remade, and a subject's shape does not change at
     // all, so both would go on masking the pixels they masked
     // before. They are cheap beside a mask in the wrong place.
-    st.rasters.clear();
-    st.learned.clear();
-    st.asked.clear();
-    st.masks_failed.clear();
+    st.develop.rasters.clear();
+    st.develop.learned.clear();
+    st.develop.asked.clear();
+    st.develop.masks_failed.clear();
     // The open frame, turned from the culling loupe or among a
     // selection, is measured the way up the viewport will draw it.
     crate::panel::viewport::settle_source_size(st);
@@ -746,18 +746,18 @@ pub(crate) fn turn_frames(
     // fitted afresh; the culling loupe reads the turn out of the
     // same matrix on its next frame, which is a redraw and not a
     // decode.
-    st.image_size = (0, 0);
+    st.develop.image_size = (0, 0);
     if developing {
         // Whatever the panel was holding was recorded on the way in;
         // the turn itself added no state.
         show_history(st, app);
-        st.generation += 1;
-        st.turn_pressed = Some(std::time::Instant::now());
+        st.develop.generation += 1;
+        st.develop.turn_pressed = Some(std::time::Instant::now());
         app.set_status("developing...".into());
         app.set_busy(true);
         worker.send(Job::Develop {
-            edit: edit_to_develop(app, &st.edit),
-            generation: st.generation,
+            edit: edit_to_develop(app, &st.develop.edit),
+            generation: st.develop.generation,
             turn: current_turn(st),
         });
     }
@@ -767,7 +767,7 @@ pub(crate) fn turn_frames(
 /// Put file `i`'s picture on the filmstrip turned `turns` quarters and
 /// mirrored if `flip`, as the viewport turns the file.
 pub(crate) fn show_thumb(st: &mut State, app: &App, i: usize, turns: u8, flip: bool) {
-    let Some((w, h, rgb)) = &st.thumb_base[i] else {
+    let Some((w, h, rgb)) = &st.views.thumb_base[i] else {
         return;
     };
     // A frame the filter hides has no row; its picture waits for the
@@ -781,7 +781,7 @@ pub(crate) fn show_thumb(st: &mut State, app: &App, i: usize, turns: u8, flip: b
     if !cells::has_cell(app, row) {
         return;
     }
-    st.thumb_shown[i] = Some((turns, flip));
+    st.views.thumb_shown[i] = Some((turns, flip));
     let (pw, ph, turned) = greycard_edit::geometry::turn_pixels(*w, *h, rgb, turns, flip);
     let mut buf = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(pw, ph);
     buf.make_mut_bytes().copy_from_slice(&turned);
@@ -805,12 +805,12 @@ pub(crate) fn settle_pictures(st: &mut State, app: &App) {
     ];
     let has = |row: usize| now.iter().any(|&(f, n)| (f..f + n).contains(&row));
     let model = app.get_thumbs();
-    for (first, count) in std::mem::replace(&mut st.pictured, now) {
+    for (first, count) in std::mem::replace(&mut st.views.pictured, now) {
         for row in (first..first + count).filter(|&r| !has(r)) {
-            let Some(&f) = st.shown.get(row) else {
+            let Some(&f) = st.views.shown.get(row) else {
                 break;
             };
-            if st.thumb_shown[f].take().is_some()
+            if st.views.thumb_shown[f].take().is_some()
                 && let Some(mut t) = model.row_data(row)
             {
                 t.image = slint::Image::default();
@@ -820,10 +820,10 @@ pub(crate) fn settle_pictures(st: &mut State, app: &App) {
     }
     for (first, count) in now {
         for row in first..first + count {
-            let Some(&f) = st.shown.get(row) else {
+            let Some(&f) = st.views.shown.get(row) else {
                 break;
             };
-            if st.thumb_base[f].is_some() && st.thumb_shown[f].is_none() {
+            if st.views.thumb_base[f].is_some() && st.views.thumb_shown[f].is_none() {
                 let (turns, flip) = thumb_turns(st, app, f);
                 show_thumb(st, app, f, turns, flip);
             }
@@ -836,10 +836,10 @@ pub(crate) fn settle_pictures(st: &mut State, app: &App) {
 /// has a picture (a larger one failed) keeps it and is not marked,
 /// but is as filled as it will get.
 pub(crate) fn show_no_thumb(st: &mut State, app: &App, i: usize) {
-    let Some(had) = st.thumb_base.get(i).map(Option::is_some) else {
+    let Some(had) = st.views.thumb_base.get(i).map(Option::is_some) else {
         return;
     };
-    st.thumb_failed[i] = true;
+    st.views.thumb_failed[i] = true;
     // A frame under a root that is offline had only the cache to
     // come from: its tile is dimmed already, and says nothing more.
     if had || crate::rows::is_offline(st, i) {
@@ -861,12 +861,12 @@ pub(crate) fn show_no_thumb(st: &mut State, app: &App, i: usize) {
 /// turned or whose meta is written to an XMP.
 pub(crate) fn stance(st: &mut State, c: usize) -> Option<greycard_core::decode::Stance> {
     let path = st.path_at(c)?.clone();
-    if let Some(s) = st.stances.get(&path) {
+    if let Some(s) = st.develop.stances.get(&path) {
         return Some(*s);
     }
     match greycard_core::decode::stance_path(&path) {
         Ok(s) => {
-            st.stances.insert(path, s);
+            st.develop.stances.insert(path, s);
             Some(s)
         }
         Err(e) => {
@@ -912,13 +912,14 @@ pub(crate) fn known_mosaic(st: &State, c: usize) -> OpenMosaic {
     if greycard_core::picture::is_picture_path(path) {
         return OpenMosaic::NotMosaic;
     }
-    if let Some(m) = st.mosaics.get(path) {
+    if let Some(m) = st.develop.mosaics.get(path) {
         return *m;
     }
-    if let Some(m) = st.stances.get(path).and_then(|s| s.mosaic) {
+    if let Some(m) = st.develop.stances.get(path).and_then(|s| s.mosaic) {
         return OpenMosaic::Known(m);
     }
     match st
+        .views
         .index_reader
         .as_ref()
         .and_then(|lib| lib.mosaic(path).ok().flatten())
@@ -935,7 +936,7 @@ pub(crate) fn known_mosaic(st: &State, c: usize) -> OpenMosaic {
 /// edit is shown. Nothing is read: what the session knows, else
 /// unknown until the worker says ([`learn_mosaic`]).
 pub(crate) fn panel_frame(st: &mut State, c: Option<usize>) {
-    st.panel_mosaic = c.and_then(|c| {
+    st.develop.panel_mosaic = c.and_then(|c| {
         let known = known_mosaic(st, c);
         st.path_at(c).cloned().map(|p| (p, known))
     });
@@ -947,8 +948,8 @@ pub(crate) fn learn_mosaic(st: &mut State, app: &App, path: &Path, mosaic: OpenM
     if mosaic == OpenMosaic::Unknown {
         return;
     }
-    st.mosaics.insert(path.to_path_buf(), mosaic);
-    if let Some((p, m)) = st.panel_mosaic.as_mut()
+    st.develop.mosaics.insert(path.to_path_buf(), mosaic);
+    if let Some((p, m)) = st.develop.panel_mosaic.as_mut()
         && p == path
         && *m != mosaic
     {
@@ -963,7 +964,7 @@ pub(crate) fn learn_mosaic(st: &mut State, app: &App, path: &Path, mosaic: OpenM
 /// The panel's file failed to open while its mosaic was still unknown:
 /// the menu's last word is that the raw could not be read.
 pub(crate) fn mosaic_unreadable(st: &mut State, app: &App) {
-    if let Some((_, m)) = st.panel_mosaic.as_mut()
+    if let Some((_, m)) = st.develop.panel_mosaic.as_mut()
         && *m == OpenMosaic::Unknown
     {
         *m = OpenMosaic::Unreadable;
@@ -986,7 +987,8 @@ pub(crate) fn mosaic_of(st: &mut State, c: usize) -> Option<greycard_core::raw::
             let read = greycard_core::decode::mosaic_path(&path)
                 .inspect_err(|e| tracing::warn!("{}: its mosaic: {e}", file_name(&path)))
                 .ok()?;
-            st.mosaics
+            st.develop
+                .mosaics
                 .insert(path, read.map_or(OpenMosaic::NotMosaic, OpenMosaic::Known));
             read
         }
@@ -1031,8 +1033,8 @@ pub(crate) fn frame_aspect(st: &mut State, cell: usize) -> Option<f32> {
     // The open frame's own develop: exactly the picture the masks
     // are in, and already the way up the frame's turn puts it.
     if st.current == Some(cell)
-        && st.cull.is_none()
-        && let Some(a) = aspect(st.source_size)
+        && st.culling.cull.is_none()
+        && let Some(a) = aspect(st.develop.source_size)
     {
         return Some(a);
     }
@@ -1050,13 +1052,14 @@ pub(crate) fn frame_aspect(st: &mut State, cell: usize) -> Option<f32> {
         let (w, h) = if turn % 2 == 1 { (h, w) } else { (w, h) };
         aspect((w, h))
     };
-    if let Some(cull) = st.cull.as_ref().or(st.hold.as_ref())
+    if let Some(cull) = st.culling.cull.as_ref().or(st.culling.hold.as_ref())
         && let Some(preview) = cull.cache.best(cell)
         && let Some(a) = shown(preview.source)
     {
         return Some(a);
     }
-    st.thumb_base
+    st.views
+        .thumb_base
         .get(cell)
         .and_then(|t| t.as_ref())
         .and_then(|(w, h, _)| shown((*w, *h)))
@@ -1093,7 +1096,7 @@ pub(crate) fn migrate_frame(st: &mut State, c: usize) {
 
 /// The browser's row of a cell, when the filter shows it.
 pub(crate) fn row_of(st: &State, cell: usize) -> Option<usize> {
-    st.shown.binary_search(&cell).ok()
+    st.views.shown.binary_search(&cell).ok()
 }
 
 /// The folder as the filter reads it: each file beside the meta its
@@ -1109,7 +1112,7 @@ pub(crate) fn filter_frames(st: &State) -> Vec<filter::Frame<'_>> {
         .map(|(i, (path, s))| filter::Frame {
             path,
             meta: &s.meta,
-            index: st.index_passed.get(i).copied().unwrap_or(true),
+            index: st.views.index_passed.get(i).copied().unwrap_or(true),
         })
         .collect()
 }
@@ -1121,10 +1124,10 @@ pub(crate) fn filter_shows(st: &State, c: usize) -> bool {
         return false;
     };
     match (st.files.get(file), st.sidecars.get(file)) {
-        (Some(path), Some(s)) => st.filter.shows(filter::Frame {
+        (Some(path), Some(s)) => st.views.filter.shows(filter::Frame {
             path,
             meta: &s.meta,
-            index: st.index_passed.get(file).copied().unwrap_or(true),
+            index: st.views.index_passed.get(file).copied().unwrap_or(true),
         }),
         _ => false,
     }
@@ -1150,7 +1153,7 @@ pub(crate) fn thumb_turns(st: &State, app: &App, c: usize) -> (u8, bool) {
         return from.turns;
     }
     let turn = st.sidecars[file].turn;
-    if st.current == Some(c) && st.cull.is_none() {
+    if st.current == Some(c) && st.culling.cull.is_none() {
         read_geometry(app).shown_turns(turn)
     } else {
         // A version's cell whose line is gone (taken out by a read, the
@@ -1176,27 +1179,28 @@ pub(crate) fn reject_count(st: &State) -> usize {
 /// the nearest row when its frame is hidden (which the caller then
 /// opens).
 pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
-    if !std::mem::take(&mut st.index_pass_ready) {
-        st.index_passed = crate::library::index_pass(st);
+    if !std::mem::take(&mut st.views.index_pass_ready) {
+        st.views.index_passed = crate::library::index_pass(st);
     }
     // The filter is over files; a file that passes brings every cell
     // of it, its own and its versions, in the list's order.
-    let passing = st.filter.apply(&filter_frames(st));
+    let passing = st.views.filter.apply(&filter_frames(st));
     let mut passes = vec![false; st.files.len()];
     for f in passing {
         passes[f] = true;
     }
-    st.shown = (0..st.cells.len())
+    st.views.shown = (0..st.cells.len())
         .filter(|&c| passes[st.cells[c].file])
         .collect();
     show_filter(st, app);
     // Under a root that is offline the tile is dimmed, and a picture
     // the cache did not have is no failure of the file's.
-    let dimmed = !st.library.offline.is_empty();
+    let dimmed = !st.views.library.offline.is_empty();
     // A closed stack's top wears its count, an open one's members their
     // places in it.
     let stacked = crate::stacks::marks(&crate::stacks::listed(st));
     let thumbs = st
+        .views
         .shown
         .iter()
         .map(|&c| {
@@ -1208,12 +1212,12 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
                 stack_place: stack.map_or(0, |m| m.place as i32),
                 stack_open: stack.is_some_and(|m| m.open),
                 offline,
-                failed: st.thumb_failed[c] && st.thumb_base[c].is_none() && !offline,
+                failed: st.views.thumb_failed[c] && st.views.thumb_base[c].is_none() && !offline,
                 // The cell's own frame, by its file's hash and its
                 // version.
                 collected: crate::panel::collections::collected(st, c),
                 paired: st.cells[c].version.is_none()
-                    && st.companions.contains_key(&st.files[file]),
+                    && st.views.companions.contains_key(&st.files[file]),
                 version: st.version_name(c).unwrap_or_default().into(),
                 ..thumb_for(&st.files[file], &st.sidecars[file].meta, frame_marks(st, c))
             }
@@ -1223,8 +1227,8 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     // for take theirs from the pixels in hand, a few screens' worth
     // however long the list: nothing is carried over from the old
     // rows, so nothing can land on a row renumbered under it.
-    st.thumb_shown.iter_mut().for_each(|s| *s = None);
-    st.pictured = [(0, 0); 2];
+    st.views.thumb_shown.iter_mut().for_each(|s| *s = None);
+    st.views.pictured = [(0, 0); 2];
     cells::set_rows(app, thumbs);
     settle_pictures(st, app);
 
@@ -1235,7 +1239,7 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     crate::panel::sort::show(st, app);
     // A frame the filter now hides leaves the set: a key or a sync
     // must not reach a frame nobody can see is chosen.
-    st.picked = selection::prune(&st.picked, &st.shown, st.current);
+    st.views.picked = selection::prune(&st.views.picked, &st.views.shown, st.current);
     show_set(st, app);
     let Some(c) = st.current else {
         app.set_selected(-1);
@@ -1248,7 +1252,7 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
         }
         None => {
             app.set_selected(-1);
-            cull::nearest_row(&st.shown, c)
+            cull::nearest_row(&st.views.shown, c)
         }
     }
 }
@@ -1443,7 +1447,7 @@ pub(crate) fn open_paths(
     worker: &Rc<Worker>,
     paths: &[PathBuf],
 ) {
-    let apart = state.borrow().jpegs_apart;
+    let apart = state.borrow().views.jpegs_apart;
     let (files, refused) = files::list_paths(paths, apart);
     for e in &refused {
         tracing::warn!("{e:#}");
@@ -1457,9 +1461,9 @@ pub(crate) fn open_paths(
     }
     // Files asked for by name, not a folder: a filter left on from
     // before must not hide what was just asked for.
-    if paths.iter().all(|p| !p.is_dir()) && !state.borrow().filter.is_empty() {
+    if paths.iter().all(|p| !p.is_dir()) && !state.borrow().views.filter.is_empty() {
         tracing::info!("browser filter cleared for the files asked for");
-        state.borrow_mut().filter = filter::Filter::default();
+        state.borrow_mut().views.filter = filter::Filter::default();
         app.set_filter_text("".into());
     }
     crate::roots::open_listing(
@@ -1491,16 +1495,16 @@ pub(crate) fn open_loaded(
     // its picture held on screen until the new one develops. In
     // culling the panel is not the frame's, and there is nothing to
     // save; the mode stays on for the new folder.
-    if st.current.is_some() && st.cull.is_none() {
-        let outgoing = read_edit(app, &st.edit, st.target);
-        if st.base_white.is_some() {
-            st.held = Some(outgoing.clone());
+    if st.current.is_some() && st.culling.cull.is_none() {
+        let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
+        if st.develop.base_white.is_some() {
+            st.develop.held = Some(outgoing.clone());
         } else {
-            st.zoom = 0.0;
+            st.develop.zoom = 0.0;
         }
         save_edit(&mut st, outgoing);
     }
-    if let Some(cull) = st.cull.as_mut() {
+    if let Some(cull) = st.culling.cull.as_mut() {
         cull.cache.clear();
         cull.textures.clear();
         cull.clear_failures();
@@ -1511,11 +1515,11 @@ pub(crate) fn open_loaded(
     // Another folder's files, and the pictures kept are keyed by the
     // last one's numbering.
     drop_placeholder(&mut st, app);
-    st.hold = None;
-    st.prefetch.want(Vec::new());
+    st.culling.hold = None;
+    st.culling.prefetch.want(Vec::new());
     st.current = None;
     crate::panel::look_preview::end(&st, app);
-    st.picked.clear();
+    st.views.picked.clear();
     // The requests for the old list's sidecars are dropped with it.
     crate::rows::list_replaced(&mut st, app);
     let count = files.len();
@@ -1537,11 +1541,11 @@ pub(crate) fn open_loaded(
     // pictures over to it.
     st.files = files.clone();
     crate::versions::list(&mut st);
-    st.thumb_want = worker::THUMB_WIDTH;
-    st.grid_shown = None;
-    st.strip_shown = None;
-    st.thumb_run = Some(ThumbRun::new(st.cells.len()));
-    st.fill_clock = Some(std::time::Instant::now());
+    st.views.thumb_want = worker::THUMB_WIDTH;
+    st.views.grid_shown = None;
+    st.views.strip_shown = None;
+    st.views.thumb_run = Some(ThumbRun::new(st.cells.len()));
+    st.views.fill_clock = Some(std::time::Instant::now());
     // The old folder's thumbnails still waiting are dropped: their
     // numbering is its list's.
     worker.forget_thumbnails();
@@ -1549,11 +1553,12 @@ pub(crate) fn open_loaded(
     // A local preview is made for the frames under a root that is
     // there now, for when it is not or is slow to read.
     worker.set_preview_roots(
-        st.library
+        st.views
+            .library
             .roots
             .list()
             .iter()
-            .filter(|r| !st.library.offline.contains(*r))
+            .filter(|r| !st.views.library.offline.contains(*r))
             .cloned()
             .collect(),
     );
@@ -1561,24 +1566,24 @@ pub(crate) fn open_loaded(
     crate::edited::note_list(&st, worker);
     // The new folder's rows as the index has them now, and a pass
     // over it on the indexer's thread to bring them up to date.
-    st.index_passed = vec![true; files.len()];
-    st.index_pass_ready = false;
-    st.index_progress = None;
-    st.index_tries = 0;
-    st.index_error = None;
+    st.views.index_passed = vec![true; files.len()];
+    st.views.index_pass_ready = false;
+    st.views.index_progress = None;
+    st.views.index_tries = 0;
+    st.views.index_error = None;
     crate::library::index_open_folder(&mut st, ids);
     // Named, and put at the front of Recently opened; not the launch's
     // folder while the roots' view asked for is about to take its
     // place (`wanted`, cleared when the index fails or there is none,
     // so no view is waited on for ever).
-    if st.library.wanted.is_none() {
+    if st.views.library.wanted.is_none() {
         crate::panel::recent::opened(&mut st, app);
     }
     let ids = started.elapsed();
     // What the command line asked of the first frame, onto its
     // sidecar before it is opened: the launch's list is the first to
     // land, and the frame's own sidecar is read for it.
-    if let Some(tweak) = st.tweak_at_start.take()
+    if let Some(tweak) = st.launch.tweak_at_start.take()
         && select < st.files.len()
         && crate::rows::load_file(&mut st, app, select)
     {
@@ -1592,7 +1597,7 @@ pub(crate) fn open_loaded(
     // The file to open, its own cell, as a row of the list; hidden by
     // the filter, the nearest one shown.
     let select = st.file_cell(select).unwrap_or(select);
-    let mut row = row_of(&st, select).or_else(|| cull::nearest_row(&st.shown, select));
+    let mut row = row_of(&st, select).or_else(|| cull::nearest_row(&st.views.shown, select));
     // A list that arrives before the window has its device (the
     // all-roots view asked for on the command line, read in less time
     // than the window takes to come up) opens its frame from the
@@ -1600,8 +1605,8 @@ pub(crate) fn open_loaded(
     // runs on the GPU like every later one.
     // A frame the setup was to open belongs to the list just
     // replaced, and goes with it.
-    let deferred = !st.setup_ran && !files.is_empty();
-    st.select_at_start = deferred.then_some(select);
+    let deferred = !st.launch.setup_ran && !files.is_empty();
+    st.launch.select_at_start = deferred.then_some(select);
     if deferred {
         row = None;
     }
@@ -1631,8 +1636,8 @@ pub(crate) fn open_loaded(
         app.set_status(filter::NOTHING_SHOWN.into());
         // A batch run would wait for a picture that never comes.
         let mut st = state.borrow_mut();
-        if st.batch {
-            st.failed = true;
+        if st.window.batch {
+            st.launch.failed = true;
             let _ = slint::quit_event_loop();
         }
     }
@@ -1646,7 +1651,10 @@ pub(crate) fn open_at_start(state: &Rc<RefCell<State>>, app: &App, row: usize) {
     app.invoke_select(row as i32);
     let (also, rows) = {
         let mut st = state.borrow_mut();
-        (std::mem::take(&mut st.also_at_start), st.shown.len())
+        (
+            std::mem::take(&mut st.launch.also_at_start),
+            st.views.shown.len(),
+        )
     };
     for r in also {
         // A row the filter left out is said, not passed over quietly.
@@ -1697,21 +1705,23 @@ pub(crate) const GRID_WAIT: std::time::Duration = std::time::Duration::from_secs
 /// waiting, the cells without their picture are named in the log and
 /// the grid is taken as it stands. Says whether it gave up.
 pub(crate) fn give_up_on_grid(st: &mut State, app: &App) -> bool {
-    if st.snapshot.is_none() || grid_filled(st, app) {
+    if st.launch.snapshot.is_none() || grid_filled(st, app) {
         return false;
     }
     // What the grid still waits for: a picture that never came, and
     // one that came too small for the cells and whose larger one has
     // not.
     let (mut missing, mut small) = (Vec::new(), Vec::new());
-    if let Some((first, last)) = st.grid_shown {
-        for f in (first.max(0) as usize..=last.max(0) as usize).filter_map(|r| st.shown.get(r)) {
-            if st.thumb_failed[*f] {
+    if let Some((first, last)) = st.views.grid_shown {
+        for f in
+            (first.max(0) as usize..=last.max(0) as usize).filter_map(|r| st.views.shown.get(r))
+        {
+            if st.views.thumb_failed[*f] {
                 continue;
             }
-            if st.thumb_made[*f] == 0 {
+            if st.views.thumb_made[*f] == 0 {
                 missing.push(file_name(st.path_of(*f)));
-            } else if grid::wants_bigger(st.thumb_made[*f], st.thumb_want) {
+            } else if grid::wants_bigger(st.views.thumb_made[*f], st.views.thumb_want) {
                 small.push(file_name(st.path_of(*f)));
             }
         }
@@ -1727,7 +1737,7 @@ pub(crate) fn give_up_on_grid(st: &mut State, app: &App) -> bool {
         if small.len() == 1 { "" } else { "s" },
         small.join(", ")
     );
-    st.grid_wait_over = true;
+    st.launch.grid_wait_over = true;
     app.window().request_redraw();
     true
 }
@@ -1736,12 +1746,12 @@ pub(crate) fn give_up_on_grid(st: &mut State, app: &App) -> bool {
 /// the cells ask for. True whenever the grid is closed.
 pub(crate) fn grid_filled(st: &State, app: &App) -> bool {
     grid_filled_rows(
-        &st.shown,
-        &st.thumb_made,
-        &st.thumb_failed,
-        st.thumb_want,
-        st.grid_shown,
-        st.grid_wait_over,
+        &st.views.shown,
+        &st.views.thumb_made,
+        &st.views.thumb_failed,
+        st.views.thumb_want,
+        st.views.grid_shown,
+        st.launch.grid_wait_over,
         app,
     )
 }
@@ -1821,16 +1831,19 @@ pub(crate) fn file_name(p: &std::path::Path) -> String {
 pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, extend: bool) {
     // The window's rows are the browser's list, which the
     // filter may have shortened; the file is what is opened.
-    let Some(&i) = usize::try_from(row).ok().and_then(|r| st.shown.get(r)) else {
+    let Some(&i) = usize::try_from(row)
+        .ok()
+        .and_then(|r| st.views.shown.get(r))
+    else {
         return;
     };
-    st.picked = if extend {
+    st.views.picked = if extend {
         selection::union(&chosen_frames(st), &[i])
     } else {
         vec![i]
     };
     // `--cull`: the first file opens the mode, not a develop.
-    if let Some(compare) = st.cull_at_start.take() {
+    if let Some(compare) = st.launch.cull_at_start.take() {
         enter_cull(st, app, compare);
     }
     if !crate::rows::is_loaded(st, i) && !crate::rows::is_offline(st, i) {
@@ -1853,33 +1866,33 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
     crate::panel::look_preview::end(st, app);
     // Leaving the frame before: its panel saved, as an open saves it,
     // unless it was itself a pick whose panel was never its own.
-    if st.cull.is_none()
+    if st.culling.cull.is_none()
         && let Some(c) = st.current
-        && st.pick_pending.as_deref() != st.path_at(c).map(PathBuf::as_path)
+        && st.views.pick_pending.as_deref() != st.path_at(c).map(PathBuf::as_path)
     {
-        let outgoing = read_edit(app, &st.edit, st.target);
-        if st.base_white.is_some() {
-            st.held = Some(outgoing.clone());
+        let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
+        if st.develop.base_white.is_some() {
+            st.develop.held = Some(outgoing.clone());
         } else {
-            st.zoom = 0.0;
+            st.develop.zoom = 0.0;
         }
         save_edit(st, outgoing);
     }
     let path = st.path_of(i).clone();
-    st.pick_pending = Some(path.clone());
+    st.views.pick_pending = Some(path.clone());
     st.current = Some(i);
-    st.generation += 1;
-    if st.cull.is_none() {
+    st.develop.generation += 1;
+    if st.culling.cull.is_none() {
         let edit = st.line(i).map(|l| l.current.clone()).unwrap_or_default();
-        st.target = None;
-        st.placing = None;
+        st.develop.target = None;
+        st.develop.placing = None;
         app.set_placing("".into());
-        st.guiding.clear();
-        st.overridden = None;
+        st.develop.guiding.clear();
+        st.launch.overridden = None;
         panel_frame(st, Some(i));
         show_edit(st, &edit, app, None);
-        st.edit = edit;
-        st.panel_stand_in = Some(path.clone());
+        st.develop.edit = edit;
+        st.views.panel_stand_in = Some(path.clone());
         show_history(st, app);
     }
     app.set_selected(row);
@@ -1899,7 +1912,7 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
             let mut st = state.borrow_mut();
             let Some(i) = at.first().copied().flatten() else {
                 // Gone before its sidecar came: the pick is over.
-                if st.pick_pending.as_deref() == Some(path.as_path()) {
+                if st.views.pick_pending.as_deref() == Some(path.as_path()) {
                     crate::rows::pick_over(&mut st, app);
                     app.set_busy(false);
                 }
@@ -1907,7 +1920,7 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
             };
             // Still the pick: opened. Moved on from: its sidecar is in
             // memory now, and nothing shows.
-            if st.pick_pending.as_deref() != Some(path.as_path()) || st.current != Some(i) {
+            if st.views.pick_pending.as_deref() != Some(path.as_path()) || st.current != Some(i) {
                 return;
             }
             // Still the pick and standing in: its read was started
@@ -1944,14 +1957,14 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // pick, so the current frame cannot say so; and a first open
     // that cannot take them (culling, an offline root) leaves none
     // for a later frame.
-    let first = !std::mem::replace(&mut st.opened, true);
-    st.zoom_stands = first && st.cull.is_none() && !offline;
-    if first && (st.cull.is_some() || offline) {
-        st.show_mask = None;
-        st.show_patch = None;
+    let first = !std::mem::replace(&mut st.launch.opened, true);
+    st.launch.zoom_stands = first && st.culling.cull.is_none() && !offline;
+    if first && (st.culling.cull.is_some() || offline) {
+        st.launch.show_mask = None;
+        st.launch.show_patch = None;
     }
     // In culling nothing is developed: the frame's JPEG shows.
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         crate::rows::pick_over(st, app);
         cull_select(st, app, i);
         show_set(st, app);
@@ -1964,20 +1977,20 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // the strip opens fitted either way. A pick whose sidecar was on
     // its way had no panel of its own to keep.
     if let Some(c) = st.current
-        && st.pick_pending.as_deref() != st.path_at(c).map(PathBuf::as_path)
+        && st.views.pick_pending.as_deref() != st.path_at(c).map(PathBuf::as_path)
     {
-        let outgoing = read_edit(app, &st.edit, st.target);
-        if st.base_white.is_some() {
-            st.held = Some(outgoing.clone());
+        let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
+        if st.develop.base_white.is_some() {
+            st.develop.held = Some(outgoing.clone());
         } else {
-            st.zoom = 0.0;
+            st.develop.zoom = 0.0;
         }
         save_edit(st, outgoing);
     }
     crate::rows::pick_over(st, app);
     // The panel is the frame's own from here, or the stand-in's again
     // below.
-    st.panel_stand_in = None;
+    st.views.panel_stand_in = None;
     // Its masks' rasters are its own, not the last frame's.
     let file = st.path_of(i).clone();
     crate::panel::mask::learned_for(st, &file);
@@ -1987,16 +2000,16 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         // from here would otherwise take another frame's edit for this
         // one's, and every one of them refuses an unloaded source.
         let edit = st.line(i).map(|l| l.current.clone()).unwrap_or_default();
-        st.target = None;
-        st.placing = None;
+        st.develop.target = None;
+        st.develop.placing = None;
         app.set_placing("".into());
-        st.guiding.clear();
+        st.develop.guiding.clear();
         panel_frame(st, Some(i));
         show_edit(st, &edit, app, None);
-        st.edit = edit;
-        st.panel_stand_in = Some(file.clone());
+        st.develop.edit = edit;
+        st.views.panel_stand_in = Some(file.clone());
         st.current = Some(i);
-        st.generation += 1;
+        st.develop.generation += 1;
         app.set_selected(row);
         show_file_name(st, app, Some(&file));
         app.set_busy(false);
@@ -2019,32 +2032,40 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     let mut edit = line.current.clone();
     // The frame the command line's overrides were on is left, or
     // opened again: they are done with (`panel_state`).
-    st.overridden = None;
+    st.launch.overridden = None;
     // The command line's temperature and exposure, over the first
     // file's edit on the panel and not on its sidecar.
     let this_file = st.file_of(i);
-    if let Some((_, overrides)) = st.overrides_at_start.take_if(|(f, _)| *f == this_file) {
+    if let Some((_, overrides)) = st
+        .launch
+        .overrides_at_start
+        .take_if(|(f, _)| *f == this_file)
+    {
         overrides.apply(&mut edit);
-        st.overridden = Some((file.clone(), edit.clone()));
+        st.launch.overridden = Some((file.clone(), edit.clone()));
     }
     // A mask asked for on the command line is the first file's
     // target, so a screenshot can show the panel's block for it.
-    st.target = if first {
-        let m = st.show_mask.take().filter(|&m| m < edit.adjustments.len());
+    st.develop.target = if first {
+        let m = st
+            .launch
+            .show_mask
+            .take()
+            .filter(|&m| m < edit.adjustments.len());
         if m.is_some() {
             app.set_show_mask(true);
             app.set_component(0);
         }
         // Likewise a patch, which the panel's list then shows
         // chosen and the viewport outlines.
-        if let Some(p) = st.show_patch.take() {
+        if let Some(p) = st.launch.show_patch.take() {
             app.set_patch(p as i32);
         }
         m
     } else {
         None
     };
-    st.placing = None;
+    st.develop.placing = None;
     app.set_placing("".into());
     // Its people are not the last picture's.
     crate::panel::parts::another_picture(st);
@@ -2053,20 +2074,20 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // again until this frame's develop lands — a turn before
     // that must not map this frame's masks by the last
     // frame's shape.
-    st.guiding.clear();
-    st.source_size = (0, 0);
-    st.turn_pressed = None;
+    st.develop.guiding.clear();
+    st.develop.source_size = (0, 0);
+    st.develop.turn_pressed = None;
     app.set_guide_mode("".into());
     // The frame's mosaic as far as the session knows it, with no read
     // here: the worker says ahead of its decode.
     panel_frame(st, Some(i));
-    show_edit(st, &edit, app, st.target);
-    st.edit = edit.clone();
+    show_edit(st, &edit, app, st.develop.target);
+    st.develop.edit = edit.clone();
     st.current = Some(i);
-    st.generation += 1;
+    st.develop.generation += 1;
     // The key's moment, until the frame that shows this
     // frame: the log's line, and `--time-select`.
-    st.selected_at = Some(std::time::Instant::now());
+    st.views.selected_at = Some(std::time::Instant::now());
     app.set_selected(row);
     show_file_name(st, app, Some(&file));
     // The last file's shot is not this one's; the open says
@@ -2101,7 +2122,7 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
         path,
         version: st.cells[i].version.clone(),
         edit,
-        generation: st.generation,
+        generation: st.develop.generation,
         seed_blend: crate::rows::wants_seed(st, i),
         turn: st.sidecars[file].turn,
         stance_known: known_mosaic(st, i) != OpenMosaic::Unknown,
@@ -2126,7 +2147,7 @@ fn step_to(
         (true, true) => open_row(&mut state.borrow_mut(), app, worker, row, true),
         (false, false) => {
             let mut st = state.borrow_mut();
-            st.picked = st.current.into_iter().collect();
+            st.views.picked = st.current.into_iter().collect();
             show_set(&mut st, app);
         }
         (false, true) => {}
@@ -2141,7 +2162,11 @@ fn step_to(
 /// nearest when the filter no longer shows the current one. None
 /// when there was nothing to step, or nothing to move to.
 pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> {
-    let step = if back { st.tags.undo() } else { st.tags.redo() }?;
+    let step = if back {
+        st.culling.tags.undo()
+    } else {
+        st.culling.tags.redo()
+    }?;
     let landing = tags::landing(
         &step,
         |p| st.file_by_path(p),
@@ -2221,7 +2246,7 @@ pub(crate) fn meta_on_selection(
     // read named that frame, and each stepped again.
     let move_on = {
         let st = state.borrow();
-        st.cull.is_some() && st.cull_move_on && paths.len() == 1
+        st.culling.cull.is_some() && st.culling.cull_move_on && paths.len() == 1
     };
     // On the last row the step has nowhere to go, so a key that takes
     // the frame out of the filtered list leaves nothing on screen
@@ -2233,7 +2258,7 @@ pub(crate) fn meta_on_selection(
         let st = state.borrow();
         st.current
             .and_then(|c| row_of(&st, c))
-            .is_some_and(|r| r + 1 == st.shown.len())
+            .is_some_and(|r| r + 1 == st.views.shown.len())
     };
     let may_select = !move_on || at_end;
     let what = match change {
@@ -2265,7 +2290,7 @@ pub(crate) fn meta_on_selection(
             let st = state.borrow();
             st.current
                 .filter(|&c| ran && row_of(&st, c).is_none())
-                .and_then(|c| cull::nearest_row(&st.shown, c))
+                .and_then(|c| cull::nearest_row(&st.views.shown, c))
         };
         match hidden {
             Some(_) if may_select => {}
@@ -2302,7 +2327,7 @@ fn meta_on(
         .filter(|&(&i, was)| was && !filter_shows(&st, i))
         .map(|(&i, _)| i)
         .collect();
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         let word = tags::notice(settled);
         let word = if hidden.is_empty() {
             word
@@ -2317,16 +2342,16 @@ fn meta_on(
             settled,
             &file_name(st.path_of(*c)),
             false,
-            &st.filter.describe(),
+            &st.views.filter.describe(),
         )),
         many => Some(tags::hidden_by_filter(
             settled,
             &format!("{} frames", many.len()),
             true,
-            &st.filter.describe(),
+            &st.views.filter.describe(),
         )),
     };
-    let generation = st.generation;
+    let generation = st.develop.generation;
     drop(st);
     // The frame left the filtered list: on to the nearest.
     if let (Some(row), true) = (next, may_select) {
@@ -2337,8 +2362,8 @@ fn meta_on(
     // ahead of the develop's line when that lands.
     if let Some(said) = said {
         let mut st = state.borrow_mut();
-        if st.generation != generation && st.cull.is_none() {
-            st.status_after_develop = Some((st.generation, said.clone()));
+        if st.develop.generation != generation && st.culling.cull.is_none() {
+            st.develop.status_after_develop = Some((st.develop.generation, said.clone()));
         }
         app.set_status(said.into());
     }
@@ -2357,7 +2382,8 @@ pub(crate) fn say_notice(st: &mut State, app: &App, text: String) {
     app.set_notice(text.into());
     app.set_notice_on(true);
     let app_weak = app.as_weak();
-    st.notice_timer
+    st.culling
+        .notice_timer
         .start(slint::TimerMode::SingleShot, NOTICE_UP, move || {
             if let Some(app) = app_weak.upgrade() {
                 app.set_notice_on(false);
@@ -2439,10 +2465,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // nearest row shown.
             let (row, count) = {
                 let st = state.borrow();
-                let row = usize::try_from(app.get_selected())
-                    .ok()
-                    .or_else(|| st.current.and_then(|c| cull::nearest_row(&st.shown, c)));
-                (row, st.shown.len())
+                let row = usize::try_from(app.get_selected()).ok().or_else(|| {
+                    st.current
+                        .and_then(|c| cull::nearest_row(&st.views.shown, c))
+                });
+                (row, st.views.shown.len())
             };
             let (Some(row), true) = (row, count > 0) else {
                 return;
@@ -2468,14 +2495,24 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some(&file) = usize::try_from(row).ok().and_then(|r| st.shown.get(r)) else {
+            let Some(&file) = usize::try_from(row)
+                .ok()
+                .and_then(|r| st.views.shown.get(r))
+            else {
                 return;
             };
-            match selection::click(&st.picked, &st.shown, st.current, file, ctrl, shift) {
+            match selection::click(
+                &st.views.picked,
+                &st.views.shown,
+                st.current,
+                file,
+                ctrl,
+                shift,
+            ) {
                 // A plain click on the frame already on screen: the
                 // set goes back to it, and nothing is opened again.
                 selection::Click::Open(f) if Some(f) == st.current => {
-                    st.picked = vec![f];
+                    st.views.picked = vec![f];
                     show_set(&mut st, &app);
                 }
                 selection::Click::Open(_) => {
@@ -2483,7 +2520,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     app.invoke_select(row);
                 }
                 selection::Click::Set(set) => {
-                    st.picked = set;
+                    st.views.picked = set;
                     show_set(&mut st, &app);
                 }
             }
@@ -2497,7 +2534,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            st.picked = st.current.into_iter().collect();
+            st.views.picked = st.current.into_iter().collect();
             show_set(&mut st, &app);
         });
     }
@@ -2524,11 +2561,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // Rows to files: the range between the two, which under a
             // filter is a superset of what is shown, and fine for an
             // order.
-            let (Some(&f), Some(&l)) = (st.shown.get(first as usize), st.shown.get(last as usize))
-            else {
+            let (Some(&f), Some(&l)) = (
+                st.views.shown.get(first as usize),
+                st.views.shown.get(last as usize),
+            ) else {
                 return;
             };
-            st.strip_shown = Some((first, last));
+            st.views.strip_shown = Some((first, last));
             worker.want_thumbnails(f, l);
             crate::edited::note_editing(&st, &worker, false);
         });
@@ -2553,14 +2592,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let count = state.borrow().shown.len() as i32;
+            let count = state.borrow().views.shown.len() as i32;
             let next = grid::end(end, count);
             if next >= 0 {
                 if extend {
                     let mut st = state.borrow_mut();
                     if let Some(current) = st.current {
-                        let run = selection::range(&st.shown, current, st.shown[next as usize]);
-                        st.picked = selection::union(&chosen_frames(&st), &run);
+                        let run = selection::range(
+                            &st.views.shown,
+                            current,
+                            st.views.shown[next as usize],
+                        );
+                        st.views.picked = selection::union(&chosen_frames(&st), &run);
                     }
                 }
                 step_to(
@@ -2582,7 +2625,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let count = state.borrow().shown.len() as i32;
+            let count = state.borrow().views.shown.len() as i32;
             let next = grid::step(app.get_selected(), dx, dy, columns, count);
             if next >= 0 {
                 step_to(
@@ -2622,7 +2665,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // The lightbox's tiles when it is on, else the grid's cells.
             let cell = app.get_tile_cell();
             let mut st = state.borrow_mut();
-            let count = st.shown.len() as i32;
+            let count = st.views.shown.len() as i32;
             // The grid's cells follow, and the pictures with them.
             let (at, wanted) = grid::window(scroll, height, cell, columns, count, top);
             if cells::show(&app, cells::View::Grid, at, wanted) {
@@ -2632,17 +2675,17 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             else {
                 return;
             };
-            st.grid_shown = Some((first, last));
+            st.views.grid_shown = Some((first, last));
             let (first, last) = (
                 first.max(0) as usize,
-                (last.max(0) as usize).min(st.shown.len().saturating_sub(1)),
+                (last.max(0) as usize).min(st.views.shown.len().saturating_sub(1)),
             );
             // What is made from now on is this cell's size, up or
             // down: a cell that has shrunk should not go on paying
             // the memory of the one before it.
             let want = grid::render_size(cell);
-            if want != st.thumb_want {
-                st.thumb_want = want;
+            if want != st.views.thumb_want {
+                st.views.thumb_want = want;
                 worker.set_thumb_size(want);
             }
             // Making one again is the part that is only ever a step
@@ -2651,21 +2694,21 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // come back at the size the worker now has anyway, and
             // asking again would only make it twice.
             for row in first..=last {
-                let i = st.shown[row];
-                if st.thumb_made[i] > 0
-                    && grid::wants_bigger(st.thumb_made[i], want)
-                    && st.thumb_asked[i] < want
+                let i = st.views.shown[row];
+                if st.views.thumb_made[i] > 0
+                    && grid::wants_bigger(st.views.thumb_made[i], want)
+                    && st.views.thumb_asked[i] < want
                 {
-                    st.thumb_asked[i] = want;
+                    st.views.thumb_asked[i] = want;
                     worker.send(crate::rows::thumb_job(&st, i));
                 }
             }
             // After the pushes, which clear the queue's order.
-            worker.want_thumbnails(st.shown[first], st.shown[last]);
+            worker.want_thumbnails(st.views.shown[first], st.views.shown[last]);
             // In the grid, no frame is being edited.
             crate::edited::note_editing(&st, &worker, true);
             // The lightbox's tiles follow the cells.
-            if st.lightbox.is_some() {
+            if st.culling.lightbox.is_some() {
                 crate::lightbox::refresh(&mut st, &app);
             }
         });
@@ -2749,9 +2792,9 @@ mod tests {
         // all rows that exist. The old code wrote file 1's badge at
         // row 1, which is file 2 — a neighbor, in range, wrong.
         st.sidecars[0].meta.flag = Flag::Reject;
-        st.filter = filter::Filter::from_name("No rejects").expect("it parses");
+        st.views.filter = filter::Filter::from_name("No rejects").expect("it parses");
         rebuild_browser(&mut st, &app);
-        assert_eq!(st.shown, vec![1, 2, 3, 4]);
+        assert_eq!(st.views.shown, vec![1, 2, 3, 4]);
         assert_eq!(app.get_thumbs().row_count(), 4);
 
         // Four stars on file 1: row 0, and nothing on row 1.
@@ -2897,7 +2940,7 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         app.set_grid_open(true);
         app.invoke_grid_range(0.0, 773.0, 8, 0.0);
-        assert_eq!(state.borrow().grid_shown, Some((0, 2)));
+        assert_eq!(state.borrow().views.grid_shown, Some((0, 2)));
         let failed = |row: usize| app.get_thumbs().row_data(row).unwrap().failed;
         deliver(&app, picture_for(&files, 0));
         deliver(&app, picture_for(&files, 2));
@@ -2926,10 +2969,10 @@ mod tests {
         assert!(!failed(0));
         deliver(&app, picture_for(&files, 1));
         assert!(!failed(1));
-        assert!(!state.borrow().thumb_failed[1]);
+        assert!(!state.borrow().views.thumb_failed[1]);
         // A larger picture that fails leaves the one there, unmarked,
         // and the cell filled.
-        state.borrow_mut().thumb_want = 360;
+        state.borrow_mut().views.thumb_want = 360;
         assert!(!grid_filled(&state.borrow(), &app));
         deliver(
             &app,
@@ -2939,9 +2982,9 @@ mod tests {
             },
         );
         assert!(!failed(0));
-        assert!(state.borrow().thumb_base[0].is_some());
-        state.borrow_mut().thumb_made[1] = 360;
-        state.borrow_mut().thumb_made[2] = 360;
+        assert!(state.borrow().views.thumb_base[0].is_some());
+        state.borrow_mut().views.thumb_made[1] = 360;
+        state.borrow_mut().views.thumb_made[2] = 360;
         assert!(grid_filled(&state.borrow(), &app));
     }
 
@@ -2971,7 +3014,11 @@ mod tests {
         );
         {
             let st = state.borrow();
-            assert!([5, 300, 900].iter().all(|&i| st.thumb_base[i].is_some()));
+            assert!(
+                [5, 300, 900]
+                    .iter()
+                    .all(|&i| st.views.thumb_base[i].is_some())
+            );
         }
         assert_eq!(pictured(5), 2, "a cell: on its row");
         assert_eq!(pictured(300), 0, "no cell: kept for later");
@@ -2980,8 +3027,11 @@ mod tests {
         app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8, 0.0);
         assert_eq!(pictured(900), 2);
         assert_eq!(pictured(5), 0);
-        assert!(state.borrow().thumb_shown[5].is_none());
-        assert!(state.borrow().thumb_base[5].is_some(), "still in hand");
+        assert!(state.borrow().views.thumb_shown[5].is_none());
+        assert!(
+            state.borrow().views.thumb_base[5].is_some(),
+            "still in hand"
+        );
         assert_eq!(pictured(300), 0);
         // The strip, through its own report.
         app.invoke_strip_range(295, 305);
@@ -3024,9 +3074,9 @@ mod tests {
             for i in 500..1000 {
                 st.sidecars[i].meta.flag = meta::Flag::Reject;
             }
-            st.filter = filter::Filter::from_name("No rejects").expect("it parses");
+            st.views.filter = filter::Filter::from_name("No rejects").expect("it parses");
             rebuild_browser(&mut st, &app);
-            assert_eq!(st.shown.len(), 500);
+            assert_eq!(st.views.shown.len(), 500);
         }
         app.set_grid_open(true);
         app.invoke_grid_range(0.0, 773.0, 8, 0.0);
@@ -3035,8 +3085,8 @@ mod tests {
         let pictured = |row: usize| app.get_thumbs().row_data(row).unwrap().image.size().width;
         {
             let mut st = state.borrow_mut();
-            assert!(st.thumb_base[900].is_some() && st.thumb_shown[900].is_none());
-            st.filter = filter::Filter::from_name("All").expect("it parses");
+            assert!(st.views.thumb_base[900].is_some() && st.views.thumb_shown[900].is_none());
+            st.views.filter = filter::Filter::from_name("All").expect("it parses");
             rebuild_browser(&mut st, &app);
         }
         assert_eq!(pictured(5), 2, "a cell: made again on its row");
@@ -3057,7 +3107,7 @@ mod tests {
         app.invoke_grid_range(0.0, 3000.0, 8, 0.0);
         let batch = crate::thumbpool::Batch::of((0..100).map(|i| picture_for(&files, i)).collect());
         take_thumbnails(&app, &state, batch, std::time::Duration::ZERO);
-        let taken = |st: &State| st.thumb_base.iter().filter(|b| b.is_some()).count();
+        let taken = |st: &State| st.views.thumb_base.iter().filter(|b| b.is_some()).count();
         assert_eq!(taken(&state.borrow()), 32, "one slice in a turn of nothing");
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
         slint::platform::update_timers_and_animations();
@@ -3106,13 +3156,13 @@ mod tests {
         );
         // The whole batch, over as many turns as it takes.
         for _ in 0..500 {
-            if state.borrow().thumb_base.iter().all(Option::is_some) {
+            if state.borrow().views.thumb_base.iter().all(Option::is_some) {
                 break;
             }
             i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
             slint::platform::update_timers_and_animations();
         }
-        assert!(state.borrow().thumb_base.iter().all(Option::is_some));
+        assert!(state.borrow().views.thumb_base.iter().all(Option::is_some));
         (app, state, files)
     }
 
@@ -3146,7 +3196,10 @@ mod tests {
             .count();
         assert_eq!(pictured, 42, "the grid's cells take in the strip's");
         let st = state.borrow();
-        assert_eq!(st.thumb_shown.iter().filter(|s| s.is_some()).count(), 42);
+        assert_eq!(
+            st.views.thumb_shown.iter().filter(|s| s.is_some()).count(),
+            42
+        );
     }
 
     /// Scrolled to the far end and back, the grid and the strip still
@@ -3185,7 +3238,7 @@ mod tests {
             // Its picture is on its row while the other view has a cell
             // for it, and off when neither has.
             assert_eq!(
-                state.borrow().thumb_shown[0].is_some(),
+                state.borrow().views.thumb_shown[0].is_some(),
                 cells::has_cell(&app, 0)
             );
             // A new picture for it while it is away.
@@ -3272,11 +3325,11 @@ mod tests {
         let files = crate::testing::folder(3);
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         app.set_grid_open(true);
-        state.borrow_mut().grid_shown = Some((0, 2));
+        state.borrow_mut().views.grid_shown = Some((0, 2));
         deliver(&app, picture_for(&files, 0));
         assert!(!give_up_on_grid(&mut state.borrow_mut(), &app));
         assert!(!grid_filled(&state.borrow(), &app));
-        state.borrow_mut().snapshot = Some(PathBuf::from("grid.png"));
+        state.borrow_mut().launch.snapshot = Some(PathBuf::from("grid.png"));
         assert!(give_up_on_grid(&mut state.borrow_mut(), &app));
         assert!(grid_filled(&state.borrow(), &app));
         // Every picture in, but one too small for the cells, its
@@ -3285,19 +3338,19 @@ mod tests {
         let files = crate::testing::folder(2);
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         app.set_grid_open(true);
-        state.borrow_mut().grid_shown = Some((0, 1));
-        state.borrow_mut().snapshot = Some(PathBuf::from("grid.png"));
+        state.borrow_mut().views.grid_shown = Some((0, 1));
+        state.borrow_mut().launch.snapshot = Some(PathBuf::from("grid.png"));
         deliver(&app, picture_for(&files, 0));
         deliver(&app, picture_for(&files, 1));
-        state.borrow_mut().thumb_want = 360;
+        state.borrow_mut().views.thumb_want = 360;
         assert!(give_up_on_grid(&mut state.borrow_mut(), &app));
         // A grid filled in time is not given up on.
         let app = window(2);
         let files = crate::testing::folder(2);
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         app.set_grid_open(true);
-        state.borrow_mut().grid_shown = Some((0, 1));
-        state.borrow_mut().snapshot = Some(PathBuf::from("grid.png"));
+        state.borrow_mut().views.grid_shown = Some((0, 1));
+        state.borrow_mut().launch.snapshot = Some(PathBuf::from("grid.png"));
         deliver(&app, picture_for(&files, 0));
         deliver(&app, picture_for(&files, 1));
         assert!(!give_up_on_grid(&mut state.borrow_mut(), &app));
@@ -3595,17 +3648,17 @@ mod tests {
         ];
         let mut st = State::empty(files, &app);
         // Nothing developed yet, and nothing else to measure by.
-        assert_eq!(st.source_size, (0, 0));
+        assert_eq!(st.develop.source_size, (0, 0));
         st.current = Some(0);
         assert_eq!(frame_aspect(&mut st, 0), None);
         // The first frame's develop lands: landscape.
-        st.source_size = (6000, 4000);
+        st.develop.source_size = (6000, 4000);
         assert_eq!(frame_aspect(&mut st, 0), Some(1.5));
         // The selection moves, as `on_select` leaves it: the size is
         // forgotten, and the second frame has no shape of its own to
         // be had (its file is not there), so nothing is claimed.
         st.current = Some(1);
-        st.source_size = (0, 0);
+        st.develop.source_size = (0, 0);
         assert_eq!(
             frame_aspect(&mut st, 1),
             None,
@@ -3613,7 +3666,7 @@ mod tests {
         );
         // Its thumbnail arrives, portrait: that is what answers, and
         // the frame's own turn goes on top of it.
-        st.thumb_base[1] = Some((400, 600, Vec::new()));
+        st.views.thumb_base[1] = Some((400, 600, Vec::new()));
         assert_eq!(frame_aspect(&mut st, 1), Some(400.0 / 600.0));
         st.sidecars[1].turn = 1;
         assert_eq!(frame_aspect(&mut st, 1), Some(600.0 / 400.0));
@@ -4369,9 +4422,9 @@ mod tests {
             for i in [0, 1, 38, 39] {
                 st.sidecars[i].meta.flag = meta::Flag::Reject;
             }
-            st.filter = filter::Filter::from_name("No rejects").expect("it parses");
+            st.views.filter = filter::Filter::from_name("No rejects").expect("it parses");
             rebuild_browser(&mut st, &app);
-            assert_eq!(st.shown, (2..38).collect::<Vec<_>>());
+            assert_eq!(st.views.shown, (2..38).collect::<Vec<_>>());
         }
         app.invoke_select(10);
         press(&app, Key::End);

@@ -59,13 +59,13 @@ fn a_folder_through_a_link_retargeted_is_followed_by_the_next_read() {
     let (state, worker) = state_for(&app, vec![link.join("x.tif")]);
     assert!(refresh_view(&state, &app, &worker));
     land_all(&state, &app, &worker);
-    assert_eq!(state.borrow().library.canonical.get(&link), Some(&a));
+    assert_eq!(state.borrow().views.library.canonical.get(&link), Some(&a));
     std::fs::remove_file(&link).unwrap();
     std::os::unix::fs::symlink(&b, &link).unwrap();
     assert!(refresh_view(&state, &app, &worker));
     land_all(&state, &app, &worker);
     let st = state.borrow();
-    assert_eq!(st.library.canonical.get(&link), Some(&b));
+    assert_eq!(st.views.library.canonical.get(&link), Some(&b));
     assert_eq!(st.files.len(), 2);
     drop(st);
     drop(state);
@@ -116,7 +116,7 @@ fn a_merge_over_folders_all_gone_completes() {
     crate::testing::remove_dir_retry(&dir);
     land(&state, &app, &worker, found);
     assert_eq!(state.borrow().files, files);
-    assert!(!state.borrow().library.merging);
+    assert!(!state.borrow().views.library.merging);
 }
 
 /// A view of the roots is built from the index's rows: each frame's
@@ -146,7 +146,7 @@ fn a_view_of_the_roots_reads_no_sidecar() {
         let thumbs = app.get_thumbs();
         let x = thumbs.row_data(0).unwrap();
         assert_eq!((x.rating, x.flag, x.offline), (3, 1, false));
-        assert!(!st.library.loading);
+        assert!(!st.views.library.loading);
     }
     // Opening y reads its sidecar, off the window's thread, and
     // nothing else's: y is current from the pick, its panel the
@@ -156,14 +156,14 @@ fn a_view_of_the_roots_reads_no_sidecar() {
         crate::panel::browser::open_row(&mut st, &app, &worker, 1, false);
         assert_eq!(st.current, Some(1));
         assert!(!st.from_row[1].read, "on its way");
-        assert_eq!(st.pick_pending, Some(files[1].clone()));
+        assert_eq!(st.views.pick_pending, Some(files[1].clone()));
         assert!(app.get_status().contains("reading"), "{}", app.get_status());
     }
     assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
     {
         let st = state.borrow();
         assert_eq!(st.current, Some(1));
-        assert!(st.pick_pending.is_none());
+        assert!(st.views.pick_pending.is_none());
         assert!(st.from_row[1].read);
         assert!(!st.from_row[0].read && !st.from_row[2].read);
         assert_eq!(disk_reads_under(&dir), 1);
@@ -171,7 +171,7 @@ fn a_view_of_the_roots_reads_no_sidecar() {
         assert_eq!(st.sidecars[1].history.len(), 1);
         assert_eq!(st.sidecars[1].meta.keywords, ["Harbor"]);
     }
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -220,7 +220,7 @@ fn a_frame_s_meta_follows_the_pass_while_its_sidecar_stands_in() {
         assert_eq!(thumbs.row_data(1).unwrap().label, meta::Label::Red.code());
         assert_eq!(disk_reads_under(&dir), 1, "only z's sidecar was read");
     }
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -258,7 +258,7 @@ fn a_key_on_a_view_frame_reads_its_sidecar_then_writes_it() {
         .remove(0)
         .unwrap();
     assert_eq!((row.meta.rating, row.edited), (4, true));
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -281,7 +281,7 @@ fn a_folder_open_reads_off_the_window_s_thread_or_from_the_rows() {
     s.save(&files[1]).unwrap();
     let app = window(0);
     let (state, worker) = state_for(&app, Vec::new());
-    state.borrow_mut().write_sidecars = true;
+    state.borrow_mut().window.write_sidecars = true;
     open_listing(
         &state,
         &app,
@@ -293,15 +293,18 @@ fn a_folder_open_reads_off_the_window_s_thread_or_from_the_rows() {
     {
         let st = state.borrow();
         assert!(st.files.is_empty(), "nothing until the read lands");
-        assert!(st.library.loading, "and the bar's timer runs meanwhile");
+        assert!(
+            st.views.library.loading,
+            "and the bar's timer runs meanwhile"
+        );
         assert_eq!(disk_reads_under(&dir), 0);
     }
     assert_eq!(land_all(&state, &app, &worker), 1);
     {
         let st = state.borrow();
         assert_eq!(st.files, files);
-        assert_eq!(st.view, View::Folder);
-        assert!(!st.library.loading);
+        assert_eq!(st.views.view, View::Folder);
+        assert!(!st.views.library.loading);
         assert!(
             st.from_row.iter().all(|r| r.read),
             "no index: every sidecar read"
@@ -311,7 +314,7 @@ fn a_folder_open_reads_off_the_window_s_thread_or_from_the_rows() {
         assert_eq!(ratings, [2, 4, 0]);
         // Opened from the rendering setup, which no test runs.
         assert_eq!(
-            st.select_at_start,
+            st.launch.select_at_start,
             Some(1),
             "the last file open, matched off the thread"
         );
@@ -323,8 +326,8 @@ fn a_folder_open_reads_off_the_window_s_thread_or_from_the_rows() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.write_sidecars = true;
-        st.index_path = Some(db.clone());
+        st.window.write_sidecars = true;
+        st.views.index_path = Some(db.clone());
     }
     open_listing(
         &state,
@@ -341,7 +344,7 @@ fn a_folder_open_reads_off_the_window_s_thread_or_from_the_rows() {
         assert_eq!(disk_reads_under(&dir), 3, "nothing more read");
         let ratings: Vec<u8> = st.sidecars.iter().map(|s| s.meta.rating).collect();
         assert_eq!(ratings, [2, 4, 0]);
-        assert_eq!(st.select_at_start, Some(2));
+        assert_eq!(st.launch.select_at_start, Some(2));
     }
     // An empty folder: said, the list as it was.
     let empty = dir.join("empty");
@@ -351,7 +354,7 @@ fn a_folder_open_reads_off_the_window_s_thread_or_from_the_rows() {
     {
         let st = state.borrow();
         assert_eq!(st.files, files, "left alone");
-        assert!(!st.library.loading);
+        assert!(!st.views.library.loading);
         assert!(
             app.get_status().contains("no pictures in"),
             "{}",
@@ -383,21 +386,24 @@ fn a_folder_that_does_not_answer_is_said_and_overtaken() {
     frames(&gone, &["d.tif"]);
     let app = window(0);
     let (state, worker) = state_for(&app, Vec::new());
-    state.borrow_mut().write_sidecars = true;
+    state.borrow_mut().window.write_sidecars = true;
     crate::panel::browser::open_folder(&state, &app, &worker, &here);
     land_all(&state, &app, &worker);
     assert_eq!(state.borrow().files, files);
     tests::NOT_ANSWERING.with(|n| n.borrow_mut().push(dir.join("share")));
     crate::panel::browser::open_folder(&state, &app, &worker, &gone);
-    assert!(state.borrow().library.loading, "the card is up meanwhile");
+    assert!(
+        state.borrow().views.library.loading,
+        "the card is up meanwhile"
+    );
     assert_eq!(land_all(&state, &app, &worker), 1);
     {
         let st = state.borrow();
         assert_eq!(st.files, files, "the list is as it was");
-        assert_eq!(st.view, View::Folder);
-        assert!(!st.library.loading);
+        assert_eq!(st.views.view, View::Folder);
+        assert!(!st.views.library.loading);
         assert_eq!(disk_reads_under(&gone), 0);
-        assert!(!st.library.canonical.contains_key(&gone));
+        assert!(!st.views.library.canonical.contains_key(&gone));
     }
     assert!(
         app.get_status().contains("isn't reachable"),
@@ -447,8 +453,8 @@ fn a_folder_opened_through_a_link_is_recorded_as_the_read_made_it() {
     land_all(&state, &app, &worker);
     let st = state.borrow();
     assert_eq!(st.files, vec![link.join("a.tif")]);
-    assert_eq!(st.library.canonical.get(&link), Some(&real));
-    assert_eq!(st.recent.open.as_deref(), Some(real.as_path()));
+    assert_eq!(st.views.library.canonical.get(&link), Some(&real));
+    assert_eq!(st.views.recent.open.as_deref(), Some(real.as_path()));
     drop(st);
     drop(state);
     crate::testing::remove_dir_retry(&dir);

@@ -30,7 +30,7 @@ const COMPARE_MOST: usize = 4;
 /// The cell the menu was opened on, or the frame on screen for a key.
 fn cell_for(st: &State, from_menu: bool) -> Option<usize> {
     if from_menu {
-        st.menu_file.or(st.current)
+        st.views.menu_file.or(st.current)
     } else {
         st.current
     }
@@ -112,7 +112,7 @@ fn planned(st: &State) -> Vec<Planned> {
         if let Some(l) = all
             .iter()
             .find(|l| !l.open && l.members.first() == Some(cell))
-            && let Some(s) = st.stacks.stack(&l.id)
+            && let Some(s) = st.views.stacks.stack(&l.id)
         {
             for (i, r) in s.refs.iter().enumerate() {
                 if i != l.refs[0] && seen.insert((r.hint.clone(), r.version.clone())) {
@@ -131,7 +131,7 @@ fn planned(st: &State) -> Vec<Planned> {
 /// A member is kept at the path the list finds it by, a frame followed
 /// on an archive's copy at its local one.
 pub(crate) fn make(st: &mut State, app: &App, worker: &Worker) {
-    if st.collection_frames.is_some() {
+    if st.views.collection_frames.is_some() {
         app.set_status("a stack is made in a folder's list, not in a collection's".into());
         return;
     }
@@ -181,7 +181,7 @@ pub(crate) fn make(st: &mut State, app: &App, worker: &Worker) {
         return;
     }
     let n = refs.len();
-    st.stacks.make(refs);
+    st.views.stacks.make(refs);
     let name = st.current.and_then(|c| st.key_of(c)).map(|k| k.said());
     settle(st, app, worker);
     let said = format!(
@@ -209,7 +209,7 @@ pub(crate) fn unmake(st: &mut State, app: &App, worker: &Worker) {
         many => format!("{} stacks unstacked", many.len()),
     };
     for l in &stacks {
-        st.stacks.unstack(&l.id);
+        st.views.stacks.unstack(&l.id);
     }
     settle(st, app, worker);
     tracing::info!("{said}");
@@ -223,6 +223,7 @@ pub(crate) fn unmake(st: &mut State, app: &App, worker: &Worker) {
 pub(crate) fn toggle(st: &mut State, app: &App, worker: &Worker, row: Option<usize>) {
     let stacks = match row {
         Some(r) => st
+            .views
             .shown
             .get(r)
             .and_then(|&c| stack_of(st, c))
@@ -245,7 +246,7 @@ pub(crate) fn toggle(st: &mut State, app: &App, worker: &Worker, row: Option<usi
         open_row(st, app, worker, row as i32, false);
     }
     for l in &stacks {
-        st.stacks.set_open(&l.id, open);
+        st.views.stacks.set_open(&l.id, open);
     }
     settle(st, app, worker);
 }
@@ -260,7 +261,7 @@ pub(crate) fn set_top(st: &mut State, app: &App, worker: &Worker, from_menu: boo
     if at == 0 {
         return;
     }
-    st.stacks.set_top_at(&l.id, l.refs[at]);
+    st.views.stacks.set_top_at(&l.id, l.refs[at]);
     settle(st, app, worker);
     let top = Listed {
         members: vec![l.members[at].clone()],
@@ -289,7 +290,10 @@ pub(crate) fn remove(st: &mut State, app: &App, worker: &Worker) {
         app.set_status("no frame chosen is in a stack".into());
         return;
     }
-    let n: usize = out.iter().map(|(id, at)| st.stacks.remove_at(id, at)).sum();
+    let n: usize = out
+        .iter()
+        .map(|(id, at)| st.views.stacks.remove_at(id, at))
+        .sum();
     settle(st, app, worker);
     app.set_status(
         format!(
@@ -329,7 +333,7 @@ pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: boo
         return;
     };
     if !l.open {
-        st.stacks.set_open(&l.id, true);
+        st.views.stacks.set_open(&l.id, true);
         settle(st, app, worker);
     }
     let Some((set, left)) = compare_set(st, &l.id) else {
@@ -343,7 +347,7 @@ pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: boo
         .cell_of(l.members[at].file, l.members[at].version.as_deref())
         .filter(|c| set.contains(c))
         .unwrap_or(set[0]);
-    if st.cull.is_none() {
+    if st.culling.cull.is_none() {
         crate::panel::cull::enter_cull(st, app, 1);
     }
     if st.current != Some(focus) {
@@ -351,7 +355,7 @@ pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: boo
             open_row(st, app, worker, row as i32, false);
         }
     } else {
-        st.picked = vec![focus];
+        st.views.picked = vec![focus];
         crate::panel::browser::show_set(st, app);
     }
     fit_compare(st, app, &l.id, None);
@@ -375,7 +379,7 @@ pub(crate) fn fit_compare(st: &mut State, app: &App, id: &str, was: Option<usize
         .filter(|(set, _)| set.len() > 1)
         .and_then(|(set, left)| Some((row_of(st, *set.first()?)?, set, left)));
     let Some((first, set, left)) = set else {
-        if let Some(cull) = st.cull.as_mut() {
+        if let Some(cull) = st.culling.cull.as_mut() {
             cull.leave_versions(app);
         }
         if let Some(c) = st.current {
@@ -384,7 +388,7 @@ pub(crate) fn fit_compare(st: &mut State, app: &App, id: &str, was: Option<usize
         return;
     };
     let up = set.len();
-    let Some(cull) = st.cull.as_mut() else {
+    let Some(cull) = st.culling.cull.as_mut() else {
         return;
     };
     let changed = was.unwrap_or(cull.compare) != up;
@@ -398,8 +402,8 @@ pub(crate) fn fit_compare(st: &mut State, app: &App, id: &str, was: Option<usize
     app.set_compare(up as i32);
     app.set_compare_text(up.to_string().into());
     if changed {
-        st.zoom = 0.0;
-        st.image_size = (0, 0);
+        st.develop.zoom = 0.0;
+        st.develop.image_size = (0, 0);
     }
     crate::panel::cull::cull_refresh(st);
     app.window().request_redraw();
@@ -416,7 +420,7 @@ pub(crate) fn menu_asked(st: &State, app: &App, c: usize) {
     app.set_menu_stack_top(of.as_ref().is_some_and(|&(_, at)| at == 0));
     // Counted as it would be made: a closed top brings its stack.
     let holds = planned(st).len();
-    app.set_menu_can_stack(st.collection_frames.is_none() && chosen_frames(st).len() > 1);
+    app.set_menu_can_stack(st.views.collection_frames.is_none() && chosen_frames(st).len() > 1);
     app.set_menu_stack_holds(holds as i32);
 }
 
@@ -429,7 +433,7 @@ pub(crate) fn healed(
     rehashed: &[Rehash],
 ) {
     let mut st = state.borrow_mut();
-    if !st.stacks.heal(moved, rehashed) {
+    if !st.views.stacks.heal(moved, rehashed) {
         return;
     }
     if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
@@ -558,14 +562,15 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
             // By name over the folders: the frames are told apart by their
             // place in the list this built, in that order.
-            st.sort = crate::sort::Kept::by_name();
-            st.library.roots.add(&root).unwrap();
+            st.views.sort = crate::sort::Kept::by_name();
+            st.views.library.roots.add(&root).unwrap();
             let collections = dir.join(crate::collections::DIR);
-            st.collections.dir = Some(collections.clone());
-            st.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(&collections));
+            st.views.collections.dir = Some(collections.clone());
+            st.views.stacks =
+                crate::stacks::Store::load(greycard_library::stacks::dir_in(&collections));
         }
         open_view(&state, &app, &worker, View::Roots(None));
         land_sent(&state, &app, &worker);
@@ -589,7 +594,7 @@ mod tests {
             ..
         } = s;
         drop(writer);
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(app);
         drop(worker);
         drop(state);
@@ -635,7 +640,7 @@ mod tests {
         let mut picked: Vec<usize> = also.iter().map(|&i| cell(s, i)).collect();
         picked.push(c);
         picked.sort_unstable();
-        s.state.borrow_mut().picked = picked;
+        s.state.borrow_mut().views.picked = picked;
     }
 
     /// Each file's own answer to which of its frames the list wants is
@@ -725,7 +730,7 @@ mod tests {
             // Out of the folder's order: the lookups by file read the
             // index made with the cells.
             let st = state.borrow();
-            assert!(st.cells_by_file.is_some());
+            assert!(st.views.cells_by_file.is_some());
             let x3 = st.file_by_path(&s.files[3]).unwrap();
             assert_eq!(st.cells_of_file(x3), [2]);
             assert_eq!(st.own_cell(x3), Some(2));
@@ -779,7 +784,7 @@ mod tests {
         let back = crate::stacks::Store::load(greycard_library::stacks::dir_in(
             &s.dir.join(crate::collections::DIR),
         ));
-        assert_eq!(back.list, state.borrow().stacks.list);
+        assert_eq!(back.list, state.borrow().views.stacks.list);
         with_modifier(app, Key::Control, || {
             with_modifier(app, Key::Shift, || press(app, "G"))
         });
@@ -849,17 +854,17 @@ mod tests {
         // Add to collection takes the top's frame, not the stack's.
         app.invoke_collection_menu_add(-1);
         assert!(matches!(
-            &state.borrow().collections.asked,
+            &state.borrow().views.collections.asked,
             Some(crate::panel::collections::Asked::New { add }) if add.len() == 1
         ));
-        state.borrow_mut().collections.asked = None;
+        state.borrow_mut().views.collections.asked = None;
         app.set_collection_sheet_open(false);
         // x3, behind the top, rated; the filter at three stars.
         {
             let mut st = state.borrow_mut();
             let x3 = st.file_by_path(&s.files[3]).unwrap();
             st.sidecars[x3].meta.rating = 3;
-            st.filter.stars = crate::filter::Stars::AtLeast(3);
+            st.views.filter.stars = crate::filter::Stars::AtLeast(3);
         }
         crate::panel::cull::apply_filter(state, app);
         assert!(rows(app).is_empty(), "{:?}", rows(app));
@@ -867,11 +872,11 @@ mod tests {
         let mut st = state.borrow_mut();
         let top = st.own_cell(st.file_by_path(&s.files[1]).unwrap()).unwrap();
         let id = stack_of(&st, top).unwrap().0.id;
-        st.stacks.set_open(&id, true);
+        st.views.stacks.set_open(&id, true);
         settle(&mut st, app, &s.worker);
         assert_eq!(rows(app), ["x3.tif [2/2]"]);
         // Closed again with the top rated: the stack, by its top.
-        st.stacks.set_open(&id, false);
+        st.views.stacks.set_open(&id, false);
         let x1 = st.file_by_path(&s.files[1]).unwrap();
         st.sidecars[x1].meta.rating = 3;
         settle(&mut st, app, &s.worker);
@@ -950,7 +955,7 @@ mod tests {
         // Warm on top, with x2.
         let w = warm_cell();
         app.invoke_select(row(&s, w));
-        state.borrow_mut().picked = vec![w, cell(&s, 2)];
+        state.borrow_mut().views.picked = vec![w, cell(&s, 2)];
         app.invoke_stack_make();
         assert_eq!(
             rows(app),
@@ -961,7 +966,7 @@ mod tests {
         // its stack along: x0's own goes behind them.
         let w = warm_cell();
         app.invoke_select(row(&s, w));
-        state.borrow_mut().picked = vec![cell(&s, 0), w];
+        state.borrow_mut().views.picked = vec![cell(&s, 0), w];
         app.invoke_stack_make();
         assert_eq!(on_disk(&s), [["x0.tif/v", "x2.tif", "x0.tif"]]);
         assert_eq!(rows(app), ["x0.tif/Warm [3]", "x1.tif", "x3.tif", "x4.tif"]);
@@ -1000,12 +1005,12 @@ mod tests {
         app.invoke_stack_compare();
         let id = {
             let st = state.borrow();
-            let cull = st.cull.as_ref().expect("culling");
+            let cull = st.culling.cull.as_ref().expect("culling");
             assert_eq!(cull.compare, 3);
             cull.stack_of.clone().unwrap()
         };
         assert_eq!(
-            state.borrow().cull.as_ref().unwrap().set.as_deref(),
+            state.borrow().culling.cull.as_ref().unwrap().set.as_deref(),
             Some([cell(&s, 1), cell(&s, 2), cell(&s, 3)].as_slice())
         );
         assert!(!app.get_grid_open());
@@ -1013,22 +1018,22 @@ mod tests {
         // x2 out of the stack: the view closes up on the two left.
         {
             let mut st = state.borrow_mut();
-            st.stacks.remove_at(&id, &[1]);
+            st.views.stacks.remove_at(&id, &[1]);
             crate::versions::settle(&mut st, app, worker);
-            let cull = st.cull.as_ref().unwrap();
+            let cull = st.culling.cull.as_ref().unwrap();
             assert_eq!(cull.compare, 2);
             assert_eq!(cull.stack_of.as_deref(), Some(id.as_str()));
         }
         assert_eq!(
-            state.borrow().cull.as_ref().unwrap().set.as_deref(),
+            state.borrow().culling.cull.as_ref().unwrap().set.as_deref(),
             Some([cell(&s, 1), cell(&s, 3)].as_slice())
         );
         // Unstacked: the view is no longer the stack's.
         {
             let mut st = state.borrow_mut();
-            st.stacks.unstack(&id);
+            st.views.stacks.unstack(&id);
             crate::versions::settle(&mut st, app, worker);
-            assert_eq!(st.cull.as_ref().unwrap().stack_of, None);
+            assert_eq!(st.culling.cull.as_ref().unwrap().stack_of, None);
         }
         teardown(s);
     }
@@ -1050,7 +1055,7 @@ mod tests {
         };
         let w = state.borrow().cell_of(x0, Some(&warm)).unwrap();
         app.invoke_select(row(&s, w));
-        state.borrow_mut().picked = vec![w, cell(&s, 1), cell(&s, 2)];
+        state.borrow_mut().views.picked = vec![w, cell(&s, 1), cell(&s, 2)];
         app.invoke_stack_make();
         assert_eq!(on_disk(&s), [["x0.tif/v", "x1.tif", "x2.tif"]]);
         {
@@ -1085,10 +1090,10 @@ mod tests {
             let mut newer = greycard_library::stacks::Stack::new(vec![r(2), r(3)]);
             older.made = 10;
             newer.made = 20;
-            let dir = st.stacks.dir.clone().unwrap();
+            let dir = st.views.stacks.dir.clone().unwrap();
             newer.write(&dir).unwrap();
             older.write(&dir).unwrap();
-            st.stacks = crate::stacks::Store::load(dir);
+            st.views.stacks = crate::stacks::Store::load(dir);
             crate::versions::settle(&mut st, app, worker);
         }
         assert_eq!(rows(app), ["x0.tif [2]", "x1.tif", "x3.tif", "x4.tif"]);
@@ -1132,10 +1137,10 @@ mod tests {
             st.own_cell(st.file_by_path(&copy).unwrap()).unwrap()
         };
         app.invoke_select(row(&s, x1));
-        state.borrow_mut().picked = vec![x1, cell(&s, 2)];
+        state.borrow_mut().views.picked = vec![x1, cell(&s, 2)];
         app.invoke_stack_make();
         assert_eq!(on_disk(&s), [["x1.tif", "x2.tif"]], "{}", app.get_status());
-        let hints: Vec<String> = state.borrow().stacks.list[0]
+        let hints: Vec<String> = state.borrow().views.stacks.list[0]
             .refs
             .iter()
             .map(|r| r.hint.clone())
@@ -1165,20 +1170,20 @@ mod tests {
                 .unwrap()
         };
         s.app.invoke_select(row(&s, cell(&s, 0)));
-        s.state.borrow_mut().picked = vec![cell(&s, 0), y];
+        s.state.borrow_mut().views.picked = vec![cell(&s, 0), y];
         s.app.invoke_stack_make();
         assert_eq!(
             s.app.get_status(),
             "a stack is made of frames in one folder"
         );
         assert!(on_disk(&s).is_empty());
-        s.state.borrow_mut().collection_frames = Some(Vec::new());
+        s.state.borrow_mut().views.collection_frames = Some(Vec::new());
         s.app.invoke_stack_make();
         assert_eq!(
             s.app.get_status(),
             "a stack is made in a folder's list, not in a collection's"
         );
-        s.state.borrow_mut().collection_frames = None;
+        s.state.borrow_mut().views.collection_frames = None;
         teardown(s);
     }
 }

@@ -119,7 +119,7 @@ pub(crate) fn uses(st: &State, name: &str) -> Uses {
             .chain(s.versions.iter().map(|v| (Some(v.id.as_str()), &v.line)))
             .any(|(version, line)| {
                 let edit = match &open {
-                    Some((f, v)) if *f == i && v.as_deref() == version => &st.edit,
+                    Some((f, v)) if *f == i && v.as_deref() == version => &st.develop.edit,
                     _ => &line.current,
                 };
                 edit.look_lut.lut.name() == name
@@ -197,7 +197,7 @@ fn offer_note(offer: Offer, files: usize) -> &'static str {
 /// Open the sheet for the look the panel has chosen, or say in the
 /// status line why there is nothing to ask.
 pub(crate) fn ask(st: &mut State, app: &App) {
-    if st.look_removing {
+    if st.sheets.look_removing {
         app.set_status("a look is still being removed".into());
         return;
     }
@@ -212,8 +212,8 @@ pub(crate) fn ask(st: &mut State, app: &App) {
     };
     // The directory as it is now, not as it was when the section was
     // opened: a table added or moved since is the look's too.
-    st.looks = list_in(Some(dir.clone()));
-    let all = files_of(&st.looks, &name, &dir);
+    st.develop.looks = list_in(Some(dir.clone()));
+    let all = files_of(&st.develop.looks, &name, &dir);
     if all.is_empty() {
         app.set_status(format!("{name} has no file in the look directory to remove").into());
         return;
@@ -240,18 +240,21 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         return;
     }
     let canonical = dunce::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
-    let offer = delete::offer(TRASH_SUPPORTED, st.trash_refused.contains(&canonical));
+    let offer = delete::offer(
+        TRASH_SUPPORTED,
+        st.sheets.trash_refused.contains(&canonical),
+    );
     let counted = uses(st, &name);
     let names: Vec<slint::SharedString> = files
         .iter()
         .filter_map(|f| f.file_name())
         .map(|n| n.to_string_lossy().as_ref().into())
         .collect();
-    let shown = look::tables_of(&st.looks, &name)
+    let shown = look::tables_of(&st.develop.looks, &name)
         .first()
         .map(|e| e.label().to_string())
         .unwrap_or_else(|| name.clone());
-    let place = match st.view {
+    let place = match st.views.view {
         crate::roots::View::Roots(_) => "in the library",
         _ => "in this folder",
     };
@@ -288,9 +291,9 @@ pub(crate) fn ask(st: &mut State, app: &App) {
     app.set_look_remove_note(note.into());
     app.set_look_remove_trash(offer.trash);
     app.set_look_remove_permanent(offer.permanent);
-    st.look_remove_generation += 1;
-    let generation = st.look_remove_generation;
-    st.look_remove = Some(Asked {
+    st.sheets.look_remove_generation += 1;
+    let generation = st.sheets.look_remove_generation;
+    st.sheets.look_remove = Some(Asked {
         name: name.clone(),
         files,
         store: dir,
@@ -320,7 +323,7 @@ fn count_unread(app: &App, generation: u64, counted: Uses, name: String, place: 
                     return;
                 };
                 let st = state.borrow();
-                if st.look_remove.as_ref().map(|a| a.generation) == Some(generation) {
+                if st.sheets.look_remove.as_ref().map(|a| a.generation) == Some(generation) {
                     app.set_look_remove_uses(uses_line(counted.named + on_disk, 0, place).into());
                 }
             });
@@ -397,7 +400,7 @@ impl Job {
 /// [`land`] finishes it.
 pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
     app.set_look_remove_open(false);
-    let Some(asked) = st.look_remove.take() else {
+    let Some(asked) = st.sheets.look_remove.take() else {
         return;
     };
     let how = match answer {
@@ -405,17 +408,17 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
         2 if asked.offer.permanent => How::Permanent,
         _ => return,
     };
-    if !st.deletes_allowed {
+    if !st.window.deletes_allowed {
         let why = "not removed: a capture, an export or a timing run never deletes";
         tracing::info!("{why}");
         app.set_status(why.into());
         return;
     }
-    if st.look_removing {
+    if st.sheets.look_removing {
         app.set_status("a look is still being removed".into());
         return;
     }
-    st.look_removing = true;
+    st.sheets.look_removing = true;
     app.set_status(format!("removing {}...", asked.name).into());
     let job = Job {
         name: asked.name,
@@ -424,7 +427,7 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
         allowed: delete::allowed(&[asked.store]),
     };
     if !send_off(app, job) {
-        st.look_removing = false;
+        st.sheets.look_removing = false;
         app.set_status("the removal could not be started; nothing was removed".into());
     }
 }
@@ -523,20 +526,20 @@ fn summary(done: &Done) -> String {
 /// open picture that named the look shows it as "(missing)" and renders
 /// without it, as it would one already missing; no sidecar is touched.
 pub(crate) fn land(st: &mut State, app: &App, done: Done) {
-    st.look_removing = false;
+    st.sheets.look_removing = false;
     if let Some(r) = &done.deleted.trash_refused
         && let Some(dir) = r.frame.parent()
     {
         let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-        st.trash_refused.insert(dir);
+        st.sheets.trash_refused.insert(dir);
     }
     let status = summary(&done);
     tracing::info!("remove look: {status}");
     app.set_status(status.into());
-    st.looks = list_in(store());
+    st.develop.looks = list_in(store());
     look::forget();
-    st.look_for = None;
-    show_looks(st, &st.edit.look_lut, app);
+    st.develop.look_for = None;
+    show_looks(st, &st.develop.edit.look_lut, app);
     crate::edited::looks_moved(st);
     app.window().request_redraw();
 }
@@ -710,7 +713,7 @@ mod tests {
         st.sidecars[2].current.look_lut = named("Neon");
         st.sidecars[3].current.look_lut = named("Mono");
         st.current = Some(0);
-        st.edit.look_lut = named("Neon");
+        st.develop.edit.look_lut = named("Neon");
         // Frame 4's edit stands in from its row.
         st.from_row[4].read = false;
         let counted = uses(&st, "Neon");
@@ -834,15 +837,15 @@ mod tests {
         let (state, _worker) = state_for(&app, crate::testing::folder(3));
         {
             let mut st = state.borrow_mut();
-            st.deletes_allowed = true;
-            st.looks = list_in(Some(store.clone()));
+            st.window.deletes_allowed = true;
+            st.develop.looks = list_in(Some(store.clone()));
             st.current = Some(0);
-            st.edit.look_lut = greycard_edit::look::LookLut {
+            st.develop.edit.look_lut = greycard_edit::look::LookLut {
                 lut: greycard_edit::look::LutChoice::Named("Neon".into()),
                 strength: 1.0,
             };
-            st.sidecars[1].current.look_lut = st.edit.look_lut.clone();
-            show_looks(&st, &st.edit.look_lut, &app);
+            st.sidecars[1].current.look_lut = st.develop.edit.look_lut.clone();
+            show_looks(&st, &st.develop.edit.look_lut, &app);
         }
         assert!(app.get_look_removable());
         assert_eq!(app.get_look_name(), "Neon");
@@ -915,8 +918,8 @@ mod tests {
             .collect();
         assert!(labels.iter().any(|l| l == "Neon (missing)"), "{labels:?}");
         assert!(!app.get_look_removable());
-        assert!(state.borrow().look_for.is_none());
-        assert_eq!(state.borrow().edit.look_lut.lut.name(), "Neon");
+        assert!(state.borrow().develop.look_for.is_none());
+        assert_eq!(state.borrow().develop.edit.look_lut.lut.name(), "Neon");
         LOOK_STORE.with(|s| *s.borrow_mut() = None);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -935,7 +938,7 @@ mod tests {
         let before = store.join("Neon.agx.cube");
         let held = std::fs::read(&before).unwrap();
         std::fs::remove_file(&before).unwrap();
-        state.borrow_mut().looks = list_in(Some(store.clone()));
+        state.borrow_mut().develop.looks = list_in(Some(store.clone()));
         std::fs::write(&before, held).unwrap();
         app.set_look_name("Neon".into());
         ask(&mut state.borrow_mut(), &app);

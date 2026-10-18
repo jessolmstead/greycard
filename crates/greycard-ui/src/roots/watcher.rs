@@ -21,32 +21,32 @@ pub(crate) fn online(root: &Path) -> bool {
 /// canonical form, and the watcher. A capture of the view does it in
 /// place, since it waits for the pass anyway.
 pub(crate) fn start(st: &mut State, app: &App) {
-    let Some(indexer) = &st.index else {
+    let Some(indexer) = &st.views.index else {
         return;
     };
-    if st.batch && st.library.wanted.is_none() {
+    if st.window.batch && st.views.library.wanted.is_none() {
         return;
     }
-    if st.library.roots.is_empty() {
+    if st.views.library.roots.is_empty() {
         return;
     }
-    st.library.watch_token += 1;
+    st.views.library.watch_token += 1;
     let plan = Plan {
-        token: st.library.watch_token,
-        roots: st.library.roots.clone(),
+        token: st.views.library.watch_token,
+        roots: st.views.library.roots.clone(),
         launch: Some(
             st.files
                 .first()
                 .and_then(|f| f.parent())
                 .map(Path::to_path_buf),
         ),
-        asker: (!st.batch).then(|| indexer.asker()),
+        asker: (!st.window.batch).then(|| indexer.asker()),
     };
-    if st.batch {
+    if st.window.batch {
         build_in_place(st, plan);
     } else {
         // Not when no thread could be had: nothing will land to end it.
-        st.library.starting = send_build(app, plan);
+        st.views.library.starting = send_build(app, plan);
     }
 }
 
@@ -56,13 +56,13 @@ pub(crate) fn start(st: &mut State, app: &App) {
 /// just taken out among them: a pass over that one costs a folder's
 /// walk at most, and its rows are left out of the view either way.
 pub(crate) fn watch(st: &mut State, app: &App) {
-    st.library.watch_token += 1;
-    let Some(indexer) = &st.index else {
+    st.views.library.watch_token += 1;
+    let Some(indexer) = &st.views.index else {
         return;
     };
     let plan = Plan {
-        token: st.library.watch_token,
-        roots: st.library.roots.clone(),
+        token: st.views.library.watch_token,
+        roots: st.views.library.roots.clone(),
         launch: None,
         asker: Some(indexer.asker()),
     };
@@ -344,29 +344,29 @@ fn take_launch(st: &mut State, launch: Launch) {
         offline,
         left_out,
     } = launch;
-    st.library.starting = false;
+    st.views.library.starting = false;
     // Only from the build asked for last: a newer one's look at the
     // roots is not put back by an older one's.
-    if token == st.library.watch_token {
-        st.library.offline = offline;
+    if token == st.views.library.watch_token {
+        st.views.library.offline = offline;
         // An archive that answered runs its queued moves once there is
         // a window to run them on (`send_build`).
-        let offline = st.library.offline.clone();
+        let offline = st.views.library.offline.clone();
         crate::panel::archive::rejects::heard_at_launch(st, &offline);
     }
     // A root taken out meanwhile is not passed over; one added
     // meanwhile asked for its own pass.
-    order.retain(|r| st.library.roots.list().contains(r));
+    order.retain(|r| st.views.library.roots.list().contains(r));
     // With the mounts below the local roots that the same look found, in
     // one ask, so the launch passes leave them out.
     if !order.is_empty()
-        && let Some(indexer) = &st.index
+        && let Some(indexer) = &st.views.index
     {
         tracing::info!(
             "library: {} root(s), a pass over each on the indexer's thread",
             order.len()
         );
-        st.library.launch_left = order.len();
+        st.views.library.launch_left = order.len();
         indexer.launch(order, left_out);
     }
 }
@@ -382,16 +382,16 @@ pub(crate) fn take_built(st: &mut State, built: Built) -> bool {
         left_out,
         watcher,
     } = built;
-    if token != st.library.watch_token {
+    if token != st.views.library.watch_token {
         tracing::debug!("library: a watcher built for roots that have changed since, dropped");
         return false;
     }
-    if let Some(indexer) = &st.index {
+    if let Some(indexer) = &st.views.index {
         indexer.left_out(left_out);
     }
-    st.library.offline = offline;
+    st.views.library.offline = offline;
     for (root, fs) in &remote {
-        if !st.library.said_remote.insert(root.clone()) {
+        if !st.views.library.said_remote.insert(root.clone()) {
             continue;
         }
         if WATCH_REMOTE {
@@ -401,6 +401,7 @@ pub(crate) fn take_built(st: &mut State, built: Built) -> bool {
             );
         } else {
             let under = st
+                .views
                 .library
                 .roots
                 .list()
@@ -411,18 +412,25 @@ pub(crate) fn take_built(st: &mut State, built: Built) -> bool {
             tracing::info!(
                 "library: not watching {}{under}: it is on {fs}, a network filesystem, where a watch sees only this machine's changes; it is passed over at launch{}",
                 root.display(),
-                match st.library.poll_every {
+                match st.views.library.poll_every {
                     Some(every) => format!(" and every {} min", every.as_secs().div_ceil(60)),
                     None => String::new(),
                 }
             );
         }
     }
-    st.library.remote = remote;
-    st.library.watcher = watcher;
+    st.views.library.remote = remote;
+    st.views.library.watcher = watcher;
     // The reduced develop of a frame under one of these runs alone.
     if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
-        worker.set_network_roots(st.library.remote.iter().map(|(r, _)| r.clone()).collect());
+        worker.set_network_roots(
+            st.views
+                .library
+                .remote
+                .iter()
+                .map(|(r, _)| r.clone())
+                .collect(),
+        );
     }
     restart_poll(st);
     true
@@ -432,15 +440,21 @@ pub(crate) fn take_built(st: &mut State, built: Built) -> bool {
 /// has them now: none when there are none, when it is off, on a batch
 /// run, and on Windows, where they are watched.
 pub(crate) fn restart_poll(st: &mut State) {
-    let far: Vec<PathBuf> = st.library.remote.iter().map(|(r, _)| r.clone()).collect();
-    st.library.poll = match (st.library.poll_every, &st.index) {
-        (Some(every), Some(indexer)) if !far.is_empty() && !st.batch && !WATCH_REMOTE => {
+    let far: Vec<PathBuf> = st
+        .views
+        .library
+        .remote
+        .iter()
+        .map(|(r, _)| r.clone())
+        .collect();
+    st.views.library.poll = match (st.views.library.poll_every, &st.views.index) {
+        (Some(every), Some(indexer)) if !far.is_empty() && !st.window.batch && !WATCH_REMOTE => {
             let asker = indexer.asker();
             Poll::start(far, every, move |roots| asker.poll(roots))
         }
         _ => None,
     };
-    if let (Some(poll), Some(every)) = (&st.library.poll, st.library.poll_every) {
+    if let (Some(poll), Some(every)) = (&st.views.library.poll, st.views.library.poll_every) {
         tracing::debug!(
             "library: {} network folder(s) passed over every {} min: {:?}",
             poll.roots.len(),

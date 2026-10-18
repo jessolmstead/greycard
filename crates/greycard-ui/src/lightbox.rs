@@ -283,7 +283,7 @@ impl Lightbox {
 /// The rows the lightbox has tiles for: the grid's cells, held to the
 /// list.
 fn rows(st: &State, window: (usize, usize)) -> std::ops::Range<usize> {
-    let end = (window.0 + window.1).min(st.shown.len());
+    let end = (window.0 + window.1).min(st.views.shown.len());
     window.0.min(end)..end
 }
 
@@ -291,7 +291,7 @@ fn rows(st: &State, window: (usize, usize)) -> std::ops::Range<usize> {
 /// and whether it waits for its edit's; or take the row's off when
 /// there is none in hand. A row that already says so is not written.
 pub(crate) fn show(st: &mut State, app: &App, cell: usize) {
-    if st.lightbox.is_none() {
+    if st.culling.lightbox.is_none() {
         return;
     }
     let Some(row) = row_of(st, cell) else {
@@ -305,7 +305,7 @@ pub(crate) fn show(st: &mut State, app: &App, cell: usize) {
     let Some(mut t) = model.row_data(row) else {
         return;
     };
-    let Some(lb) = st.lightbox.as_mut() else {
+    let Some(lb) = st.culling.lightbox.as_mut() else {
         return;
     };
     let pending = lb.waiting.contains(&path);
@@ -341,7 +341,7 @@ fn clear_rows(app: &App, range: std::ops::Range<usize>) {
 pub(crate) fn refresh(st: &mut State, app: &App) {
     let size = picture_size(app.get_tile_cell(), app.window().scale_factor());
     let window = cells::window(app, cells::View::Grid);
-    let Some(lb) = st.lightbox.as_mut() else {
+    let Some(lb) = st.culling.lightbox.as_mut() else {
         return;
     };
     let was = lb.window;
@@ -355,19 +355,22 @@ pub(crate) fn refresh(st: &mut State, app: &App) {
     for r in before.clone().filter(|r| !now.contains(r)) {
         clear_rows(app, r..r + 1);
     }
-    let paths: HashSet<Key> = now.clone().filter_map(|r| st.key_of(st.shown[r])).collect();
-    if let Some(lb) = st.lightbox.as_mut() {
+    let paths: HashSet<Key> = now
+        .clone()
+        .filter_map(|r| st.key_of(st.views.shown[r]))
+        .collect();
+    if let Some(lb) = st.culling.lightbox.as_mut() {
         lb.pictures.retain(|p, _| paths.contains(p));
         lb.waiting.retain(|p| paths.contains(p));
     }
     let model = app.get_thumbs();
     for r in now {
-        let f = st.shown[r];
+        let f = st.views.shown[r];
         // A row that does not say what the lightbox holds of its frame
         // (a new list's row, which has neither its picture nor its
         // Developing word): put right, whether or not it was in the
         // window before.
-        let stale = st.lightbox.as_ref().is_some_and(|lb| {
+        let stale = st.culling.lightbox.as_ref().is_some_and(|lb| {
             let Some(path) = st.key_of(f) else {
                 return false;
             };
@@ -387,11 +390,11 @@ pub(crate) fn refresh(st: &mut State, app: &App) {
 /// the rows on screen first, then the rows of the margin. Only the
 /// window's rows, so nothing about the screen is read here.
 fn want(st: &mut State) {
-    let Some(lb) = st.lightbox.as_ref() else {
+    let Some(lb) = st.culling.lightbox.as_ref() else {
         return;
     };
     let now = rows(st, lb.window);
-    let shown: Vec<usize> = match st.grid_shown {
+    let shown: Vec<usize> = match st.views.grid_shown {
         Some((a, b)) => (a.max(0) as usize..=b.max(0) as usize)
             .filter(|r| now.contains(r))
             .collect(),
@@ -404,7 +407,7 @@ fn want(st: &mut State) {
     let mut wants = Vec::new();
     let mut out_of_reach = Vec::new();
     for r in order {
-        let f = st.shown[r];
+        let f = st.views.shown[r];
         let Some(frame) = st.key_of(f) else {
             continue;
         };
@@ -428,10 +431,10 @@ fn want(st: &mut State) {
             ..want.of_version(frame.version.clone())
         });
     }
-    if let Some(lb) = st.lightbox.as_mut() {
+    if let Some(lb) = st.culling.lightbox.as_mut() {
         lb.failed.extend(out_of_reach);
     }
-    if let Some(fetch) = st.lightbox_fetch.as_ref() {
+    if let Some(fetch) = st.culling.lightbox_fetch.as_ref() {
         fetch.want(wants);
     }
 }
@@ -443,7 +446,7 @@ pub(crate) fn forget(st: &mut State, cell: usize) {
     let Some(path) = st.key_of(cell) else {
         return;
     };
-    let Some(lb) = st.lightbox.as_mut() else {
+    let Some(lb) = st.culling.lightbox.as_mut() else {
         return;
     };
     if let Some(p) = lb.pictures.get_mut(&path) {
@@ -476,11 +479,12 @@ pub(crate) fn take(st: &mut State, app: &App, loaded: Loaded) {
         return;
     }
     let in_window = row_of(st, file).is_some_and(|r| {
-        st.lightbox
+        st.culling
+            .lightbox
             .as_ref()
             .is_some_and(|lb| rows(st, lb.window).contains(&r))
     });
-    let Some(lb) = st.lightbox.as_mut() else {
+    let Some(lb) = st.culling.lightbox.as_mut() else {
         return;
     };
     match loaded {
@@ -509,7 +513,7 @@ pub(crate) fn take(st: &mut State, app: &App, loaded: Loaded) {
 /// time, its pictures let go on the way out.
 fn changed(st: &mut State, app: &App, worker: &Worker) {
     if app.get_lightbox() {
-        if st.lightbox_fetch.is_none() {
+        if st.culling.lightbox_fetch.is_none() {
             let app_weak = app.as_weak();
             let fetch = cull::Prefetcher::new(move |loaded| {
                 let app_weak = app_weak.clone();
@@ -520,16 +524,16 @@ fn changed(st: &mut State, app: &App, worker: &Worker) {
                 });
             });
             fetch.set_previews(worker.previews());
-            st.lightbox_fetch = Some(fetch);
+            st.culling.lightbox_fetch = Some(fetch);
         }
-        if st.lightbox.is_none() {
-            st.lightbox = Some(Lightbox::new());
+        if st.culling.lightbox.is_none() {
+            st.culling.lightbox = Some(Lightbox::new());
         }
         refresh(st, app);
-    } else if let Some(lb) = st.lightbox.take() {
+    } else if let Some(lb) = st.culling.lightbox.take() {
         let end = (lb.window.0 + lb.window.1).min(app.get_thumbs().row_count());
         clear_rows(app, lb.window.0.min(end)..end);
-        if let Some(fetch) = st.lightbox_fetch.as_ref() {
+        if let Some(fetch) = st.culling.lightbox_fetch.as_ref() {
             fetch.want(Vec::new());
         }
     }
@@ -668,7 +672,7 @@ mod tests {
         press(&app, "l");
         assert!(app.get_lightbox() && app.get_grid_open());
         assert!(app.get_left_hidden() && app.get_right_hidden() && app.get_strip_hidden());
-        assert!(state.borrow().lightbox.is_some());
+        assert!(state.borrow().culling.lightbox.is_some());
         // Tab is the grid's over it: the left pane back, and away.
         press(&app, Key::Tab);
         assert!(!app.get_left_hidden());
@@ -678,7 +682,7 @@ mod tests {
         assert!(!app.get_lightbox());
         assert!(app.get_grid_open(), "Escape leaves to the grid");
         assert!(!app.get_left_hidden() && !app.get_right_hidden() && !app.get_strip_hidden());
-        assert!(state.borrow().lightbox.is_none());
+        assert!(state.borrow().culling.lightbox.is_none());
         // From the grid, with the left pane put away: kept so.
         app.set_left_hidden(true);
         press(&app, "L");
@@ -959,10 +963,10 @@ mod tests {
     fn a_tile_keeps_its_picture_while_its_edit_s_is_made() {
         let (app, state) = lightbox_window(6);
         press(&app, "l");
-        assert!(state.borrow().lightbox.as_ref().unwrap().size >= 256);
+        assert!(state.borrow().culling.lightbox.as_ref().unwrap().size >= 256);
         let landed = |file: usize| {
             let path = state.borrow().files[file].clone();
-            let size = state.borrow().lightbox.as_ref().unwrap().size;
+            let size = state.borrow().culling.lightbox.as_ref().unwrap().size;
             let picture = Preview::new(9, 6, vec![200; 9 * 6 * 4], (9, 6), false);
             take(
                 &mut state.borrow_mut(),
@@ -992,13 +996,21 @@ mod tests {
         };
         landed(1);
         let path = state.borrow().files[1].clone();
-        assert!(state.borrow().lightbox.as_ref().unwrap().has(&path));
+        assert!(state.borrow().culling.lightbox.as_ref().unwrap().has(&path));
         assert_eq!(row(1), (9, false));
         // Synced: the edit's new picture not kept yet. The old one stays.
         forget(&mut state.borrow_mut(), 1);
         assert_eq!(row(1), (9, false), "up while it is asked again");
         waits(1);
-        assert!(state.borrow().lightbox.as_ref().unwrap().waits(&path));
+        assert!(
+            state
+                .borrow()
+                .culling
+                .lightbox
+                .as_ref()
+                .unwrap()
+                .waits(&path)
+        );
         assert_eq!(row(1), (9, true), "kept, dimmed");
         settle(&app);
         assert_eq!(crate::testing::count_labeled(&app, "Developing"), 0);
@@ -1012,10 +1024,10 @@ mod tests {
         assert_eq!(row(1), (9, false));
         // A new size: the pictures stay drawn until theirs land.
         landed(2);
-        let size = state.borrow().lightbox.as_ref().unwrap().size;
+        let size = state.borrow().culling.lightbox.as_ref().unwrap().size;
         press(&app, "+");
         press(&app, "+");
-        assert_ne!(state.borrow().lightbox.as_ref().unwrap().size, size);
+        assert_ne!(state.borrow().culling.lightbox.as_ref().unwrap().size, size);
         assert_eq!(row(2).0, 9);
         landed(2);
         assert_eq!(row(2).0, 9);

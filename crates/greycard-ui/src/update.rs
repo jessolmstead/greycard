@@ -395,7 +395,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
             });
             app.set_update_checking(true);
             app.set_update_note("Checking...".into());
-            let persist = !state.borrow().batch && !cfg!(test);
+            let persist = !state.borrow().window.batch && !cfg!(test);
             spawn(&app, fetch, persist, Some(n));
         });
     }

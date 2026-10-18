@@ -61,7 +61,7 @@ pub(crate) fn write_file(st: &mut State, file: usize) {
     }
     // A frame followed to an archive's copy has its XMP written there
     // by the archive write, from the sidecar, off the window's thread.
-    if st.xmp_sidecars && !crate::sync::followed(st, file) {
+    if st.window.xmp_sidecars && !crate::sync::followed(st, file) {
         // `tiff:Orientation` is the camera's tag and the frame's
         // quarter turns composed; with no tag to compose onto,
         // whatever the file says about the orientation is left
@@ -100,7 +100,7 @@ pub(crate) fn save_file(st: &mut State, file: usize) -> bool {
         }
         return true;
     }
-    let (path, placement) = (st.files[file].clone(), st.placement);
+    let (path, placement) = (st.files[file].clone(), st.window.placement);
     match st.sidecars[file].save_in(&path, placement) {
         Ok(_) => {
             crate::library::sidecar_written(st, file);
@@ -123,7 +123,7 @@ pub(crate) fn writable(st: &State, c: usize) -> bool {
 
 /// [`writable`] by the file.
 pub(crate) fn file_writable(st: &State, file: usize) -> bool {
-    st.write_sidecars
+    st.window.write_sidecars
         && !crate::panel::delete::held_file(st, file)
         && st.from_row.get(file).is_none_or(|r| r.read)
 }
@@ -170,10 +170,10 @@ pub(crate) fn time_moves(st: &mut State, app: &App) {
 
 fn time_move(st: &mut State, app: &App, which: Timed) {
     let (name, timing) = match which {
-        Timed::Sharpen => ("sharpen", &mut st.time_sharpen),
-        Timed::Clarity => ("clarity", &mut st.time_clarity),
-        Timed::Dehaze => ("dehaze", &mut st.time_dehaze),
-        Timed::Texture => ("texture", &mut st.time_texture),
+        Timed::Sharpen => ("sharpen", &mut st.launch.time_sharpen),
+        Timed::Clarity => ("clarity", &mut st.launch.time_clarity),
+        Timed::Dehaze => ("dehaze", &mut st.launch.time_dehaze),
+        Timed::Texture => ("texture", &mut st.launch.time_texture),
     };
     let Some((left, sent, samples)) = timing.as_mut() else {
         return;
@@ -203,29 +203,29 @@ fn time_move(st: &mut State, app: &App, which: Timed) {
     *sent = Some(std::time::Instant::now());
     match which {
         Timed::Sharpen => {
-            st.edit.sharpen.enabled = true;
-            st.edit.sharpen.auto_radius = false;
-            st.edit.sharpen.radius = if low { 0.6 } else { 1.0 };
+            st.develop.edit.sharpen.enabled = true;
+            st.develop.edit.sharpen.auto_radius = false;
+            st.develop.edit.sharpen.radius = if low { 0.6 } else { 1.0 };
         }
         Timed::Clarity => {
-            st.edit.detail.enabled = true;
-            st.edit.detail.clarity = if low { 0.3 } else { 0.6 };
+            st.develop.edit.detail.enabled = true;
+            st.develop.edit.detail.clarity = if low { 0.3 } else { 0.6 };
         }
         Timed::Dehaze => {
-            st.edit.detail.enabled = true;
-            st.edit.detail.dehaze = if low { 0.3 } else { 0.6 };
+            st.develop.edit.detail.enabled = true;
+            st.develop.edit.detail.dehaze = if low { 0.3 } else { 0.6 };
         }
         Timed::Texture => {
-            st.edit.detail.enabled = true;
-            st.edit.detail.dehaze = 0.5;
-            st.edit.detail.texture = if low { 0.3 } else { 0.6 };
+            st.develop.edit.detail.enabled = true;
+            st.develop.edit.detail.dehaze = 0.5;
+            st.develop.edit.detail.texture = if low { 0.3 } else { 0.6 };
         }
     }
-    st.generation += 1;
+    st.develop.generation += 1;
     app.set_busy(true);
     let job = Job::Develop {
-        edit: st.edit.clone(),
-        generation: st.generation,
+        edit: st.develop.edit.clone(),
+        generation: st.develop.generation,
         turn: current_turn(st),
     };
     WORKER.with(|w| {
@@ -243,7 +243,7 @@ pub(crate) fn schedule_save(st: &mut State, app_weak: slint::Weak<App>) {
     let Some(state) = STATE.with(|s| s.borrow().clone()) else {
         return;
     };
-    st.save_timer.start(
+    st.develop.save_timer.start(
         slint::TimerMode::SingleShot,
         std::time::Duration::from_millis(SAVE_MS),
         move || {
@@ -251,7 +251,7 @@ pub(crate) fn schedule_save(st: &mut State, app_weak: slint::Weak<App>) {
                 return;
             };
             let mut st = state.borrow_mut();
-            let edit = read_edit(&app, &st.edit, st.target);
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
             if save_edit(&mut st, edit)
                 && let Some(c) = st.current
                 && let Some(why) = crate::rows::not_kept(&st, c)
@@ -289,10 +289,10 @@ pub(crate) fn panel_state(st: &mut State, edit: Edit) -> Option<Edit> {
     let Some(c) = st.current else {
         return Some(edit);
     };
-    match &st.overridden {
+    match &st.launch.overridden {
         Some((file, shown)) if file == st.path_of(c) && *shown == edit => None,
         Some(_) => {
-            st.overridden = None;
+            st.launch.overridden = None;
             Some(edit)
         }
         None => Some(edit),
@@ -306,7 +306,7 @@ pub(crate) fn panel_state(st: &mut State, edit: Edit) -> Option<Edit> {
 /// command line's overrides unmoved ([`panel_state`]), or in culling.
 pub(crate) fn record_panel(st: &mut State, app: &App) -> bool {
     // Never in culling, for the reason `save_edit` gives.
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         return false;
     }
     let Some(c) = st.current else {
@@ -315,7 +315,7 @@ pub(crate) fn record_panel(st: &mut State, app: &App) -> bool {
     if !crate::rows::panel_is_frames(st, c) {
         return false;
     }
-    let edit = read_edit(app, &st.edit, st.target);
+    let edit = read_edit(app, &st.develop.edit, st.develop.target);
     panel_state(st, edit).is_some_and(|edit| st.line_mut(c).is_some_and(|l| l.record(edit)))
 }
 
@@ -337,7 +337,7 @@ pub(crate) fn save_edit(st: &mut State, edit: Edit) -> bool {
     // was saved on the way in (`enter_cull`, before the mode is set);
     // recorded now, by the quit or a timer still running, it would be
     // written onto whichever frame is current, so nothing is.
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         return false;
     }
     let Some(c) = st.current else {
@@ -372,7 +372,7 @@ pub(crate) fn take_sources(st: &mut State, sources: &[greycard_edit::retouch::Pa
     if sources.is_empty() {
         return false;
     }
-    st.edit.retouch.take_sources(sources);
+    st.develop.edit.retouch.take_sources(sources);
     let Some(c) = st.current else {
         return false;
     };
@@ -451,13 +451,13 @@ pub(crate) fn develop_soon(
         return;
     };
     // A repair reached in culling: out of it, and the frame develops.
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         leave_cull(st, &app, &worker, None);
         return;
     }
     app.window().request_redraw();
     schedule_save(st, app_weak.clone());
-    st.debounce.start(
+    st.develop.debounce.start(
         slint::TimerMode::SingleShot,
         std::time::Duration::from_millis(DEBOUNCE_MS),
         move || {
@@ -465,12 +465,12 @@ pub(crate) fn develop_soon(
                 return;
             };
             let mut st = state.borrow_mut();
-            st.generation += 1;
+            st.develop.generation += 1;
             app.set_status("developing...".into());
             app.set_busy(true);
             worker.send(Job::Develop {
-                edit: edit_to_develop(&app, &st.edit),
-                generation: st.generation,
+                edit: edit_to_develop(&app, &st.develop.edit),
+                generation: st.develop.generation,
                 turn: current_turn(&st),
             });
         },
@@ -697,7 +697,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     // the thread's handle would find nothing and draw the editor bare
     // until the next analysis, which a switch of target alone does
     // not bring.
-    app.set_curve_image(draw_curve(app, st.bins.as_deref()));
+    app.set_curve_image(draw_curve(app, st.develop.bins.as_deref()));
     app.set_lens_enabled(edit.lens.enabled);
     app.set_lens_profile_on(edit.lens.profile);
     app.set_lens_distortion(edit.lens.distortion);
@@ -796,7 +796,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_retouch_enabled(edit.retouch.enabled);
     // The look as the panel now holds it, the baseline for the next
     // change (see `mask::look_edited`).
-    *st.look_seen.borrow_mut() = Some(read_look(app));
+    *st.develop.look_seen.borrow_mut() = Some(read_look(app));
 }
 
 /// The panel's sections that fold, by the names the settings keep
@@ -960,16 +960,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let mut st = state.borrow_mut();
             // A develop control reached in culling is the way out of
             // it: the frame develops, with that control as set.
-            if st.cull.is_some() {
+            if st.culling.cull.is_some() {
                 let with = control_over_frame(&mut st, &app);
                 leave_cull(&mut st, &app, &worker, with);
                 return;
             }
-            st.edit = read_edit(&app, &st.edit, st.target);
+            st.develop.edit = read_edit(&app, &st.develop.edit, st.develop.target);
             app.window().request_redraw();
             schedule_save(&mut st, app.as_weak());
             let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
-            st.debounce.start(
+            st.develop.debounce.start(
                 slint::TimerMode::SingleShot,
                 std::time::Duration::from_millis(DEBOUNCE_MS),
                 move || {
@@ -977,12 +977,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         return;
                     };
                     let mut st = state.borrow_mut();
-                    st.generation += 1;
+                    st.develop.generation += 1;
                     app.set_status("developing...".into());
                     app.set_busy(true);
                     worker.send(Job::Develop {
-                        edit: edit_to_develop(&app, &st.edit),
-                        generation: st.generation,
+                        edit: edit_to_develop(&app, &st.develop.edit),
+                        generation: st.develop.generation,
                         turn: current_turn(&st),
                     });
                 },

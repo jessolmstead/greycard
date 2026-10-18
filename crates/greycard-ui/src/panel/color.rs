@@ -269,15 +269,20 @@ pub(crate) type WhiteKey = (bool, f32, f32);
 /// away; the picture on the GPU is left alone, since the develop that
 /// follows the change replaces it and brings its own base.
 pub(crate) fn white_profile(st: &mut State) -> Option<CameraProfile> {
-    let want = st.edit.camera.profile.name();
-    if st.white_profile.as_ref().is_none_or(|(had, _)| had != want) {
+    let want = st.develop.edit.camera.profile.name();
+    if st
+        .develop
+        .white_profile
+        .as_ref()
+        .is_none_or(|(had, _)| had != want)
+    {
         let want = want.to_string();
-        let chosen = st.edit.camera.profile().map(|p| p.camera.clone());
-        let embedded = st.frame.as_ref().map(|(_, p)| (**p).clone());
-        st.white_profile = chosen.or(embedded).map(|p| (want, p));
-        st.white_cache = None;
+        let chosen = st.develop.edit.camera.profile().map(|p| p.camera.clone());
+        let embedded = st.develop.frame.as_ref().map(|(_, p)| (**p).clone());
+        st.develop.white_profile = chosen.or(embedded).map(|p| (want, p));
+        st.develop.white_cache = None;
     }
-    st.white_profile.as_ref().map(|(_, p)| p.clone())
+    st.develop.white_profile.as_ref().map(|(_, p)| p.clone())
 }
 
 pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
@@ -287,12 +292,12 @@ pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
     let Some(profile) = white_profile(st) else {
         return IDENTITY;
     };
-    if let Some((key, m)) = st.white_cache
+    if let Some((key, m)) = st.develop.white_cache
         && key == panel
     {
         return m;
     }
-    let (Some(base), Some((frame, _))) = (st.base_white, st.frame.as_ref()) else {
+    let (Some(base), Some((frame, _))) = (st.develop.base_white, st.develop.frame.as_ref()) else {
         return IDENTITY;
     };
     let white = panel_white(panel);
@@ -313,7 +318,7 @@ pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
             IDENTITY
         }
     };
-    st.white_cache = Some((panel, m));
+    st.develop.white_cache = Some((panel, m));
     m
 }
 
@@ -322,20 +327,20 @@ pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
 /// was resolved through. `None` for a picture that is not a raw.
 ///
 /// A picture held up while the next frame's develop is on its way
-/// keeps what its own masks were made from (`State::shown_white`):
+/// keeps what its own masks were made from (`Develop::shown_white`):
 /// the frame and its profile are the next one's by then, and its
 /// masks would otherwise flash back to the global's white.
 pub(crate) fn local_white_shift(st: &mut State) -> Option<WhiteShift> {
-    if st.held.is_some() {
-        return st.shown_white.clone();
+    if st.develop.held.is_some() {
+        return st.develop.shown_white.clone();
     }
-    let shift = match (white_profile(st), st.base_white) {
+    let shift = match (white_profile(st), st.develop.base_white) {
         (Some(profile), Some(base)) => {
             Some(WhiteShift::from_parts(profile, base.gains, base.matrix))
         }
         _ => None,
     };
-    st.shown_white = shift.clone();
+    st.develop.shown_white = shift.clone();
     shift
 }
 
@@ -348,7 +353,7 @@ pub(crate) fn global_temp_tint(st: &mut State, panel: WhiteKey) -> Option<(f32, 
         return Some((temperature, tint));
     }
     let profile = white_profile(st)?;
-    let (frame, _) = st.frame.as_ref()?;
+    let (frame, _) = st.develop.frame.as_ref()?;
     let tt = greycard_core::color::as_shot_temp_tint(frame, &profile).ok()?;
     Some((tt.cct as f32, tt.duv as f32))
 }
@@ -740,9 +745,9 @@ mod tests {
         // the panel is on in it.
         let edit = || {
             let st = state.borrow();
-            crate::panel::edit::read_edit(app, &st.edit, st.target)
+            crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target)
         };
-        let grading = || edit().target_look(state.borrow().target).grading;
+        let grading = || edit().target_look(state.borrow().develop.target).grading;
 
         // Three wheels with three different points, each dragged, the
         // highlights last.
@@ -851,7 +856,7 @@ mod tests {
         let name = app.get_adjustment_name().to_string();
         the_sliders_follow_the_chosen_wheel(&app, &state, &format!("{name}: "));
         let st = state.borrow();
-        let edit = crate::panel::edit::read_edit(&app, &st.edit, st.target);
+        let edit = crate::panel::edit::read_edit(&app, &st.develop.edit, st.develop.target);
         assert_eq!(
             edit.grading,
             Grading::default(),
@@ -874,7 +879,7 @@ mod tests {
         use greycard_edit::history::describe;
         let edit = || {
             let st = state.borrow();
-            crate::panel::edit::read_edit(app, &st.edit, st.target)
+            crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target)
         };
         assert!(app.get_tint_enabled(), "a new tint is on");
         app.set_tint_hue(210.0);
@@ -907,7 +912,7 @@ mod tests {
         app.set_tint_amount(0.0);
         {
             let st = state.borrow();
-            crate::panel::edit::show_edit(&st, &off, app, st.target);
+            crate::panel::edit::show_edit(&st, &off, app, st.develop.target);
         }
         assert!(!app.get_tint_enabled());
         assert_eq!((app.get_tint_hue(), app.get_tint_amount()), (210.0, 0.4));

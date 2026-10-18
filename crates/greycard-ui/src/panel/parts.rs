@@ -58,15 +58,15 @@ fn before_run(route: &Route) -> Option<&'static str> {
 /// The People model's step for a part: ask, offer it, or wait.
 fn part_step(st: &State, part: &PartKind) -> Option<Step> {
     let shape = Shape::of_kind(&format!("Part:{}", part.phrase));
-    let store = st.store.clone();
+    let store = st.develop.store.clone();
     let have = |m: &greycard_ai::Model| store.as_ref().is_some_and(|s| s.have(m));
-    let sheet_free = st.fetch.is_none() && !st.fetching;
+    let sheet_free = st.sheets.fetch.is_none() && !st.sheets.fetching;
     step(
         &shape,
         have,
         crate::ai::providers(),
-        &st.declined,
-        &st.fetch_failed,
+        &st.sheets.declined,
+        &st.sheets.fetch_failed,
         sheet_free,
         |_| false,
     )
@@ -80,10 +80,10 @@ pub(crate) fn chosen(st: &mut State, app: &App, label: &str, mode: &str) {
         app.set_status(format!("{label} is not on the People menu").into());
         return;
     };
-    let Some(index) = st.target else {
+    let Some(index) = st.develop.target else {
         return;
     };
-    let Some(a) = st.edit.adjustments.get(index) else {
+    let Some(a) = st.develop.edit.adjustments.get(index) else {
         return;
     };
     // A mask's first shape is always Add, as the other buttons have it.
@@ -94,15 +94,15 @@ pub(crate) fn chosen(st: &mut State, app: &App, label: &str, mode: &str) {
     };
     let id = a.id;
     // Whatever else was in hand is put down.
-    if st.placing.take().is_some() || st.choosing.take().is_some() {
+    if st.develop.placing.take().is_some() || st.develop.choosing.take().is_some() {
         app.set_placing("".into());
     }
-    st.part_pending = Some(Pending { id, part, mode });
+    st.develop.part_pending = Some(Pending { id, part, mode });
     match part_step(st, part) {
         Some(Step::Ask(_)) => ask_people(app, part),
         Some(Step::Offer(model, falls_back)) => offer_model(st, app, model, falls_back),
         _ => {
-            st.part_pending = None;
+            st.develop.part_pending = None;
             app.set_status("the People model is not downloaded".into());
         }
     }
@@ -121,13 +121,13 @@ fn ask_people(app: &App, part: &PartKind) {
 /// The People model arrived (or its offer was answered): a part waiting
 /// on it goes on, or is let go.
 pub(crate) fn model_answered(st: &mut State, app: &App, have: bool) {
-    let Some(pending) = st.part_pending.as_ref() else {
+    let Some(pending) = st.develop.part_pending.as_ref() else {
         return;
     };
     if have {
         ask_people(app, pending.part);
     } else {
-        st.part_pending = None;
+        st.develop.part_pending = None;
         app.set_status("without the People model no person or part can be found".into());
     }
 }
@@ -145,7 +145,7 @@ pub(crate) fn people_found(
     file: Option<PathBuf>,
     people: Result<(Vec<Candidate>, &'static str, f64), String>,
 ) -> bool {
-    let Some(pending) = st.part_pending.take() else {
+    let Some(pending) = st.develop.part_pending.take() else {
         return false;
     };
     let open = st.current.and_then(|c| st.path_at(c)).cloned();
@@ -170,7 +170,7 @@ pub(crate) fn people_found(
         [one] => return add(st, app, &pending, Some(one.person())),
         _ => {}
     }
-    st.choosing = Some(Choosing {
+    st.develop.choosing = Some(Choosing {
         id: pending.id,
         component: None,
         part: pending.part,
@@ -195,9 +195,10 @@ fn arm(app: &App, status: &str) {
 /// The part into its adjustment, of `person` or of everyone; whether
 /// it went in.
 fn add(st: &mut State, app: &App, pending: &Pending, person: Option<Person>) -> bool {
-    let edit = read_edit(app, &st.edit, st.target);
-    st.edit = edit;
+    let edit = read_edit(app, &st.develop.edit, st.develop.target);
+    st.develop.edit = edit;
     let Some((index, a)) = st
+        .develop
         .edit
         .adjustments
         .iter_mut()
@@ -220,11 +221,11 @@ fn add(st: &mut State, app: &App, pending: &Pending, person: Option<Person>) -> 
     let which = a.mask.components.len() - 1;
     // Asked for from the menu: the Subject model its edge runs may be
     // offered beside it (`mask::ask_for`).
-    st.edge_offer_due = crate::ai::takes_subject_edge(&a.mask.components[which].shape);
-    st.fresh_mask = None;
-    st.target = Some(index);
+    st.sheets.edge_offer_due = crate::ai::takes_subject_edge(&a.mask.components[which].shape);
+    st.develop.fresh_mask = None;
+    st.develop.target = Some(index);
     app.set_component(which as i32);
-    show_edit(st, &st.edit, app, st.target);
+    show_edit(st, &st.develop.edit, app, st.develop.target);
     let status = before_run(&pending.part.route)
         .map(str::to_string)
         .unwrap_or_else(|| format!("finding the {}", pending.part.label.to_lowercase()));
@@ -235,9 +236,10 @@ fn add(st: &mut State, app: &App, pending: &Pending, person: Option<Person>) -> 
 /// Put the person `person` (none: everyone) into the placed part
 /// `component` of adjustment `id`; whether it went in.
 fn repick(st: &mut State, app: &App, id: u64, component: usize, person: Option<Person>) -> bool {
-    let edit = read_edit(app, &st.edit, st.target);
-    st.edit = edit;
+    let edit = read_edit(app, &st.develop.edit, st.develop.target);
+    st.develop.edit = edit;
     let Some(c) = st
+        .develop
         .edit
         .adjustments
         .iter_mut()
@@ -258,8 +260,8 @@ fn repick(st: &mut State, app: &App, id: u64, component: usize, person: Option<P
         let status = before_run(&route)
             .map(str::to_string)
             .unwrap_or_else(|| format!("finding the {}", label.to_lowercase()));
-        st.part_asks.remove(&(id, component));
-        show_edit(st, &st.edit, app, st.target);
+        st.develop.part_asks.remove(&(id, component));
+        show_edit(st, &st.develop.edit, app, st.develop.target);
         app.set_status(status.into());
         return true;
     }
@@ -270,16 +272,16 @@ fn repick(st: &mut State, app: &App, id: u64, component: usize, person: Option<P
 /// under it, if any. None when no person is being picked; else whether
 /// the edit changed.
 pub(crate) fn pressed(st: &mut State, app: &App, x: f32, y: f32) -> Option<bool> {
-    let choosing = st.choosing.as_ref()?;
+    let choosing = st.develop.choosing.as_ref()?;
     let at = view_to_source(st, app, x, y);
-    let (w, h) = st.source_size;
+    let (w, h) = st.develop.source_size;
     let aspect = if w > 0 { h as f32 / w as f32 } else { 1.0 };
     let Some(i) = crate::ai::picked(&choosing.ask.people, at, aspect) else {
         app.set_status("no one there: click a person, or All people".into());
         return Some(false);
     };
     let person = choosing.ask.people[i].person();
-    let choosing = st.choosing.take().expect("checked above");
+    let choosing = st.develop.choosing.take().expect("checked above");
     app.set_placing("".into());
     Some(match choosing.component {
         None => add(
@@ -299,7 +301,7 @@ pub(crate) fn pressed(st: &mut State, app: &App, x: f32, y: f32) -> Option<bool>
 /// All people, while a person is to be picked; whether the edit
 /// changed.
 pub(crate) fn all_people(st: &mut State, app: &App) -> bool {
-    let Some(choosing) = st.choosing.take() else {
+    let Some(choosing) = st.develop.choosing.take() else {
         return false;
     };
     app.set_placing("".into());
@@ -321,8 +323,8 @@ pub(crate) fn all_people(st: &mut State, app: &App) -> bool {
 /// Escape, or anything else that puts the tool down: the picking and
 /// any part waiting on its people go with it.
 pub(crate) fn stopped(st: &mut State) {
-    st.choosing = None;
-    st.part_pending = None;
+    st.develop.choosing = None;
+    st.develop.part_pending = None;
     // And a Landscape press, which waits on the picture the same way.
     crate::panel::landscape::stopped(st);
 }
@@ -333,14 +335,14 @@ pub(crate) fn stopped(st: &mut State) {
 /// frame's ask would otherwise stand for this one's.
 pub(crate) fn another_picture(st: &mut State) {
     stopped(st);
-    st.part_asks.clear();
-    st.part_dismissed.clear();
+    st.develop.part_asks.clear();
+    st.develop.part_dismissed.clear();
 }
 
 /// A placed part asked which person it is of on this picture: kept,
 /// and the picking armed when it is the chosen mask's on the Masks tab.
 pub(crate) fn asked(st: &mut State, app: &App, key: Key, ask: Ask) {
-    st.part_asks.insert(key, ask);
+    st.develop.part_asks.insert(key, ask);
     rearm(st, app);
 }
 
@@ -349,17 +351,19 @@ pub(crate) fn asked(st: &mut State, app: &App, key: Key, ask: Ask) {
 /// part that asks; none when nothing on the picture asks.
 pub(crate) fn asking_mask(st: &State) -> Option<usize> {
     let asks = |i: usize, dismissed: bool| {
-        st.edit.adjustments.get(i).is_some_and(|a| {
-            st.part_asks
+        st.develop.edit.adjustments.get(i).is_some_and(|a| {
+            st.develop
+                .part_asks
                 .keys()
-                .any(|k| k.0 == a.id && (dismissed || !st.part_dismissed.contains(k)))
+                .any(|k| k.0 == a.id && (dismissed || !st.develop.part_dismissed.contains(k)))
         })
     };
     // The mask chosen asks: it, whatever was put down. Else another
     // only for an ask not put down with Escape.
-    st.target
+    st.develop
+        .target
         .filter(|&t| asks(t, true))
-        .or_else(|| (0..st.edit.adjustments.len()).find(|&i| asks(i, false)))
+        .or_else(|| (0..st.develop.edit.adjustments.len()).find(|&i| asks(i, false)))
 }
 
 /// Escape while a placed part asks: not brought back on its own.
@@ -368,19 +372,26 @@ pub(crate) fn dismissed(st: &mut State) {
         id,
         component: Some(c),
         ..
-    }) = st.choosing
+    }) = st.develop.choosing
     {
-        st.part_dismissed.insert((id, c));
+        st.develop.part_dismissed.insert((id, c));
     }
 }
 
 /// The picking for the chosen mask's part that asks, when there is one
 /// and nothing else is in hand: on choosing the mask or the shape.
 pub(crate) fn rearm(st: &mut State, app: &App) {
-    if st.placing.is_some() || st.choosing.is_some() || app.get_panel_tab() != "Masks" {
+    if st.develop.placing.is_some()
+        || st.develop.choosing.is_some()
+        || app.get_panel_tab() != "Masks"
+    {
         return;
     }
-    let Some(a) = st.target.and_then(|i| st.edit.adjustments.get(i)) else {
+    let Some(a) = st
+        .develop
+        .target
+        .and_then(|i| st.develop.edit.adjustments.get(i))
+    else {
         return;
     };
     let chosen = app.get_component().max(0) as usize;
@@ -388,18 +399,18 @@ pub(crate) fn rearm(st: &mut State, app: &App) {
     let key = std::iter::once(chosen)
         .chain(0..a.mask.components.len())
         .map(|c| (a.id, c))
-        .find(|k| st.part_asks.contains_key(k));
+        .find(|k| st.develop.part_asks.contains_key(k));
     let Some(key) = key else {
         return;
     };
     let Some(Shape::Part { phrase, .. }) = a.mask.components.get(key.1).map(|c| &c.shape) else {
-        st.part_asks.remove(&key);
+        st.develop.part_asks.remove(&key);
         return;
     };
     let part = greycard_edit::mask::part_of(phrase).unwrap_or(&PARTS[0]);
-    let ask = st.part_asks[&key].clone();
+    let ask = st.develop.part_asks[&key].clone();
     let words = ask.words();
-    st.choosing = Some(Choosing {
+    st.develop.choosing = Some(Choosing {
         id: key.0,
         component: Some(key.1),
         part,
@@ -411,7 +422,7 @@ pub(crate) fn rearm(st: &mut State, app: &App) {
 
 /// The people's outlines on the view while one is to be picked.
 pub(crate) fn boxes(st: &State, app: &App) -> Vec<PersonBox> {
-    let Some(choosing) = &st.choosing else {
+    let Some(choosing) = &st.develop.choosing else {
         return Vec::new();
     };
     choosing
@@ -489,21 +500,21 @@ mod tests {
         app.set_panel_tab("Masks".into());
         {
             let mut st = state.borrow_mut();
-            st.edit.adjustments.push(greycard_edit::Adjustment {
+            st.develop.edit.adjustments.push(greycard_edit::Adjustment {
                 id: 1,
                 name: "Mask 1".into(),
                 enabled: true,
                 mask: Mask::default(),
                 look: Default::default(),
             });
-            st.target = Some(0);
-            st.source_size = (1200, 800);
+            st.develop.target = Some(0);
+            st.develop.source_size = (1200, 800);
         }
         (app, state, worker)
     }
 
     fn pending(st: &mut State, label: &str) {
-        st.part_pending = Some(Pending {
+        st.develop.part_pending = Some(Pending {
             id: 1,
             part: by_label(label).unwrap(),
             mode: Mode::Add,
@@ -511,7 +522,7 @@ mod tests {
     }
 
     fn shapes(st: &State) -> Vec<Shape> {
-        st.edit.adjustments[0]
+        st.develop.edit.adjustments[0]
             .mask
             .components
             .iter()
@@ -553,10 +564,10 @@ mod tests {
         assert_eq!(p.picture.as_deref(), Some("5e1d"));
         assert_eq!(p.at, her.at);
         assert_ne!(shapes(&st)[0], Shape::of_kind("Part:iris of the eye"));
-        assert!(st.choosing.is_none() && st.part_pending.is_none());
+        assert!(st.develop.choosing.is_none() && st.develop.part_pending.is_none());
         assert_eq!(app.get_placing(), "");
         assert!(boxes(&st, &app).is_empty(), "no one outlined");
-        assert_eq!(st.edit.adjustments[0].name, "Iris 1");
+        assert_eq!(st.develop.edit.adjustments[0].name, "Iris 1");
         // A face no body went with is remembered the same way.
         pending(&mut st, "Lips");
         let bodiless = two().remove(1);
@@ -597,7 +608,7 @@ mod tests {
         // A click on no one keeps the picking.
         let (x, y) = source_to_view(&st, &app, 0.95, 0.6);
         assert_eq!(pressed(&mut st, &app, x, y), Some(false));
-        assert!(st.choosing.is_some());
+        assert!(st.develop.choosing.is_some());
         // A click on the second face picks her.
         let people = two();
         let (x, y) = over(&st, &app, &people[1]);
@@ -610,7 +621,7 @@ mod tests {
                 person: Some(people[1].person()),
             }]
         );
-        assert!(st.choosing.is_none());
+        assert!(st.develop.choosing.is_none());
         assert_eq!(app.get_placing(), "");
         assert!(boxes(&st, &app).is_empty());
         // Not picking: a click is not the picking's.
@@ -633,7 +644,7 @@ mod tests {
         // Escape puts it down, and nothing is made.
         app.invoke_stop_placing();
         let st = state.borrow();
-        assert!(st.choosing.is_none() && st.part_pending.is_none());
+        assert!(st.develop.choosing.is_none() && st.develop.part_pending.is_none());
         assert_eq!(app.get_placing(), "");
         assert_eq!(shapes(&st).len(), 1);
     }
@@ -658,10 +669,13 @@ mod tests {
                 picture: None,
             }),
         };
-        st.edit.adjustments[0].mask.components.push(Component {
-            shape: elsewhere,
-            ..Default::default()
-        });
+        st.develop.edit.adjustments[0]
+            .mask
+            .components
+            .push(Component {
+                shape: elsewhere,
+                ..Default::default()
+            });
         asked(
             &mut st,
             &app,
@@ -686,7 +700,7 @@ mod tests {
             &shapes(&st)[0],
             Shape::Part { person: Some(p), .. } if *p == people[1].person()
         ));
-        assert!(st.part_asks.is_empty());
+        assert!(st.develop.part_asks.is_empty());
         // Asked again, All people takes everyone on this copy.
         asked(
             &mut st,
@@ -722,10 +736,13 @@ mod tests {
 
     fn with_a_part(state: &Rc<RefCell<State>>) {
         let mut st = state.borrow_mut();
-        st.edit.adjustments[0].mask.components.push(Component {
-            shape: Shape::of_kind("Part:lips"),
-            ..Default::default()
-        });
+        st.develop.edit.adjustments[0]
+            .mask
+            .components
+            .push(Component {
+                shape: Shape::of_kind("Part:lips"),
+                ..Default::default()
+            });
         st.current = Some(0);
     }
 
@@ -737,10 +754,10 @@ mod tests {
         with_a_part(&state);
         let open = state.borrow().files[0].clone();
         crate::panel::deliver::deliver(&app, ask_from(Some(PathBuf::from("/nowhere/else.CR3"))));
-        assert!(state.borrow().part_asks.is_empty());
+        assert!(state.borrow().develop.part_asks.is_empty());
         assert_eq!(app.get_placing(), "");
         crate::panel::deliver::deliver(&app, ask_from(Some(open)));
-        assert_eq!(state.borrow().part_asks.len(), 1);
+        assert_eq!(state.borrow().develop.part_asks.len(), 1);
         assert_eq!(app.get_placing(), PICKING);
     }
 
@@ -752,13 +769,13 @@ mod tests {
         with_a_part(&state);
         app.set_panel_tab("Develop".into());
         app.invoke_tab_changed("Develop".into());
-        assert_eq!(state.borrow().target, None);
+        assert_eq!(state.borrow().develop.target, None);
         let open = state.borrow().files[0].clone();
         crate::panel::deliver::deliver(&app, ask_from(Some(open)));
         assert_eq!(app.get_placing(), "", "not off the Masks tab");
         app.set_panel_tab("Masks".into());
         app.invoke_tab_changed("Masks".into());
-        assert_eq!(state.borrow().target, Some(0));
+        assert_eq!(state.borrow().develop.target, Some(0));
         assert_eq!(app.get_placing(), PICKING);
         assert_eq!(boxes(&state.borrow(), &app).len(), 2);
         // Put down with Escape, it is not brought back by the tab: the
@@ -768,7 +785,7 @@ mod tests {
         app.invoke_tab_changed("Develop".into());
         app.set_panel_tab("Masks".into());
         app.invoke_tab_changed("Masks".into());
-        assert_eq!(state.borrow().target, None);
+        assert_eq!(state.borrow().develop.target, None);
         assert_eq!(app.get_placing(), "");
         // Choosing its mask brings it back.
         app.invoke_target_changed(1);
@@ -778,21 +795,24 @@ mod tests {
     /// A lips mask made on one woman's portrait, as pasted onto
     /// another picture: her signature, her face's place there.
     fn made_for_her(st: &mut State) {
-        st.edit.adjustments[0].mask.components.push(Component {
-            shape: Shape::Part {
-                phrase: "lips".into(),
-                route: Route::Mouth,
-                person: Some(greycard_edit::mask::Person {
-                    signature: greycard_edit::mask::Signature {
-                        kind: "colors-1".into(),
-                        values: vec![7.0; 22],
-                    },
-                    at: [0.9, 0.9],
-                    picture: Some("her portrait".into()),
-                }),
-            },
-            ..Default::default()
-        });
+        st.develop.edit.adjustments[0]
+            .mask
+            .components
+            .push(Component {
+                shape: Shape::Part {
+                    phrase: "lips".into(),
+                    route: Route::Mouth,
+                    person: Some(greycard_edit::mask::Person {
+                        signature: greycard_edit::mask::Signature {
+                            kind: "colors-1".into(),
+                            values: vec![7.0; 22],
+                        },
+                        at: [0.9, 0.9],
+                        picture: Some("her portrait".into()),
+                    }),
+                },
+                ..Default::default()
+            });
         st.current = Some(0);
     }
 
@@ -853,7 +873,7 @@ mod tests {
             Shape::Part { person: Some(p), .. }
                 if *p == stranger.person() && p.picture.as_deref() == Some("this picture")
         ));
-        assert!(st.part_asks.is_empty() && st.choosing.is_none());
+        assert!(st.develop.part_asks.is_empty() && st.develop.choosing.is_none());
         assert_eq!(app.get_placing(), "");
     }
 
@@ -874,7 +894,7 @@ mod tests {
             assert!(all_people(&mut st, &app));
             assert!(matches!(&shapes(&st)[0], Shape::Part { person: None, .. }));
             // Back to hers, asked again.
-            st.edit.adjustments[0].mask.components.clear();
+            st.develop.edit.adjustments[0].mask.components.clear();
             made_for_her(&mut st);
         }
         crate::panel::deliver::deliver(&app, someone_else(two(), open));
@@ -883,13 +903,13 @@ mod tests {
         {
             let st = state.borrow();
             assert_eq!(app.get_placing(), "");
-            assert!(st.choosing.is_none());
+            assert!(st.develop.choosing.is_none());
             assert!(matches!(
                 &shapes(&st)[0],
                 Shape::Part { person: Some(p), .. } if p.at == [0.9, 0.9]
             ));
             assert!(
-                st.part_asks.contains_key(&(1, 0)),
+                st.develop.part_asks.contains_key(&(1, 0)),
                 "still asking, not armed"
             );
         }
@@ -929,7 +949,7 @@ mod tests {
         let st = state.borrow();
         assert_eq!(app.get_placing(), "");
         assert_eq!(app.get_status(), note);
-        assert!(st.part_asks.is_empty() && st.choosing.is_none());
+        assert!(st.develop.part_asks.is_empty() && st.develop.choosing.is_none());
         assert!(boxes(&st, &app).is_empty());
     }
 
@@ -954,7 +974,7 @@ mod tests {
             Ok((vec![her.clone()], "CPU", 0.1))
         ));
         assert_eq!(shapes(&st), [person(Some(her.person()))]);
-        assert_eq!(st.edit.adjustments[0].name, "Whole person 1");
+        assert_eq!(st.develop.edit.adjustments[0].name, "Whole person 1");
         // Two: the second picked.
         pending(&mut st, "Whole person");
         assert!(!people_found(&mut st, &app, None, Ok((two(), "CPU", 0.1))));
@@ -972,10 +992,10 @@ mod tests {
         assert_eq!(app.get_placing(), "");
         // Asked for from the menu, so the Subject model its edge runs
         // may be offered beside it; another part makes no such offer.
-        assert!(st.edge_offer_due);
+        assert!(st.sheets.edge_offer_due);
         pending(&mut st, "Lips");
         people_found(&mut st, &app, None, Ok((vec![her.clone()], "CPU", 0.1)));
-        assert!(!st.edge_offer_due);
+        assert!(!st.sheets.edge_offer_due);
     }
 
     #[test]
@@ -983,7 +1003,7 @@ mod tests {
         let (app, state, _worker) = masks();
         chosen(&mut state.borrow_mut(), &app, "Ears", "Add");
         assert!(app.get_status().contains("Ears"));
-        assert!(state.borrow().part_pending.is_none());
+        assert!(state.borrow().develop.part_pending.is_none());
     }
 
     /// The menu in `mask.slint` and the table are the same labels, so
@@ -1022,7 +1042,7 @@ mod tests {
     /// frame's size.
     fn view(state: &Rc<RefCell<State>>) -> (f32, (f32, f32), (u32, u32)) {
         let st = state.borrow();
-        (st.zoom, st.center, st.image_size)
+        (st.develop.zoom, st.develop.center, st.develop.image_size)
     }
 
     /// The part's raster and the develop after it, as the worker
@@ -1030,7 +1050,7 @@ mod tests {
     fn land(app: &App, state: &Rc<RefCell<State>>) {
         let (shape, generation) = {
             let st = state.borrow();
-            (shapes(&st)[0].clone(), st.generation)
+            (shapes(&st)[0].clone(), st.develop.generation)
         };
         crate::panel::deliver::deliver(
             app,
@@ -1082,9 +1102,9 @@ mod tests {
         let (app, state, _worker) = masks();
         {
             let mut st = state.borrow_mut();
-            st.image_size = (1200, 800);
-            st.zoom = 2.0;
-            st.center = (330.0, 230.0);
+            st.develop.image_size = (1200, 800);
+            st.develop.zoom = 2.0;
+            st.develop.center = (330.0, 230.0);
             pending(&mut st, "Lips");
         }
         let before = view(&state);
@@ -1127,7 +1147,7 @@ mod tests {
         // A picture of one: made at once, landed, the view where it was.
         {
             let mut st = state.borrow_mut();
-            st.edit.adjustments[0].mask.components.clear();
+            st.develop.edit.adjustments[0].mask.components.clear();
             pending(&mut st, "Lips");
         }
         crate::panel::deliver::deliver(
@@ -1144,7 +1164,11 @@ mod tests {
         // A plain click on the picture still goes back to Fit: what
         // is latched is the press's, not a rule against zooming.
         crate::testing::click(&app, base.x + x, base.y + y);
-        assert_eq!(state.borrow().zoom, 0.0, "a plain click goes back to Fit");
+        assert_eq!(
+            state.borrow().develop.zoom,
+            0.0,
+            "a plain click goes back to Fit"
+        );
     }
 
     /// Every phrase the menu asks for is in the table the model ships

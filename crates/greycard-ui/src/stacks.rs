@@ -369,13 +369,13 @@ pub(crate) struct Listed {
 pub(crate) fn hint_of_file(st: &State, file: usize) -> Option<String> {
     let path = st.files.get(file)?;
     let path = crate::sync::local_of(st, path).unwrap_or(path);
-    if st.view.lists_rows() {
+    if st.views.view.lists_rows() {
         return Some(hint_of(path));
     }
     let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
         return Some(hint_of(path));
     };
-    let mut canon = st.stacks.canon.borrow_mut();
+    let mut canon = st.views.stacks.canon.borrow_mut();
     let key = canon
         .entry(folder.to_path_buf())
         .or_insert_with(|| greycard_library::key_folder(folder));
@@ -385,8 +385,8 @@ pub(crate) fn hint_of_file(st: &State, file: usize) -> Option<String> {
 /// The stacks the list shows: each with at least two members listed,
 /// in the order of the store. None while a collection is the list.
 pub(crate) fn listed(st: &State) -> Vec<Listed> {
-    let store = &st.stacks;
-    if store.list.is_empty() || st.collection_frames.is_some() {
+    let store = &st.views.stacks;
+    if store.list.is_empty() || st.views.collection_frames.is_some() {
         return Vec::new();
     }
     let mut touched: BTreeSet<usize> = BTreeSet::new();
@@ -459,7 +459,7 @@ pub(crate) fn arrange(natural: Vec<Cell>, listed: &[Listed]) -> Vec<Cell> {
 }
 
 /// The versions the list wants of file `file`, a member of a stack the
-/// cells were last made with (`State::stacks_listed`): the stacks that
+/// cells were last made with (`Views::stacks_listed`): the stacks that
 /// hold it laid over their files alone, as the sidecars are now (a
 /// member whose version a read took out is none). A version a read
 /// brought that is a member stands as a plain one until the cells are
@@ -473,6 +473,7 @@ pub(crate) fn wanted_of_file(st: &State, file: usize) -> Vec<Option<Arc<str>>> {
             .is_some_and(|s| s.version(v).is_some()),
     };
     let stacks: Vec<Listed> = st
+        .views
         .stacks_listed
         .iter()
         .filter(|l| l.members.iter().any(|m| m.file == file))
@@ -521,7 +522,7 @@ pub(crate) fn wanted_of_file(st: &State, file: usize) -> Vec<Option<Arc<str>>> {
 /// them behind a top, by file: what the filter's counts leave out, so a
 /// chip counts the frames it would show. None when no stack is listed.
 pub(crate) fn behind(st: &State) -> Option<Vec<bool>> {
-    if st.stacks_listed.is_empty() || st.collection_frames.is_some() {
+    if st.views.stacks_listed.is_empty() || st.views.collection_frames.is_some() {
         return None;
     }
     let mut out = vec![true; st.files.len()];
@@ -600,7 +601,7 @@ pub(crate) fn stack_of(st: &State, c: usize) -> Option<(Listed, usize)> {
 /// of their folder by the window: each leaves its stack, before the
 /// list forgets where they were. True when a stack changed.
 pub(crate) fn left_files(st: &mut State, gone: &[usize]) -> bool {
-    if st.stacks.list.is_empty() {
+    if st.views.stacks.list.is_empty() {
         return false;
     }
     let paths: Vec<PathBuf> = gone
@@ -608,7 +609,7 @@ pub(crate) fn left_files(st: &mut State, gone: &[usize]) -> bool {
         .filter_map(|&f| hint_of_file(st, f))
         .map(PathBuf::from)
         .collect();
-    st.stacks.left(&paths)
+    st.views.stacks.left(&paths)
 }
 
 /// Version `id` of file `file` deleted by the window: it leaves its
@@ -617,7 +618,8 @@ pub(crate) fn version_left(st: &mut State, file: usize, id: &str) -> bool {
     let Some(hint) = hint_of_file(st, file) else {
         return false;
     };
-    st.stacks
+    st.views
+        .stacks
         .drop_frames(&HashSet::from([(hint, Some(id.to_string()))]))
 }
 

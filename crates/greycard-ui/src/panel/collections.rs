@@ -54,9 +54,9 @@ pub(crate) enum Asked {
 
 /// "Cover picks", or "Clients/2026/Cover picks" for one in sets.
 pub(crate) fn name_of(st: &State, id: &str) -> String {
-    if let Some(c) = st.collections.collection(id) {
+    if let Some(c) = st.views.collections.collection(id) {
         full_name(&c.set, &c.name)
-    } else if let Some(s) = st.collections.smart(id) {
+    } else if let Some(s) = st.views.collections.smart(id) {
         full_name(&s.set, &s.name)
     } else {
         String::new()
@@ -66,18 +66,20 @@ pub(crate) fn name_of(st: &State, id: &str) -> String {
 /// The list in the left pane and what hangs off it: the menu's names,
 /// the collection open, and whether the grid takes a drag.
 pub(crate) fn show(st: &State, app: &App) {
-    let open = st.view.collection();
+    let open = st.views.view.collection();
     // Each collection's order as kept: its own (none), or one chosen,
     // which the row names while it is open and its menu checks.
     let order = |id: &str| {
-        st.sort
+        st.views
+            .sort
             .choice(&View::Collection { id: id.to_string() })
             .order()
     };
-    let hand = st.sort.choice(&st.view) == crate::sort::Choice::Hand;
-    let filter = Saved::of(&st.filter);
-    let smart_on = |s: &Smart| filter == s.filter && st.view == smart_view(st, s.root.as_deref());
-    let store = &st.collections;
+    let hand = st.views.sort.choice(&st.views.view) == crate::sort::Choice::Hand;
+    let filter = Saved::of(&st.views.filter);
+    let smart_on =
+        |s: &Smart| filter == s.filter && st.views.view == smart_view(st, s.root.as_deref());
+    let store = &st.views.collections;
     let chips: Vec<CollectionChip> = store
         .list
         .iter()
@@ -130,7 +132,7 @@ pub(crate) fn smart_view(st: &State, root: Option<&Path>) -> View {
     let Some(at) = root else {
         return View::Roots(None);
     };
-    let roots = &st.library.roots;
+    let roots = &st.views.library.roots;
     if roots.list().iter().any(|r| r == at) {
         return View::Roots(Some(at.to_path_buf()));
     }
@@ -147,7 +149,7 @@ pub(crate) fn smart_view(st: &State, root: Option<&Path>) -> View {
 /// Where a smart collection looks, in words for its sheet.
 fn scope_words(st: &State, root: Option<&Path>) -> String {
     match smart_view(st, root) {
-        View::Roots(Some(r)) => crate::roots::root_name(&st.library.roots, &r),
+        View::Roots(Some(r)) => crate::roots::root_name(&st.views.library.roots, &r),
         View::Branch { folder, .. } => format!("{} and the folders in it", folder.display()),
         _ => "every root".to_string(),
     }
@@ -157,10 +159,10 @@ fn scope_words(st: &State, root: Option<&Path>) -> String {
 /// that picture that are members, asked again: after a collection
 /// changed, or the index did. True when they changed.
 pub(crate) fn refresh_members(st: &mut State) -> bool {
-    let ids = match &st.index_reader {
+    let ids = match &st.views.index_reader {
         Some(lib) => {
             let mut by_hash: HashMap<&str, HashSet<Option<String>>> = HashMap::new();
-            for (hash, version) in st.collections.pairs() {
+            for (hash, version) in st.views.collections.pairs() {
                 by_hash
                     .entry(hash)
                     .or_default()
@@ -185,16 +187,16 @@ pub(crate) fn refresh_members(st: &mut State) -> bool {
                 None => ids,
                 Some(e) => {
                     tracing::debug!("collections: {e}; the marks kept");
-                    st.collections.member_ids.clone()
+                    st.views.collections.member_ids.clone()
                 }
             }
         }
         None => HashMap::new(),
     };
-    if ids == st.collections.member_ids {
+    if ids == st.views.collections.member_ids {
         return false;
     }
-    st.collections.member_ids = ids;
+    st.views.collections.member_ids = ids;
     true
 }
 
@@ -206,18 +208,19 @@ pub(crate) fn collected(st: &State, c: usize) -> bool {
     let Some(cell) = st.cell(c) else {
         return false;
     };
-    st.index_ids
+    st.views
+        .index_ids
         .get(cell.file)
         .copied()
         .flatten()
-        .and_then(|id| st.collections.member_ids.get(&id))
+        .and_then(|id| st.views.collections.member_ids.get(&id))
         .is_some_and(|versions| versions.contains(&cell.version.as_deref().map(str::to_string)))
 }
 
 /// The mark put on every row whose membership changed.
 pub(crate) fn show_collected(st: &State, app: &App) {
     let model = app.get_thumbs();
-    for (row, &c) in st.shown.iter().enumerate() {
+    for (row, &c) in st.views.shown.iter().enumerate() {
         let want = collected(st, c);
         if let Some(mut t) = model.row_data(row)
             && t.collected != want
@@ -252,8 +255,8 @@ pub(crate) fn report_landed(st: &mut State, app: &App, report: &greycard_library
 /// What the status line says of the collection open: its name and how
 /// many of its frames are shown, and missing.
 pub(crate) fn opened_words(st: &State, missing: usize) -> Option<String> {
-    let id = st.view.collection()?;
-    let c = st.collections.collection(id)?;
+    let id = st.views.view.collection()?;
+    let c = st.views.collections.collection(id)?;
     let name = full_name(&c.set, &c.name);
     Some(if c.refs.is_empty() {
         format!("{name} is empty: add frames with B, or Add to collection in the frame menu")
@@ -276,7 +279,7 @@ pub(crate) fn healed(state: &Rc<RefCell<State>>, app: &App, rehashed: &[Rehash])
     let viewing = {
         let mut st = state.borrow_mut();
         let st = &mut *st;
-        let lib = st.index_reader.as_ref();
+        let lib = st.views.index_reader.as_ref();
         // Asked only of a member's hash (`Store::heal`). With no index to
         // ask, or one that will not answer, the copies are not known:
         // nothing is taken for gone, and no hint moved.
@@ -286,12 +289,13 @@ pub(crate) fn healed(state: &Rc<RefCell<State>>, app: &App, rehashed: &[Rehash])
                 _ => None,
             }
         };
-        let changed = st.collections.heal(rehashed, &copies);
+        let changed = st.views.collections.heal(rehashed, &copies);
         if changed.is_empty() {
             return;
         }
         members_changed(st, app);
-        st.view
+        st.views
+            .view
             .collection()
             .is_some_and(|id| changed.iter().any(|c| c == id))
     };
@@ -323,11 +327,12 @@ pub(crate) fn frames_of(st: &State, cells: &[usize]) -> Vec<Frame> {
 fn hash_and_path(st: &State, f: usize) -> Option<(String, PathBuf)> {
     let path = st.files.get(f)?;
     let row = st
+        .views
         .index_ids
         .get(f)
         .copied()
         .flatten()
-        .and_then(|id| st.index_reader.as_ref()?.by_id(id).ok().flatten());
+        .and_then(|id| st.views.index_reader.as_ref()?.by_id(id).ok().flatten());
     match row {
         Some(e) => Some((e.hash, e.path)),
         None => match greycard_library::hash_file(path) {
@@ -354,12 +359,12 @@ fn add_to(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, id: &str, 
     let viewing = {
         let mut st = state.borrow_mut();
         let name = name_of(&st, id);
-        let Some(c) = st.collections.collection_mut(id) else {
+        let Some(c) = st.views.collections.collection_mut(id) else {
             return;
         };
         let added = c.add(frames);
-        st.collections.save(id);
-        st.collections.target = Some(id.to_string());
+        st.views.collections.save(id);
+        st.views.collections.target = Some(id.to_string());
         members_changed(&mut st, app);
         app.set_status(
             match (added.added, added.moved) {
@@ -374,7 +379,7 @@ fn add_to(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, id: &str, 
             added.added,
             added.moved
         );
-        st.view.collection() == Some(id) && added != Default::default()
+        st.views.view.collection() == Some(id) && added != Default::default()
     };
     if viewing {
         crate::roots::refresh_view(state, app, worker);
@@ -386,21 +391,21 @@ fn add_to(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, id: &str, 
 /// so its cell comes in beside it to be opened and named, as it would in
 /// a folder. True when it went in.
 pub(crate) fn version_made(st: &mut State, app: &App, c: usize, id: &str) -> bool {
-    let View::Collection { id: open, .. } = st.view.clone() else {
+    let View::Collection { id: open, .. } = st.views.view.clone() else {
         return false;
     };
     let (Some((hash, path, from)), Some(source)) = (frames_of(st, &[c]).pop(), st.key_of(c)) else {
         return false;
     };
     let frame = (hash.clone(), path, Some(id.to_string()));
-    let Some(coll) = st.collections.collection_mut(&open) else {
+    let Some(coll) = st.views.collections.collection_mut(&open) else {
         return false;
     };
     if !coll.insert_after((&hash, from.as_deref()), &frame) {
         return false;
     }
-    st.collections.save(&open);
-    if let Some(frames) = st.collection_frames.as_mut() {
+    st.views.collections.save(&open);
+    if let Some(frames) = st.views.collection_frames.as_mut() {
         let at = frames
             .iter()
             .position(|k| *k == source)
@@ -423,7 +428,7 @@ fn remove_from(
     let view = {
         let mut st = state.borrow_mut();
         let name = name_of(&st, id);
-        let Some(c) = st.collections.collection_mut(id) else {
+        let Some(c) = st.views.collections.collection_mut(id) else {
             return;
         };
         let n = c.remove(pairs);
@@ -431,11 +436,11 @@ fn remove_from(
             app.set_status(format!("not in {name}").into());
             return;
         }
-        st.collections.save(id);
+        st.views.collections.save(id);
         members_changed(&mut st, app);
         app.set_status(format!("{} taken out of {name}", crate::queue::frames(n)).into());
         tracing::info!("collection {name}: {n} taken out");
-        (st.view.collection() == Some(id)).then(|| st.view.clone())
+        (st.views.view.collection() == Some(id)).then(|| st.views.view.clone())
     };
     // Opened again rather than merged: a merge keeps the frame on
     // screen in the list, and a frame taken out of the collection is
@@ -451,21 +456,27 @@ fn remove_from(
 /// until the pass reaches the folder it went to, and a rebuilt index has
 /// every file missing until its passes are done.
 fn indexing(st: &State) -> bool {
-    st.library.starting
-        || st.library.launch_left > 0
-        || st.index.as_ref().is_some_and(|i| {
-            let far: Vec<PathBuf> = st.library.remote.iter().map(|(m, _)| m.clone()).collect();
-            i.busy(&st.library.offline, &far)
+    st.views.library.starting
+        || st.views.library.launch_left > 0
+        || st.views.index.as_ref().is_some_and(|i| {
+            let far: Vec<PathBuf> = st
+                .views
+                .library
+                .remote
+                .iter()
+                .map(|(m, _)| m.clone())
+                .collect();
+            i.busy(&st.views.library.offline, &far)
         })
 }
 
 /// How many references of collection `id` its menu offers to forget:
 /// from its last read, while it is open and no pass is under way.
 fn forgettable(st: &State, id: &str) -> usize {
-    if indexing(st) || st.view.collection() != Some(id) {
+    if indexing(st) || st.views.view.collection() != Some(id) {
         return 0;
     }
-    match &st.collections.missing {
+    match &st.views.collections.missing {
         Some((at, _, gone)) if at == id => *gone,
         _ => 0,
     }
@@ -480,7 +491,7 @@ fn forgettable(st: &State, id: &str) -> usize {
 fn forget_missing(state: &Rc<RefCell<State>>, app: &App, id: &str) {
     let mut st = state.borrow_mut();
     let st = &mut *st;
-    if st.view.collection() != Some(id) {
+    if st.views.view.collection() != Some(id) {
         return;
     }
     let name = name_of(st, id);
@@ -491,11 +502,17 @@ fn forget_missing(state: &Rc<RefCell<State>>, app: &App, id: &str) {
         );
         return;
     }
-    let away: Vec<PathBuf> = st.library.offline.iter().cloned().collect();
-    let far: Vec<PathBuf> = st.library.remote.iter().map(|(m, _)| m.clone()).collect();
+    let away: Vec<PathBuf> = st.views.library.offline.iter().cloned().collect();
+    let far: Vec<PathBuf> = st
+        .views
+        .library
+        .remote
+        .iter()
+        .map(|(m, _)| m.clone())
+        .collect();
     // Each folder answers by its root, when it is under one: a handful
     // of looks rather than one a folder.
-    let roots = &st.library.roots;
+    let roots = &st.views.library.roots;
     let look = |dirs: &[PathBuf]| {
         let anchor = |d: &PathBuf| {
             roots
@@ -523,8 +540,9 @@ fn forget_missing(state: &Rc<RefCell<State>>, app: &App, id: &str) {
             .collect()
     };
     let Some(forgot) =
-        st.collections
-            .forget_missing(id, st.index_reader.as_ref(), &away, &far, &look)
+        st.views
+            .collections
+            .forget_missing(id, st.views.index_reader.as_ref(), &away, &far, &look)
     else {
         app.set_status(
             format!("the library index could not be read; nothing forgotten from {name}").into(),
@@ -595,7 +613,7 @@ fn ask(st: &mut State, app: &App, asked: Asked) {
     app.set_collection_sheet_asks_name(asks);
     app.set_collection_sheet_verb(verb.into());
     app.set_collection_sheet_name(name.into());
-    st.collections.asked = Some(asked);
+    st.views.collections.asked = Some(asked);
     app.set_collection_sheet_open(true);
 }
 
@@ -607,14 +625,14 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
     let typed = app.get_collection_sheet_name().trim().to_string();
     let named = !crate::collections::split_name(&typed).1.is_empty();
     let mut st = state.borrow_mut();
-    let Some(asked) = st.collections.asked.take() else {
+    let Some(asked) = st.views.collections.asked.take() else {
         app.set_collection_sheet_open(false);
         return;
     };
     // A version's name: no sets, and a blank one keeps the sheet up.
     if let Asked::Version { path, id } = asked {
         if typed.is_empty() {
-            st.collections.asked = Some(Asked::Version { path, id });
+            st.views.collections.asked = Some(Asked::Version { path, id });
             return;
         }
         app.set_collection_sheet_open(false);
@@ -624,7 +642,7 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
     }
     if !named && !matches!(asked, Asked::Delete(_)) {
         // Nothing typed: the sheet stays, as it was.
-        st.collections.asked = Some(asked);
+        st.views.collections.asked = Some(asked);
         return;
     }
     app.set_collection_sheet_open(false);
@@ -632,15 +650,15 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
     match asked {
         Asked::New { add } => {
             let mut c = Collection::new(&typed);
-            while st.collections.id_taken(&c.id) {
+            while st.views.collections.id_taken(&c.id) {
                 c = Collection::new(&typed);
             }
             let added = c.add(&add).added;
             let (id, name) = (c.id.clone(), full_name(&c.set, &c.name));
-            st.collections.list.push(c);
-            st.collections.sort();
-            st.collections.save(&id);
-            st.collections.target = Some(id);
+            st.views.collections.list.push(c);
+            st.views.collections.sort();
+            st.views.collections.save(&id);
+            st.views.collections.target = Some(id);
             tracing::info!("collection {name} made, {added} frames in it");
             app.set_status(
                 match added {
@@ -652,7 +670,7 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
         }
         Asked::Smart { filter, root } => {
             let mut s = Smart::new(&typed, filter.clone(), root.clone());
-            while st.collections.id_taken(&s.id) {
+            while st.views.collections.id_taken(&s.id) {
                 s = Smart::new(&typed, filter.clone(), root.clone());
             }
             let (id, name) = (s.id.clone(), full_name(&s.set, &s.name));
@@ -660,33 +678,33 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
                 "smart collection {name} saved: {}",
                 s.filter.filter().describe()
             );
-            st.collections.smart.push(s);
-            st.collections.sort();
-            st.collections.save(&id);
+            st.views.collections.smart.push(s);
+            st.views.collections.sort();
+            st.views.collections.save(&id);
             app.set_status(format!("saved the filter as {name}").into());
         }
         Asked::Rename(id) => {
             let (set, name) = crate::collections::split_name(&typed);
-            if let Some(c) = st.collections.collection_mut(&id) {
+            if let Some(c) = st.views.collections.collection_mut(&id) {
                 (c.set, c.name) = (set, name);
-            } else if let Some(s) = st.collections.smart.iter_mut().find(|s| s.id == id) {
+            } else if let Some(s) = st.views.collections.smart.iter_mut().find(|s| s.id == id) {
                 (s.set, s.name) = (set, name);
             }
-            st.collections.sort();
-            st.collections.save(&id);
+            st.views.collections.sort();
+            st.views.collections.save(&id);
             app.set_status(format!("renamed {}", name_of(&st, &id)).into());
         }
         // Taken before the match.
         Asked::Version { .. } => {}
         Asked::Delete(id) => {
             let name = name_of(&st, &id);
-            if st.collections.delete(&id) {
+            if st.views.collections.delete(&id) {
                 tracing::info!("collection {name} deleted");
                 // Its order goes with it.
-                st.sort.forget(&id);
+                st.views.sort.forget(&id);
                 crate::panel::prefs::keep(&st, |s| s.sort.forget(&id));
                 app.set_status(format!("deleted {name}; no frame was touched").into());
-                if st.view.collection() == Some(id.as_str()) {
+                if st.views.view.collection() == Some(id.as_str()) {
                     reopen = Some(View::Roots(None));
                 }
             }
@@ -712,13 +730,18 @@ fn key(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
         }
         let frames = frames_of(&st, &files);
         let target = st
+            .views
             .view
             .collection()
             .map(str::to_string)
-            .or_else(|| st.collections.target.clone())
-            .filter(|id| st.collections.collection(id).is_some());
+            .or_else(|| st.views.collections.target.clone())
+            .filter(|id| st.views.collections.collection(id).is_some());
         let all_in = target.as_deref().is_some_and(|id| {
-            let c = st.collections.collection(id).expect("looked at above");
+            let c = st
+                .views
+                .collections
+                .collection(id)
+                .expect("looked at above");
             !frames.is_empty()
                 && frames
                     .iter()
@@ -741,29 +764,33 @@ fn key(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
 fn moved(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, from: usize, to: usize) {
     {
         let mut st = state.borrow_mut();
-        let View::Collection { id } = st.view.clone() else {
+        let View::Collection { id } = st.views.view.clone() else {
             return;
         };
         // In an order chosen, a drag has nothing to move: the order is
         // the frames', not the collection's.
-        if st.sort.choice(&st.view) != crate::sort::Choice::Hand {
+        if st.views.sort.choice(&st.views.view) != crate::sort::Choice::Hand {
             return;
         }
-        let Some(&cell) = st.shown.get(from) else {
+        let Some(&cell) = st.views.shown.get(from) else {
             return;
         };
         let set = chosen_frames(&st);
         let cells = if set.contains(&cell) { set } else { vec![cell] };
         let moving = frames_of(&st, &cells);
-        let before = st.shown.get(to).and_then(|&c| frames_of(&st, &[c]).pop());
-        let Some(c) = st.collections.collection_mut(&id) else {
+        let before = st
+            .views
+            .shown
+            .get(to)
+            .and_then(|&c| frames_of(&st, &[c]).pop());
+        let Some(c) = st.views.collections.collection_mut(&id) else {
             return;
         };
         let before = before.as_ref().map(|(h, _, v)| (h.as_str(), v.as_deref()));
         if !c.reorder(&pairs_of(&moving), before) {
             return;
         }
-        st.collections.save(&id);
+        st.views.collections.save(&id);
         tracing::info!("collection {}: {} moved", name_of(&st, &id), moving.len());
     }
     crate::roots::refresh_view(state, app, worker);
@@ -773,25 +800,25 @@ fn moved(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, from: usize
 /// index; a smart one's filter put on the bar over the view of its root.
 fn picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, id: &str) {
     let mut st = state.borrow_mut();
-    if st.collections.collection(id).is_some() {
+    if st.views.collections.collection(id).is_some() {
         // In the order kept for it, its own until another is chosen.
         drop(st);
         crate::roots::open_view(state, app, worker, View::Collection { id: id.to_string() });
         return;
     }
-    let Some(s) = st.collections.smart(id).cloned() else {
+    let Some(s) = st.views.collections.smart(id).cloned() else {
         return;
     };
     // A root since taken out of the library: every root instead.
     let view = smart_view(&st, s.root.as_deref());
-    st.filter = s.filter.filter();
-    app.set_filter_text(st.filter.text.as_str().into());
+    st.views.filter = s.filter.filter();
+    app.set_filter_text(st.views.filter.text.as_str().into());
     tracing::info!(
         "smart collection {}: {}",
         full_name(&s.set, &s.name),
-        st.filter.describe()
+        st.views.filter.describe()
     );
-    let same = st.view == view;
+    let same = st.views.view == view;
     drop(st);
     if same {
         crate::panel::cull::apply_filter(state, app);
@@ -801,8 +828,10 @@ fn picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, id: &str) 
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
-    app.set_collections(ModelRc::from(state.borrow().collections.rows.clone()));
-    app.set_collection_names(ModelRc::from(state.borrow().collections.names.clone()));
+    app.set_collections(ModelRc::from(state.borrow().views.collections.rows.clone()));
+    app.set_collection_names(ModelRc::from(
+        state.borrow().views.collections.names.clone(),
+    ));
     show(&state.borrow(), app);
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
@@ -857,7 +886,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // oldest first, and from any order back to the collection's
             // own.
             let view = View::Collection { id: id.to_string() };
-            let sorted = state.borrow().sort.choice(&view) != crate::sort::Choice::Hand;
+            let sorted = state.borrow().views.sort.choice(&view) != crate::sort::Choice::Hand;
             let choice = if sorted {
                 crate::sort::Choice::Hand
             } else {
@@ -897,7 +926,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 let frames = frames_of(&st, &chosen_frames(&st));
                 let id = usize::try_from(at)
                     .ok()
-                    .and_then(|i| st.collections.list.get(i))
+                    .and_then(|i| st.views.collections.list.get(i))
                     .map(|c| c.id.clone());
                 (id, frames)
             };
@@ -915,7 +944,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let (id, frames) = {
                 let st = state.borrow();
-                let Some(id) = st.view.collection().map(str::to_string) else {
+                let Some(id) = st.views.view.collection().map(str::to_string) else {
                     return;
                 };
                 (id, frames_of(&st, &chosen_frames(&st)))
@@ -951,7 +980,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if st.filter.is_empty() {
+            if st.views.filter.is_empty() {
                 app.set_status("nothing to save: the filter shows every frame".into());
                 return;
             }
@@ -960,7 +989,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // list is no place a filter can be kept over); a folder
             // opened from the disk is saved over every root, which
             // the sheet says.
-            let root = match &st.view {
+            let root = match &st.views.view {
                 View::Roots(r) => r.clone(),
                 View::Branch { folder, .. } => Some(folder.clone()),
                 View::Folder => None,
@@ -971,7 +1000,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     return;
                 }
             };
-            let filter = Saved::of(&st.filter);
+            let filter = Saved::of(&st.views.filter);
             ask(&mut st, &app, Asked::Smart { filter, root });
         });
     }
@@ -1027,15 +1056,15 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
             // By name over the folders: the frames are told apart by their
             // place in the list this built, in that order.
-            st.sort = crate::sort::Kept::by_name();
-            st.library.roots.add(&root).unwrap();
-            st.collections.dir = Some(dir.join(crate::collections::DIR));
+            st.views.sort = crate::sort::Kept::by_name();
+            st.views.library.roots.add(&root).unwrap();
+            st.views.collections.dir = Some(dir.join(crate::collections::DIR));
             // Sidecars on, as a session has them: a frame stands in from
             // its row, and the row is what marks it.
-            st.write_sidecars = true;
+            st.window.write_sidecars = true;
         }
         open_view(&state, &app, &worker, View::Roots(None));
         land_sent(&state, &app, &worker);
@@ -1064,7 +1093,7 @@ mod tests {
             ..
         } = s;
         drop(writer);
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(app);
         drop(worker);
         drop(state);
@@ -1141,7 +1170,7 @@ mod tests {
         // The shoot's x and z chosen, and the menu's New collection.
         let x = row_of(&state.borrow(), &s.files[0]);
         app.invoke_select(x);
-        state.borrow_mut().picked = vec![1, 3];
+        state.borrow_mut().views.picked = vec![1, 3];
         app.invoke_collection_menu_add(-1);
         assert!(app.get_collection_sheet_open());
         assert_eq!(app.get_collection_sheet_note(), "2 frames go into it");
@@ -1150,8 +1179,8 @@ mod tests {
         assert!(!app.get_collection_sheet_open());
         let id = {
             let st = state.borrow();
-            assert_eq!(st.collections.list.len(), 1);
-            let c = &st.collections.list[0];
+            assert_eq!(st.views.collections.list.len(), 1);
+            let c = &st.views.collections.list[0];
             assert_eq!(
                 (c.set.as_str(), c.name.as_str()),
                 ("Clients", "Cover picks")
@@ -1175,12 +1204,24 @@ mod tests {
         let (cx, cy) = middle_of(app, "Clients/Cover picks");
         click(app, cx, cy);
         land_sent(state, app, worker);
-        assert_eq!(state.borrow().view, View::Collection { id: id.clone() });
+        assert_eq!(
+            state.borrow().views.view,
+            View::Collection { id: id.clone() }
+        );
         assert_eq!(names(&state.borrow()), ["shoot/x.tif", "shoot/z.tif"]);
         assert_eq!(app.get_collection_open(), "Clients/Cover picks");
         assert!(app.get_collection_reorder());
         assert_eq!(app.get_status(), "Clients/Cover picks: 2 frames");
-        assert!(state.borrow().collections.rows.row_data(0).unwrap().on);
+        assert!(
+            state
+                .borrow()
+                .views
+                .collections
+                .rows
+                .row_data(0)
+                .unwrap()
+                .on
+        );
 
         // Back to every root: y chosen and B, which goes to the last
         // collection made.
@@ -1221,7 +1262,7 @@ mod tests {
         assert_eq!(hints(&s, &id), ["selects/x.tif"]);
         // Kept on disk: a new session reads the same collection back.
         let back = crate::collections::Store::load(s.dir.join(crate::collections::DIR));
-        assert_eq!(back.list, state.borrow().collections.list);
+        assert_eq!(back.list, state.borrow().views.collections.list);
         teardown(s);
     }
 
@@ -1243,8 +1284,8 @@ mod tests {
             let mut c = Collection::new("Order");
             c.add(&frames);
             let id = c.id.clone();
-            st.collections.list.push(c);
-            st.collections.save(&id);
+            st.views.collections.list.push(c);
+            st.views.collections.save(&id);
             id
         };
         app.invoke_collection_picked(id.as_str().into());
@@ -1298,7 +1339,16 @@ mod tests {
             ["shoot/x.tif", "shoot/z.tif", "shoot/y.tif"]
         );
         assert!(!app.get_collection_reorder());
-        assert!(state.borrow().collections.rows.row_data(0).unwrap().capture);
+        assert!(
+            state
+                .borrow()
+                .views
+                .collections
+                .rows
+                .row_data(0)
+                .unwrap()
+                .capture
+        );
         assert_eq!(
             hints(&s, &id),
             ["shoot/z.tif", "shoot/x.tif", "shoot/y.tif"]
@@ -1330,8 +1380,8 @@ mod tests {
             let mut c = Collection::new("Sequence");
             c.add(&frames);
             let id = c.id.clone();
-            st.collections.list.push(c);
-            st.collections.save(&id);
+            st.views.collections.list.push(c);
+            st.views.collections.save(&id);
             id
         };
         app.invoke_collection_picked(id.as_str().into());
@@ -1377,8 +1427,8 @@ mod tests {
             let mut c = Collection::new("Kept");
             c.add(&frames);
             let id = c.id.clone();
-            st.collections.list.push(c);
-            st.collections.save(&id);
+            st.views.collections.list.push(c);
+            st.views.collections.save(&id);
             id
         };
         let (app, state, worker) = (&s.app, &s.state, &s.worker);
@@ -1428,8 +1478,8 @@ mod tests {
         let id = {
             let mut st = s.state.borrow_mut();
             // A root of the library, unplugged: never made on disk.
-            st.library.roots.add_checked(drive.clone()).unwrap();
-            st.library.offline.insert(drive.clone());
+            st.views.library.roots.add_checked(drive.clone()).unwrap();
+            st.views.library.offline.insert(drive.clone());
             let x = st.files.iter().position(|p| *p == s.files[0]).unwrap();
             let mut frames = frames_of(&st, &[x]);
             frames.push((
@@ -1441,8 +1491,8 @@ mod tests {
             let mut c = Collection::new("Kept");
             c.add(&frames);
             let id = c.id.clone();
-            st.collections.list.push(c);
-            st.collections.save(&id);
+            st.views.collections.list.push(c);
+            st.views.collections.save(&id);
             id
         };
         let (app, state, worker) = (&s.app, &s.state, &s.worker);
@@ -1465,7 +1515,7 @@ mod tests {
         );
         assert_eq!(offered(app), 1, "the offline one is not offered");
         // A pass under way: nothing offered, and a press refused.
-        state.borrow_mut().library.launch_left = 1;
+        state.borrow_mut().views.library.launch_left = 1;
         assert_eq!(offered(app), 0);
         app.invoke_collection_forget_missing(id.as_str().into());
         assert_eq!(
@@ -1473,7 +1523,7 @@ mod tests {
             "the library is being indexed; nothing forgotten from Kept until it is done"
         );
         assert_eq!(hints(&s, &id).len(), 3);
-        state.borrow_mut().library.launch_left = 0;
+        state.borrow_mut().views.library.launch_left = 0;
         assert_eq!(chip(app).count, 3);
 
         app.invoke_collection_forget_missing(id.as_str().into());
@@ -1493,7 +1543,7 @@ mod tests {
         );
         // The drive pulled since the window last looked: the set it holds
         // does not say offline, but the root answers no, and b is kept.
-        state.borrow_mut().library.offline.clear();
+        state.borrow_mut().views.library.offline.clear();
         app.invoke_collection_forget_missing(id.as_str().into());
         assert_eq!(
             app.get_status(),
@@ -1501,7 +1551,12 @@ mod tests {
              nothing forgotten: 1 frame on a drive that is offline or not answering"
         );
         assert_eq!(hints(&s, &id), ["shoot/x.tif", "drive/b.tif"]);
-        state.borrow_mut().library.offline.insert(drive.clone());
+        state
+            .borrow_mut()
+            .views
+            .library
+            .offline
+            .insert(drive.clone());
         assert_eq!(chip(app).count, 2);
         assert_eq!(names(&state.borrow()), ["shoot/x.tif"]);
         // Opened again: the status line's count is the one left.
@@ -1523,10 +1578,10 @@ mod tests {
         let id = made(&s, "Both", &[&s.files[0], &s.files[1]]);
         let (hx, hy) = {
             let st = s.state.borrow();
-            let c = st.collections.collection(&id).unwrap();
+            let c = st.views.collections.collection(&id).unwrap();
             (c.refs[0].hash.clone(), c.refs[1].hash.clone())
         };
-        s.state.borrow_mut().index_reader = None;
+        s.state.borrow_mut().views.index_reader = None;
         let rehash = Rehash {
             path: s.files[0].clone(),
             old: hx.clone(),
@@ -1536,6 +1591,7 @@ mod tests {
         let refs = s
             .state
             .borrow()
+            .views
             .collections
             .collection(&id)
             .unwrap()
@@ -1559,46 +1615,76 @@ mod tests {
         let (app, state, worker) = (&s.app, &s.state, &s.worker);
         app.invoke_filter_save_smart();
         assert!(!app.get_collection_sheet_open(), "nothing to save yet");
-        state.borrow_mut().filter.text = "y".into();
+        state.borrow_mut().views.filter.text = "y".into();
         app.set_filter_text("y".into());
         crate::panel::cull::apply_filter(state, app);
-        assert_eq!(state.borrow().shown.len(), 1);
+        assert_eq!(state.borrow().views.shown.len(), 1);
         app.invoke_filter_save_smart();
         assert!(app.get_collection_sheet_open());
         assert_eq!(app.get_collection_sheet_note(), "\"y\", under every root");
         app.set_collection_sheet_name("Just y".into());
         app.invoke_collection_sheet_done();
-        let id = state.borrow().collections.smart[0].id.clone();
+        let id = state.borrow().views.collections.smart[0].id.clone();
         let file = s
             .dir
             .join(crate::collections::DIR)
             .join(format!("{id}.smart.json"));
         assert!(file.exists());
-        assert!(state.borrow().collections.rows.row_data(0).unwrap().on);
+        assert!(
+            state
+                .borrow()
+                .views
+                .collections
+                .rows
+                .row_data(0)
+                .unwrap()
+                .on
+        );
         // Cleared, the row goes dark; pressed, the filter is back.
         app.invoke_filter_cleared();
-        assert_eq!(state.borrow().shown.len(), 4);
-        assert!(!state.borrow().collections.rows.row_data(0).unwrap().on);
+        assert_eq!(state.borrow().views.shown.len(), 4);
+        assert!(
+            !state
+                .borrow()
+                .views
+                .collections
+                .rows
+                .row_data(0)
+                .unwrap()
+                .on
+        );
         let (cx, cy) = middle_of(app, "Just y");
         click(app, cx, cy);
         land_sent(state, app, worker);
-        assert_eq!(state.borrow().filter.text, "y");
+        assert_eq!(state.borrow().views.filter.text, "y");
         assert_eq!(app.get_filter_text(), "y");
-        assert_eq!(state.borrow().shown.len(), 1);
-        assert!(state.borrow().collections.rows.row_data(0).unwrap().on);
+        assert_eq!(state.borrow().views.shown.len(), 1);
+        assert!(
+            state
+                .borrow()
+                .views
+                .collections
+                .rows
+                .row_data(0)
+                .unwrap()
+                .on
+        );
         // Read back from its file, the same question.
         let back = crate::collections::Store::load(s.dir.join(crate::collections::DIR));
-        assert_eq!(back.smart[0].filter, Saved::of(&state.borrow().filter));
+        assert_eq!(
+            back.smart[0].filter,
+            Saved::of(&state.borrow().views.filter)
+        );
         // Renamed, into a set, and deleted, from its menu's sheet.
         app.invoke_collection_rename(id.as_str().into());
         assert_eq!(app.get_collection_sheet_name(), "Just y");
         app.set_collection_sheet_name("Sets/Only y".into());
         app.invoke_collection_sheet_done();
-        assert_eq!(state.borrow().collections.smart[0].set, "Sets");
+        assert_eq!(state.borrow().views.collections.smart[0].set, "Sets");
         app.invoke_collection_delete(id.as_str().into());
         assert!(!app.get_collection_sheet_asks_name());
         app.invoke_collection_sheet_done();
-        assert!(state.borrow().collections.smart.is_empty());
+        assert!(state.borrow().views.collections.smart.is_empty());
         assert!(!file.exists());
         teardown(s);
     }
@@ -1615,8 +1701,8 @@ mod tests {
         let mut c = Collection::new(name);
         c.add(&frames);
         let id = c.id.clone();
-        st.collections.list.push(c);
-        st.collections.save(&id);
+        st.views.collections.list.push(c);
+        st.views.collections.save(&id);
         id
     }
 
@@ -1638,6 +1724,7 @@ mod tests {
             .into_owned();
         state
             .borrow_mut()
+            .views
             .collections
             .collection_mut(&a)
             .unwrap()
@@ -1648,10 +1735,14 @@ mod tests {
         app.invoke_collection_picked(b.as_str().into());
         crate::roots::land_sent_last_first(state, app, worker);
         let st = state.borrow();
-        let hint = |id: &str| st.collections.collection(id).unwrap().refs[0].hint.clone();
+        let hint = |id: &str| {
+            st.views.collections.collection(id).unwrap().refs[0]
+                .hint
+                .clone()
+        };
         assert_eq!(hint(&b), s.files[0].to_string_lossy(), "B untouched");
         assert_ne!(hint(&a), stale, "A's own read healed A");
-        assert_eq!(st.view, View::Collection { id: b.clone() });
+        assert_eq!(st.views.view, View::Collection { id: b.clone() });
         drop(st);
         teardown(s);
     }
@@ -1674,12 +1765,12 @@ mod tests {
         crate::testing::type_text(app, "Picks");
         crate::testing::press(app, slint::platform::Key::Return);
         assert!(!app.get_collection_sheet_open());
-        assert_eq!(state.borrow().collections.list.len(), 1);
+        assert_eq!(state.borrow().views.collections.list.len(), 1);
         let y = row_of(&state.borrow(), &s.files[1]);
         app.invoke_select(y);
         crate::testing::press(app, "b");
         assert_eq!(app.get_status(), "1 frame added to Picks");
-        assert_eq!(state.borrow().collections.list[0].refs.len(), 2);
+        assert_eq!(state.borrow().views.collections.list[0].refs.len(), 2);
         let _ = worker;
         teardown(s);
     }
@@ -1704,7 +1795,7 @@ mod tests {
             },
         );
         land_sent(state, app, worker);
-        state.borrow_mut().filter.text = "z".into();
+        state.borrow_mut().views.filter.text = "z".into();
         app.set_filter_text("z".into());
         crate::panel::cull::apply_filter(state, app);
         app.invoke_filter_save_smart();
@@ -1714,9 +1805,9 @@ mod tests {
         );
         app.set_collection_sheet_name("Zs".into());
         app.invoke_collection_sheet_done();
-        let id = state.borrow().collections.smart[0].id.clone();
+        let id = state.borrow().views.collections.smart[0].id.clone();
         assert_eq!(
-            state.borrow().collections.smart[0].root,
+            state.borrow().views.collections.smart[0].root,
             Some(shoot.clone())
         );
         open_view(state, app, worker, View::Roots(None));
@@ -1724,14 +1815,23 @@ mod tests {
         app.invoke_collection_picked(id.as_str().into());
         land_sent(state, app, worker);
         assert_eq!(
-            state.borrow().view,
+            state.borrow().views.view,
             View::Branch {
                 root: root.clone(),
                 folder: shoot.clone(),
                 deep: true
             }
         );
-        assert!(state.borrow().collections.rows.row_data(0).unwrap().on);
+        assert!(
+            state
+                .borrow()
+                .views
+                .collections
+                .rows
+                .row_data(0)
+                .unwrap()
+                .on
+        );
         // Over a collection: no button, and the callback says why.
         let c = made(&s, "C", &[&s.files[2]]);
         app.invoke_collection_picked(c.as_str().into());
@@ -1810,7 +1910,7 @@ mod tests {
         app.invoke_collection_menu_add(-1);
         app.set_collection_sheet_name("Warm ones".into());
         app.invoke_collection_sheet_done();
-        let id = state.borrow().collections.list[0].id.clone();
+        let id = state.borrow().views.collections.list[0].id.clone();
         let refs = file_of(&s, &id)["refs"].clone();
         assert_eq!(refs.as_array().unwrap().len(), 1);
         assert_eq!(refs[0]["version"], warm.as_str());
@@ -1855,7 +1955,7 @@ mod tests {
         // once.
         {
             let mut st = state.borrow_mut();
-            let c = st.collections.collection_mut(&id).unwrap();
+            let c = st.views.collections.collection_mut(&id).unwrap();
             let again = c.refs[1].clone();
             c.refs.push(again);
         }
@@ -1871,6 +1971,7 @@ mod tests {
         assert_eq!(frames(&state.borrow()), [("shoot/x.tif".to_string(), None)]);
         let refs = state
             .borrow()
+            .views
             .collections
             .collection(&id)
             .unwrap()
@@ -1900,8 +2001,8 @@ mod tests {
             c.add(&frames);
             let id = c.id.clone();
             let mut st = s.state.borrow_mut();
-            st.collections.list.push(c);
-            st.collections.save(&id);
+            st.views.collections.list.push(c);
+            st.views.collections.save(&id);
             id
         };
         // Deleted on another machine, the sidecar synced over.
@@ -1944,6 +2045,7 @@ mod tests {
         app.invoke_collection_sheet_done();
         let refs = state
             .borrow()
+            .views
             .collections
             .collection(&id)
             .unwrap()
@@ -1976,20 +2078,24 @@ mod tests {
         let mut s = setup("version-smart");
         let warm = version_of_x(&mut s, "Warm");
         let (app, state, worker) = (&s.app, &s.state, &s.worker);
-        state.borrow_mut().filter.text = "x".into();
+        state.borrow_mut().views.filter.text = "x".into();
         app.set_filter_text("x".into());
         crate::panel::cull::apply_filter(state, app);
         app.invoke_filter_save_smart();
         app.set_collection_sheet_name("Just x".into());
         app.invoke_collection_sheet_done();
-        let id = state.borrow().collections.smart[0].id.clone();
+        let id = state.borrow().views.collections.smart[0].id.clone();
         app.invoke_filter_cleared();
-        assert_eq!(state.borrow().shown.len(), 5);
+        assert_eq!(state.borrow().views.shown.len(), 5);
         app.invoke_collection_picked(id.as_str().into());
         land_sent(state, app, worker);
         let st = state.borrow();
-        let shown: Vec<(String, Option<String>)> =
-            st.shown.iter().map(|&c| frames(&st)[c].clone()).collect();
+        let shown: Vec<(String, Option<String>)> = st
+            .views
+            .shown
+            .iter()
+            .map(|&c| frames(&st)[c].clone())
+            .collect();
         assert_eq!(
             shown,
             [
@@ -2018,7 +2124,13 @@ mod tests {
         crate::panel::versions::new_version(state, app, worker, false, false);
         app.invoke_collection_sheet_done();
         assert_eq!(state.borrow().cells.len(), 3);
-        let made_id = state.borrow().collections.collection(&id).unwrap().refs[1]
+        let made_id = state
+            .borrow()
+            .views
+            .collections
+            .collection(&id)
+            .unwrap()
+            .refs[1]
             .version
             .clone()
             .unwrap();
@@ -2040,6 +2152,7 @@ mod tests {
         );
         let refs = state
             .borrow()
+            .views
             .collections
             .collection(&id)
             .unwrap()
@@ -2072,8 +2185,8 @@ mod tests {
             c.add(&frames);
             let id = c.id.clone();
             let mut st = s.state.borrow_mut();
-            st.collections.list.push(c);
-            st.collections.save(&id);
+            st.views.collections.list.push(c);
+            st.views.collections.save(&id);
             id
         };
         let old = file_of(&s, &id)["refs"][0]["hash"]

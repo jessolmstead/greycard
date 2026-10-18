@@ -88,8 +88,8 @@ pub(crate) struct Preview {
 /// a rest; a leave reported for a row the pointer has already moved off
 /// to another is nothing.
 fn hovered(st: &mut State, name: &str, on: bool) {
-    let app_weak = st.app.clone();
-    let hover = st.look_hover.get_mut();
+    let app_weak = st.window.app.clone();
+    let hover = st.develop.look_hover.get_mut();
     if on {
         hover.under = Some(name.to_string());
     } else if hover.under.as_deref() == Some(name) {
@@ -113,7 +113,7 @@ fn hovered(st: &mut State, name: &str, on: bool) {
 /// The pointer has rested: the row under it shown, or with none, the
 /// kept look back.
 fn rested(st: &mut State, app: &App) {
-    let Some(name) = st.look_hover.get_mut().under.clone() else {
+    let Some(name) = st.develop.look_hover.get_mut().under.clone() else {
         end(st, app);
         return;
     };
@@ -121,8 +121,8 @@ fn rested(st: &mut State, app: &App) {
     // the frame's, and a pick still reading its sidecar has none yet.
     if name == app.get_look_name().as_str()
         || st.current.is_none()
-        || st.cull.is_some()
-        || st.pick_pending.is_some()
+        || st.culling.cull.is_some()
+        || st.views.pick_pending.is_some()
     {
         end(st, app);
         return;
@@ -130,6 +130,7 @@ fn rested(st: &mut State, app: &App) {
     // This row's table on show or on its way: nothing to ask. One
     // dropped while the pointer was off the row is asked for again.
     if st
+        .develop
         .look_hover
         .get_mut()
         .preview
@@ -144,13 +145,13 @@ fn rested(st: &mut State, app: &App) {
 /// Ask for `name`'s table at the panel's Strength under its display
 /// curve, on a thread.
 fn ask(st: &mut State, app: &App, name: String) {
-    let panel = crate::panel::edit::read_edit(app, &st.edit, st.target);
+    let panel = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
     let want = LookLut {
         lut: LutChoice::from_name(&name),
         strength: panel.look_lut.strength,
     };
     let current = st.current;
-    let hover = st.look_hover.get_mut();
+    let hover = st.develop.look_hover.get_mut();
     hover.generation += 1;
     let generation = hover.generation;
     hover.wanted.store(generation, Ordering::Relaxed);
@@ -253,7 +254,7 @@ fn load(
 /// A table read for a preview, landed: shown if it is still the one
 /// asked for and the pointer is still on its row, dropped otherwise.
 fn landed(st: &mut State, app: &App, generation: u64, look: Option<Look>) {
-    let hover = st.look_hover.get_mut();
+    let hover = st.develop.look_hover.get_mut();
     let under = hover.under.clone();
     let Some(preview) = hover.preview.as_mut() else {
         return;
@@ -273,7 +274,7 @@ fn landed(st: &mut State, app: &App, generation: u64, look: Option<Look>) {
 /// The preview over, the kept look back on the next draw. The row under
 /// the pointer is still known, so a leave reported later is matched.
 pub(crate) fn end(st: &State, app: &App) {
-    let mut hover = st.look_hover.borrow_mut();
+    let mut hover = st.develop.look_hover.borrow_mut();
     hover.rest.stop();
     hover.wanted.store(0, Ordering::Relaxed);
     if hover.preview.take().is_some() {
@@ -287,17 +288,23 @@ pub(crate) fn end(st: &State, app: &App) {
 /// row reports it afresh.
 pub(crate) fn forget(st: &State, app: &App) {
     end(st, app);
-    st.look_hover.borrow_mut().under = None;
+    st.develop.look_hover.borrow_mut().under = None;
 }
 
 /// A panel change: a Strength or a display curve other than the
 /// preview's ends it.
 pub(crate) fn panel_moved(st: &State, app: &App) {
-    let moved = st.look_hover.borrow().preview.as_ref().is_some_and(|p| {
-        let curve = DisplayCurve::from_name(app.get_display_curve().as_str())
-            .unwrap_or(st.edit.display_curve);
-        app.get_look_strength() != p.strength || curve != p.curve
-    });
+    let moved = st
+        .develop
+        .look_hover
+        .borrow()
+        .preview
+        .as_ref()
+        .is_some_and(|p| {
+            let curve = DisplayCurve::from_name(app.get_display_curve().as_str())
+                .unwrap_or(st.develop.edit.display_curve);
+            app.get_look_strength() != p.strength || curve != p.curve
+        });
     if moved {
         end(st, app);
     }
@@ -308,10 +315,10 @@ pub(crate) fn panel_moved(st: &State, app: &App) {
 /// and display curve, its section open and on show.
 fn fits(preview: &Preview, st: &State, app: &App, edit: &Edit) -> bool {
     preview.frame == st.current
-        && st.held.is_none()
-        && st.peek.is_none()
-        && st.cull.is_none()
-        && st.pick_pending.is_none()
+        && st.develop.held.is_none()
+        && st.develop.peek.is_none()
+        && st.culling.cull.is_none()
+        && st.views.pick_pending.is_none()
         && edit.look_lut.strength == preview.strength
         && edit.display_curve == preview.curve
         && app.get_panel_tab() == "Develop"
@@ -324,6 +331,7 @@ fn fits(preview: &Preview, st: &State, app: &App, edit: &Edit) -> bool {
 /// longer fits is ended here, so none outlives what it was asked for.
 pub(crate) fn drawn(st: &State, app: &App, edit: &Edit) -> Option<Look> {
     let unfit = st
+        .develop
         .look_hover
         .borrow()
         .preview
@@ -332,10 +340,10 @@ pub(crate) fn drawn(st: &State, app: &App, edit: &Edit) -> Option<Look> {
     if unfit {
         end(st, app);
     }
-    let hover = st.look_hover.borrow();
+    let hover = st.develop.look_hover.borrow();
     match hover.preview.as_ref().and_then(|p| p.shown.as_ref()) {
         Some(shown) => shown.clone(),
-        None => st.look.clone(),
+        None => st.develop.look.clone(),
     }
 }
 
@@ -429,13 +437,17 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             assert_eq!(st.current, Some(0));
-            st.looks = crate::panel::look_remove::list_in(Some(store.clone()));
-            st.edit.look_lut = LookLut {
+            st.develop.looks = crate::panel::look_remove::list_in(Some(store.clone()));
+            st.develop.edit.look_lut = LookLut {
                 lut: LutChoice::Named("Mono".into()),
                 strength: 0.6,
             };
-            show_looks(&st, &st.edit.look_lut, &app);
-            st.look = resolve(Some(store), &st.edit.look_lut, st.edit.display_curve);
+            show_looks(&st, &st.develop.edit.look_lut, &app);
+            st.develop.look = resolve(
+                Some(store),
+                &st.develop.edit.look_lut,
+                st.develop.edit.display_curve,
+            );
         }
         // The section's body grows to its rows over a moment.
         for _ in 0..4 {
@@ -471,7 +483,7 @@ mod tests {
     /// strength.
     fn drawn_now(s: &Setup) -> Option<(usize, f32)> {
         let st = s.state.borrow();
-        let edit = read_edit(&s.app, &st.edit, st.target);
+        let edit = read_edit(&s.app, &st.develop.edit, st.develop.target);
         drawn(&st, &s.app, &edit).map(|l| (l.lut.size, l.strength))
     }
 
@@ -486,35 +498,65 @@ mod tests {
     fn a_rest_on_a_row_shows_its_look_and_leaving_brings_the_kept_one_back() {
         let s = setup("rest");
         let states = || s.state.borrow().sidecars[0].states();
-        let before = (states(), s.state.borrow().edit.clone());
+        let before = (states(), s.state.borrow().develop.edit.clone());
         assert_eq!(drawn_now(&s), MONO);
         point_at(&s.app, row(&s.app, "Neon"));
         assert_eq!(
-            s.state.borrow().look_hover.borrow().under.as_deref(),
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .under
+                .as_deref(),
             Some("Neon")
         );
         // Not before the rest.
         wait(REST.as_millis() as u64 / 2);
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
         assert_eq!(drawn_now(&s), MONO);
         // Asked for after it; the kept look stands until the table lands.
         rest();
-        assert!(s.state.borrow().look_hover.borrow().preview.is_some());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_some()
+        );
         assert_eq!(drawn_now(&s), MONO);
         arrive(&s.state, &s.app);
         assert_eq!(drawn_now(&s), NEON);
         // Off the list: Neon until the rest is over, then Mono.
         away(&s.app);
-        assert_eq!(s.state.borrow().look_hover.borrow().under, None);
+        assert_eq!(s.state.borrow().develop.look_hover.borrow().under, None);
         assert_eq!(drawn_now(&s), NEON);
         rest();
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
         assert_eq!(drawn_now(&s), MONO);
         // Long past any save's wait: no step, the edit as it was.
         wait(crate::panel::edit::SAVE_MS + 100);
         assert_eq!(states(), before.0, "no history step");
-        assert_eq!(s.state.borrow().edit, before.1);
-        assert_eq!(s.state.borrow().edit.look_lut.lut.name(), "Mono");
+        assert_eq!(s.state.borrow().develop.edit, before.1);
+        assert_eq!(s.state.borrow().develop.edit.look_lut.lut.name(), "Mono");
         teardown(s);
     }
 
@@ -525,7 +567,15 @@ mod tests {
         let s = setup("none");
         point_at(&s.app, row(&s.app, "Mono"));
         rest();
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
         point_at(&s.app, row(&s.app, "None"));
         rest();
         assert!(READ.with(|r| r.borrow().is_empty()), "nothing to read");
@@ -548,7 +598,15 @@ mod tests {
         arrive(&s.state, &s.app);
         assert_eq!(drawn_now(&s), MONO);
         rest();
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
 
         // Neon asked for, then None's row before it lands.
         point_at(&s.app, row(&s.app, "Neon"));
@@ -591,7 +649,15 @@ mod tests {
         assert_eq!(drawn_now(&s), NEON);
         s.app.invoke_select(1);
         assert_eq!(s.state.borrow().current, Some(1));
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
         assert_eq!(drawn_now(&s), MONO);
 
         point_at(&s.app, row(&s.app, "Neon"));
@@ -599,7 +665,15 @@ mod tests {
         let late = READ.with(|r| r.borrow_mut().pop()).unwrap();
         s.app.invoke_select(2);
         landed(&mut s.state.borrow_mut(), &s.app, late.0, late.1);
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
         assert_eq!(drawn_now(&s), MONO);
         teardown(s);
     }
@@ -619,7 +693,15 @@ mod tests {
         previewed(&s);
         s.app.set_look_strength(0.3);
         s.app.invoke_view_changed();
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
         assert_eq!(drawn_now(&s), MONO);
 
         // Asked again, now at 30%.
@@ -628,7 +710,15 @@ mod tests {
         previewed(&s);
         assert_eq!(drawn_now(&s), Some((2, 0.3)));
         s.app.invoke_look_curve_changed();
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
 
         // Unreported: the draw sees the Strength moved and ends it.
         away(&s.app);
@@ -636,7 +726,15 @@ mod tests {
         previewed(&s);
         s.app.set_look_strength(0.8);
         assert_eq!(drawn_now(&s), MONO);
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
         teardown(s);
     }
 
@@ -650,9 +748,17 @@ mod tests {
         arrive(&s.state, &s.app);
         assert_eq!(drawn_now(&s), NEON);
         s.app.window().dispatch_event(WindowEvent::PointerExited);
-        assert_eq!(s.state.borrow().look_hover.borrow().under, None);
+        assert_eq!(s.state.borrow().develop.look_hover.borrow().under, None);
         rest();
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
         assert_eq!(drawn_now(&s), MONO);
         teardown(s);
     }
@@ -671,9 +777,17 @@ mod tests {
         arrive(&s.state, &s.app);
         assert_eq!(drawn_now(&s), NEON);
         click(&s.app, neon.x, neon.y);
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
-        assert_eq!(s.state.borrow().edit.look_lut.lut.name(), "Neon");
-        assert_eq!(s.state.borrow().edit.look_lut.strength, 0.6);
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
+        assert_eq!(s.state.borrow().develop.edit.look_lut.lut.name(), "Neon");
+        assert_eq!(s.state.borrow().develop.edit.look_lut.strength, 0.6);
         wait(crate::panel::edit::SAVE_MS + 100);
         assert_eq!(states(), before + 1, "one history step");
         assert_eq!(
@@ -683,7 +797,15 @@ mod tests {
         // Resting on the row now kept asks for nothing.
         point_at(&s.app, slint::LogicalPosition::new(neon.x + 1.0, neon.y));
         rest();
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
         assert!(READ.with(|r| r.borrow().is_empty()));
         teardown(s);
     }
@@ -735,8 +857,16 @@ mod tests {
             crate::testing::press(&s.app, key);
             wait(0);
             assert!(s.app.get_right_hidden(), "{key:?} put the panel away");
-            assert_eq!(s.state.borrow().look_hover.borrow().under, None);
-            assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+            assert_eq!(s.state.borrow().develop.look_hover.borrow().under, None);
+            assert!(
+                s.state
+                    .borrow()
+                    .develop
+                    .look_hover
+                    .borrow()
+                    .preview
+                    .is_none()
+            );
             assert_eq!(drawn_now(&s), MONO);
             crate::testing::press(&s.app, key);
             wait(0);
@@ -765,10 +895,18 @@ mod tests {
         assert_eq!(drawn_now(&s), NEON);
         {
             let st = s.state.borrow();
-            crate::panel::edit::show_edit(&st, &st.edit, &s.app, st.target);
+            crate::panel::edit::show_edit(&st, &st.develop.edit, &s.app, st.develop.target);
         }
-        assert_eq!(s.state.borrow().look_hover.borrow().under, None);
-        assert!(s.state.borrow().look_hover.borrow().preview.is_none());
+        assert_eq!(s.state.borrow().develop.look_hover.borrow().under, None);
+        assert!(
+            s.state
+                .borrow()
+                .develop
+                .look_hover
+                .borrow()
+                .preview
+                .is_none()
+        );
         assert_eq!(drawn_now(&s), MONO);
         teardown(s);
     }

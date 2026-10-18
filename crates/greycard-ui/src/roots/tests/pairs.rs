@@ -42,11 +42,11 @@ fn a_folders_pairs_are_one_frame_each_until_listed_apart() {
             [dir.join("A.CR3"), dir.join("B.JPG"), dir.join("C.CR3")]
         );
         assert_eq!(
-            st.companions.get(&dir.join("A.CR3")),
+            st.views.companions.get(&dir.join("A.CR3")),
             Some(&vec![dir.join("A.JPG")])
         );
         assert_eq!(
-            st.companions.get(&dir.join("C.CR3")),
+            st.views.companions.get(&dir.join("C.CR3")),
             Some(&vec![dir.join("c.jpeg")])
         );
     }
@@ -66,9 +66,9 @@ fn a_folders_pairs_are_one_frame_each_until_listed_apart() {
     land_all(&state, &app, &worker);
     {
         let st = state.borrow();
-        assert!(st.jpegs_apart);
+        assert!(st.views.jpegs_apart);
         assert_eq!(st.files.len(), 5, "{:?}", st.files);
-        assert!(st.companions.is_empty());
+        assert!(st.views.companions.is_empty());
     }
     assert!(
         marks(&app).iter().all(|(_, paired)| !paired),
@@ -144,9 +144,9 @@ fn a_jpeg_listed_as_a_frame_is_no_companion_of_its_raw() {
     land_all(&state, &app, &worker);
     {
         let st = state.borrow();
-        assert!(!st.companions.contains_key(&dir.join("A.CR3")));
+        assert!(!st.views.companions.contains_key(&dir.join("A.CR3")));
         assert_eq!(
-            st.companions.get(&dir.join("B.CR3")),
+            st.views.companions.get(&dir.join("B.CR3")),
             Some(&vec![dir.join("B.JPG")])
         );
     }

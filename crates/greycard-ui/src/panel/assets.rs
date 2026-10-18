@@ -18,16 +18,16 @@ pub(crate) fn offer_lenses_unprompted(database: bool, declined: bool, asked: boo
 /// capture a sheet would spoil. Called with no database found; the
 /// offer waits for a later picture when something is in the way.
 pub(crate) fn offer_lenses_once(st: &mut State, app: &App) {
-    if !offer_lenses_unprompted(false, st.lenses_declined, st.lenses_asked) {
+    if !offer_lenses_unprompted(false, st.sheets.lenses_declined, st.sheets.lenses_asked) {
         return;
     }
     // Any sheet: the window's own list of them, so a sheet added
     // later is covered here without being named.
-    let busy = st.fetch.is_some() || st.fetching || app.invoke_sheet_open();
-    if busy || st.batch {
+    let busy = st.sheets.fetch.is_some() || st.sheets.fetching || app.invoke_sheet_open();
+    if busy || st.window.batch {
         return;
     }
-    st.lenses_asked = true;
+    st.sheets.lenses_asked = true;
     tracing::info!("no lens profiles on this machine: offering the download");
     offer_lenses(st, app, true);
 }
@@ -38,7 +38,7 @@ pub(crate) const LENSES_WHY: &str = "No lens profiles installed; lenses aren't c
 /// Open the download sheet for the lens database: `unprompted` when
 /// no one asked for it, and the sheet says why it is up.
 pub(crate) fn offer_lenses(st: &mut State, app: &App, unprompted: bool) {
-    st.fetch = Some(Fetch::Lenses);
+    st.sheets.fetch = Some(Fetch::Lenses);
     app.set_fetch_title("Download the lens profiles?".into());
     let details = format!(
         "The lensfun database, about {} KB from {}.
@@ -119,8 +119,8 @@ pub(crate) fn offered(
     falls_back: bool,
 ) -> bool {
     if let Err(why) = greycard_ai::runtime::status() {
-        if !st.declined.contains(&model.id) {
-            st.declined.push(model.id);
+        if !st.sheets.declined.contains(&model.id) {
+            st.sheets.declined.push(model.id);
         }
         if model.id == greycard_ai::SAM3.id {
             crate::panel::parts::model_answered(st, app, false);
@@ -128,7 +128,7 @@ pub(crate) fn offered(
         app.set_status(why.to_string().into());
         return false;
     }
-    st.fetch = Some(Fetch::Model(model));
+    st.sheets.fetch = Some(Fetch::Model(model));
     let note = model_note(model);
     app.set_fetch_note(
         if falls_back {
@@ -155,7 +155,8 @@ Kept in {}.",
                 .unwrap_or("the model host"),
             model.license.name,
             model.license.url,
-            st.store
+            st.develop
+                .store
                 .as_ref()
                 .map_or("no cache directory".to_string(), |s| s
                     .root()
@@ -181,7 +182,7 @@ pub(crate) fn offer_edge(st: &mut State, app: &App, model: &'static greycard_ai:
     if !offered(st, app, model, false) {
         return;
     }
-    st.fetch = Some(Fetch::Edge(model));
+    st.sheets.fetch = Some(Fetch::Edge(model));
     app.set_fetch_note(
         format!(
             "For a Whole person's finer edge, hair against the sky; the mask is made \
@@ -197,7 +198,8 @@ pub(crate) fn offer_edge(st: &mut State, app: &App, model: &'static greycard_ai:
 pub(crate) fn show_presets(st: &State, app: &App) {
     app.set_preset_confirm_remove(-1);
     app.set_preset_names(ModelRc::new(VecModel::from(
-        st.presets
+        st.develop
+            .presets
             .iter()
             .map(|e| slint::SharedString::from(e.preset.name.as_str()))
             .collect::<Vec<_>>(),
@@ -206,7 +208,8 @@ pub(crate) fn show_presets(st: &State, app: &App) {
 
 /// List the store again and show it.
 pub(crate) fn refresh_presets(st: &mut State, app: &App) {
-    st.presets = st
+    st.develop.presets = st
+        .develop
         .preset_store
         .as_ref()
         .map(|s| s.list())
@@ -219,13 +222,14 @@ pub(crate) fn refresh_presets(st: &mut State, app: &App) {
 /// without, and so whether Restore is offered.
 pub(crate) fn show_presets_missing(st: &State, app: &App) {
     let missing = st
+        .develop
         .preset_store
         .as_ref()
         .map(|s| s.missing_shipped())
         .unwrap_or_default();
     app.set_presets_missing(missing.len() as i32);
     app.set_presets_missing_words(
-        presets_missing_words(st.preset_store.is_some(), &missing).into(),
+        presets_missing_words(st.develop.preset_store.is_some(), &missing).into(),
     );
 }
 
@@ -277,7 +281,7 @@ const STATUS_ROOM: usize = 80;
 /// line's `--import` uses, show the list again, and say once what came
 /// across.
 pub(crate) fn import_presets(st: &mut State, app: &App, paths: &[PathBuf]) {
-    let Some(store) = st.preset_store.as_ref() else {
+    let Some(store) = st.develop.preset_store.as_ref() else {
         tracing::warn!("preset import: no configuration directory to save into");
         app.set_status("no configuration directory to keep presets in".into());
         return;
@@ -464,14 +468,14 @@ pub(crate) fn show_lens(report: &LensReport, app: &App) {
 /// directory that were made for this camera, then the chosen one when
 /// it is neither.
 pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileChoice, app: &App) {
-    let (make, model) = (st.camera.0.as_str(), st.camera.1.as_str());
+    let (make, model) = (st.develop.camera.0.as_str(), st.develop.camera.1.as_str());
     let mut names = vec![slint::SharedString::from(greycard_edit::camera::EMBEDDED)];
     let mut labels = vec![slint::SharedString::from("Embedded")];
     let embedded = chosen.is_embedded();
     let chosen_name = chosen.name().to_string();
     let chosen = chosen_name.as_str();
     let mut hidden = 0;
-    for e in &st.profiles {
+    for e in &st.develop.profiles {
         if e.fits(make, model) || e.name == chosen {
             names.push(e.name.as_str().into());
             labels.push(e.label().into());
@@ -489,7 +493,7 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
     app.set_camera_profile_labels(ModelRc::new(VecModel::from(labels)));
     app.set_camera_profile(chosen.into());
     app.set_camera_profile_note(
-        match (st.profiles.len(), hidden) {
+        match (st.develop.profiles.len(), hidden) {
             (0, _) => match greycard_edit::camera::store_dir() {
                 Some(dir) => format!("No profiles yet: put DCP files in {}.", dir.display()),
                 None => "No profile directory on this machine.".to_string(),
@@ -500,7 +504,12 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
         .into(),
     );
     app.set_camera_profile_warning(
-        greycard_edit::camera::warning(&st.profiles, &st.camera, chosen_name.as_str()).into(),
+        greycard_edit::camera::warning(
+            &st.develop.profiles,
+            &st.develop.camera,
+            chosen_name.as_str(),
+        )
+        .into(),
     );
 }
 
@@ -508,7 +517,7 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
 /// LIGHT section's choice, read as the edit reads it.
 fn panel_curve(st: &State, app: &App) -> greycard_edit::DisplayCurve {
     greycard_edit::DisplayCurve::from_name(app.get_display_curve().as_str())
-        .unwrap_or(st.edit.display_curve)
+        .unwrap_or(st.develop.edit.display_curve)
 }
 
 /// The look directory on the panel: None first, then the tables it
@@ -530,14 +539,14 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
     let curve = panel_curve(st, app);
     // The open frame's body as the index and the camera match name it:
     // the decoder's make and model, joined as the panel joins them.
-    let camera = greycard_core::raw::camera_name(&st.camera.0, &st.camera.1);
+    let camera = greycard_core::raw::camera_name(&st.develop.camera.0, &st.develop.camera.1);
     let listing = greycard_edit::look::Listing {
         chosen: chosen_name,
         camera: &camera,
         curve,
-        open: &st.look_groups_open,
+        open: &st.develop.look_groups_open,
     };
-    let rows: Vec<LookRow> = greycard_edit::look::grouped(&st.looks, listing)
+    let rows: Vec<LookRow> = greycard_edit::look::grouped(&st.develop.looks, listing)
         .into_iter()
         .map(|r| match r {
             greycard_edit::look::Row::Heading {
@@ -581,32 +590,43 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
     // No table for the picture's curve, or one an earlier fit wrote:
     // either way the line over the Refit button, which opens the
     // camera match's sheet on the look's group.
-    let (mismatch, refit) = match greycard_edit::look::mismatch(&st.looks, chosen_name, curve) {
-        Some((text, true)) => (text, format!("Refit under {}…", curve.phrase())),
-        Some((text, false)) => (text, String::new()),
-        None => {
-            greycard_edit::look::stale(&st.looks, chosen_name, curve, greycard_match::FIT_VERSION)
-                .map(|text| (text, "Refit…".to_string()))
-                .unwrap_or_default()
-        }
-    };
+    let (mismatch, refit) =
+        match greycard_edit::look::mismatch(&st.develop.looks, chosen_name, curve) {
+            Some((text, true)) => (text, format!("Refit under {}…", curve.phrase())),
+            Some((text, false)) => (text, String::new()),
+            None => greycard_edit::look::stale(
+                &st.develop.looks,
+                chosen_name,
+                curve,
+                greycard_match::FIT_VERSION,
+            )
+            .map(|text| (text, "Refit…".to_string()))
+            .unwrap_or_default(),
+        };
     app.set_look_mismatch(mismatch.into());
     app.set_look_refit(refit.into());
     app.set_look_name(chosen_name.into());
-    app.set_look_removable(crate::panel::look_remove::removable(&st.looks, chosen_name));
-    app.set_look_renamable(crate::panel::look_rename::renamable(&st.looks, chosen_name));
+    app.set_look_removable(crate::panel::look_remove::removable(
+        &st.develop.looks,
+        chosen_name,
+    ));
+    app.set_look_renamable(crate::panel::look_rename::renamable(
+        &st.develop.looks,
+        chosen_name,
+    ));
     app.set_look_strength(chosen.strength);
     // The chosen look's table for the picture's curve, or its first.
-    let shown = greycard_edit::look::table_for(&st.looks, chosen_name, curve).or_else(|| {
-        greycard_edit::look::tables_of(&st.looks, chosen_name)
-            .first()
-            .copied()
-    });
+    let shown =
+        greycard_edit::look::table_for(&st.develop.looks, chosen_name, curve).or_else(|| {
+            greycard_edit::look::tables_of(&st.develop.looks, chosen_name)
+                .first()
+                .copied()
+        });
     let note = match shown {
         // What the chosen table is: its kind, its size, and what it
         // says it was made in when that is not the usual sRGB.
         Some(entry) => entry.described(),
-        None if st.looks.is_empty() => match greycard_edit::look::store_dir() {
+        None if st.develop.looks.is_empty() => match greycard_edit::look::store_dir() {
             Some(dir) => format!(
                 "No looks yet. Add .cube or HaldCLUT .png files to {}.",
                 dir.display()
@@ -616,7 +636,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
         None => String::new(),
     };
     app.set_look_note(note.into());
-    app.set_look_warning(greycard_edit::look::warning(&st.looks, chosen_name).into());
+    app.set_look_warning(greycard_edit::look::warning(&st.develop.looks, chosen_name).into());
     app.set_look_fitted(fitted_note(st, shown).into());
 }
 
@@ -626,7 +646,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
 /// applies either way: a look is a preference, not a measurement, and
 /// is never swapped for this body's own.
 fn fitted_note(st: &State, shown: Option<&greycard_edit::look::Entry>) -> String {
-    let (make, model) = (st.camera.0.as_str(), st.camera.1.as_str());
+    let (make, model) = (st.develop.camera.0.as_str(), st.develop.camera.1.as_str());
     if make.is_empty() && model.is_empty() {
         return String::new();
     }
@@ -658,8 +678,8 @@ pub(crate) fn preset_checks(edit: &Edit) -> crate::carry::Checks {
 /// Put the save sheet's checks on the sheet.
 pub(crate) fn show_preset_checks(st: &mut State, app: &App) {
     let st = &mut *st;
-    let lines = st.preset_rows.show(&st.preset_checks);
-    app.set_preset_rows(ModelRc::from(st.preset_rows.model.clone()));
+    let lines = st.sheets.preset_rows.show(&st.sheets.preset_checks);
+    app.set_preset_rows(ModelRc::from(st.sheets.preset_rows.model.clone()));
     app.set_preset_lines(lines);
 }
 
@@ -672,7 +692,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if st.fetch.is_none() && !st.fetching {
+            if st.sheets.fetch.is_none() && !st.sheets.fetching {
                 offer_lenses(&mut st, &app, false);
             }
         });
@@ -686,29 +706,29 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let mut st = state.borrow_mut();
             app.set_fetch_open(false);
-            let Some(fetch) = st.fetch.take() else {
+            let Some(fetch) = st.sheets.fetch.take() else {
                 return;
             };
             match (fetch, yes) {
                 (Fetch::Model(model) | Fetch::Edge(model), true) => {
-                    st.fetching = true;
+                    st.sheets.fetching = true;
                     worker.send(Job::Fetch { model });
                 }
                 (Fetch::Edge(_), false) => {
-                    st.edge_declined = true;
+                    st.sheets.edge_declined = true;
                     app.set_status(EDGE_DECLINED.into());
                 }
                 (Fetch::Model(model), false) if model.id == greycard_ai::SAM3.id => {
-                    st.declined.push(model.id);
+                    st.sheets.declined.push(model.id);
                     crate::panel::parts::model_answered(&mut st, &app, false);
-                    if st.part_pending.is_none() {
+                    if st.develop.part_pending.is_none() {
                         app.set_status(
                             "without the People model a People shape masks nothing".into(),
                         );
                     }
                 }
                 (Fetch::Model(model), false) => {
-                    st.declined.push(model.id);
+                    st.sheets.declined.push(model.id);
                     let lost = if model.id == greycard_ai::SUBJECT_WEBGPU.id {
                         // The masks waiting on it turn to the original,
                         // which the next frame offers.
@@ -729,7 +749,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     }
                 }
                 (Fetch::Lenses, true) => {
-                    st.fetching = true;
+                    st.sheets.fetching = true;
                     worker.send(Job::FetchLenses);
                 }
                 (Fetch::Lenses, false) => {
@@ -740,8 +760,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     // own, this run or the next. Not from a batch run,
                     // which leaves the user's settings alone, nor from
                     // a test, which has no business with them.
-                    st.lenses_declined = true;
-                    if !st.batch && !cfg!(test) {
+                    st.sheets.lenses_declined = true;
+                    if !st.window.batch && !cfg!(test) {
                         let mut settings = settings::Settings::load();
                         if !settings.lenses_declined {
                             settings.lenses_declined = true;
@@ -762,8 +782,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            st.profiles = greycard_edit::camera::list();
-            show_profiles(&st, &st.edit.camera.profile, &app);
+            st.develop.profiles = greycard_edit::camera::list();
+            show_profiles(&st, &st.develop.edit.camera.profile, &app);
             // A profile put there by hand is the edits' that name it.
             crate::edited::looks_moved(&mut st);
         });
@@ -777,8 +797,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            st.edit = read_edit(&app, &st.edit, st.target);
-            show_profiles(&st, &st.edit.camera.profile, &app);
+            st.develop.edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            show_profiles(&st, &st.develop.edit.camera.profile, &app);
             develop_soon(&mut st, state.clone(), worker.clone(), app.as_weak());
         });
     }
@@ -795,9 +815,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            st.looks = greycard_edit::look::list();
-            st.look_for = None;
-            show_looks(&st, &st.edit.look_lut, &app);
+            st.develop.looks = greycard_edit::look::list();
+            st.develop.look_for = None;
+            show_looks(&st, &st.develop.edit.look_lut, &app);
             // A table put there or replaced by hand is the edits' that
             // name it.
             crate::edited::looks_moved(&mut st);
@@ -817,14 +837,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let mut st = state.borrow_mut();
             let key = key.to_string();
-            let camera = greycard_core::raw::camera_name(&st.camera.0, &st.camera.1);
+            let camera =
+                greycard_core::raw::camera_name(&st.develop.camera.0, &st.develop.camera.1);
             let listing = greycard_edit::look::Listing {
-                chosen: st.edit.look_lut.lut.name(),
+                chosen: st.develop.edit.look_lut.lut.name(),
                 camera: &camera,
                 curve: panel_curve(&st, &app),
-                open: &st.look_groups_open,
+                open: &st.develop.look_groups_open,
             };
-            let shown = greycard_edit::look::grouped(&st.looks, listing)
+            let shown = greycard_edit::look::grouped(&st.develop.looks, listing)
                 .into_iter()
                 .find_map(|r| match r {
                     greycard_edit::look::Row::Heading {
@@ -838,8 +859,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some((folded, false)) = shown else {
                 return;
             };
-            st.look_groups_open.insert(key, folded);
-            show_looks(&st, &st.edit.look_lut, &app);
+            st.develop.look_groups_open.insert(key, folded);
+            show_looks(&st, &st.develop.edit.look_lut, &app);
         });
     }
     // The display curve changed: which tables are off for the picture
@@ -851,7 +872,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let st = state.borrow();
-            show_looks(&st, &st.edit.look_lut, &app);
+            show_looks(&st, &st.develop.edit.look_lut, &app);
         });
     }
     // The refit the section offers for a table fitted under another
@@ -863,7 +884,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let name = st.edit.look_lut.lut.name().to_string();
+            let name = st.develop.edit.look_lut.lut.name().to_string();
             crate::panel::camera_match::open(&mut st, &app, Some(name));
         });
     }
@@ -881,13 +902,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             crate::panel::look_preview::end(&st, &app);
             // A look reached in culling is the way out of it, as
             // every other look control is.
-            if st.cull.is_some() {
+            if st.culling.cull.is_some() {
                 let with = control_over_frame(&mut st, &app);
                 leave_cull(&mut st, &app, &worker, with);
                 return;
             }
-            st.edit = read_edit(&app, &st.edit, st.target);
-            show_looks(&st, &st.edit.look_lut, &app);
+            st.develop.edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            show_looks(&st, &st.develop.edit.look_lut, &app);
             schedule_save(&mut st, app.as_weak());
             app.window().request_redraw();
         });
@@ -907,6 +928,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_preset_confirm_remove(-1);
             let Some(preset) = state
                 .borrow()
+                .develop
                 .presets
                 .get(i as usize)
                 .map(|e| e.preset.clone())
@@ -929,10 +951,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // On to start: what the edit changed, of the sections a
             // preset carries by default, and of a section with parts
             // the parts it changed.
-            let edit = read_edit(&app, &st.edit, st.target);
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
             drop(st);
             let mut st = state.borrow_mut();
-            st.preset_checks = preset_checks(&edit);
+            st.sheets.preset_checks = preset_checks(&edit);
             show_preset_checks(&mut st, &app);
             app.set_preset_name("".into());
             app.set_preset_open(true);
@@ -946,8 +968,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if let Some(target) = st.preset_rows.target(i) {
-                st.preset_checks.toggle(target);
+            if let Some(target) = st.sheets.preset_rows.target(i) {
+                st.sheets.preset_checks.toggle(target);
                 show_preset_checks(&mut st, &app);
             }
         });
@@ -959,7 +981,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            st.preset_checks.set_all(on);
+            st.sheets.preset_checks.set_all(on);
             show_preset_checks(&mut st, &app);
         });
     }
@@ -970,7 +992,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            st.preset_checks.join = join;
+            st.sheets.preset_checks.join = join;
             show_preset_checks(&mut st, &app);
         });
     }
@@ -986,7 +1008,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_status("a preset needs a name".into());
                 return;
             }
-            let choice = st.preset_checks.choice();
+            let choice = st.sheets.preset_checks.choice();
             if choice.is_empty() {
                 app.set_status("choose what the preset carries".into());
                 return;
@@ -994,12 +1016,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // The demosaic as the open frame runs it, which is what its
             // menu shows.
             let edit = crate::panel::sync::as_source(
-                read_edit(&app, &st.edit, st.target),
+                read_edit(&app, &st.develop.edit, st.develop.target),
                 st.open_mosaic().kind(),
             );
             let preset = Preset::from_choice(&name, &edit, &choice);
             app.set_preset_open(false);
-            match st.preset_store.as_ref().map(|s| s.save(&preset)) {
+            match st.develop.preset_store.as_ref().map(|s| s.save(&preset)) {
                 Some(Ok(path)) => {
                     app.set_status(
                         format!(
@@ -1033,16 +1055,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some(entry) = st.presets.get(i as usize).cloned() else {
+            let Some(entry) = st.develop.presets.get(i as usize).cloned() else {
                 return;
             };
-            match st.preset_store.as_ref().map(|s| s.remove(&entry)) {
+            match st.develop.preset_store.as_ref().map(|s| s.remove(&entry)) {
                 Some(Ok(())) => {
                     let name = &entry.preset.name;
                     // Promised only when the Restore would bring one
                     // of that name back: the shipped one, which need
                     // not be what the user had under the name.
-                    let restorable = st.preset_store.as_ref().is_some_and(|s| {
+                    let restorable = st.develop.preset_store.as_ref().is_some_and(|s| {
                         s.missing_shipped()
                             .iter()
                             .any(|m| m.eq_ignore_ascii_case(name))
@@ -1074,7 +1096,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            match st.preset_store.as_ref().map(|s| s.restore_shipped()) {
+            match st
+                .develop
+                .preset_store
+                .as_ref()
+                .map(|s| s.restore_shipped())
+            {
                 Some(Ok(names)) if names.is_empty() => {
                     app.set_status("every default preset is in the list".into());
                 }
@@ -1179,10 +1206,11 @@ mod tests {
         if let Err(why) = greycard_ai::runtime::status() {
             greycard_ai::runtime::absent_in_test(why);
             assert!(!app.get_fetch_open());
-            assert_eq!(state.borrow().fetch, None);
+            assert_eq!(state.borrow().sheets.fetch, None);
             assert!(
                 state
                     .borrow()
+                    .sheets
                     .declined
                     .contains(&greycard_ai::SUBJECT_WEBGPU.id)
             );
@@ -1191,14 +1219,17 @@ mod tests {
         }
         assert!(app.get_fetch_open());
         assert_eq!(
-            state.borrow().fetch,
+            state.borrow().sheets.fetch,
             Some(Fetch::Edge(&greycard_ai::SUBJECT_WEBGPU))
         );
         assert!(app.get_fetch_note().contains("Whole person"));
         app.invoke_fetch_answered(false);
         let st = state.borrow();
-        assert!(st.edge_declined);
-        assert!(st.declined.is_empty(), "a Subject shape is still offered");
+        assert!(st.sheets.edge_declined);
+        assert!(
+            st.sheets.declined.is_empty(),
+            "a Subject shape is still offered"
+        );
         assert_eq!(app.get_status(), EDGE_DECLINED);
     }
 
@@ -1211,7 +1242,7 @@ mod tests {
         app.set_export_open(true);
         offer_lenses_once(&mut state.borrow_mut(), &app);
         assert!(!app.get_fetch_open());
-        assert!(!state.borrow().lenses_asked);
+        assert!(!state.borrow().sheets.lenses_asked);
         app.set_export_open(false);
         // The settings sheet too: an offer under it would be answered
         // Not now, for good, by the Escape meant for the settings.
@@ -1222,28 +1253,28 @@ mod tests {
         crate::testing::press(&app, slint::platform::Key::Escape);
         assert!(!app.get_settings_open());
         assert!(
-            !state.borrow().lenses_declined,
+            !state.borrow().sheets.lenses_declined,
             "Escape closed the settings only"
         );
-        assert!(!state.borrow().lenses_asked);
+        assert!(!state.borrow().sheets.lenses_asked);
 
         offer_lenses_once(&mut state.borrow_mut(), &app);
         assert!(app.get_fetch_open(), "offered");
-        assert_eq!(state.borrow().fetch, Some(Fetch::Lenses));
+        assert_eq!(state.borrow().sheets.fetch, Some(Fetch::Lenses));
         assert!(app.get_fetch_text().starts_with(LENSES_WHY));
 
         // Not now: remembered, and the next picture asks nothing.
         app.invoke_fetch_answered(false);
         assert!(!app.get_fetch_open());
-        assert!(state.borrow().lenses_declined);
+        assert!(state.borrow().sheets.lenses_declined);
         offer_lenses_once(&mut state.borrow_mut(), &app);
         assert!(!app.get_fetch_open(), "asked once");
 
         // A launch that was never declined still asks only once.
         {
             let mut st = state.borrow_mut();
-            st.lenses_declined = false;
-            st.lenses_asked = true;
+            st.sheets.lenses_declined = false;
+            st.sheets.lenses_asked = true;
         }
         offer_lenses_once(&mut state.borrow_mut(), &app);
         assert!(!app.get_fetch_open(), "once a launch");
@@ -1300,11 +1331,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         let store = preset::Store::at(d.clone());
         store.seed();
-        state.borrow_mut().preset_store = Some(store);
+        state.borrow_mut().develop.preset_store = Some(store);
         refresh_presets(&mut state.borrow_mut(), &app);
         app.set_collapsed_navigator(true);
-        let first = state.borrow().presets[0].clone();
-        assert_eq!(state.borrow().presets.len(), 3, "the three shipped presets");
+        let first = state.borrow().develop.presets[0].clone();
+        assert_eq!(
+            state.borrow().develop.presets.len(),
+            3,
+            "the three shipped presets"
+        );
 
         // The pane is 240px wide, its bins in the right-hand strip;
         // the list is one of the first things in it with the
@@ -1383,7 +1418,7 @@ mod tests {
             }
         }
         assert!(removed, "the Remove removes");
-        assert_eq!(state.borrow().presets.len(), 2);
+        assert_eq!(state.borrow().develop.presets.len(), 2);
         assert_eq!(app.get_preset_confirm_remove(), -1);
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -1402,7 +1437,7 @@ mod tests {
                 "edit": {"detail": {"dehaze": 0.3}}}"#,
         )
         .unwrap();
-        state.borrow_mut().preset_store = Some(preset::Store::at(d.join("store")));
+        state.borrow_mut().develop.preset_store = Some(preset::Store::at(d.join("store")));
         import_presets(&mut state.borrow_mut(), &app, std::slice::from_ref(&file));
         assert_eq!(app.get_status(), "imported Haze (1 part)");
         assert!(
@@ -1463,7 +1498,7 @@ mod tests {
         )
         .unwrap();
         let store = d.join("store");
-        state.borrow_mut().preset_store = Some(preset::Store::at(store.clone()));
+        state.borrow_mut().develop.preset_store = Some(preset::Store::at(store.clone()));
         refresh_presets(&mut state.borrow_mut(), &app);
         assert_eq!(app.get_preset_names().row_count(), 0);
 
@@ -1649,12 +1684,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         let store = preset::Store::at(d.clone());
         store.seed();
-        state.borrow_mut().preset_store = Some(store);
+        state.borrow_mut().develop.preset_store = Some(store);
         refresh_presets(&mut state.borrow_mut(), &app);
         assert_eq!(app.get_presets_missing(), 0);
-        let count = || state.borrow().presets.len();
+        let count = || state.borrow().develop.presets.len();
         assert_eq!(count(), 3);
-        let first = state.borrow().presets[0].clone();
+        let first = state.borrow().develop.presets[0].clone();
         assert_eq!(first.preset.name, "Muted Slide");
 
         // The bin, which only arms the row: nothing is removed, and a
@@ -1702,7 +1737,7 @@ mod tests {
         let dup = Preset::from_edit("warm negative", &Edit::default(), &[Section::Light]);
         {
             let st = state.borrow();
-            let store = st.preset_store.as_ref().unwrap();
+            let store = st.develop.preset_store.as_ref().unwrap();
             store.save(&mine).unwrap();
             dup.save_to(&d.join("warm-negative-copy.gcp")).unwrap();
         }
@@ -1710,6 +1745,7 @@ mod tests {
         let at = |name: &str| {
             state
                 .borrow()
+                .develop
                 .presets
                 .iter()
                 .position(|e| e.preset.name == name)
@@ -1726,7 +1762,7 @@ mod tests {
     fn a_batch_run_is_never_offered_the_lens_profiles() {
         let app = crate::testing::window(1);
         let (state, _worker) = crate::testing::retouch_state(&app);
-        state.borrow_mut().batch = true;
+        state.borrow_mut().window.batch = true;
         offer_lenses_once(&mut state.borrow_mut(), &app);
         assert!(!app.get_fetch_open());
     }

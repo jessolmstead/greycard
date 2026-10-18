@@ -50,8 +50,8 @@ fn folder_of(files: &[PathBuf], canonical: &HashMap<PathBuf, PathBuf>) -> Option
 /// pane. A run with no settings file to write (a capture, an export,
 /// a test) keeps the list in the window only.
 pub(crate) fn opened(st: &mut State, app: &App) {
-    st.recent.open = match &st.view {
-        crate::roots::View::Folder => folder_of(&st.files, &st.library.canonical),
+    st.views.recent.open = match &st.views.view {
+        crate::roots::View::Folder => folder_of(&st.files, &st.views.library.canonical),
         // A folder of a root's tree is a folder opened, with or without
         // the folders under it; the index's spelling is canonical, and
         // an offline root's folder is recorded without a look at it.
@@ -61,18 +61,18 @@ pub(crate) fn opened(st: &mut State, app: &App) {
     // A folder under no root opened again has its own folders read
     // again for its tiles: nothing watches it.
     crate::tree::loose_changed(st, app);
-    if let Some(dir) = st.recent.open.clone() {
+    if let Some(dir) = st.views.recent.open.clone() {
         let dir = dir.to_string_lossy().into_owned();
-        match &st.settings_file {
+        match &st.window.settings_file {
             // Through the file as it is now, so a second window's
             // folders are kept too.
             Some(path) => {
                 let mut kept = settings::Settings::load_from(path);
                 push_recent(&mut kept.recent_folders, &dir);
                 kept.save_to(path);
-                st.recent.folders = kept.recent_folders;
+                st.views.recent.folders = kept.recent_folders;
             }
-            None => push_recent(&mut st.recent.folders, &dir),
+            None => push_recent(&mut st.views.recent.folders, &dir),
         }
     }
     app.set_open_folder_note("".into());
@@ -103,8 +103,8 @@ fn own_name(dir: &Path) -> String {
 /// list, the one open marked. Called as a list opens and as the roots
 /// change, since a root's name is part of what is shown.
 pub(crate) fn show(st: &State, app: &App) {
-    let roots = &st.library.roots;
-    let (name, root, path) = match (&st.view, &st.recent.open) {
+    let roots = &st.views.library.roots;
+    let (name, root, path) = match (&st.views.view, &st.views.recent.open) {
         (crate::roots::View::Folder | crate::roots::View::Branch { .. }, Some(dir)) => {
             let (name, root) = named(roots, dir);
             (name, root, dir.display().to_string())
@@ -126,11 +126,13 @@ pub(crate) fn show(st: &State, app: &App) {
     app.set_open_folder_root(root.into());
     app.set_open_folder_path(path.into());
     let open = st
+        .views
         .recent
         .open
         .as_ref()
         .map(|d| d.to_string_lossy().into_owned());
     let rows: Vec<RecentFolder> = st
+        .views
         .recent
         .folders
         .iter()
@@ -156,7 +158,7 @@ pub(crate) fn show(st: &State, app: &App) {
             }
         })
         .collect();
-    let model = &st.recent.rows;
+    let model = &st.views.recent.rows;
     if !model.iter().eq(rows.iter().cloned()) {
         model.set_vec(rows);
     }
@@ -171,7 +173,7 @@ pub(crate) fn show(st: &State, app: &App) {
 fn chosen(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>, path: &str) {
     let dir = PathBuf::from(path);
     let app_weak = app.as_weak();
-    let generation = state.borrow().view_generation;
+    let generation = state.borrow().views.view_generation;
     let opening = format!("opening {}...", tilde(&dir));
     app.set_status(opening.as_str().into());
     let spawned = std::thread::Builder::new()
@@ -213,7 +215,7 @@ fn chosen(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>, path: &st
 /// generation on, and a look that comes back after it is dropped
 /// rather than opened over what the user went to meanwhile.
 fn still_wanted(st: &State, generation: u64) -> bool {
-    st.view_generation == generation
+    st.views.view_generation == generation
 }
 
 /// In a test the folder is looked at in place: there is no event loop
@@ -270,7 +272,7 @@ fn checked(
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
-    app.set_recent_folders(ModelRc::from(state.borrow().recent.rows.clone()));
+    app.set_recent_folders(ModelRc::from(state.borrow().views.recent.rows.clone()));
     let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
     app.on_recent_chosen(move |path| {
         if let Some(app) = app_weak.upgrade() {
@@ -443,7 +445,7 @@ mod tests {
         .save_to(&file);
         let app = window(0);
         let (state, worker) = state_for(&app, Vec::new());
-        state.borrow_mut().settings_file = Some(file.clone());
+        state.borrow_mut().window.settings_file = Some(file.clone());
         open_folder(&state, &app, &worker, &a);
         // Another window opens b meanwhile.
         let mut other = settings::Settings::load_from(&file);
@@ -457,7 +459,7 @@ mod tests {
             [b_s.as_ref(), "/elsewhere/b", a_s.as_ref()]
         );
         assert_eq!(read.scope, "Parade", "the rest of the file kept");
-        assert_eq!(state.borrow().recent.folders, read.recent_folders);
+        assert_eq!(state.borrow().views.recent.folders, read.recent_folders);
         assert_eq!(app.get_recent_folders().row_count(), 3);
         drop(state);
         crate::testing::remove_dir_retry(&dir);
@@ -472,11 +474,11 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.library.roots.add(&root).unwrap();
-            st.library.roots.set_name(&root, "Archive");
+            st.views.library.roots.add(&root).unwrap();
+            st.views.library.roots.set_name(&root, "Archive");
             // A `--roots` launch whose index then failed: no view will
             // come, and a folder opened by hand is recorded.
-            st.library.wanted = Some(crate::roots::View::Roots(None));
+            st.views.library.wanted = Some(crate::roots::View::Roots(None));
         }
         crate::library::told(&app, crate::library::Told::Failed("no index".into()));
         open_folder(&state, &app, &worker, &under);
@@ -533,13 +535,13 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         open_folder(&state, &app, &worker, &x);
         // X chosen again, its look out on a share that hangs.
-        let chosen_at = state.borrow().view_generation;
+        let chosen_at = state.borrow().views.view_generation;
         assert!(still_wanted(&state.borrow(), chosen_at));
         // Y opened meanwhile.
         open_folder(&state, &app, &worker, &y);
         assert!(!still_wanted(&state.borrow(), chosen_at));
         // The generation Y opened at is wanted until the next.
-        let now = state.borrow().view_generation;
+        let now = state.borrow().views.view_generation;
         assert!(still_wanted(&state.borrow(), now));
         drop(state);
         crate::testing::remove_dir_retry(&dir);

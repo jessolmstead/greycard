@@ -13,8 +13,8 @@ use crate::{App, SortMenu, State};
 
 /// The menu as the view's choice has it.
 pub(crate) fn menu_of(st: &State) -> SortMenu {
-    let choice = st.sort.choice(&st.view);
-    let listed = entries(&st.view);
+    let choice = st.views.sort.choice(&st.views.view);
+    let listed = entries(&st.views.view);
     let checked = listed
         .iter()
         .position(|e| *e == choice.order().map(|o| o.by))
@@ -92,8 +92,8 @@ pub(crate) fn choose(
 ) {
     let on_screen = {
         let mut st = state.borrow_mut();
-        let was = st.sort.choice(view);
-        st.sort.set(view, choice);
+        let was = st.views.sort.choice(view);
+        st.views.sort.set(view, choice);
         let set = (view.clone(), choice);
         crate::panel::prefs::keep(&st, move |s| s.sort.set(&set.0, set.1));
         show(&st, app);
@@ -101,23 +101,23 @@ pub(crate) fn choose(
         if was != choice {
             tracing::info!("sort: {:?} for {:?}", choice, crate::sort::Slot::of(view));
         }
-        let on_screen = st.view == *view;
+        let on_screen = st.views.view == *view;
         if on_screen && was == choice {
             return;
         }
         on_screen
     };
     if on_screen {
-        state.borrow_mut().sort_reveal = true;
+        state.borrow_mut().views.sort_reveal = true;
         if !crate::roots::refresh_view(state, app, worker) {
             let mut st = state.borrow_mut();
             // A view still being opened is read again in the choice as
             // it lands (`roots::landing`), the reveal with it.
-            if !st.library.loading {
+            if !st.views.library.loading {
                 // Nothing to read the list again from (files the
                 // desktop handed over from several folders): the choice
                 // is kept, and the next read of the list is in it.
-                st.sort_reveal = false;
+                st.views.sort_reveal = false;
                 app.set_status(
                     "the order is kept; it applies the next time the list is read".into(),
                 );
@@ -132,7 +132,7 @@ pub(crate) fn choose(
 /// read was for a sort. The state is not held across the reveal, which
 /// tells the window's ranges to the callbacks that read it.
 pub(crate) fn landed(state: &Rc<RefCell<State>>, app: &App) {
-    let reveal = std::mem::take(&mut state.borrow_mut().sort_reveal);
+    let reveal = std::mem::take(&mut state.borrow_mut().views.sort_reveal);
     if reveal {
         app.invoke_reveal_selected();
     }
@@ -148,14 +148,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let (view, choice) = {
                 let st = state.borrow();
-                let now = st.sort.choice(&st.view);
+                let now = st.views.sort.choice(&st.views.view);
                 let Some(choice) = usize::try_from(entry)
                     .ok()
-                    .and_then(|e| picked(&st.view, now, e))
+                    .and_then(|e| picked(&st.views.view, now, e))
                 else {
                     return;
                 };
-                (st.view.clone(), choice)
+                (st.views.view.clone(), choice)
             };
             choose(&state, &app, &worker, &view, choice);
         });
@@ -169,8 +169,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let (view, choice) = {
                 let st = state.borrow();
                 (
-                    st.view.clone(),
-                    turned(st.sort.choice(&st.view), descending),
+                    st.views.view.clone(),
+                    turned(st.views.sort.choice(&st.views.view), descending),
                 )
             };
             choose(&state, &app, &worker, &view, choice);

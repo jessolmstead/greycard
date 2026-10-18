@@ -305,20 +305,20 @@ pub(crate) fn pair(lib: &Library, roots: &greycard_library::Roots, frame: &Path)
 pub(crate) fn followed(st: &State, c: usize) -> bool {
     st.files
         .get(c)
-        .is_some_and(|f| st.sync.followed.contains_key(f))
+        .is_some_and(|f| st.work.sync.followed.contains_key(f))
 }
 
 /// The local frame the window follows on the archive's copy at `path`,
 /// when it follows one there.
 pub(crate) fn local_of<'a>(st: &'a State, path: &Path) -> Option<&'a Path> {
-    st.sync.followed.get(path).map(|f| f.local.as_path())
+    st.work.sync.followed.get(path).map(|f| f.local.as_path())
 }
 
 /// Follow the frame at `copy`, an archive's copy of `local`, as an
 /// offline root does: for a test of what a save of it does.
 #[cfg(test)]
 pub(crate) fn follow_for_test(st: &mut State, copy: PathBuf, local: PathBuf, archive: PathBuf) {
-    st.sync.followed.insert(
+    st.work.sync.followed.insert(
         copy,
         Followed {
             local,
@@ -337,18 +337,18 @@ pub(crate) fn follow_for_test(st: &mut State, copy: PathBuf, local: PathBuf, arc
 /// follows it there: the editor works on the local copy, and the
 /// archive's is written from it (§233).
 pub(crate) fn after_save(st: &mut State, c: usize) {
-    if !st.write_sidecars {
+    if !st.window.write_sidecars {
         return;
     }
     let Some(frame) = st.files.get(c).cloned() else {
         return;
     };
-    if let Some(followed) = st.sync.followed.get(&frame).cloned() {
+    if let Some(followed) = st.work.sync.followed.get(&frame).cloned() {
         // The frame is the archive's copy: its own write, checked
         // against the copy as any is. With the reader closed (the
         // quit's own save), the quit writes it
         // (`write_followed_at_quit`).
-        let Some(lib) = st.index_reader.as_ref() else {
+        let Some(lib) = st.views.index_reader.as_ref() else {
             return;
         };
         let Some(row) = lib.by_path(&frame).ok().flatten() else {
@@ -366,8 +366,8 @@ pub(crate) fn after_save(st: &mut State, c: usize) {
             frame: frame.clone(),
             hash: row.hash,
             source: Source::Memory(Box::new(st.sidecars[c].clone())),
-            placement: st.placement,
-            xmp: st.xmp_sidecars,
+            placement: st.window.placement,
+            xmp: st.window.xmp_sidecars,
             copies: vec![Copy {
                 archive: followed.archive,
                 copy: frame.clone(),
@@ -376,7 +376,7 @@ pub(crate) fn after_save(st: &mut State, c: usize) {
         queue(st, write);
         return;
     }
-    if st.library.roots.archive_of(&frame).is_some() {
+    if st.views.library.roots.archive_of(&frame).is_some() {
         return;
     }
     let stand_in = st.from_row.get(c).is_some_and(|r| !r.read);
@@ -395,7 +395,7 @@ pub(crate) fn after_save(st: &mut State, c: usize) {
 /// (an export recorded on a frame it let go of, a stand-in un-rejected):
 /// the archive write goes from the file.
 pub(crate) fn after_disk_save(st: &mut State, frame: &Path) {
-    if !st.write_sidecars || st.library.roots.archive_of(frame).is_some() {
+    if !st.window.write_sidecars || st.views.library.roots.archive_of(frame).is_some() {
         return;
     }
     queue_for(st, frame, Source::Disk);
@@ -423,9 +423,14 @@ pub(crate) fn note_disk_save(index: &Path, roots: &greycard_library::Roots, fram
 /// it has no file here to write from, and its write went just before
 /// ([`write_followed_at_quit`]). How many rows were noted.
 pub(crate) fn note_unsent_at_quit(st: &mut State) -> usize {
-    let deferred = std::mem::take(&mut st.sync.deferred);
-    let queued = std::mem::take(&mut st.sync.queued);
-    let Some(index) = st.index_path.clone().filter(|_| st.write_sidecars) else {
+    let deferred = std::mem::take(&mut st.work.sync.deferred);
+    let queued = std::mem::take(&mut st.work.sync.queued);
+    let Some(index) = st
+        .views
+        .index_path
+        .clone()
+        .filter(|_| st.window.write_sidecars)
+    else {
         return 0;
     };
     let frames: std::collections::BTreeSet<PathBuf> = deferred
@@ -439,7 +444,7 @@ pub(crate) fn note_unsent_at_quit(st: &mut State) -> usize {
         .map(|frame| {
             note_waiting(
                 &index,
-                &st.library.roots,
+                &st.views.library.roots,
                 frame,
                 "saved as the window closed",
             )
@@ -548,7 +553,12 @@ fn write_followed_with(
     run: fn(&Write, &Path) -> Vec<Outcome>,
 ) -> QuitWrites {
     let mut out = QuitWrites::default();
-    let Some(index) = st.index_path.clone().filter(|_| st.write_sidecars) else {
+    let Some(index) = st
+        .views
+        .index_path
+        .clone()
+        .filter(|_| st.window.write_sidecars)
+    else {
         return out;
     };
     let held: Vec<(usize, PathBuf, PathBuf)> = st
@@ -556,7 +566,7 @@ fn write_followed_with(
         .iter()
         .enumerate()
         .filter_map(|(c, f)| {
-            let followed = st.sync.followed.get(f)?;
+            let followed = st.work.sync.followed.get(f)?;
             Some((c, f.clone(), followed.archive.clone()))
         })
         .filter(|(c, ..)| {
@@ -594,13 +604,13 @@ fn write_followed_with(
         }
         // The window's sidecar is the latest: a write queued behind
         // one still out carries no more than it.
-        st.sync.queued.remove(&copy);
+        st.work.sync.queued.remove(&copy);
         writes.push(Write {
             frame: copy.clone(),
             hash: row.hash,
             source: Source::Memory(Box::new(st.sidecars[c].clone())),
-            placement: st.placement,
-            xmp: st.xmp_sidecars,
+            placement: st.window.placement,
+            xmp: st.window.xmp_sidecars,
             copies: vec![Copy { archive, copy }],
         });
     }
@@ -612,7 +622,7 @@ fn write_followed_with(
         .iter()
         .map(|w| (w.hash.clone(), w.copies[0].archive.clone(), w.frame.clone()))
         .collect();
-    let running = Arc::clone(&st.sync.running);
+    let running = Arc::clone(&st.work.sync.running);
     let job_running = Arc::clone(&running);
     let (tx, rx) = std::sync::mpsc::channel::<(PathBuf, Vec<Outcome>)>();
     let job_index = index.clone();
@@ -836,9 +846,9 @@ fn note_waiting(
 /// The index reader is open now (`library::open_reader`): the saves
 /// made before it was are paired and queued.
 pub(crate) fn reader_opened(st: &mut State) {
-    let deferred = std::mem::take(&mut st.sync.deferred);
+    let deferred = std::mem::take(&mut st.work.sync.deferred);
     for (frame, source) in deferred {
-        if st.write_sidecars && st.library.roots.archive_of(&frame).is_none() {
+        if st.window.write_sidecars && st.views.library.roots.archive_of(&frame).is_none() {
             queue_for(st, &frame, source);
         }
     }
@@ -848,13 +858,13 @@ pub(crate) fn reader_opened(st: &mut State) {
 /// copies, and note in memory the archives where which copy is this
 /// frame's is not known; the job notes the rest in the index.
 fn queue_for(st: &mut State, frame: &Path, source: Source) {
-    let Some(lib) = st.index_reader.as_ref() else {
+    let Some(lib) = st.views.index_reader.as_ref() else {
         // The index is still opening (a launch preset's save comes
         // before it): kept, and queued when it is.
-        st.sync.deferred.push((frame.to_path_buf(), source));
+        st.work.sync.deferred.push((frame.to_path_buf(), source));
         return;
     };
-    let Some(paired) = pair(lib, &st.library.roots, frame) else {
+    let Some(paired) = pair(lib, &st.views.library.roots, frame) else {
         return;
     };
     if paired.copies.is_empty() && paired.ambiguous.is_empty() {
@@ -864,8 +874,8 @@ fn queue_for(st: &mut State, frame: &Path, source: Source) {
         frame: frame.to_path_buf(),
         hash: paired.hash,
         source,
-        placement: st.placement,
-        xmp: st.xmp_sidecars,
+        placement: st.window.placement,
+        xmp: st.window.xmp_sidecars,
         copies: paired.copies,
     };
     if !paired.ambiguous.is_empty() {
@@ -886,29 +896,29 @@ fn queue_for(st: &mut State, frame: &Path, source: Source) {
 /// for the frame is out.
 fn queue(st: &mut State, write: Write) {
     let frame = write.frame.clone();
-    st.sync.queued.insert(frame.clone(), write);
+    st.work.sync.queued.insert(frame.clone(), write);
     send_next(st, &frame);
 }
 
 /// Send the queued write for `frame`, if there is one and none is out.
 fn send_next(st: &mut State, frame: &Path) {
-    if st.sync.in_flight.contains(frame) {
+    if st.work.sync.in_flight.contains(frame) {
         return;
     }
-    let Some(write) = st.sync.queued.remove(frame) else {
+    let Some(write) = st.work.sync.queued.remove(frame) else {
         return;
     };
-    let Some(index) = st.index_path.clone() else {
+    let Some(index) = st.views.index_path.clone() else {
         return;
     };
-    let Some(app) = st.app.upgrade() else {
+    let Some(app) = st.window.app.upgrade() else {
         return;
     };
-    st.sync.in_flight.insert(frame.to_path_buf());
+    st.work.sync.in_flight.insert(frame.to_path_buf());
     let frame = frame.to_path_buf();
     let landing_frame = frame.clone();
-    st.sync.running.start(&frame);
-    let ends = Ends(Arc::clone(&st.sync.running), frame.clone());
+    st.work.sync.running.start(&frame);
+    let ends = Ends(Arc::clone(&st.work.sync.running), frame.clone());
     let sent = send(
         &app,
         "archive write",
@@ -923,7 +933,7 @@ fn send_next(st: &mut State, frame: &Path) {
         },
     );
     if !sent {
-        st.sync.in_flight.remove(&frame);
+        st.work.sync.in_flight.remove(&frame);
     }
 }
 
@@ -1318,24 +1328,24 @@ fn record(lib: Option<&mut Library>, write: &Write, target: &Copy, dest: &Path, 
 /// leaves writes waiting (a copy to join, one that would not read)
 /// makes them due again too, so the next answering look tries them.
 pub(crate) fn heard_from(st: &mut State, app: &App, archive: &Path, answered: bool) {
-    if !st.write_sidecars || !st.library.roots.is_archive(archive) {
+    if !st.window.write_sidecars || !st.views.library.roots.is_archive(archive) {
         return;
     }
     if !answered {
-        st.sync.caught_up.remove(archive);
+        st.work.sync.caught_up.remove(archive);
         return;
     }
-    if st.sync.caught_up.contains(archive) {
+    if st.work.sync.caught_up.contains(archive) {
         return;
     }
-    st.sync.caught_up.insert(archive.to_path_buf());
+    st.work.sync.caught_up.insert(archive.to_path_buf());
     catch_up(st, app, archive);
 }
 
 /// The archives the roots' look found, one way or the other: those in
 /// `offline` did not answer, the rest did.
 pub(crate) fn heard_over(st: &mut State, app: &App, offline: &HashSet<PathBuf>) {
-    let archives = st.library.roots.archives().to_vec();
+    let archives = st.views.library.roots.archives().to_vec();
     for a in archives {
         heard_from(st, app, &a, !offline.contains(&a));
     }
@@ -1348,10 +1358,11 @@ pub(crate) fn heard_over(st: &mut State, app: &App, offline: &HashSet<PathBuf>) 
 /// window's) is brought home through the frame's queue, once a return
 /// (`Followed::homed`); the frame goes on following.
 fn bring_home_followed(st: &mut State, offline: &HashSet<PathBuf>) {
-    if !st.write_sidecars {
+    if !st.window.write_sidecars {
         return;
     }
     let due: Vec<(PathBuf, Followed)> = st
+        .work
         .sync
         .followed
         .iter()
@@ -1366,6 +1377,7 @@ fn bring_home_followed(st: &mut State, offline: &HashSet<PathBuf>) {
             continue;
         }
         let Some(hash) = st
+            .views
             .index_reader
             .as_ref()
             .and_then(|l| l.by_path(&copy).ok().flatten())
@@ -1373,7 +1385,7 @@ fn bring_home_followed(st: &mut State, offline: &HashSet<PathBuf>) {
         else {
             continue;
         };
-        if let Some(f) = st.sync.followed.get_mut(&copy) {
+        if let Some(f) = st.work.sync.followed.get_mut(&copy) {
             f.homed = true;
         }
         let write = Write {
@@ -1383,7 +1395,7 @@ fn bring_home_followed(st: &mut State, offline: &HashSet<PathBuf>) {
                 local: followed.local.clone(),
                 ours: Box::new(st.sidecars[c].clone()),
             },
-            placement: st.placement,
+            placement: st.window.placement,
             xmp: false,
             copies: vec![Copy {
                 archive: followed.archive.clone(),
@@ -1393,9 +1405,9 @@ fn bring_home_followed(st: &mut State, offline: &HashSet<PathBuf>) {
         // Behind a save's write when one is queued: the latest wins the
         // queue, so a home never replaces a save. It goes when nothing
         // is queued or out.
-        if !st.sync.queued.contains_key(&copy) && !st.sync.in_flight.contains(&copy) {
+        if !st.work.sync.queued.contains_key(&copy) && !st.work.sync.in_flight.contains(&copy) {
             queue(st, write);
-        } else if let Some(f) = st.sync.followed.get_mut(&copy) {
+        } else if let Some(f) = st.work.sync.followed.get_mut(&copy) {
             f.homed = false;
         }
     }
@@ -1405,10 +1417,11 @@ fn bring_home_followed(st: &mut State, offline: &HashSet<PathBuf>) {
 /// the frame's own queue, from the file, so a catch-up and a save's
 /// write never run at once for one frame.
 pub(crate) fn catch_up(st: &mut State, app: &App, archive: &Path) {
-    if !st.write_sidecars {
+    if !st.window.write_sidecars {
         return;
     }
     let pending = st
+        .views
         .index_reader
         .as_ref()
         .and_then(|l| l.pending_for(archive).ok())
@@ -1416,7 +1429,7 @@ pub(crate) fn catch_up(st: &mut State, app: &App, archive: &Path) {
     if pending.is_empty() {
         return;
     }
-    let (placement, xmp) = (st.placement, st.xmp_sidecars);
+    let (placement, xmp) = (st.window.placement, st.window.xmp_sidecars);
     let mut by_frame: HashMap<PathBuf, Write> = HashMap::new();
     for p in pending {
         let entry = by_frame.entry(p.frame.clone()).or_insert_with(|| Write {
@@ -1431,9 +1444,10 @@ pub(crate) fn catch_up(st: &mut State, app: &App, archive: &Path) {
             // Which copy is this frame's was not known: paired again
             // from the index, in case the roots say now.
             match st
+                .views
                 .index_reader
                 .as_ref()
-                .and_then(|l| pair(l, &st.library.roots, &p.frame))
+                .and_then(|l| pair(l, &st.views.library.roots, &p.frame))
             {
                 Some(paired) => match paired.copies.into_iter().find(|c| c.archive == p.archive) {
                     Some(c) => c,
@@ -1461,7 +1475,7 @@ pub(crate) fn catch_up(st: &mut State, app: &App, archive: &Path) {
         // A frame the window holds with a sidecar of its own saves from
         // memory; one it has let go of, or stands in for, from disk. A
         // write already queued for the frame is the latest and stands.
-        if st.sync.queued.contains_key(&frame) || st.sync.in_flight.contains(&frame) {
+        if st.work.sync.queued.contains_key(&frame) || st.work.sync.in_flight.contains(&frame) {
             continue;
         }
         let held = st
@@ -1485,13 +1499,14 @@ pub(crate) fn catch_up(st: &mut State, app: &App, archive: &Path) {
 /// taken up now.
 pub(crate) fn retry(st: &mut State, app: &App) {
     let counts = st
+        .views
         .index_reader
         .as_ref()
         .and_then(|l| l.pending_counts().ok())
         .unwrap_or_default();
     for count in counts {
         if count.unknown > 0
-            && let Some(lib) = st.index_reader.as_ref()
+            && let Some(lib) = st.views.index_reader.as_ref()
             && let Ok(rows) = lib.pending_for(&count.archive)
         {
             // Which frames cannot tell their copy, for the log: the
@@ -1505,7 +1520,7 @@ pub(crate) fn retry(st: &mut State, app: &App) {
                 );
             }
         }
-        st.sync.caught_up.remove(&count.archive);
+        st.work.sync.caught_up.remove(&count.archive);
         catch_up(st, app, &count.archive);
     }
 }
@@ -1527,12 +1542,12 @@ fn landed(
             return;
         }
         Heard::Lost => {
-            state.borrow_mut().sync.in_flight.remove(frame);
+            state.borrow_mut().work.sync.in_flight.remove(frame);
             refresh_note(&state.borrow(), app);
             return;
         }
         Heard::Done { result, .. } => {
-            state.borrow_mut().sync.in_flight.remove(frame);
+            state.borrow_mut().work.sync.in_flight.remove(frame);
             result
         }
     };
@@ -1558,7 +1573,7 @@ fn landed(
             }
             Outcome::Homed { local } => {
                 // As a save tells it: the row reads the sidecar again.
-                if let Some(indexer) = &state.borrow().index {
+                if let Some(indexer) = &state.borrow().views.index {
                     indexer.file(local);
                 }
             }
@@ -1582,7 +1597,7 @@ fn landed(
         // Writes left waiting while the archive answers are due again
         // at its next answer, and at the frame's next save.
         for a in waiting {
-            st.sync.caught_up.remove(&a);
+            st.work.sync.caught_up.remove(&a);
         }
         send_next(&mut st, frame);
     }
@@ -1635,7 +1650,7 @@ fn settle_held(
     theirs: Sidecar,
 ) -> bool {
     let mut st = state.borrow_mut();
-    if !st.write_sidecars {
+    if !st.window.write_sidecars {
         return false;
     }
     let held = st
@@ -1665,7 +1680,7 @@ fn settle_held(
             // Taken whole: the copy's bytes over the local sidecar, no
             // new revision, and nothing to write back.
             if !followed(&st, c) {
-                let (path, placement) = (st.files[c].clone(), st.placement);
+                let (path, placement) = (st.files[c].clone(), st.window.placement);
                 let dest =
                     Sidecar::find(&path).unwrap_or_else(|| Sidecar::path_in(&path, placement));
                 if let Err(e) = theirs.write_to(&dest) {
@@ -1689,7 +1704,7 @@ fn settle_held(
             for cell in st.cells_of_file(c) {
                 crate::edited::saved(&st, cell);
             }
-            if let Some(indexer) = &st.index {
+            if let Some(indexer) = &st.views.index {
                 indexer.file(st.files[c].clone());
             }
             // The copy and the window are the same now, which the
@@ -1724,7 +1739,7 @@ fn settle_held(
             // The save failed (the disk gone under the frame, about to
             // follow its copy): the join still goes to the copy from
             // memory, so the copy has both edits and the row clears.
-            if !st.sync.queued.contains_key(frame) && !st.sync.in_flight.contains(frame) {
+            if !st.work.sync.queued.contains_key(frame) && !st.work.sync.in_flight.contains(frame) {
                 after_save(&mut st, c);
             }
         }
@@ -1736,7 +1751,7 @@ fn settle_held(
 /// a save of its own: the panel shows it, developed again.
 fn show_settled(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
     let mut st = state.borrow_mut();
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         return;
     }
     crate::panel::history::take_current_settled(&mut st, app, worker);
@@ -1747,7 +1762,7 @@ fn show_settled(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
 /// copy. The frame goes through its own queue, so nothing else for it
 /// runs beside this.
 fn settle_on_disk(st: &mut State, frame: &Path, archive: &Path, copy: &Path, theirs: Sidecar) {
-    let Some(lib) = st.index_reader.as_ref() else {
+    let Some(lib) = st.views.index_reader.as_ref() else {
         return;
     };
     let Some(row) = lib.by_path(frame).ok().flatten() else {
@@ -1758,7 +1773,7 @@ fn settle_on_disk(st: &mut State, frame: &Path, archive: &Path, copy: &Path, the
         hash: row.hash,
         source: Source::Settle(Box::new(theirs)),
         placement: Placement::of(frame),
-        xmp: st.xmp_sidecars,
+        xmp: st.window.xmp_sidecars,
         copies: vec![Copy {
             archive: archive.to_path_buf(),
             copy: copy.to_path_buf(),
@@ -1772,6 +1787,7 @@ fn settle_on_disk(st: &mut State, frame: &Path, archive: &Path, copy: &Path, the
 /// click on it is [`retry`].
 pub(crate) fn refresh_note(st: &State, app: &App) {
     let counts = st
+        .views
         .index_reader
         .as_ref()
         .and_then(|l| l.pending_counts().ok())
@@ -1779,7 +1795,7 @@ pub(crate) fn refresh_note(st: &State, app: &App) {
     let note = counts
         .iter()
         .map(|count| {
-            let name = crate::roots::root_name(&st.library.roots, &count.archive);
+            let name = crate::roots::root_name(&st.views.library.roots, &count.archive);
             let n = count.total;
             let mut clause = format!(
                 "{n} edit{} waiting for {name}",
@@ -1813,7 +1829,7 @@ pub(crate) fn refresh_note(st: &State, app: &App) {
 /// a frame does not follow back when its root returns: its saves go to
 /// the copy until it is opened again.
 pub(crate) fn follow_offline(st: &mut State, app: &App) {
-    if !st.write_sidecars {
+    if !st.window.write_sidecars {
         return;
     }
     let Some(c) = st.current else {
@@ -1823,19 +1839,19 @@ pub(crate) fn follow_offline(st: &mut State, app: &App) {
         return;
     };
     if !crate::rows::is_offline(st, c)
-        || st.sync.followed.contains_key(&frame)
-        || st.sync.checking.contains(&frame)
-        || st.sync.queued.contains_key(&frame)
-        || st.sync.in_flight.contains(&frame)
+        || st.work.sync.followed.contains_key(&frame)
+        || st.work.sync.checking.contains(&frame)
+        || st.work.sync.queued.contains_key(&frame)
+        || st.work.sync.in_flight.contains(&frame)
         || !crate::panel::edit::writable(st, c)
-        || st.library.roots.archive_of(&frame).is_some()
+        || st.views.library.roots.archive_of(&frame).is_some()
     {
         return;
     }
-    let Some(lib) = st.index_reader.as_ref() else {
+    let Some(lib) = st.views.index_reader.as_ref() else {
         return;
     };
-    let Some(paired) = pair(lib, &st.library.roots, &frame) else {
+    let Some(paired) = pair(lib, &st.views.library.roots, &frame) else {
         return;
     };
     if lib.is_pending(&paired.hash).unwrap_or(true) {
@@ -1844,20 +1860,20 @@ pub(crate) fn follow_offline(st: &mut State, app: &App) {
     let Some(target) = paired
         .copies
         .into_iter()
-        .find(|c| !st.library.offline.contains(&c.archive))
+        .find(|c| !st.views.library.offline.contains(&c.archive))
     else {
         return;
     };
     if st.files.contains(&target.copy) {
         return;
     }
-    let Some(index) = st.index_path.clone() else {
+    let Some(index) = st.views.index_path.clone() else {
         return;
     };
-    st.sync.checking.insert(frame.clone());
+    st.work.sync.checking.insert(frame.clone());
     let hash = paired.hash;
     let sidecar = st.sidecar(c).clone();
-    let placement = st.placement;
+    let placement = st.window.placement;
     let job_frame = frame.clone();
     let job_target = target.clone();
     let land_target = target;
@@ -1882,7 +1898,7 @@ pub(crate) fn follow_offline(st: &mut State, app: &App) {
         },
     );
     if !sent {
-        st.sync.checking.remove(&frame);
+        st.work.sync.checking.remove(&frame);
     }
 }
 
@@ -1971,11 +1987,11 @@ fn follow_landed(
     let found = match heard {
         Heard::Aside => return,
         Heard::Lost => {
-            state.borrow_mut().sync.checking.remove(frame);
+            state.borrow_mut().work.sync.checking.remove(frame);
             return;
         }
         Heard::Done { result, .. } => {
-            state.borrow_mut().sync.checking.remove(frame);
+            state.borrow_mut().work.sync.checking.remove(frame);
             result
         }
     };
@@ -2011,21 +2027,22 @@ fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
     if st.files.get(file).map(Path::new) != Some(frame)
         || !crate::rows::is_offline(st, c)
         || st.files.contains(&target.copy)
-        || st.sync.queued.contains_key(frame)
-        || st.sync.in_flight.contains(frame)
+        || st.work.sync.queued.contains_key(frame)
+        || st.work.sync.in_flight.contains(frame)
     {
         return;
     }
     let local_root = crate::rows::offline_root(st, c);
-    if st.panel_stand_in.as_ref() == Some(&frame.to_path_buf()) {
-        st.panel_stand_in = Some(target.copy.clone());
+    if st.views.panel_stand_in.as_ref() == Some(&frame.to_path_buf()) {
+        st.views.panel_stand_in = Some(target.copy.clone());
     }
     if let Some(id) = st
+        .views
         .index_reader
         .as_ref()
         .and_then(|l| l.by_path(&target.copy).ok().flatten())
         .map(|e| e.id)
-        && let Some(slot) = st.index_ids.get_mut(file)
+        && let Some(slot) = st.views.index_ids.get_mut(file)
     {
         *slot = Some(id);
     }
@@ -2036,7 +2053,7 @@ fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
     );
     // The file's path: every cell of it follows.
     st.move_file(file, target.copy.clone());
-    st.sync.followed.insert(
+    st.work.sync.followed.insert(
         target.copy.clone(),
         Followed {
             local: frame.to_path_buf(),
@@ -2044,9 +2061,9 @@ fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
             homed: false,
         },
     );
-    let where_ = crate::roots::root_name(&st.library.roots, &target.archive);
+    let where_ = crate::roots::root_name(&st.views.library.roots, &target.archive);
     let which = local_root
-        .map(|r| crate::roots::root_name(&st.library.roots, &r))
+        .map(|r| crate::roots::root_name(&st.views.library.roots, &r))
         .unwrap_or_else(|| "its root".to_string());
     app.set_status(
         format!(
@@ -2228,8 +2245,8 @@ pub(crate) mod tests {
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.write_sidecars = true;
-            st.index_path = Some(db.to_path_buf());
+            st.window.write_sidecars = true;
+            st.views.index_path = Some(db.to_path_buf());
             let file = dir.join("roots.json");
             let mut roots = greycard_library::Roots::default();
             roots.add(local).unwrap();
@@ -2237,8 +2254,8 @@ pub(crate) mod tests {
             roots.set_archive(nas, true);
             roots.set_name(nas, "Archive");
             roots.save(&file).unwrap();
-            st.library.roots = roots;
-            st.library.file = Some(file);
+            st.views.library.roots = roots;
+            st.views.library.file = Some(file);
             for f in st.files.clone() {
                 if let Ok(Some(s)) = Sidecar::load(&f) {
                     let i = st.files.iter().position(|x| *x == f).unwrap();
@@ -2255,7 +2272,7 @@ pub(crate) mod tests {
     /// state alive past the drop, and Windows will not remove a folder
     /// holding an open database.
     fn close(state: Rc<RefCell<State>>, worker: Rc<Worker>) {
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(worker);
         drop(state);
     }
@@ -2540,7 +2557,7 @@ pub(crate) mod tests {
         let (local, nas, files, db) = two_places(&dir);
         let app = window(2);
         let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
-        state.borrow_mut().xmp_sidecars = true;
+        state.borrow_mut().window.xmp_sidecars = true;
         state.borrow_mut().sidecars[0].meta.rating = 3;
         save(&state, 0.75);
         let here = Sidecar::load(&files[0]).unwrap().unwrap();
@@ -2549,8 +2566,8 @@ pub(crate) mod tests {
         save(&state, 0.9);
         {
             let st = state.borrow();
-            assert!(st.sync.in_flight.contains(&files[0]));
-            assert_eq!(st.sync.queued.len(), 1);
+            assert!(st.work.sync.in_flight.contains(&files[0]));
+            assert_eq!(st.work.sync.queued.len(), 1);
         }
         let landed = land_sent(&state, &app, &worker);
         assert_eq!(landed, 2, "the first write, then the latest");
@@ -2564,8 +2581,8 @@ pub(crate) mod tests {
             !greycard_edit::xmp::paths_of(&copy).is_empty(),
             "the copy's XMP"
         );
-        assert!(state.borrow().sync.queued.is_empty());
-        assert!(state.borrow().sync.in_flight.is_empty());
+        assert!(state.borrow().work.sync.queued.is_empty());
+        assert!(state.borrow().work.sync.in_flight.is_empty());
         assert_eq!(app.get_sync_note(), "");
         assert!(pending_for(&db, &nas).is_empty());
         // XMPs off: none written beside the copy.
@@ -2618,7 +2635,7 @@ pub(crate) mod tests {
         {
             let mut st = state.borrow_mut();
             heard_from(&mut st, &app, &nas, true);
-            assert_eq!(st.sync.in_flight.len(), 2);
+            assert_eq!(st.work.sync.in_flight.len(), 2);
         }
         land_sent(&state, &app, &worker);
         let here = Sidecar::load(&files[0]).unwrap().unwrap();
@@ -2855,12 +2872,12 @@ pub(crate) mod tests {
         let late: Vec<Sent> = SENT.with(|s| s.borrow_mut().drain(..).collect());
         assert_eq!(late.len(), 1);
         assert!(
-            state.borrow().sync.in_flight.contains(&files[0]),
+            state.borrow().work.sync.in_flight.contains(&files[0]),
             "still out"
         );
         save(&state, 0.9);
         assert_eq!(
-            state.borrow().sync.in_flight.len(),
+            state.borrow().work.sync.in_flight.len(),
             1,
             "no second job beside it"
         );
@@ -2926,10 +2943,12 @@ pub(crate) mod tests {
         // The pairings say which is whose.
         {
             let mut st = state.borrow_mut();
-            st.library
+            st.views
+                .library
                 .roots
                 .set_backup_folder(&shoot, &nas, &nas.join("shoot"));
-            st.library
+            st.views
+                .library
                 .roots
                 .set_backup_folder(&selects, &nas, &nas.join("selects"));
             st.current = Some(1);
@@ -2982,7 +3001,7 @@ pub(crate) mod tests {
         save(&state, 0.4);
         heard_from(&mut state.borrow_mut(), &app, &nas, true);
         assert_eq!(
-            state.borrow().sync.in_flight.len(),
+            state.borrow().work.sync.in_flight.len(),
             1,
             "one job for the frame"
         );
@@ -3022,9 +3041,9 @@ pub(crate) mod tests {
         std::fs::rename(&local, &away).unwrap();
         {
             let mut st = state.borrow_mut();
-            st.library.offline.insert(local.clone());
+            st.views.library.offline.insert(local.clone());
             follow_offline(&mut st, &app);
-            assert!(st.sync.checking.contains(&files[0]));
+            assert!(st.work.sync.checking.contains(&files[0]));
             assert_eq!(st.files[0], files[0], "not followed before the check");
         }
         land_sent(&state, &app, &worker);
@@ -3080,10 +3099,10 @@ pub(crate) mod tests {
         // off the window's thread, and the frame goes on following.
         {
             let mut st = state.borrow_mut();
-            st.library.offline.clear();
+            st.views.library.offline.clear();
             heard_over(&mut st, &app, &HashSet::new());
             assert!(
-                st.sync.in_flight.contains(&copy),
+                st.work.sync.in_flight.contains(&copy),
                 "one job, through the frame's queue"
             );
         }
@@ -3106,9 +3125,9 @@ pub(crate) mod tests {
         crate::roots::tests::NOT_ANSWERING.with(|n| n.borrow_mut().clear());
         {
             let mut st = state2.borrow_mut();
-            st.library.offline.insert(local.clone());
+            st.views.library.offline.insert(local.clone());
             follow_offline(&mut st, &app2);
-            assert!(!st.sync.checking.contains(&files[1]));
+            assert!(!st.work.sync.checking.contains(&files[1]));
             assert_eq!(st.files[1], files[1], "a write waits: it stays");
         }
         close(state2, worker2);
@@ -3179,20 +3198,20 @@ pub(crate) mod tests {
         state.borrow_mut().current = Some(1);
         save(&state, 0.2);
         save(&state, 0.3);
-        assert_eq!(state.borrow().sync.queued.len(), 1);
+        assert_eq!(state.borrow().work.sync.queued.len(), 1);
         // Frame a: saved by the quit, the reader closed first, as
         // `startup::main` closes it.
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.index_reader = None;
+            st.views.index_reader = None;
         }
         save(&state, 0.7);
-        assert_eq!(state.borrow().sync.deferred.len(), 1);
+        assert_eq!(state.borrow().work.sync.deferred.len(), 1);
         assert_eq!(note_unsent_at_quit(&mut state.borrow_mut()), 2);
         {
             let st = state.borrow();
-            assert!(st.sync.deferred.is_empty() && st.sync.queued.is_empty());
+            assert!(st.work.sync.deferred.is_empty() && st.work.sync.queued.is_empty());
         }
         let mut p = pending_for(&db, &nas);
         p.sort_by(|x, y| x.frame.cmp(&y.frame));
@@ -3242,7 +3261,7 @@ pub(crate) mod tests {
         std::fs::rename(&local, &away).unwrap();
         {
             let mut st = state.borrow_mut();
-            st.library.offline.insert(local.clone());
+            st.views.library.offline.insert(local.clone());
             follow_offline(&mut st, &app);
         }
         land_sent(&state, &app, &worker);
@@ -3266,7 +3285,7 @@ pub(crate) mod tests {
         };
         // The quit: the reader closed, as `startup::main` closes it,
         // then its saves.
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         assert_eq!(
             save_at_quit(&mut state.borrow_mut(), exposed(0.9), QUIT_WRITE_WAIT),
             QuitWrites { ended: 1, noted: 0 }
@@ -3290,8 +3309,8 @@ pub(crate) mod tests {
         // is noted and the copy is untouched.
         crate::library::open_reader(&mut state.borrow_mut(), &app);
         save(&state, 1.2);
-        assert!(state.borrow().sync.in_flight.contains(&copy));
-        state.borrow_mut().index_reader = None;
+        assert!(state.borrow().work.sync.in_flight.contains(&copy));
+        state.borrow_mut().views.index_reader = None;
         let before = std::fs::read(copy_sidecar(&copy, Placement::Beside)).unwrap();
         assert_eq!(
             save_at_quit(
@@ -3385,10 +3404,10 @@ pub(crate) mod tests {
         st.current = Some(c);
         let edit = st.sidecars[c].current.clone();
         crate::panel::edit::show_edit(&st, &edit, app, None);
-        st.edit = edit;
-        st.cull_move_on = false;
+        st.develop.edit = edit;
+        st.culling.cull_move_on = false;
         crate::panel::cull::enter_cull(&mut st, app, 1);
-        assert!(st.cull.is_some());
+        assert!(st.culling.cull.is_some());
     }
 
     /// A quit from culling records nothing from the panel, which is
@@ -3412,7 +3431,7 @@ pub(crate) mod tests {
         std::fs::rename(&local, &away).unwrap();
         {
             let mut st = state.borrow_mut();
-            st.library.offline.insert(local.clone());
+            st.views.library.offline.insert(local.clone());
             follow_offline(&mut st, &app);
         }
         land_sent(&state, &app, &worker);
@@ -3425,10 +3444,10 @@ pub(crate) mod tests {
         // A rating, its write sent and not landed.
         assert!(app.invoke_meta_key("3".into()));
         assert_eq!(state.borrow().sidecars[0].meta.rating, 3);
-        assert!(state.borrow().sync.in_flight.contains(&copy));
+        assert!(state.borrow().work.sync.in_flight.contains(&copy));
         let on_copy = || Sidecar::load(&copy).unwrap().unwrap();
         assert_eq!(on_copy().meta.rating, 0);
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         assert_eq!(
             save_at_quit(
                 &mut state.borrow_mut(),
@@ -3488,15 +3507,15 @@ pub(crate) mod tests {
         assert!(app.invoke_meta_key("2".into()));
         assert!(app.invoke_meta_key("3".into()));
         assert_eq!(state.borrow().sidecars[1].meta.rating, 3);
-        assert_eq!(state.borrow().sync.queued.len(), 1);
+        assert_eq!(state.borrow().work.sync.queued.len(), 1);
         let on_disk = std::fs::read(Sidecar::path_for(&files[1])).unwrap();
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         save_at_quit(
             &mut state.borrow_mut(),
             exposed(2.0),
             crate::sync::QUIT_WRITE_WAIT,
         );
-        assert!(state.borrow().sync.queued.is_empty());
+        assert!(state.borrow().work.sync.queued.is_empty());
         let p = pending_for(&db, &nas);
         assert_eq!(
             p.iter()
@@ -3604,7 +3623,7 @@ pub(crate) mod tests {
             land_sent(&state, &app, &worker);
             crate::roots::tests::NOT_ANSWERING.with(|n| n.borrow_mut().clear());
             assert_eq!(pending_for(&db, &nas).len(), 1);
-            state.borrow_mut().index_reader = None;
+            state.borrow_mut().views.index_reader = None;
             drop(state);
             drop(worker);
         }
@@ -3653,6 +3672,7 @@ pub(crate) mod tests {
         let (state, worker) = opened(&app, &dir, vec![a.clone(), a2.clone()], &local, &nas, &db);
         state
             .borrow_mut()
+            .views
             .library
             .roots
             .set_backup_folder(&shoot, &nas, &nas.join("shoot"));
@@ -3681,7 +3701,7 @@ pub(crate) mod tests {
             show(&nas.join("selects").join("a.tif")).is_empty(),
             "nothing written to it"
         );
-        state.borrow_mut().library.roots.set_backup_folder(
+        state.borrow_mut().views.library.roots.set_backup_folder(
             &local.join("selects"),
             &nas,
             &nas.join("selects"),
@@ -3709,6 +3729,7 @@ pub(crate) mod tests {
         let (state, worker) = opened(&app, &dir, vec![a.clone(), a2.clone()], &local, &nas, &db);
         state
             .borrow_mut()
+            .views
             .library
             .roots
             .set_backup_folder(&shoot, &nas, &nas.join("shoot"));
@@ -3822,18 +3843,18 @@ pub(crate) mod tests {
         let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
         {
             let mut st = state.borrow_mut();
-            st.index_reader = None;
+            st.views.index_reader = None;
         }
         save(&state, 0.4);
         {
             let st = state.borrow();
-            assert_eq!(st.sync.deferred.len(), 1);
-            assert!(st.sync.queued.is_empty() && st.sync.in_flight.is_empty());
+            assert_eq!(st.work.sync.deferred.len(), 1);
+            assert!(st.work.sync.queued.is_empty() && st.work.sync.in_flight.is_empty());
         }
         assert_eq!(land_sent(&state, &app, &worker), 0);
         crate::library::open_reader(&mut state.borrow_mut(), &app);
-        assert!(state.borrow().sync.deferred.is_empty());
-        assert_eq!(state.borrow().sync.in_flight.len(), 1);
+        assert!(state.borrow().work.sync.deferred.is_empty());
+        assert_eq!(state.borrow().work.sync.in_flight.len(), 1);
         land_sent(&state, &app, &worker);
         let copy = nas.join("shoot").join("a.tif");
         assert_eq!(
@@ -3873,7 +3894,7 @@ pub(crate) mod tests {
         assert_eq!(pending_for(&db, &nas).len(), 1);
         // a deleted by another hand, the window over other frames now.
         let other = vec![nas.join("shoot").join("b.tif")];
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         drop(worker);
         std::fs::remove_file(&files[0]).unwrap();
@@ -3913,7 +3934,7 @@ pub(crate) mod tests {
         land_sent(&state, &app, &worker);
         {
             let mut st = state.borrow_mut();
-            st.library.offline.insert(local.clone());
+            st.views.library.offline.insert(local.clone());
             follow_offline(&mut st, &app);
         }
         land_sent(&state, &app, &worker);
@@ -3926,7 +3947,7 @@ pub(crate) mod tests {
         there.save(&files[0]).unwrap();
         {
             let mut st = state.borrow_mut();
-            st.library.offline.clear();
+            st.views.library.offline.clear();
             heard_over(&mut st, &app, &HashSet::new());
         }
         land_sent(&state, &app, &worker);
@@ -3966,7 +3987,7 @@ pub(crate) mod tests {
         crate::roots::tests::NOT_ANSWERING.with(|n| n.borrow_mut().clear());
         assert_eq!(pending_for(&db, &nas).len(), 1);
         // The window over the archive's frame; the mount point empty.
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         drop(worker);
         std::fs::remove_file(&a).unwrap();

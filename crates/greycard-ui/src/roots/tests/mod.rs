@@ -89,7 +89,7 @@ fn read_new(st: &State, next: &[PathBuf]) -> HashMap<PathBuf, Held> {
         .cloned()
         .collect();
     let none = vec![None; fresh.len()];
-    let held = rows::bring(&fresh, &none, st.write_sidecars, None);
+    let held = rows::bring(&fresh, &none, st.window.write_sidecars, None);
     fresh.into_iter().zip(held).collect()
 }
 
@@ -99,7 +99,7 @@ fn seen_now(st: &State, db: Option<&Path>) -> OnScreen {
     st.current
         .and_then(|c| {
             let path = st.path_at(c)?.clone();
-            let id = st.index_ids.get(st.file_at(c)?).copied().flatten();
+            let id = st.views.index_ids.get(st.file_at(c)?).copied().flatten();
             let lib = db.and_then(|db| greycard_library::Library::open_read_only(db).ok());
             Some(OnScreen::look(path, id, lib.as_ref()))
         })
@@ -176,11 +176,11 @@ fn three_under_a_root(
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
         // By name over the folders: the frames are told apart by their
         // place in the list this built, in that order.
-        st.sort = crate::sort::Kept::by_name();
-        st.library.roots.add(&a).unwrap();
+        st.views.sort = crate::sort::Kept::by_name();
+        st.views.library.roots.add(&a).unwrap();
     }
     (dir, writer, app, state, worker)
 }
@@ -188,7 +188,12 @@ fn three_under_a_root(
 /// The count a view's read keeps, as the pool would bump it.
 fn read_so_far(state: &Rc<RefCell<State>>, n: usize) {
     let st = state.borrow();
-    let p = st.library.progress.as_ref().expect("a view's read is out");
+    let p = st
+        .views
+        .library
+        .progress
+        .as_ref()
+        .expect("a view's read is out");
     p.read.store(n, Ordering::Relaxed);
 }
 
@@ -256,13 +261,13 @@ fn rated_under_a_root(
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
         // By name over the folders: the frames are told apart by their
         // place in the list this built, in that order.
-        st.sort = crate::sort::Kept::by_name();
-        st.index_path = Some(db);
-        st.write_sidecars = true;
-        st.library.roots.add(&a).unwrap();
+        st.views.sort = crate::sort::Kept::by_name();
+        st.views.index_path = Some(db);
+        st.window.write_sidecars = true;
+        st.views.library.roots.add(&a).unwrap();
     }
     (dir, files, writer, app, state, worker)
 }
@@ -296,12 +301,12 @@ impl Shoot {
         let (state, worker) = state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
             // By name over the folders: the frames are told apart by their
             // place in the list this built, in that order.
-            st.sort = crate::sort::Kept::by_name();
-            st.index_path = Some(db.clone());
-            st.library.roots.add(&root).unwrap();
+            st.views.sort = crate::sort::Kept::by_name();
+            st.views.index_path = Some(db.clone());
+            st.views.library.roots.add(&root).unwrap();
         }
         open_view(&state, &app, &worker, View::Roots(None));
         land_all(&state, &app, &worker);
@@ -343,7 +348,7 @@ impl Shoot {
     }
 
     fn done(self) {
-        self.state.borrow_mut().index_reader = None;
+        self.state.borrow_mut().views.index_reader = None;
         drop(self.state);
         drop(self.writer);
         crate::testing::remove_dir_retry(&self.dir);

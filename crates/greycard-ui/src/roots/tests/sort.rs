@@ -41,9 +41,9 @@ fn window_on(dir: &Path, root: &Path) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.index_path = Some(db);
-        st.library.roots.add(root).unwrap();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.index_path = Some(db);
+        st.views.library.roots.add(root).unwrap();
     }
     (app, state, worker)
 }
@@ -71,7 +71,7 @@ fn on_screen(st: &State) -> Option<String> {
 }
 
 fn teardown(dir: &Path, state: Rc<RefCell<State>>, writer: greycard_library::Library) {
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(dir);
@@ -112,7 +112,10 @@ fn every_root_reads_by_capture_time_and_a_sort_keeps_the_frame_on_screen() {
     app.invoke_select(1);
     assert_eq!(on_screen(&state.borrow()).as_deref(), Some("IMG_0001.tif"));
     app.invoke_sort_picked(1);
-    assert!(state.borrow().sort_reveal, "a read is out for the sort");
+    assert!(
+        state.borrow().views.sort_reveal,
+        "a read is out for the sort"
+    );
     land_all(&state, &app, &worker);
     let by_name = [
         "IMG_0001.tif",
@@ -125,23 +128,23 @@ fn every_root_reads_by_capture_time_and_a_sort_keeps_the_frame_on_screen() {
     assert_eq!(on_screen(&state.borrow()).as_deref(), Some("IMG_0001.tif"));
     assert_eq!(app.get_selected(), 0);
     assert!(
-        !state.borrow().sort_reveal,
+        !state.borrow().views.sort_reveal,
         "brought into view as it landed"
     );
     assert_eq!(app.get_sort_menu().words, "Name");
     assert_eq!(app.get_sort_menu().label, "name");
     assert_eq!(
-        state.borrow().sort.choice(&View::Roots(None)),
+        state.borrow().views.sort.choice(&View::Roots(None)),
         Choice::By(Order::NAME)
     );
     // Kept for every view of several folders, and for those alone.
-    assert_eq!(state.borrow().sort.roots.as_deref(), Some("name"));
-    assert_eq!(state.borrow().sort.folder, None);
+    assert_eq!(state.borrow().views.sort.roots.as_deref(), Some("name"));
+    assert_eq!(state.borrow().views.sort.folder, None);
 
     // Culling's arrows walk the list in the order chosen, and Home and
     // End go to its ends.
     app.invoke_cull_toggled();
-    assert!(state.borrow().cull.is_some());
+    assert!(state.borrow().culling.cull.is_some());
     crate::testing::press(&app, Key::RightArrow);
     assert_eq!(on_screen(&state.borrow()).as_deref(), Some("IMG_0002.tif"));
     crate::testing::press(&app, Key::RightArrow);
@@ -188,12 +191,15 @@ fn a_sort_chosen_while_a_view_opens_is_read_again_when_it_lands() {
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     open_view(&state, &app, &worker, View::Roots(Some(root.clone())));
-    assert!(state.borrow().library.loading, "the root's read is out");
+    assert!(
+        state.borrow().views.library.loading,
+        "the root's read is out"
+    );
     app.invoke_sort_picked(1);
     assert_eq!(app.get_sort_menu().words, "Name");
-    assert!(state.borrow().sort_reveal, "kept for the landing");
+    assert!(state.borrow().views.sort_reveal, "kept for the landing");
     land_all(&state, &app, &worker);
-    assert_eq!(state.borrow().view, View::Roots(Some(root.clone())));
+    assert_eq!(state.borrow().views.view, View::Roots(Some(root.clone())));
     let by_name = [
         "IMG_0001.tif",
         "IMG_0002.tif",
@@ -203,7 +209,7 @@ fn a_sort_chosen_while_a_view_opens_is_read_again_when_it_lands() {
     assert_eq!(listed(&state.borrow()), by_name);
     assert_eq!(rows_shown(&app), by_name);
     assert_eq!(app.get_sort_menu().words, "Name");
-    assert!(!state.borrow().sort_reveal);
+    assert!(!state.borrow().views.sort_reveal);
     teardown(&dir, state, writer);
 }
 
@@ -229,7 +235,7 @@ fn a_folder_from_the_disk_is_by_name_until_its_order_is_chosen() {
         Select::Row(0),
     );
     land_all(&state, &app, &worker);
-    assert_eq!(state.borrow().view, View::Folder);
+    assert_eq!(state.borrow().views.view, View::Folder);
     assert_eq!(
         listed(&state.borrow()),
         ["IMG_0000.tif", "IMG_0001.tif", "IMG_0002.tif"]
@@ -245,9 +251,12 @@ fn a_folder_from_the_disk_is_by_name_until_its_order_is_chosen() {
         ["IMG_0000.tif", "IMG_0002.tif", "IMG_0001.tif"]
     );
     assert_eq!(app.get_sort_menu().words, "Capture time");
-    assert_eq!(state.borrow().sort.folder.as_deref(), Some("capture-desc"));
     assert_eq!(
-        state.borrow().sort.choice(&View::Roots(None)),
+        state.borrow().views.sort.folder.as_deref(),
+        Some("capture-desc")
+    );
+    assert_eq!(
+        state.borrow().views.sort.choice(&View::Roots(None)),
         Choice::By(Order::TAKEN)
     );
     teardown(&dir, state, writer);
@@ -276,7 +285,7 @@ fn a_collection_keeps_its_hand_order_until_a_sort_and_comes_back_to_it() {
         let mut c = crate::collections::Collection::new("Picks");
         c.add(&frames);
         let id = c.id.clone();
-        st.collections.list.push(c);
+        st.views.collections.list.push(c);
         id
     };
     let view = View::Collection { id: id.clone() };
@@ -305,6 +314,7 @@ fn a_collection_keeps_its_hand_order_until_a_sort_and_comes_back_to_it() {
     assert!(!app.get_collection_reorder(), "no drag in an order chosen");
     let hints: Vec<String> = state
         .borrow()
+        .views
         .collections
         .collection(&id)
         .unwrap()
@@ -319,7 +329,7 @@ fn a_collection_keeps_its_hand_order_until_a_sort_and_comes_back_to_it() {
         })
         .collect();
     assert_eq!(hints, hand, "the collection's own order is kept");
-    let row = state.borrow().collections.rows.row_data(0).unwrap();
+    let row = state.borrow().views.collections.rows.row_data(0).unwrap();
     assert!(row.capture);
     assert_eq!(row.order, "capture time", "the open row names its order");
 
@@ -339,18 +349,28 @@ fn a_collection_keeps_its_hand_order_until_a_sort_and_comes_back_to_it() {
         rows_shown(&app),
         ["IMG_0002.tif", "IMG_0001.tif", "_DSC0001.tif"]
     );
-    assert!(state.borrow().collections.rows.row_data(0).unwrap().capture);
+    assert!(
+        state
+            .borrow()
+            .views
+            .collections
+            .rows
+            .row_data(0)
+            .unwrap()
+            .capture
+    );
     app.invoke_collection_capture(id.as_str().into());
     land_all(&state, &app, &worker);
     assert_eq!(rows_shown(&app), hand);
     assert_eq!(app.get_sort_menu().words, "Hand order");
-    let row = state.borrow().collections.rows.row_data(0).unwrap();
+    let row = state.borrow().views.collections.rows.row_data(0).unwrap();
     assert!(!row.capture);
     assert_eq!(row.order, "");
     // Another collection is in its own order still.
     assert_eq!(
         state
             .borrow()
+            .views
             .sort
             .choice(&View::Collection { id: "other".into() }),
         Choice::Hand

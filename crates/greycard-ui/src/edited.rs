@@ -1267,10 +1267,10 @@ pub(crate) fn looks_moved(st: &mut crate::State) {
             ask_again(st, &worker, c);
         }
     }
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         crate::panel::cull::cull_refresh(st);
     }
-    if let Some(indexer) = &st.index {
+    if let Some(indexer) = &st.views.index {
         indexer.keys_stale();
     }
 }
@@ -1282,7 +1282,7 @@ pub(crate) fn looks_moved(st: &mut crate::State) {
 pub(crate) fn note_editing(st: &crate::State, worker: &crate::worker::Worker, grid: bool) {
     let open = st
         .current
-        .filter(|_| st.cull.is_none() && !grid)
+        .filter(|_| st.culling.cull.is_none() && !grid)
         .and_then(|c| st.key_of(c));
     worker.set_open_frame(open);
 }
@@ -1322,7 +1322,7 @@ pub(crate) fn saved(st: &crate::State, c: usize) {
         return;
     };
     let iso = iso_of(st, c);
-    if st.current == Some(c) && st.cull.is_none() {
+    if st.current == Some(c) && st.culling.cull.is_none() {
         worker.send(crate::worker::Job::Keep {
             frame,
             edit: line.current.clone(),
@@ -1346,7 +1346,7 @@ pub(crate) fn saved(st: &crate::State, c: usize) {
 /// frame edited before its pictures were kept has them once it is
 /// opened. A frame with no edit, and none held, asks nothing.
 pub(crate) fn landed(st: &crate::State, turn: u8) {
-    let Some(c) = st.current.filter(|_| st.cull.is_none()) else {
+    let Some(c) = st.current.filter(|_| st.culling.cull.is_none()) else {
         return;
     };
     let (Some(frame), Some(line), Some(sidecar)) = (st.key_of(c), st.line(c), st.sidecar_at(c))
@@ -1355,7 +1355,10 @@ pub(crate) fn landed(st: &crate::State, turn: u8) {
     };
     // The sidecar on disk is the frame's own, and holds what was
     // developed: nothing on the panel is unsaved.
-    if !crate::panel::edit::writable(st, c) || line.current != st.edit || sidecar.turn != turn {
+    if !crate::panel::edit::writable(st, c)
+        || line.current != st.develop.edit
+        || sidecar.turn != turn
+    {
         return;
     }
     let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) else {
@@ -1431,7 +1434,7 @@ pub(crate) fn kept(st: &mut crate::State, worker: &crate::worker::Worker, frame:
         return;
     };
     ask_again(st, worker, c);
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         crate::panel::cull::cull_refresh(st);
     }
 }
@@ -1441,7 +1444,10 @@ pub(crate) fn kept(st: &mut crate::State, worker: &crate::worker::Worker, frame:
 fn ask_again(st: &mut crate::State, worker: &crate::worker::Worker, c: usize) {
     worker.send(crate::rows::thumb_job(st, c));
     crate::lightbox::forget(st, c);
-    for cull in [st.cull.as_mut(), st.hold.as_mut()].into_iter().flatten() {
+    for cull in [st.culling.cull.as_mut(), st.culling.hold.as_mut()]
+        .into_iter()
+        .flatten()
+    {
         cull.cache.forget(c);
     }
 }
@@ -2117,7 +2123,7 @@ mod tests {
     /// has a cell: what frame `i` shows in the window.
     fn shown(st: &crate::State, app: &crate::App, i: usize) -> (f64, Option<f64>) {
         use slint::Model;
-        let (_, _, rgb) = st.thumb_base[i].as_ref().expect("a picture held");
+        let (_, _, rgb) = st.views.thumb_base[i].as_ref().expect("a picture held");
         let drawn = crate::panel::browser::row_of(st, i)
             .and_then(|row| app.get_thumbs().row_data(row))
             .and_then(|t| t.image.to_rgb8())
@@ -2164,7 +2170,7 @@ mod tests {
         crate::WORKER.with(|w| *w.borrow_mut() = Some(worker.clone()));
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = true;
+            st.window.write_sidecars = true;
             for s in &mut st.sidecars {
                 s.current = Edit::for_picture();
             }
@@ -2200,7 +2206,7 @@ mod tests {
             }
         };
         pump(
-            &|st| st.thumb_base.iter().all(Option::is_some),
+            &|st| st.views.thumb_base.iter().all(Option::is_some),
             "the camera's",
         );
         let camera = shown(&state.borrow(), &app, 0);
@@ -2263,11 +2269,11 @@ mod tests {
             let mut st = state.borrow_mut();
             crate::panel::browser::turn_frames(&mut st, &app, &worker, &[0], 1);
             assert_eq!(st.sidecars[0].turn, 1);
-            st.thumb_base[0] = None;
+            st.views.thumb_base[0] = None;
             worker.send(crate::rows::thumb_job(&st, 0));
         }
         pump(
-            &|st| st.thumb_base[0].is_some(),
+            &|st| st.views.thumb_base[0].is_some(),
             "the turned frame's picture",
         );
         let turned = shown(&state.borrow(), &app, 0).0;

@@ -354,3 +354,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§341. The CLI's main.rs, one file a subcommand](notes/341-the-clis-main-rs-one-file-a-subcommand.md) (2026-10-17)
 - [§342. Fitting the Lightroom mapper to its exports: the body's stop, and what the sliders would not give](notes/342-fitting-the-lightroom-mapper-to-its-exports-the-bodys-stop-and-what-the-sliders-would-not-give.md) (2026-10-17)
 - [§343. X-Trans CA: the read, the vote, and the green that limits both](notes/343-x-trans-ca-the-read-the-vote-and-the-green-that-limits-both.md) (2026-10-17)
+- [§344. The window's State, by owner](notes/344-the-windows-state-by-owner.md) (2026-10-17)

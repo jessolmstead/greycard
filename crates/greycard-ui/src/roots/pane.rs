@@ -5,25 +5,26 @@ use super::*;
 
 /// Each root's count, as the index holds it now.
 pub(crate) fn recount(st: &mut State) {
-    let Some(lib) = &st.index_reader else {
+    let Some(lib) = &st.views.index_reader else {
         return;
     };
     let counts: Vec<usize> = st
+        .views
         .library
         .roots
         .list()
         .iter()
         .map(|r| lib.count_under_canonical(r).unwrap_or(0))
         .collect();
-    st.library.counts = counts;
+    st.views.library.counts = counts;
 }
 
 /// The roots in the grid's left pane, and what depends on them: the
 /// open folder's name and the tree.
 pub(crate) fn show(st: &State, app: &App) {
-    let roots = st.library.roots.list();
+    let roots = st.views.library.roots.list();
     // A folder of a root's tree keeps the root's row lit.
-    let on = match &st.view {
+    let on = match &st.views.view {
         View::Roots(r) => Some(r.clone()),
         View::Branch { root, .. } => Some(Some(root.clone())),
         View::Folder | View::Collection { .. } => None,
@@ -32,20 +33,20 @@ pub(crate) fn show(st: &State, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, r)| RootChip {
-            name: root_name(&st.library.roots, r).into(),
+            name: root_name(&st.views.library.roots, r).into(),
             path: r.to_string_lossy().into_owned().into(),
-            count: st.library.counts.get(i).copied().unwrap_or(0) as i32,
+            count: st.views.library.counts.get(i).copied().unwrap_or(0) as i32,
             on: on.as_ref() == Some(&Some(r.clone())),
-            offline: st.library.offline.contains(r),
-            archive: st.library.roots.is_archive(r),
+            offline: st.views.library.offline.contains(r),
+            archive: st.views.library.roots.is_archive(r),
         })
         .collect();
-    let model = &st.library.rows;
+    let model = &st.views.library.rows;
     if !model.iter().eq(chips.iter().cloned()) {
         model.set_vec(chips);
     }
     app.set_library_all_on(on == Some(None));
-    app.set_library_all_count(st.library.counts.iter().sum::<usize>() as i32);
+    app.set_library_all_count(st.views.library.counts.iter().sum::<usize>() as i32);
     app.set_library_can_add_open(open_folder_to_add(st).is_some());
     app.set_library_note(
         if roots.is_empty() {
@@ -110,17 +111,23 @@ fn folder_name(dir: &Path) -> String {
 /// and the add makes it canonical off the window's thread, where one
 /// under a root after all is said to be.
 pub(super) fn open_folder_to_add(st: &State) -> Option<PathBuf> {
-    if st.view != View::Folder {
+    if st.views.view != View::Folder {
         return None;
     }
     let dir = st.files.first()?.parent()?;
     let dir = st
+        .views
         .library
         .canonical
         .get(dir)
         .cloned()
         .unwrap_or_else(|| dir.to_path_buf());
-    st.library.roots.root_of(&dir).is_none().then_some(dir)
+    st.views
+        .library
+        .roots
+        .root_of(&dir)
+        .is_none()
+        .then_some(dir)
 }
 
 /// Change the roots: through the file as it is on disk now when there
@@ -130,15 +137,15 @@ pub(crate) fn edit_roots<T>(
     st: &mut State,
     change: impl FnOnce(&mut Roots) -> T,
 ) -> std::result::Result<T, String> {
-    match &st.library.file {
+    match &st.views.library.file {
         Some(path) => match Roots::edit(path, change) {
             Ok((roots, out)) => {
-                st.library.roots = roots;
+                st.views.library.roots = roots;
                 Ok(out)
             }
             Err(e) => Err(format!("{}: {e}", path.display())),
         },
-        None => Ok(change(&mut st.library.roots)),
+        None => Ok(change(&mut st.views.library.roots)),
     }
 }
 
@@ -187,7 +194,15 @@ impl Check {
         match self {
             Check::Add => add_checked(state, app, worker, checked),
             Check::Remove => match checked {
-                Ok(canonical) if state.borrow().library.roots.list().contains(&canonical) => {
+                Ok(canonical)
+                    if state
+                        .borrow()
+                        .views
+                        .library
+                        .roots
+                        .list()
+                        .contains(&canonical) =>
+                {
                     remove_listed(state, app, worker, &canonical)
                 }
                 Ok(_) => app.set_status(format!("{} is not in the library", dir.display()).into()),
@@ -320,7 +335,7 @@ fn add_checked(
             app.set_status(
                 format!(
                     "{} is in the library now; right-click its row to name it",
-                    said(&st.library.roots, &root)
+                    said(&st.views.library.roots, &root)
                 )
                 .into(),
             );
@@ -330,7 +345,7 @@ fn add_checked(
             app.set_status(
                 format!(
                     "{} is in the library now, in place of {} folder{} under it",
-                    said(&st.library.roots, &root),
+                    said(&st.views.library.roots, &root),
                     under.len(),
                     if under.len() == 1 { "" } else { "s" }
                 )
@@ -342,7 +357,7 @@ fn add_checked(
             app.set_status(
                 format!(
                     "already in the library, under {}",
-                    said(&st.library.roots, &root)
+                    said(&st.views.library.roots, &root)
                 )
                 .into(),
             );
@@ -355,13 +370,13 @@ fn add_checked(
         }
     };
     tracing::info!("library: added {}", new.display());
-    if let Some(indexer) = &st.index {
+    if let Some(indexer) = &st.views.index {
         indexer.roots(vec![new]);
     }
     watch(&mut st, app);
     recount(&mut st);
     show(&st, app);
-    let refresh = matches!(st.view, View::Roots(None));
+    let refresh = matches!(st.views.view, View::Roots(None));
     drop(st);
     if refresh {
         refresh_view(state, app, worker);
@@ -380,27 +395,27 @@ pub(crate) fn taken_from_file(
     added: Vec<PathBuf>,
 ) {
     let mut st = state.borrow_mut();
-    match st.library.file.clone() {
+    match st.views.library.file.clone() {
         Some(file) => match Roots::load(&file) {
-            Ok(roots) => st.library.roots = roots,
+            Ok(roots) => st.views.library.roots = roots,
             Err(e) => tracing::warn!("library: roots not read again: {e}"),
         },
         None => {
             for dir in &added {
-                if let Err(e) = st.library.roots.add(dir) {
+                if let Err(e) = st.views.library.roots.add(dir) {
                     tracing::warn!("library: {e}");
                 }
             }
         }
     }
     tracing::info!("library: {} roots added by the import", added.len());
-    if let Some(indexer) = &st.index {
+    if let Some(indexer) = &st.views.index {
         indexer.roots(added);
     }
     watch(&mut st, app);
     recount(&mut st);
     show(&st, app);
-    let refresh = matches!(st.view, View::Roots(None));
+    let refresh = matches!(st.views.view, View::Roots(None));
     drop(st);
     if refresh && let Some(worker) = worker {
         refresh_view(state, app, worker);
@@ -414,7 +429,15 @@ pub(crate) fn taken_from_file(
 /// other path is made canonical off the window's thread first, and
 /// taken out by that when it is in the list.
 pub(crate) fn remove(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
-    if state.borrow().library.roots.list().iter().any(|r| r == dir) {
+    if state
+        .borrow()
+        .views
+        .library
+        .roots
+        .list()
+        .iter()
+        .any(|r| r == dir)
+    {
         remove_listed(state, app, worker, dir);
     } else {
         send_check(state, app, worker, dir.to_path_buf(), Check::Remove);
@@ -424,7 +447,7 @@ pub(crate) fn remove(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>,
 /// Take out a root the list has as `dir`, as it is.
 fn remove_listed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     let mut st = state.borrow_mut();
-    let was = said(&st.library.roots, dir);
+    let was = said(&st.views.library.roots, dir);
     match edit_roots(&mut st, |r| r.remove(dir)) {
         Ok(true) => {}
         Ok(false) => return,
@@ -440,7 +463,7 @@ fn remove_listed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir
     );
     app.set_status(format!("{was} is out of the library; its files are where they were").into());
     // Nothing is owed to or by a root that is out (§233).
-    if let Some(indexer) = &st.index {
+    if let Some(indexer) = &st.views.index {
         indexer.forget_pending_under(dir.to_path_buf());
     }
     // The watcher there is kept until the one on the rest is ready, so
@@ -448,14 +471,14 @@ fn remove_listed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir
     // large tree, many seconds). The timer is started again at once
     // without the root, which asks the disk nothing.
     // A network mount below the root goes with it.
-    st.library.remote.retain(|(r, _)| !r.starts_with(dir));
+    st.views.library.remote.retain(|(r, _)| !r.starts_with(dir));
     restart_poll(&mut st);
     watch(&mut st, app);
     recount(&mut st);
-    let view = st.view.clone();
+    let view = st.views.view.clone();
     let refresh = match &view {
         View::Roots(Some(r)) | View::Branch { root: r, .. } if r == dir => {
-            st.view = View::Roots(None);
+            st.views.view = View::Roots(None);
             true
         }
         View::Roots(_) | View::Branch { .. } | View::Collection { .. } => true,
@@ -477,7 +500,7 @@ fn remove_listed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir
 /// row and what the status line calls it change.
 pub(crate) fn rename(state: &Rc<RefCell<State>>, app: &App, dir: &Path, name: &str) {
     let mut st = state.borrow_mut();
-    let before = st.library.roots.name(dir).map(str::to_owned);
+    let before = st.views.library.roots.name(dir).map(str::to_owned);
     match edit_roots(&mut st, |r| r.set_name(dir, name)) {
         Ok(true) => {}
         Ok(false) => {
@@ -490,7 +513,7 @@ pub(crate) fn rename(state: &Rc<RefCell<State>>, app: &App, dir: &Path, name: &s
             return;
         }
     }
-    let after = st.library.roots.name(dir).map(str::to_owned);
+    let after = st.views.library.roots.name(dir).map(str::to_owned);
     if after != before {
         tracing::info!("library: {} named {:?}", dir.display(), after);
     }
@@ -511,6 +534,6 @@ pub(crate) fn rename(state: &Rc<RefCell<State>>, app: &App, dir: &Path, name: &s
 pub(super) fn open_sheet(st: &State, app: &App, dir: &Path) {
     app.set_root_sheet_path(dir.to_string_lossy().into_owned().into());
     app.set_root_sheet_folder(folder_name(dir).into());
-    app.set_root_sheet_name(st.library.roots.name(dir).unwrap_or("").into());
+    app.set_root_sheet_name(st.views.library.roots.name(dir).unwrap_or("").into());
     app.set_root_sheet_open(true);
 }

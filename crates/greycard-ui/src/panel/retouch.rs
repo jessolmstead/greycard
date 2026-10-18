@@ -83,8 +83,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let mut st = state.borrow_mut();
             let method = RetouchMethod::from_name(kind.as_str());
-            if method.is_none() || st.retouching == method {
-                st.retouching = None;
+            if method.is_none() || st.develop.retouching == method {
+                st.develop.retouching = None;
                 app.set_retouch_mode("".into());
                 app.set_status("".into());
                 return;
@@ -92,17 +92,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // A fill needs its model; offer it first.
             if method == Some(RetouchMethod::Fill)
                 && !st
+                    .develop
                     .store
                     .as_ref()
                     .is_some_and(|s| s.have(&greycard_ai::FILL))
             {
-                if !st.fetching {
+                if !st.sheets.fetching {
                     offer_model(&mut st, &app, &greycard_ai::FILL, false);
                 }
                 return;
             }
-            st.retouching = method;
-            st.placing = None;
+            st.develop.retouching = method;
+            st.develop.placing = None;
             app.set_placing("".into());
             app.set_retouch_mode(kind);
             app.set_status(
@@ -118,7 +119,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let st = state.borrow();
             app.set_patch(i);
-            show_patches(&st.edit, &app);
+            show_patches(&st.develop.edit, &app);
             app.window().request_redraw();
         });
     }
@@ -132,10 +133,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Ok(i) = usize::try_from(app.get_patch()) else {
                 return;
             };
-            if i < st.edit.retouch.patches.len() {
-                st.edit.retouch.patches.remove(i);
+            if i < st.develop.edit.retouch.patches.len() {
+                st.develop.edit.retouch.patches.remove(i);
                 app.set_patch(i as i32 - 1);
-                show_patches(&st.edit, &app);
+                show_patches(&st.develop.edit, &app);
                 develop_soon(&mut st, state.clone(), worker.clone(), app.as_weak());
             }
         });
@@ -150,7 +151,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Ok(i) = usize::try_from(app.get_patch()) else {
                 return;
             };
-            if let Some(p) = st.edit.retouch.patches.get_mut(i) {
+            if let Some(p) = st.develop.edit.retouch.patches.get_mut(i) {
                 p.radius = app.get_patch_size().clamp(0.002, 0.3);
                 p.feather = app.get_patch_feather().clamp(0.0, 1.0);
                 p.opacity = app.get_patch_opacity().clamp(0.0, 1.0);
@@ -167,7 +168,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let mut st = state.borrow_mut();
             let Some(patch) = usize::try_from(app.get_patch())
                 .ok()
-                .and_then(|i| st.edit.retouch.patches.get(i))
+                .and_then(|i| st.develop.edit.retouch.patches.get(i))
                 .cloned()
             else {
                 return;
@@ -179,7 +180,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 _ => return,
             };
             let at = source_to_view(&st, &app, u, v);
-            st.patch_drag = Some((patch, handle.max(0) as usize, at));
+            st.develop.patch_drag = Some((patch, handle.max(0) as usize, at));
         });
     }
     {
@@ -189,7 +190,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some((grabbed, handle, at)) = st.patch_drag.clone() else {
+            let Some((grabbed, handle, at)) = st.develop.patch_drag.clone() else {
                 return;
             };
             let p = view_to_source(&st, &app, at.0 + dx, at.1 + dy);
@@ -205,7 +206,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             if let Some(slot) = usize::try_from(app.get_patch())
                 .ok()
-                .and_then(|i| st.edit.retouch.patches.get_mut(i))
+                .and_then(|i| st.develop.edit.retouch.patches.get_mut(i))
             {
                 *slot = moved;
             }
@@ -216,7 +217,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_patch_dropped(move || {
             let mut st = state.borrow_mut();
-            if st.patch_drag.take().is_some() {
+            if st.develop.patch_drag.take().is_some() {
                 develop_soon(&mut st, state.clone(), worker.clone(), app_weak.clone());
             }
         });
@@ -249,15 +250,15 @@ mod tests {
             -1,
             "the stroke just drawn does not stay selected"
         );
-        assert_eq!(state.borrow().edit.retouch.patches.len(), 1);
-        let first_radius = state.borrow().edit.retouch.patches[0].radius;
+        assert_eq!(state.borrow().develop.edit.retouch.patches.len(), 1);
+        let first_radius = state.borrow().develop.edit.retouch.patches[0].radius;
 
         // The brush size changed for the next repair, with nothing
         // selected: the first stroke is untouched.
         app.set_patch_size(0.2);
         app.invoke_patch_edited();
         assert_eq!(
-            state.borrow().edit.retouch.patches[0].radius,
+            state.borrow().develop.edit.retouch.patches[0].radius,
             first_radius,
             "a size change with nothing selected must not touch the last stroke"
         );
@@ -266,8 +267,8 @@ mod tests {
         app.invoke_place_pressed(30.0, 10.0, false);
         app.invoke_place_dragged(40.0, 10.0);
         app.invoke_place_released();
-        assert_eq!(state.borrow().edit.retouch.patches.len(), 2);
-        assert_eq!(state.borrow().edit.retouch.patches[1].radius, 0.2);
+        assert_eq!(state.borrow().develop.edit.retouch.patches.len(), 2);
+        assert_eq!(state.borrow().develop.edit.retouch.patches[1].radius, 0.2);
 
         // Choosing the first stroke from the list selects it: the
         // sliders show its own size, and changing it now does edit
@@ -277,9 +278,9 @@ mod tests {
         assert_eq!(app.get_patch_size(), first_radius);
         app.set_patch_size(0.05);
         app.invoke_patch_edited();
-        assert_eq!(state.borrow().edit.retouch.patches[0].radius, 0.05);
+        assert_eq!(state.borrow().develop.edit.retouch.patches[0].radius, 0.05);
         assert_eq!(
-            state.borrow().edit.retouch.patches[1].radius,
+            state.borrow().develop.edit.retouch.patches[1].radius,
             0.2,
             "editing the first stroke leaves the second alone"
         );
@@ -296,7 +297,7 @@ mod tests {
         app.invoke_retouch_toggled("Heal".into());
         app.invoke_place_pressed(10.0, 10.0, false);
         app.invoke_place_released();
-        assert_eq!(state.borrow().edit.retouch.patches.len(), 1);
+        assert_eq!(state.borrow().develop.edit.retouch.patches.len(), 1);
         assert_eq!(app.get_patch(), -1);
 
         app.invoke_patch_changed(0);

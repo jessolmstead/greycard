@@ -292,11 +292,11 @@ pub(crate) fn bake_locals(
 /// has one, so a mask copied from one frame to the next (same key, same
 /// shape) would otherwise be drawn there with the first frame's raster.
 pub(crate) fn learned_for(st: &mut State, file: &Path) {
-    if st.learned_of.as_deref() != Some(file) {
-        st.learned.clear();
-        st.asked.clear();
-        st.masks_failed.clear();
-        st.learned_of = Some(file.to_path_buf());
+    if st.develop.learned_of.as_deref() != Some(file) {
+        st.develop.learned.clear();
+        st.develop.asked.clear();
+        st.develop.masks_failed.clear();
+        st.develop.learned_of = Some(file.to_path_buf());
     }
 }
 
@@ -412,10 +412,10 @@ pub(crate) fn edge_offer(
 /// where the model is not in the store, offer to fetch it.
 pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
     for (key, shape) in wants {
-        if st.asked.get(&key) == Some(&shape) {
+        if st.develop.asked.get(&key) == Some(&shape) {
             continue;
         }
-        let store = st.store.clone();
+        let store = st.develop.store.clone();
         let have = |m: &greycard_ai::Model| store.as_ref().is_some_and(|s| s.have(m));
         let providers = crate::ai::providers();
         // Cached: the first ask opens a `wgpu::Instance` to name the
@@ -426,13 +426,13 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
                 .as_ref()
                 .is_some_and(crate::ai::subject_original_failed_on_webgpu)
         };
-        let sheet_free = st.fetch.is_none() && !st.fetching;
+        let sheet_free = st.sheets.fetch.is_none() && !st.sheets.fetching;
         let Some(next) = step(
             &shape,
             have,
             providers,
-            &st.declined,
-            &st.fetch_failed,
+            &st.sheets.declined,
+            &st.sheets.fetch_failed,
             sheet_free,
             original_failed_on_webgpu,
         ) else {
@@ -458,25 +458,25 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
             // is offered beside it, once. The first with Subject in the
             // store loads it, some seconds: said.
             if crate::ai::takes_subject_edge(&shape) {
-                if !st.edge_loaded
+                if !st.sheets.edge_loaded
                     && (have(&greycard_ai::SUBJECT) || have(&greycard_ai::SUBJECT_WEBGPU))
                 {
                     app.set_status(EDGE_LOADING.into());
                 }
-                let due = std::mem::take(&mut st.edge_offer_due);
+                let due = std::mem::take(&mut st.sheets.edge_offer_due);
                 if let Some(subject) = edge_offer(
                     &shape,
                     have,
                     providers,
-                    &st.declined,
-                    &st.fetch_failed,
-                    due && !st.edge_declined && sheet_free,
+                    &st.sheets.declined,
+                    &st.sheets.fetch_failed,
+                    due && !st.sheets.edge_declined && sheet_free,
                     original_failed_on_webgpu,
                 ) {
                     crate::panel::assets::offer_edge(st, app, subject);
                 }
             }
-            st.asked.insert(key, shape);
+            st.develop.asked.insert(key, shape);
         } else if let Step::Offer(model, falls_back) = next {
             offer_model(st, app, model, falls_back);
         }
@@ -508,8 +508,8 @@ pub(crate) fn fetch_failed(
 /// The toggle as it was comes back once the tool is down, unless it
 /// is thrown meanwhile, when the choice stands.
 pub(crate) fn tool_in_hand(st: &mut State, app: &App) {
-    if st.show_mask_kept.is_none() {
-        st.show_mask_kept = Some(app.get_show_mask());
+    if st.develop.show_mask_kept.is_none() {
+        st.develop.show_mask_kept = Some(app.get_show_mask());
     }
     app.set_show_mask(true);
 }
@@ -525,10 +525,10 @@ pub(crate) fn tool_in_hand(st: &mut State, app: &App) {
 /// bring the overlay back over the edit.
 pub(crate) fn look_edited(st: &mut State, app: &App) {
     let now = crate::panel::edit::read_look(app);
-    let before = st.look_seen.borrow_mut().replace(now.clone());
-    if st.target.is_some() && before.is_some_and(|b| b != now) && app.get_show_mask() {
+    let before = st.develop.look_seen.borrow_mut().replace(now.clone());
+    if st.develop.target.is_some() && before.is_some_and(|b| b != now) && app.get_show_mask() {
         app.set_show_mask(false);
-        st.show_mask_kept = None;
+        st.develop.show_mask_kept = None;
     }
 }
 
@@ -542,8 +542,8 @@ pub(crate) fn look_edited(st: &mut State, app: &App) {
 /// slider dragged on while that develop runs asks for no second one;
 /// the asking is recorded here.
 pub(crate) fn detail_asks(st: &mut State, app: &App) -> bool {
-    let wants = read_edit(app, &st.edit, st.target).detail_wants();
-    let (has, asked) = (st.planes_wants, st.planes_asked);
+    let wants = read_edit(app, &st.develop.edit, st.develop.target).detail_wants();
+    let (has, asked) = (st.develop.planes_wants, st.develop.planes_asked);
     let coming = greycard_edit::DetailWants {
         texture: has.texture || asked.texture,
         clarity: has.clarity || asked.clarity,
@@ -552,7 +552,7 @@ pub(crate) fn detail_asks(st: &mut State, app: &App) -> bool {
     if coming.covers(&wants) {
         return false;
     }
-    st.planes_asked = wants;
+    st.develop.planes_asked = wants;
     true
 }
 
@@ -605,7 +605,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     {
         let state = state.clone();
         app.on_show_mask_toggled(move || {
-            state.borrow_mut().show_mask_kept = None;
+            state.borrow_mut().develop.show_mask_kept = None;
         });
     }
     // Local adjustments: the panel edits one look at a time. A switch
@@ -622,18 +622,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // strokes and picks into the mask it was armed for
             // (`placing.index`), not whichever this switches to: put
             // it down first, as leaving the Masks tab already does.
-            if st.placing.take().is_some() || st.choosing.take().is_some() {
+            if st.develop.placing.take().is_some() || st.develop.choosing.take().is_some() {
                 app.set_placing("".into());
                 app.set_status("".into());
             }
-            st.part_pending = None;
+            st.develop.part_pending = None;
             crate::panel::landscape::stopped(&mut st);
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.edit = edit;
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            st.develop.edit = edit;
             let target = (i > 0).then(|| i as usize - 1);
-            st.target = target.filter(|&t| t < st.edit.adjustments.len());
+            st.develop.target = target.filter(|&t| t < st.develop.edit.adjustments.len());
             app.set_component(0);
-            show_edit(&st, &st.edit, &app, st.target);
+            show_edit(&st, &st.develop.edit, &app, st.develop.target);
             crate::panel::parts::rearm(&mut st, &app);
             app.window().request_redraw();
         });
@@ -649,25 +649,25 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let mut st = state.borrow_mut();
             // A develop tab reached in culling is the way out of it,
             // on to that tab.
-            if st.cull.is_some() {
+            if st.culling.cull.is_some() {
                 leave_cull(&mut st, &app, &worker, None);
                 app.set_panel_tab(tab.clone());
             }
             if tab != "Masks" {
-                if st.placing.take().is_some() || st.choosing.is_some() {
+                if st.develop.placing.take().is_some() || st.develop.choosing.is_some() {
                     app.set_placing("".into());
                     app.set_status("".into());
                 }
                 crate::panel::parts::stopped(&mut st);
-                if st.target.is_some() {
-                    let edit = read_edit(&app, &st.edit, st.target);
-                    st.edit = edit;
-                    st.target = None;
+                if st.develop.target.is_some() {
+                    let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+                    st.develop.edit = edit;
+                    st.develop.target = None;
                     app.set_component(0);
-                    show_edit(&st, &st.edit, &app, None);
+                    show_edit(&st, &st.develop.edit, &app, None);
                 }
             }
-            if tab != "Retouch" && st.retouching.take().is_some() {
+            if tab != "Retouch" && st.develop.retouching.take().is_some() {
                 app.set_retouch_mode("".into());
                 app.set_status("".into());
             }
@@ -694,14 +694,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if st.edit.adjustments.len() >= MAX_LOCALS {
+            if st.develop.edit.adjustments.len() >= MAX_LOCALS {
                 app.set_status(format!("at most {MAX_LOCALS} adjustments").into());
                 return;
             }
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.edit = edit;
-            let id = st.edit.next_id();
-            st.edit.adjustments.push(Adjustment {
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            st.develop.edit = edit;
+            let id = st.develop.edit.next_id();
+            st.develop.edit.adjustments.push(Adjustment {
                 id,
                 name: placeholder_name(id),
                 enabled: true,
@@ -711,13 +711,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 },
                 look: Look::default(),
             });
-            st.target = Some(st.edit.adjustments.len() - 1);
-            st.fresh_mask = Some(id);
-            if st.placing.take().is_some() {
+            st.develop.target = Some(st.develop.edit.adjustments.len() - 1);
+            st.develop.fresh_mask = Some(id);
+            if st.develop.placing.take().is_some() {
                 app.set_placing("".into());
             }
             app.set_component(0);
-            show_edit(&st, &st.edit, &app, st.target);
+            show_edit(&st, &st.develop.edit, &app, st.develop.target);
             drop(st);
             app.invoke_view_changed();
         });
@@ -731,11 +731,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some(index) = st.target else {
+            let Some(index) = st.develop.target else {
                 return;
             };
             if app.get_placing() == kind && app.get_placing_into() {
-                st.placing = None;
+                st.develop.placing = None;
                 app.set_placing("".into());
                 app.set_status("".into());
                 return;
@@ -743,6 +743,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let chosen = app.get_component().max(0) as usize;
             let sky_chosen = kind == "Sky"
                 && st
+                    .develop
                     .edit
                     .adjustments
                     .get(index)
@@ -753,6 +754,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // Add/Subtract/Intersect row is left over from a shape
             // added to some other mask earlier.
             let first_shape = st
+                .develop
                 .edit
                 .adjustments
                 .get(index)
@@ -763,9 +765,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 Mode::from_name(mode.as_str()).unwrap_or_default()
             };
             if made_at_once(kind.as_str()) && !sky_chosen {
-                let edit = read_edit(&app, &st.edit, st.target);
-                st.edit = edit;
-                let Some(a) = st.edit.adjustments.get_mut(index) else {
+                let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+                st.develop.edit = edit;
+                let Some(a) = st.develop.edit.adjustments.get_mut(index) else {
                     return;
                 };
                 a.mask.components.push(Component {
@@ -776,11 +778,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 });
                 name_first_shape(a, kind.as_str());
                 let which = a.mask.components.len() - 1;
-                st.fresh_mask = None;
-                st.placing = None;
+                st.develop.fresh_mask = None;
+                st.develop.placing = None;
                 app.set_placing("".into());
                 app.set_component(which as i32);
-                show_edit(&st, &st.edit, &app, st.target);
+                show_edit(&st, &st.develop.edit, &app, st.develop.target);
                 drop(st);
                 app.invoke_view_changed();
                 arm_range_pick(&app, kind.as_str());
@@ -789,6 +791,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // A brush chosen in the list takes more strokes rather
             // than a new brush beside it; an object or a sky more picks.
             let component = st
+                .develop
                 .edit
                 .adjustments
                 .get(index)
@@ -806,11 +809,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if let Some(c) = component
                 && kind == "Sky"
             {
-                let id = st.edit.adjustments.get(index).map(|a| a.id);
+                let id = st.develop.edit.adjustments.get(index).map(|a| a.id);
                 let no_sky = id
-                    .and_then(|id| st.learned.get(&(id, c)))
+                    .and_then(|id| st.develop.learned.get(&(id, c)))
                     .is_some_and(|(_, r)| r.data().iter().all(|&v| v == 0));
-                let have_sam = st.store.as_ref().is_some_and(|s| s.have(&greycard_ai::SAM));
+                let have_sam = st
+                    .develop
+                    .store
+                    .as_ref()
+                    .is_some_and(|s| s.have(&greycard_ai::SAM));
                 match sky_pick(no_sky, have_sam) {
                     Ok(h) => hint = h,
                     Err(why) => {
@@ -819,7 +826,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     }
                 }
             }
-            st.placing = Some(Placing {
+            st.develop.placing = Some(Placing {
                 kind: Shape::of_kind(kind.as_str()),
                 mode: joined,
                 from: (0.0, 0.0),
@@ -840,17 +847,17 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if st.placing.take().is_some() || st.choosing.is_some() {
+            if st.develop.placing.take().is_some() || st.develop.choosing.is_some() {
                 app.set_placing("".into());
                 app.set_status("".into());
             }
             crate::panel::parts::dismissed(&mut st);
             crate::panel::parts::stopped(&mut st);
-            if st.retouching.take().is_some() {
+            if st.develop.retouching.take().is_some() {
                 app.set_retouch_mode("".into());
                 app.set_status("".into());
             }
-            st.picking = None;
+            st.develop.picking = None;
             let was_defringe = app.get_picking() == "Defringe";
             if !app.get_picking().is_empty() {
                 app.set_picking("".into());
@@ -871,19 +878,19 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some(i) = st.target else {
+            let Some(i) = st.develop.target else {
                 return;
             };
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.edit = edit;
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            st.develop.edit = edit;
             let c = c.max(0) as usize;
-            if let Some(a) = st.edit.adjustments.get_mut(i)
+            if let Some(a) = st.develop.edit.adjustments.get_mut(i)
                 && c < a.mask.components.len()
             {
                 a.mask.components.remove(c);
             }
             app.set_component(c.saturating_sub(1) as i32);
-            show_edit(&st, &st.edit, &app, st.target);
+            show_edit(&st, &st.develop.edit, &app, st.develop.target);
             drop(st);
             app.invoke_view_changed();
         });
@@ -895,12 +902,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some(i) = st.target else {
+            let Some(i) = st.develop.target else {
                 return;
             };
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.edit = edit;
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            st.develop.edit = edit;
             if let Some(shape) = st
+                .develop
                 .edit
                 .adjustments
                 .get_mut(i)
@@ -908,7 +916,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             {
                 shape.enabled = !shape.enabled;
             }
-            show_edit(&st, &st.edit, &app, st.target);
+            show_edit(&st, &st.develop.edit, &app, st.develop.target);
             drop(st);
             app.invoke_view_changed();
         });
@@ -922,12 +930,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some(i) = st.target else {
+            let Some(i) = st.develop.target else {
                 return;
             };
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.edit = edit;
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            st.develop.edit = edit;
             if let Some(component) = st
+                .develop
                 .edit
                 .adjustments
                 .get_mut(i)
@@ -940,7 +949,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // model every time, which tears down the shapes list's
             // rows (the row just given keyboard focus among them) even
             // though not one of their names or their count changed.
-            if let Some(a) = st.edit.adjustments.get(i) {
+            if let Some(a) = st.develop.edit.adjustments.get(i) {
                 app.set_shape_invert(component_invert(&a.mask));
             }
             drop(st);
@@ -954,12 +963,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.edit = edit;
-            if let Some(a) = st.edit.adjustments.get_mut(i.max(0) as usize) {
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            st.develop.edit = edit;
+            if let Some(a) = st.develop.edit.adjustments.get_mut(i.max(0) as usize) {
                 a.enabled = !a.enabled;
             }
-            show_edit(&st, &st.edit, &app, st.target);
+            show_edit(&st, &st.develop.edit, &app, st.develop.target);
             drop(st);
             app.invoke_view_changed();
         });
@@ -972,10 +981,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let mut st = state.borrow_mut();
             // The old shape's controls go to it first.
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.edit = edit;
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            st.develop.edit = edit;
             app.set_component(c);
-            if let Some(a) = st.target.and_then(|i| st.edit.adjustments.get(i)) {
+            if let Some(a) = st
+                .develop
+                .target
+                .and_then(|i| st.develop.edit.adjustments.get(i))
+            {
                 show_component(&a.mask, &app);
             }
             crate::panel::parts::rearm(&mut st, &app);
@@ -988,9 +1001,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let st = state.borrow();
-            let edit = read_edit(&app, &st.edit, st.target);
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
             show_names(&edit, &app);
-            if let Some((i, a)) = st.target.and_then(|i| Some((i, edit.adjustments.get(i)?))) {
+            if let Some((i, a)) = st
+                .develop
+                .target
+                .and_then(|i| Some((i, edit.adjustments.get(i)?)))
+            {
                 app.set_target_name(heading_name(&a.name, i).into());
             }
             drop(st);
@@ -1004,7 +1021,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some(i) = st.target else {
+            let Some(i) = st.develop.target else {
                 return;
             };
             // A brush, an object or a sky left in hand has its
@@ -1012,18 +1029,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // remove below — put it down first rather than let a
             // later stroke or pick land in whatever mask slid into
             // its place.
-            if st.placing.take().is_some() || st.choosing.is_some() {
+            if st.develop.placing.take().is_some() || st.develop.choosing.is_some() {
                 app.set_placing("".into());
                 app.set_status("".into());
             }
             crate::panel::parts::stopped(&mut st);
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.edit = edit;
-            if i < st.edit.adjustments.len() {
-                st.edit.adjustments.remove(i);
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            st.develop.edit = edit;
+            if i < st.develop.edit.adjustments.len() {
+                st.develop.edit.adjustments.remove(i);
             }
-            st.target = None;
-            show_edit(&st, &st.edit, &app, None);
+            st.develop.target = None;
+            show_edit(&st, &st.develop.edit, &app, None);
             drop(st);
             app.invoke_view_changed();
         });
@@ -1036,10 +1053,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let mut st = state.borrow_mut();
             // A repair: a spot here, a stroke if the pointer travels.
-            if let Some(method) = st.retouching {
+            if let Some(method) = st.develop.retouching {
                 let at = view_to_source(&st, &app, x, y);
                 let patch = Patch {
-                    id: st.edit.retouch.next_id(),
+                    id: st.develop.edit.retouch.next_id(),
                     method,
                     points: vec![[at.0, at.1]],
                     radius: app.get_patch_size().clamp(0.002, 0.3),
@@ -1047,11 +1064,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     opacity: app.get_patch_opacity().clamp(0.0, 1.0),
                     source: None,
                 };
-                st.edit.retouch.patches.push(patch);
-                let i = st.edit.retouch.patches.len() - 1;
-                st.patch_stroke = Some(i);
+                st.develop.edit.retouch.patches.push(patch);
+                let i = st.develop.edit.retouch.patches.len() - 1;
+                st.develop.patch_stroke = Some(i);
                 app.set_patch(i as i32);
-                show_patches(&st.edit, &app);
+                show_patches(&st.develop.edit, &app);
                 app.window().request_redraw();
                 return;
             }
@@ -1063,18 +1080,19 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 }
                 return;
             }
-            let Some(mut placing) = st.placing.take() else {
+            let Some(mut placing) = st.develop.placing.take() else {
                 return;
             };
             let at = view_to_source(&st, &app, x, y);
             // The panel's look goes to its target before the new one
             // takes the panel.
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.edit = edit;
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            st.develop.edit = edit;
             // Another stroke of a brush already placed, or another
             // pick for an object.
             if let Some(c) = placing.component
                 && let Some(shape) = st
+                    .develop
                     .edit
                     .adjustments
                     .get_mut(placing.index)
@@ -1091,7 +1109,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 }
                 placing.from = at;
                 placing.boxed = false;
-                st.placing = Some(placing);
+                st.develop.placing = Some(placing);
                 app.window().request_redraw();
                 return;
             }
@@ -1131,7 +1149,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 invert: false,
                 enabled: true,
             };
-            let Some(a) = st.edit.adjustments.get_mut(placing.index) else {
+            let Some(a) = st.develop.edit.adjustments.get_mut(placing.index) else {
                 app.set_placing("".into());
                 return;
             };
@@ -1144,8 +1162,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             placing.from = at;
             placing.boxed = false;
             app.set_component(which as i32);
-            st.placing = Some(placing);
-            show_edit(&st, &st.edit, &app, st.target);
+            st.develop.placing = Some(placing);
+            show_edit(&st, &st.develop.edit, &app, st.develop.target);
             app.window().request_redraw();
         });
     }
@@ -1157,8 +1175,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let mut st = state.borrow_mut();
             let at = view_to_source(&st, &app, x, y);
-            if let Some(i) = st.patch_stroke {
-                if let Some(p) = st.edit.retouch.patches.get_mut(i)
+            if let Some(i) = st.develop.patch_stroke {
+                if let Some(p) = st.develop.edit.retouch.patches.get_mut(i)
                     && p.points
                         .last()
                         .is_none_or(|l| (at.0 - l[0]).hypot(at.1 - l[1]) > MIN_STEP * 4.0)
@@ -1169,7 +1187,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             }
             let st = &mut *st;
-            let Some(placing) = st.placing.as_mut() else {
+            let Some(placing) = st.develop.placing.as_mut() else {
                 return;
             };
             let Some(which) = placing.component else {
@@ -1177,6 +1195,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let (from, index) = (placing.from, placing.index);
             let Some(component) = st
+                .develop
                 .edit
                 .adjustments
                 .get_mut(index)
@@ -1234,14 +1253,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if st.patch_stroke.take().is_some() {
+            if st.develop.patch_stroke.take().is_some() {
                 // The spot or stroke just finished does not stay
                 // selected: the sliders and the wheel go back to
                 // setting the brush for the next repair, not resizing
                 // the one just drawn. A deliberate click on it in the
                 // list selects it again.
                 app.set_patch(-1);
-                show_patches(&st.edit, &app);
+                show_patches(&st.develop.edit, &app);
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
                         develop_soon(&mut st, state.clone(), w.clone(), app.as_weak());
@@ -1249,12 +1268,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 });
                 return;
             }
-            let Some(mut placing) = st.placing.take() else {
+            let Some(mut placing) = st.develop.placing.take() else {
                 return;
             };
             let Some(which) = placing.component else {
                 // A release with no press to it.
-                st.placing = Some(placing);
+                st.develop.placing = Some(placing);
                 return;
             };
             // A brush stays in hand for the next stroke; a dab is a
@@ -1271,17 +1290,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 // Only on the stroke that actually renames it, or
                 // every later stroke in the same brush would rebuild
                 // the shapes list (and the focus in it) for nothing.
-                st.fresh_mask = None;
+                st.develop.fresh_mask = None;
                 let named = st
+                    .develop
                     .edit
                     .adjustments
                     .get_mut(placing.index)
                     .is_some_and(|a| name_first_shape(a, placing.kind.name()));
                 if named {
-                    show_edit(&st, &st.edit, &app, st.target);
+                    show_edit(&st, &st.develop.edit, &app, st.develop.target);
                 }
                 placing.boxed = false;
-                st.placing = Some(placing);
+                st.develop.placing = Some(placing);
                 drop(st);
                 app.invoke_view_changed();
                 return;
@@ -1289,6 +1309,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_placing("".into());
             // A press without a drag makes nothing.
             let drawn = st
+                .develop
                 .edit
                 .adjustments
                 .get(placing.index)
@@ -1312,8 +1333,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     | Shape::Unknown => true,
                 });
             if drawn {
-                st.fresh_mask = None;
+                st.develop.fresh_mask = None;
                 let named = st
+                    .develop
                     .edit
                     .adjustments
                     .get_mut(placing.index)
@@ -1323,10 +1345,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     // left stale, the next `read_edit` (any later
                     // action) would copy the panel's old text straight
                     // back over the name just given here.
-                    show_edit(&st, &st.edit, &app, st.target);
+                    show_edit(&st, &st.develop.edit, &app, st.develop.target);
                 }
                 app.set_status("".into());
-            } else if let Some(a) = st.edit.adjustments.get_mut(placing.index)
+            } else if let Some(a) = st.develop.edit.adjustments.get_mut(placing.index)
                 && which < a.mask.components.len()
             {
                 a.mask.components.remove(which);
@@ -1343,15 +1365,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     && a.look == Look::default()
                     && a.name == placeholder_name(id)
                     && !a.mask.invert
-                    && st.fresh_mask == Some(id);
+                    && st.develop.fresh_mask == Some(id);
                 if fresh {
-                    st.edit.adjustments.remove(placing.index);
-                    st.target = None;
-                    st.fresh_mask = None;
-                    show_edit(&st, &st.edit, &app, None);
+                    st.develop.edit.adjustments.remove(placing.index);
+                    st.develop.target = None;
+                    st.develop.fresh_mask = None;
+                    show_edit(&st, &st.develop.edit, &app, None);
                 } else {
                     app.set_component(which.saturating_sub(1) as i32);
-                    show_edit(&st, &st.edit, &app, st.target);
+                    show_edit(&st, &st.develop.edit, &app, st.develop.target);
                 }
                 app.set_status("nothing placed".into());
             }
@@ -1369,8 +1391,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let mut st = state.borrow_mut();
             let Some(shape) = st
+                .develop
                 .target
-                .and_then(|i| st.edit.adjustments.get(i))
+                .and_then(|i| st.develop.edit.adjustments.get(i))
                 .and_then(|a| a.mask.components.get(app.get_component().max(0) as usize))
                 .map(|c| c.shape.clone())
             else {
@@ -1381,7 +1404,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let at = source_to_view(&st, &app, u, v);
-            st.mask_drag = Some(MaskDrag { shape, handle, at });
+            st.develop.mask_drag = Some(MaskDrag { shape, handle, at });
         });
     }
     {
@@ -1392,6 +1415,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let mut st = state.borrow_mut();
             let Some((shape, handle, at)) = st
+                .develop
                 .mask_drag
                 .as_ref()
                 .map(|d| (d.shape.clone(), d.handle, d.at))
@@ -1414,8 +1438,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let which = app.get_component().max(0) as usize;
             if let Some(c) = st
+                .develop
                 .target
-                .and_then(|i| st.edit.adjustments.get_mut(i))
+                .and_then(|i| st.develop.edit.adjustments.get_mut(i))
                 .and_then(|a| a.mask.components.get_mut(which))
             {
                 c.shape = moved;
@@ -1441,8 +1466,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return false;
             };
             let Some(shape) = st
+                .develop
                 .target
-                .and_then(|i| st.edit.adjustments.get(i))
+                .and_then(|i| st.develop.edit.adjustments.get(i))
                 .and_then(|a| a.mask.components.get(app.get_component().max(0) as usize))
                 .map(|c| &c.shape)
             else {
@@ -1457,7 +1483,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            if state.borrow_mut().mask_drag.take().is_some() {
+            if state.borrow_mut().develop.mask_drag.take().is_some() {
                 app.invoke_view_changed();
             }
         });
@@ -1497,7 +1523,7 @@ mod tests {
         app.set_exposure(0.8);
         app.invoke_view_changed();
         assert!(!app.get_show_mask(), "every look change hides it");
-        assert!(state.borrow().show_mask_kept.is_none());
+        assert!(state.borrow().develop.show_mask_kept.is_none());
     }
 
     /// A mask's Detail: its sliders read into the mask's look and not
@@ -1513,13 +1539,13 @@ mod tests {
         app.set_panel_tab("Masks".into());
         app.invoke_new_mask();
         app.invoke_target_changed(1);
-        state.borrow_mut().edit.adjustments[0]
+        state.borrow_mut().develop.edit.adjustments[0]
             .mask
             .components
             .push(greycard_edit::mask::Component::default());
         let edit = || {
             let st = state.borrow();
-            read_edit(&app, &st.edit, st.target)
+            read_edit(&app, &st.develop.edit, st.develop.target)
         };
         let before = edit();
         assert_eq!(before.adjustments[0].look.detail, Default::default());
@@ -1540,14 +1566,26 @@ mod tests {
         );
         // No texture plane came with the shown develop: the panel's
         // edit is the one sent to be developed.
-        assert_eq!(state.borrow().edit.adjustments[0].look.detail.texture, -0.5);
+        assert_eq!(
+            state.borrow().develop.edit.adjustments[0]
+                .look
+                .detail
+                .texture,
+            -0.5
+        );
         // Moved again while that develop is on its way: no second one.
         app.set_local_texture(-0.6);
         app.invoke_view_changed();
-        assert_eq!(state.borrow().edit.adjustments[0].look.detail.texture, -0.5);
+        assert_eq!(
+            state.borrow().develop.edit.adjustments[0]
+                .look
+                .detail
+                .texture,
+            -0.5
+        );
         // That develop fails: the plane is not coming, and the next
         // move asks again.
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(
             &app,
             crate::worker::Outcome::Failed {
@@ -1555,31 +1593,43 @@ mod tests {
                 message: "failed on purpose".into(),
             },
         );
-        assert_eq!(state.borrow().planes_asked, Default::default());
+        assert_eq!(state.borrow().develop.planes_asked, Default::default());
         app.set_local_texture(-0.55);
         app.invoke_view_changed();
         assert_eq!(
-            state.borrow().edit.adjustments[0].look.detail.texture,
+            state.borrow().develop.edit.adjustments[0]
+                .look
+                .detail
+                .texture,
             -0.55
         );
-        assert!(state.borrow().planes_asked.texture);
+        assert!(state.borrow().develop.planes_asked.texture);
         // It lands with the plane; a slider moved is the finish's alone.
         {
             let mut st = state.borrow_mut();
-            st.planes_wants.texture = true;
-            st.planes_asked = Default::default();
+            st.develop.planes_wants.texture = true;
+            st.develop.planes_asked = Default::default();
         }
         app.set_local_texture(-0.8);
         app.invoke_view_changed();
         assert_eq!(
-            state.borrow().edit.adjustments[0].look.detail.texture,
+            state.borrow().develop.edit.adjustments[0]
+                .look
+                .detail
+                .texture,
             -0.55
         );
         assert_eq!(edit().adjustments[0].look.detail.texture, -0.8);
         // Dehaze asks for the haze, which is not there.
         app.set_local_dehaze(0.3);
         app.invoke_view_changed();
-        assert_eq!(state.borrow().edit.adjustments[0].look.detail.dehaze, 0.3);
+        assert_eq!(
+            state.borrow().develop.edit.adjustments[0]
+                .look
+                .detail
+                .dehaze,
+            0.3
+        );
         // Through the sidecar's JSON and back onto the panel.
         let saved = edit();
         let back = greycard_edit::Edit::from_json(&saved.to_json()).unwrap();
@@ -1589,7 +1639,7 @@ mod tests {
         app.set_local_detail_enabled(false);
         {
             let st = state.borrow();
-            show_edit(&st, &back, &app, st.target);
+            show_edit(&st, &back, &app, st.develop.target);
         }
         assert!(app.get_local_detail_enabled());
         assert_eq!(
@@ -1620,12 +1670,12 @@ mod tests {
         app.invoke_target_changed(1);
         app.set_show_mask(true);
         app.invoke_add_shape("Brush".into(), "Add".into());
-        assert!(state.borrow().placing.is_some());
-        assert_eq!(state.borrow().show_mask_kept, Some(true));
+        assert!(state.borrow().develop.placing.is_some());
+        assert_eq!(state.borrow().develop.show_mask_kept, Some(true));
         app.set_shadows(0.4);
         app.invoke_view_changed();
         assert!(!app.get_show_mask());
-        assert_eq!(state.borrow().show_mask_kept, None);
+        assert_eq!(state.borrow().develop.show_mask_kept, None);
     }
 
     /// Picking another mask keeps today's rule: the look on show is
@@ -1663,8 +1713,13 @@ mod tests {
             let (state, _worker) = crate::testing::state_for(&app, Vec::new());
             app.set_panel_tab("Masks".into());
             app.invoke_new_mask();
-            state.borrow_mut().edit.adjustments[0].look.white_balance = white;
-            state.borrow_mut().edit.adjustments[0].look.curves.red = Vec::new();
+            state.borrow_mut().develop.edit.adjustments[0]
+                .look
+                .white_balance = white;
+            state.borrow_mut().develop.edit.adjustments[0]
+                .look
+                .curves
+                .red = Vec::new();
             app.invoke_target_changed(1);
             app.set_show_mask(true);
             app.invoke_view_changed();
@@ -2052,9 +2107,9 @@ mod tests {
         app.invoke_add_shape("Sky".into(), "Add".into());
         {
             let st = state.borrow();
-            assert_eq!(st.target, Some(0));
+            assert_eq!(st.develop.target, Some(0));
             assert_eq!(
-                st.edit.adjustments[0].mask.components,
+                st.develop.edit.adjustments[0].mask.components,
                 vec![Component {
                     shape: Shape::Sky { picks: Vec::new() },
                     mode: Mode::Add,
@@ -2062,7 +2117,7 @@ mod tests {
                     enabled: true,
                 }]
             );
-            assert!(st.placing.is_none());
+            assert!(st.develop.placing.is_none());
         }
         assert_eq!(app.get_component_kind(), "Sky");
         assert_eq!(app.get_status(), "finding the sky");
@@ -2076,7 +2131,7 @@ mod tests {
         app.invoke_place_released();
         {
             let st = state.borrow();
-            let components = &st.edit.adjustments[0].mask.components;
+            let components = &st.develop.edit.adjustments[0].mask.components;
             assert_eq!(components.len(), 1, "a pick is not a second sky");
             let Shape::Sky { picks } = &components[0].shape else {
                 panic!("{:?}", components[0].shape)
@@ -2085,11 +2140,11 @@ mod tests {
                 picks.iter().map(|p| p.positive).collect::<Vec<_>>(),
                 vec![true, false]
             );
-            assert!(st.placing.is_some(), "the tool stays in hand");
+            assert!(st.develop.placing.is_some(), "the tool stays in hand");
         }
         app.invoke_add_shape("Sky".into(), "Add".into());
         assert!(app.get_placing().is_empty());
-        assert!(state.borrow().placing.is_none());
+        assert!(state.borrow().develop.placing.is_none());
 
         // The test's state has no SAM: Pick says a click that adds sky
         // needs it.
@@ -2100,14 +2155,16 @@ mod tests {
         // not take the tool, and says why.
         {
             let mut st = state.borrow_mut();
-            let id = st.edit.adjustments[0].id;
-            let shape = st.edit.adjustments[0].mask.components[0].shape.clone();
+            let id = st.develop.edit.adjustments[0].id;
+            let shape = st.develop.edit.adjustments[0].mask.components[0]
+                .shape
+                .clone();
             let empty = Arc::new(Raster::from_data(1.5, 16, vec![0u8; 16 * 11]));
-            st.learned.insert((id, 0), (shape, empty));
+            st.develop.learned.insert((id, 0), (shape, empty));
         }
         app.invoke_add_shape("Sky".into(), "Add".into());
         assert!(app.get_placing().is_empty());
-        assert!(state.borrow().placing.is_none());
+        assert!(state.borrow().develop.placing.is_none());
         assert_eq!(app.get_status(), "no sky found in this picture");
     }
 
@@ -2190,9 +2247,9 @@ mod tests {
         app.invoke_add_shape("Luminance".into(), "Add".into());
         {
             let st = state.borrow();
-            assert_eq!(st.target, Some(0));
+            assert_eq!(st.develop.target, Some(0));
             assert_eq!(
-                st.edit.adjustments[0].mask.components[0].shape,
+                st.develop.edit.adjustments[0].mask.components[0].shape,
                 Shape::LUMINANCE
             );
         }
@@ -2204,7 +2261,7 @@ mod tests {
         app.set_lum_high_feather(0.2);
         let read = |app: &App| {
             let st = state.borrow();
-            read_edit(app, &st.edit, st.target)
+            read_edit(app, &st.develop.edit, st.develop.target)
         };
         assert_eq!(
             read(&app).adjustments[0].mask.components[0].shape,
@@ -2283,12 +2340,12 @@ mod tests {
         app.invoke_new_mask();
         {
             let st = state.borrow();
-            assert_eq!(st.target, Some(0));
-            assert!(st.edit.adjustments[0].mask.components.is_empty());
+            assert_eq!(st.develop.target, Some(0));
+            assert!(st.develop.edit.adjustments[0].mask.components.is_empty());
             // Named while empty, never a blank row: `show_names`
             // reads `Adjustment.name` raw, with no fallback of its
             // own for an empty one.
-            assert_eq!(st.edit.adjustments[0].name, "Mask 1");
+            assert_eq!(st.develop.edit.adjustments[0].name, "Mask 1");
         }
         assert_eq!(
             app.get_adjustment_names()
@@ -2304,7 +2361,7 @@ mod tests {
         assert_eq!(app.get_component_kind(), "Sky");
         let st = state.borrow();
         assert_eq!(
-            st.edit.adjustments[0].mask.components,
+            st.develop.edit.adjustments[0].mask.components,
             vec![Component {
                 shape: Shape::Sky { picks: Vec::new() },
                 mode: Mode::Add,
@@ -2314,7 +2371,7 @@ mod tests {
         );
         // Named for its first shape now, as a made-at-once shape from
         // the old `add_adjustment` always was ("Sky 1", not "Mask 1").
-        assert_eq!(st.edit.adjustments[0].name, "Sky 1");
+        assert_eq!(st.develop.edit.adjustments[0].name, "Sky 1");
     }
 
     /// A shape's mode is always Add when it is the mask's first, even
@@ -2332,17 +2389,30 @@ mod tests {
         app.invoke_add_shape("Luminance".into(), "Subtract".into());
         {
             let st = state.borrow();
-            assert_eq!(st.edit.adjustments[0].mask.components[0].mode, Mode::Add);
-            assert_eq!(st.edit.adjustments[0].mask.components[0].mode.sign(), "+");
+            assert_eq!(
+                st.develop.edit.adjustments[0].mask.components[0].mode,
+                Mode::Add
+            );
+            assert_eq!(
+                st.develop.edit.adjustments[0].mask.components[0]
+                    .mode
+                    .sign(),
+                "+"
+            );
         }
         // Left on Subtract for the next mask's first shape too.
         app.invoke_new_mask();
         app.invoke_add_shape("Subject".into(), "Subtract".into());
         {
             let st = state.borrow();
-            assert_eq!(st.edit.adjustments[1].mask.components[0].mode, Mode::Add);
             assert_eq!(
-                st.edit.adjustments[1].mask.at_with(0.5, 0.5, |_, _, _| 1.0),
+                st.develop.edit.adjustments[1].mask.components[0].mode,
+                Mode::Add
+            );
+            assert_eq!(
+                st.develop.edit.adjustments[1]
+                    .mask
+                    .at_with(0.5, 0.5, |_, _, _| 1.0),
                 1.0
             );
         }
@@ -2354,11 +2424,14 @@ mod tests {
         app.invoke_place_released();
         let st = state.borrow();
         assert_eq!(
-            st.edit.adjustments.len(),
+            st.develop.edit.adjustments.len(),
             3,
             "the drag was far enough to be drawn, not abandoned"
         );
-        assert_eq!(st.edit.adjustments[2].mask.components[0].mode, Mode::Add);
+        assert_eq!(
+            st.develop.edit.adjustments[2].mask.components[0].mode,
+            Mode::Add
+        );
     }
 
     /// A placed shape (not one made whole) abandoned without a drag,
@@ -2377,11 +2450,11 @@ mod tests {
         app.invoke_place_released();
         let st = state.borrow();
         assert!(
-            st.edit.adjustments.is_empty(),
+            st.develop.edit.adjustments.is_empty(),
             "an empty mask, untouched since New mask, should not linger: {:?}",
-            st.edit.adjustments
+            st.develop.edit.adjustments
         );
-        assert_eq!(st.target, None);
+        assert_eq!(st.develop.target, None);
     }
 
     /// The same abandoned first shape, but the mask's look was
@@ -2400,12 +2473,12 @@ mod tests {
         app.invoke_place_released();
         let st = state.borrow();
         assert_eq!(
-            st.edit.adjustments.len(),
+            st.develop.edit.adjustments.len(),
             1,
             "the mask stays: its look was touched"
         );
-        assert!(st.edit.adjustments[0].mask.components.is_empty());
-        assert_eq!(st.edit.adjustments[0].look.light.exposure, 1.5);
+        assert!(st.develop.edit.adjustments[0].mask.components.is_empty());
+        assert_eq!(st.develop.edit.adjustments[0].look.light.exposure, 1.5);
     }
 
     /// A mask that once had a shape, emptied again by deleting it
@@ -2422,19 +2495,19 @@ mod tests {
         app.invoke_delete_shape_at(0);
         {
             let st = state.borrow();
-            assert_eq!(st.edit.adjustments.len(), 1);
-            assert!(st.edit.adjustments[0].mask.components.is_empty());
+            assert_eq!(st.develop.edit.adjustments.len(), 1);
+            assert!(st.develop.edit.adjustments[0].mask.components.is_empty());
         }
         app.invoke_add_shape("Linear".into(), "Add".into());
         app.invoke_place_pressed(300.0, 200.0, false);
         app.invoke_place_released();
         let st = state.borrow();
         assert_eq!(
-            st.edit.adjustments.len(),
+            st.develop.edit.adjustments.len(),
             1,
             "a mask that once had a shape is never taken, however it is emptied since"
         );
-        assert!(st.edit.adjustments[0].mask.components.is_empty());
+        assert!(st.develop.edit.adjustments[0].mask.components.is_empty());
     }
 
     /// A shape is named for its kind only once it lands, at the
@@ -2459,15 +2532,15 @@ mod tests {
         app.invoke_place_released();
         let st = state.borrow();
         assert_eq!(
-            st.edit.adjustments.len(),
+            st.develop.edit.adjustments.len(),
             2,
             "not the tracked fresh mask (the second one is): kept"
         );
         assert_eq!(
-            st.edit.adjustments[0].name, "Mask 1",
+            st.develop.edit.adjustments[0].name, "Mask 1",
             "never renamed for a shape that did not land"
         );
-        assert!(st.edit.adjustments[0].mask.components.is_empty());
+        assert!(st.develop.edit.adjustments[0].mask.components.is_empty());
     }
 
     /// The same abandoned drag, but the mask's look was touched first,
@@ -2486,16 +2559,20 @@ mod tests {
         app.invoke_place_released();
         {
             let st = state.borrow();
-            assert_eq!(st.edit.adjustments.len(), 1, "kept: its look was touched");
             assert_eq!(
-                st.edit.adjustments[0].name, "Mask 1",
+                st.develop.edit.adjustments.len(),
+                1,
+                "kept: its look was touched"
+            );
+            assert_eq!(
+                st.develop.edit.adjustments[0].name, "Mask 1",
                 "not renamed for the shape that never landed"
             );
-            assert!(st.edit.adjustments[0].mask.components.is_empty());
+            assert!(st.develop.edit.adjustments[0].mask.components.is_empty());
         }
         app.invoke_add_shape("Subject".into(), "Add".into());
         let st = state.borrow();
-        assert_eq!(st.edit.adjustments[0].name, "Subject 1");
+        assert_eq!(st.develop.edit.adjustments[0].name, "Subject 1");
     }
 
     /// The rename a landed, drawn shape gives its mask has to reach
@@ -2515,12 +2592,12 @@ mod tests {
         app.invoke_place_released();
         {
             let st = state.borrow();
-            assert_eq!(st.edit.adjustments[0].name, "Linear 1");
+            assert_eq!(st.develop.edit.adjustments[0].name, "Linear 1");
         }
         app.invoke_invert_shape_toggled(0);
         let st = state.borrow();
         assert_eq!(
-            st.edit.adjustments[0].name, "Linear 1",
+            st.develop.edit.adjustments[0].name, "Linear 1",
             "a later read_edit must not copy the panel's stale name back over it"
         );
     }
@@ -2539,10 +2616,10 @@ mod tests {
         app.invoke_place_released();
         {
             let st = state.borrow();
-            assert_eq!(st.edit.adjustments[0].name, "Brush 1");
+            assert_eq!(st.develop.edit.adjustments[0].name, "Brush 1");
         }
         app.invoke_invert_shape_toggled(0);
-        assert_eq!(state.borrow().edit.adjustments[0].name, "Brush 1");
+        assert_eq!(state.borrow().develop.edit.adjustments[0].name, "Brush 1");
 
         // Named once, on the stroke that gave it its name: a later
         // stroke on the same brush does not rename it again, so it
@@ -2553,12 +2630,13 @@ mod tests {
         // nothing.
         let (at, size) = labeled(&app, "Invert this shape");
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
-        let inverted_by_click = state.borrow().edit.adjustments[0].mask.components[0].invert;
+        let inverted_by_click =
+            state.borrow().develop.edit.adjustments[0].mask.components[0].invert;
         app.invoke_place_pressed(320.0, 220.0, false);
         app.invoke_place_released();
         press(&app, " ");
         assert_ne!(
-            state.borrow().edit.adjustments[0].mask.components[0].invert,
+            state.borrow().develop.edit.adjustments[0].mask.components[0].invert,
             inverted_by_click,
             "focus survived the second stroke: Space still reaches the same row"
         );
@@ -2581,8 +2659,12 @@ mod tests {
         app.invoke_place_released();
         {
             let st = state.borrow();
-            assert_eq!(st.edit.adjustments.len(), 1, "renamed by hand: kept");
-            assert_eq!(st.edit.adjustments[0].name, "Portrait");
+            assert_eq!(
+                st.develop.edit.adjustments.len(),
+                1,
+                "renamed by hand: kept"
+            );
+            assert_eq!(st.develop.edit.adjustments[0].name, "Portrait");
         }
 
         // A second mask, its own Invert switched on instead of a rename.
@@ -2592,8 +2674,12 @@ mod tests {
         app.invoke_place_pressed(300.0, 200.0, false);
         app.invoke_place_released();
         let st = state.borrow();
-        assert_eq!(st.edit.adjustments.len(), 2, "Invert switched on: kept");
-        assert!(st.edit.adjustments[1].mask.invert);
+        assert_eq!(
+            st.develop.edit.adjustments.len(),
+            2,
+            "Invert switched on: kept"
+        );
+        assert!(st.develop.edit.adjustments[1].mask.invert);
     }
 
     /// A shape's own invert is a switch on its row, not a control only
@@ -2612,7 +2698,7 @@ mod tests {
         app.invoke_invert_shape_toggled(0);
         {
             let st = state.borrow();
-            let components = &st.edit.adjustments[0].mask.components;
+            let components = &st.develop.edit.adjustments[0].mask.components;
             assert!(components[0].invert, "the row toggled, not the chosen one");
             assert!(!components[1].invert);
         }
@@ -2621,7 +2707,7 @@ mod tests {
             vec![true, false]
         );
         app.invoke_invert_shape_toggled(0);
-        assert!(!state.borrow().edit.adjustments[0].mask.components[0].invert);
+        assert!(!state.borrow().develop.edit.adjustments[0].mask.components[0].invert);
     }
 
     /// A shape's own invert is reachable from the keyboard, not only
@@ -2639,17 +2725,17 @@ mod tests {
         let (at, size) = labeled(&app, "Invert this shape");
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         assert!(
-            state.borrow().edit.adjustments[0].mask.components[0].invert,
+            state.borrow().develop.edit.adjustments[0].mask.components[0].invert,
             "the click both focuses it and toggles it"
         );
         press(&app, " ");
         assert!(
-            !state.borrow().edit.adjustments[0].mask.components[0].invert,
+            !state.borrow().develop.edit.adjustments[0].mask.components[0].invert,
             "Space toggles the focused row back"
         );
         press(&app, Key::Return);
         assert!(
-            state.borrow().edit.adjustments[0].mask.components[0].invert,
+            state.borrow().develop.edit.adjustments[0].mask.components[0].invert,
             "Enter toggles it again"
         );
     }
@@ -2671,17 +2757,20 @@ mod tests {
         app.invoke_add_shape("Brush".into(), "Add".into());
         app.invoke_place_pressed(300.0, 200.0, false);
         app.invoke_place_released();
-        assert!(state.borrow().placing.is_some(), "the brush stays in hand");
+        assert!(
+            state.borrow().develop.placing.is_some(),
+            "the brush stays in hand"
+        );
         app.invoke_delete_adjustment();
         assert!(
-            state.borrow().placing.is_none(),
+            state.borrow().develop.placing.is_none(),
             "the tool is put down, not left armed for whatever slid into the deleted mask's slot"
         );
         // The remaining mask (the second "New mask") is untouched.
         let st = state.borrow();
-        assert_eq!(st.edit.adjustments.len(), 1);
-        assert_eq!(st.edit.adjustments[0].name, "Mask 2");
-        assert!(st.edit.adjustments[0].mask.components.is_empty());
+        assert_eq!(st.develop.edit.adjustments.len(), 1);
+        assert_eq!(st.develop.edit.adjustments[0].name, "Mask 2");
+        assert!(st.develop.edit.adjustments[0].mask.components.is_empty());
     }
 
     /// With no mask chosen, "New mask" is there and nothing offers a
@@ -2698,7 +2787,7 @@ mod tests {
         app.set_panel_scroll(-900.0);
         let (at, size) = crate::testing::labeled(&app, "New mask");
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
-        assert_eq!(state.borrow().edit.adjustments.len(), 2);
+        assert_eq!(state.borrow().develop.edit.adjustments.len(), 2);
         assert_eq!(app.get_panel_scroll(), 0.0, "the sections are at their top");
     }
 
@@ -2791,9 +2880,9 @@ mod tests {
         let (state, worker) = crate::testing::state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.source_size = (400, 300);
-            st.zoom = 1.0;
-            st.edit.adjustments.push(Adjustment {
+            st.develop.source_size = (400, 300);
+            st.develop.zoom = 1.0;
+            st.develop.edit.adjustments.push(Adjustment {
                 id: 1,
                 mask: Mask {
                     components: vec![Component {
@@ -2804,7 +2893,7 @@ mod tests {
                 },
                 ..Default::default()
             });
-            st.target = Some(0);
+            st.develop.target = Some(0);
         }
         app.set_panel_tab("Masks".into());
         app.set_component(0);
@@ -2830,7 +2919,7 @@ mod tests {
     }
 
     fn the_shape(state: &Rc<RefCell<State>>) -> Shape {
-        state.borrow().edit.adjustments[0].mask.components[0]
+        state.borrow().develop.edit.adjustments[0].mask.components[0]
             .shape
             .clone()
     }
@@ -2852,7 +2941,7 @@ mod tests {
         let (app, state, _worker, base) = body_setup(a_radial(0.2, 0.1));
         // Halfway out along the long axis, well clear of every handle.
         let press = shown_at(&app, &state, base, 0.6, 0.375);
-        let was_center = state.borrow().center;
+        let was_center = state.borrow().develop.center;
         let (center_x, center_y) = shown_at(&app, &state, base, 0.5, 0.375);
         crate::testing::drag(
             &app,
@@ -2881,8 +2970,15 @@ mod tests {
             !app.get_mask_body_moving(),
             "the move cursor outlived the release"
         );
-        assert_eq!(state.borrow().center, was_center, "the picture panned");
-        assert!(state.borrow().mask_drag.is_none(), "the drag was let go");
+        assert_eq!(
+            state.borrow().develop.center,
+            was_center,
+            "the picture panned"
+        );
+        assert!(
+            state.borrow().develop.mask_drag.is_none(),
+            "the drag was let go"
+        );
     }
 
     /// A linear's body is the band between its lines, the whole width
@@ -2895,7 +2991,7 @@ mod tests {
         };
         let (app, state, _worker, base) = body_setup(linear);
         let press = shown_at(&app, &state, base, 0.15, 0.375);
-        let was_center = state.borrow().center;
+        let was_center = state.borrow().develop.center;
         crate::testing::drag(
             &app,
             &[press, (press.0, press.1 + 10.0), (press.0, press.1 + 40.0)],
@@ -2909,7 +3005,11 @@ mod tests {
         assert!((from[1] - (0.3 + dv)).abs() < 1e-4, "{from:?}");
         assert!((to[1] - (0.45 + dv)).abs() < 1e-4, "{to:?}");
         assert!(!app.get_mask_body_moving(), "the move outlived the release");
-        assert_eq!(state.borrow().center, was_center, "the picture panned");
+        assert_eq!(
+            state.borrow().develop.center,
+            was_center,
+            "the picture panned"
+        );
     }
 
     /// Off the body a drag still pans, and the shape stays put.
@@ -2918,13 +3018,17 @@ mod tests {
         let radial = a_radial(0.1, 0.05);
         let (app, state, _worker, base) = body_setup(radial.clone());
         let press = shown_at(&app, &state, base, 0.1, 0.1);
-        let was_center = state.borrow().center;
+        let was_center = state.borrow().develop.center;
         crate::testing::drag(
             &app,
             &[press, (press.0 + 10.0, press.1), (press.0 + 40.0, press.1)],
         );
         assert_eq!(the_shape(&state), radial);
-        assert_ne!(state.borrow().center, was_center, "the picture did not pan");
+        assert_ne!(
+            state.borrow().develop.center,
+            was_center,
+            "the picture did not pan"
+        );
         // Nor beyond a linear's lines.
         let linear = Shape::Linear {
             from: [0.5, 0.3],
@@ -2932,13 +3036,17 @@ mod tests {
         };
         let (app, state, _worker, base) = body_setup(linear.clone());
         let press = shown_at(&app, &state, base, 0.15, 0.6);
-        let was_center = state.borrow().center;
+        let was_center = state.borrow().develop.center;
         crate::testing::drag(
             &app,
             &[press, (press.0, press.1 + 10.0), (press.0, press.1 + 40.0)],
         );
         assert_eq!(the_shape(&state), linear);
-        assert_ne!(state.borrow().center, was_center, "the picture did not pan");
+        assert_ne!(
+            state.borrow().develop.center,
+            was_center,
+            "the picture did not pan"
+        );
     }
 
     /// A press on the body that never clears the drag threshold is a
@@ -2957,7 +3065,7 @@ mod tests {
         click(&app, press.0, press.1);
         assert!(zoomed.get(), "the click did not zoom");
         assert_eq!(the_shape(&state), radial);
-        assert!(state.borrow().mask_drag.is_none());
+        assert!(state.borrow().develop.mask_drag.is_none());
     }
 
     /// With a dropper in hand the picture's presses are the dropper's:
@@ -3001,20 +3109,24 @@ mod tests {
         app.set_geo_crop_h(0.5);
         {
             let mut st = state.borrow_mut();
-            st.zoom = 2.0;
-            st.center = (100.0, 75.0);
+            st.develop.zoom = 2.0;
+            st.develop.center = (100.0, 75.0);
         }
         // Off the radial on the cropped, zoomed view: it pans.
         let off = shown_at(&app, &state, base, 0.7, 0.45);
         assert!(!app.invoke_mask_body_at(off.0 - base.x, off.1 - base.y, 0.0));
-        let was_center = state.borrow().center;
+        let was_center = state.borrow().develop.center;
         crate::testing::drag(&app, &[off, (off.0 + 10.0, off.1), (off.0 + 40.0, off.1)]);
         assert_eq!(the_shape(&state), radial);
-        assert_ne!(state.borrow().center, was_center, "the picture did not pan");
+        assert_ne!(
+            state.borrow().develop.center,
+            was_center,
+            "the picture did not pan"
+        );
         // On it: the radial moves and the picture stays.
         let press = shown_at(&app, &state, base, 0.72, 0.55);
         assert!(app.invoke_mask_body_at(press.0 - base.x, press.1 - base.y, 0.0));
-        let was_center = state.borrow().center;
+        let was_center = state.borrow().develop.center;
         crate::testing::drag(
             &app,
             &[press, (press.0 + 10.0, press.1), (press.0 + 30.0, press.1)],
@@ -3028,7 +3140,11 @@ mod tests {
             (center[0] - (0.7 + du)).abs() < 1e-3 && (center[1] - 0.55).abs() < 1e-3,
             "{center:?}"
         );
-        assert_eq!(state.borrow().center, was_center, "the picture panned");
+        assert_eq!(
+            state.borrow().develop.center,
+            was_center,
+            "the picture panned"
+        );
     }
 
     /// The body stops at the picture's edge: a linear's band runs on
@@ -3041,7 +3157,7 @@ mod tests {
             to: [0.5, 0.45],
         };
         let (app, state, _worker, base) = body_setup(linear.clone());
-        state.borrow_mut().zoom = 0.25;
+        state.borrow_mut().develop.zoom = 0.25;
         let on = shown_at(&app, &state, base, 0.1, 0.375);
         assert!(app.invoke_mask_body_at(on.0 - base.x, on.1 - base.y, 0.0));
         let grey = shown_at(&app, &state, base, -0.2, 0.375);
@@ -3052,7 +3168,7 @@ mod tests {
             &[grey, (grey.0, grey.1 + 10.0), (grey.0, grey.1 + 40.0)],
         );
         assert_eq!(the_shape(&state), linear);
-        assert!(state.borrow().mask_drag.is_none());
+        assert!(state.borrow().develop.mask_drag.is_none());
     }
 
     /// Let the sections' folding and any other animation run out, so
@@ -3114,7 +3230,7 @@ mod tests {
         let (at, size) = global[0];
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         assert_eq!(app.get_target(), 0);
-        assert_eq!(state.borrow().target, None);
+        assert_eq!(state.borrow().develop.target, None);
 
         // And from far down to another mask.
         app.invoke_target_changed(1);
@@ -3126,7 +3242,7 @@ mod tests {
         let (at, size) = second[0];
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         assert_eq!(app.get_target(), 2);
-        assert_eq!(state.borrow().target, Some(1));
+        assert_eq!(state.borrow().develop.target, Some(1));
     }
 
     /// A long list holds at most six rows and scrolls inside itself,

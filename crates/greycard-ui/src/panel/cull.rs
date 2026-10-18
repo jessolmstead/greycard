@@ -156,47 +156,47 @@ impl Cull {
 /// selection is on is shown from its JPEG, the ones about it decoded
 /// ahead.
 pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         return;
     }
-    st.turn_pressed = None;
+    st.develop.turn_pressed = None;
     crate::panel::look_preview::end(st, app);
-    st.placing = None;
+    st.develop.placing = None;
     app.set_placing("".into());
-    st.retouching = None;
+    st.develop.retouching = None;
     app.set_retouch_mode("".into());
-    st.picking = None;
+    st.develop.picking = None;
     app.set_picking("".into());
-    st.guiding.clear();
+    st.develop.guiding.clear();
     app.set_guide_mode("".into());
     app.set_level_mode(false);
     app.set_crop_mode(false);
-    st.crop_drag = None;
-    st.crop_draw = None;
-    st.mask_drag = None;
-    st.patch_drag = None;
+    st.develop.crop_drag = None;
+    st.develop.crop_draw = None;
+    st.develop.mask_drag = None;
+    st.develop.patch_drag = None;
     if st.current.is_some() {
-        let outgoing = read_edit(app, &st.edit, st.target);
+        let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
         save_edit(st, outgoing);
     }
     // The panel is not the frame's from here, and the sidecar's when
     // culling ends: the command line's overrides are done with.
-    st.overridden = None;
+    st.launch.overridden = None;
     // A save or a develop still on its timer would read a panel that
     // is no longer the frame's.
-    st.save_timer.stop();
-    st.debounce.stop();
-    st.held = None;
-    st.peek = None;
-    st.status_kept = None;
-    st.view_kept = None;
+    st.develop.save_timer.stop();
+    st.develop.debounce.stop();
+    st.develop.held = None;
+    st.develop.peek = None;
+    st.develop.status_kept = None;
+    st.develop.view_kept = None;
     // A frame whose develop was still on its way: that develop is
     // dropped with the generation, and the camera's picture standing
     // in for it with the mode's own. The previews the develop view
     // kept go too — the mode makes its own, at its own size.
     drop_placeholder(st, app);
-    st.hold = None;
-    st.generation += 1;
+    st.culling.hold = None;
+    st.develop.generation += 1;
     app.set_busy(false);
     app.set_navigator(slint::Image::default());
     app.set_scope_picture(slint::Image::default());
@@ -214,7 +214,7 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     app.set_compare(cull.compare as i32);
     app.set_compare_text(cull.compare.to_string().into());
     let reach = cull.reach;
-    st.cull = Some(cull);
+    st.culling.cull = Some(cull);
     // No frame is being edited while culling.
     if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
         worker.set_open_frame(None);
@@ -222,9 +222,9 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     // Fitted, as a file opens; at the start the command line's zoom
     // stands, so `--zoom 1` opens the loupe at 1:1.
     if st.current.is_some() {
-        st.zoom = 0.0;
+        st.develop.zoom = 0.0;
     }
-    st.image_size = (0, 0);
+    st.develop.image_size = (0, 0);
     tracing::info!("culling: on, previews at {size} px, {reach} either side");
     if let Some(c) = st.current {
         cull_select(st, app, c);
@@ -238,21 +238,21 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
 /// screen until that lands, when the viewport swaps to ours in one
 /// frame: they differ by design, and a blend would hide that.
 pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Option<Edit>) {
-    let Some(mut cull) = st.cull.take() else {
+    let Some(mut cull) = st.culling.cull.take() else {
         return;
     };
     // A pick whose sidecar was on its way is left with the mode: the
     // frame stays current, and the open that would have followed
     // finds it no longer the pick.
     crate::rows::pick_over(st, app);
-    st.prefetch.want(Vec::new());
+    st.culling.prefetch.want(Vec::new());
     app.set_culling(false);
     app.set_panel_tab(cull.tab_kept.clone());
-    sync_rows(&st.compare_tiles, Vec::new());
+    sync_rows(&st.culling.compare_tiles, Vec::new());
     tracing::info!("culling: off");
     let Some(c) = st.current else {
         drop_placeholder(st, app);
-        st.hold = None;
+        st.culling.hold = None;
         app.set_status("".into());
         return;
     };
@@ -260,24 +260,24 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     // one frame's is needed for that.
     cull.compare = 1;
     cull.textures.retain(|f, _| *f == c);
-    st.hold = Some(cull);
+    st.culling.hold = Some(cull);
     // The word for the last key goes with the mode, or coming back
     // within its second would show it over another frame.
-    st.notice_timer.stop();
+    st.culling.notice_timer.stop();
     app.set_notice_on(false);
     // The panel takes the frame's edit here, so it is no stand-in's
     // any more, and the load is not an open of its own.
-    st.panel_stand_in = None;
+    st.views.panel_stand_in = None;
     if !crate::rows::load_frame(st, app, c) {
-        st.panel_stand_in = Some(st.path_of(c).clone());
+        st.views.panel_stand_in = Some(st.path_of(c).clone());
     }
     let edit = with.unwrap_or_else(|| st.line(c).map(|l| l.current.clone()).unwrap_or_default());
-    st.target = None;
+    st.develop.target = None;
     // The tool is put down. Left onto another frame than the one open
     // before the mode, its people are not that frame's either; left on
     // the same one, a part's question who it is of still stands, as
     // its raster does.
-    if st.learned_of.as_deref() == Some(st.path_of(c).as_path()) {
+    if st.develop.learned_of.as_deref() == Some(st.path_of(c).as_path()) {
         crate::panel::parts::stopped(st);
     } else {
         crate::panel::parts::another_picture(st);
@@ -290,10 +290,10 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
         schedule_save(st, app.as_weak());
     }
     show_history(st, app);
-    st.edit = edit.clone();
-    st.generation += 1;
-    st.zoom = 0.0;
-    st.image_size = (0, 0);
+    st.develop.edit = edit.clone();
+    st.develop.generation += 1;
+    st.develop.zoom = 0.0;
+    st.develop.image_size = (0, 0);
     crate::panel::viewport::settle_source_size(st);
     // The loupe's picture is already up: it stands in for the develop
     // now, by the same rule a selected frame's does, and the panel
@@ -302,7 +302,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     // mode left before its first decode has nothing standing in, and
     // saying it had would gate the panel off the developed picture
     // that is still on screen.
-    if let Some(preview) = st.hold.as_ref().and_then(|h| h.cache.best(c)) {
+    if let Some(preview) = st.culling.hold.as_ref().and_then(|h| h.cache.best(c)) {
         let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, c, app, true);
         let plane = Geometry {
             turns,
@@ -312,9 +312,9 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
         .plane_size(preview.source.0 as f32, preview.source.1 as f32);
         let shown = (plane.0.round() as u32, plane.1.round() as u32);
         let (small, local, own) = (preview.small(), preview.origin(), preview.own_size());
-        st.placeholder = Some(placeholder::Wait::held(c, st.generation));
+        st.culling.placeholder = Some(placeholder::Wait::held(c, st.develop.generation));
         show_overlays(st, app, true);
-        say_placeholder(app, shown, small, local, (st.zoom, own));
+        say_placeholder(app, shown, small, local, (st.develop.zoom, own));
     }
     app.set_status("developing...".into());
     app.set_busy(true);
@@ -330,8 +330,8 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
 /// across with it. None when nothing on the panel moved.
 pub(crate) fn control_over_frame(st: &mut State, app: &App) -> Option<Edit> {
     let c = st.current?;
-    let before = st.edit.clone();
-    let touched = read_edit(app, &before, st.target);
+    let before = st.develop.edit.clone();
+    let touched = read_edit(app, &before, st.develop.target);
     if touched == before {
         return None;
     }
@@ -357,11 +357,11 @@ pub(crate) fn control_over_frame(st: &mut State, app: &App) -> Option<Edit> {
 /// is not an answer.
 pub(crate) fn shot_text(st: &State, file: usize) -> Option<greycard_core::raw::ShotSummary> {
     let path = st.files.get(file)?;
-    if st.library.offline.iter().any(|r| path.starts_with(r)) {
+    if st.views.library.offline.iter().any(|r| path.starts_with(r)) {
         return Some(Default::default());
     }
-    let reader = st.index_reader.as_ref()?;
-    let Some(id) = st.index_ids.get(file).copied().flatten() else {
+    let reader = st.views.index_reader.as_ref()?;
+    let Some(id) = st.views.index_ids.get(file).copied().flatten() else {
         return Some(Default::default());
     };
     match reader.by_id(id) {
@@ -381,7 +381,7 @@ pub(crate) fn shot_text(st: &State, file: usize) -> Option<greycard_core::raw::S
 /// Nothing outside culling, where the develop writes them; and the
 /// lines already up stay when the index could not be asked.
 pub(crate) fn show_shot(st: &State, app: &App) {
-    let (Some(_), Some(file)) = (&st.cull, st.current) else {
+    let (Some(_), Some(file)) = (&st.culling.cull, st.current) else {
         return;
     };
     if let Some(shot) = shot_text(st, file) {
@@ -417,8 +417,8 @@ pub(crate) fn cull_select(st: &mut State, app: &App, cell: usize) {
     app.set_shot_size("".into());
     show_history(st, app);
     show_frame_tags(st, app);
-    let count = st.shown.len();
-    if let Some(cull) = st.cull.as_mut() {
+    let count = st.views.shown.len();
+    if let Some(cull) = st.culling.cull.as_mut() {
         cull.forward = was.is_none_or(|w| cell >= w);
         // A versions compare holds while the focus is one of its cells,
         // wherever they stand in the list; off them it is no longer the
@@ -456,11 +456,11 @@ pub(crate) fn cull_refresh(st: &mut State) {
     let Some(row) = row_of(st, c) else {
         return;
     };
-    let count = st.shown.len();
-    let Some(cull) = st.cull.as_mut() else {
+    let count = st.views.shown.len();
+    let Some(cull) = st.culling.cull.as_mut() else {
         return;
     };
-    let rows = cull.rows(&st.shown);
+    let rows = cull.rows(&st.views.shown);
     let mut order: Vec<usize> = rows.clone();
     for r in cull::order(row, count, cull.reach, cull.forward) {
         if !order.contains(&r) {
@@ -468,7 +468,11 @@ pub(crate) fn cull_refresh(st: &mut State) {
         }
     }
     let kept = cull::kept(row, count, cull.reach);
-    let window: Vec<usize> = kept.clone().chain(rows).map(|r| st.shown[r]).collect();
+    let window: Vec<usize> = kept
+        .clone()
+        .chain(rows)
+        .map(|r| st.views.shown[r])
+        .collect();
     cull.cache.keep(&window, c);
     cull.textures.retain(|f, _| window.contains(f));
     tracing::debug!(
@@ -479,16 +483,16 @@ pub(crate) fn cull_refresh(st: &mut State) {
         cull.cache.bytes() / 1_000_000
     );
     let size = cull.size;
-    let (files, from_row, cells, library) = (&st.files, &st.from_row, &st.cells, &st.library);
+    let (files, from_row, cells, library) = (&st.files, &st.from_row, &st.cells, &st.views.library);
     let plan = |c: usize| loupe_plan_of(files, from_row, cells, library, c);
     let path_of = |c: usize| files[cells[c].file].clone();
-    let picture_of = |c: usize| companion_picture(&st.companions, &files[cells[c].file]);
+    let picture_of = |c: usize| companion_picture(&st.views.companions, &files[cells[c].file]);
     let version_of = |c: usize| cells[c].version.clone();
-    let frames: Vec<usize> = order.iter().map(|&r| st.shown[r]).collect();
+    let frames: Vec<usize> = order.iter().map(|&r| st.views.shown[r]).collect();
     let mut wants = Vec::new();
     // At 1:1, the frame's full JPEG before anything, where its file can
     // be read.
-    if st.zoom > 0.0 && !cull.cache.has_own_size(c) && cull.wants_file(c) && plan(c).file {
+    if st.develop.zoom > 0.0 && !cull.cache.has_own_size(c) && cull.wants_file(c) && plan(c).file {
         wants.push(
             cull::Want::for_loupe(c, path_of(c), 0)
                 .of_version(version_of(c))
@@ -531,7 +535,7 @@ pub(crate) fn cull_refresh(st: &mut State) {
                 .with_picture(picture_of(f)),
         );
     }
-    st.prefetch.want(wants);
+    st.culling.prefetch.want(wants);
 }
 
 /// The camera's JPEG beside the raw at `path`, which the loupe and the
@@ -548,7 +552,7 @@ pub(crate) fn companion_picture(
 /// [`cull::source_for`]. The key is the row's while the frame stands
 /// in from it; a frame read from disk has none.
 pub(crate) fn loupe_plan(st: &State, c: usize) -> cull::Plan {
-    loupe_plan_of(&st.files, &st.from_row, &st.cells, &st.library, c)
+    loupe_plan_of(&st.files, &st.from_row, &st.cells, &st.views.library, c)
 }
 
 /// [`loupe_plan`] with the state's fields borrowed apart.
@@ -580,7 +584,7 @@ pub(crate) fn loupe_plan_of(
 /// again. Only the selection's own is asked for: nothing is decoded
 /// ahead here, where the develop wants the cores.
 pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
-    let count = st.shown.len();
+    let count = st.views.shown.len();
     let row = row_of(st, cell);
     // At the view's long edge, as the mode's are, and no smaller than
     // a strip would be laughable at.
@@ -589,7 +593,7 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
     // frame gets a placeholder of its own: a run through a folder of
     // pictures would otherwise hold on to whatever a run through the
     // raws before it left.
-    if let Some(hold) = st.hold.as_mut() {
+    if let Some(hold) = st.culling.hold.as_mut() {
         // A view resized since: what is kept was made for a view that
         // is gone, and the mode's rule is to remake at the size in
         // hand.
@@ -600,7 +604,7 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
         }
         let window: Vec<usize> = match row {
             Some(row) => placeholder::window(row, count)
-                .map(|r| st.shown[r])
+                .map(|r| st.views.shown[r])
                 .collect(),
             // Hidden by the filter, which is not a row to keep a
             // window about; its own picture is all that is wanted.
@@ -618,6 +622,7 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
     // The hold is the mode's own state without the mode: its tab is
     // never put back from here, since nothing took it away.
     let hold = st
+        .culling
         .hold
         .get_or_insert_with(|| Cull::new(slint::SharedString::new(), size));
     let held = hold.cache.get(cell).is_some();
@@ -629,8 +634,12 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
     let path = st.path_of(cell).clone();
     // Whatever camera picture is on screen stays there until this
     // frame's own is in hand.
-    let showing = st.placeholder.as_ref().and_then(|w| w.showing);
-    st.placeholder = Some(placeholder::Wait::asked(cell, st.generation, showing));
+    let showing = st.culling.placeholder.as_ref().and_then(|w| w.showing);
+    st.culling.placeholder = Some(placeholder::Wait::asked(
+        cell,
+        st.develop.generation,
+        showing,
+    ));
     if held {
         // Already decoded: up on the next frame, no thread needed.
         placeholder_arrived(st, app, cell);
@@ -640,13 +649,13 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
         drop_placeholder(st, app);
         return;
     }
-    st.prefetch.want(vec![
+    st.culling.prefetch.want(vec![
         // The frame's own want, version and all: the delivery is
         // checked against the cell's key, and a version's picture
         // asked as its file's would be dropped there.
         cull::Want::of_file(cell, path.clone(), size)
             .of_version(st.cells[cell].version.clone())
-            .with_picture(companion_picture(&st.companions, &path)),
+            .with_picture(companion_picture(&st.views.companions, &path)),
     ]);
     // The frame before this one may have gone with the window — a
     // jump across the folder — and then there is nothing standing in
@@ -659,6 +668,7 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
 /// for a frame chosen since, whose own develop is still to come.
 pub(crate) fn develop_landed(st: &mut State, app: &App, generation: u64) -> bool {
     if !st
+        .culling
         .placeholder
         .as_ref()
         .is_some_and(|w| w.replaced_by(generation))
@@ -674,8 +684,8 @@ pub(crate) fn develop_landed(st: &mut State, app: &App, generation: u64) -> bool
 /// held any more, which leaves the developed picture on screen as it
 /// was before any of this.
 pub(crate) fn standing_in(st: &State) -> Option<usize> {
-    let file = st.placeholder.as_ref()?.showing?;
-    st.hold.as_ref()?.cache.best(file)?;
+    let file = st.culling.placeholder.as_ref()?.showing?;
+    st.culling.hold.as_ref()?.cache.best(file)?;
     Some(file)
 }
 
@@ -690,7 +700,7 @@ pub(crate) fn standing_in(st: &State) -> Option<usize> {
 /// (`zoom_stands`), where the zoom is the command line's and stands
 /// into the develop, so `--zoom 1` opens at 1:1.
 fn placeholder_arrived(st: &mut State, app: &App, cell: usize) {
-    let Some(preview) = st.hold.as_ref().and_then(|h| h.cache.best(cell)) else {
+    let Some(preview) = st.culling.hold.as_ref().and_then(|h| h.cache.best(cell)) else {
         return;
     };
     let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, cell, app, true);
@@ -702,11 +712,11 @@ fn placeholder_arrived(st: &mut State, app: &App, cell: usize) {
     .plane_size(preview.source.0 as f32, preview.source.1 as f32);
     let shown = (plane.0.round() as u32, plane.1.round() as u32);
     let (small, local, own) = (preview.small(), preview.origin(), preview.own_size());
-    if !st.zoom_stands {
-        st.zoom = 0.0;
+    if !st.launch.zoom_stands {
+        st.develop.zoom = 0.0;
     }
-    st.image_size = (0, 0);
-    say_placeholder(app, shown, small, local, (st.zoom, own));
+    st.develop.image_size = (0, 0);
+    say_placeholder(app, shown, small, local, (st.develop.zoom, own));
     show_overlays(st, app, true);
     app.window().request_redraw();
 }
@@ -754,7 +764,7 @@ fn show_overlays(st: &mut State, app: &App, up: bool) {
         // redraws it from whatever is in hand — paints the last
         // frame's histogram back behind a picture it does not
         // describe.
-        st.bins = None;
+        st.develop.bins = None;
         app.set_scope_picture(slint::Image::default());
         app.set_curve_image(draw_curve(app, None));
         app.set_clip_shadows_lit(false);
@@ -771,11 +781,11 @@ fn show_overlays(st: &mut State, app: &App, up: bool) {
 /// textures made from them do not, since nothing draws them until
 /// another frame is chosen.
 pub(crate) fn drop_placeholder(st: &mut State, app: &App) -> bool {
-    let was = st.placeholder.take().is_some();
+    let was = st.culling.placeholder.take().is_some();
     if was {
         show_overlays(st, app, false);
         app.set_placeholder_status("".into());
-        if let Some(hold) = st.hold.as_mut() {
+        if let Some(hold) = st.culling.hold.as_mut() {
             hold.textures.clear();
         }
     }
@@ -813,9 +823,9 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
     }
     let path = frame.path.clone();
     let current = st.current;
-    let culling = st.cull.is_some();
+    let culling = st.culling.cull.is_some();
     let plan = loupe_plan(st, file);
-    let Some(cull) = st.cull.as_mut().or(st.hold.as_mut()) else {
+    let Some(cull) = st.culling.cull.as_mut().or(st.culling.hold.as_mut()) else {
         return;
     };
     if cull.full_asked == Some(file) && size == 0 {
@@ -892,6 +902,7 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
     // up, and a frame with no camera JPEG in it gives up the wait,
     // leaving the picture on screen where it is until the develop.
     if st
+        .culling
         .placeholder
         .as_mut()
         .is_some_and(|w| made && w.arrived(file))
@@ -899,6 +910,7 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
         placeholder_arrived(st, app, file);
     } else if !made
         && st
+            .culling
             .placeholder
             .as_ref()
             .is_some_and(|w| w.file == file && !w.up())
@@ -922,10 +934,10 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     let Some(selected) = st.current else {
         return;
     };
-    let count = st.shown.len();
+    let count = st.views.shown.len();
     // The mode itself, or the camera's picture standing in for a
     // develop: the mode just left, or a frame just selected.
-    let holding = st.cull.is_none();
+    let holding = st.culling.cull.is_none();
     // Which frame is drawn: while one stands in, the frame there is a
     // picture of, which lags the selection until its own is decoded.
     let c = match standing_in(st) {
@@ -936,24 +948,24 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // so only that frame's turns are read off it.
     let from_panel = |file: usize| holding && Some(file) == st.current;
     // `--cull-develop` is about to leave: no capture of this picture.
-    let leave_next = st.cull_develop;
-    let Some(cull) = st.cull.as_mut().or(st.hold.as_mut()) else {
+    let leave_next = st.launch.cull_develop;
+    let Some(cull) = st.culling.cull.as_mut().or(st.culling.hold.as_mut()) else {
         return;
     };
-    let Some(renderer) = st.renderer.as_mut() else {
+    let Some(renderer) = st.develop.renderer.as_mut() else {
         return;
     };
     sync_display(
-        &mut st.lut_for,
-        &mut st.encoded_lut_for,
-        &st.monitors,
+        &mut st.develop.lut_for,
+        &mut st.develop.encoded_lut_for,
+        &st.develop.monitors,
         app,
         renderer,
     );
     let rows = if holding {
-        cull::row_of_shown(&st.shown, c).into_iter().collect()
+        cull::row_of_shown(&st.views.shown, c).into_iter().collect()
     } else {
-        cull.rows(&st.shown)
+        cull.rows(&st.views.shown)
     };
     let rects = cull::tile_rects(vw, vh, rows.len().max(1));
     // The current frame's picture, which the others' centers follow.
@@ -971,15 +983,15 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // same frame keeps its place.
     if let Some(full) = current_full {
         let size = (full.0.round() as u32, full.1.round() as u32);
-        if size != st.image_size {
-            st.image_size = size;
-            st.center = (full.0 / 2.0, full.1 / 2.0);
+        if size != st.develop.image_size {
+            st.develop.image_size = size;
+            st.develop.center = (full.0 / 2.0, full.1 / 2.0);
         }
     }
     // A frame needs its full-size copy only while it is looked at
     // 1:1; at a fit that copy and its texture are let go, and at
     // 1:1 it is asked for before anything else.
-    if st.zoom <= 0.0 && cull.cache.full(c).is_some() {
+    if st.develop.zoom <= 0.0 && cull.cache.full(c).is_some() {
         cull.cache.drop_full();
         cull.textures.remove(&c);
     }
@@ -988,25 +1000,25 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // moment would ask again.
     // A frame out of reach has its local preview and nothing more.
     if !holding
-        && st.zoom > 0.0
+        && st.develop.zoom > 0.0
         && !cull.cache.has_own_size(c)
         && cull.wants_file(c)
         && cull.full_asked != Some(c)
-        && loupe_plan_of(&st.files, &st.from_row, &st.cells, &st.library, c).file
+        && loupe_plan_of(&st.files, &st.from_row, &st.cells, &st.views.library, c).file
     {
         cull.full_asked = Some(c);
         let path = st.files[st.cells[c].file].clone();
         let want = cull::Want::for_loupe(c, path.clone(), 0)
             .of_version(st.cells[c].version.clone())
-            .with_picture(companion_picture(&st.companions, &path));
-        st.prefetch.push_front(want);
+            .with_picture(companion_picture(&st.views.companions, &path));
+        st.culling.prefetch.push_front(want);
     }
     let mut tiles = Vec::new();
     let mut overlay = Vec::new();
     let mut ready = true;
     let mut names = Vec::new();
     for (k, &row) in rows.iter().enumerate() {
-        let file = st.shown[row];
+        let file = st.views.shown[row];
         let rect = rects[k];
         let meta = &st.sidecars[st.cells[file].file].meta;
         let version = version_name_of(&st.sidecars, &st.cells, file);
@@ -1063,8 +1075,8 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
         let scale = tw / fw;
         let full = geometry.plane_size(fw, fh);
         let frame = geometry.frame(tw, th);
-        let zoom = if st.zoom > 0.0 {
-            st.zoom
+        let zoom = if st.develop.zoom > 0.0 {
+            st.develop.zoom
         } else {
             (rect.2 as f32 / full.0)
                 .min(rect.3 as f32 / full.1)
@@ -1075,10 +1087,10 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
         // corner of each.
         let center = match current_full {
             Some(cur) if file != c => (
-                st.center.0 / cur.0.max(1.0) * full.0,
-                st.center.1 / cur.1.max(1.0) * full.1,
+                st.develop.center.0 / cur.0.max(1.0) * full.0,
+                st.develop.center.1 / cur.1.max(1.0) * full.1,
             ),
-            _ => st.center,
+            _ => st.develop.center,
         };
         tiles.push((
             file,
@@ -1094,7 +1106,11 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             },
             rect,
         ));
-        if file == c && st.zoom > 0.0 && !preview.own_size() && !cull.failed.contains_key(&c) {
+        if file == c
+            && st.develop.zoom > 0.0
+            && !preview.own_size()
+            && !cull.failed.contains_key(&c)
+        {
             ready = false;
         }
         // The size as shown, so the line follows the frame's turn as
@@ -1121,11 +1137,11 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // The rule and the names are for telling compared frames apart;
     // one frame alone needs neither.
     if holding || rows.len() < 2 {
-        sync_rows(&st.compare_tiles, Vec::new());
+        sync_rows(&st.culling.compare_tiles, Vec::new());
     } else {
-        sync_rows(&st.compare_tiles, overlay);
+        sync_rows(&st.culling.compare_tiles, overlay);
     }
-    let label = zoom_label(st.zoom);
+    let label = zoom_label(st.develop.zoom);
     if app.get_zoom_text() != label {
         app.set_zoom_text(label);
     }
@@ -1136,26 +1152,27 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // turned since, and then the size in the line is the other way
     // round.
     if holding && let Some(n) = names.iter().find(|n| n.file == c) {
-        say_placeholder(app, n.size, n.small, n.local, (st.zoom, n.own));
+        say_placeholder(app, n.size, n.small, n.local, (st.develop.zoom, n.own));
     }
     // The frame that shows it is the one a timing hook measures to.
     if holding
         && shown_now
         && st
+            .culling
             .placeholder
             .as_mut()
             .is_some_and(placeholder::Wait::drawn)
-        && let Some(at) = st.selected_at
+        && let Some(at) = st.views.selected_at
     {
         let ms = at.elapsed().as_secs_f64() * 1e3;
         tracing::debug!("select to the camera picture: {ms:.1} ms");
-        if let Some((_, to_picture, _)) = st.time_select.as_mut() {
+        if let Some((_, to_picture, _)) = st.launch.time_select.as_mut() {
             to_picture.push(ms);
         }
     }
     // The status: what is on screen and how, or why not yet.
     if !holding {
-        let status = cull_status(cull, c, st.zoom, shown_now, &names);
+        let status = cull_status(cull, c, st.develop.zoom, shown_now, &names);
         if cull.status != status {
             cull.status = status.clone();
             app.set_status(status.into());
@@ -1169,17 +1186,17 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             );
             // The turned picture is up; a capture waiting on it may
             // go on the next frame.
-            st.awaiting_turn = false;
+            st.launch.awaiting_turn = false;
         }
         if shown_now && let Some(at) = cull.switched.take() {
             let ms = at.elapsed().as_secs_f64() * 1e3;
             tracing::debug!("cull switch to frame: {ms:.1} ms");
             time_cull(
-                &mut st.time_cull,
+                &mut st.launch.time_cull,
                 app,
                 state,
                 ms,
-                cull::row_of_shown(&st.shown, c),
+                cull::row_of_shown(&st.views.shown, c),
                 count,
             );
             // `--turn`: the key, from the event loop, and the Enter
@@ -1188,13 +1205,13 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             // is of the turned frame and not of both in turn. The
             // flag is cleared in the callback rather than here, so a
             // capture waiting on it does not go off in between.
-            if let Some(quarters) = st.turn_at_start {
+            if let Some(quarters) = st.launch.turn_at_start {
                 let app_weak = app.as_weak();
-                let then_leave = std::mem::take(&mut st.cull_develop);
+                let then_leave = std::mem::take(&mut st.launch.cull_develop);
                 let state = state.clone();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                     if let Some(app) = app_weak.upgrade() {
-                        state.borrow_mut().turn_at_start = None;
+                        state.borrow_mut().launch.turn_at_start = None;
                         app.invoke_frame_turned(quarters);
                         if then_leave {
                             app.invoke_cull_leave();
@@ -1205,18 +1222,18 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             // `--cull-key`: the key, from the event loop; the flag
             // is cleared there, as `--turn`'s is, so the capture
             // waits for the frame after it.
-            if let Some(key) = st.cull_key_at_start.clone() {
+            if let Some(key) = st.launch.cull_key_at_start.clone() {
                 let app_weak = app.as_weak();
                 let state = state.clone();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                     if let Some(app) = app_weak.upgrade() {
-                        state.borrow_mut().cull_key_at_start = None;
+                        state.borrow_mut().launch.cull_key_at_start = None;
                         app.invoke_meta_key(key.into());
                     }
                 });
             }
             // `--cull-develop`: the Enter, from the event loop.
-            if std::mem::take(&mut st.cull_develop) {
+            if std::mem::take(&mut st.launch.cull_develop) {
                 let app_weak = app.as_weak();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                     if let Some(app) = app_weak.upgrade() {
@@ -1226,8 +1243,8 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             }
             // `--ask-rejects` and `--move-rejects`: the button, and
             // for the second the sheet's yes, from the event loop.
-            if std::mem::take(&mut st.ask_rejects) {
-                let answer = std::mem::take(&mut st.move_rejects);
+            if std::mem::take(&mut st.launch.ask_rejects) {
+                let answer = std::mem::take(&mut st.launch.move_rejects);
                 let app_weak = app.as_weak();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                     if let Some(app) = app_weak.upgrade() {
@@ -1244,18 +1261,18 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // when the mode is being left.
     let ready = ready
         && !leave_next
-        && !st.awaiting_turn
-        && st.cull_key_at_start.is_none()
-        && !st.awaiting_index
-        && !st.library.awaiting
-        && st.asked.is_empty()
+        && !st.launch.awaiting_turn
+        && st.launch.cull_key_at_start.is_none()
+        && !st.launch.awaiting_index
+        && !st.views.library.awaiting
+        && st.develop.asked.is_empty()
         && grid_filled_rows(
-            &st.shown,
-            &st.thumb_made,
-            &st.thumb_failed,
-            st.thumb_want,
-            st.grid_shown,
-            st.grid_wait_over,
+            &st.views.shown,
+            &st.views.thumb_made,
+            &st.views.thumb_failed,
+            st.views.thumb_want,
+            st.views.grid_shown,
+            st.launch.grid_wait_over,
             app,
         );
     // `--snapshot-placeholder` waits for the camera's picture instead,
@@ -1263,19 +1280,20 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // than for the first file's own, which is up before anything has
     // been developed at all. The run goes on afterwards: the develop
     // it stands in for is on the GPU this moment.
-    let standing_in = holding && st.snapshot_placeholder && shown_now && st.base_white.is_some();
+    let standing_in =
+        holding && st.launch.snapshot_placeholder && shown_now && st.develop.base_white.is_some();
     schedule_snapshot(
-        &mut st.snapshot,
-        &mut st.panel_scroll,
-        &mut st.snapshot_shown,
+        &mut st.launch.snapshot,
+        &mut st.launch.panel_scroll,
+        &mut st.launch.snapshot_shown,
         app,
         state,
         ready && (standing_in || !holding),
         !standing_in,
     );
     write_screenshot(
-        &mut st.screenshot,
-        &mut st.failed,
+        &mut st.launch.screenshot,
+        &mut st.launch.failed,
         renderer,
         &texture,
         ready && !holding,
@@ -1479,7 +1497,7 @@ pub(crate) fn time_cull(
     slint::Timer::single_shot(std::time::Duration::from_millis(100), move || {
         if let Some(app) = app_weak.upgrade() {
             // The key's moment is the step's: the arrow, as pressed.
-            if let Some(cull) = state.borrow_mut().cull.as_mut() {
+            if let Some(cull) = state.borrow_mut().culling.cull.as_mut() {
                 cull.switched = Some(std::time::Instant::now());
             }
             app.invoke_step(1, false);
@@ -1551,7 +1569,7 @@ pub(crate) fn to_move_out(st: &State, i: usize) -> bool {
 
 /// The move-rejects sheet: how many frames and where they would go.
 pub(crate) fn ask_rejects(st: &State, app: &App) {
-    if st.deleting.is_some() {
+    if st.sheets.deleting.is_some() {
         app.set_status("a delete is still under way".into());
         return;
     }
@@ -1580,7 +1598,7 @@ pub(crate) fn ask_rejects(st: &State, app: &App) {
 /// The frame the selection was on, if it went, gives way to the
 /// nearest one left.
 pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
-    if st.deleting.is_some() {
+    if st.sheets.deleting.is_some() {
         app.set_status("a delete is still under way".into());
         return;
     }
@@ -1593,7 +1611,7 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
         &st.files,
         &rejected,
         cull::Orphans::WriteOver,
-        st.jpegs_apart,
+        st.views.jpegs_apart,
     ) {
         Ok(m) => m,
         Err(e) => {
@@ -1631,7 +1649,7 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
 /// takes for a drive that is away. Called with the list still holding
 /// the old paths, and ahead of the folders' passes.
 fn hand_moves(st: &State, moved: &cull::Moved) {
-    if let Some(indexer) = &st.index {
+    if let Some(indexer) = &st.views.index {
         indexer.moved(
             moved
                 .files
@@ -1657,7 +1675,7 @@ fn hand_folders(st: &State, moved: &cull::Moved) {
             }
         }
     }
-    if let Some(indexer) = &st.index
+    if let Some(indexer) = &st.views.index
         && !folders.is_empty()
     {
         indexer.asker().changes(
@@ -1781,7 +1799,7 @@ pub(crate) fn show_back(st: &State, app: &App) {
 /// left on would send it out again at the next Move rejects, so the
 /// flag comes off in its sidecar where it now is.
 pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
-    if st.deleting.is_some() {
+    if st.sheets.deleting.is_some() {
         app.set_status("a delete is still under way".into());
         return;
     }
@@ -1790,7 +1808,7 @@ pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
         app.set_status("no frame chosen is in a rejects folder".into());
         return;
     }
-    let moved = cull::move_back(&st.files, &frames, st.jpegs_apart);
+    let moved = cull::move_back(&st.files, &frames, st.views.jpegs_apart);
     for (i, why) in &moved.skipped {
         tracing::warn!("{} left where it is: {why}", file_name(&st.files[*i]));
     }
@@ -1853,7 +1871,7 @@ fn unreject(st: &mut State, i: usize) {
         crate::panel::edit::write_file(st, i);
         return;
     }
-    if !st.write_sidecars {
+    if !st.window.write_sidecars {
         return;
     }
     let path = st.files[i].clone();
@@ -1861,14 +1879,14 @@ fn unreject(st: &mut State, i: usize) {
     match Sidecar::load(&path) {
         Ok(Some(mut sidecar)) if sidecar.meta.flag == meta::Flag::Reject => {
             sidecar.meta.flag = meta::Flag::None;
-            if st.xmp_sidecars
+            if st.window.xmp_sidecars
                 && let Err(e) = greycard_edit::xmp::save(&path, &sidecar.meta, None)
             {
                 tracing::warn!("{}: xmp not written: {e}", file_name(&path));
             }
             match sidecar.save_in(&path, placement) {
                 Ok(()) => {
-                    if let Some(indexer) = &st.index {
+                    if let Some(indexer) = &st.views.index {
                         indexer.file(path.clone());
                     }
                     // The archive's copy, from the file: the sidecar in
@@ -1934,9 +1952,9 @@ pub(crate) fn drop_files(
     // The index's answers by the new numbering, and a pass over the
     // folder, which marks the rows of frames moved out missing (a
     // delete has had its rows forgotten already).
-    st.index_passed = kept
+    st.views.index_passed = kept
         .iter()
-        .map(|&i| st.index_passed.get(i).copied().unwrap_or(true))
+        .map(|&i| st.views.index_passed.get(i).copied().unwrap_or(true))
         .collect();
     // The cells follow the files: each that stays keeps its picture and
     // its place in the selection; the pictures keyed by the old
@@ -1953,13 +1971,13 @@ pub(crate) fn drop_files(
     crate::roots::ask_owed(st, worker);
     // The set was numbered by the old list; the frame on screen is
     // what is left of it.
-    st.picked.clear();
+    st.views.picked.clear();
     let next = rebuild_browser(st, app)
-        .or_else(|| stand_in.and_then(|f| crate::cull::nearest_row(&st.shown, f)));
+        .or_else(|| stand_in.and_then(|f| crate::cull::nearest_row(&st.views.shown, f)));
     app.set_status(status.into());
     match (st.current, next) {
         (Some(c), _) => {
-            if st.cull.is_some() {
+            if st.culling.cull.is_some() {
                 cull_select(st, app, c);
             }
         }
@@ -2000,9 +2018,9 @@ pub(crate) fn show_filter(st: &State, app: &App) {
             !behind.get(f - 1).copied().unwrap_or(false)
         });
     }
-    let counts = filter::Counts::of(&st.filter, &frames);
-    let exact = st.filter.stars.is_exact();
-    let picked = st.filter.stars.count();
+    let counts = filter::Counts::of(&st.views.filter, &frames);
+    let exact = st.views.filter.stars.is_exact();
+    let picked = st.views.filter.stars.count();
     let stars: Vec<FilterChip> = (0..=meta::STARS)
         .map(|n| FilterChip {
             text: filter::Stars::chip_name(n, exact).into(),
@@ -2020,7 +2038,7 @@ pub(crate) fn show_filter(st: &State, app: &App) {
         .map(|(n, f)| FilterChip {
             text: f.name().into(),
             count: counts.flags[n] as i32,
-            on: st.filter.flags.contains(f),
+            on: st.views.filter.flags.contains(f),
             code: f.code(),
         })
         .collect();
@@ -2037,7 +2055,7 @@ pub(crate) fn show_filter(st: &State, app: &App) {
             }
             .into(),
             count: counts.labels[n] as i32,
-            on: st.filter.labels.contains(l),
+            on: st.views.filter.labels.contains(l),
             code: l.code(),
         })
         .collect();
@@ -2047,7 +2065,7 @@ pub(crate) fn show_filter(st: &State, app: &App) {
     app.set_filter_exact(exact);
     app.set_filter_shown(counts.shown as i32);
     app.set_filter_total(counts.total as i32);
-    app.set_filter_on(!st.filter.is_empty());
+    app.set_filter_on(!st.views.filter.is_empty());
     // The facets: the EXIF's counted by the index, none until it has
     // rows for the folder; the keyword's and the kind's counted from
     // the frames in hand. The note beside them says how the index is
@@ -2070,7 +2088,7 @@ pub(crate) fn show_filter(st: &State, app: &App) {
 /// carry the badge. When the list has just gone empty there is no
 /// badge, no next frame and no arrow, only a blank sheet and a zero.
 pub(crate) fn say_if_empty(st: &State, app: &App) {
-    if st.shown.is_empty() && !st.files.is_empty() {
+    if st.views.shown.is_empty() && !st.files.is_empty() {
         app.set_status(filter::NOTHING_SHOWN.into());
     }
 }
@@ -2104,7 +2122,11 @@ pub(crate) fn refilter(state: &Rc<RefCell<State>>, app: &App, settled: bool) {
 fn apply_filter_said(state: &Rc<RefCell<State>>, app: &App, settled: bool, say_errors: bool) {
     let mut st = state.borrow_mut();
     let next = rebuild_browser(&mut st, app);
-    let (what, shown, count) = (st.filter.describe(), st.shown.len(), st.files.len());
+    let (what, shown, count) = (
+        st.views.filter.describe(),
+        st.views.shown.len(),
+        st.files.len(),
+    );
     if settled {
         tracing::info!("browser filter: {what}, {shown} of {count} frames");
     } else {
@@ -2113,7 +2135,7 @@ fn apply_filter_said(state: &Rc<RefCell<State>>, app: &App, settled: bool, say_e
     say_if_empty(&st, app);
     // A term typed that does not parse is looked for as a word, as
     // it was before the field took terms, and the reason is said.
-    if say_errors && let Some(e) = st.filter.typed().errors.first() {
+    if say_errors && let Some(e) = st.views.filter.typed().errors.first() {
         app.set_status(format!("filter: {e}").into());
     }
     match next {
@@ -2122,7 +2144,7 @@ fn apply_filter_said(state: &Rc<RefCell<State>>, app: &App, settled: bool, say_e
             app.invoke_select(row as i32);
         }
         None => {
-            if st.cull.is_some()
+            if st.culling.cull.is_some()
                 && let Some(c) = st.current
             {
                 cull_select(&mut st, app, c);
@@ -2142,7 +2164,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if st.cull.is_some() {
+            if st.culling.cull.is_some() {
                 leave_cull(&mut st, &app, &worker, None);
             } else if st.current.is_some() {
                 enter_cull(&mut st, &app, 1);
@@ -2177,13 +2199,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 2 | 4 => n as usize,
                 _ => 1,
             };
-            let count = st.shown.len();
+            let count = st.views.shown.len();
             let row = st.current.and_then(|c| row_of(&st, c)).unwrap_or(0);
             // The row and the key agree with the count whether or
             // not the mode takes it.
             app.set_compare(n as i32);
             app.set_compare_text(n.to_string().into());
-            let Some(cull) = st.cull.as_mut() else {
+            let Some(cull) = st.culling.cull.as_mut() else {
                 return;
             };
             cull.compare = n;
@@ -2193,8 +2215,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             cull.stack_of = None;
             cull.set = None;
             // The tiles are another size: fitted afresh.
-            st.zoom = 0.0;
-            st.image_size = (0, 0);
+            st.develop.zoom = 0.0;
+            st.develop.image_size = (0, 0);
             cull_refresh(&mut st);
             app.window().request_redraw();
         });
@@ -2209,8 +2231,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            st.cull_move_on = app.get_cull_move_on();
-            let on = st.cull_move_on;
+            st.culling.cull_move_on = app.get_cull_move_on();
+            let on = st.culling.cull_move_on;
             crate::panel::prefs::keep(&st, |s| s.cull_move_on = on);
         });
     }
@@ -2229,11 +2251,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             {
                 let mut st = state.borrow_mut();
-                let want = filter::Stars::AtLeast(stars).read_as(st.filter.stars.is_exact());
-                if st.filter.stars == want {
+                let want = filter::Stars::AtLeast(stars).read_as(st.views.filter.stars.is_exact());
+                if st.views.filter.stars == want {
                     return;
                 }
-                st.filter.stars = want;
+                st.views.filter.stars = want;
             }
             apply_filter(&state, &app);
         });
@@ -2247,7 +2269,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(&flag) = meta::Flag::ALL.get(chip.max(0) as usize) else {
                 return;
             };
-            state.borrow_mut().filter.toggle_flag(flag);
+            state.borrow_mut().views.filter.toggle_flag(flag);
             apply_filter(&state, &app);
         });
     }
@@ -2260,7 +2282,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(&label) = meta::Label::ALL.get(chip.max(0) as usize) else {
                 return;
             };
-            state.borrow_mut().filter.toggle_label(label);
+            state.borrow_mut().views.filter.toggle_label(label);
             apply_filter(&state, &app);
         });
     }
@@ -2272,8 +2294,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             {
                 let mut st = state.borrow_mut();
-                let exact = st.filter.stars.is_exact();
-                st.filter.stars = st.filter.stars.read_as(!exact);
+                let exact = st.views.filter.stars.is_exact();
+                st.views.filter.stars = st.views.filter.stars.read_as(!exact);
             }
             apply_filter(&state, &app);
         });
@@ -2287,7 +2309,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(&facet) = filter::Facet::ALL.get(code.max(0) as usize) else {
                 return;
             };
-            state.borrow_mut().filter.toggle_facet(facet, &value);
+            state.borrow_mut().views.filter.toggle_facet(facet, &value);
             apply_filter(&state, &app);
         });
     }
@@ -2299,10 +2321,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             {
                 let mut st = state.borrow_mut();
-                if st.filter.text == text.as_str() {
+                if st.views.filter.text == text.as_str() {
                     return;
                 }
-                st.filter.text = text.to_string();
+                st.views.filter.text = text.to_string();
             }
             apply_filter_typed(&state, &app);
         });
@@ -2315,10 +2337,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             {
                 let mut st = state.borrow_mut();
-                if st.filter.is_empty() {
+                if st.views.filter.is_empty() {
                     return;
                 }
-                st.filter = filter::Filter::default();
+                st.views.filter = filter::Filter::default();
             }
             // The field holds its own text, so emptying the filter
             // has to empty it too.
@@ -2451,7 +2473,7 @@ mod tests {
         deliver_preview(&app, late);
         {
             let st = state.borrow();
-            let shown = st.cull.as_ref().unwrap().cache.get(1).unwrap();
+            let shown = st.culling.cull.as_ref().unwrap().cache.get(1).unwrap();
             assert!(!shown.local, "the camera's JPEG stays");
         }
         // The file's failure first, then the local preview.
@@ -2465,6 +2487,7 @@ mod tests {
         assert!(
             state
                 .borrow()
+                .culling
                 .cull
                 .as_ref()
                 .unwrap()
@@ -2475,13 +2498,13 @@ mod tests {
         deliver_preview(&app, preview);
         let mut st = state.borrow_mut();
         {
-            let cull = st.cull.as_ref().unwrap();
+            let cull = st.culling.cull.as_ref().unwrap();
             assert!(cull.cache.get(2).is_some_and(|p| p.local), "up");
             assert!(!cull.failed.contains_key(&2), "no failure said over it");
             assert!(cull.file_failed.contains(&2));
         }
         cull_refresh(&mut st);
-        assert!(!st.prefetch.asked().iter().any(|w| w.file == 2));
+        assert!(!st.culling.prefetch.asked().iter().any(|w| w.file == 2));
     }
 
     /// Culling left on another frame than the one opened before it: the
@@ -2496,31 +2519,33 @@ mod tests {
         let (state, worker) = state_for(&app, folder(3));
         app.invoke_select(0);
         let mut st = state.borrow_mut();
-        assert_eq!(st.learned_of.as_ref(), Some(&st.files[0]));
-        st.part_asks.insert((1, 0), crate::ai::Ask::default());
-        st.part_dismissed.insert((1, 1));
+        assert_eq!(st.develop.learned_of.as_ref(), Some(&st.files[0]));
+        st.develop
+            .part_asks
+            .insert((1, 0), crate::ai::Ask::default());
+        st.develop.part_dismissed.insert((1, 1));
         let pending = || crate::panel::parts::Pending {
             id: 1,
             part: crate::panel::parts::by_label("Lips").unwrap(),
             mode: greycard_edit::mask::Mode::Add,
         };
-        st.part_pending = Some(pending());
+        st.develop.part_pending = Some(pending());
         // In and out on the same frame.
         enter_cull(&mut st, &app, 1);
         leave_cull(&mut st, &app, &worker, None);
-        assert_eq!(st.part_asks.len(), 1);
-        assert_eq!(st.part_dismissed.len(), 1);
-        assert!(st.part_pending.is_none());
-        assert_eq!(st.learned_of.as_ref(), Some(&st.files[0]));
+        assert_eq!(st.develop.part_asks.len(), 1);
+        assert_eq!(st.develop.part_dismissed.len(), 1);
+        assert!(st.develop.part_pending.is_none());
+        assert_eq!(st.develop.learned_of.as_ref(), Some(&st.files[0]));
         // In, and out on another.
-        st.part_pending = Some(pending());
+        st.develop.part_pending = Some(pending());
         enter_cull(&mut st, &app, 1);
         st.current = Some(2);
         leave_cull(&mut st, &app, &worker, None);
-        assert!(st.part_pending.is_none());
-        assert!(st.part_asks.is_empty());
-        assert!(st.part_dismissed.is_empty());
-        assert_eq!(st.learned_of.as_ref(), Some(&st.files[2]));
+        assert!(st.develop.part_pending.is_none());
+        assert!(st.develop.part_asks.is_empty());
+        assert!(st.develop.part_dismissed.is_empty());
+        assert_eq!(st.develop.learned_of.as_ref(), Some(&st.files[2]));
     }
 
     /// Culling left on a frame of the other mosaic: the demosaic menu
@@ -2534,8 +2559,11 @@ mod tests {
         let (state, worker) = state_for(&app, folder(3));
         let mut st = state.borrow_mut();
         let (bayer, xtrans) = (st.files[0].clone(), st.files[2].clone());
-        st.mosaics.insert(bayer, OpenMosaic::Known(Mosaic::Bayer));
-        st.mosaics
+        st.develop
+            .mosaics
+            .insert(bayer, OpenMosaic::Known(Mosaic::Bayer));
+        st.develop
+            .mosaics
             .insert(xtrans.clone(), OpenMosaic::Known(Mosaic::XTrans));
         drop(st);
         app.invoke_select(0);
@@ -2553,7 +2581,7 @@ mod tests {
         assert_eq!(names, ["markesteijn-3", "markesteijn-1", "bilinear"]);
         assert_eq!(app.get_demosaic_hint(), "");
         // A frame nothing is known of yet: the menu rests.
-        st.mosaics.remove(&xtrans);
+        st.develop.mosaics.remove(&xtrans);
         enter_cull(&mut st, &app, 1);
         cull_select(&mut st, &app, 2);
         leave_cull(&mut st, &app, &worker, None);
@@ -2575,20 +2603,20 @@ mod tests {
         assert_eq!(app.get_demosaic_hint(), "");
         assert_eq!(app.get_demosaic(), "markesteijn-3");
         assert_eq!(
-            state.borrow().mosaics.get(&xtrans),
+            state.borrow().develop.mosaics.get(&xtrans),
             Some(&OpenMosaic::Known(Mosaic::XTrans))
         );
         // An open that fails while nothing has said what the raw is:
         // the menu stops waiting and says so.
         {
             let mut st = state.borrow_mut();
-            st.mosaics.clear();
+            st.develop.mosaics.clear();
             enter_cull(&mut st, &app, 1);
             cull_select(&mut st, &app, 2);
             leave_cull(&mut st, &app, &worker, None);
             assert_eq!(app.get_demosaic_hint(), "reading the raw");
         }
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         crate::STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
         crate::panel::deliver::deliver(
             &app,
@@ -2612,10 +2640,12 @@ mod tests {
         let (state, _worker) = state_for(&app, files.clone());
         let jpeg = files[1].with_extension("JPG");
         let mut st = state.borrow_mut();
-        st.companions.insert(files[1].clone(), vec![jpeg.clone()]);
+        st.views
+            .companions
+            .insert(files[1].clone(), vec![jpeg.clone()]);
         st.current = Some(1);
         enter_cull(&mut st, &app, 1);
-        let asked = st.prefetch.asked();
+        let asked = st.culling.prefetch.asked();
         let of = |file: usize| asked.iter().filter(move |w| w.file == file);
         assert!(of(1).count() > 0, "{asked:?}");
         assert!(
@@ -2624,9 +2654,9 @@ mod tests {
         );
         assert!(of(2).all(|w| w.picture.is_none()), "{asked:?}");
         // At 1:1, the full copy first, from the JPEG too.
-        st.zoom = 1.0;
+        st.develop.zoom = 1.0;
         cull_refresh(&mut st);
-        let asked = st.prefetch.asked();
+        let asked = st.culling.prefetch.asked();
         let full = asked
             .iter()
             .find(|w| w.file == 1 && w.size == 0)
@@ -2645,12 +2675,12 @@ mod tests {
         let mut st = state.borrow_mut();
         st.current = Some(1);
         enter_cull(&mut st, &app, 1);
-        let size = st.cull.as_ref().unwrap().size;
+        let size = st.culling.cull.as_ref().unwrap().size;
         let full = Arc::new(cull::Preview::new(8, 6, vec![0; 192], (8192, 5464), true));
-        st.cull.as_mut().unwrap().cache.insert(1, full);
-        st.zoom = 0.0;
+        st.culling.cull.as_mut().unwrap().cache.insert(1, full);
+        st.develop.zoom = 0.0;
         cull_refresh(&mut st);
-        let asked = st.prefetch.asked();
+        let asked = st.culling.prefetch.asked();
         assert!(
             asked
                 .iter()
@@ -2673,7 +2703,11 @@ mod tests {
         app.invoke_select(1);
         {
             let st = state.borrow();
-            let wait = st.placeholder.as_ref().expect("a frame is waited on");
+            let wait = st
+                .culling
+                .placeholder
+                .as_ref()
+                .expect("a frame is waited on");
             assert_eq!(wait.file, 1);
             assert!(!wait.up(), "nothing stands in until the JPEG is decoded");
             assert_eq!(standing_in(&st), None);
@@ -2688,9 +2722,9 @@ mod tests {
         deliver_preview(&app, loaded);
         {
             let st = state.borrow();
-            assert!(st.placeholder.as_ref().unwrap().up());
+            assert!(st.culling.placeholder.as_ref().unwrap().up());
             assert_eq!(standing_in(&st), Some(1));
-            assert_eq!(st.zoom, 0.0, "a placeholder is the fit view's");
+            assert_eq!(st.develop.zoom, 0.0, "a placeholder is the fit view's");
         }
         assert!(app.get_placeholder());
         assert_eq!(
@@ -2700,18 +2734,26 @@ mod tests {
         // The readings of a picture that is not on screen wait.
         assert!(!app.get_nav_partial());
         assert!(!app.get_clip_highlights_lit());
-        assert!(state.borrow().bins.is_none());
+        assert!(state.borrow().develop.bins.is_none());
         assert_eq!(app.get_scope_picture().size().width, 0);
 
         // The develop lands: ours takes its place and the panel comes
         // back to it.
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         assert!(develop_landed(&mut state.borrow_mut(), &app, generation));
         assert!(!app.get_placeholder());
         assert_eq!(app.get_placeholder_status(), "");
-        assert!(state.borrow().placeholder.is_none());
+        assert!(state.borrow().culling.placeholder.is_none());
         assert!(
-            state.borrow().hold.as_ref().unwrap().cache.get(1).is_some(),
+            state
+                .borrow()
+                .culling
+                .hold
+                .as_ref()
+                .unwrap()
+                .cache
+                .get(1)
+                .is_some(),
             "the picture is kept for the arrow back"
         );
     }
@@ -2724,12 +2766,12 @@ mod tests {
     fn the_command_lines_zoom_stands_through_the_first_placeholder() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
-        state.borrow_mut().zoom = 1.0;
+        state.borrow_mut().develop.zoom = 1.0;
         app.invoke_select(1);
         let loaded = camera_picture(&state.borrow(), 1, (8192, 5464));
         deliver_preview(&app, loaded);
         assert_eq!(standing_in(&state.borrow()), Some(1));
-        assert_eq!(state.borrow().zoom, 1.0, "the command line's zoom");
+        assert_eq!(state.borrow().develop.zoom, 1.0, "the command line's zoom");
         assert_eq!(
             app.get_placeholder_status(),
             "camera preview: the camera JPEG, 8192 \u{d7} 5464, 100%, \
@@ -2738,19 +2780,23 @@ mod tests {
 
         // Its develop lands at that zoom, and the user moves on from
         // it: the next frame is fitted.
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(&app, developed(generation, (6000, 4000)));
-        assert_eq!(state.borrow().zoom, 1.0, "the develop keeps it");
-        state.borrow_mut().base_white = Some(crate::worker::WhiteBase::IDENTITY);
+        assert_eq!(state.borrow().develop.zoom, 1.0, "the develop keeps it");
+        state.borrow_mut().develop.base_white = Some(crate::worker::WhiteBase::IDENTITY);
         app.invoke_select(2);
         assert!(
-            state.borrow().held.is_some(),
+            state.borrow().develop.held.is_some(),
             "the picture on screen is held"
         );
         let loaded = camera_picture(&state.borrow(), 2, (8192, 5464));
         deliver_preview(&app, loaded);
         assert_eq!(standing_in(&state.borrow()), Some(2));
-        assert_eq!(state.borrow().zoom, 0.0, "a later frame opens fitted");
+        assert_eq!(
+            state.borrow().develop.zoom,
+            0.0,
+            "a later frame opens fitted"
+        );
         assert!(
             app.get_placeholder_status()
                 .ends_with("fitted; developing...")
@@ -2767,16 +2813,19 @@ mod tests {
         let (state, _worker) = state_for(&app, folder(4));
         {
             let mut st = state.borrow_mut();
-            st.show_mask = Some(0);
-            st.show_patch = Some(0);
-            st.cull_at_start = Some(1);
+            st.launch.show_mask = Some(0);
+            st.launch.show_patch = Some(0);
+            st.launch.cull_at_start = Some(1);
         }
         app.invoke_select(1);
         let st = state.borrow();
-        assert!(st.cull.is_some());
-        assert!(st.opened);
-        assert_eq!((st.show_mask, st.show_patch), (None, None));
-        assert!(!st.zoom_stands, "no develop for the zoom to stand into");
+        assert!(st.culling.cull.is_some());
+        assert!(st.launch.opened);
+        assert_eq!((st.launch.show_mask, st.launch.show_patch), (None, None));
+        assert!(
+            !st.launch.zoom_stands,
+            "no develop for the zoom to stand into"
+        );
     }
 
     /// The frame on screen deleted, zoomed in: the nearest frame left
@@ -2789,12 +2838,12 @@ mod tests {
         let app = window(4);
         let (state, worker) = state_for(&app, folder(4));
         app.invoke_select(1);
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(&app, developed(generation, (6000, 4000)));
         {
             let mut st = state.borrow_mut();
-            st.base_white = Some(crate::worker::WhiteBase::IDENTITY);
-            st.zoom = 2.0;
+            st.develop.base_white = Some(crate::worker::WhiteBase::IDENTITY);
+            st.develop.zoom = 2.0;
         }
         drop_files(&mut state.borrow_mut(), &app, &worker, &[1], "gone".into());
         assert_eq!(state.borrow().current, None);
@@ -2803,13 +2852,13 @@ mod tests {
         deliver_preview(&app, loaded);
         assert_eq!(standing_in(&state.borrow()), Some(1));
         assert_eq!(
-            state.borrow().zoom,
+            state.borrow().develop.zoom,
             0.0,
             "fitted under the camera's picture"
         );
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(&app, developed(generation, (6000, 4000)));
-        assert_eq!(state.borrow().zoom, 0.0, "and under the develop");
+        assert_eq!(state.borrow().develop.zoom, 0.0, "and under the develop");
     }
 
     /// A develop as the worker delivers one: a picture of `size` and
@@ -2853,10 +2902,10 @@ mod tests {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
         app.invoke_select(1);
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(&app, developed(generation, (6000, 4000)));
         assert_eq!(
-            state.borrow().shown_size,
+            state.borrow().develop.shown_size,
             (6000, 4000),
             "the develop delivered is the picture the viewport draws"
         );
@@ -2875,14 +2924,14 @@ mod tests {
             },
         );
         let st = state.borrow();
-        assert!(st.placeholder.is_none(), "nothing stands in for it");
+        assert!(st.culling.placeholder.is_none(), "nothing stands in for it");
         assert_eq!(
-            st.source_size,
+            st.develop.source_size,
             (0, 0),
             "the open frame has no develop of its own yet"
         );
         assert_eq!(
-            placeholder::drawn_source(st.source_size, st.shown_size),
+            placeholder::drawn_source(st.develop.source_size, st.develop.shown_size),
             (6000, 4000),
             "the picture on screen is drawn at its own size, not at nothing"
         );
@@ -2904,7 +2953,11 @@ mod tests {
         app.invoke_select(2);
         {
             let st = state.borrow();
-            let wait = st.placeholder.as_ref().expect("the second frame waits");
+            let wait = st
+                .culling
+                .placeholder
+                .as_ref()
+                .expect("the second frame waits");
             assert_eq!(wait.file, 2);
             assert!(!wait.up());
             assert_eq!(standing_in(&st), Some(1), "the picture there is stays");
@@ -2913,13 +2966,21 @@ mod tests {
 
         // The first frame's develop, landing late for a frame no
         // longer selected, is not this frame's picture.
-        assert!(!state.borrow().placeholder.as_ref().unwrap().replaced_by(1));
+        assert!(
+            !state
+                .borrow()
+                .culling
+                .placeholder
+                .as_ref()
+                .unwrap()
+                .replaced_by(1)
+        );
 
         let loaded = camera_picture(&state.borrow(), 2, (6000, 4000));
         deliver_preview(&app, loaded);
         {
             let st = state.borrow();
-            assert!(st.placeholder.as_ref().unwrap().up());
+            assert!(st.culling.placeholder.as_ref().unwrap().up());
             assert_eq!(standing_in(&st), Some(2));
         }
     }
@@ -2932,16 +2993,19 @@ mod tests {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
         app.invoke_select(1);
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         assert!(develop_landed(&mut state.borrow_mut(), &app, generation));
         let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
         deliver_preview(&app, loaded);
         let st = state.borrow();
-        assert!(st.placeholder.is_none(), "the late JPEG re-armed the wait");
+        assert!(
+            st.culling.placeholder.is_none(),
+            "the late JPEG re-armed the wait"
+        );
         assert_eq!(standing_in(&st), None, "the late JPEG went up over ours");
         assert!(!app.get_placeholder());
         assert!(
-            st.hold.as_ref().unwrap().cache.get(1).is_some(),
+            st.culling.hold.as_ref().unwrap().cache.get(1).is_some(),
             "the picture is still kept for the arrow back"
         );
     }
@@ -2954,7 +3018,7 @@ mod tests {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
         app.invoke_select(1);
-        let older = state.borrow().generation;
+        let older = state.borrow().develop.generation;
         let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
         deliver_preview(&app, loaded);
         app.invoke_select(2);
@@ -2972,7 +3036,7 @@ mod tests {
             },
         );
         let st = state.borrow();
-        assert!(st.placeholder.is_some());
+        assert!(st.culling.placeholder.is_some());
         assert_eq!(standing_in(&st), Some(2));
         assert!(app.get_placeholder());
     }
@@ -2991,21 +3055,30 @@ mod tests {
         deliver_preview(&app, loaded);
         let said = app.get_placeholder_status().to_string();
         assert!(said.starts_with("camera preview: "), "{said}");
-        let before = state.borrow().generation;
+        let before = state.borrow().develop.generation;
         app.set_exposure(1.25);
         app.invoke_develop_changed();
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(400));
         {
             let st = state.borrow();
-            assert!(st.generation > before, "no develop was asked for");
-            assert!(st.placeholder.is_some(), "the placeholder went down early");
-            assert!(st.placeholder.as_ref().unwrap().replaced_by(st.generation));
+            assert!(st.develop.generation > before, "no develop was asked for");
+            assert!(
+                st.culling.placeholder.is_some(),
+                "the placeholder went down early"
+            );
+            assert!(
+                st.culling
+                    .placeholder
+                    .as_ref()
+                    .unwrap()
+                    .replaced_by(st.develop.generation)
+            );
         }
         assert!(app.get_placeholder());
         assert_eq!(app.get_placeholder_status(), said.as_str());
         assert_eq!(app.get_exposure(), 1.25, "the panel lost the slider");
         // That develop lands, and the line goes with the picture.
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         assert!(develop_landed(&mut state.borrow_mut(), &app, generation));
         assert!(!app.get_placeholder());
         assert_eq!(app.get_placeholder_status(), "");
@@ -3050,18 +3123,21 @@ mod tests {
     fn a_turn_over_the_placeholder_keeps_it_up_and_turns_the_picture() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
-        state.borrow_mut().bins = Some((0..768).map(|i| (i % 97) as u32 + 1).collect());
+        state.borrow_mut().develop.bins = Some((0..768).map(|i| (i % 97) as u32 + 1).collect());
         app.invoke_select(1);
         let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
         deliver_preview(&app, loaded);
-        let before = state.borrow().generation;
+        let before = state.borrow().develop.generation;
         let turns_before = {
             let st = state.borrow();
             thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, 1, &app, true)
         };
         app.invoke_frame_turned(1);
         let st = state.borrow();
-        assert!(st.generation > before, "the develop was not re-keyed");
+        assert!(
+            st.develop.generation > before,
+            "the develop was not re-keyed"
+        );
         assert_eq!(standing_in(&st), Some(1), "the turn took it down");
         assert_ne!(
             turns_before,
@@ -3069,7 +3145,7 @@ mod tests {
             "the camera picture would be drawn the same way up"
         );
         assert!(app.get_placeholder());
-        assert!(st.bins.is_none(), "the last frame's bins came back");
+        assert!(st.develop.bins.is_none(), "the last frame's bins came back");
     }
 
     /// A frame turned with its develop on screen is drawn turned on
@@ -3089,16 +3165,16 @@ mod tests {
         let land = |outcome| {
             crate::panel::deliver::deliver(&app, outcome);
             let mut st = state.borrow_mut();
-            st.pending.take().expect("the develop was taken");
-            st.source_size = st.shown_size;
+            st.develop.pending.take().expect("the develop was taken");
+            st.develop.source_size = st.develop.shown_size;
             crate::panel::viewport::settle_source_size(&mut st);
         };
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         land(developed(generation, (6000, 4000)));
         assert_eq!(drawn_picture(&state.borrow()), ((6000, 4000), 0));
 
         app.invoke_frame_turned(1);
-        let first = state.borrow().generation;
+        let first = state.borrow().develop.generation;
         {
             let st = state.borrow();
             assert_eq!(st.sidecars[1].turn, 1);
@@ -3107,9 +3183,9 @@ mod tests {
                 ((4000, 6000), 1),
                 "the turn waited for its develop"
             );
-            assert_eq!(st.source_size, (4000, 6000));
+            assert_eq!(st.develop.source_size, (4000, 6000));
             // The edit is measured on the source standing on end.
-            let frame = st.edit.geometry.frame(4000.0, 6000.0);
+            let frame = st.develop.edit.geometry.frame(4000.0, 6000.0);
             assert!(frame.size.1 > frame.size.0, "{:?}", frame.size);
         }
 
@@ -3120,7 +3196,7 @@ mod tests {
         assert_eq!(drawn_picture(&state.borrow()), ((6000, 4000), 2));
 
         // The second's lands, and the picture on the GPU is turned.
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         land(developed_at(generation, (6000, 4000), 2));
         assert_eq!(drawn_picture(&state.borrow()), ((6000, 4000), 0));
 
@@ -3133,7 +3209,7 @@ mod tests {
         {
             let st = state.borrow();
             assert_eq!(drawn_picture(&st), ((4000, 6000), 1));
-            assert_eq!(st.source_size, (4000, 6000));
+            assert_eq!(st.develop.source_size, (4000, 6000));
         }
 
         // Another frame chosen: the develop on screen is the last
@@ -3148,8 +3224,8 @@ mod tests {
     fn land_if_taken(app: &App, state: &Rc<RefCell<State>>, outcome: crate::worker::Outcome) {
         crate::panel::deliver::deliver(app, outcome);
         let mut st = state.borrow_mut();
-        if st.pending.take().is_some() {
-            st.source_size = st.shown_size;
+        if st.develop.pending.take().is_some() {
+            st.develop.source_size = st.develop.shown_size;
             crate::panel::viewport::settle_source_size(&mut st);
         }
     }
@@ -3164,9 +3240,9 @@ mod tests {
         let app = window(4);
         let (state, worker) = state_for(&app, folder(4));
         app.invoke_select(1);
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         land_if_taken(&app, &state, developed(generation, (6000, 4000)));
-        assert_eq!(state.borrow().source_size, (6000, 4000));
+        assert_eq!(state.borrow().develop.source_size, (6000, 4000));
 
         // Culling, on to frame 2, and both turned together; then
         // back to frame 1 and out, with no camera picture of it.
@@ -3178,7 +3254,7 @@ mod tests {
             let st = state.borrow();
             assert_eq!(st.current, Some(1));
             assert_eq!(
-                st.source_size,
+                st.develop.source_size,
                 (4000, 6000),
                 "back on frame 1 under the loupe"
             );
@@ -3187,21 +3263,21 @@ mod tests {
         {
             let st = state.borrow();
             assert_eq!(drawn_picture(&st), ((4000, 6000), 1));
-            assert_eq!(st.source_size, (4000, 6000));
+            assert_eq!(st.develop.source_size, (4000, 6000));
         }
 
         // Its develop delivered, and a turn before the frame that
         // takes it up: that frame measures it on end again.
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(&app, developed_at(generation, (4000, 6000), 1));
         app.invoke_frame_turned(1);
         {
             let mut st = state.borrow_mut();
             // What the render does with it.
-            st.pending.take().expect("the develop was taken");
-            st.source_size = (4000, 6000);
+            st.develop.pending.take().expect("the develop was taken");
+            st.develop.source_size = (4000, 6000);
             crate::panel::viewport::settle_source_size(&mut st);
-            assert_eq!(st.source_size, (6000, 4000));
+            assert_eq!(st.develop.source_size, (6000, 4000));
             assert_eq!(drawn_picture(&st), ((6000, 4000), 1));
         }
     }
@@ -3223,9 +3299,15 @@ mod tests {
             app.invoke_cull_toggled();
             {
                 let st = state.borrow();
-                assert!(st.placeholder.is_none(), "a wait survived into the mode");
-                assert!(st.hold.is_none(), "the develop view's pictures survived");
-                assert!(st.cull.is_some(), "the mode did not start");
+                assert!(
+                    st.culling.placeholder.is_none(),
+                    "a wait survived into the mode"
+                );
+                assert!(
+                    st.culling.hold.is_none(),
+                    "the develop view's pictures survived"
+                );
+                assert!(st.culling.cull.is_some(), "the mode did not start");
             }
             assert!(!app.get_placeholder(), "the mode draws with the gate on");
             if decoded {
@@ -3234,8 +3316,8 @@ mod tests {
             }
             app.invoke_cull_leave();
             let st = state.borrow();
-            assert!(st.cull.is_none());
-            assert_eq!(st.placeholder.is_some(), decoded);
+            assert!(st.culling.cull.is_none());
+            assert_eq!(st.culling.placeholder.is_some(), decoded);
             assert_eq!(app.get_placeholder(), decoded);
             assert_eq!(
                 app.get_placeholder_status().starts_with("camera preview: "),
@@ -3268,11 +3350,11 @@ mod tests {
         app.invoke_select(1);
         let st = state.borrow();
         assert!(
-            st.hold.as_ref().unwrap().failed.contains_key(&1),
+            st.culling.hold.as_ref().unwrap().failed.contains_key(&1),
             "the frame is asked for again on every select"
         );
         assert!(
-            st.placeholder.is_none(),
+            st.culling.placeholder.is_none(),
             "it waits for a decode nobody sent"
         );
         assert!(!app.get_placeholder());
@@ -3293,10 +3375,13 @@ mod tests {
         assert!(app.get_placeholder());
         app.invoke_select(4);
         let st = state.borrow();
-        assert!(st.placeholder.is_none(), "a picture file got a placeholder");
+        assert!(
+            st.culling.placeholder.is_none(),
+            "a picture file got a placeholder"
+        );
         assert!(!app.get_placeholder());
         assert!(
-            st.hold.as_ref().unwrap().cache.get(0).is_none(),
+            st.culling.hold.as_ref().unwrap().cache.get(0).is_none(),
             "the window was not trimmed on the way past"
         );
     }
@@ -3314,7 +3399,7 @@ mod tests {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
         let last = (0..768).map(|i| (i % 97) as u32 + 1).collect::<Vec<u32>>();
-        state.borrow_mut().bins = Some(last.clone());
+        state.borrow_mut().develop.bins = Some(last.clone());
         app.invoke_select(1);
         let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
         deliver_preview(&app, loaded);
@@ -3355,11 +3440,14 @@ mod tests {
         };
         deliver_preview(&app, failed);
         let st = state.borrow();
-        assert!(st.placeholder.is_none(), "nothing is waited on any more");
+        assert!(
+            st.culling.placeholder.is_none(),
+            "nothing is waited on any more"
+        );
         assert_eq!(standing_in(&st), None);
         assert!(!app.get_placeholder());
         // Asked for once: the frame is not re-decoded every frame.
-        assert!(st.hold.as_ref().unwrap().failed.contains_key(&1));
+        assert!(st.culling.hold.as_ref().unwrap().failed.contains_key(&1));
     }
 
     /// Nothing that belongs to the developed picture is drawn over a
@@ -3413,7 +3501,7 @@ mod tests {
         let (state, worker) = state_for(&app, folder(5));
         app.invoke_select(2);
         app.invoke_cull_toggled();
-        assert!(state.borrow().cull.is_some());
+        assert!(state.borrow().culling.cull.is_some());
         assert_eq!(state.borrow().current, Some(2));
         drop_files(&mut state.borrow_mut(), &app, &worker, &[2], "gone".into());
         assert_eq!(state.borrow().files.len(), 4);
@@ -3427,7 +3515,7 @@ mod tests {
         );
         assert_eq!(app.get_selected(), 2);
         assert_eq!(app.get_file_name(), "IMG_0003.CR3");
-        assert!(state.borrow().cull.is_some(), "culling was left");
+        assert!(state.borrow().culling.cull.is_some(), "culling was left");
 
         // The last frame: the one before takes over.
         app.invoke_select(3);
@@ -3548,7 +3636,7 @@ mod tests {
             st.sidecars[4].meta.flag = meta::Flag::Reject;
             st.sidecars[2].meta.label = meta::Label::Red;
             st.sidecars[2].meta.keywords = vec!["harbor".into()];
-            st.shown = (0..6).collect();
+            st.views.shown = (0..6).collect();
             st.current = Some(2);
         }
         rebuild_browser(&mut state.borrow_mut(), &app);
@@ -3563,7 +3651,7 @@ mod tests {
         assert_eq!(stars.row_data(3).unwrap().count, 4);
         assert_eq!(stars.row_data(5).unwrap().count, 2);
         app.invoke_filter_star_picked(3);
-        assert_eq!(state.borrow().shown, vec![1, 2, 4, 5]);
+        assert_eq!(state.borrow().views.shown, vec![1, 2, 4, 5]);
         assert_eq!(app.get_filter_shown(), 4);
         assert!(app.get_filter_on());
         assert_eq!(app.get_thumbs().row_count(), 4);
@@ -3577,30 +3665,30 @@ mod tests {
         assert_eq!(flags.row_data(1).unwrap().count, 1);
         assert_eq!(flags.row_data(2).unwrap().count, 1);
         app.invoke_filter_flag_toggled(1);
-        assert_eq!(state.borrow().shown, vec![1]);
+        assert_eq!(state.borrow().views.shown, vec![1]);
         // Any-of: the rejects as well, and then neither again.
         app.invoke_filter_flag_toggled(2);
-        assert_eq!(state.borrow().shown, vec![1, 4]);
+        assert_eq!(state.borrow().views.shown, vec![1, 4]);
         app.invoke_filter_flag_toggled(1);
         app.invoke_filter_flag_toggled(2);
-        assert_eq!(state.borrow().shown, vec![1, 2, 4, 5]);
+        assert_eq!(state.borrow().views.shown, vec![1, 2, 4, 5]);
 
         // "Exactly" reads the same chip the other way.
         app.invoke_filter_exact_toggled();
         assert!(app.get_filter_exact());
-        assert_eq!(state.borrow().shown, vec![2, 5]);
+        assert_eq!(state.borrow().views.shown, vec![2, 5]);
         app.invoke_filter_exact_toggled();
 
         // A word: a keyword one frame carries, then part of a name,
         // and both of them narrow what the stars already left.
         app.invoke_filter_text_edited("harbor".into());
-        assert_eq!(state.borrow().shown, vec![2]);
+        assert_eq!(state.borrow().views.shown, vec![2]);
         app.invoke_filter_text_edited("0004".into());
-        assert_eq!(state.borrow().shown, vec![4]);
+        assert_eq!(state.borrow().views.shown, vec![4]);
 
         // Clear puts the folder back, the field with it.
         app.invoke_filter_cleared();
-        assert_eq!(state.borrow().shown, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(state.borrow().views.shown, vec![0, 1, 2, 3, 4, 5]);
         assert_eq!(app.get_filter_text(), "");
         assert!(!app.get_filter_on());
     }
@@ -3619,18 +3707,18 @@ mod tests {
             for (i, stars) in [4u8, 4, 4, 0, 4].into_iter().enumerate() {
                 st.sidecars[i].meta.set_rating(stars);
             }
-            st.shown = (0..5).collect();
+            st.views.shown = (0..5).collect();
             st.current = Some(2);
             app.set_selected(2);
         }
         app.invoke_filter_star_picked(4);
-        assert_eq!(state.borrow().shown, vec![0, 1, 2, 4]);
+        assert_eq!(state.borrow().views.shown, vec![0, 1, 2, 4]);
         assert_eq!(app.get_selected(), 2, "the frame kept its own row");
 
         // One star on it: it leaves the list, and file 4 — the next
         // one still shown, at row 2 now — is what opens.
         app.invoke_meta_key("1".into());
-        assert_eq!(state.borrow().shown, vec![0, 1, 4]);
+        assert_eq!(state.borrow().views.shown, vec![0, 1, 4]);
         assert_eq!(state.borrow().current, Some(4));
         assert_eq!(app.get_selected(), 2);
         assert_eq!(app.get_thumbs().row_data(2).unwrap().name, "IMG_0004.CR3");
@@ -3640,14 +3728,14 @@ mod tests {
         // where it is, and still moves the counts.
         app.invoke_meta_key("5".into());
         assert_eq!(state.borrow().current, Some(4));
-        assert_eq!(state.borrow().shown, vec![0, 1, 4]);
+        assert_eq!(state.borrow().views.shown, vec![0, 1, 4]);
         assert_eq!(app.get_filter_stars().row_data(5).unwrap().count, 1);
 
         // The last frame the filter shows, rated out of it: there is
         // nothing after it, so the one before takes the selection.
         app.invoke_select(2);
         app.invoke_meta_key("0".into());
-        assert_eq!(state.borrow().shown, vec![0, 1]);
+        assert_eq!(state.borrow().views.shown, vec![0, 1]);
         assert_eq!(state.borrow().current, Some(1));
         assert_eq!(app.get_selected(), 1);
     }
@@ -3666,15 +3754,15 @@ mod tests {
             for i in 0..3 {
                 st.sidecars[i].meta.set_rating(2);
             }
-            st.shown = (0..3).collect();
+            st.views.shown = (0..3).collect();
             st.current = Some(1);
             app.set_selected(1);
         }
         app.invoke_filter_star_picked(1);
-        assert_eq!(state.borrow().shown, vec![0, 1, 2]);
+        assert_eq!(state.borrow().views.shown, vec![0, 1, 2]);
 
         app.invoke_meta_key("0".into());
-        assert_eq!(state.borrow().shown, vec![0, 2]);
+        assert_eq!(state.borrow().views.shown, vec![0, 2]);
         assert_eq!(state.borrow().current, Some(2), "on to the next frame");
         assert_eq!(app.get_selected(), 1);
         assert_eq!(
@@ -3686,9 +3774,9 @@ mod tests {
         // A flag key that hides the frame says it the same way.
         app.invoke_meta_key("p".into());
         app.invoke_filter_flag_toggled(1);
-        assert_eq!(state.borrow().shown, vec![2]);
+        assert_eq!(state.borrow().views.shown, vec![2]);
         app.invoke_meta_key("u".into());
-        assert!(state.borrow().shown.is_empty());
+        assert!(state.borrow().views.shown.is_empty());
         assert!(
             app.get_status()
                 .as_str()
@@ -3759,7 +3847,7 @@ mod tests {
 
         app.invoke_redo();
         assert_eq!(tags(&state.borrow(), 0), (3, Flag::None));
-        assert!(state.borrow().cull.is_some(), "still culling");
+        assert!(state.borrow().culling.cull.is_some(), "still culling");
         assert_eq!(
             develop(&state.borrow()),
             before,
@@ -3786,7 +3874,7 @@ mod tests {
         app.invoke_select(0);
         enter_cull(&mut state.borrow_mut(), &app, 1);
         assert!(!app.get_cull_move_on(), "off by default");
-        assert!(!state.borrow().cull_move_on);
+        assert!(!state.borrow().culling.cull_move_on);
 
         // Off: the key and the arrow are two presses.
         app.invoke_meta_key("2".into());
@@ -3797,7 +3885,7 @@ mod tests {
 
         app.set_cull_move_on(true);
         app.invoke_cull_move_on_changed();
-        assert!(state.borrow().cull_move_on);
+        assert!(state.borrow().culling.cull_move_on);
 
         app.invoke_meta_key("3".into());
         assert_eq!(state.borrow().current, Some(1));
@@ -3883,7 +3971,7 @@ mod tests {
         write_frame(&files[3], &R6, 4);
         let app = window(files.len());
         let (state, _worker) = state_for(&app, files);
-        state.borrow_mut().index_reader =
+        state.borrow_mut().views.index_reader =
             Some(greycard_library::Library::open_read_only(&db).unwrap());
         app.invoke_select(0);
         crate::library::refresh_ids(&mut state.borrow_mut());
@@ -3916,7 +4004,7 @@ mod tests {
         assert!(app.get_shot_exposure().contains("ISO 6400"));
         // The window's callbacks hold the state, so the reader must
         // be closed here or Windows keeps the folder locked.
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -3976,13 +4064,13 @@ mod tests {
         // frame shown takes the selection, once, not the one after.
         {
             let mut st = state.borrow_mut();
-            st.filter = filter::Filter::from_name("No rejects").expect("it parses");
+            st.views.filter = filter::Filter::from_name("No rejects").expect("it parses");
             rebuild_browser(&mut st, &app);
         }
         app.invoke_select(0);
         assert_eq!(state.borrow().current, Some(0));
         app.invoke_meta_key("x".into());
-        assert_eq!(state.borrow().shown, vec![1, 2, 3, 4]);
+        assert_eq!(state.borrow().views.shown, vec![1, 2, 3, 4]);
         assert_eq!(state.borrow().current, Some(1));
         assert_eq!(app.get_selected(), 0);
     }
@@ -4137,7 +4225,7 @@ mod tests {
         let (state, worker) = state_for(app, files.to_vec());
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = true;
+            st.window.write_sidecars = true;
             for (i, f) in files.iter().enumerate() {
                 if let Some(s) = Sidecar::load(f).unwrap() {
                     st.sidecars[i] = s;
@@ -4172,7 +4260,7 @@ mod tests {
         // The set of all three: the two in the rejects folder.
         {
             let mut st = state.borrow_mut();
-            st.picked = vec![0, 1, 2];
+            st.views.picked = vec![0, 1, 2];
             crate::panel::browser::show_set(&mut st, &app);
         }
         assert_eq!(app.get_back_count(), 2);
@@ -4241,7 +4329,7 @@ mod tests {
             // The hidden folder is the setting here: the flag's write
             // after the move settles a sidecar where the setting says,
             // as every save does.
-            st.placement = greycard_edit::Placement::Folder;
+            st.window.placement = greycard_edit::Placement::Folder;
             enter_cull(&mut st, &app, 0);
         }
         assert_eq!(app.get_panel_tab(), "Cull");
@@ -4317,15 +4405,15 @@ mod tests {
         let (state, worker) = opened_with_sidecars(&app, &files);
         {
             let mut st = state.borrow_mut();
-            st.index = Some(indexer);
+            st.views.index = Some(indexer);
             // a has an XMP, which the index reads too: written with the
             // flag, as the editor does with XMPs on.
-            st.xmp_sidecars = true;
+            st.window.xmp_sidecars = true;
         }
         app.invoke_select(1);
         {
             let mut st = state.borrow_mut();
-            st.picked = vec![1, 2];
+            st.views.picked = vec![1, 2];
             crate::panel::browser::show_set(&mut st, &app);
         }
         app.invoke_move_back_asked();
@@ -4361,7 +4449,7 @@ mod tests {
             assert!(!row.missing);
             assert!(reader.by_path(&files[0]).unwrap().is_none());
         }
-        let indexer = state.borrow_mut().index.take().unwrap();
+        let indexer = state.borrow_mut().views.index.take().unwrap();
         indexer.stop(Duration::from_secs(20));
         drop(state);
         drop(worker);
@@ -4379,7 +4467,7 @@ mod tests {
         assert_eq!(app.get_back_count(), 1);
         {
             let mut st = state.borrow_mut();
-            st.library.offline.insert(shoot.clone());
+            st.views.library.offline.insert(shoot.clone());
             assert!(!to_move_back(&st, 1));
             crate::panel::browser::show_set(&mut st, &app);
         }
@@ -4438,7 +4526,7 @@ mod tests {
 
         let app = window(files.len());
         let (state, worker) = opened_with_sidecars(&app, &files);
-        state.borrow_mut().index = Some(indexer);
+        state.borrow_mut().views.index = Some(indexer);
         app.invoke_select(1);
         app.invoke_move_back_asked();
         assert!(shoot.join("a.tif").exists());
@@ -4455,7 +4543,7 @@ mod tests {
             .expect("a's row at its new path");
         assert!(!row.missing);
         drop(reader);
-        let indexer = state.borrow_mut().index.take().unwrap();
+        let indexer = state.borrow_mut().views.index.take().unwrap();
         indexer.stop(Duration::from_secs(20));
         drop(state);
         drop(worker);
@@ -4810,7 +4898,7 @@ mod tests {
     fn quit(state: &Rc<RefCell<State>>, app: &App) -> crate::sync::QuitWrites {
         let edit = {
             let st = state.borrow();
-            read_edit(app, &st.edit, st.target)
+            read_edit(app, &st.develop.edit, st.develop.target)
         };
         crate::panel::startup::save_at_quit(
             &mut state.borrow_mut(),
@@ -4832,16 +4920,16 @@ mod tests {
             let mut st = state.borrow_mut();
             // As the window starts: nothing open yet, the mode asked for.
             st.current = None;
-            st.cull_at_start = Some(1);
+            st.launch.cull_at_start = Some(1);
         }
         let on_disk = std::fs::read(Sidecar::path_for(&files[0])).unwrap();
         app.invoke_select(0);
         {
             let st = state.borrow();
-            assert!(st.cull.is_some());
+            assert!(st.culling.cull.is_some());
             assert_eq!(st.current, Some(0));
             assert_ne!(
-                read_edit(&app, &st.edit, st.target),
+                read_edit(&app, &st.develop.edit, st.develop.target),
                 st.sidecars[0].current,
                 "the panel is not the frame's"
             );
@@ -4872,11 +4960,11 @@ mod tests {
         let on_disk = std::fs::read(Sidecar::path_for(&files[0])).unwrap();
         // a opens in the develop view: its edit on the panel.
         app.invoke_select(0);
-        assert!(state.borrow().cull.is_none());
+        assert!(state.borrow().culling.cull.is_none());
         assert_eq!(app.get_exposure(), 1.5);
         // C, then the arrow on to b.
         press(&app, "c");
-        assert!(state.borrow().cull.is_some(), "culling");
+        assert!(state.borrow().culling.cull.is_some(), "culling");
         press(&app, Key::RightArrow);
         assert_eq!(state.borrow().current, Some(1));
         assert_eq!(app.get_exposure(), 1.5, "the panel is still a's");

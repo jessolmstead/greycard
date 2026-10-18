@@ -47,6 +47,7 @@ mod measure_lightroom;
 mod mounts;
 mod naming;
 mod outline;
+mod owners;
 mod panel;
 mod placeholder;
 mod previews;
@@ -617,7 +618,7 @@ enum Fetch {
 }
 
 /// A change to one frame's sidecar, by its number in the list, made
-/// once when the launch's list lands: see `State::tweak_at_start`.
+/// once when the launch's list lands: see `Launch::tweak_at_start`.
 pub(crate) type Tweak = Box<dyn FnOnce(&mut State, usize)>;
 
 pub(crate) struct State {
@@ -630,43 +631,8 @@ pub(crate) struct State {
     /// (`versions`). `current`, `picked`, `shown`, `menu_file` and the
     /// thumbnail vectors are by cell.
     pub(crate) cells: Vec<versions::Cell>,
-    /// The camera's JPEGs beside the listed raws, by the raw's path, as
-    /// the last read of the list found them (`greycard_library::pairs`):
-    /// the tile's mark, the name's line, the culling loupe's picture.
-    /// A move or a delete asks the disk again at the moment it acts.
-    /// Empty while `jpegs_apart`.
-    pub(crate) companions: HashMap<PathBuf, Vec<PathBuf>>,
-    /// Whether a camera's JPEG beside its raw is a frame of its own:
-    /// the Settings sheet's switch, `settings.jpegs_apart`.
-    pub(crate) jpegs_apart: bool,
-    /// While a collection is the list: the frames it shows, each file
-    /// and version, in its order. The cells are these, the ones whose
-    /// file is listed and whose version its sidecar has, rather than
-    /// every file's own and all its versions. None for any other list.
-    pub(crate) collection_frames: Option<Vec<versions::Key>>,
-    /// Each file's cells, by file, while the cells do not stand as
-    /// `versions::cells_of` makes them (each file's together, its own
-    /// first, the files in order): an open stack gathers its members
-    /// behind its top, and the lookups by file then read this in place
-    /// of searching. None while they stand so, a closed stack only
-    /// leaving cells out.
-    pub(crate) cells_by_file: Option<Vec<Vec<usize>>>,
-    /// The stacks as the cells were last made from them: what a file's
-    /// own question (`versions::wanted_of_file`) is answered by, without
-    /// laying every stack over the whole list again.
-    pub(crate) stacks_listed: Vec<stacks::Listed>,
-    /// The stacks, kept beside the collections, and what the list
-    /// shows of them.
-    pub(crate) stacks: stacks::Store,
     /// The cell on screen.
     pub(crate) current: Option<usize>,
-    /// The browser's selection, as cells: the current frame and
-    /// whatever else Ctrl, Shift or Shift and an arrow put beside it.
-    /// Read through `selection::frames`, which puts the current frame
-    /// back in whatever this holds.
-    pub(crate) picked: Vec<usize>,
-    /// The edit the worker is developing, or last developed.
-    pub(crate) edit: Edit,
     /// Every file's sidecar: its current edit and history. A frame the
     /// index listed holds a stand-in from its row until something needs
     /// the whole sidecar; see `rows`.
@@ -674,608 +640,9 @@ pub(crate) struct State {
     /// Whether each file's sidecar was read from disk, and what its
     /// row stands in for while it was not (`rows::FromRow`).
     pub(crate) from_row: Vec<rows::FromRow>,
-    /// What the command line asked of the first frame opened
-    /// (`--preset`, `--develop-temperature`, `--exposure`), applied to
-    /// its sidecar when the launch's list lands, before it is opened.
-    pub(crate) tweak_at_start: Option<Tweak>,
-    pub(crate) write_sidecars: bool,
-    /// Whether a meta written to the `.gcd` is also written to an
-    /// `.xmp` beside the frame: `settings.xmp_sidecars`, or
-    /// `--xmp-sidecars`. Reading one is not a choice, so nothing
-    /// here guards it.
-    pub(crate) xmp_sidecars: bool,
-    /// Where a sidecar written goes, beside the frame or under the
-    /// hidden folder: `settings.sidecars_in_folder`, or
-    /// `--sidecar-folder`. Reading looks in both places either way.
-    pub(crate) placement: greycard_edit::Placement,
-    /// The developed image waiting to go to the GPU, if any.
-    pub(crate) pending: Option<Landed>,
-    /// `--time-sharpen`, `--time-clarity`, `--time-dehaze` and
-    /// `--time-texture`: the moves left, when the last was sent, and
-    /// the milliseconds each took to its frame.
-    pub(crate) time_sharpen: Option<crate::panel::edit::Timing>,
-    pub(crate) time_clarity: Option<crate::panel::edit::Timing>,
-    pub(crate) time_dehaze: Option<crate::panel::edit::Timing>,
-    pub(crate) time_texture: Option<crate::panel::edit::Timing>,
-    /// `--time-cull`: the steps left and the milliseconds each took
-    /// from the key to the frame that showed the next picture.
-    pub(crate) time_cull: Option<(u32, Vec<f64>)>,
-    /// `--time-select`: the steps left, and the milliseconds each
-    /// step took from the key to the frame that showed the camera's
-    /// picture and to the frame that showed the develop.
-    pub(crate) time_select: Option<(u32, Vec<f64>, Vec<f64>)>,
-    /// `--time-scroll`: the moves left and what each cost.
-    pub(crate) time_scroll: Option<panel::browser::ScrollTiming>,
-    /// When the folder on screen was opened, until the first frame
-    /// that draws every row on screen with its picture.
-    pub(crate) fill_clock: Option<std::time::Instant>,
-    /// When the selection last moved in the develop view, until the
-    /// frame that shows the frame it moved to.
-    pub(crate) selected_at: Option<std::time::Instant>,
-    /// `--cull-develop`: leave the mode once its first picture shows.
-    pub(crate) cull_develop: bool,
-    /// `--snapshot-placeholder`: step to the next frame once the
-    /// first develop is on screen, and let a capture go as soon as
-    /// that frame's camera picture is up rather than waiting for its
-    /// develop.
-    pub(crate) snapshot_placeholder: bool,
-    /// `--turn`: quarter turns to put on the selection once the first
-    /// picture shows, for a capture.
-    pub(crate) turn_at_start: Option<i32>,
-    /// `--turn` was asked for and the picture it leads to is not on
-    /// screen yet. A capture waits for it, or it would catch the
-    /// develop that fired the key rather than the turned frame.
-    pub(crate) awaiting_turn: bool,
-    /// `--cull-key`: the culling key to press once the first picture
-    /// shows, for a capture, which waits until it has been.
-    pub(crate) cull_key_at_start: Option<String>,
-    /// `--ask-rejects`: open the move-rejects sheet once it does;
-    /// `--move-rejects`: and answer it with yes.
-    pub(crate) ask_rejects: bool,
-    pub(crate) move_rejects: bool,
-    /// The delete sheet's question while it is up: what it would
-    /// delete and from where. Read again at the confirm.
-    pub(crate) delete_asked: Option<panel::delete::Asked>,
-    /// The delete sheet's question over versions while it is up, in
-    /// place of `delete_asked`: a version goes by a save, not to the
-    /// trash.
-    pub(crate) version_delete: Option<panel::versions::Asked>,
-    /// The folders whose files the system trash has refused this
-    /// session: the sheet offers the permanent delete beside the
-    /// trash for these, as a choice.
-    pub(crate) trash_refused: std::collections::HashSet<PathBuf>,
-    /// The remove-a-look sheet's question while it is up, how many
-    /// have been asked (so a late count is dropped), and a removal out
-    /// on its thread.
-    pub(crate) look_remove: Option<panel::look_remove::Asked>,
-    pub(crate) look_remove_generation: u64,
-    pub(crate) look_removing: bool,
-    /// The rename-a-look sheet's question while it is up, and how many
-    /// have been asked, so a late count is dropped.
-    pub(crate) look_rename: Option<panel::look_rename::Asked>,
-    pub(crate) look_rename_generation: u64,
-    /// A rename out on its thread, until it lands.
-    pub(crate) look_renaming: Option<panel::look_rename::Renaming>,
-    /// Whether anything may be deleted from disk: only in a session
-    /// someone is at. A snapshot, a screenshot, an export or a timing
-    /// run never deletes, whatever it is asked, and a test's state
-    /// does not until the test says so.
-    pub(crate) deletes_allowed: bool,
-    /// A delete is out on its thread, with the frames it has planned:
-    /// another is refused until it lands, and so is Move rejects, and
-    /// no sidecar of those frames is written meanwhile
-    /// (`panel::delete::held`).
-    pub(crate) deleting: Option<std::collections::HashSet<PathBuf>>,
-    /// Culling mode (notes §80), while it is on.
-    pub(crate) cull: Option<Cull>,
-    /// Whether a culling key moves the selection on to the next
-    /// frame: the CULLING section's switch, `settings.cull_move_on`.
-    pub(crate) cull_move_on: bool,
-    /// Takes the word over the picture for the last culling key down
-    /// again; nothing else does, so an arrow pressed after the key
-    /// leaves the word up for its second.
-    pub(crate) notice_timer: slint::Timer,
-    /// The session's rating, flag and label changes: culling's undo.
-    pub(crate) tags: tags::History,
-    /// The camera's pictures the develop view keeps: what the mode
-    /// left behind on its way out, and what a select decoded, with
-    /// the textures made from them. They are drawn only while
-    /// `placeholder` says a develop is pending.
-    pub(crate) hold: Option<Cull>,
-    /// A frame selected whose develop has not landed: the camera's
-    /// JPEG stands in for it meanwhile.
-    pub(crate) placeholder: Option<placeholder::Wait>,
-    /// The previews decoded ahead of the arrow, on their own threads.
-    pub(crate) prefetch: cull::Prefetcher,
-    /// The lightbox, while it is on: its tiles' pictures.
-    pub(crate) lightbox: Option<lightbox::Lightbox>,
-    /// The lightbox's decode threads, made the first time it opens.
-    pub(crate) lightbox_fetch: Option<cull::Prefetcher>,
-    /// Open in culling mode, with the compare view at this many
-    /// frames, once the first file is chosen (`--cull`).
-    pub(crate) cull_at_start: Option<usize>,
-    /// The browser's rows: the cells it lists, in order, the filter
-    /// applied. `selected` on the window is a row; `current` here is
-    /// a cell.
-    pub(crate) shown: Vec<usize>,
-    /// The rows the strip's cells and the grid's were for when their
-    /// pictures were last put on and taken off (`settle_pictures`),
-    /// first and how many.
-    pub(crate) pictured: [(usize, usize); 2],
-    pub(crate) filter: filter::Filter,
-    /// The library index's thread, which indexes the open folder and
-    /// each frame after its sidecar is written; none in a test, or
-    /// when the library could not be opened.
-    pub(crate) index: Option<library::Indexer>,
-    /// The index read on this thread, read-only, for the filter's
-    /// EXIF tests and the facets' counts; none until the indexer has
-    /// opened the library.
-    pub(crate) index_reader: Option<greycard_library::Library>,
-    /// Each file's row in the index, where it has one yet.
-    pub(crate) index_ids: Vec<Option<i64>>,
-    /// Whether the index's tests passed each file when the browser's
-    /// list was last made (`filter::Frame::index`).
-    pub(crate) index_passed: Vec<bool>,
-    /// The folder pass the window last asked for, so a pass over a
-    /// folder since left says nothing.
-    pub(crate) index_generation: u64,
-    /// How far that pass is, while it runs.
-    pub(crate) index_progress: Option<(usize, usize)>,
-    /// `--filter`'s facet terms, chosen when the pass is done.
-    pub(crate) facets_wanted: Vec<filter::Wanted>,
-    /// A capture waits for those to be chosen.
-    pub(crate) awaiting_index: bool,
-    /// Where the indexer opened the library, for the window's own
-    /// read-only connection, tried again while it will not open.
-    pub(crate) index_path: Option<PathBuf>,
-    /// What the facets' row says instead of its note when the index
-    /// is busy or unavailable.
-    pub(crate) index_error: Option<String>,
-    /// Passes over this folder that have failed in a row; asked
-    /// again a few times before the window gives up on it.
-    pub(crate) index_tries: u32,
-    /// `index_passed` was just answered for this filter, and the list
-    /// about to be made need not ask again.
-    pub(crate) index_pass_ready: bool,
-    /// The facets' counts as last read, kept when a read comes back
-    /// busy.
-    pub(crate) facets_last: RefCell<Vec<(filter::Facet, Vec<greycard_library::FacetCount>)>>,
-    /// The library's roots, their counts and their watcher.
-    pub(crate) library: roots::Library,
-    /// The collections and smart collections, and what the browser
-    /// marks with them.
-    pub(crate) collections: collections::Store,
-    /// The folder open, as the Open folder button names it, and the
-    /// folders opened before it.
-    pub(crate) recent: panel::recent::Recent,
-    /// The open root's folders as a tree in the left pane, and the
-    /// switch that opens a folder with those under it.
-    pub(crate) tree: tree::Tree,
     /// The camera match's sheet: its scope, what the survey found and
     /// a run under way.
     pub(crate) camera_match: panel::camera_match::Sheet,
-    /// What the browser lists: a folder, or the files under the
-    /// roots.
-    pub(crate) view: roots::View,
-    /// The grid's order, each view's choice as kept in the settings:
-    /// what a read of the list is sorted by (`sort`).
-    pub(crate) sort: sort::Kept,
-    /// The order was just chosen: the read it asked for, once merged,
-    /// brings the frame on screen into view wherever it went.
-    pub(crate) sort_reveal: bool,
-    /// Counts every list put in the browser, so a list read on
-    /// another thread that arrives after a later one is dropped.
-    pub(crate) view_generation: u64,
-    /// The requests for frames' sidecars out, in order, and the bar
-    /// over their reads (`rows::request`).
-    pub(crate) loads: rows::Loads,
-    /// The frame picked whose sidecar is on its way: current already,
-    /// its panel read-only, and opened when the read lands if it is
-    /// still the pick. Nothing of the panel's is saved for it.
-    pub(crate) pick_pending: Option<PathBuf>,
-    /// The frame whose panel shows the edit standing in from its row,
-    /// not its own: a pick whose sidecar was on its way, or a frame
-    /// opened while its sidecar could not be had. Nothing of the panel
-    /// is recorded for it (`rows::panel_is_frames`) until the frame is
-    /// opened on its own sidecar, which `rows::take` does the moment
-    /// that sidecar is in.
-    pub(crate) panel_stand_in: Option<PathBuf>,
-    /// The compare view's tiles on the view, one model for the life
-    /// of the window, as the handles' are.
-    pub(crate) compare_tiles: Rc<VecModel<CompareTile>>,
-    /// The file to open once the window has its device: the first
-    /// develop then runs where every later one does, so a screenshot
-    /// or an export shows the same path a session would.
-    pub(crate) select_at_start: Option<usize>,
-    /// `--develop-temperature` and `--exposure`: laid over the first
-    /// file's edit on the panel when it is opened, not over its
-    /// sidecar's. See [`panel::startup::Overrides`].
-    pub(crate) overrides_at_start: Option<(usize, panel::startup::Overrides)>,
-    /// The first file, and its edit as those overrides left it on the
-    /// panel, until the panel moves off it or the frame is left: while
-    /// the panel shows exactly this, there is nothing of the panel's
-    /// to record (`panel::edit::panel_state`).
-    pub(crate) overridden: Option<(PathBuf, Edit)>,
-    /// The rendering setup has run and opened what it was to open: a
-    /// list put in the browser from then on opens its own frame.
-    pub(crate) setup_ran: bool,
-    /// `--also`: rows put in the set once the first frame is opened.
-    pub(crate) also_at_start: Vec<usize>,
-    /// The white balance of the image on the GPU.
-    pub(crate) base_white: Option<WhiteBase>,
-    /// The open frame and its profile, for the white balance preview.
-    pub(crate) frame: Option<(Arc<RawFrame>, Box<CameraProfile>)>,
-    /// The file the panel is for and what is known of its mosaic, set
-    /// by `browser::panel_frame` wherever the panel's file changes and
-    /// brought up to date by `browser::learn_mosaic` as the worker
-    /// finds out; read through [`State::open_mosaic`].
-    pub(crate) panel_mosaic: Option<(PathBuf, crate::panel::browser::OpenMosaic)>,
-    /// What the session has learned of files' mosaics from the worker:
-    /// its read ahead of a decode, and the decoded frames.
-    pub(crate) mosaics: HashMap<PathBuf, crate::panel::browser::OpenMosaic>,
-    /// A raw's scene or a picture already rendered, from the open.
-    pub(crate) source: finish::Source,
-    /// The last preview matrix, keyed by what it was computed for.
-    pub(crate) white_cache: Option<(WhiteKey, Matrix3)>,
-    /// What the picture on screen's masks made their white balances
-    /// from, kept from its own develop: a picture held up while the
-    /// next frame's develop is on the way keeps its masks' whites,
-    /// though the frame and its profile are the next one's by then
-    /// (`panel::color::local_white_shift`).
-    pub(crate) shown_white: Option<greycard_edit::WhiteShift>,
-    /// Holds a develop back until the sliders rest.
-    pub(crate) debounce: slint::Timer,
-    /// Holds a sidecar write back until the sliders rest.
-    pub(crate) save_timer: slint::Timer,
-    /// A temperature to put on the panel once the file opens, for the
-    /// preview check.
-    pub(crate) preview_temperature: Option<f32>,
-    /// The image the viewport shows, in pixels, for fit and zoom.
-    pub(crate) image_size: (u32, u32),
-    /// Display pixels per image pixel; 0 means fit to the view.
-    pub(crate) zoom: f32,
-    /// The image pixel at the view's center.
-    pub(crate) center: (f32, f32),
-    pub(crate) renderer: Option<Renderer>,
-    /// The viewport's adapter as the log names it, for a report; none
-    /// until the rendering setup has run.
-    pub(crate) gpu: Option<String>,
-    /// The last scope bins: the histogram, the backdrop of the curve
-    /// editor, and after it whatever `scope` asked for.
-    pub(crate) bins: Option<Vec<u32>>,
-    /// Which scope the panel shows.
-    pub(crate) scope: scope::Scope,
-    /// The curve point under the pointer while it is held.
-    pub(crate) curve_drag: Option<usize>,
-    /// The developed picture's size, the source of the geometry.
-    /// Cleared on every select: until this frame's develop lands
-    /// nothing may take the last frame's shape for this one's.
-    pub(crate) source_size: (u32, u32),
-    /// The size of the developed picture on the GPU, which is what
-    /// the viewport draws while a develop is pending and no camera
-    /// picture stands in. Not cleared by a select: the picture stays
-    /// on screen until another replaces it.
-    pub(crate) shown_size: (u32, u32),
-    /// The frame that picture is a develop of and the quarter turns
-    /// it was developed at. A turn pressed since is drawn at once by
-    /// turning that picture in the viewport (`lagging_turn`) rather
-    /// than waiting a second for the develop at the new turn.
-    pub(crate) shown_turn: Option<(usize, u8)>,
-    /// When the open frame was last turned, for the log's line on the
-    /// first frame drawn after it.
-    pub(crate) turn_pressed: Option<std::time::Instant>,
-    /// The crop as it was when a handle was pressed.
-    pub(crate) crop_drag: Option<Crop>,
-    /// The anchor of a crop being drawn fresh from a press outside
-    /// today's, fractions of the leveled plane, [`Crop`]'s own units.
-    pub(crate) crop_draw: Option<(f32, f32)>,
-    /// Which look the panel edits: an adjustment by index, or the
-    /// global one. The panel is the truth for that look; `edit` is
-    /// for everything else, the other adjustments included.
-    pub(crate) target: Option<usize>,
-    /// The id of a mask "New mask" made that has not yet taken a
-    /// shape: still nameless work in progress, so a shape drawn into
-    /// it and abandoned takes the mask with it. Cleared the moment a
-    /// shape lands in any mask, so a mask once emptied by deleting
-    /// its shapes, or the mask "New mask" made once it has moved on
-    /// to something else, is never taken by mistake.
-    pub(crate) fresh_mask: Option<u64>,
-    /// A mask shape being drawn in the viewport.
-    pub(crate) placing: Option<Placing>,
-    /// A part's person being picked on the picture.
-    pub(crate) choosing: Option<panel::parts::Choosing>,
-    /// A part chosen from the menu, waiting on the people (or its
-    /// model's download).
-    pub(crate) part_pending: Option<panel::parts::Pending>,
-    /// The Landscape button pressed, waiting on what the model finds
-    /// (or on its model's download), for the mask it was pressed on.
-    pub(crate) landscape_pending: Option<panel::landscape::Pending>,
-    /// What it found is on its menu: the mask a pick from it goes to.
-    pub(crate) landscape_offer: Option<panel::landscape::Pending>,
-    /// The open picture's placed parts that ask which person they are
-    /// of, by component.
-    pub(crate) part_asks: HashMap<Key, ai::Ask>,
-    /// The asks put down with Escape on the open picture: not brought
-    /// back by returning to the Masks tab, only by choosing their mask.
-    pub(crate) part_dismissed: std::collections::HashSet<Key>,
-    /// A dropper's press, while the pointer is down.
-    pub(crate) picking: Option<Picking>,
-    /// A mask to paint whatever the panel says, for a screenshot.
-    pub(crate) show_mask: Option<usize>,
-    /// A patch to choose on the first file, for a screenshot.
-    pub(crate) show_patch: Option<usize>,
-    /// A file has been opened this session (`open_frame`): what the
-    /// command line asks of the first file is for that open alone.
-    pub(crate) opened: bool,
-    /// The open the camera's picture stands in for is the session's
-    /// first, so the command line's zoom stands through it rather
-    /// than the picture fitting the view (`cull::placeholder_arrived`).
-    pub(crate) zoom_stands: bool,
-    /// A shape's handle being dragged.
-    pub(crate) mask_drag: Option<MaskDrag>,
-    /// The brushes' rasters, by adjustment id and component index,
-    /// kept up with their strokes a stamp at a time.
-    pub(crate) rasters: HashMap<(u64, usize), Arc<Raster>>,
-    /// The repair tool in hand, the stroke under way (a patch index),
-    /// and a patch's handle being dragged: the patch as grabbed, the
-    /// handle, and where it was on the view.
-    pub(crate) retouching: Option<RetouchMethod>,
-    pub(crate) patch_stroke: Option<usize>,
-    pub(crate) patch_drag: Option<(Patch, usize, (f32, f32))>,
-    /// The patch handles' positions on the view, one model for the
-    /// life of the window, as the masks' are.
-    pub(crate) patch_handles: Rc<VecModel<Pt>>,
-    /// The chosen patch's rings in the picture's units, for the
-    /// patch they were made for, so a frame maps them and no more.
-    pub(crate) patch_shape: Option<PatchShape>,
-    /// The perspective guide's first stroke, while it waits for the
-    /// second.
-    pub(crate) guiding: Guiding,
-    /// That stroke's two ends where they are in the view now, for the
-    /// overlay to draw.
-    pub(crate) guide_kept: Rc<VecModel<Pt>>,
-    /// The filmstrip's pictures as the worker made them, unturned, and
-    /// the turns and mirror each is shown with on its row. Only the
-    /// rows the strip or the grid has a cell for carry their picture;
-    /// the rest are `None` here, their pictures kept in `thumb_base`.
-    pub(crate) thumb_base: Vec<Option<(u32, u32, Vec<u8>)>>,
-    pub(crate) thumb_shown: Vec<Option<(u8, bool)>>,
-    /// The long edge each picture was made at, zero until one
-    /// arrives, and the long edge each was last asked for; and the
-    /// size the grid is asking for now, which follows the cell rather
-    /// than climbing with it, so one look at the largest cell does
-    /// not make every picture afterwards that size.
-    pub(crate) thumb_made: Vec<u32>,
-    /// Files no picture could be made of: their cells are marked, and
-    /// a snapshot of the grid counts them as filled.
-    pub(crate) thumb_failed: Vec<bool>,
-    /// The snapshot has waited its limit for the grid's pictures and
-    /// takes the grid as it stands.
-    pub(crate) grid_wait_over: bool,
-    pub(crate) thumb_asked: Vec<u32>,
-    pub(crate) thumb_want: u32,
-    /// The folder's first round of thumbnails, counted as they come
-    /// back, for one line in the log when the last one has.
-    pub(crate) thumb_run: Option<panel::browser::ThumbRun>,
-    /// The frames the grid last said it shows, first and last.
-    pub(crate) grid_shown: Option<(i32, i32)>,
-    /// The rows the filmstrip last said it shows, first and last.
-    pub(crate) strip_shown: Option<(i32, i32)>,
-    /// How each frame stands in its own file — its orientation tag
-    /// and the size a develop comes out at — read once and kept. No
-    /// pixel is decoded for it, and nothing asks until a turn is
-    /// pressed or an XMP is written, so a folder of frames nobody
-    /// turns and nobody shares never pays for it.
-    pub(crate) stances: HashMap<PathBuf, greycard_core::decode::Stance>,
-    /// The learned masks' rasters as the worker made them, with the
-    /// shape each was made for.
-    pub(crate) learned: HashMap<Key, (Shape, Arc<Raster>)>,
-    /// The shapes asked of the worker and not yet answered.
-    pub(crate) asked: HashMap<Key, Shape>,
-    /// The shapes the worker answered by failing (no runtime here, a
-    /// provider that would not run it), with the file they were asked
-    /// of. They stay in `asked`, so the same shape is not asked again
-    /// and again, but count as answered for a capture's wait, which
-    /// would otherwise wait on them for ever.
-    pub(crate) masks_failed: HashMap<Key, (Shape, Option<PathBuf>)>,
-    /// The file `learned` and `asked` are of: the one last sent to the
-    /// worker to open (`panel::mask::learned_for`).
-    pub(crate) learned_of: Option<PathBuf>,
-    /// The model store, to know what is there.
-    pub(crate) store: Option<greycard_ai::Store>,
-    /// What the sheet offers to fetch, and whether something is coming.
-    pub(crate) fetch: Option<Fetch>,
-    pub(crate) fetching: bool,
-    /// Models declined this session, not to be asked for again.
-    pub(crate) declined: Vec<&'static str>,
-    /// The Subject model declined this session as a Whole person's
-    /// edge: not offered for it again.
-    pub(crate) edge_declined: bool,
-    /// A Whole person was just asked for from the People menu: the
-    /// Subject model its edge runs may be offered once, beside it.
-    /// Never for one loaded from a sidecar or pasted.
-    pub(crate) edge_offer_due: bool,
-    /// A Whole person has been made with Subject's edge this session,
-    /// so the worker has the Subject model loaded: the first such run
-    /// says on the status line that it loads it.
-    pub(crate) edge_loaded: bool,
-    /// Models whose fetch failed this session: a Subject turns from
-    /// its WebGPU file to the original when that one fails.
-    pub(crate) fetch_failed: Vec<&'static str>,
-    /// The lens profiles' first-launch offer: whether it was ever
-    /// answered Not now (`settings.lenses_declined`), and whether it
-    /// has been made this launch.
-    pub(crate) lenses_declined: bool,
-    pub(crate) lenses_asked: bool,
-    /// What the lens database made of the open file.
-    pub(crate) lens: LensReport,
-    /// The camera profiles the profile directory holds, and the open
-    /// file's camera, for the panel's list and its warning.
-    pub(crate) profiles: Vec<greycard_edit::camera::Entry>,
-    pub(crate) camera: (String, String),
-    /// The look tables the look directory holds, for the panel's list.
-    pub(crate) looks: Vec<greycard_edit::look::Entry>,
-    /// The look the viewport draws through, and the section it was
-    /// resolved for. Kept here rather than read on every frame: the
-    /// table is on the GPU already, and reading the section is a stat
-    /// of the file. `None` for the section asks for it again, which
-    /// is what a re-listing sets it to.
-    /// It is resolved through the gate for the picture's display
-    /// curve, so the curve is part of what it was resolved for: a
-    /// fitted table is no look under another curve.
-    pub(crate) look: Option<greycard_core::lut::Look>,
-    pub(crate) look_for: Option<(greycard_edit::LookLut, greycard_edit::DisplayCurve)>,
-    /// The look list's groups the user has opened (true) or folded,
-    /// by key (`greycard_edit::look::Listing::open`).
-    pub(crate) look_groups_open: std::collections::BTreeMap<String, bool>,
-    /// The look list's row under the pointer and the look previewed
-    /// from it, drawn in place of `look` while it stands.
-    pub(crate) look_hover: RefCell<panel::look_preview::Hover>,
-    /// The profile the white balance is solved through, and the name
-    /// it was resolved for: the edit's DCP when it names one that
-    /// reads, else the file's own. The develop converts temperature
-    /// and tint through the chosen profile's matrices, so the panel's
-    /// preview and the neutral dropper have to use the same ones or
-    /// they answer for a camera the picture was not developed as.
-    pub(crate) white_profile: Option<(String, CameraProfile)>,
-    /// The handles' positions on the view, one model for the life of
-    /// the window: replaced, the handle under the pointer would be
-    /// made anew mid-drag and lose the press.
-    pub(crate) mask_handles: Rc<VecModel<Pt>>,
-    /// An object's boxes and picks on the view.
-    pub(crate) mask_boxes: Rc<VecModel<MaskBox>>,
-    pub(crate) mask_picks: Rc<VecModel<MaskPick>>,
-    /// The people a part may be of, outlined while one is picked.
-    pub(crate) person_boxes: Rc<VecModel<PersonBox>>,
-    pub(crate) screenshot: Option<PathBuf>,
-    pub(crate) snapshot: Option<PathBuf>,
-    /// How far down the panel is scrolled before the snapshot,
-    /// logical pixels.
-    pub(crate) panel_scroll: Option<f32>,
-    /// A sheet or a tool put on screen before the snapshot.
-    pub(crate) snapshot_shown: Option<panel::viewport::Shown>,
-    /// The displays colord knows, primary first, for the panel's
-    /// "System" choice.
-    pub(crate) monitors: Vec<display::Monitor>,
-    /// What the display table on the renderer was built for: the
-    /// output space, the proof if one is on, and the monitor.
-    pub(crate) lut_for: Option<(
-        export::Space,
-        Option<display::Proof>,
-        display::MonitorProfile,
-    )>,
-    /// What the encoded path's table was built for: the monitor
-    /// alone, since the camera's JPEG is sRGB and takes no proof.
-    pub(crate) encoded_lut_for: Option<display::MonitorProfile>,
-    /// A set being exported, until its last frame is done with: held
-    /// to cancel it and to know its outcomes from a stale set's.
-    pub(crate) exporting: Option<Arc<queue::Set>>,
-    /// A folder chooser for an export is up, or the overwrite sheet:
-    /// Export waits for the answer.
-    pub(crate) export_choosing: bool,
-    /// How many looks at an export's folder have begun: an answer of
-    /// an earlier one (a mount that kept it waiting, overtaken by
-    /// another Export or a Choose) is dropped. A look holds nothing
-    /// up, so a folder that never answers never stops Export.
-    pub(crate) export_checks: u64,
-    /// The folder the latest look is at, while it has not answered: a
-    /// Choose that overtakes it says the export was not started.
-    pub(crate) export_looking: Option<PathBuf>,
-    /// The line a set of one frame ends on, made as its frame is done:
-    /// the file's name, a rename and what the edit went without, which
-    /// a set's count does not say.
-    pub(crate) export_one_line: Option<(Arc<queue::Set>, String)>,
-    /// A set that would write over files that are there, held while
-    /// the overwrite sheet asks; `export_choosing` is up meanwhile.
-    pub(crate) export_pending: Option<crate::panel::deliver::Pending>,
-    /// The sets waiting to be exported, oldest first, as
-    /// `export-queue.json` keeps them.
-    pub(crate) export_queue: Vec<export_queue::Entry>,
-    /// Where the queue is written whenever it changes; none for a
-    /// snapshot or a batch run, which leave the user's files alone.
-    pub(crate) export_queue_file: Option<PathBuf>,
-    /// The queue's head entry being exported, while the queue runs.
-    pub(crate) queue_run: Option<crate::panel::export_queue::Run>,
-    /// How many looks for an entry's files the queue has begun.
-    pub(crate) queue_probes: u64,
-    /// The export presets, as the settings file keeps them.
-    pub(crate) export_presets: Vec<sheet::ExportPreset>,
-    /// The folder an export's chooser last answered with, where the
-    /// next export goes and the next chooser opens; the settings file
-    /// keeps it across runs.
-    pub(crate) export_last_folder: Option<PathBuf>,
-    /// Where a preset saved, chosen or deleted is written at once;
-    /// none for a snapshot or a batch run, which leave the user's
-    /// settings alone.
-    pub(crate) settings_file: Option<PathBuf>,
-    /// The presets, as the store lists them, and the store.
-    pub(crate) presets: Vec<Entry>,
-    pub(crate) preset_store: Option<preset::Store>,
-    /// The save sheet's checks of sections, parts and masks, and the
-    /// rows the sheet shows of them (`carry`).
-    pub(crate) preset_checks: carry::Checks,
-    pub(crate) preset_rows: carry::Shown,
-    /// The sync sheet's, the same way; a paste's too.
-    pub(crate) sync_checks: carry::Checks,
-    pub(crate) sync_rows: carry::Shown,
-    /// The frame and the targets the sync sheet was opened on, so an
-    /// Apply can refuse a selection that moved under it.
-    pub(crate) sync_asked: Option<(usize, Vec<usize>)>,
-    /// The same for a paste: the frame on screen and the frames the
-    /// sheet named, so an Apply can refuse a selection that moved.
-    pub(crate) paste_asked: Option<(usize, Vec<usize>)>,
-    /// The checks the last sync or paste laid over the selection,
-    /// for the session: a paste's sheet opens with them.
-    pub(crate) sync_last: Option<carry::Checks>,
-    /// The settings clipboard: an edit copied from a frame, to paste
-    /// over the selection (`clipboard`). The session's, never the
-    /// system's.
-    pub(crate) clipboard: Option<clipboard::Clipboard>,
-    /// The frame the frame menu was opened over, for its Reveal.
-    pub(crate) menu_file: Option<usize>,
-    /// A preset click's own words ("Muted Slide onto 3 frames"),
-    /// waiting for the current frame's develop (its generation) to
-    /// land: the develop's own line would otherwise stand alone,
-    /// since it is set again once that develop is on screen.
-    pub(crate) status_after_develop: Option<(u64, String)>,
-    /// A state shown in the viewport in place of the panel's while a
-    /// history or snapshot row is under the pointer, and the status
-    /// line it covers meanwhile.
-    pub(crate) peek: Option<Edit>,
-    /// The edit of the picture still on the GPU after another file was
-    /// chosen: the viewport shows that picture under this look until
-    /// the new file's develop lands, rather than the new look over the
-    /// old picture.
-    pub(crate) held: Option<Edit>,
-    pub(crate) status_kept: Option<slint::SharedString>,
-    /// The view (the frame's size and the center) before a peek, put
-    /// back after it: a hover over a row is not to lose a zoomed place.
-    pub(crate) view_kept: Option<((u32, u32), (f32, f32))>,
-    /// The mask toggle as it was before a tool went in hand; the mask
-    /// shows while a shape is placed, and the toggle comes back after,
-    /// unless it was thrown meanwhile.
-    pub(crate) show_mask_kept: Option<bool>,
-    /// The look as the panel last showed it, read back from the panel
-    /// where it is written (`show_edit`) and where it is changed
-    /// (`mask::look_edited`), so the next change can tell a look slider
-    /// from a shape control.
-    pub(crate) look_seen: RefCell<Option<greycard_edit::Look>>,
-    /// The detail planes the shown develop came with: a mask's Detail
-    /// moved to ask for one it lacks develops again
-    /// (`panel::mask::detail_asks`).
-    pub(crate) planes_wants: greycard_edit::DetailWants,
-    /// The planes a develop has been asked for by a mask's Detail and
-    /// has not yet brought: none asked for twice while one is on its
-    /// way. Cleared when a develop lands.
-    pub(crate) planes_asked: greycard_edit::DetailWants,
-    pub(crate) generation: u64,
-    /// Whether the command line asked for a snapshot, a screenshot or
-    /// an export. All three wait for a picture, and nobody is reading
-    /// the status line, so a failure has to end the run itself.
-    pub(crate) batch: bool,
-    /// Something a batch run asked for did not happen: the exit code
-    /// says so.
-    pub(crate) failed: bool,
     /// The import sheet's folders and what the source holds, and the
     /// import running.
     pub(crate) import: panel::import::Sheet,
@@ -1286,273 +653,296 @@ pub(crate) struct State {
     /// The archive roots: the sheet's question, a copy under way, the
     /// header's count (`panel::archive`).
     pub(crate) archive: panel::archive::Archive,
-    /// The writes behind the saves to the archives' copies (§233):
-    /// see [`sync`].
-    pub(crate) sync: sync::Sync,
-    /// The window, for a job's end landing on its thread from a place
-    /// that has only the state in hand.
-    pub(crate) app: slint::Weak<App>,
+    /// What the command line asked of this run: see [`owners::Launch`].
+    pub(crate) launch: owners::Launch,
+    /// The window and the session's policies: see [`owners::Window`].
+    pub(crate) window: owners::Window,
+    /// The sheets without a struct of their own: see [`owners::Sheets`].
+    pub(crate) sheets: owners::Sheets,
+    /// The exports and the archive copies' writes: see [`owners::Work`].
+    pub(crate) work: owners::Work,
+    /// Culling, the lightbox and the camera's pictures: see [`owners::Culling`].
+    pub(crate) culling: owners::Culling,
+    /// The library views: see [`owners::Views`].
+    pub(crate) views: owners::Views,
+    /// The open frame and its develop: see [`owners::Develop`].
+    pub(crate) develop: owners::Develop,
 }
 
 impl State {
     /// What is known of the mosaic of the file the panel is for.
     pub(crate) fn open_mosaic(&self) -> crate::panel::browser::OpenMosaic {
-        self.panel_mosaic
+        self.develop
+            .panel_mosaic
             .as_ref()
             .map_or(crate::panel::browser::OpenMosaic::Unknown, |(_, m)| *m)
     }
 
     /// A blank state for `files`, on `app`'s window: no picture
     /// chosen, no sidecar read, nothing running or remembered. The
-    /// one place every field is named; `run` overlays what the
-    /// command line and the settings choose with `..Self::empty(...)`,
-    /// and a test wires only the handful a callback under test reads,
-    /// the same way. Add a field once, here, and both stay whole.
+    /// one place every field is named. The launch builds from it and
+    /// assigns what the command line and the settings choose, and a
+    /// test builds from it and assigns only the handful a callback
+    /// under test reads. Add a field once, here, and both stay whole.
     pub(crate) fn empty(files: Vec<PathBuf>, app: &App) -> Self {
         let count = files.len();
         Self {
-            sync: sync::Sync::default(),
-            app: app.as_weak(),
             cells: (0..count)
                 .map(|file| versions::Cell {
                     file,
                     version: None,
                 })
                 .collect(),
-            collection_frames: None,
-            cells_by_file: None,
-            stacks_listed: Vec::new(),
-            stacks: stacks::Store::default(),
             files,
             current: None,
-            picked: Vec::new(),
-            edit: Edit::default(),
             sidecars: vec![Sidecar::default(); count],
             from_row: vec![rows::FromRow::read(); count],
-            tweak_at_start: None,
-            write_sidecars: false,
-            xmp_sidecars: false,
-            placement: greycard_edit::Placement::Beside,
-            pending: None,
-            time_sharpen: None,
-            time_clarity: None,
-            time_dehaze: None,
-            time_texture: None,
-            time_cull: None,
-            time_select: None,
-            time_scroll: None,
-            fill_clock: None,
-            selected_at: None,
-            cull_develop: false,
-            turn_at_start: None,
-            awaiting_turn: false,
-            cull_key_at_start: None,
-            ask_rejects: false,
-            move_rejects: false,
-            delete_asked: None,
-            version_delete: None,
-            trash_refused: std::collections::HashSet::new(),
-            look_remove: None,
-            look_remove_generation: 0,
-            look_removing: false,
-            look_rename: None,
-            look_rename_generation: 0,
-            look_renaming: None,
-            deletes_allowed: false,
-            deleting: None,
-            snapshot_placeholder: false,
-            cull: None,
-            cull_move_on: false,
-            companions: HashMap::new(),
-            jpegs_apart: false,
-            notice_timer: slint::Timer::default(),
-            tags: tags::History::default(),
-            hold: None,
-            placeholder: None,
-            // Previews come back to the UI thread as the worker's do.
-            prefetch: {
-                let app_weak = app.as_weak();
-                cull::Prefetcher::new(move |loaded| {
-                    let app_weak = app_weak.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(app) = app_weak.upgrade() {
-                            deliver_preview(&app, loaded);
-                        }
-                    });
-                })
-            },
-            lightbox: None,
-            lightbox_fetch: None,
-            cull_at_start: None,
-            shown: (0..count).collect(),
-            pictured: [(0, 0); 2],
-            filter: filter::Filter::default(),
-            index: None,
-            index_reader: None,
-            index_ids: vec![None; count],
-            index_passed: vec![true; count],
-            index_generation: 0,
-            index_progress: None,
-            facets_wanted: Vec::new(),
-            awaiting_index: false,
-            index_path: None,
-            index_error: None,
-            index_tries: 0,
-            index_pass_ready: false,
-            facets_last: RefCell::new(Vec::new()),
-            library: roots::Library::default(),
-            collections: collections::Store::default(),
-            recent: panel::recent::Recent::default(),
-            tree: tree::Tree::default(),
             camera_match: Default::default(),
-            view: roots::View::Folder,
-            sort: sort::Kept::default(),
-            sort_reveal: false,
-            view_generation: 0,
-            loads: rows::Loads::default(),
-            pick_pending: None,
-            panel_stand_in: None,
-            compare_tiles: Rc::new(VecModel::default()),
-            select_at_start: None,
-            overrides_at_start: None,
-            overridden: None,
-            setup_ran: false,
-            also_at_start: Vec::new(),
-            base_white: None,
-            frame: None,
-            panel_mosaic: None,
-            mosaics: HashMap::new(),
-            source: finish::Source::Scene,
-            white_cache: None,
-            shown_white: None,
-            debounce: slint::Timer::default(),
-            save_timer: slint::Timer::default(),
-            preview_temperature: None,
-            image_size: (1, 1),
-            zoom: 0.0,
-            center: (0.0, 0.0),
-            renderer: None,
-            gpu: None,
-            bins: None,
-            scope: scope::Scope::default(),
-            curve_drag: None,
-            // Nothing until a develop says so: a turn pressed
-            // before one lands must not measure the frame by the
-            // last frame's shape, or by a square.
-            source_size: (0, 0),
-            shown_size: (0, 0),
-            shown_turn: None,
-            turn_pressed: None,
-            crop_drag: None,
-            crop_draw: None,
-            target: None,
-            fresh_mask: None,
-            placing: None,
-            choosing: None,
-            part_pending: None,
-            landscape_pending: None,
-            landscape_offer: None,
-            part_asks: HashMap::new(),
-            part_dismissed: Default::default(),
-            picking: None,
-            show_mask: None,
-            show_patch: None,
-            opened: false,
-            zoom_stands: false,
-            mask_drag: None,
-            rasters: HashMap::new(),
-            retouching: None,
-            patch_stroke: None,
-            patch_drag: None,
-            patch_handles: Rc::new(VecModel::default()),
-            patch_shape: None,
-            guiding: Guiding::default(),
-            guide_kept: Rc::new(VecModel::default()),
-            thumb_base: vec![None; count],
-            thumb_shown: vec![None; count],
-            thumb_made: vec![0; count],
-            thumb_failed: vec![false; count],
-            grid_wait_over: false,
-            thumb_asked: vec![worker::THUMB_WIDTH; count],
-            thumb_want: worker::THUMB_WIDTH,
-            thumb_run: None,
-            grid_shown: None,
-            strip_shown: None,
-            stances: HashMap::new(),
-            learned: HashMap::new(),
-            asked: HashMap::new(),
-            masks_failed: HashMap::new(),
-            learned_of: None,
-            store: None,
-            fetch: None,
-            fetching: false,
-            declined: Vec::new(),
-            edge_declined: false,
-            edge_offer_due: false,
-            edge_loaded: false,
-            fetch_failed: Vec::new(),
-            lenses_declined: false,
-            lenses_asked: false,
-            lens: LensReport::NoDatabase,
-            profiles: Vec::new(),
-            camera: (String::new(), String::new()),
-            looks: Vec::new(),
-            look: None,
-            look_for: None,
-            look_groups_open: Default::default(),
-            look_hover: Default::default(),
-            white_profile: None,
-            mask_handles: Rc::new(VecModel::default()),
-            mask_boxes: Rc::new(VecModel::default()),
-            mask_picks: Rc::new(VecModel::default()),
-            person_boxes: Rc::new(VecModel::default()),
-            screenshot: None,
-            snapshot: None,
-            panel_scroll: None,
-            snapshot_shown: None,
-            monitors: Vec::new(),
-            lut_for: None,
-            encoded_lut_for: None,
-            exporting: None,
-            export_choosing: false,
-            export_checks: 0,
-            export_looking: None,
-            export_one_line: None,
-            export_pending: None,
-            export_queue: Vec::new(),
-            export_queue_file: None,
-            queue_run: None,
-            queue_probes: 0,
-            export_presets: Vec::new(),
-            export_last_folder: None,
-            settings_file: None,
-            presets: Vec::new(),
-            preset_store: None,
-            preset_checks: carry::Checks::new(Vec::new(), |_| false),
-            preset_rows: carry::Shown::default(),
-            sync_checks: carry::Checks::new(Vec::new(), |_| false),
-            sync_rows: carry::Shown::default(),
-            sync_asked: None,
-            paste_asked: None,
-            sync_last: None,
-            clipboard: None,
-            menu_file: None,
-            peek: None,
-            held: None,
-            status_after_develop: None,
-            status_kept: None,
-            view_kept: None,
-            show_mask_kept: None,
-            look_seen: RefCell::new(None),
-            planes_wants: Default::default(),
-            planes_asked: Default::default(),
-            generation: 0,
-            batch: false,
-            failed: false,
             import: panel::import::Sheet::default(),
             lightroom: panel::lightroom::Sheet::default(),
             rawtherapee: panel::rawtherapee::Sheet::default(),
             archive: panel::archive::Archive::default(),
+            launch: owners::Launch {
+                tweak_at_start: None,
+                time_sharpen: None,
+                time_clarity: None,
+                time_dehaze: None,
+                time_texture: None,
+                time_cull: None,
+                time_select: None,
+                time_scroll: None,
+                cull_develop: false,
+                snapshot_placeholder: false,
+                turn_at_start: None,
+                awaiting_turn: false,
+                cull_key_at_start: None,
+                ask_rejects: false,
+                move_rejects: false,
+                cull_at_start: None,
+                facets_wanted: Vec::new(),
+                awaiting_index: false,
+                select_at_start: None,
+                overrides_at_start: None,
+                overridden: None,
+                setup_ran: false,
+                also_at_start: Vec::new(),
+                preview_temperature: None,
+                show_mask: None,
+                show_patch: None,
+                opened: false,
+                zoom_stands: false,
+                grid_wait_over: false,
+                screenshot: None,
+                snapshot: None,
+                panel_scroll: None,
+                snapshot_shown: None,
+                failed: false,
+            },
+            window: owners::Window {
+                write_sidecars: false,
+                xmp_sidecars: false,
+                placement: greycard_edit::Placement::Beside,
+                deletes_allowed: false,
+                settings_file: None,
+                batch: false,
+                app: app.as_weak(),
+            },
+            sheets: owners::Sheets {
+                delete_asked: None,
+                version_delete: None,
+                trash_refused: std::collections::HashSet::new(),
+                look_remove: None,
+                look_remove_generation: 0,
+                look_removing: false,
+                look_rename: None,
+                look_rename_generation: 0,
+                look_renaming: None,
+                deleting: None,
+                fetch: None,
+                fetching: false,
+                declined: Vec::new(),
+                edge_declined: false,
+                edge_offer_due: false,
+                edge_loaded: false,
+                fetch_failed: Vec::new(),
+                lenses_declined: false,
+                lenses_asked: false,
+                preset_checks: carry::Checks::new(Vec::new(), |_| false),
+                preset_rows: carry::Shown::default(),
+                sync_checks: carry::Checks::new(Vec::new(), |_| false),
+                sync_rows: carry::Shown::default(),
+                sync_asked: None,
+                paste_asked: None,
+                sync_last: None,
+                clipboard: None,
+            },
+            work: owners::Work {
+                exporting: None,
+                export_choosing: false,
+                export_checks: 0,
+                export_looking: None,
+                export_one_line: None,
+                export_pending: None,
+                export_queue: Vec::new(),
+                export_queue_file: None,
+                queue_run: None,
+                queue_probes: 0,
+                export_presets: Vec::new(),
+                export_last_folder: None,
+                sync: sync::Sync::default(),
+            },
+            culling: owners::Culling {
+                cull: None,
+                cull_move_on: false,
+                notice_timer: slint::Timer::default(),
+                tags: tags::History::default(),
+                hold: None,
+                placeholder: None,
+                // Previews come back to the UI thread as the worker's do.
+                prefetch: {
+                    let app_weak = app.as_weak();
+                    cull::Prefetcher::new(move |loaded| {
+                        let app_weak = app_weak.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(app) = app_weak.upgrade() {
+                                deliver_preview(&app, loaded);
+                            }
+                        });
+                    })
+                },
+                lightbox: None,
+                lightbox_fetch: None,
+                compare_tiles: Rc::new(VecModel::default()),
+            },
+            views: owners::Views {
+                companions: HashMap::new(),
+                jpegs_apart: false,
+                collection_frames: None,
+                cells_by_file: None,
+                stacks_listed: Vec::new(),
+                stacks: stacks::Store::default(),
+                picked: Vec::new(),
+                shown: (0..count).collect(),
+                pictured: [(0, 0); 2],
+                filter: filter::Filter::default(),
+                index: None,
+                index_reader: None,
+                index_ids: vec![None; count],
+                index_passed: vec![true; count],
+                index_generation: 0,
+                index_progress: None,
+                index_path: None,
+                index_error: None,
+                index_tries: 0,
+                index_pass_ready: false,
+                facets_last: RefCell::new(Vec::new()),
+                library: roots::Library::default(),
+                collections: collections::Store::default(),
+                recent: panel::recent::Recent::default(),
+                tree: tree::Tree::default(),
+                view: roots::View::Folder,
+                sort: sort::Kept::default(),
+                sort_reveal: false,
+                view_generation: 0,
+                loads: rows::Loads::default(),
+                pick_pending: None,
+                panel_stand_in: None,
+                thumb_base: vec![None; count],
+                thumb_shown: vec![None; count],
+                thumb_made: vec![0; count],
+                thumb_failed: vec![false; count],
+                thumb_asked: vec![worker::THUMB_WIDTH; count],
+                thumb_want: worker::THUMB_WIDTH,
+                thumb_run: None,
+                fill_clock: None,
+                selected_at: None,
+                grid_shown: None,
+                strip_shown: None,
+                menu_file: None,
+            },
+            develop: owners::Develop {
+                edit: Edit::default(),
+                pending: None,
+                base_white: None,
+                frame: None,
+                panel_mosaic: None,
+                mosaics: HashMap::new(),
+                source: finish::Source::Scene,
+                white_cache: None,
+                shown_white: None,
+                debounce: slint::Timer::default(),
+                save_timer: slint::Timer::default(),
+                image_size: (1, 1),
+                zoom: 0.0,
+                center: (0.0, 0.0),
+                renderer: None,
+                gpu: None,
+                bins: None,
+                scope: scope::Scope::default(),
+                curve_drag: None,
+                // Nothing until a develop says so: a turn pressed
+                // before one lands must not measure the frame by the
+                // last frame's shape, or by a square.
+                source_size: (0, 0),
+                shown_size: (0, 0),
+                shown_turn: None,
+                turn_pressed: None,
+                crop_drag: None,
+                crop_draw: None,
+                target: None,
+                fresh_mask: None,
+                placing: None,
+                choosing: None,
+                part_pending: None,
+                landscape_pending: None,
+                landscape_offer: None,
+                part_asks: HashMap::new(),
+                part_dismissed: Default::default(),
+                picking: None,
+                mask_drag: None,
+                rasters: HashMap::new(),
+                retouching: None,
+                patch_stroke: None,
+                patch_drag: None,
+                patch_handles: Rc::new(VecModel::default()),
+                patch_shape: None,
+                guiding: Guiding::default(),
+                guide_kept: Rc::new(VecModel::default()),
+                stances: HashMap::new(),
+                learned: HashMap::new(),
+                asked: HashMap::new(),
+                masks_failed: HashMap::new(),
+                learned_of: None,
+                store: None,
+                lens: LensReport::NoDatabase,
+                profiles: Vec::new(),
+                camera: (String::new(), String::new()),
+                looks: Vec::new(),
+                look: None,
+                look_for: None,
+                look_groups_open: Default::default(),
+                look_hover: Default::default(),
+                white_profile: None,
+                mask_handles: Rc::new(VecModel::default()),
+                mask_boxes: Rc::new(VecModel::default()),
+                mask_picks: Rc::new(VecModel::default()),
+                person_boxes: Rc::new(VecModel::default()),
+                monitors: Vec::new(),
+                lut_for: None,
+                encoded_lut_for: None,
+                presets: Vec::new(),
+                preset_store: None,
+                status_after_develop: None,
+                peek: None,
+                held: None,
+                status_kept: None,
+                view_kept: None,
+                show_mask_kept: None,
+                look_seen: RefCell::new(None),
+                planes_wants: Default::default(),
+                planes_asked: Default::default(),
+                generation: 0,
+            },
         }
     }
 }

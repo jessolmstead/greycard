@@ -57,9 +57,9 @@ ours, so a tester brings a library over in one go.
       `{folder}` token, the frame's path under the source, so a
       copied job keeps its camera subfolders (a tester asked to
       import a folder with its subfolders)
-- [ ] The window's structure: `State` grouped by owner, the library
-      views measured for a crate of their own (Pool; the CLI split
-      landed, §341)
+- [ ] The window's structure: the library views measured for a crate
+      of their own (Pool; the CLI split landed as §341, the State
+      grouping as §344)
 
 
 ## Tracks
@@ -511,7 +511,9 @@ clears or a tester asks for it.
 - [ ] The window's structure (0.8.0), in three mechanical passes
       each landing green, each alone with no other window branch in
       flight: the CLI's `main.rs` split one file a
-      subcommand (landed, §341); the window's `State` (about 216 fields in `main.rs`,
+      subcommand (landed, §341); the window's `State` grouped by owner
+      (landed, §344: views, develop, culling, sheets, work, window,
+      launch; 17 fields left at the top); the window's `State` (about 216 fields in `main.rs`,
       every panel reaching in) grouped into a few structs by owner
       (library, develop, culling, sheets, worker handles), the
       `st.cull` pattern made the rule; then the library views (the

@@ -138,7 +138,8 @@ pub(crate) fn held(st: &State, c: usize) -> bool {
 
 /// [`held`] by the file.
 pub(crate) fn held_file(st: &State, file: usize) -> bool {
-    st.deleting
+    st.sheets
+        .deleting
         .as_ref()
         .is_some_and(|planned| st.files.get(file).is_some_and(|f| planned.contains(f)))
 }
@@ -176,7 +177,7 @@ pub(crate) fn offer_note(offer: Offer) -> &'static str {
 /// Open the delete sheet for `which`, or say in the status line why
 /// there is nothing to ask.
 pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
-    if st.deleting.is_some() {
+    if st.sheets.deleting.is_some() {
         app.set_status("a delete is still under way".into());
         return;
     }
@@ -248,13 +249,13 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
             // A view of one folder takes the rejects folder beside it,
             // read from the disk; a view over many folders takes every
             // rejects folder it lists frames in.
-            let one = match &st.view {
+            let one = match &st.views.view {
                 // Beside the first frame's folder, which is the open
                 // folder; the sheet names it whatever else is open.
                 // With every frame moved out there is no first frame,
                 // and Recently opened still has the folder.
                 View::Folder => shoot_rejects_dir(st).or_else(|| {
-                    let dir = st.recent.open.as_deref()?;
+                    let dir = st.views.recent.open.as_deref()?;
                     let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
                     Some(cull::rejects_dir(&dir))
                 }),
@@ -263,8 +264,14 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
                     deep: false,
                     ..
                 } => {
-                    if let Some(root) = st.library.offline.iter().find(|r| folder.starts_with(r)) {
-                        let name = crate::roots::root_name(&st.library.roots, root);
+                    if let Some(root) = st
+                        .views
+                        .library
+                        .offline
+                        .iter()
+                        .find(|r| folder.starts_with(r))
+                    {
+                        let name = crate::roots::root_name(&st.views.library.roots, root);
                         app.set_status(format!("{name} is offline: nothing to delete").into());
                         return;
                     }
@@ -297,7 +304,7 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
                     return;
                 }
             }
-            let frames = match crate::files::list_files(&dir, st.jpegs_apart) {
+            let frames = match crate::files::list_files(&dir, st.views.jpegs_apart) {
                 Ok(f) => f,
                 Err(e) => {
                     app.set_status(format!("the rejects folder cannot be read: {e:#}").into());
@@ -339,11 +346,11 @@ struct Over {
 /// its own rejects folders, and one delete over every root would take
 /// a reject and its copy together. None, said, when nothing is left.
 fn rejects_listed(st: &State, app: &App) -> Option<Over> {
-    let of_view = match &st.view {
+    let of_view = match &st.views.view {
         View::Roots(Some(root)) | View::Branch { root, .. } => Some(root.as_path()),
         _ => None,
     };
-    let roots = &st.library.roots;
+    let roots = &st.views.library.roots;
     let elsewhere = |f: &Path| {
         roots
             .archive_of(f)
@@ -412,7 +419,7 @@ fn ask_sheet(st: &mut State, app: &App, which: Which, over: Over) {
         links,
         archived,
     } = over;
-    let plan = delete::plan(&frames, &st.files, &allowed, st.jpegs_apart);
+    let plan = delete::plan(&frames, &st.files, &allowed, st.views.jpegs_apart);
     if plan.frames.is_empty() {
         let why = plan
             .refused
@@ -424,7 +431,7 @@ fn ask_sheet(st: &mut State, app: &App, which: Which, over: Over) {
     }
     let planned: Vec<PathBuf> = plan.frames.iter().map(|d| d.frame.clone()).collect();
     let folders = folders_of(&planned);
-    let refused_here = folders.iter().any(|f| st.trash_refused.contains(f));
+    let refused_here = folders.iter().any(|f| st.sheets.trash_refused.contains(f));
     let offer = delete::offer(TRASH_SUPPORTED, refused_here);
     let n = planned.len();
     let title = match which {
@@ -482,14 +489,14 @@ fn ask_sheet(st: &mut State, app: &App, which: Which, over: Over) {
     app.set_delete_title(title.into());
     app.set_delete_text(text.into());
     app.set_delete_confirm("".into());
-    st.version_delete = None;
+    st.sheets.version_delete = None;
     app.set_delete_note(offer_note(offer).into());
     app.set_delete_trash(offer.trash);
     app.set_delete_permanent(offer.permanent);
     // Whether they are safe somewhere: a line, filled in when the look
     // at the archives lands.
     crate::panel::archive::delete_line(st, app, &planned);
-    st.delete_asked = Some(Asked {
+    st.sheets.delete_asked = Some(Asked {
         which,
         frames: planned,
         allowed,
@@ -503,7 +510,7 @@ fn ask_sheet(st: &mut State, app: &App, which: Which, over: Over) {
 /// and hands it to its own thread; [`land`] finishes it.
 pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
     app.set_delete_open(false);
-    let Some(asked) = st.delete_asked.take() else {
+    let Some(asked) = st.sheets.delete_asked.take() else {
         return;
     };
     let how = match answer {
@@ -511,32 +518,37 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
         2 if asked.offer.permanent => How::Permanent,
         _ => return,
     };
-    if !st.deletes_allowed {
+    if !st.window.deletes_allowed {
         let why = "not deleted: a capture, an export or a timing run never deletes";
         tracing::info!("{why}");
         app.set_status(why.into());
         return;
     }
-    if st.deleting.is_some() {
+    if st.sheets.deleting.is_some() {
         app.set_status("a delete is still under way".into());
         return;
     }
     // An edit of the frame on screen still to be written goes to disk
     // first, so it goes with the frame (to the trash, to be restored
     // with it) or stays with it if the delete is refused.
-    if st.save_timer.running()
+    if st.develop.save_timer.running()
         && st
             .current
             .and_then(|c| st.path_at(c))
             .is_some_and(|f| asked.frames.contains(f))
     {
-        st.save_timer.stop();
-        let edit = read_edit(app, &st.edit, st.target);
+        st.develop.save_timer.stop();
+        let edit = read_edit(app, &st.develop.edit, st.develop.target);
         save_edit(st, edit);
     }
-    let plan = delete::plan(&asked.frames, &st.files, &asked.allowed, st.jpegs_apart);
+    let plan = delete::plan(
+        &asked.frames,
+        &st.files,
+        &asked.allowed,
+        st.views.jpegs_apart,
+    );
     let n = plan.frames.len();
-    st.deleting = Some(plan.frames.iter().map(|d| d.frame.clone()).collect());
+    st.sheets.deleting = Some(plan.frames.iter().map(|d| d.frame.clone()).collect());
     app.set_status(format!("deleting {}...", delete::count(n, "frame")).into());
     let job = Job {
         which: asked.which,
@@ -545,7 +557,7 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
         allowed: asked.allowed,
     };
     if !send_off(app, job) {
-        st.deleting = None;
+        st.sheets.deleting = None;
         app.set_status("the delete could not be started; nothing was deleted".into());
     }
 }
@@ -597,12 +609,12 @@ fn send_off(_app: &App, job: Job) -> bool {
 /// frames that went dropped, a refusal of the trash remembered for
 /// the folder, the status said, and the frames out of the list.
 pub(crate) fn land(st: &mut State, app: &App, worker: &Worker, done: Done) {
-    st.deleting = None;
+    st.sheets.deleting = None;
     let gone = &done.deleted.frames;
     // The camera's JPEGs that went with their raws are forgotten with
     // them: a row left standing would be a frame of every listing of
     // the index until a pass found the file gone.
-    if let Some(indexer) = &st.index {
+    if let Some(indexer) = &st.views.index {
         indexer.forget(
             gone.iter()
                 .chain(&done.deleted.companions)
@@ -627,7 +639,7 @@ pub(crate) fn land(st: &mut State, app: &App, worker: &Worker, done: Done) {
         && let Some(dir) = r.frame.parent()
     {
         let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-        st.trash_refused.insert(dir);
+        st.sheets.trash_refused.insert(dir);
     }
     for (f, why) in done.refused.iter().chain(&done.deleted.failed) {
         tracing::warn!("{}: not deleted: {why}", f.display());
@@ -674,7 +686,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if st.version_delete.is_some() {
+            if st.sheets.version_delete.is_some() {
                 crate::panel::versions::answered(&mut st, &app, &worker, answer);
             } else {
                 answered(&mut st, &app, answer);
@@ -761,7 +773,7 @@ pub(crate) mod tests {
         let (state, worker) = state_for(app, files);
         {
             let mut st = state.borrow_mut();
-            st.deletes_allowed = true;
+            st.window.deletes_allowed = true;
             st.current = Some(0);
             crate::panel::browser::rebuild_browser(&mut st, app);
         }
@@ -773,6 +785,7 @@ pub(crate) mod tests {
     fn refused(state: &Rc<RefCell<State>>, dir: &Path) {
         state
             .borrow_mut()
+            .sheets
             .trash_refused
             .insert(dunce::canonicalize(dir).unwrap());
     }
@@ -807,9 +820,9 @@ pub(crate) mod tests {
         refused(&state, &shoot_dir);
         {
             let mut st = state.borrow_mut();
-            st.index = Some(indexer);
+            st.views.index = Some(indexer);
             st.current = Some(1);
-            st.picked = vec![1, 3];
+            st.views.picked = vec![1, 3];
         }
         app.invoke_delete_asked("selection".into());
         assert!(app.get_delete_open());
@@ -835,8 +848,8 @@ pub(crate) mod tests {
                 [files[0].clone(), files[2].clone(), files[4].clone()]
             );
             assert_eq!(st.sidecars.len(), 3);
-            assert_eq!(st.shown, [0, 1, 2]);
-            assert!(st.picked.is_empty());
+            assert_eq!(st.views.shown, [0, 1, 2]);
+            assert!(st.views.picked.is_empty());
         }
         // The rows went with the files, and the neighbors' stayed.
         match wait(&|t| matches!(t, Told::Forgotten(..))) {
@@ -852,7 +865,7 @@ pub(crate) mod tests {
         for kept in [0, 2, 4] {
             assert!(reader.by_path(&files[kept]).unwrap().is_some());
         }
-        let indexer = state.borrow_mut().index.take().unwrap();
+        let indexer = state.borrow_mut().views.index.take().unwrap();
         indexer.stop(Duration::from_secs(20));
         drop(reader);
         crate::testing::remove_dir_retry(&dir);
@@ -899,7 +912,7 @@ pub(crate) mod tests {
         let app = window(files.len());
         let (state, worker) = opened(&app, files);
         refused(&state, &shoot_dir);
-        state.borrow_mut().index = Some(indexer);
+        state.borrow_mut().views.index = Some(indexer);
         app.invoke_delete_asked("selection".into());
         let text = app.get_delete_text();
         assert!(
@@ -925,7 +938,7 @@ pub(crate) mod tests {
                 .unwrap(),
             std::slice::from_ref(&other)
         );
-        let indexer = state.borrow_mut().index.take().unwrap();
+        let indexer = state.borrow_mut().views.index.take().unwrap();
         indexer.stop(Duration::from_secs(20));
         drop(reader);
         crate::testing::remove_dir_retry(&dir);
@@ -957,7 +970,7 @@ pub(crate) mod tests {
         app.invoke_delete_answered(2);
         land_all(&state, &app, &worker);
         assert!(!app.get_delete_open());
-        assert!(state.borrow().delete_asked.is_none());
+        assert!(state.borrow().sheets.delete_asked.is_none());
         // Cancelled: nothing either.
         app.invoke_delete_asked("selection".into());
         app.invoke_delete_answered(0);
@@ -977,7 +990,7 @@ pub(crate) mod tests {
         let app = window(files.len());
         let (state, worker) = opened(&app, files.clone());
         refused(&state, &dir);
-        state.borrow_mut().deletes_allowed = false;
+        state.borrow_mut().window.deletes_allowed = false;
         app.invoke_delete_asked("selection".into());
         assert!(app.get_delete_permanent());
         app.invoke_delete_answered(2);
@@ -1031,7 +1044,7 @@ pub(crate) mod tests {
         refused(&state, &dir);
         app.invoke_delete_asked("selection".into());
         app.invoke_delete_answered(2);
-        assert!(state.borrow().deleting.is_some());
+        assert!(state.borrow().sheets.deleting.is_some());
         assert_eq!(app.get_status(), "deleting 1 frame...");
         assert!(
             files[0].exists(),
@@ -1041,7 +1054,7 @@ pub(crate) mod tests {
         assert!(!app.get_delete_open());
         assert_eq!(app.get_status(), "a delete is still under way");
         assert_eq!(land_all(&state, &app, &worker), 1);
-        assert!(state.borrow().deleting.is_none() && !files[0].exists());
+        assert!(state.borrow().sheets.deleting.is_none() && !files[0].exists());
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -1057,9 +1070,9 @@ pub(crate) mod tests {
         app.invoke_delete_asked("selection".into());
         assert!(app.get_delete_trash());
         app.invoke_delete_answered(1);
-        assert!(state.borrow().deleting.is_some());
+        assert!(state.borrow().sheets.deleting.is_some());
         assert_eq!(land_all(&state, &app, &worker), 1);
-        assert!(state.borrow().deleting.is_none());
+        assert!(state.borrow().sheets.deleting.is_none());
         assert_eq!(
             app.get_status(),
             "the delete failed, and nothing more was deleted (0 frames went before it \
@@ -1086,8 +1099,8 @@ pub(crate) mod tests {
         refused(&state, &dir);
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = true;
-            st.picked = vec![0, 2];
+            st.window.write_sidecars = true;
+            st.views.picked = vec![0, 2];
         }
         app.invoke_delete_asked("selection".into());
         app.invoke_delete_answered(2);
@@ -1118,7 +1131,7 @@ pub(crate) mod tests {
         let app = window(files.len());
         let (state, worker) = opened(&app, files.clone());
         refused(&state, &dir);
-        state.borrow_mut().picked = vec![0, 2];
+        state.borrow_mut().views.picked = vec![0, 2];
         app.invoke_delete_asked("selection".into());
         std::fs::remove_file(&files[2]).unwrap();
         app.invoke_delete_answered(2);
@@ -1227,7 +1240,7 @@ pub(crate) mod tests {
         };
         let app = window(listed.len());
         let (state, worker) = opened(&app, listed.clone());
-        state.borrow_mut().view = View::Roots(None);
+        state.borrow_mut().views.view = View::Roots(None);
         refused(&state, &cull::rejects_dir(&one));
         refused(&state, &cull::rejects_dir(&two));
         app.invoke_delete_asked("rejects".into());
@@ -1303,10 +1316,10 @@ pub(crate) mod tests {
             let (state, worker) = opened(&app, files);
             {
                 let mut st = state.borrow_mut();
-                st.library.roots.add(&local).unwrap();
-                st.library.roots.add(&nas).unwrap();
-                st.library.roots.set_archive(&nas, true);
-                st.view = view;
+                st.views.library.roots.add(&local).unwrap();
+                st.views.library.roots.add(&nas).unwrap();
+                st.views.library.roots.set_archive(&nas, true);
+                st.views.view = view;
             }
             app.invoke_delete_asked("rejects".into());
             (app, state, worker)
@@ -1357,7 +1370,7 @@ pub(crate) mod tests {
         write_frame(&rejects.join("x.tif"), &A7, 9);
         let app = window(files.len());
         let (state, worker) = opened(&app, files.clone());
-        state.borrow_mut().view = View::Branch {
+        state.borrow_mut().views.view = View::Branch {
             root: dir.clone(),
             folder: shoot_dir.clone(),
             deep: false,
@@ -1385,7 +1398,7 @@ pub(crate) mod tests {
         let files = shoot(&dir);
         let app = window(files.len());
         let (state, _worker) = opened(&app, files);
-        state.borrow_mut().view = View::Roots(None);
+        state.borrow_mut().views.view = View::Roots(None);
         app.invoke_delete_asked("rejects".into());
         assert!(!app.get_delete_open());
         assert_eq!(app.get_status(), "no frame here is in a rejects folder");

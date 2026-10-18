@@ -100,9 +100,9 @@ pub(crate) fn moved_words(moved: &Moved, placement: greycard_edit::Placement) ->
 /// for. A test counts in place.
 pub(crate) fn show_elsewhere(st: &State, app: &App) {
     app.set_open_frames(st.files.len() as i32);
-    app.set_sidecars_written(st.write_sidecars);
+    app.set_sidecars_written(st.window.write_sidecars);
     let ask = ELSEWHERE_ASKED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-    let (files, placement) = (st.files.clone(), st.placement);
+    let (files, placement) = (st.files.clone(), st.window.placement);
     if cfg!(test) {
         app.set_sidecars_elsewhere(sidecars_elsewhere(&files, placement) as i32);
         return;
@@ -140,7 +140,7 @@ static MOVING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::ne
 /// switch) from the file rather than the panel, so the file is the
 /// place they live.
 pub(crate) fn keep(st: &State, change: impl FnOnce(&mut settings::Settings)) {
-    if st.batch || cfg!(test) {
+    if st.window.batch || cfg!(test) {
         return;
     }
     let mut kept = settings::Settings::load();
@@ -344,7 +344,8 @@ fn preview_cap_mb(worker: &Worker) -> u64 {
 /// The minutes between the passes over the network roots, as the
 /// window runs them now: zero for never.
 fn poll_minutes(st: &State) -> u64 {
-    st.library
+    st.views
+        .library
         .poll_every
         .map_or(0, |every| every.as_secs().div_ceil(60))
 }
@@ -365,7 +366,7 @@ pub(crate) fn network_poll_changed(st: &mut State, app: &App) {
     }
     app.set_network_poll_minutes(minutes.to_string().into());
     keep(st, |s| s.network_poll_minutes = minutes);
-    st.library.poll_every = crate::roots::poll_every(minutes);
+    st.views.library.poll_every = crate::roots::poll_every(minutes);
     tracing::info!(
         "library: network roots passed over {}",
         match minutes {
@@ -389,10 +390,10 @@ pub(crate) fn jpegs_apart_changed(
 ) {
     {
         let mut st = state.borrow_mut();
-        if st.jpegs_apart == apart {
+        if st.views.jpegs_apart == apart {
             return;
         }
-        st.jpegs_apart = apart;
+        st.views.jpegs_apart = apart;
         keep(&st, |s| s.jpegs_apart = apart);
         tracing::info!(
             "a JPEG beside its raw is {}",
@@ -402,7 +403,7 @@ pub(crate) fn jpegs_apart_changed(
                 "the raw's companion"
             }
         );
-        if let Some(lib) = st.index_reader.as_mut() {
+        if let Some(lib) = st.views.index_reader.as_mut() {
             lib.set_jpegs_apart(apart);
         }
         crate::roots::recount(&mut st);
@@ -525,9 +526,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_preview_cache_cap(preview_cap_mb(&worker).to_string().into());
             let st = state.borrow();
             app.set_network_poll_minutes(poll_minutes(&st).to_string().into());
-            app.set_sidecar_placement(placement_name(st.placement).into());
-            app.set_xmp_sidecars(st.xmp_sidecars);
-            app.set_jpegs_apart(st.jpegs_apart);
+            app.set_sidecar_placement(placement_name(st.window.placement).into());
+            app.set_xmp_sidecars(st.window.xmp_sidecars);
+            app.set_jpegs_apart(st.views.jpegs_apart);
             app.set_settings_note("".into());
             // A Check now still on its way keeps its "Checking...".
             if !app.get_update_checking() {
@@ -547,8 +548,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            st.placement = placement_named(&app.get_sidecar_placement());
-            let folder = st.placement == greycard_edit::Placement::Folder;
+            st.window.placement = placement_named(&app.get_sidecar_placement());
+            let folder = st.window.placement == greycard_edit::Placement::Folder;
             keep(&st, |s| s.sidecars_in_folder = folder);
             app.set_settings_note("".into());
             show_elsewhere(&st, &app);
@@ -561,8 +562,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            st.xmp_sidecars = app.get_xmp_sidecars();
-            let on = st.xmp_sidecars;
+            st.window.xmp_sidecars = app.get_xmp_sidecars();
+            let on = st.window.xmp_sidecars;
             keep(&st, |s| s.xmp_sidecars = on);
         });
     }
@@ -587,7 +588,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let st = state.borrow();
             // `--no-sidecars` promised not to touch them; the sheet
             // says so and offers nothing, and this holds to it too.
-            if !st.write_sidecars {
+            if !st.window.write_sidecars {
                 return;
             }
             // The renames are one round trip a frame, so on a thread
@@ -596,7 +597,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if MOVING.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 return;
             }
-            let (files, placement) = (st.files.clone(), st.placement);
+            let (files, placement) = (st.files.clone(), st.window.placement);
             drop(st);
             let land = move |app: &App, state: &Rc<RefCell<State>>, moved: Moved| {
                 MOVING.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -719,7 +720,7 @@ mod tests {
         let files = shoot(&dir);
         let app = crate::testing::window(files.len());
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
 
         // Ctrl+, opens it, with the place and the count as they are.
         app.window()
@@ -738,7 +739,7 @@ mod tests {
         // Flipping the place moves nothing: only the count changes.
         app.set_sidecar_placement(FOLDER.into());
         app.invoke_placement_changed();
-        assert_eq!(state.borrow().placement, Placement::Folder);
+        assert_eq!(state.borrow().window.placement, Placement::Folder);
         assert_eq!(app.get_sidecars_elsewhere(), 2);
         assert!(Sidecar::path_in(&files[0], Placement::Beside).exists());
 
@@ -753,7 +754,7 @@ mod tests {
 
         app.set_xmp_sidecars(true);
         app.invoke_xmp_changed();
-        assert!(state.borrow().xmp_sidecars);
+        assert!(state.borrow().window.xmp_sidecars);
 
         // Escape closes it.
         crate::testing::press(&app, slint::platform::Key::Escape);
@@ -799,8 +800,8 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = false;
-            st.placement = Placement::Folder;
+            st.window.write_sidecars = false;
+            st.window.placement = Placement::Folder;
         }
         app.invoke_settings_asked();
         assert!(!app.get_sidecars_written(), "the sheet is told");
@@ -879,14 +880,14 @@ mod tests {
     fn the_network_poll_field_takes_whole_minutes() {
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().library.poll_every = crate::roots::poll_every(10);
+        state.borrow_mut().views.library.poll_every = crate::roots::poll_every(10);
         app.invoke_settings_asked();
         assert_eq!(app.get_network_poll_minutes(), "10");
         app.set_network_poll_minutes(" 25 ".into());
         app.invoke_network_poll_changed();
         assert_eq!(app.get_network_poll_minutes(), "25");
         assert_eq!(
-            state.borrow().library.poll_every,
+            state.borrow().views.library.poll_every,
             Some(std::time::Duration::from_secs(25 * 60))
         );
         for bad in ["soon", "2.5", "-1", ""] {
@@ -894,19 +895,23 @@ mod tests {
             app.invoke_network_poll_changed();
             assert_eq!(app.get_network_poll_minutes(), "25", "{bad:?} put back");
             assert_eq!(
-                state.borrow().library.poll_every,
+                state.borrow().views.library.poll_every,
                 Some(std::time::Duration::from_secs(25 * 60))
             );
         }
         app.set_network_poll_minutes("0".into());
         app.invoke_network_poll_changed();
-        assert_eq!(state.borrow().library.poll_every, None, "zero is never");
+        assert_eq!(
+            state.borrow().views.library.poll_every,
+            None,
+            "zero is never"
+        );
         app.invoke_settings_asked();
         assert_eq!(app.get_network_poll_minutes(), "0");
         // Past what a clock holds: saturates, as the launch's does.
         app.set_network_poll_minutes(u64::MAX.to_string().into());
         app.invoke_network_poll_changed();
-        assert!(state.borrow().library.poll_every.is_some());
+        assert!(state.borrow().views.library.poll_every.is_some());
     }
 
     /// The previews' cap field: shown as the cache has it, taken when a

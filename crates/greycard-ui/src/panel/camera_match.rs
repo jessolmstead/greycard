@@ -197,8 +197,8 @@ impl Sheet {
 
 /// Where the library is and its roots, when one is indexed.
 fn library_of(st: &State) -> Option<(PathBuf, Vec<PathBuf>)> {
-    let path = st.index_path.clone()?;
-    let roots = st.library.roots.list().to_vec();
+    let path = st.views.index_path.clone()?;
+    let roots = st.views.library.roots.list().to_vec();
     (!roots.is_empty()).then_some((path, roots))
 }
 
@@ -238,7 +238,7 @@ fn scope_key(at: &Where) -> String {
 /// unless it sets one.) Reading is always done, so a capture shows the
 /// choice the scope was left with.
 fn persists(st: &State) -> bool {
-    !st.batch
+    !st.window.batch
 }
 
 /// The groups the scope was left with unchecked.
@@ -603,9 +603,9 @@ pub(crate) fn open(st: &mut State, app: &App, refit: Option<String>) {
         // before the edit has recorded a switch just made.
         st.camera_match.curve =
             greycard_edit::DisplayCurve::from_name(app.get_display_curve().as_str())
-                .unwrap_or(st.edit.display_curve);
+                .unwrap_or(st.develop.edit.display_curve);
         st.camera_match.refit = refit.map(|name| {
-            let tables = greycard_edit::look::tables_of(&st.looks, &name)
+            let tables = greycard_edit::look::tables_of(&st.develop.looks, &name)
                 .into_iter()
                 .cloned()
                 .collect();
@@ -778,9 +778,9 @@ fn heard(st: &mut State, app: &App, generation: u64, message: Message) {
             // The new tables in the picker, and the look resolved
             // again: a refit replaces the table in place, and the
             // picture that asked for it now takes it.
-            st.looks = greycard_edit::look::list();
-            st.look_for = None;
-            show_looks(st, &st.edit.look_lut, app);
+            st.develop.looks = greycard_edit::look::list();
+            st.develop.look_for = None;
+            show_looks(st, &st.develop.edit.look_lut, app);
             // The frames not open that use a table it wrote show it
             // too, once the pool has made their pictures again.
             crate::edited::looks_moved(st);

@@ -25,8 +25,8 @@ fn the_pane_lists_the_roots_with_their_counts() {
     app.set_grid_open(true);
     let (state, _worker) = state_for(&app, open);
     let mut st = state.borrow_mut();
-    st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-    st.library.roots.add(&a).unwrap();
+    st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+    st.views.library.roots.add(&a).unwrap();
     recount(&mut st);
     show(&st, &app);
     let chips = app.get_library_roots();
@@ -42,8 +42,8 @@ fn the_pane_lists_the_roots_with_their_counts() {
     assert_eq!(root_row(&app, "All roots").0, "3");
     assert_eq!(buttons_named(&app, "+ Add this folder"), 1);
     let mut st = state.borrow_mut();
-    st.library.roots.add(&b).unwrap();
-    st.view = View::Roots(None);
+    st.views.library.roots.add(&b).unwrap();
+    st.views.view = View::Roots(None);
     recount(&mut st);
     show(&st, &app);
     assert_eq!(app.get_library_all_count(), 4);
@@ -62,21 +62,21 @@ fn the_pane_lists_the_roots_with_their_counts() {
     );
     // One root's view: its row lit, All roots not.
     let mut st = state.borrow_mut();
-    st.view = View::Roots(Some(a.clone()));
+    st.views.view = View::Roots(Some(a.clone()));
     show(&st, &app);
     drop(st);
     assert!(root_row(&app, "a").1);
     assert!(!root_row(&app, "All roots").1);
     let mut st = state.borrow_mut();
     // A name given is the chip's, and the path is still the root.
-    st.library.roots.set_name(&a, "Archive");
-    assert_eq!(root_name(&st.library.roots, &a), "Archive");
-    assert_eq!(root_name(&st.library.roots, &b), "b");
+    st.views.library.roots.set_name(&a, "Archive");
+    assert_eq!(root_name(&st.views.library.roots, &a), "Archive");
+    assert_eq!(root_name(&st.views.library.roots, &b), "b");
     show(&st, &app);
     let chip = app.get_library_roots().row_data(0).unwrap();
     assert_eq!(chip.name.as_str(), "Archive");
     assert_eq!(chip.path.as_str(), a.to_str().unwrap());
-    st.index_reader = None;
+    st.views.index_reader = None;
     drop(st);
     drop(state);
     crate::testing::remove_dir_retry(&dir);
@@ -97,17 +97,17 @@ fn a_folder_opened_over_a_root_view_turns_its_chip_off() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.library.roots.add(&a).unwrap();
-        st.view = View::Roots(Some(a.clone()));
+        st.views.library.roots.add(&a).unwrap();
+        st.views.view = View::Roots(Some(a.clone()));
         show(&st, &app);
         assert!(app.get_library_roots().row_data(0).unwrap().on);
     }
     crate::panel::browser::open_folder(&state, &app, &worker, &b);
     // The chip stays lit until the folder lands, since the list on
     // screen is still the view's.
-    assert_eq!(state.borrow().view, View::Roots(Some(a.clone())));
+    assert_eq!(state.borrow().views.view, View::Roots(Some(a.clone())));
     assert_eq!(land_all(&state, &app, &worker), 1);
-    assert_eq!(state.borrow().view, View::Folder);
+    assert_eq!(state.borrow().views.view, View::Folder);
     assert!(
         !app.get_library_roots().row_data(0).unwrap().on,
         "the root's chip stayed lit after a folder opened"
@@ -316,7 +316,7 @@ fn a_root_is_named_from_its_menu() {
         .set_size(slint::LogicalSize::new(1200.0, 700.0));
     app.set_grid_open(true);
     let (state, _worker) = state_for(&app, open);
-    state.borrow_mut().library.roots.add(&photos).unwrap();
+    state.borrow_mut().views.library.roots.add(&photos).unwrap();
     show(&state.borrow(), &app);
     slint::platform::update_timers_and_animations();
 
@@ -326,22 +326,22 @@ fn a_root_is_named_from_its_menu() {
         app.get_menu_up(),
         "a right-click on the root's row opens its menu"
     );
-    assert_eq!(state.borrow().view, View::Folder, "nothing picked");
-    assert!(state.borrow().library.wanted.is_none());
+    assert_eq!(state.borrow().views.view, View::Folder, "nothing picked");
+    assert!(state.borrow().views.library.wanted.is_none());
     // The press that closes it, on the row just left of where the
     // menu opened, is let go by.
     let (x, y) = left_of(&app, "Photos");
     crate::testing::click(&app, x, y);
     assert!(!app.get_menu_up());
-    assert!(state.borrow().library.wanted.is_none(), "not a pick");
+    assert!(state.borrow().views.library.wanted.is_none(), "not a pick");
     assert_eq!(
-        state.borrow().library.roots.list(),
+        state.borrow().views.library.roots.list(),
         std::slice::from_ref(&photos)
     );
     // The next is a press on the row, which picks its root.
     crate::testing::click(&app, x, y);
     assert_eq!(
-        state.borrow_mut().library.wanted.take(),
+        state.borrow_mut().views.library.wanted.take(),
         Some(View::Roots(Some(photos.clone())))
     );
 
@@ -375,7 +375,10 @@ fn a_root_is_named_from_its_menu() {
     );
     crate::testing::press(&app, slint::platform::Key::Escape);
     assert!(!app.get_root_sheet_open(), "Escape closed it");
-    assert_eq!(state.borrow().library.roots.name(&photos), Some("Archive"));
+    assert_eq!(
+        state.borrow().views.library.roots.name(&photos),
+        Some("Archive")
+    );
     // A click beside the sheet closes it too.
     app.invoke_library_root_rename(photos.to_string_lossy().into_owned().into());
     crate::testing::click(&app, 20.0, 680.0);
@@ -388,8 +391,8 @@ fn a_root_is_named_from_its_menu() {
     assert!(!app.get_root_sheet_open());
     {
         let st = state.borrow();
-        assert_eq!(st.library.roots.list(), [photos.clone(), b.clone()]);
-        assert_eq!(st.library.roots.name(&b), None);
+        assert_eq!(st.views.library.roots.list(), [photos.clone(), b.clone()]);
+        assert_eq!(st.views.library.roots.name(&b), None);
     }
     assert!(
         app.get_status().contains("right-click"),

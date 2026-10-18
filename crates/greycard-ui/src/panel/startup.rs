@@ -367,7 +367,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 }
             }
             if !overrides.is_empty() {
-                st.overrides_at_start = Some((i, overrides));
+                st.launch.overrides_at_start = Some((i, overrides));
             }
         }) as crate::Tweak
     });
@@ -375,44 +375,40 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(keys) = cli.keys.clone() {
         let _ = crate::panel::viewport::SNAPSHOT_KEYS.set(keys);
     }
-    let state = Rc::new(RefCell::new(State {
-        tweak_at_start,
-        write_sidecars: !cli.no_sidecars,
-        xmp_sidecars: cli.xmp_sidecars || remembered.xmp_sidecars,
-        cull_move_on: remembered.cull_move_on,
-        jpegs_apart: remembered.jpegs_apart,
-        sort: remembered.sort.clone(),
-        placement,
-        zoom: cli.zoom.max(0.0),
-        scope: opening_scope(&cli, &remembered),
-        show_mask: cli.show_mask.and_then(|i| i.checked_sub(1)),
-        show_patch: cli.patch.and_then(|i| i.checked_sub(1)),
-        store: greycard_ai::Store::user().ok(),
-        lenses_declined: remembered.lenses_declined,
-        monitors,
-        screenshot: cli.screenshot.clone(),
-        snapshot: cli.snapshot.clone(),
-        panel_scroll: cli.panel_scroll,
-        snapshot_shown: cli
+    let state = Rc::new(RefCell::new({
+        let write_sidecars = !cli.no_sidecars;
+        let xmp_sidecars = cli.xmp_sidecars || remembered.xmp_sidecars;
+        let cull_move_on = remembered.cull_move_on;
+        let jpegs_apart = remembered.jpegs_apart;
+        let sort = remembered.sort.clone();
+        let zoom = cli.zoom.max(0.0);
+        let scope = opening_scope(&cli, &remembered);
+        let show_mask = cli.show_mask.and_then(|i| i.checked_sub(1));
+        let show_patch = cli.patch.and_then(|i| i.checked_sub(1));
+        let store = greycard_ai::Store::user().ok();
+        let lenses_declined = remembered.lenses_declined;
+        let screenshot = cli.screenshot.clone();
+        let snapshot = cli.snapshot.clone();
+        let panel_scroll = cli.panel_scroll;
+        let snapshot_shown = cli
             .sheet
             .or(cli.tool)
             .or(cli.part)
             .or(cli.menu.map(crate::panel::viewport::Shown::Menu))
-            .or(cli.press.map(crate::panel::viewport::Shown::Key)),
-        export_presets: remembered.export_presets.clone(),
-        export_last_folder: remembered_folder(&remembered),
-        settings_file: if cli.snapshot.is_some() || cli.screenshot.is_some() {
+            .or(cli.press.map(crate::panel::viewport::Shown::Key));
+        let export_presets = remembered.export_presets.clone();
+        let export_last_folder = remembered_folder(&remembered);
+        let settings_file = if cli.snapshot.is_some() || cli.screenshot.is_some() {
             None
         } else {
             settings::path()
-        },
-        presets: preset_store.as_ref().map(|s| s.list()).unwrap_or_default(),
-        preset_store,
-        batch: cli.snapshot.is_some() || cli.screenshot.is_some(),
+        };
+        let presets = preset_store.as_ref().map(|s| s.list()).unwrap_or_default();
+        let batch = cli.snapshot.is_some() || cli.screenshot.is_some();
         // Only a session someone is at deletes: never a capture or a
         // timing run, which have nobody to have confirmed. (An export
         // from the command line has no window: `headless`.)
-        deletes_allowed: cli.snapshot.is_none()
+        let deletes_allowed = cli.snapshot.is_none()
             && cli.screenshot.is_none()
             && cli.time_sharpen.is_none()
             && cli.time_clarity.is_none()
@@ -420,49 +416,94 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             && cli.time_texture.is_none()
             && cli.time_cull.is_none()
             && cli.time_select.is_none()
-            && cli.time_scroll.is_none(),
-        time_sharpen: cli.time_sharpen.map(|n| (n, None, Vec::new())),
-        time_clarity: cli.time_clarity.map(|n| (n, None, Vec::new())),
-        time_dehaze: cli.time_dehaze.map(|n| (n, None, Vec::new())),
-        time_texture: cli.time_texture.map(|n| (n, None, Vec::new())),
-        time_cull: cli.time_cull.map(|n| (n, Vec::new())),
-        time_select: cli.time_select.map(|n| (n, Vec::new(), Vec::new())),
-        time_scroll: cli
+            && cli.time_scroll.is_none();
+        let time_sharpen = cli.time_sharpen.map(|n| (n, None, Vec::new()));
+        let time_clarity = cli.time_clarity.map(|n| (n, None, Vec::new()));
+        let time_dehaze = cli.time_dehaze.map(|n| (n, None, Vec::new()));
+        let time_texture = cli.time_texture.map(|n| (n, None, Vec::new()));
+        let time_cull = cli.time_cull.map(|n| (n, Vec::new()));
+        let time_select = cli.time_select.map(|n| (n, Vec::new(), Vec::new()));
+        let time_scroll = cli
             .time_scroll
-            .map(|n| crate::panel::browser::ScrollTiming::new(n, cli.time_scroll_by)),
-        snapshot_placeholder: cli.snapshot_placeholder,
-        cull_develop: cli.cull_develop,
-        turn_at_start: cli.turn.filter(|q| q.rem_euclid(4) != 0),
-        awaiting_turn: cli.turn.is_some_and(|q| q.rem_euclid(4) != 0),
-        cull_key_at_start: cli.cull_key.clone(),
-        ask_rejects: cli.ask_rejects || cli.move_rejects,
-        also_at_start: cli.also.clone(),
-        move_rejects: cli.move_rejects,
-        cull_at_start: (cli.cull
+            .map(|n| crate::panel::browser::ScrollTiming::new(n, cli.time_scroll_by));
+        let snapshot_placeholder = cli.snapshot_placeholder;
+        let cull_develop = cli.cull_develop;
+        let turn_at_start = cli.turn.filter(|q| q.rem_euclid(4) != 0);
+        let awaiting_turn = cli.turn.is_some_and(|q| q.rem_euclid(4) != 0);
+        let cull_key_at_start = cli.cull_key.clone();
+        let ask_rejects = cli.ask_rejects || cli.move_rejects;
+        let also_at_start = cli.also.clone();
+        let move_rejects = cli.move_rejects;
+        let cull_at_start = (cli.cull
             || cli.cull_compare.is_some()
             || cli.cull_key.is_some()
             || cli.time_cull.is_some()
             || cli.cull_develop
             || cli.ask_rejects
             || cli.move_rejects)
-            .then(|| cli.cull_compare.unwrap_or(1)),
-        filter,
-        recent: crate::panel::recent::Recent {
+            .then(|| cli.cull_compare.unwrap_or(1));
+        let recent = crate::panel::recent::Recent {
             open: None,
             folders: remembered.recent_folders.clone(),
             ..Default::default()
-        },
-        tree: crate::tree::Tree::with_subfolders(remembered.folder_tree_subfolders),
-        awaiting_index: !facets_wanted.is_empty(),
-        facets_wanted,
-        ..State::empty(Vec::new(), &app)
+        };
+        let tree = crate::tree::Tree::with_subfolders(remembered.folder_tree_subfolders);
+        let awaiting_index = !facets_wanted.is_empty();
+        let mut st = State::empty(Vec::new(), &app);
+        st.launch.tweak_at_start = tweak_at_start;
+        st.launch.show_mask = show_mask;
+        st.launch.show_patch = show_patch;
+        st.launch.screenshot = screenshot;
+        st.launch.snapshot = snapshot;
+        st.launch.panel_scroll = panel_scroll;
+        st.launch.snapshot_shown = snapshot_shown;
+        st.window.batch = batch;
+        st.launch.time_sharpen = time_sharpen;
+        st.launch.time_clarity = time_clarity;
+        st.launch.time_dehaze = time_dehaze;
+        st.launch.time_texture = time_texture;
+        st.launch.time_cull = time_cull;
+        st.launch.time_select = time_select;
+        st.launch.time_scroll = time_scroll;
+        st.launch.snapshot_placeholder = snapshot_placeholder;
+        st.launch.cull_develop = cull_develop;
+        st.launch.turn_at_start = turn_at_start;
+        st.launch.awaiting_turn = awaiting_turn;
+        st.launch.cull_key_at_start = cull_key_at_start;
+        st.launch.ask_rejects = ask_rejects;
+        st.launch.also_at_start = also_at_start;
+        st.launch.move_rejects = move_rejects;
+        st.launch.cull_at_start = cull_at_start;
+        st.launch.awaiting_index = awaiting_index;
+        st.launch.facets_wanted = facets_wanted;
+        st.window.write_sidecars = write_sidecars;
+        st.window.xmp_sidecars = xmp_sidecars;
+        st.window.placement = placement;
+        st.window.settings_file = settings_file;
+        st.window.deletes_allowed = deletes_allowed;
+        st.sheets.lenses_declined = lenses_declined;
+        st.work.export_presets = export_presets;
+        st.work.export_last_folder = export_last_folder;
+        st.culling.cull_move_on = cull_move_on;
+        st.views.jpegs_apart = jpegs_apart;
+        st.views.sort = sort;
+        st.views.filter = filter;
+        st.views.recent = recent;
+        st.views.tree = tree;
+        st.develop.zoom = zoom;
+        st.develop.scope = scope;
+        st.develop.store = store;
+        st.develop.monitors = monitors;
+        st.develop.presets = presets;
+        st.develop.preset_store = preset_store;
+        st
     }));
-    app.set_compare_tiles(ModelRc::from(state.borrow().compare_tiles.clone()));
+    app.set_compare_tiles(ModelRc::from(state.borrow().culling.compare_tiles.clone()));
     // The export queue the last session left: shown, never run. A
     // snapshot or a batch run reads it and leaves the file alone.
     {
         let mut st = state.borrow_mut();
-        let write = st.settings_file.is_some();
+        let write = st.window.settings_file.is_some();
         crate::panel::export_queue::open_at_launch(
             &mut st,
             &app,
@@ -490,9 +531,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     }
     // The settings sheet's two, as this run has them: the flags'
     // over the file's.
-    app.set_sidecar_placement(crate::panel::prefs::placement_name(state.borrow().placement).into());
-    app.set_xmp_sidecars(state.borrow().xmp_sidecars);
-    app.set_cull_move_on(state.borrow().cull_move_on);
+    app.set_sidecar_placement(
+        crate::panel::prefs::placement_name(state.borrow().window.placement).into(),
+    );
+    app.set_xmp_sidecars(state.borrow().window.xmp_sidecars);
+    app.set_cull_move_on(state.borrow().culling.cull_move_on);
     // The browser's list under the filter asked for, the files it
     // hides left out of the strip and the grid; and the chips, which
     // count the folder whether or not anything is filtered.
@@ -559,7 +602,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     }
     // The culling loupe reads the local previews the pool makes, and
     // makes one from a camera picture it decoded anyway.
-    state.borrow().prefetch.set_previews(worker.previews());
+    state
+        .borrow()
+        .culling
+        .prefetch
+        .set_previews(worker.previews());
     // The library index, on a thread of its own: the folder open is
     // indexed there, so the first frame never waits for a pass, and
     // the facets fill in as it goes.
@@ -574,24 +621,27 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         // The collections, kept beside the library whatever the roots,
         // into the sidebar's model the window already holds.
         if let Some(path) = &library_path {
-            let (rows, names) = (st.collections.rows.clone(), st.collections.names.clone());
-            st.collections =
+            let (rows, names) = (
+                st.views.collections.rows.clone(),
+                st.views.collections.names.clone(),
+            );
+            st.views.collections =
                 crate::collections::Store::load(crate::collections::Store::dir_beside(path));
-            (st.collections.rows, st.collections.names) = (rows, names);
+            (st.views.collections.rows, st.views.collections.names) = (rows, names);
             crate::panel::collections::show(&st, &app);
             // The stacks, in their folder among the collections.
-            st.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(
+            st.views.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(
                 &crate::collections::Store::dir_beside(path),
             ));
         }
-        st.library.poll_every = crate::roots::poll_every(remembered.network_poll_minutes);
+        st.views.library.poll_every = crate::roots::poll_every(remembered.network_poll_minutes);
         if cli.roots.is_empty() {
             if let Some(path) = &library_path {
                 let file = greycard_library::Roots::path_beside(path);
                 match greycard_library::Roots::load(&file) {
                     Ok(roots) => {
-                        st.library.roots = roots;
-                        st.library.file = Some(file);
+                        st.views.library.roots = roots;
+                        st.views.library.file = Some(file);
                     }
                     // Kept as it is: with no file to save to, nothing
                     // is written over it this session.
@@ -600,15 +650,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             }
         } else {
             for dir in &cli.roots {
-                if let Err(e) = st.library.roots.add(dir) {
+                if let Err(e) = st.views.library.roots.add(dir) {
                     tracing::warn!("--roots: {e}");
                 }
             }
         }
         if !cli.roots.is_empty() || cli.all_roots {
-            st.library.wanted = Some(crate::roots::View::Roots(None));
+            st.views.library.wanted = Some(crate::roots::View::Roots(None));
             // A capture waits for the view, not the folder under it.
-            st.library.awaiting = st.batch;
+            st.views.library.awaiting = st.window.batch;
         }
     }
     // The launch's folder, the command line's or the last one's, is
@@ -623,7 +673,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             // rows from the index before the indexer has said it is
             // open; a file that is not there yet is a read that fails
             // and the sidecars read instead.
-            state.borrow_mut().index_path = Some(path.clone());
+            state.borrow_mut().views.index_path = Some(path.clone());
             let started = crate::library::Indexer::start(path, move |told| {
                 let app_weak = app_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -635,7 +685,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             let mut st = state.borrow_mut();
             match started {
                 Ok(indexer) => {
-                    st.index = Some(indexer);
+                    st.views.index = Some(indexer);
                     crate::library::index_open_folder(&mut st, None);
                     // After the open folder's own pass is asked for,
                     // so that one goes first.
@@ -643,11 +693,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 }
                 Err(e) => {
                     tracing::warn!("no library index: the indexer did not start: {e}");
-                    st.awaiting_index = false;
-                    st.library.awaiting = false;
+                    st.launch.awaiting_index = false;
+                    st.views.library.awaiting = false;
                     // No view of the roots will come to take the
                     // launch's folder's place.
-                    st.library.wanted = None;
+                    st.views.library.wanted = None;
                 }
             }
             crate::panel::cull::show_filter(&st, &app);
@@ -656,21 +706,21 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         None => {
             tracing::warn!("no data directory for the library index; the facets are off");
             let mut st = state.borrow_mut();
-            st.awaiting_index = false;
-            st.library.awaiting = false;
-            st.library.wanted = None;
+            st.launch.awaiting_index = false;
+            st.views.library.awaiting = false;
+            st.views.library.wanted = None;
         }
     }
-    app.set_mask_handles(ModelRc::from(state.borrow().mask_handles.clone()));
-    app.set_mask_boxes(ModelRc::from(state.borrow().mask_boxes.clone()));
-    app.set_mask_picks(ModelRc::from(state.borrow().mask_picks.clone()));
-    app.set_person_boxes(ModelRc::from(state.borrow().person_boxes.clone()));
-    app.set_patch_handles(ModelRc::from(state.borrow().patch_handles.clone()));
-    app.set_guide_kept(ModelRc::from(state.borrow().guide_kept.clone()));
+    app.set_mask_handles(ModelRc::from(state.borrow().develop.mask_handles.clone()));
+    app.set_mask_boxes(ModelRc::from(state.borrow().develop.mask_boxes.clone()));
+    app.set_mask_picks(ModelRc::from(state.borrow().develop.mask_picks.clone()));
+    app.set_person_boxes(ModelRc::from(state.borrow().develop.person_boxes.clone()));
+    app.set_patch_handles(ModelRc::from(state.borrow().develop.patch_handles.clone()));
+    app.set_guide_kept(ModelRc::from(state.borrow().develop.guide_kept.clone()));
     install_callbacks(&app, state.clone(), worker.clone());
     // The pane's entry from what the last check found, and this
     // launch's check if a day has gone.
-    crate::update::start(&app, state.borrow().batch, &remembered.update);
+    crate::update::start(&app, state.borrow().window.batch, &remembered.update);
 
     // The viewport is rendered inside Slint's frame, on its device.
     {
@@ -688,9 +738,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         let gpu = report::gpu_line(&device.adapter_info());
                         tracing::info!("gpu: {gpu}");
                         let mut st = state.borrow_mut();
-                        st.gpu = Some(gpu);
-                        st.renderer = Some(Renderer::new(device, queue));
-                        st.lut_for = None;
+                        st.develop.gpu = Some(gpu);
+                        st.develop.renderer = Some(Renderer::new(device, queue));
+                        st.develop.lut_for = None;
                         // The engine's GPU ops run on the same device,
                         // so what they leave is the viewport's. Handed
                         // over before the first file opens, so its
@@ -706,7 +756,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                     } else {
                         tracing::error!("gpu: not wgpu 30 ({api:?}); the viewport cannot render");
-                        state.borrow_mut().gpu = Some(format!("not wgpu 30 ({api:?})"));
+                        state.borrow_mut().develop.gpu = Some(format!("not wgpu 30 ({api:?})"));
                     }
                     // The file to start on, now that the worker knows
                     // where to develop. From the event loop rather than
@@ -734,11 +784,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     };
                     let row = {
                         let mut st = state.borrow_mut();
-                        st.setup_ran = true;
-                        let at_start = st.select_at_start.take();
-                        at_start
-                            .filter(|_| from_finder.is_empty())
-                            .map(|i| row_of(&st, i).or_else(|| cull::nearest_row(&st.shown, i)))
+                        st.launch.setup_ran = true;
+                        let at_start = st.launch.select_at_start.take();
+                        at_start.filter(|_| from_finder.is_empty()).map(|i| {
+                            row_of(&st, i).or_else(|| cull::nearest_row(&st.views.shown, i))
+                        })
                     };
                     if !from_finder.is_empty() {
                         let app_weak = app_weak.clone();
@@ -771,8 +821,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             }
                             tracing::warn!("no frames pass the filter");
                             let mut st = state.borrow_mut();
-                            if st.batch {
-                                st.failed = true;
+                            if st.window.batch {
+                                st.launch.failed = true;
                                 let _ = slint::quit_event_loop();
                             }
                         }
@@ -788,7 +838,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     let st = &mut *st;
                     // A frame drawn while a folder's pictures come,
                     // for the run's line in the log.
-                    if let Some(run) = st.thumb_run.as_mut() {
+                    if let Some(run) = st.views.thumb_run.as_mut() {
                         run.frame();
                     }
                     // The first frame to draw the rows on screen with
@@ -796,31 +846,31 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // opened. Asked for no longer than a snapshot waits
                     // for the grid: a view that never says what it
                     // shows is not asked about at every frame after.
-                    if let Some(at) = st.fill_clock {
+                    if let Some(at) = st.views.fill_clock {
                         if crate::panel::browser::screen_filled(st, &app) {
                             tracing::info!(
                                 "thumbnails: the rows on screen drawn with their pictures \
                                  {:.2} s from the folder's open",
                                 at.elapsed().as_secs_f64()
                             );
-                            st.fill_clock = None;
+                            st.views.fill_clock = None;
                         } else if at.elapsed() > crate::panel::browser::GRID_WAIT {
-                            st.fill_clock = None;
+                            st.views.fill_clock = None;
                         }
                     }
-                    let pictures_in = st.thumb_run.is_none();
-                    if let Some(timing) = st.time_scroll.as_mut() {
+                    let pictures_in = st.views.thumb_run.is_none();
+                    if let Some(timing) = st.launch.time_scroll.as_mut() {
                         timing.before_frame(pictures_in, &app);
                     }
                     // The first frame to show the all-roots view, or a
                     // list merged, and how long since it was asked for.
-                    if let Some((at, what)) = st.library.painted.take() {
+                    if let Some((at, what)) = st.views.library.painted.take() {
                         tracing::info!(
                             "library: on screen {:.0} ms after {what}",
                             at.elapsed().as_secs_f64() * 1e3
                         );
                     }
-                    let pending = st.pending.take();
+                    let pending = st.develop.pending.take();
                     // The develop the camera's picture was standing in
                     // for has landed — that one, or a later one of the
                     // same frame — so ours takes its place, now, and
@@ -832,9 +882,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     }
                     // Culling, or a camera picture standing in for a
                     // develop: neither draws the develop's frame below.
-                    if st.cull.is_some() || standing_in(st).is_some() {
+                    if st.culling.cull.is_some() || standing_in(st).is_some() {
                         if let Some(landed) = &pending
-                            && let Some(renderer) = st.renderer.as_mut()
+                            && let Some(renderer) = st.develop.renderer.as_mut()
                         {
                             match &landed.image {
                                 Developed::Halves(halves) => renderer.upload(halves),
@@ -848,28 +898,29 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     }
                     if let Some(landed) = &pending {
                         let (w, h) = (landed.image.width(), landed.image.height());
-                        st.source_size = (w, h);
+                        st.develop.source_size = (w, h);
                         // A turn pressed since its delivery stands it
                         // on end again.
                         settle_source_size(st);
                         app.set_shot_size(size_text(w, h).into());
-                        st.base_white = Some(landed.white);
-                        st.white_cache = None;
+                        st.develop.base_white = Some(landed.white);
+                        st.develop.white_cache = None;
                     }
                     // The frame on show: the crop, or the turned source's
                     // bounds while cropping. A change of size re-centers.
                     // A row under the pointer shows its state instead.
-                    let panel = read_edit(&app, &st.edit, st.target);
+                    let panel = read_edit(&app, &st.develop.edit, st.develop.target);
                     let edit = st
+                        .develop
                         .held
                         .clone()
-                        .or_else(|| st.peek.clone())
+                        .or_else(|| st.develop.peek.clone())
                         .unwrap_or_else(|| panel.clone());
                     // The chosen patch's handles: its center, and its source.
                     let selected = usize::try_from(app.get_patch())
                         .ok()
                         .and_then(|i| edit.retouch.patches.get(i));
-                    let handles: Vec<Pt> = match (st.retouching, selected) {
+                    let handles: Vec<Pt> = match (st.develop.retouching, selected) {
                         (Some(_), Some(p)) => {
                             let c = p.center();
                             let mut v = vec![source_to_view(st, &app, c[0], c[1])];
@@ -880,14 +931,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                         _ => Vec::new(),
                     };
-                    sync_rows(&st.patch_handles, handles);
+                    sync_rows(&st.develop.patch_handles, handles);
                     // The guide's kept stroke follows the view: it is
                     // held in source pixels and mapped here, so a zoom
                     // or a pan between the two strokes moves the line
                     // with the picture.
-                    let kept: Vec<Pt> = match st.guiding.first {
+                    let kept: Vec<Pt> = match st.develop.guiding.first {
                         Some(ends) if !app.get_guide_mode().is_empty() => {
-                            let sw = st.source_size.0 as f32;
+                            let sw = st.develop.source_size.0 as f32;
                             ends.iter()
                                 .map(|&(x, y)| {
                                     let (vx, vy) = source_to_view(st, &app, x / sw, y / sw);
@@ -897,14 +948,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                         _ => Vec::new(),
                     };
-                    sync_rows(&st.guide_kept, kept);
+                    sync_rows(&st.develop.guide_kept, kept);
                     // The filmstrip's picture of this file follows its turns.
                     if let Some(i) = st.current
-                        && st.thumb_base.get(i).is_some_and(|b| b.is_some())
+                        && st.views.thumb_base.get(i).is_some_and(|b| b.is_some())
                         && crate::rows::is_loaded(st, i)
                     {
                         let (turns, flip) = panel.geometry.shown_turns(st.sidecar(i).turn);
-                        if st.thumb_shown[i] != Some((turns, flip)) {
+                        if st.views.thumb_shown[i] != Some((turns, flip)) {
                             show_thumb(st, &app, i, turns, flip);
                         }
                     }
@@ -930,17 +981,17 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     let exported = panel.geometry.frame(sw, sh).size;
                     app.set_frame_width(exported.0 as i32);
                     app.set_frame_height(exported.1 as i32);
-                    if frame_size != st.image_size {
-                        st.image_size = frame_size;
-                        st.center = (frame.size.0 / 2.0, frame.size.1 / 2.0);
+                    if frame_size != st.develop.image_size {
+                        st.develop.image_size = frame_size;
+                        st.develop.center = (frame.size.0 / 2.0, frame.size.1 / 2.0);
                     }
-                    let white_key = match &st.peek {
+                    let white_key = match &st.develop.peek {
                         Some(p) => white_key(&p.white_balance),
                         None => (app.get_as_shot(), app.get_temperature(), app.get_tint()),
                     };
                     // A held picture was developed at its own white
                     // balance; the open frame is already the next one.
-                    let white = if st.held.is_some() {
+                    let white = if st.develop.held.is_some() {
                         WhiteBase::IDENTITY.matrix
                     } else {
                         preview_white(st, white_key)
@@ -950,21 +1001,22 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         app.get_view_height().max(1) as u32,
                     );
                     let zoom = effective_zoom(st, vw, vh);
-                    if st.placing.is_none()
-                        && let Some(was) = st.show_mask_kept.take()
+                    if st.develop.placing.is_none()
+                        && let Some(was) = st.develop.show_mask_kept.take()
                     {
                         app.set_show_mask(was);
                     }
                     // The readout, from the one place the zoom is settled
                     // per frame, so it cannot go stale.
-                    let label = zoom_label(st.zoom);
+                    let label = zoom_label(st.develop.zoom);
                     if app.get_zoom_text() != label {
                         app.set_zoom_text(label);
                     }
                     // The chosen shape's handles and outline on the view.
                     let chosen = st
+                        .develop
                         .target
-                        .filter(|_| !app.get_crop_mode() && st.placing.is_none())
+                        .filter(|_| !app.get_crop_mode() && st.develop.placing.is_none())
                         .and_then(|i| edit.adjustments.get(i))
                         .and_then(|a| a.mask.components.get(app.get_component().max(0) as usize))
                         .cloned();
@@ -977,7 +1029,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         match selected.filter(|_| app.get_panel_tab() == "Retouch") {
                             Some(p) => {
                                 let map = ViewMap::of(st, &app);
-                                patch_outlines(&mut st.patch_shape, p, &map)
+                                patch_outlines(&mut st.develop.patch_shape, p, &map)
                             }
                             None => (String::new(), String::new()),
                         };
@@ -1024,7 +1076,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 | Shape::Color { .. }
                                 | Shape::Unknown => {}
                             }
-                            sync_rows(&st.mask_handles, handles);
+                            sync_rows(&st.develop.mask_handles, handles);
                             app.set_mask_kind(component.shape.name().into());
                         }
                         None => app.set_mask_kind("".into()),
@@ -1032,7 +1084,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // An object's boxes and picks, or a sky's picks:
                     // the chosen one's, or, with the tool in hand, the
                     // one it adds to.
-                    let object = match &st.placing {
+                    let object = match &st.develop.placing {
                         Some(p) => p.component.and_then(|c| {
                             edit.adjustments
                                 .get(p.index)
@@ -1074,16 +1126,16 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         ),
                         None => (Vec::new(), Vec::new()),
                     };
-                    sync_rows(&st.mask_boxes, boxes);
-                    sync_rows(&st.mask_picks, picks);
+                    sync_rows(&st.develop.mask_boxes, boxes);
+                    sync_rows(&st.develop.mask_picks, picks);
                     let people = crate::panel::parts::boxes(st, &app);
-                    sync_rows(&st.person_boxes, people);
+                    sync_rows(&st.develop.person_boxes, people);
                     let st = &mut *st;
                     let shift = crate::panel::color::local_white_shift(st);
                     let (locals, wants) = bake_locals(
                         &edit,
-                        &mut st.rasters,
-                        &mut st.learned,
+                        &mut st.develop.rasters,
+                        &mut st.develop.learned,
                         sh / sw.max(1.0),
                         shift.as_ref(),
                     );
@@ -1094,12 +1146,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // it would catch a sheet of empty cells.
                     // A shape the worker answered by failing, for the
                     // file open now, is answered.
-                    let quiet = st.asked.iter().all(|(key, shape)| {
-                        st.masks_failed
+                    let quiet = st.develop.asked.iter().all(|(key, shape)| {
+                        st.develop
+                            .masks_failed
                             .get(key)
-                            .is_some_and(|(s, f)| s == shape && *f == st.learned_of)
-                    }) && st.part_pending.is_none()
-                        && st.landscape_pending.is_none()
+                            .is_some_and(|(s, f)| s == shape && *f == st.develop.learned_of)
+                    }) && st.develop.part_pending.is_none()
+                        && st.develop.landscape_pending.is_none()
                         && grid_filled(st, &app);
                     // A timed slider move is sent as its frame starts.
                     if pending.is_some() {
@@ -1107,25 +1160,30 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // The frame that shows the frame the key
                         // landed on: the switch's time, for the log
                         // and `--time-select`.
-                        if let Some(at) = st.selected_at.take() {
+                        if let Some(at) = st.views.selected_at.take() {
                             let ms = at.elapsed().as_secs_f64() * 1e3;
                             tracing::debug!("select to develop: {ms:.1} ms");
-                            let row = st.current.and_then(|c| cull::row_of_shown(&st.shown, c));
-                            let count = st.shown.len();
-                            time_select(&mut st.time_select, &app, ms, row, count);
+                            let row = st
+                                .current
+                                .and_then(|c| cull::row_of_shown(&st.views.shown, c));
+                            let count = st.views.shown.len();
+                            time_select(&mut st.launch.time_select, &app, ms, row, count);
                         }
                         // `--snapshot-placeholder`: the capture is
                         // taken and the develop it stood in for has
                         // landed, so the run ends here rather than in
                         // the middle of that develop.
-                        if st.snapshot_placeholder && st.snapshot.is_none() && st.batch {
+                        if st.launch.snapshot_placeholder
+                            && st.launch.snapshot.is_none()
+                            && st.window.batch
+                        {
                             let _ = slint::quit_event_loop();
                         }
                         // And, before it is taken: on to the next
                         // frame, from the event loop, so the capture
                         // is of its camera picture standing in for its
                         // develop rather than of this develop.
-                        if st.snapshot_placeholder && st.snapshot.is_some() {
+                        if st.launch.snapshot_placeholder && st.launch.snapshot.is_some() {
                             let app_weak = app.as_weak();
                             slint::Timer::single_shot(
                                 std::time::Duration::from_millis(100),
@@ -1148,12 +1206,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // no look in either. A look previewed from the list
                     // is drawn in its place while it stands.
                     let look_key = (edit.look_lut.clone(), edit.display_curve);
-                    if st.look_for.as_ref() != Some(&look_key) {
-                        st.look = edit.look_lut.look_under(edit.display_curve);
-                        st.look_for = Some(look_key);
+                    if st.develop.look_for.as_ref() != Some(&look_key) {
+                        st.develop.look = edit.look_lut.look_under(edit.display_curve);
+                        st.develop.look_for = Some(look_key);
                     }
                     let look = crate::panel::look_preview::drawn(st, &app, &edit);
-                    let Some(renderer) = st.renderer.as_mut() else {
+                    let Some(renderer) = st.develop.renderer.as_mut() else {
                         return;
                     };
                     if let Some(landed) = &pending {
@@ -1165,9 +1223,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         renderer.set_detail(landed.planes.as_ref());
                     }
                     sync_display(
-                        &mut st.lut_for,
-                        &mut st.encoded_lut_for,
-                        &st.monitors,
+                        &mut st.develop.lut_for,
+                        &mut st.develop.encoded_lut_for,
+                        &st.develop.monitors,
                         &app,
                         renderer,
                     );
@@ -1190,7 +1248,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     } = View::with_look(&edit);
                     let view = View {
                         zoom,
-                        center: st.center,
+                        center: st.develop.center,
                         light,
                         mixer,
                         color,
@@ -1211,12 +1269,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             shadows: app.get_warn_shadows(),
                             highlights: app.get_warn_highlights(),
                         },
-                        show_mask: app.get_show_mask().then_some(st.target).flatten(),
+                        show_mask: app.get_show_mask().then_some(st.develop.target).flatten(),
                         show_sharpen: app.get_show_sharpen_mask() && app.get_sharpen(),
                         mask_alone: false,
                         weigh_by: None,
                         canvas: render::canvas_rgb(app.get_canvas_choice()),
-                        source: st.source,
+                        source: st.develop.source,
                         display_curve,
                         source_turn: lag,
                     };
@@ -1228,10 +1286,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         let partial = shown_w < fw - 0.5 || shown_h < fh - 0.5;
                         app.set_nav_partial(partial);
                         if partial {
-                            let left = ((st.center.0 - shown_w / 2.0) / fw).clamp(0.0, 1.0);
-                            let top = ((st.center.1 - shown_h / 2.0) / fh).clamp(0.0, 1.0);
-                            let right = ((st.center.0 + shown_w / 2.0) / fw).clamp(0.0, 1.0);
-                            let bottom = ((st.center.1 + shown_h / 2.0) / fh).clamp(0.0, 1.0);
+                            let left = ((st.develop.center.0 - shown_w / 2.0) / fw).clamp(0.0, 1.0);
+                            let top = ((st.develop.center.1 - shown_h / 2.0) / fh).clamp(0.0, 1.0);
+                            let right =
+                                ((st.develop.center.0 + shown_w / 2.0) / fw).clamp(0.0, 1.0);
+                            let bottom =
+                                ((st.develop.center.1 + shown_h / 2.0) / fh).clamp(0.0, 1.0);
                             app.set_nav_left(left);
                             app.set_nav_top(top);
                             app.set_nav_width(right - left);
@@ -1239,7 +1299,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                     }
                     let (texture, drew) = renderer.render(vw, vh, &view);
-                    if let Some(at) = st.turn_pressed.take() {
+                    if let Some(at) = st.develop.turn_pressed.take() {
                         tracing::info!(
                             "turn: on screen {:.0} ms after the key, the develop there read \
                              through {lag} quarter turns",
@@ -1250,11 +1310,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // mask, when the panel's selection toggle asks and
                     // there is a mask to weigh by.
                     let selection = st
+                        .develop
                         .target
                         .filter(|&k| view.locals.get(k).is_some_and(|l| !l.mask.is_empty()));
                     app.set_scope_mask_active(selection.is_some());
                     let weigh_by = selection.filter(|_| app.get_scope_selection());
-                    let (bins, in_flight) = renderer.analyze(&view, st.scope, weigh_by);
+                    let (bins, in_flight) = renderer.analyze(&view, st.develop.scope, weigh_by);
                     let fresh = bins.map(|(_, b)| b.to_vec());
                     if let Some((taken, bins)) = bins {
                         app.set_scope_picture(scope::draw(taken, bins));
@@ -1276,7 +1337,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // peek from a row under the pointer leaves it
                         // be, or the rows would move out from under
                         // the pointer and the peek end.
-                        if st.peek.is_none() {
+                        if st.develop.peek.is_none() {
                             app.set_navigator(picture);
                         }
                     }
@@ -1292,22 +1353,22 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // develop: the culling path takes that one.
                     let ready = renderer.has_image()
                         && quiet
-                        && !st.awaiting_turn
-                        && !st.awaiting_index
-                        && !st.library.awaiting
-                        && !st.snapshot_placeholder;
+                        && !st.launch.awaiting_turn
+                        && !st.launch.awaiting_index
+                        && !st.views.library.awaiting
+                        && !st.launch.snapshot_placeholder;
                     schedule_snapshot(
-                        &mut st.snapshot,
-                        &mut st.panel_scroll,
-                        &mut st.snapshot_shown,
+                        &mut st.launch.snapshot,
+                        &mut st.launch.panel_scroll,
+                        &mut st.launch.snapshot_shown,
                         &app,
                         &state,
                         ready,
                         true,
                     );
                     write_screenshot(
-                        &mut st.screenshot,
-                        &mut st.failed,
+                        &mut st.launch.screenshot,
+                        &mut st.launch.failed,
                         renderer,
                         &texture,
                         ready,
@@ -1340,20 +1401,20 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 }
                 slint::RenderingState::AfterRendering => {
                     if let Some(app) = app_weak.upgrade()
-                        && let Some(timing) = state.borrow_mut().time_scroll.as_mut()
+                        && let Some(timing) = state.borrow_mut().launch.time_scroll.as_mut()
                     {
                         timing.after_frame(&app);
                     }
                 }
                 slint::RenderingState::RenderingTeardown => {
-                    state.borrow_mut().renderer = None;
+                    state.borrow_mut().develop.renderer = None;
                 }
                 _ => {}
             })
             .context("Slint's rendering notifier")?;
     }
 
-    state.borrow_mut().preview_temperature = cli.preview_temperature;
+    state.borrow_mut().launch.preview_temperature = cli.preview_temperature;
     // Open the folder to start on, if there is one yet: listed and its
     // sidecars found off the window's thread once the loop runs, and
     // its frame opened from the rendering setup when the list is in
@@ -1377,7 +1438,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 select,
             );
         });
-    } else if state.borrow().library.wanted.is_none() {
+    } else if state.borrow().views.library.wanted.is_none() {
         // Nothing to open yet: ask the desktop for a folder once the
         // event loop is running. Canceled, the empty editor stays up
         // with its Open folder button. The all-roots view asked for
@@ -1447,12 +1508,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // library.
     {
         let mut st = state.borrow_mut();
-        st.index_reader = None;
+        st.views.index_reader = None;
         // The watcher first, which holds a way to the indexer's
         // thread.
-        st.library.watcher = None;
-        st.library.poll = None;
-        if let Some(indexer) = st.index.take() {
+        st.views.library.watcher = None;
+        st.views.library.poll = None;
+        if let Some(indexer) = st.views.index.take() {
             indexer.stop(worker::LEAVING);
         }
     }
@@ -1464,7 +1525,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if cli.screenshot.is_none() && cli.snapshot.is_none() {
         let mut settings = remember(&app);
         take_state_choices(&mut settings, &state.borrow());
-        settings.filter = filter::Saved::of(&state.borrow().filter);
+        settings.filter = filter::Saved::of(&state.borrow().views.filter);
         let kept = settings::Settings::load();
         settings.last_file = kept.last_file;
         settings.recent_folders = kept.recent_folders;
@@ -1495,12 +1556,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The open file's edit, as left.
     let edit = {
         let st = state.borrow();
-        read_edit(&app, &st.edit, st.target)
+        read_edit(&app, &st.develop.edit, st.develop.target)
     };
     save_at_quit(&mut state.borrow_mut(), edit, crate::sync::QUIT_WRITE_WAIT);
     // A batch run whose picture never developed is a failure a script
     // can see, as is a window lost under the run.
-    let failed = state.borrow().failed || ran.is_err();
+    let failed = state.borrow().launch.failed || ran.is_err();
     // A worker still in a job (a develop of a large frame, a mask, the
     // learned denoiser, each of which can outlast `LEAVING`) may be
     // inside the GPU driver, waiting on a fence in `Device::poll`.
@@ -1527,7 +1588,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         if let Err(e) = &ran {
             eprintln!("Error: {e:?}");
         }
-        let index = state.borrow().index_path.clone();
+        let index = state.borrow().views.index_path.clone();
         if let Some(index) = index {
             fold_library_log(&index, LOG_FOLD_WAIT);
         }
@@ -1557,7 +1618,7 @@ pub(crate) fn bins_read(st: &mut State, app: &App, bins: Vec<u32>) {
     app.set_clip_shadows_mark(mark(clipping.shadows));
     app.set_clip_highlights_lit(clipping.highlights.iter().any(|&c| c));
     app.set_clip_highlights_mark(mark(clipping.highlights));
-    st.bins = Some(bins);
+    st.develop.bins = Some(bins);
 }
 
 /// The quit's saves, the window's index reader closed: the open
@@ -1920,8 +1981,9 @@ pub(crate) fn remembered_folder(settings: &settings::Settings) -> Option<PathBuf
 /// What the state owns of the settings, not the panel: put on the
 /// settings the panel's choices made, for the file at close.
 pub(crate) fn take_state_choices(settings: &mut settings::Settings, st: &State) {
-    settings.export_presets = st.export_presets.clone();
+    settings.export_presets = st.work.export_presets.clone();
     settings.export_last_folder = st
+        .work
         .export_last_folder
         .as_ref()
         .map(|f| f.to_string_lossy().into_owned())
@@ -2013,7 +2075,7 @@ pub(crate) fn remember_last_file(st: &State) {
     // `batch` as well: a snapshot's path is taken at the capture, and
     // a develop that lands after it (a `--menu` over another frame)
     // must not write the user's settings either.
-    if st.batch || st.screenshot.is_some() || st.snapshot.is_some() {
+    if st.window.batch || st.launch.screenshot.is_some() || st.launch.snapshot.is_some() {
         return;
     }
     let Some(path) = st.current.and_then(|i| st.path_at(i)) else {

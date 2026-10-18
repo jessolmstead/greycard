@@ -225,15 +225,15 @@ pub(crate) fn refusal(folder: &Folder, old: &str, files: &[PathBuf], new: &str) 
 /// else that writes looks or sidecars, or moves the files they sit
 /// beside.
 fn busy(st: &State) -> Option<&'static str> {
-    if st.look_renaming.is_some() {
+    if st.sheets.look_renaming.is_some() {
         Some("a look is still being renamed")
-    } else if st.deleting.is_some() {
+    } else if st.sheets.deleting.is_some() {
         Some("pictures are being deleted; rename the look when that is done")
-    } else if st.look_removing {
+    } else if st.sheets.look_removing {
         Some("a look is still being removed")
     } else if st.camera_match.running() {
         Some("the camera match is running; rename the look when it is done")
-    } else if st.exporting.is_some() || st.queue_run.is_some() {
+    } else if st.work.exporting.is_some() || st.work.queue_run.is_some() {
         Some("an export is running; rename the look when it is done")
     } else if st.archive.copying() {
         Some("a copy to or from an archive is running; rename the look when it is done")
@@ -261,8 +261,8 @@ pub(crate) fn uses(st: &State) -> (Vec<BTreeSet<String>>, Vec<PathBuf>) {
             .get(i)
             .map(Sidecar::looks_named)
             .unwrap_or_default();
-        if Some(i) == st.current && !st.edit.look_lut.lut.is_none() {
-            looks.insert(st.edit.look_lut.lut.name().to_string());
+        if Some(i) == st.current && !st.develop.edit.look_lut.lut.is_none() {
+            looks.insert(st.develop.edit.look_lut.lut.name().to_string());
         }
         if !looks.is_empty() {
             named.push(looks);
@@ -390,8 +390,8 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         return;
     };
     // The directory as it is now, as removal reads it.
-    st.looks = list_in(Some(dir.clone()));
-    let files = files_of(&st.looks, &name, &dir);
+    st.develop.looks = list_in(Some(dir.clone()));
+    let files = files_of(&st.develop.looks, &name, &dir);
     if files.is_empty() {
         app.set_status(format!("{name} has no file in the look directory to rename").into());
         return;
@@ -406,7 +406,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         );
         return;
     }
-    let tables = look::tables_of(&st.looks, &name);
+    let tables = look::tables_of(&st.develop.looks, &name);
     let own = tables
         .iter()
         .find(|e| e.variant.is_none())
@@ -415,22 +415,23 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         .first()
         .map(|e| e.label().to_string())
         .unwrap_or_else(|| name.clone());
-    let place = match st.view {
+    let place = match st.views.view {
         crate::roots::View::Roots(_) => "in the library",
         _ => "in this folder",
     };
     let (in_memory, unread) = uses(st);
     let presets = st
+        .develop
         .presets
         .iter()
         .filter(|e| !e.preset.edit.look_lut.lut.is_none())
         .map(|e| e.preset.edit.look_lut.lut.name().to_string())
         .collect();
-    st.look_rename_generation += 1;
-    let generation = st.look_rename_generation;
+    st.sheets.look_rename_generation += 1;
+    let generation = st.sheets.look_rename_generation;
     let asked = Asked {
         name: name.clone(),
-        folder: Folder::read(&dir, &st.looks),
+        folder: Folder::read(&dir, &st.develop.looks),
         files,
         store: dir,
         own,
@@ -444,7 +445,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
     app.set_look_rename_title(format!("Rename the look {shown}").into());
     app.set_look_rename_name(name.as_str().into());
     app.set_look_rename_working(false);
-    st.look_rename = Some(asked);
+    st.sheets.look_rename = Some(asked);
     show_sheet(st, app);
     app.set_look_rename_open(true);
     if !unread.is_empty() {
@@ -454,7 +455,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
 
 /// The sheet's lines for the name in its field.
 fn show_sheet(st: &State, app: &App) {
-    let Some(asked) = &st.look_rename else {
+    let Some(asked) = &st.sheets.look_rename else {
         return;
     };
     let new = app.get_look_rename_name().trim().to_string();
@@ -540,7 +541,7 @@ pub(crate) fn counted(
     generation: u64,
     found: Vec<(PathBuf, BTreeSet<String>)>,
 ) {
-    match &mut st.look_rename {
+    match &mut st.sheets.look_rename {
         Some(asked) if asked.generation == generation => asked.on_disk = Some(found),
         _ => return,
     }
@@ -855,12 +856,12 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
     }
     // The reads out now carry what the files held before the thread
     // renames them: those, and only those, are caught up as they land.
-    let catch = st.loads.in_flight.clone();
+    let catch = st.views.loads.in_flight.clone();
     let catch_paths = catch.values().flatten().cloned().collect();
     let mut done = Rewritten::default();
     // With sidecars off none was read, so any of them may name the old
     // name: the old files stay.
-    if !st.write_sidecars {
+    if !st.window.write_sidecars {
         done.unreachable = st.files.len();
     }
     // The open picture: the panel's edit and the sidecar in memory,
@@ -869,14 +870,14 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
         .current
         .filter(|&c| crate::rows::panel_is_frames(st, c))
         .map(|c| st.file_of(c));
-    let open_edit = st.edit.look_lut.rename(old, new);
+    let open_edit = st.develop.edit.look_lut.rename(old, new);
     if let Some(f) = open {
         // The file's whole sidecar: a rename reaches every line of it.
         let renamed = st.sidecars[f].rename_look(old, new);
         if renamed || open_edit {
             done.pictures += 1;
         }
-        if renamed && st.write_sidecars {
+        if renamed && st.window.write_sidecars {
             save_window_copy(st, f, &mut done);
         }
     }
@@ -889,7 +890,7 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
             continue;
         }
         let loaded = crate::rows::file_is_loaded(st, i);
-        if !st.write_sidecars {
+        if !st.window.write_sidecars {
             if loaded && st.sidecars[i].rename_look(old, new) {
                 done.pictures += 1;
             }
@@ -914,11 +915,11 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
         });
     }
     rename_elsewhere(st, app, old, new, &mut done);
-    st.look_rename_generation += 1;
-    let generation = st.look_rename_generation;
+    st.sheets.look_rename_generation += 1;
+    let generation = st.sheets.look_rename_generation;
     let reached = Arc::new(Mutex::new(Vec::with_capacity(frames.len())));
     let stop = Arc::new(AtomicBool::new(false));
-    st.look_renaming = Some(Renaming {
+    st.sheets.look_renaming = Some(Renaming {
         generation,
         old: old.to_string(),
         new: new.to_string(),
@@ -941,7 +942,7 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
         old: old.to_string(),
         new: new.to_string(),
         frames,
-        placement: st.placement,
+        placement: st.window.placement,
         reached,
         stop,
     };
@@ -967,17 +968,20 @@ fn save_window_copy(st: &mut State, i: usize, done: &mut Rewritten) {
 /// clipboard, the hovered and held states, the command line's
 /// override, the export queue, and the presets in the store.
 fn rename_elsewhere(st: &mut State, app: &App, old: &str, new: &str, done: &mut Rewritten) {
-    if let Some(c) = &mut st.clipboard {
+    if let Some(c) = &mut st.sheets.clipboard {
         c.edit.look_lut.rename(old, new);
     }
-    for edit in [st.peek.as_mut(), st.held.as_mut()].into_iter().flatten() {
+    for edit in [st.develop.peek.as_mut(), st.develop.held.as_mut()]
+        .into_iter()
+        .flatten()
+    {
         edit.look_lut.rename(old, new);
     }
-    if let Some((_, edit)) = &mut st.overridden {
+    if let Some((_, edit)) = &mut st.launch.overridden {
         edit.look_lut.rename(old, new);
     }
     let mut queued = false;
-    for entry in &mut st.export_queue {
+    for entry in &mut st.work.export_queue {
         for frame in &mut entry.frames {
             queued |= frame.edit.look_lut.rename(old, new);
         }
@@ -985,7 +989,7 @@ fn rename_elsewhere(st: &mut State, app: &App, old: &str, new: &str, done: &mut 
     if queued {
         crate::panel::export_queue::keep(st);
     }
-    if let Some(store) = st.preset_store.clone() {
+    if let Some(store) = st.develop.preset_store.clone() {
         for mut entry in store.list() {
             if !entry.preset.edit.look_lut.rename(old, new) {
                 continue;
@@ -1065,7 +1069,7 @@ pub(crate) fn caught_up(st: &mut State, i: usize) -> bool {
     let Some(path) = st.files.get(i).cloned() else {
         return false;
     };
-    let Some(r) = st.look_renaming.as_mut() else {
+    let Some(r) = st.sheets.look_renaming.as_mut() else {
         return false;
     };
     if !r.catch_paths.remove(&path) {
@@ -1075,7 +1079,13 @@ pub(crate) fn caught_up(st: &mut State, i: usize) -> bool {
     // The old files are kept until the reads are in, so a look of the
     // old name is the old look; one listed again after they went is a
     // new look of that name, and not this one.
-    if r.reported && st.looks.iter().any(|e| e.name.eq_ignore_ascii_case(&old)) {
+    if r.reported
+        && st
+            .develop
+            .looks
+            .iter()
+            .any(|e| e.name.eq_ignore_ascii_case(&old))
+    {
         return false;
     }
     match r.written.remove(&path) {
@@ -1096,7 +1106,7 @@ pub(crate) fn caught_up(st: &mut State, i: usize) -> bool {
 /// A read of the window's has landed (request `id`): if it was out when
 /// the rename began, the rename has one fewer to wait on.
 pub(crate) fn read_landed(st: &mut State, app: &App, id: u64) {
-    let Some(r) = st.look_renaming.as_mut() else {
+    let Some(r) = st.sheets.look_renaming.as_mut() else {
         return;
     };
     if let Some(paths) = r.catch.remove(&id) {
@@ -1115,7 +1125,11 @@ pub(crate) fn read_landed(st: &mut State, app: &App, id: u64) {
 /// a stall or a Stop) as a late one, which keeps the window and the
 /// file in step but changes nothing of what was said.
 pub(crate) fn heard(st: &mut State, app: &App, generation: u64, thread_done: bool) {
-    let Some(mut r) = st.look_renaming.take_if(|r| r.generation == generation) else {
+    let Some(mut r) = st
+        .sheets
+        .look_renaming
+        .take_if(|r| r.generation == generation)
+    else {
         return;
     };
     let clock = std::time::Instant::now();
@@ -1151,7 +1165,7 @@ pub(crate) fn heard(st: &mut State, app: &App, generation: u64, thread_done: boo
         if late { "a late outcome" } else { "the thread" },
         clock.elapsed().as_secs_f64()
     );
-    st.look_renaming = Some(r);
+    st.sheets.look_renaming = Some(r);
     settle(st, app);
 }
 
@@ -1257,6 +1271,7 @@ fn give_up_later(app: &App, generation: u64) {
 /// not reached.
 pub(crate) fn give_up(st: &mut State, app: &App, generation: u64) {
     let Some(r) = st
+        .sheets
         .look_renaming
         .as_mut()
         .filter(|r| r.generation == generation && !r.catch.is_empty())
@@ -1282,7 +1297,7 @@ pub(crate) fn give_up(st: &mut State, app: &App, generation: u64) {
 /// once the thread has also said it is done, the rename is over and
 /// another may begin.
 fn settle(st: &mut State, app: &App) {
-    let Some(r) = st.look_renaming.as_mut() else {
+    let Some(r) = st.sheets.look_renaming.as_mut() else {
         return;
     };
     if !r.landed || !r.catch.is_empty() {
@@ -1301,9 +1316,9 @@ fn settle(st: &mut State, app: &App) {
             r.started.elapsed().as_secs_f64()
         );
         look::forget();
-        st.looks = list_in(store());
-        st.look_for = None;
-        show_looks(st, &st.edit.look_lut, app);
+        st.develop.looks = list_in(store());
+        st.develop.look_for = None;
+        show_looks(st, &st.develop.edit.look_lut, app);
         crate::edited::looks_moved(st);
         show_history(st, app);
         app.set_look_rename_working(false);
@@ -1311,8 +1326,13 @@ fn settle(st: &mut State, app: &App) {
         app.set_status(status.into());
         app.window().request_redraw();
     }
-    if st.look_renaming.as_ref().is_some_and(|r| !r.thread_out) {
-        st.look_renaming = None;
+    if st
+        .sheets
+        .look_renaming
+        .as_ref()
+        .is_some_and(|r| !r.thread_out)
+    {
+        st.sheets.look_renaming = None;
     }
 }
 
@@ -1347,7 +1367,7 @@ fn after_saves(st: &mut State, app: &App, mut paths: Vec<PathBuf>) {
 /// rename is out the sheet stays, says so, and its one answer is Stop,
 /// which lands what is done.
 pub(crate) fn answered(st: &mut State, app: &App, yes: bool) {
-    if let Some(r) = &st.look_renaming {
+    if let Some(r) = &st.sheets.look_renaming {
         if !yes && !r.reported {
             let (generation, landed) = (r.generation, r.landed);
             tracing::info!("rename look: stopped");
@@ -1361,7 +1381,7 @@ pub(crate) fn answered(st: &mut State, app: &App, yes: bool) {
         return;
     }
     let close = |app: &App| app.set_look_rename_open(false);
-    let Some(asked) = st.look_rename.take() else {
+    let Some(asked) = st.sheets.look_rename.take() else {
         close(app);
         return;
     };
@@ -1370,7 +1390,7 @@ pub(crate) fn answered(st: &mut State, app: &App, yes: bool) {
         return;
     }
     let new = app.get_look_rename_name().trim().to_string();
-    let refused = if !st.deletes_allowed {
+    let refused = if !st.window.deletes_allowed {
         Some("not renamed: a capture, an export or a timing run never renames".to_string())
     } else if let Some(why) = busy(st) {
         Some(why.to_string())
@@ -1388,7 +1408,7 @@ pub(crate) fn answered(st: &mut State, app: &App, yes: bool) {
         None => {
             tracing::info!(
                 "rename look: begun, {} sidecars to their thread",
-                st.look_renaming.as_ref().map_or(0, |r| r.frames)
+                st.sheets.look_renaming.as_ref().map_or(0, |r| r.frames)
             );
             app.set_look_rename_working(true);
             app.set_look_rename_ready(false);
@@ -1731,9 +1751,9 @@ mod tests {
         let (state, worker) = state_for(app, files.clone());
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = true;
-            st.deletes_allowed = true;
-            st.looks = list_in(Some(store.to_path_buf()));
+            st.window.write_sidecars = true;
+            st.window.deletes_allowed = true;
+            st.develop.looks = list_in(Some(store.to_path_buf()));
         }
         (state, worker, files)
     }
@@ -1761,8 +1781,8 @@ mod tests {
             // sidecar is on disk only, Neon in its history; frame 4 has
             // no look.
             st.current = Some(0);
-            st.edit.look_lut = named("Neon");
-            let open = st.edit.clone();
+            st.develop.edit.look_lut = named("Neon");
+            let open = st.develop.edit.clone();
             st.sidecars[0].record(open);
             st.sidecars[0].save(&files[0]).unwrap();
             let mut e = Edit {
@@ -1790,7 +1810,7 @@ mod tests {
             on_disk
                 .save_in(&files[3], greycard_edit::Placement::Folder)
                 .unwrap();
-            assert_eq!(st.placement, greycard_edit::Placement::Beside);
+            assert_eq!(st.window.placement, greycard_edit::Placement::Beside);
             st.from_row[3].read = false;
             st.from_row[4].read = false;
             let store_p = greycard_edit::preset::Store::at(presets.clone());
@@ -1809,27 +1829,27 @@ mod tests {
             store_p
                 .save(&Preset::from_edit("Ghost Warm", &look, &[Section::Look]))
                 .unwrap();
-            st.preset_store = Some(store_p);
+            st.develop.preset_store = Some(store_p);
             crate::panel::assets::refresh_presets(&mut st, &app);
-            st.clipboard = Some(crate::clipboard::Clipboard::copy_file(
-                st.edit.clone(),
+            st.sheets.clipboard = Some(crate::clipboard::Clipboard::copy_file(
+                st.develop.edit.clone(),
                 &files[0],
             ));
-            st.export_queue_file = Some(queue_file.clone());
-            st.export_queue = vec![crate::export_queue::Entry {
+            st.work.export_queue_file = Some(queue_file.clone());
+            st.work.export_queue = vec![crate::export_queue::Entry {
                 queued: 0,
                 folder: None,
                 preset: None,
                 sheet: Default::default(),
                 frames: vec![crate::export_queue::QueuedFrame {
                     source: files[0].clone(),
-                    edit: st.edit.clone(),
+                    edit: st.develop.edit.clone(),
                     turn: 0,
                     seed_blend: false,
                     version: None,
                 }],
             }];
-            show_looks(&st, &st.edit.look_lut, &app);
+            show_looks(&st, &st.develop.edit.look_lut, &app);
         }
         let mono_preset = std::fs::read(presets.join("mono-cold.gcp")).unwrap();
         let before_2 = std::fs::read(Sidecar::path_for(&files[2])).unwrap();
@@ -1871,7 +1891,7 @@ mod tests {
 
         // The edits read from disk land; frame 4's sidecar was never
         // written, so only frame 3 names it, and Ghost besides.
-        let generation = state.borrow().look_rename_generation;
+        let generation = state.borrow().sheets.look_rename_generation;
         let unread: Vec<PathBuf> = vec![files[3].clone(), files[4].clone()];
         let found = looks_on_disk(&unread);
         assert_eq!(found.len(), 1);
@@ -1972,10 +1992,13 @@ mod tests {
             std::fs::read(presets.join("mono-cold.gcp")).unwrap(),
             mono_preset
         );
-        assert_eq!(st.clipboard.as_ref().unwrap().edit.look_lut, named("Glow"));
+        assert_eq!(
+            st.sheets.clipboard.as_ref().unwrap().edit.look_lut,
+            named("Glow")
+        );
         let queued = crate::export_queue::load(&queue_file);
         assert_eq!(queued[0].frames[0].edit.look_lut, named("Glow"));
-        assert_eq!(st.edit.look_lut, named("Glow"));
+        assert_eq!(st.develop.edit.look_lut, named("Glow"));
         assert_eq!(app.get_look_name(), "Glow");
         let labels: Vec<String> = app
             .get_look_rows()
@@ -2006,11 +2029,11 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.edit.look_lut = named("Neon");
-            let open = st.edit.clone();
+            st.develop.edit.look_lut = named("Neon");
+            let open = st.develop.edit.clone();
             st.sidecars[0].record(open.clone());
             st.sidecars[1].record(open);
-            show_looks(&st, &st.edit.look_lut, &app);
+            show_looks(&st, &st.develop.edit.look_lut, &app);
         }
         ask(&mut state.borrow_mut(), &app);
         assert!(app.get_look_rename_open());
@@ -2066,7 +2089,7 @@ mod tests {
                 dir.join("local").join("f1.tif"),
                 dir.clone(),
             );
-            show_looks(&st, &st.edit.look_lut, &app);
+            show_looks(&st, &st.develop.edit.look_lut, &app);
         }
         app.set_look_name("Neon".into());
         ask(&mut state.borrow_mut(), &app);
@@ -2102,11 +2125,11 @@ mod tests {
         assert!(app.get_status().contains("no look is chosen"));
 
         app.set_look_name("Neon".into());
-        state.borrow_mut().look_removing = true;
+        state.borrow_mut().sheets.look_removing = true;
         ask(&mut state.borrow_mut(), &app);
         assert!(!app.get_look_rename_open());
         assert!(app.get_status().contains("still being removed"));
-        state.borrow_mut().look_removing = false;
+        state.borrow_mut().sheets.look_removing = false;
 
         // Escape: no, and the window has its keys.
         ask(&mut state.borrow_mut(), &app);
@@ -2122,7 +2145,7 @@ mod tests {
         assert_eq!(*toggles.borrow(), 1);
 
         // A capture never renames, whatever its keys answer.
-        state.borrow_mut().deletes_allowed = false;
+        state.borrow_mut().window.deletes_allowed = false;
         ask(&mut state.borrow_mut(), &app);
         app.set_look_rename_name("Glow".into());
         app.invoke_look_rename_edited();
@@ -2147,7 +2170,7 @@ mod tests {
         }
         // Pictures being deleted: no rename until that is done.
         app.set_look_name("Neon".into());
-        state.borrow_mut().deleting = Some(Default::default());
+        state.borrow_mut().sheets.deleting = Some(Default::default());
         ask(&mut state.borrow_mut(), &app);
         assert!(!app.get_look_rename_open());
         assert!(app.get_status().contains("being deleted"));
@@ -2160,7 +2183,7 @@ mod tests {
     fn answer(state: &Rc<RefCell<State>>, app: &App, new: &str) {
         ask(&mut state.borrow_mut(), app);
         assert!(app.get_look_rename_open(), "{}", app.get_status());
-        let generation = state.borrow().look_rename_generation;
+        let generation = state.borrow().sheets.look_rename_generation;
         let unread: Vec<PathBuf> = {
             let st = state.borrow();
             (0..st.files.len())
@@ -2193,13 +2216,13 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.edit.look_lut = named("Neon");
+            st.develop.edit.look_lut = named("Neon");
             for (i, f) in files.iter().enumerate() {
-                let edit = st.edit.clone();
+                let edit = st.develop.edit.clone();
                 st.sidecars[i].record(edit);
                 st.sidecars[i].save(f).unwrap();
             }
-            show_looks(&st, &st.edit.look_lut, &app);
+            show_looks(&st, &st.develop.edit.look_lut, &app);
         }
         (app, state, files)
     }
@@ -2224,9 +2247,9 @@ mod tests {
             let mut st = state.borrow_mut();
             st.from_row[0].read = false;
             st.from_row[1].read = false;
-            st.panel_stand_in = Some(files[0].clone());
-            st.loads.in_flight.insert(70, vec![files[0].clone()]);
-            st.loads.in_flight.insert(71, vec![files[1].clone()]);
+            st.views.panel_stand_in = Some(files[0].clone());
+            st.views.loads.in_flight.insert(70, vec![files[0].clone()]);
+            st.views.loads.in_flight.insert(71, vec![files[1].clone()]);
         }
         answer(&state, &app, "Glow");
         let (generation, job) = sent();
@@ -2242,7 +2265,7 @@ mod tests {
         // Frame 1's read is still out: the rename waits, the old files
         // with it.
         assert!(app.get_look_rename_open());
-        assert!(state.borrow().look_renaming.is_some());
+        assert!(state.borrow().sheets.look_renaming.is_some());
         assert!(store.join("Neon.cube").exists());
         {
             let mut st = state.borrow_mut();
@@ -2250,7 +2273,7 @@ mod tests {
             read_landed(&mut st, &app, 71);
         }
         assert!(!app.get_look_rename_open());
-        assert!(state.borrow().look_renaming.is_none());
+        assert!(state.borrow().sheets.look_renaming.is_none());
         assert!(app.get_status().starts_with("renamed Neon to Glow"));
         assert!(!store.join("Neon.cube").exists());
         let st = state.borrow();
@@ -2369,7 +2392,7 @@ mod tests {
         assert!(matches!(late, Outcome::Written(_)));
         {
             let st = state.borrow();
-            let r = st.look_renaming.as_ref().unwrap();
+            let r = st.sheets.look_renaming.as_ref().unwrap();
             r.reached
                 .lock()
                 .unwrap()
@@ -2377,7 +2400,7 @@ mod tests {
         }
         heard(&mut state.borrow_mut(), &app, generation, true);
         let st = state.borrow();
-        assert!(st.look_renaming.is_none());
+        assert!(st.sheets.look_renaming.is_none());
         assert!(!st.sidecars[1].names_look("Neon"));
         assert_eq!(
             st.sidecars[1].revisions,
@@ -2474,13 +2497,13 @@ mod tests {
             {
                 let mut st = state.borrow_mut();
                 st.current = Some(0);
-                st.edit.look_lut = named("Neon");
+                st.develop.edit.look_lut = named("Neon");
                 for (i, f) in files.iter().enumerate() {
-                    let edit = st.edit.clone();
+                    let edit = st.develop.edit.clone();
                     st.sidecars[i].record(edit);
                     st.sidecars[i].save(f).unwrap();
                 }
-                show_looks(&st, &st.edit.look_lut, &app);
+                show_looks(&st, &st.develop.edit.look_lut, &app);
             }
             answer(&state, &app, "Glow");
             let (generation, job) = sent();
@@ -2492,14 +2515,21 @@ mod tests {
             } else {
                 // The thread does one sidecar and goes quiet on the next:
                 // the watch lands it.
-                let stop = state.borrow().look_renaming.as_ref().unwrap().stop.clone();
+                let stop = state
+                    .borrow()
+                    .sheets
+                    .look_renaming
+                    .as_ref()
+                    .unwrap()
+                    .stop
+                    .clone();
                 job.run(&|| stop.store(true, Ordering::Relaxed));
                 heard(&mut state.borrow_mut(), &app, generation, false);
             }
             // Over only when the thread says it is done.
-            assert!(state.borrow().look_renaming.is_some());
+            assert!(state.borrow().sheets.look_renaming.is_some());
             heard(&mut state.borrow_mut(), &app, generation, true);
-            assert!(state.borrow().look_renaming.is_none());
+            assert!(state.borrow().sheets.look_renaming.is_none());
             let status = app.get_status().to_string();
             let left = if stop_pressed { 3 } else { 2 };
             assert!(
@@ -2537,7 +2567,7 @@ mod tests {
                 match case {
                     "offline" => {
                         st.from_row[1].read = false;
-                        st.library.offline.insert(dir.clone());
+                        st.views.library.offline.insert(dir.clone());
                     }
                     "followed" => {
                         st.from_row[1].read = false;
@@ -2548,7 +2578,7 @@ mod tests {
                             dir.clone(),
                         );
                     }
-                    _ => st.write_sidecars = false,
+                    _ => st.window.write_sidecars = false,
                 }
             }
             answer(&state, &app, "Glow");
@@ -2588,9 +2618,9 @@ mod tests {
             .collect();
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = true;
-            st.look_rename_generation = 7;
-            st.look_renaming = Some(Renaming {
+            st.window.write_sidecars = true;
+            st.sheets.look_rename_generation = 7;
+            st.sheets.look_renaming = Some(Renaming {
                 generation: 7,
                 old: "Neon".into(),
                 new: "Glow".into(),

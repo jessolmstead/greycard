@@ -366,7 +366,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             };
             if parametric_mode(&app) {
                 let p = panel_parametric(&app);
-                state.borrow_mut().curve_drag = p.nearest_split(x);
+                state.borrow_mut().develop.curve_drag = p.nearest_split(x);
                 return;
             }
             let channel = current_channel(&app);
@@ -380,7 +380,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                     // selected one go.
                     if points.iter().any(|p| (p[0] - x).abs() < curve::MIN_GAP) {
                         select_point(&app, None);
-                        app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+                        app.set_curve_image(draw_curve(
+                            &app,
+                            state.borrow().develop.bins.as_deref(),
+                        ));
                         return;
                     }
                     let at = points.partition_point(|p| p[0] < x);
@@ -388,11 +391,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                     at
                 }
             };
-            state.borrow_mut().curve_drag = Some(index);
+            state.borrow_mut().develop.curve_drag = Some(index);
             set_curve_points(&app, channel, &points);
             // Pressed is selected, and stays so after the release.
             select_point(&app, Some(index));
-            app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+            app.set_curve_image(draw_curve(&app, state.borrow().develop.bins.as_deref()));
             app.window().request_redraw();
         });
     }
@@ -402,7 +405,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let Some(i) = state.borrow().curve_drag else {
+            let Some(i) = state.borrow().develop.curve_drag else {
                 return;
             };
             if parametric_mode(&app) {
@@ -410,7 +413,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 if i < p.splits.len() {
                     p.set_split(i, x);
                     set_panel_parametric(&app, &p);
-                    app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+                    app.set_curve_image(draw_curve(&app, state.borrow().develop.bins.as_deref()));
                     app.window().request_redraw();
                 }
                 return;
@@ -423,7 +426,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             points[i] = moved_point(&points, i, x, y);
             set_curve_points(&app, channel, &points);
             show_selected(&app);
-            app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+            app.set_curve_image(draw_curve(&app, state.borrow().develop.bins.as_deref()));
             app.window().request_redraw();
         });
     }
@@ -433,7 +436,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            if state.borrow_mut().curve_drag.take().is_some() {
+            if state.borrow_mut().develop.curve_drag.take().is_some() {
                 app.invoke_view_changed();
             }
         });
@@ -450,9 +453,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                     return;
                 };
                 p.set_split(i, Parametric::DEFAULT_SPLITS[i]);
-                state.borrow_mut().curve_drag = None;
+                state.borrow_mut().develop.curve_drag = None;
                 set_panel_parametric(&app, &p);
-                app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+                app.set_curve_image(draw_curve(&app, state.borrow().develop.bins.as_deref()));
                 app.invoke_view_changed();
                 return;
             }
@@ -465,10 +468,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             }
             points.remove(i);
-            state.borrow_mut().curve_drag = None;
+            state.borrow_mut().develop.curve_drag = None;
             set_curve_points(&app, channel, &points);
             select_point(&app, None);
-            app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+            app.set_curve_image(draw_curve(&app, state.borrow().develop.bins.as_deref()));
             app.invoke_view_changed();
         });
     }
@@ -501,7 +504,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             points[i] = moved_point(&points, i, x, y);
             set_curve_points(&app, channel, &points);
             show_selected(&app);
-            app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+            app.set_curve_image(draw_curve(&app, state.borrow().develop.bins.as_deref()));
             app.invoke_view_changed();
         });
     }
@@ -518,7 +521,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 set_curve_points(&app, channel, &channel.identity());
             }
             select_point(&app, None);
-            app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+            app.set_curve_image(draw_curve(&app, state.borrow().develop.bins.as_deref()));
             app.invoke_view_changed();
         });
     }
@@ -529,7 +532,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             select_point(&app, None);
-            app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+            app.set_curve_image(draw_curve(&app, state.borrow().develop.bins.as_deref()));
         });
     }
     // The other curve: the same picture, drawn for it. The curve
@@ -547,7 +550,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 app.invoke_pick_started("Curve".into());
             }
             select_point(&app, None);
-            app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+            app.set_curve_image(draw_curve(&app, state.borrow().develop.bins.as_deref()));
         });
     }
     {
@@ -556,7 +559,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+            app.set_curve_image(draw_curve(&app, state.borrow().develop.bins.as_deref()));
             app.invoke_view_changed();
         });
     }
@@ -728,8 +731,8 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.source_size = (1200, 800);
-            st.edit.adjustments.push(greycard_edit::Adjustment {
+            st.develop.source_size = (1200, 800);
+            st.develop.edit.adjustments.push(greycard_edit::Adjustment {
                 id: 1,
                 name: "Mask 1".into(),
                 enabled: true,
@@ -742,7 +745,7 @@ mod tests {
                 },
                 look: Default::default(),
             });
-            st.bins = Some(bins.to_vec());
+            st.develop.bins = Some(bins.to_vec());
         }
         app.set_panel_tab("Masks".into());
         app.invoke_tab_changed("Masks".into());
@@ -768,7 +771,7 @@ mod tests {
 
         app.invoke_target_changed(1);
         app.set_collapsed_curves(false);
-        assert_eq!(state.borrow().target, Some(0));
+        assert_eq!(state.borrow().develop.target, Some(0));
         assert_eq!(app.get_target(), 1);
         assert!(!app.get_collapsed_curves());
         assert_eq!(
@@ -780,7 +783,7 @@ mod tests {
         // The global curve, by the Develop tab: the same histogram.
         app.set_panel_tab("Develop".into());
         app.invoke_tab_changed("Develop".into());
-        assert_eq!(state.borrow().target, None);
+        assert_eq!(state.borrow().develop.target, None);
         assert_eq!(image_bytes(&app.get_curve_image()), drawn);
     }
 
@@ -804,7 +807,14 @@ mod tests {
         let locals = |state: &Rc<RefCell<State>>| {
             let mut st = state.borrow_mut();
             let st = &mut *st;
-            bake_locals(&st.edit, &mut st.rasters, &mut st.learned, 2.0 / 3.0, None).0
+            bake_locals(
+                &st.develop.edit,
+                &mut st.develop.rasters,
+                &mut st.develop.learned,
+                2.0 / 3.0,
+                None,
+            )
+            .0
         };
         let waiting = locals(&state);
         assert!(waiting[0].rasters[0].is_none(), "the sky is not made yet");
@@ -842,6 +852,9 @@ mod tests {
             image_bytes(&app.get_curve_image()),
             image_bytes(&draw_curve(&app, Some(&weighed)))
         );
-        assert_eq!(state.borrow().bins.as_deref(), Some(weighed.as_slice()));
+        assert_eq!(
+            state.borrow().develop.bins.as_deref(),
+            Some(weighed.as_slice())
+        );
     }
 }

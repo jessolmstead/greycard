@@ -15,12 +15,12 @@ fn a_list_merged_keeps_each_frames_own_by_its_path() {
     let (state, worker) = state_for(&app, files.clone());
     {
         let mut st = state.borrow_mut();
-        st.write_sidecars = true;
+        st.window.write_sidecars = true;
         st.sidecars[1].meta.rating = 4;
-        st.thumb_base[2] = Some((1, 1, vec![9, 9, 9]));
-        st.thumb_made[2] = 128;
+        st.views.thumb_base[2] = Some((1, 1, vec![9, 9, 9]));
+        st.views.thumb_made[2] = 128;
         st.current = Some(1);
-        st.picked = vec![1, 2];
+        st.views.picked = vec![1, 2];
         rebuild_browser(&mut st, &app);
     }
     let aa = frames(&dir, &["aa.tif"]).remove(0);
@@ -39,10 +39,10 @@ fn a_list_merged_keeps_each_frames_own_by_its_path() {
         assert_eq!(st.files, next);
         assert_eq!(st.sidecars[2].meta.rating, 4, "b's own, as edited");
         assert_eq!(st.sidecars[1].meta.rating, 2, "aa's, from its sidecar");
-        assert_eq!(st.thumb_made[3], 128);
-        assert!(st.thumb_base[3].is_some());
+        assert_eq!(st.views.thumb_made[3], 128);
+        assert!(st.views.thumb_base[3].is_some());
         assert_eq!(st.current, Some(2));
-        assert_eq!(st.picked, vec![2, 3]);
+        assert_eq!(st.views.picked, vec![2, 3]);
         assert_eq!(row, None, "the frame on screen stays");
         assert_eq!(app.get_thumbs().row_count(), 4);
         assert_eq!(app.get_selected(), 2);
@@ -50,7 +50,7 @@ fn a_list_merged_keeps_each_frames_own_by_its_path() {
     // c goes from the list: out of the selection too.
     let next = vec![files[0].clone(), aa.clone(), files[1].clone()];
     assert_eq!(merge_read(&state, &app, &worker, next, None), None);
-    assert_eq!(state.borrow().picked, vec![2]);
+    assert_eq!(state.borrow().views.picked, vec![2]);
     // The same list again is nothing to do.
     let same = state.borrow().files.clone();
     assert_eq!(merge_read(&state, &app, &worker, same, None), None);
@@ -101,7 +101,7 @@ fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
     let (state, worker) = state_for(&app, files.clone());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
         crate::library::refresh_ids(&mut st);
         st.sidecars[1].meta.rating = 5;
         st.current = Some(1);
@@ -136,7 +136,7 @@ fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
     // The window's thread keeps the state, and with it the
     // reader: closed by hand, since Windows will not remove a
     // folder with a database open in it.
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -248,11 +248,11 @@ fn after_the_rejects_move_each_frame_keeps_its_own_picture() {
     crate::cells::show(&app, crate::cells::View::Strip, 0, 8);
     {
         let mut st = state.borrow_mut();
-        st.write_sidecars = true;
+        st.window.write_sidecars = true;
         for (i, f) in files.iter().enumerate() {
             // A picture of one pixel, its red the frame's number.
-            st.thumb_base[i] = Some((1, 1, vec![10 * i as u8 + 5, 0, 0]));
-            st.thumb_made[i] = 128;
+            st.views.thumb_base[i] = Some((1, 1, vec![10 * i as u8 + 5, 0, 0]));
+            st.views.thumb_made[i] = 128;
             if i == 2 || i == 5 {
                 st.sidecars[i].meta.flag = meta::Flag::Reject;
                 st.sidecars[i].save(f).unwrap();
@@ -266,7 +266,7 @@ fn after_the_rejects_move_each_frame_keeps_its_own_picture() {
         assert_eq!(st.files.len(), 6);
     }
     let st = state.borrow();
-    for (row, &f) in st.shown.iter().enumerate() {
+    for (row, &f) in st.views.shown.iter().enumerate() {
         let own = files.iter().position(|p| *p == st.files[f]).unwrap();
         assert_eq!(
             row_pixel(&app, row),
@@ -300,8 +300,8 @@ fn a_merge_while_the_pictures_are_coming_asks_for_every_one_still_owed() {
     // numbers, by the open, and have not come.
     {
         let mut st = state.borrow_mut();
-        st.thumb_base[1] = Some((1, 1, vec![1, 2, 3]));
-        st.thumb_made[1] = 128;
+        st.views.thumb_base[1] = Some((1, 1, vec![1, 2, 3]));
+        st.views.thumb_made[1] = 128;
         rebuild_browser(&mut st, &app);
     }
     let aa = frames(&dir, &["aa.tif"]).remove(0);
@@ -357,7 +357,7 @@ fn a_frame_deleted_after_a_backup_is_gone_not_followed_to_the_copy() {
     let (state, worker) = state_for(&app, files.clone());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
         crate::library::refresh_ids(&mut st);
         st.sidecars[1].meta.rating = 5;
         st.current = Some(1);
@@ -380,7 +380,7 @@ fn a_frame_deleted_after_a_backup_is_gone_not_followed_to_the_copy() {
         assert_eq!(st.sidecars[copy.unwrap()].meta.rating, 0, "the copy's own");
     }
     assert!(!backup.join("b.tif.gcd").exists());
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -415,16 +415,16 @@ fn a_kept_filter_is_not_put_back_over_a_file_or_a_batch_run() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.filter = filter::Filter::from_name("Picks").unwrap();
-        st.library.loading = true;
+        st.views.filter = filter::Filter::from_name("Picks").unwrap();
+        st.views.library.loading = true;
     }
     crate::panel::browser::open_paths(&state, &app, &worker, &files);
-    assert!(state.borrow().filter.is_empty(), "cleared at once");
+    assert!(state.borrow().views.filter.is_empty(), "cleared at once");
     assert_eq!(land_all(&state, &app, &worker), 1);
     let st = state.borrow();
-    assert!(st.filter.is_empty());
-    assert_eq!(st.shown, [0]);
-    assert!(!st.library.loading, "the folder's own load is done");
+    assert!(st.views.filter.is_empty());
+    assert_eq!(st.views.shown, [0]);
+    assert!(!st.views.library.loading, "the folder's own load is done");
     drop(st);
     drop(state);
     crate::testing::remove_dir_retry(&dir);
@@ -454,10 +454,10 @@ fn an_offline_frame_is_culled_from_its_local_preview_and_its_file_is_not_read() 
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.write_sidecars = true;
-        st.library.roots.add(&a).unwrap();
-        st.library.roots.add(&b).unwrap();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.window.write_sidecars = true;
+        st.views.library.roots.add(&a).unwrap();
+        st.views.library.roots.add(&b).unwrap();
         recount(&mut st);
     }
     let away = dir.join("b-away");
@@ -507,12 +507,12 @@ fn an_offline_frame_is_culled_from_its_local_preview_and_its_file_is_not_read() 
     // Culling on z.
     {
         let mut st = state.borrow_mut();
-        st.prefetch.set_previews(local.clone());
+        st.culling.prefetch.set_previews(local.clone());
         st.current = Some(zi);
         crate::panel::cull::enter_cull(&mut st, &app, 1);
-        assert!(st.cull.is_some());
+        assert!(st.culling.cull.is_some());
     }
-    let asked = state.borrow().prefetch.asked();
+    let asked = state.borrow().culling.prefetch.asked();
     let want = asked.iter().find(|w| w.file == zi).expect("z asked for");
     assert_eq!(
         want.from,
@@ -546,6 +546,7 @@ fn an_offline_frame_is_culled_from_its_local_preview_and_its_file_is_not_read() 
     assert_eq!(
         state
             .borrow()
+            .culling
             .cull
             .as_ref()
             .unwrap()
@@ -556,7 +557,7 @@ fn an_offline_frame_is_culled_from_its_local_preview_and_its_file_is_not_read() 
     );
     {
         let st = state.borrow();
-        let shown = st.cull.as_ref().unwrap().cache.get(zi).expect("up");
+        let shown = st.culling.cull.as_ref().unwrap().cache.get(zi).expect("up");
         assert!(shown.local, "marked as the local preview");
         assert_eq!((shown.width, shown.height), (300, 200));
         assert!(!shown.small());
@@ -581,7 +582,7 @@ fn an_offline_frame_is_culled_from_its_local_preview_and_its_file_is_not_read() 
         version: None,
     }];
     let line = crate::panel::cull::cull_status(
-        state.borrow().cull.as_ref().unwrap(),
+        state.borrow().culling.cull.as_ref().unwrap(),
         zi,
         0.0,
         true,
@@ -597,10 +598,10 @@ fn an_offline_frame_is_culled_from_its_local_preview_and_its_file_is_not_read() 
     let xi = state.borrow().files.iter().position(|f| *f == x).unwrap();
     {
         let mut st = state.borrow_mut();
-        st.library.remote = vec![(a.clone(), "nfs".into())];
+        st.views.library.remote = vec![(a.clone(), "nfs".into())];
         crate::panel::cull::cull_refresh(&mut st);
     }
-    let asked = state.borrow().prefetch.asked();
+    let asked = state.borrow().culling.prefetch.asked();
     let local_at = asked
         .iter()
         .position(|w| w.file == xi && matches!(w.from, crate::cull::Source::Preview { .. }))
@@ -633,18 +634,18 @@ fn an_offline_frame_is_culled_from_its_local_preview_and_its_file_is_not_read() 
     );
     {
         let mut st = state.borrow_mut();
-        let cull = st.cull.as_ref().unwrap();
+        let cull = st.culling.cull.as_ref().unwrap();
         assert!(cull.cache.get(xi).is_some_and(|p| p.local), "stays up");
         assert!(cull.file_failed.contains(&xi));
         assert!(!cull.failed.contains_key(&xi), "no failure over it");
         crate::panel::cull::cull_refresh(&mut st);
     }
-    let asked = state.borrow().prefetch.asked();
+    let asked = state.borrow().culling.prefetch.asked();
     assert!(
         !asked.iter().any(|w| w.file == xi),
         "not asked again: {asked:?}"
     );
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -676,10 +677,10 @@ fn all_roots_lists_the_archives_copy_when_the_local_one_is_away() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.library.roots.add(&a).unwrap();
-        st.library.roots.add(&nas).unwrap();
-        st.library.roots.set_archive(&nas, true);
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.library.roots.add(&a).unwrap();
+        st.views.library.roots.add(&nas).unwrap();
+        st.views.library.roots.set_archive(&nas, true);
         recount(&mut st);
     }
     let listed = |state: &Rc<RefCell<State>>| {
@@ -758,10 +759,10 @@ fn an_offline_root_is_listed_dimmed_and_its_frames_left_alone() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.write_sidecars = true;
-        st.library.roots.add(&a).unwrap();
-        st.library.roots.add(&b).unwrap();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.window.write_sidecars = true;
+        st.views.library.roots.add(&a).unwrap();
+        st.views.library.roots.add(&b).unwrap();
         recount(&mut st);
     }
     // b unplugged: the folder gone from the disk.
@@ -779,7 +780,11 @@ fn an_offline_root_is_listed_dimmed_and_its_frames_left_alone() {
             [a.join("x.tif"), a.join("day").join("y.tif"), z.clone()],
             "the offline root's frame is listed"
         );
-        assert_eq!(st.library.counts, vec![2, 1], "b's row kept as it was");
+        assert_eq!(
+            st.views.library.counts,
+            vec![2, 1],
+            "b's row kept as it was"
+        );
         let thumbs = app.get_thumbs();
         assert!(!thumbs.row_data(0).unwrap().offline);
         let tile = thumbs.row_data(2).unwrap();
@@ -797,6 +802,7 @@ fn an_offline_root_is_listed_dimmed_and_its_frames_left_alone() {
     assert_eq!(
         state
             .borrow()
+            .views
             .library
             .roots
             .list()
@@ -808,9 +814,9 @@ fn an_offline_root_is_listed_dimmed_and_its_frames_left_alone() {
     // The filter works on it.
     {
         let mut st = state.borrow_mut();
-        st.filter = filter::Filter::from_name("Picks").unwrap();
+        st.views.filter = filter::Filter::from_name("Picks").unwrap();
         rebuild_browser(&mut st, &app);
-        assert_eq!(st.shown, [2], "the pick under the offline root");
+        assert_eq!(st.views.shown, [2], "the pick under the offline root");
     }
     // Opening it: selected, and told why there is no picture.
     {
@@ -862,7 +868,7 @@ fn an_offline_root_is_listed_dimmed_and_its_frames_left_alone() {
             );
         }
     }
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -892,20 +898,20 @@ fn a_folder_that_cannot_be_read_leaves_the_list_and_comes_back() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.index_path = Some(db.clone());
-        st.library.roots.add(&root).unwrap();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.index_path = Some(db.clone());
+        st.views.library.roots.add(&root).unwrap();
     }
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     assert_eq!(state.borrow().files.len(), 3);
-    assert!(state.borrow().library.readable.contains(&day));
+    assert!(state.borrow().views.library.readable.contains(&day));
 
     std::fs::set_permissions(&day, std::fs::Permissions::from_mode(0o000)).unwrap();
     if std::fs::read_dir(&day).is_ok() {
         // Run as a user no permission stops: nothing to see.
         std::fs::set_permissions(&day, std::fs::Permissions::from_mode(0o755)).unwrap();
-        state.borrow_mut().index_reader = None;
+        state.borrow_mut().views.index_reader = None;
         return;
     }
     let report = writer.index_tree(&root, &mut |_| {}).unwrap();
@@ -917,7 +923,7 @@ fn a_folder_that_cannot_be_read_leaves_the_list_and_comes_back() {
     std::fs::set_permissions(&day, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(state.borrow().files, [root.join("x.tif")]);
     assert!(
-        !state.borrow().library.readable.contains(&day),
+        !state.borrow().views.library.readable.contains(&day),
         "not kept as readable, and not kept as unreadable either"
     );
 
@@ -930,7 +936,7 @@ fn a_folder_that_cannot_be_read_leaves_the_list_and_comes_back() {
     assert!(background_done(&state, &app, &other, &report, false, false));
     land_all(&state, &app, &worker);
     assert_eq!(state.borrow().files.len(), 4);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -955,8 +961,8 @@ fn a_read_out_during_a_pass_keeps_nothing_of_the_pass_s_folders() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.library.roots.add(&root).unwrap();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.library.roots.add(&root).unwrap();
     }
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
@@ -970,11 +976,11 @@ fn a_read_out_during_a_pass_keeps_nothing_of_the_pass_s_folders() {
     folders_passed(&mut state.borrow_mut(), &d);
     land(&state, &app, &worker, found);
     let st = state.borrow();
-    assert!(!st.library.readable.contains(&d), "d's look is older");
-    assert!(st.library.readable.contains(&e), "e's is not");
+    assert!(!st.views.library.readable.contains(&d), "d's look is older");
+    assert!(st.views.library.readable.contains(&e), "e's is not");
     assert_eq!(st.files.len(), 3);
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -994,16 +1000,16 @@ fn a_read_that_never_lands_is_given_up_on() {
     let lost = SENT.with(|s| s.borrow_mut().pop()).unwrap();
     assert!(refresh_view(&state, &app, &worker));
     assert_eq!(sent(), 0, "one out at a time");
-    state.borrow_mut().library.merge_since =
+    state.borrow_mut().views.library.merge_since =
         Some(Instant::now() - READ_GIVES_UP - Duration::from_secs(1));
     assert!(refresh_view(&state, &app, &worker));
     assert_eq!(sent(), 1, "another sent");
     land(&state, &app, &worker, lost.run());
-    assert!(state.borrow().library.merging, "the lost one dropped");
+    assert!(state.borrow().views.library.merging, "the lost one dropped");
     assert_eq!(state.borrow().files.len(), 1);
     land_all(&state, &app, &worker);
     assert_eq!(state.borrow().files, files);
-    assert!(!state.borrow().library.merging);
+    assert!(!state.borrow().views.library.merging);
     // A folder's view looks at no root.
     let look = ask(&state.borrow()).unwrap();
     assert!(look.roots.is_empty());
@@ -1084,10 +1090,10 @@ fn the_frame_on_screen_under_a_root_gone_offline_stays() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.index_path = Some(db.clone());
-        st.library.roots.add(&a).unwrap();
-        st.library.roots.add(&b).unwrap();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.index_path = Some(db.clone());
+        st.views.library.roots.add(&a).unwrap();
+        st.views.library.roots.add(&b).unwrap();
     }
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
@@ -1100,7 +1106,7 @@ fn the_frame_on_screen_under_a_root_gone_offline_stays() {
     assert!(refresh_view(&state, &app, &worker));
     land_all(&state, &app, &worker);
     let st = state.borrow();
-    assert!(st.library.offline.contains(&b));
+    assert!(st.views.library.offline.contains(&b));
     assert_eq!(st.current.map(|c| st.files[c].clone()), Some(y.clone()));
     assert_eq!(
         st.files,
@@ -1112,7 +1118,7 @@ fn the_frame_on_screen_under_a_root_gone_offline_stays() {
     assert!(thumbs.row_data(1).unwrap().offline);
     assert!(thumbs.row_data(2).unwrap().offline);
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);

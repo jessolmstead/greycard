@@ -77,8 +77,8 @@ fn options(st: &State, app: &App, write: bool) -> Option<lrcat::Options> {
         force: app.get_lr_force(),
         // The field starts at the catalog's name; empty is none.
         set: Some(app.get_lr_set().to_string()),
-        library: st.index_path.clone()?,
-        sidecars_in_folder: st.placement == greycard_edit::Placement::Folder,
+        library: st.views.index_path.clone()?,
+        sidecars_in_folder: st.window.placement == greycard_edit::Placement::Folder,
         no_creations: !app.get_lr_creations(),
     })
 }
@@ -103,7 +103,7 @@ pub(crate) fn open(st: &mut State, app: &App, catalog: PathBuf) {
     app.set_lr_force(false);
     app.set_lr_step(0);
     app.set_lr_open(true);
-    if st.index_path.is_none() {
+    if st.views.index_path.is_none() {
         app.set_lr_note(
             "No library here to bring the collections and the roots into: this \
              installation has no data folder."
@@ -255,9 +255,11 @@ pub(crate) fn show(st: &State, app: &App) {
     }));
     app.set_lr_already(report.map_or(0, |r| r.already) as i32);
     app.set_lr_ready(
-        report.is_some_and(|r| r.found > 0) && st.index_path.is_some() && st.write_sidecars,
+        report.is_some_and(|r| r.found > 0)
+            && st.views.index_path.is_some()
+            && st.window.write_sidecars,
     );
-    if !st.write_sidecars && app.get_lr_note().is_empty() {
+    if !st.window.write_sidecars && app.get_lr_note().is_empty() {
         app.set_lr_note(NO_SIDECARS.into());
     }
     if let Some(r) = report {
@@ -306,7 +308,7 @@ pub(crate) fn write(state: &Rc<RefCell<State>>, app: &App) {
     if st.lightroom.thread.is_some() {
         return;
     }
-    if !st.write_sidecars {
+    if !st.window.write_sidecars {
         app.set_lr_note(NO_SIDECARS.into());
         return;
     }
@@ -368,9 +370,9 @@ pub(crate) fn write_options(st: &mut State, app: &App) -> Option<lrcat::Options>
     // to rest) is saved now: the frame then has an edit of its own, and
     // the import leaves it alone unless told to write over it. A panel
     // at rest is the sidecar already, and nothing is written.
-    if st.current.is_some() && st.cull.is_none() && st.save_timer.running() {
-        st.save_timer.stop();
-        let outgoing = crate::panel::edit::read_edit(app, &st.edit, st.target);
+    if st.current.is_some() && st.culling.cull.is_none() && st.develop.save_timer.running() {
+        st.develop.save_timer.stop();
+        let outgoing = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
         crate::panel::edit::save_edit(st, outgoing);
     }
     Some(opts)
@@ -507,15 +509,18 @@ pub(crate) fn wrote(
 fn took_up(state: &Rc<RefCell<State>>, app: &App) {
     let added: Vec<PathBuf> = {
         let mut st = state.borrow_mut();
-        let Some(path) = st.index_path.clone() else {
+        let Some(path) = st.views.index_path.clone() else {
             return;
         };
-        let (rows, names) = (st.collections.rows.clone(), st.collections.names.clone());
-        st.collections =
+        let (rows, names) = (
+            st.views.collections.rows.clone(),
+            st.views.collections.names.clone(),
+        );
+        st.views.collections =
             crate::collections::Store::load(crate::collections::Store::dir_beside(&path));
-        (st.collections.rows, st.collections.names) = (rows, names);
+        (st.views.collections.rows, st.views.collections.names) = (rows, names);
         crate::panel::collections::show(&st, app);
-        st.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(
+        st.views.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(
             &crate::collections::Store::dir_beside(&path),
         ));
         st.lightroom
@@ -565,9 +570,9 @@ pub(crate) fn reread_written(
             crate::edited::changed(&mut st, c);
         }
     }
-    let on_screen = st
-        .current
-        .filter(|&c| st.cull.is_none() && st.file_at(c).is_some_and(|f| files.contains(&f)));
+    let on_screen = st.current.filter(|&c| {
+        st.culling.cull.is_none() && st.file_at(c).is_some_and(|f| files.contains(&f))
+    });
     if let Some(c) = on_screen
         && let Some(worker) = WORKER.with(|w| w.borrow().clone())
     {
@@ -789,9 +794,9 @@ mod tests {
         let catalog = catalog(&dir);
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         let library = dir.join("library").join("library.sqlite");
-        state.borrow_mut().index_path = Some(library.clone());
+        state.borrow_mut().views.index_path = Some(library.clone());
 
         // The roots: the folder of the root's name beside the catalog,
         // guessed, and its files found.
@@ -911,7 +916,7 @@ mod tests {
         let shots = dir.join("Shoots");
         let app = crate::testing::window(0);
         let (state, worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         crate::panel::browser::open_folder(&state, &app, &worker, &shots);
         crate::roots::land_sent(&state, &app, &worker);
         WORKER.with(|w| *w.borrow_mut() = Some(worker.clone()));
@@ -919,7 +924,7 @@ mod tests {
         assert_eq!(state.borrow().current, Some(0));
         let a = shots.join("a.tif");
         assert!(greycard_edit::Sidecar::load(&a).unwrap().is_none());
-        state.borrow_mut().index_path = Some(dir.join("library").join("library.sqlite"));
+        state.borrow_mut().views.index_path = Some(dir.join("library").join("library.sqlite"));
         open(&mut state.borrow_mut(), &app, catalog.clone());
         land_now(&state, &app);
         // The write as Write runs it, landed.
@@ -952,22 +957,22 @@ mod tests {
         let shots = dir.join("Shoots");
         let app = crate::testing::window(0);
         let (state, worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         crate::panel::browser::open_folder(&state, &app, &worker, &shots);
         crate::roots::land_sent(&state, &app, &worker);
         app.invoke_select(0);
-        state.borrow_mut().index_path = Some(dir.join("library").join("library.sqlite"));
+        state.borrow_mut().views.index_path = Some(dir.join("library").join("library.sqlite"));
         open(&mut state.borrow_mut(), &app, catalog.clone());
         land_now(&state, &app);
         // The slider moved, its save waiting on the panel to rest.
         app.set_exposure(0.8);
-        state.borrow().save_timer.start(
+        state.borrow().develop.save_timer.start(
             slint::TimerMode::SingleShot,
             std::time::Duration::from_secs(60),
             || {},
         );
         let opts = write_options(&mut state.borrow_mut(), &app).unwrap();
-        assert!(!state.borrow().save_timer.running());
+        assert!(!state.borrow().develop.save_timer.running());
         let a = shots.join("a.tif");
         let saved = greycard_edit::Sidecar::load(&a).unwrap().unwrap();
         assert_eq!(saved.current.light.exposure, 0.8);
@@ -990,8 +995,8 @@ mod tests {
         let library = dir.join("library").join("library.sqlite");
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = false;
-            st.index_path = Some(library.clone());
+            st.window.write_sidecars = false;
+            st.views.index_path = Some(library.clone());
         }
         open(&mut state.borrow_mut(), &app, catalog);
         land_now(&state, &app);
@@ -1014,8 +1019,8 @@ mod tests {
         let catalog = catalog(&dir);
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
-        state.borrow_mut().index_path = Some(dir.join("library").join("library.sqlite"));
+        state.borrow_mut().window.write_sidecars = true;
+        state.borrow_mut().views.index_path = Some(dir.join("library").join("library.sqlite"));
         open(&mut state.borrow_mut(), &app, catalog);
         land_now(&state, &app);
         // The guess beside the catalog becomes the write's mapping.
@@ -1033,9 +1038,9 @@ mod tests {
         let catalog = catalog(&dir);
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         let library = dir.join("library").join("library.sqlite");
-        state.borrow_mut().index_path = Some(library.clone());
+        state.borrow_mut().views.index_path = Some(library.clone());
         open(&mut state.borrow_mut(), &app, catalog.clone());
         land_now(&state, &app);
         // The write as its thread runs it, landed: given the report's
@@ -1095,17 +1100,24 @@ mod tests {
         // The window's collections are the ones it wrote: Picks and
         // the book, under the catalog's set.
         let st = state.borrow();
-        let names: Vec<String> = st.collections.list.iter().map(|c| c.name.clone()).collect();
+        let names: Vec<String> = st
+            .views
+            .collections
+            .list
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
         assert!(names.iter().any(|n| n == "Picks"), "{names:?}");
         assert!(names.iter().any(|n| n == "Album"), "{names:?}");
         assert!(
-            st.library
+            st.views
+                .library
                 .roots
                 .list()
                 .iter()
                 .any(|r| r.ends_with("Shoots")),
             "{:?}",
-            st.library.roots.list()
+            st.views.library.roots.list()
         );
         drop(st);
         std::fs::remove_dir_all(&dir).unwrap();

@@ -149,17 +149,17 @@ pub(crate) fn record_export(
         crate::panel::browser::show_badges_of_file(st, app, file);
         return;
     }
-    if st.write_sidecars
+    if st.window.write_sidecars
         && record_export_on_disk(
             source,
             edit,
             version,
             exported,
-            st.placement,
-            st.xmp_sidecars,
+            st.window.placement,
+            st.window.xmp_sidecars,
         )
     {
-        if let Some(indexer) = &st.index {
+        if let Some(indexer) = &st.views.index {
             indexer.file(source.to_path_buf());
         }
         // The archive's copy, from the file (§233).
@@ -333,30 +333,30 @@ fn row_time(secs: u64, now: u64) -> String {
 pub(crate) fn peek(st: &mut State, app: &App, edit: Option<Edit>, what: &str) {
     match edit {
         Some(edit) => {
-            let panel = read_edit(app, &st.edit, st.target);
+            let panel = read_edit(app, &st.develop.edit, st.develop.target);
             let unseen = finish::not_previewed(&edit, &panel, st.open_mosaic().kind());
             let note = if unseen.is_empty() {
                 String::new()
             } else {
                 format!("; the {} shown once restored", unseen.join(" and "))
             };
-            if st.status_kept.is_none() {
-                st.status_kept = Some(app.get_status());
+            if st.develop.status_kept.is_none() {
+                st.develop.status_kept = Some(app.get_status());
             }
-            if st.view_kept.is_none() {
-                st.view_kept = Some((st.image_size, st.center));
+            if st.develop.view_kept.is_none() {
+                st.develop.view_kept = Some((st.develop.image_size, st.develop.center));
             }
             app.set_status(format!("{what}{note}").into());
-            st.peek = Some(edit);
+            st.develop.peek = Some(edit);
         }
         None => {
-            if st.peek.take().is_some() {
-                if let Some(status) = st.status_kept.take() {
+            if st.develop.peek.take().is_some() {
+                if let Some(status) = st.develop.status_kept.take() {
                     app.set_status(status);
                 }
-                if let Some((size, center)) = st.view_kept.take() {
-                    st.image_size = size;
-                    st.center = center;
+                if let Some((size, center)) = st.develop.view_kept.take() {
+                    st.develop.image_size = size;
+                    st.develop.center = center;
                 }
             }
         }
@@ -416,10 +416,10 @@ pub(crate) fn take_current_with(st: &mut State, app: &App, worker: &Worker, save
     }
     // The panel is the sidecar's again: the command line's overrides,
     // if they were on it, are done with (`panel_state`).
-    st.overridden = None;
+    st.launch.overridden = None;
     // In culling the sidecar's current state is what the leaving
     // develops; the history moved, and the mode ends on that.
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         leave_cull(st, app, worker, None);
         return;
     }
@@ -443,16 +443,20 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
     if save && crate::panel::edit::writable(st, c) {
         crate::panel::edit::save_sidecar(st, c);
     }
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         return;
     }
     let Some(edit) = st.line(c).map(|l| l.current.clone()) else {
         return;
     };
-    if st.target.is_some_and(|i| i >= edit.adjustments.len()) {
-        st.target = None;
+    if st
+        .develop
+        .target
+        .is_some_and(|i| i >= edit.adjustments.len())
+    {
+        st.develop.target = None;
     }
-    show_edit(st, &edit, app, st.target);
+    show_edit(st, &edit, app, st.develop.target);
     show_history(st, app);
     // The panel's edit is the state's whether or not the engine has
     // to develop again: `read_edit` takes from it all the panel does
@@ -460,22 +464,22 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
     // so one left behind on the state just moved from made the next
     // read of the panel news to the history, and its save cut the
     // rows above the one clicked.
-    let develop = !edit.same_develop(&st.edit);
-    st.edit = edit;
+    let develop = !edit.same_develop(&st.develop.edit);
+    st.develop.edit = edit;
     if !develop {
         app.window().request_redraw();
     } else {
-        st.generation += 1;
+        st.develop.generation += 1;
         // A preset or a sync's own words, left for an earlier
         // generation's develop to carry (`status_after_develop`): that
         // generation is superseded now and will not land, so the
         // words it was holding for would otherwise sit unread.
-        st.status_after_develop = None;
+        st.develop.status_after_develop = None;
         app.set_status("developing...".into());
         app.set_busy(true);
         worker.send(Job::Develop {
-            edit: edit_to_develop(app, &st.edit),
-            generation: st.generation,
+            edit: edit_to_develop(app, &st.develop.edit),
+            generation: st.develop.generation,
             turn: current_turn(st),
         });
     }
@@ -499,7 +503,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // like a key's, with nothing to read, so it queues behind
             // the keys still waiting on their reads and takes back the
             // last key the user pressed, not the last that landed.
-            if st.cull.is_some() {
+            if st.culling.cull.is_some() {
                 drop(st);
                 crate::rows::request(
                     &state,
@@ -552,8 +556,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             // In culling the panel is not the frame's: the sidecar
             // goes to the row on its own, and the leaving develops it.
-            if st.cull.is_some() {
-                st.status_kept = None;
+            if st.culling.cull.is_some() {
+                st.develop.status_kept = None;
                 if st.line_mut(c).is_some_and(|l| l.go_to(index)) {
                     leave_cull(&mut st, &app, &worker, None);
                 }
@@ -579,7 +583,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             } else {
                 line.go_to(index)
             };
-            st.status_kept = None;
+            st.develop.status_kept = None;
             if !moved {
                 return;
             }
@@ -647,7 +651,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             // In culling the panel is not the frame's: the snapshot
             // is of the sidecar's current state as it stands.
-            if st.cull.is_none() {
+            if st.culling.cull.is_none() {
                 record_panel(&mut st, &app);
             }
             let Some(line) = st.line_mut(c) else {
@@ -680,8 +684,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             // In culling the panel is not the frame's: nothing is
             // recorded from it, and the leaving develops the restore.
-            if st.cull.is_some() {
-                st.status_kept = None;
+            if st.culling.cull.is_some() {
+                st.develop.status_kept = None;
                 if st
                     .line_mut(c)
                     .is_some_and(|l| l.restore_snapshot(i as usize))
@@ -692,7 +696,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             }
             record_panel(&mut st, &app);
-            st.status_kept = None;
+            st.develop.status_kept = None;
             if !st
                 .line_mut(c)
                 .is_some_and(|l| l.restore_snapshot(i as usize))
@@ -700,7 +704,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 // The sidecar is there already, but a panel still
                 // showing the command line's overrides is not: it
                 // takes the snapshot's state all the same.
-                if st.overridden.is_some() {
+                if st.launch.overridden.is_some() {
                     app.set_status(format!("{name} restored").into());
                     take_current(&mut st, &app, &worker);
                 } else {
@@ -839,7 +843,7 @@ mod tests {
     /// export button) makes it.
     fn save(app: &App, state: &Rc<RefCell<State>>) {
         let mut st = state.borrow_mut();
-        let edit = read_edit(app, &st.edit, st.target);
+        let edit = read_edit(app, &st.develop.edit, st.develop.target);
         crate::panel::edit::save_edit(&mut st, edit);
         show_history(&st, app);
     }
@@ -1078,7 +1082,7 @@ mod tests {
 
         // Hovered, the viewport shows the look that went out.
         app.invoke_history_hovered(1);
-        assert_eq!(state.borrow().peek.as_ref(), Some(&sent));
+        assert_eq!(state.borrow().develop.peek.as_ref(), Some(&sent));
         assert!(app.get_status().contains("/out/IMG_0000.jpg, exported"));
         app.invoke_history_hovered(-1);
 
@@ -1128,7 +1132,7 @@ mod tests {
 
         let app = crate::testing::window(1);
         let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         let exported = |edit: &Edit| landed(&raw, edit, dir.join("IMG_0100.jpg"), None);
         crate::panel::deliver::deliver(&app, exported(&edit));
         let back = Sidecar::load(&raw).unwrap().unwrap();
@@ -1189,9 +1193,9 @@ mod tests {
         let (state, worker) = crate::testing::state_for(&app, raws.clone());
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = true;
+            st.window.write_sidecars = true;
             st.sidecars[0] = Sidecar::load(&raws[0]).unwrap().unwrap();
-            st.overrides_at_start = Some((
+            st.launch.overrides_at_start = Some((
                 0,
                 crate::panel::startup::Overrides {
                     temperature: temperature.then_some(4000.0),
@@ -1220,8 +1224,8 @@ mod tests {
         let dir = scratch("override");
         let half = exposed(0.5);
         let (app, state, _worker, raw, bytes) = launched(&dir, 1, true);
-        state.borrow_mut().batch = true;
-        let rendered = state.borrow().edit.clone();
+        state.borrow_mut().window.batch = true;
+        let rendered = state.borrow().develop.edit.clone();
         assert_eq!(rendered.light.exposure, 1.0, "the panel's");
         assert_eq!(
             state.borrow().sidecars[0].current,
@@ -1237,7 +1241,7 @@ mod tests {
         );
         {
             let mut st = state.borrow_mut();
-            let edit = read_edit(&app, &st.edit, st.target);
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
             crate::panel::edit::save_edit(&mut st, edit);
         }
         assert!(
@@ -1274,7 +1278,7 @@ mod tests {
         assert!(std::fs::read(Sidecar::path_for(&raw)).unwrap() == bytes);
         app.invoke_select(0);
         assert_eq!(app.get_exposure(), 0.5, "the sidecar's, not the override's");
-        assert_eq!(state.borrow().edit, exposed(0.5));
+        assert_eq!(state.borrow().develop.edit, exposed(0.5));
         app.set_exposure(1.0);
         save(&app, &state);
         assert_eq!(state.borrow().sidecars[0].states(), 3);
@@ -1313,7 +1317,7 @@ mod tests {
                 "the override is no state"
             );
             assert_eq!(s.redo.len(), 2, "the carried redo kept");
-            assert!(st.overridden.is_none(), "done with");
+            assert!(st.launch.overridden.is_none(), "done with");
         }
         assert_eq!(app.get_exposure(), 0.0);
         app.invoke_redo();
@@ -1342,7 +1346,7 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, vec![listed.clone()]);
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = true;
+            st.window.write_sidecars = true;
             assert!(crate::rows::wants_seed(&st, 0), "a raw never developed");
         }
         let set = Arc::new(crate::queue::Set::new(
@@ -1466,7 +1470,7 @@ mod tests {
 
     /// A develop landing with `sources` for the state developing now.
     fn land(app: &App, state: &Rc<RefCell<State>>, sources: Vec<greycard_edit::retouch::Patch>) {
-        let generation = state.borrow().generation;
+        let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(
             app,
             crate::worker::Outcome::Developed {
@@ -1510,9 +1514,9 @@ mod tests {
         app.invoke_place_released();
         let placed = {
             let st = state.borrow();
-            assert_eq!(st.edit.retouch.patches.len(), 1);
-            assert!(st.edit.retouch.patches[0].source.is_none());
-            st.edit.retouch.patches[0].clone()
+            assert_eq!(st.develop.edit.retouch.patches.len(), 1);
+            assert!(st.develop.edit.retouch.patches[0].source.is_none());
+            st.develop.edit.retouch.patches[0].clone()
         };
         let spots = |state: &Rc<RefCell<State>>| {
             state.borrow().sidecars[0]
@@ -1527,7 +1531,7 @@ mod tests {
         // The save timer fires first: the spot is recorded sourceless.
         {
             let mut st = state.borrow_mut();
-            let edit = crate::panel::edit::read_edit(&app, &st.edit, st.target);
+            let edit = crate::panel::edit::read_edit(&app, &st.develop.edit, st.develop.target);
             crate::panel::edit::save_edit(&mut st, edit);
         }
         let before = state.borrow().sidecars[0].states();
@@ -1542,12 +1546,15 @@ mod tests {
         land(&app, &state, vec![developed]);
         assert_eq!(state.borrow().sidecars[0].states(), before, "no new step");
         assert_eq!(spots(&state), vec![Some(source)]);
-        assert_eq!(state.borrow().edit.retouch.patches[0].source, Some(source));
+        assert_eq!(
+            state.borrow().develop.edit.retouch.patches[0].source,
+            Some(source)
+        );
 
         // One undo, and the spot is gone.
         app.invoke_undo();
         assert_eq!(spots(&state), vec![]);
-        assert!(state.borrow().edit.retouch.patches.is_empty());
+        assert!(state.borrow().develop.edit.retouch.patches.is_empty());
         // That state's develop lands, and nothing comes back.
         land(&app, &state, Vec::new());
         assert_eq!(spots(&state), vec![]);
@@ -1575,7 +1582,7 @@ mod tests {
         app.invoke_retouch_toggled("Clone".into());
         app.invoke_place_pressed(10.0, 10.0, false);
         app.invoke_place_released();
-        let first = state.borrow().edit.retouch.patches[0].clone();
+        let first = state.borrow().develop.edit.retouch.patches[0].clone();
         let developed = greycard_edit::retouch::Patch {
             source: Some([0.05, -0.02]),
             ..first.clone()
@@ -1585,25 +1592,29 @@ mod tests {
         // another placed elsewhere, before the develop lands.
         {
             let mut st = state.borrow_mut();
-            let edit = crate::panel::edit::read_edit(&app, &st.edit, st.target);
+            let edit = crate::panel::edit::read_edit(&app, &st.develop.edit, st.develop.target);
             crate::panel::edit::save_edit(&mut st, edit);
         }
         app.set_patch(0);
         app.invoke_delete_patch();
-        assert!(state.borrow().edit.retouch.patches.is_empty());
+        assert!(state.borrow().develop.edit.retouch.patches.is_empty());
         app.invoke_place_pressed(10.0, 10.0, false);
         app.invoke_place_released();
         {
             let mut st = state.borrow_mut();
             // Wherever the test window puts it, somewhere else.
-            st.edit.retouch.patches[0].points = vec![[0.8, 0.2]];
-            let second = &st.edit.retouch.patches[0];
+            st.develop.edit.retouch.patches[0].points = vec![[0.8, 0.2]];
+            let second = &st.develop.edit.retouch.patches[0];
             assert_eq!(second.id, first.id, "the id is reused");
             assert_ne!(second.points, first.points);
         }
         let states = state.borrow().sidecars[0].states();
         land(&app, &state, vec![developed.clone()]);
-        assert!(state.borrow().edit.retouch.patches[0].source.is_none());
+        assert!(
+            state.borrow().develop.edit.retouch.patches[0]
+                .source
+                .is_none()
+        );
         // The sidecar's state with the first spot is completed, with
         // that spot's own source, and nothing is recorded.
         assert_eq!(state.borrow().sidecars[0].states(), states);
@@ -1616,11 +1627,15 @@ mod tests {
         // spot the develop chose for.
         {
             let mut st = state.borrow_mut();
-            st.edit.retouch.patches[0].points = first.points.clone();
-            st.edit.retouch.patches[0].radius = first.radius * 2.0;
+            st.develop.edit.retouch.patches[0].points = first.points.clone();
+            st.develop.edit.retouch.patches[0].radius = first.radius * 2.0;
         }
         land(&app, &state, vec![developed]);
-        assert!(state.borrow().edit.retouch.patches[0].source.is_none());
+        assert!(
+            state.borrow().develop.edit.retouch.patches[0]
+                .source
+                .is_none()
+        );
     }
 
     /// The rests a slider's timers wait out: the develop's debounce
@@ -1685,7 +1700,7 @@ mod tests {
         assert_eq!(walk(&state), (steps.clone(), 3));
         let panel_is_current = |state: &Rc<RefCell<State>>| {
             let st = state.borrow();
-            read_edit(&app, &st.edit, st.target) == st.sidecars[0].current
+            read_edit(&app, &st.develop.edit, st.develop.target) == st.sidecars[0].current
         };
         assert!(
             panel_is_current(&state),
@@ -1720,12 +1735,12 @@ mod tests {
         click_state(&app, &state, 0);
         rest();
         assert_eq!(walk(&state), (steps.clone(), 0));
-        assert!(state.borrow().edit.adjustments.is_empty());
+        assert!(state.borrow().develop.edit.adjustments.is_empty());
         assert!(panel_is_current(&state));
         click_state(&app, &state, 3);
         rest();
         assert_eq!(walk(&state), (steps.clone(), 3));
-        assert_eq!(state.borrow().edit.adjustments.len(), 1);
+        assert_eq!(state.borrow().develop.edit.adjustments.len(), 1);
         assert!(panel_is_current(&state));
 
         // An undo and a redo go the same way.

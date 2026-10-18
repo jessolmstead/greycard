@@ -40,15 +40,15 @@ pub(crate) fn words_of(offer: &Offer) -> String {
 /// wants the prior alone.
 fn model_step(st: &State) -> Option<Step> {
     let shape = Shape::of_kind("Water");
-    let store = st.store.clone();
+    let store = st.develop.store.clone();
     let have = |m: &greycard_ai::Model| store.as_ref().is_some_and(|s| s.have(m));
-    let sheet_free = st.fetch.is_none() && !st.fetching;
+    let sheet_free = st.sheets.fetch.is_none() && !st.sheets.fetching;
     step(
         &shape,
         have,
         crate::ai::providers(),
-        &st.declined,
-        &st.fetch_failed,
+        &st.sheets.declined,
+        &st.sheets.fetch_failed,
         sheet_free,
         |_| false,
     )
@@ -58,7 +58,11 @@ fn model_step(st: &State) -> Option<Step> {
 /// `mode`: what the model finds is asked for, the model offered first
 /// if it is not downloaded.
 pub(crate) fn pressed(st: &mut State, app: &App, mode: &str) {
-    let Some(a) = st.target.and_then(|i| st.edit.adjustments.get(i)) else {
+    let Some(a) = st
+        .develop
+        .target
+        .and_then(|i| st.develop.edit.adjustments.get(i))
+    else {
         return;
     };
     // A mask's first shape is always Add, as the other buttons have it.
@@ -69,12 +73,12 @@ pub(crate) fn pressed(st: &mut State, app: &App, mode: &str) {
     };
     let id = a.id;
     // Whatever else was in hand is put down.
-    if st.placing.take().is_some() || st.choosing.take().is_some() {
+    if st.develop.placing.take().is_some() || st.develop.choosing.take().is_some() {
         app.set_placing("".into());
     }
-    st.part_pending = None;
-    st.landscape_offer = None;
-    st.landscape_pending = Some(Pending { id, mode });
+    st.develop.part_pending = None;
+    st.develop.landscape_offer = None;
+    st.develop.landscape_pending = Some(Pending { id, mode });
     resume(st, app);
 }
 
@@ -84,18 +88,18 @@ pub(crate) fn pressed(st: &mut State, app: &App, mode: &str) {
 /// this session; else it waits for the download or the sheet in hand,
 /// and says so. Again whenever a download ends.
 pub(crate) fn resume(st: &mut State, app: &App) {
-    if st.landscape_pending.is_none() {
+    if st.develop.landscape_pending.is_none() {
         return;
     }
     match model_step(st) {
         Some(Step::Ask(_)) => ask(app),
         Some(Step::Offer(model, falls_back)) => offer_model(st, app, model, falls_back),
-        _ if st.declined.contains(&greycard_ai::SKY.id) => {
-            st.landscape_pending = None;
+        _ if st.sheets.declined.contains(&greycard_ai::SKY.id) => {
+            st.develop.landscape_pending = None;
             app.set_status(DECLINED.into());
         }
-        _ if st.fetch_failed.contains(&greycard_ai::SKY.id) => {
-            st.landscape_pending = None;
+        _ if st.sheets.fetch_failed.contains(&greycard_ai::SKY.id) => {
+            st.develop.landscape_pending = None;
             app.set_status("the Sky model could not be fetched this session".into());
         }
         _ => app.set_status(WAITING.into()),
@@ -119,13 +123,13 @@ fn ask(app: &App) {
 /// The sky's model arrived (or its offer was answered): a press
 /// waiting on it goes on, or is let go.
 pub(crate) fn model_answered(st: &mut State, app: &App, have: bool) {
-    if st.landscape_pending.is_none() {
+    if st.develop.landscape_pending.is_none() {
         return;
     }
     if have {
         ask(app);
     } else {
-        st.landscape_pending = None;
+        st.develop.landscape_pending = None;
         app.set_status(DECLINED.into());
     }
 }
@@ -140,7 +144,7 @@ pub(crate) fn found(
     file: Option<PathBuf>,
     offers: Result<(Vec<Offer>, &'static str, f64), String>,
 ) {
-    let Some(pending) = st.landscape_pending.take() else {
+    let Some(pending) = st.develop.landscape_pending.take() else {
         return;
     };
     let open = st.current.and_then(|c| st.path_at(c)).cloned();
@@ -164,7 +168,7 @@ pub(crate) fn found(
         app.set_status(note.into());
         return;
     }
-    st.landscape_offer = Some(pending);
+    st.develop.landscape_offer = Some(pending);
     app.set_landscape_menu_shown(true);
     let n = offers.len();
     app.set_status(
@@ -179,12 +183,13 @@ pub(crate) fn found(
 /// A shape picked from the menu, by kind, into the mask the button was
 /// pressed on; whether the edit changed.
 pub(crate) fn chosen(st: &mut State, app: &App, kind: &str) -> bool {
-    let Some(pending) = st.landscape_offer.take() else {
+    let Some(pending) = st.develop.landscape_offer.take() else {
         return false;
     };
-    let edit = read_edit(app, &st.edit, st.target);
-    st.edit = edit;
+    let edit = read_edit(app, &st.develop.edit, st.develop.target);
+    st.develop.edit = edit;
     let Some((index, a)) = st
+        .develop
         .edit
         .adjustments
         .iter_mut()
@@ -206,10 +211,10 @@ pub(crate) fn chosen(st: &mut State, app: &App, kind: &str) -> bool {
     });
     name_first_shape(a, kind);
     let which = a.mask.components.len() - 1;
-    st.fresh_mask = None;
-    st.target = Some(index);
+    st.develop.fresh_mask = None;
+    st.develop.target = Some(index);
     app.set_component(which as i32);
-    show_edit(st, &st.edit, app, st.target);
+    show_edit(st, &st.develop.edit, app, st.develop.target);
     app.set_status(format!("finding the {}", kind.to_lowercase()).into());
     true
 }
@@ -217,8 +222,8 @@ pub(crate) fn chosen(st: &mut State, app: &App, kind: &str) -> bool {
 /// Escape, another mask, another tab or another picture: the press
 /// waiting and the menu's offer go.
 pub(crate) fn stopped(st: &mut State) {
-    st.landscape_pending = None;
-    st.landscape_offer = None;
+    st.develop.landscape_pending = None;
+    st.develop.landscape_offer = None;
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
@@ -258,20 +263,20 @@ mod tests {
         app.set_panel_tab("Masks".into());
         {
             let mut st = state.borrow_mut();
-            st.edit.adjustments.push(greycard_edit::Adjustment {
+            st.develop.edit.adjustments.push(greycard_edit::Adjustment {
                 id: 1,
                 name: "Mask 1".into(),
                 enabled: true,
                 mask: Mask::default(),
                 look: Default::default(),
             });
-            st.target = Some(0);
+            st.develop.target = Some(0);
         }
         (app, state, worker)
     }
 
     fn shapes(st: &State) -> Vec<Shape> {
-        st.edit.adjustments[0]
+        st.develop.edit.adjustments[0]
             .mask
             .components
             .iter()
@@ -331,12 +336,12 @@ mod tests {
     fn what_is_found_is_offered_and_a_pick_makes_it() {
         let (app, state, _worker) = masks();
         let mut st = state.borrow_mut();
-        st.landscape_pending = Some(Pending {
+        st.develop.landscape_pending = Some(Pending {
             id: 1,
             mode: Mode::Subtract,
         });
         found(&mut st, &app, None, Ok((coast(), "WebGPU", 0.42)));
-        assert!(st.landscape_pending.is_none());
+        assert!(st.develop.landscape_pending.is_none());
         assert_eq!(
             strings(app.get_landscape_offers()),
             ["Foliage 33%", "Sky 25%", "Water 17%"]
@@ -349,10 +354,10 @@ mod tests {
         assert_eq!(app.get_status(), "3 shapes found on WebGPU in 0.42 s");
         assert!(chosen(&mut st, &app, "Water"));
         // The mask's first shape is Add, whatever the row said.
-        let c = &st.edit.adjustments[0].mask.components[0];
+        let c = &st.develop.edit.adjustments[0].mask.components[0];
         assert_eq!(c.shape, Shape::of_kind("Water"));
         assert_eq!(c.mode, Mode::Add);
-        assert_eq!(st.edit.adjustments[0].name, "Water 1");
+        assert_eq!(st.develop.edit.adjustments[0].name, "Water 1");
         assert_eq!(app.get_status(), "finding the water");
         // The menu's offer is spent: a second pick from a stale menu
         // makes nothing.
@@ -360,13 +365,13 @@ mod tests {
         assert_eq!(shapes(&st).len(), 1);
         // Pressed again, the sky from it is a sky, joined by the mode
         // the button was pressed with.
-        st.landscape_pending = Some(Pending {
+        st.develop.landscape_pending = Some(Pending {
             id: 1,
             mode: Mode::Subtract,
         });
         found(&mut st, &app, None, Ok((coast(), "WebGPU", 0.01)));
         assert!(chosen(&mut st, &app, "Sky"));
-        let c = &st.edit.adjustments[0].mask.components[1];
+        let c = &st.develop.edit.adjustments[0].mask.components[1];
         assert_eq!(c.shape, Shape::Sky { picks: Vec::new() });
         assert_eq!(c.mode, Mode::Subtract);
     }
@@ -375,13 +380,13 @@ mod tests {
     fn nothing_found_says_so_and_opens_nothing() {
         let (app, state, _worker) = masks();
         let mut st = state.borrow_mut();
-        st.landscape_pending = Some(Pending {
+        st.develop.landscape_pending = Some(Pending {
             id: 1,
             mode: Mode::Add,
         });
         found(&mut st, &app, None, Ok((Vec::new(), "CPU", 0.3)));
         assert!(!app.get_landscape_menu_shown());
-        assert!(st.landscape_offer.is_none());
+        assert!(st.develop.landscape_offer.is_none());
         assert!(
             app.get_status().starts_with("no landscape found in "),
             "{}",
@@ -397,8 +402,8 @@ mod tests {
         let (app, state, _worker) = masks();
         let mut st = state.borrow_mut();
         found(&mut st, &app, None, Ok((coast(), "CPU", 0.3)));
-        assert!(!app.get_landscape_menu_shown() && st.landscape_offer.is_none());
-        st.landscape_pending = Some(Pending {
+        assert!(!app.get_landscape_menu_shown() && st.develop.landscape_offer.is_none());
+        st.develop.landscape_pending = Some(Pending {
             id: 1,
             mode: Mode::Add,
         });
@@ -408,14 +413,14 @@ mod tests {
             Some(PathBuf::from("/elsewhere/another.CR3")),
             Ok((coast(), "CPU", 0.3)),
         );
-        assert!(!app.get_landscape_menu_shown() && st.landscape_offer.is_none());
+        assert!(!app.get_landscape_menu_shown() && st.develop.landscape_offer.is_none());
         // Escape puts a press down with the rest.
-        st.landscape_pending = Some(Pending {
+        st.develop.landscape_pending = Some(Pending {
             id: 1,
             mode: Mode::Add,
         });
         crate::panel::parts::stopped(&mut st);
-        assert!(st.landscape_pending.is_none());
+        assert!(st.develop.landscape_pending.is_none());
     }
 
     /// Delivered as the worker delivers it: the menu's model and its
@@ -423,7 +428,7 @@ mod tests {
     #[test]
     fn the_worker_s_answer_reaches_the_menu() {
         let (app, state, _worker) = masks();
-        state.borrow_mut().landscape_pending = Some(Pending {
+        state.borrow_mut().develop.landscape_pending = Some(Pending {
             id: 1,
             mode: Mode::Add,
         });
@@ -435,7 +440,7 @@ mod tests {
             },
         );
         assert_eq!(app.get_landscape_offers().row_count(), 3);
-        assert!(state.borrow().landscape_offer.is_some());
+        assert!(state.borrow().develop.landscape_offer.is_some());
     }
 
     /// The button sits beside Sky and its menu is what was found, each
@@ -462,10 +467,10 @@ mod tests {
     fn a_press_without_the_model_says_so() {
         let (app, state, _worker) = masks();
         let mut st = state.borrow_mut();
-        st.store = None;
-        st.declined.push(greycard_ai::SKY.id);
+        st.develop.store = None;
+        st.sheets.declined.push(greycard_ai::SKY.id);
         pressed(&mut st, &app, "Add");
-        assert!(st.landscape_pending.is_none());
+        assert!(st.develop.landscape_pending.is_none());
         assert_eq!(app.get_status(), DECLINED);
     }
 
@@ -476,15 +481,15 @@ mod tests {
     fn a_press_during_a_download_waits_for_it() {
         let (app, state, _worker) = masks();
         let mut st = state.borrow_mut();
-        st.store = None;
-        st.fetching = true;
+        st.develop.store = None;
+        st.sheets.fetching = true;
         pressed(&mut st, &app, "Add");
-        assert!(st.landscape_pending.is_some(), "the press waits");
+        assert!(st.develop.landscape_pending.is_some(), "the press waits");
         assert_eq!(app.get_status(), WAITING);
-        st.fetching = false;
-        st.fetch_failed.push(greycard_ai::SKY.id);
+        st.sheets.fetching = false;
+        st.sheets.fetch_failed.push(greycard_ai::SKY.id);
         resume(&mut st, &app);
-        assert!(st.landscape_pending.is_none());
+        assert!(st.develop.landscape_pending.is_none());
         assert_eq!(
             app.get_status(),
             "the Sky model could not be fetched this session"

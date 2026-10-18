@@ -153,13 +153,13 @@ pub(crate) fn read_export_settings(app: &App) -> export::Settings {
 /// Keep the presets in the settings file now, not at the window's
 /// close: a preset is worth keeping even from a session that ends
 /// badly. Not from a snapshot or a batch run, which have no file to
-/// write (`State::settings_file`).
+/// write (`Window::settings_file`).
 fn keep_presets(st: &State, app: &App) {
-    let Some(path) = &st.settings_file else {
+    let Some(path) = &st.window.settings_file else {
         return;
     };
     let mut settings = settings::Settings::load_from(path);
-    settings.export_presets = st.export_presets.clone();
+    settings.export_presets = st.work.export_presets.clone();
     settings.export_preset = chosen_preset(app).unwrap_or_default();
     settings.export = read_sheet(app);
     settings.save_to(path);
@@ -173,7 +173,8 @@ fn keep_presets(st: &State, app: &App) {
 /// (`check_folder`), and a chooser opened on one gone since opens on
 /// its nearest parent (`export::ask`).
 pub(crate) fn sheet_folder(st: &State, raw: &Path) -> PathBuf {
-    st.export_last_folder
+    st.work
+        .export_last_folder
         .clone()
         .or_else(|| raw.parent().map(Path::to_path_buf))
         .unwrap_or_default()
@@ -182,11 +183,11 @@ pub(crate) fn sheet_folder(st: &State, raw: &Path) -> PathBuf {
 /// A chooser answered with `folder`: exports go there and the next
 /// chooser opens there, in this run and, written at once as a preset
 /// is, in the next; the sheet's Folder row reads it again. Not
-/// written from a snapshot or a batch run (`State::settings_file`).
+/// written from a snapshot or a batch run (`Window::settings_file`).
 pub(crate) fn remember_export_last_folder(st: &mut State, app: &App, folder: &Path) {
-    st.export_last_folder = Some(folder.to_path_buf());
+    st.work.export_last_folder = Some(folder.to_path_buf());
     app.set_export_folder_turn(app.get_export_folder_turn().wrapping_add(1));
-    let Some(path) = &st.settings_file else {
+    let Some(path) = &st.window.settings_file else {
         return;
     };
     let mut settings = settings::Settings::load_from(path);
@@ -221,19 +222,20 @@ pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
                 seconds * 1000.0
             );
             count_thumb(st, index, Some(cached), seconds);
-            st.thumb_base[index] = Some((width, height, rgb));
-            st.thumb_made[index] = size;
-            st.thumb_failed[index] = false;
+            st.views.thumb_base[index] = Some((width, height, rgb));
+            st.views.thumb_made[index] = size;
+            st.views.thumb_failed[index] = false;
             // One that was being made when the cells grew comes back
             // at the old size. Nothing else would ask for it again
             // until the grid next moved, and a snapshot waiting on
             // the grid would wait for ever, so ask here.
-            if grid::wants_bigger(size, st.thumb_want)
+            if grid::wants_bigger(size, st.views.thumb_want)
                 && st
+                    .views
                     .grid_shown
                     .is_some_and(|(f, l)| (f..=l).contains(&(index as i32)))
             {
-                st.thumb_asked[index] = st.thumb_want;
+                st.views.thumb_asked[index] = st.views.thumb_want;
                 let job = crate::rows::thumb_job(st, index);
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
@@ -342,7 +344,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             blend,
         } => {
             let mut st = state.borrow_mut();
-            if generation != st.generation {
+            if generation != st.develop.generation {
                 return;
             }
             // A fresh raw's learned-denoiser blend from its ISO: into
@@ -356,45 +358,46 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             {
                 // The overrides' edit is the panel's, seed and all.
                 let file = st.path_at(i).cloned();
-                if let Some((f, e)) = st.overridden.as_mut()
+                if let Some((f, e)) = st.launch.overridden.as_mut()
                     && file.as_ref() == Some(f)
                 {
                     e.noise.learned_strength = b;
                 }
-                st.edit.noise.learned_strength = b;
+                st.develop.edit.noise.learned_strength = b;
                 app.set_denoise_learned_strength(b);
             }
-            st.frame = frame.zip(profile);
+            st.develop.frame = frame.zip(profile);
             // The camera the file names, and what the profile
             // directory holds for it: read on open, not on develop.
-            st.camera = st
+            st.develop.camera = st
+                .develop
                 .frame
                 .as_ref()
                 .map(|(f, _)| (f.make.clone(), f.model.clone()))
                 .unwrap_or_default();
-            st.profiles = greycard_edit::camera::list();
-            st.looks = greycard_edit::look::list();
+            st.develop.profiles = greycard_edit::camera::list();
+            st.develop.looks = greycard_edit::look::list();
             // Read on each open, so a look or a profile changed by hand
             // since is caught here too.
             crate::edited::looks_moved(&mut st);
             // Another file, so the embedded profile behind the
             // white balance is another one too.
-            st.white_profile = None;
-            show_profiles(&st, &st.edit.camera.profile, app);
+            st.develop.white_profile = None;
+            show_profiles(&st, &st.develop.edit.camera.profile, app);
             // After the directory is read, not before: `show_edit`
             // ran earlier in this arm, when there was nothing to list.
-            show_looks(&st, &st.edit.look_lut, app);
+            show_looks(&st, &st.develop.edit.look_lut, app);
             app.set_shot_camera(shot.camera.as_str().into());
             app.set_shot_exposure(shot.exposure.as_str().into());
             match &kind {
                 SourceKind::Raw => {
-                    st.source = finish::Source::Scene;
+                    st.develop.source = finish::Source::Scene;
                     app.set_raw_input(true);
                     app.set_source_note("".into());
                     // The learned denoiser has no X-Trans version yet:
                     // the section says so and its tiers rest, while the
                     // profiled denoise works as on any raw.
-                    let xtrans = st.frame.as_ref().is_some_and(|(f, _)| {
+                    let xtrans = st.develop.frame.as_ref().is_some_and(|(f, _)| {
                         matches!(&f.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans())
                     });
                     app.set_noise_unavailable("".into());
@@ -408,7 +411,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     );
                     // The raw's mosaic, now known from its pixels: the
                     // menu, if the worker's read ahead had not said.
-                    let mosaic = match st.frame.as_ref().map(|(f, _)| &f.layout) {
+                    let mosaic = match st.develop.frame.as_ref().map(|(f, _)| &f.layout) {
                         Some(greycard_core::raw::SensorLayout::Cfa(p)) => {
                             crate::panel::browser::OpenMosaic::Known(p.mosaic())
                         }
@@ -420,7 +423,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     }
                 }
                 SourceKind::Picture { space, bits } => {
-                    st.source = finish::Source::Display;
+                    st.develop.source = finish::Source::Display;
                     app.set_raw_input(false);
                     app.set_noise_unavailable("raw only".into());
                     app.set_learned_unavailable("".into());
@@ -444,15 +447,15 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if matches!(lens, LensReport::NoDatabase) {
                 offer_lenses_once(&mut st, app);
             }
-            st.lens = lens;
-            st.white_cache = None;
+            st.develop.lens = lens;
+            st.develop.white_cache = None;
             // Show the frame's own white balance on the sliders, so a
             // custom setting starts from it.
-            if st.edit.white_balance == WhiteBalance::AsShot {
+            if st.develop.edit.white_balance == WhiteBalance::AsShot {
                 app.set_temperature(as_shot.0 as f32);
                 app.set_tint(as_shot.1 as f32);
             }
-            if let Some(t) = st.preview_temperature.take() {
+            if let Some(t) = st.launch.preview_temperature.take() {
                 app.set_as_shot(false);
                 app.set_temperature(t);
             }
@@ -474,13 +477,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         } => {
             release_thumbnails();
             let mut st = state.borrow_mut();
-            if generation != st.generation {
+            if generation != st.develop.generation {
                 return;
             }
-            if st.cull.is_some() {
+            if st.culling.cull.is_some() {
                 // Culling takes the develop and not its planes: a mask's
                 // Detail asks again when the panel is back.
-                st.planes_asked = Default::default();
+                st.develop.planes_asked = Default::default();
                 return;
             }
             // The saved edit's pictures, from this develop.
@@ -506,15 +509,15 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 show_history(&st, app);
             }
             // The picture held from the last file gives way, fitted.
-            if st.held.take().is_some() {
-                st.zoom = 0.0;
+            if st.develop.held.take().is_some() {
+                st.develop.zoom = 0.0;
             }
             // A new source, or a fit view, is centered on the next
             // frame, by the render, which knows the frame's size (the
             // crop's, not the source's); a zoomed view of the same
             // source keeps its place.
-            if st.zoom == 0.0 || st.source_size != (image.width(), image.height()) {
-                st.image_size = (0, 0);
+            if st.develop.zoom == 0.0 || st.develop.source_size != (image.width(), image.height()) {
+                st.develop.image_size = (0, 0);
             }
             let dehazed = match dehaze {
                 Some(d) => format!(
@@ -547,7 +550,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     format!(", learned denoiser from the cache in {seconds:.1} s")
                 }
                 LearnedReport::Missing(model) => {
-                    if st.fetch.is_none() && !st.fetching && !st.declined.contains(&model.id) {
+                    if st.sheets.fetch.is_none()
+                        && !st.sheets.fetching
+                        && !st.sheets.declined.contains(&model.id)
+                    {
                         offer_model(&mut st, app, model, false);
                     }
                     ", the engine's denoise until the model is fetched".to_string()
@@ -579,7 +585,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     }
                 ));
                 let model = &greycard_ai::FILL;
-                if st.fetch.is_none() && !st.fetching && !st.declined.contains(&model.id) {
+                if st.sheets.fetch.is_none()
+                    && !st.sheets.fetching
+                    && !st.sheets.declined.contains(&model.id)
+                {
                     offer_model(&mut st, app, model, false);
                 }
             }
@@ -600,6 +609,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // `take_current` clears it outright once a newer develop
             // is asked for, before it can sit and wait for one.
             let prefix = st
+                .develop
                 .status_after_develop
                 .take_if(|(g, _)| *g == generation)
                 .map(|(_, s)| format!("{s}; "))
@@ -626,11 +636,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // The picture the viewport draws from the next frame on,
             // whether it takes a camera picture's place or stands
             // where the last frame's develop stood.
-            st.shown_size = (image.width(), image.height());
-            st.shown_turn = st.current.map(|c| (c, turn % 4));
-            st.planes_wants = planes.as_ref().map(|p| p.wants).unwrap_or_default();
-            st.planes_asked = Default::default();
-            st.pending = Some(Landed {
+            st.develop.shown_size = (image.width(), image.height());
+            st.develop.shown_turn = st.current.map(|c| (c, turn % 4));
+            st.develop.planes_wants = planes.as_ref().map(|p| p.wants).unwrap_or_default();
+            st.develop.planes_asked = Default::default();
+            st.develop.pending = Some(Landed {
                 image,
                 guide,
                 planes,
@@ -645,19 +655,19 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // event loop. Cleared in the callback, so the capture
             // this develop would otherwise be caught by waits for
             // the turn's own develop.
-            if let Some(quarters) = st.turn_at_start {
+            if let Some(quarters) = st.launch.turn_at_start {
                 let app_weak = app.as_weak();
                 let state = state.clone();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                     if let Some(app) = app_weak.upgrade() {
-                        state.borrow_mut().turn_at_start = None;
+                        state.borrow_mut().launch.turn_at_start = None;
                         app.invoke_frame_turned(quarters);
                     }
                 });
             } else {
                 // This develop is the turn's own (or there was never
                 // a turn to wait for): a capture may go.
-                st.awaiting_turn = false;
+                st.launch.awaiting_turn = false;
             }
         }
         Outcome::Mosaic { path, mosaic } => {
@@ -668,7 +678,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         Outcome::Filling { generation, name } => {
             // The outline on the viewport says where; this says why
             // the picture has not moved yet.
-            if generation == state.borrow().generation {
+            if generation == state.borrow().develop.generation {
                 app.set_status(format!("developing... the fill model is at work on {name}").into());
             }
         }
@@ -680,7 +690,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let mut st = state.borrow_mut();
             // Recorded whether or not the develop is still the wanted one.
             tracing::error!("failed: {message}");
-            if generation == st.generation {
+            if generation == st.develop.generation {
                 app.set_status(format!("failed: {message}").into());
                 app.set_busy(false);
                 // An open that failed before anything said what the raw
@@ -688,19 +698,19 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 crate::panel::browser::mosaic_unreadable(&mut st, app);
                 // The planes it was asked for are not coming: a mask's
                 // Detail moved again asks for them again.
-                st.planes_asked = Default::default();
+                st.develop.planes_asked = Default::default();
                 // Nothing is coming: the old picture shows the panel's
                 // look, and a camera picture standing in for a develop
                 // that failed comes down with it.
                 let stood_in = develop_landed(&mut st, app, generation);
-                if st.held.take().is_some() || stood_in {
+                if st.develop.held.take().is_some() || stood_in {
                     app.window().request_redraw();
                 }
                 // A snapshot, a screenshot or an export waits for a
                 // picture that will never arrive; end the run instead
                 // of hanging on it.
-                if st.batch {
-                    st.failed = true;
+                if st.window.batch {
+                    st.launch.failed = true;
                     let _ = slint::quit_event_loop();
                 }
             }
@@ -719,12 +729,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // A Whole person run with Subject's edge: the worker has
             // Subject loaded.
             if crate::ai::takes_subject_edge(&shape) && provider.is_some() && note.is_none() {
-                st.edge_loaded = true;
+                st.sheets.edge_loaded = true;
             }
             // Made on a frame opened before this one: that frame's. The
             // key and the shape may well be this frame's too (a mask
             // pasted across), and its own is asked for already.
-            if file.is_some() && st.learned_of.is_some() && file != st.learned_of {
+            if file.is_some() && st.develop.learned_of.is_some() && file != st.develop.learned_of {
                 tracing::debug!(
                     "mask: a {} raster of {} is not the open frame's",
                     shape.name(),
@@ -732,8 +742,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 );
                 return;
             }
-            st.asked.remove(&key);
-            st.masks_failed.remove(&key);
+            st.develop.asked.remove(&key);
+            st.develop.masks_failed.remove(&key);
             // A Part asking which person it is of here: the picking,
             // with the people outlined; settled, it asks no more. An
             // ask made on a picture no longer open is that picture's.
@@ -747,7 +757,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
                 Some(crate::ai::Unresolved::Ask(_)) => {}
                 _ => {
-                    st.part_asks.remove(&key);
+                    st.develop.part_asks.remove(&key);
                 }
             }
             let name = shape.name().to_lowercase();
@@ -756,6 +766,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // when showing a mask it is no longer part of would be a
             // surprise.
             let live = st
+                .develop
                 .edit
                 .adjustments
                 .iter()
@@ -776,7 +787,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             {
                 app.set_show_mask(true);
             }
-            st.learned.insert(key, (shape, raster));
+            st.develop.learned.insert(key, (shape, raster));
             // A sky the gate did not find is said every time, cached or
             // not: the empty mask is the answer, not a failure.
             if let Some(note) = note {
@@ -799,10 +810,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         Outcome::MaskFailed { key, message } => {
             let mut st = state.borrow_mut();
             tracing::error!("mask: {message}");
-            if let Some(shape) = st.asked.get(&key).cloned() {
+            if let Some(shape) = st.develop.asked.get(&key).cloned() {
                 app.set_status(format!("mask: {message}").into());
-                let file = st.learned_of.clone();
-                st.masks_failed.insert(key, (shape, file));
+                let file = st.develop.learned_of.clone();
+                st.develop.masks_failed.insert(key, (shape, file));
                 // A capture waiting on this shape is waiting no more.
                 app.window().request_redraw();
             }
@@ -820,10 +831,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         }
         Outcome::Fetched { model } => {
             let mut st = state.borrow_mut();
-            st.fetching = false;
-            st.asked.clear();
-            st.masks_failed.clear();
-            st.fetch_failed.retain(|id| *id != model.id);
+            st.sheets.fetching = false;
+            st.develop.asked.clear();
+            st.develop.masks_failed.clear();
+            st.sheets.fetch_failed.retain(|id| *id != model.id);
             let short = model.name.split(',').next().unwrap_or(model.name);
             app.set_status(format!("{short} is ready").into());
             if model.id == greycard_ai::SAM3.id {
@@ -839,9 +850,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if model.id == greycard_ai::SUBJECT.id || model.id == greycard_ai::SUBJECT_WEBGPU.id {
                 // A Whole person made meanwhile with SAM's edge is
                 // asked for again, for Subject's.
-                st.learned
+                st.develop
+                    .learned
                     .retain(|_, (s, _)| !crate::ai::takes_subject_edge(s));
-                st.edge_loaded = false;
+                st.sheets.edge_loaded = false;
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
                         w.forget_subject();
@@ -851,6 +863,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // A denoiser the edit is waiting for, or the fill model
             // with a fill to make: develop again with it.
             let denoiser = st
+                .develop
                 .edit
                 .noise
                 .learned
@@ -858,23 +871,24 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .and_then(greycard_ai::denoiser)
                 .is_some_and(|m| m.id == model.id);
             let fill = model.id == greycard_ai::FILL.id
-                && st.edit.retouch.enabled
+                && st.develop.edit.retouch.enabled
                 && st
+                    .develop
                     .edit
                     .retouch
                     .patches
                     .iter()
                     .any(|p| p.method == RetouchMethod::Fill);
-            if (denoiser || fill) && st.cull.is_none() {
-                st.generation += 1;
+            if (denoiser || fill) && st.culling.cull.is_none() {
+                st.develop.generation += 1;
                 app.set_status("developing...".into());
                 app.set_busy(true);
                 let turn = current_turn(&st);
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
                         w.send(Job::Develop {
-                            edit: st.edit.clone(),
-                            generation: st.generation,
+                            edit: st.develop.edit.clone(),
+                            generation: st.develop.generation,
                             turn,
                         });
                     }
@@ -884,11 +898,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         }
         Outcome::FetchFailed { id, name, message } => {
             let mut st = state.borrow_mut();
-            st.fetching = false;
+            st.sheets.fetching = false;
             tracing::error!("{name} could not be fetched: {message}");
-            let status = crate::panel::mask::fetch_failed(&mut st.fetch_failed, id, name, &message);
+            let status =
+                crate::panel::mask::fetch_failed(&mut st.sheets.fetch_failed, id, name, &message);
             app.set_status(status.into());
-            if st.landscape_pending.is_some() {
+            if st.develop.landscape_pending.is_some() {
                 crate::panel::landscape::resume(&mut st, app);
             }
             // The masks waiting on it are asked about again, and may
@@ -913,20 +928,20 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         }
         Outcome::LensesFetched => {
             let mut st = state.borrow_mut();
-            st.fetching = false;
+            st.sheets.fetching = false;
             app.set_status("the lens profiles are ready".into());
             // The develop keys in the index were made with the old
             // database; the next pass over each folder makes them anew.
-            if let Some(indexer) = &st.index {
+            if let Some(indexer) = &st.views.index {
                 indexer.keys_stale();
             }
             // The worker looks the open file up again on its next
             // open; ask it now, so the panel says what it found. Not
             // in culling, whose leaving opens the file anyway.
-            if let Some(i) = st.current.filter(|_| st.cull.is_none()) {
-                st.generation += 1;
+            if let Some(i) = st.current.filter(|_| st.culling.cull.is_none()) {
+                st.develop.generation += 1;
                 app.set_busy(true);
-                let edit = st.edit.clone();
+                let edit = st.develop.edit.clone();
                 let job = crate::panel::browser::open_job(&mut st, i, edit);
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
@@ -937,7 +952,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         }
         Outcome::LensesFetchFailed { message } => {
             let mut st = state.borrow_mut();
-            st.fetching = false;
+            st.sheets.fetching = false;
             tracing::error!("the lens profiles could not be fetched: {message}");
             app.set_status(format!("the lens profiles could not be fetched: {message}").into());
         }
@@ -975,7 +990,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     // what it went without.
                     if set.total == 1 {
                         let line = exported_line(&path, seconds, note.as_deref(), &left_out);
-                        state.borrow_mut().export_one_line = Some((set.clone(), line));
+                        state.borrow_mut().work.export_one_line = Some((set.clone(), line));
                     }
                     crate::panel::history::record_export(
                         &mut state.borrow_mut(),
@@ -992,7 +1007,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     if set.total == 1 {
                         let line =
                             format!("{} is there already: nothing exported", file_name(&path));
-                        state.borrow_mut().export_one_line = Some((set.clone(), line));
+                        state.borrow_mut().work.export_one_line = Some((set.clone(), line));
                     }
                 }
                 // One line for the frame; the rest of the set goes on.
@@ -1006,6 +1021,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         Outcome::SetDone { set, tally } => {
             let mut st = state.borrow_mut();
             let one = st
+                .work
                 .export_one_line
                 .take()
                 .filter(|(of, _)| Arc::ptr_eq(of, &set) && set.total == 1)
@@ -1025,7 +1041,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 tracing::warn!("{line}");
             }
             if exporting(&st, &set) {
-                st.exporting = None;
+                st.work.exporting = None;
                 app.set_export_running(false);
                 app.set_export_stopping(false);
                 app.set_status(line.clone().into());
@@ -1060,8 +1076,8 @@ pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetF
         .filter_map(|c| {
             // The panel is the current frame's outside culling only:
             // in it, the panel is no frame's (`save_edit`).
-            let edit = if Some(c) == st.current && st.cull.is_none() {
-                read_edit(app, &st.edit, st.target)
+            let edit = if Some(c) == st.current && st.culling.cull.is_none() {
+                read_edit(app, &st.develop.edit, st.develop.target)
             } else {
                 st.line(c)?.current.clone()
             };
@@ -1122,7 +1138,10 @@ pub(crate) fn left_out_words(n: usize) -> String {
 /// Whether `set` is the one the window is exporting, rather than one
 /// it has already let go of.
 fn exporting(st: &State, set: &Arc<queue::Set>) -> bool {
-    st.exporting.as_ref().is_some_and(|s| Arc::ptr_eq(s, set))
+    st.work
+        .exporting
+        .as_ref()
+        .is_some_and(|s| Arc::ptr_eq(s, set))
 }
 
 /// Send `frames` to the worker as a set, into `folder`, or with none
@@ -1140,13 +1159,13 @@ pub(crate) fn start_set(
     on_exists: export::OnExists,
     preset: Option<String>,
 ) -> Option<Arc<queue::Set>> {
-    st.export_choosing = false;
+    st.work.export_choosing = false;
     // Nothing to write would never be said done: the spinner would run
     // and a batch run would wait for ever.
     if frames.is_empty() {
         app.set_status("nothing to export".into());
-        if st.batch {
-            st.failed = true;
+        if st.window.batch {
+            st.launch.failed = true;
             let _ = slint::quit_event_loop();
         }
         return None;
@@ -1191,7 +1210,7 @@ pub(crate) fn start_set(
     app.set_status(format!("exporting {}...", queue::frames(frames.len())).into());
     app.set_export_running(true);
     app.set_export_stopping(false);
-    st.exporting = Some(set.clone());
+    st.work.exporting = Some(set.clone());
     WORKER.with(|w| {
         if let Some(w) = &*w.borrow() {
             w.send(Job::ExportSet {
@@ -1257,8 +1276,8 @@ fn start_or_ask(
             app.set_overwrite_open(true);
             app.set_status(format!("{title}: overwrite?").into());
             // One question at a time: another Export waits for this.
-            st.export_choosing = true;
-            st.export_pending = Some(Pending {
+            st.work.export_choosing = true;
+            st.work.export_pending = Some(Pending {
                 frames,
                 folder,
                 sub,
@@ -1275,14 +1294,14 @@ fn start_or_ask(
 /// Increment), 2 overwrite.
 fn overwrite_answered(st: &mut State, app: &App, answer: i32) {
     app.set_overwrite_open(false);
-    let Some(p) = st.export_pending.take() else {
+    let Some(p) = st.work.export_pending.take() else {
         return;
     };
     let on_exists = match answer {
         1 => export::OnExists::Increment,
         2 => export::OnExists::Overwrite,
         _ => {
-            st.export_choosing = false;
+            st.work.export_choosing = false;
             app.set_status("export canceled".into());
             return;
         }
@@ -1453,7 +1472,7 @@ thread_local! {
 fn choose_export_folder(state: &Rc<RefCell<State>>, app: &App) {
     let start = {
         let st = state.borrow();
-        if st.exporting.is_some() || st.export_choosing {
+        if st.work.exporting.is_some() || st.work.export_choosing {
             return;
         }
         let Some(raw) = st.current.and_then(|c| st.path_at(c)) else {
@@ -1465,9 +1484,9 @@ fn choose_export_folder(state: &Rc<RefCell<State>>, app: &App) {
     // the chooser's answer, since the status line shows that last.
     let overtaken = {
         let mut st = state.borrow_mut();
-        st.export_checks += 1;
-        st.export_choosing = true;
-        st.export_looking.take()
+        st.work.export_checks += 1;
+        st.work.export_choosing = true;
+        st.work.export_looking.take()
     };
     app.set_status("choosing the folder exports go to...".into());
     ask_folder(app, start, move |app, chosen| {
@@ -1475,13 +1494,13 @@ fn choose_export_folder(state: &Rc<RefCell<State>>, app: &App) {
             return;
         };
         let mut st = state.borrow_mut();
-        st.export_choosing = false;
+        st.work.export_choosing = false;
         let mut line = match chosen {
             Ok(Some(folder)) => {
                 remember_export_last_folder(&mut st, app, &folder);
                 if !app.get_export_subfolder().trim().is_empty() {
                     app.set_export_subfolder("".into());
-                    show_edited(app, &st.export_presets);
+                    show_edited(app, &st.work.export_presets);
                 }
                 format!("exports go to {}", folder.display())
             }
@@ -1518,7 +1537,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            if let Some(set) = &state.borrow().exporting
+            if let Some(set) = &state.borrow().work.exporting
                 && !set.is_canceled()
             {
                 set.cancel();
@@ -1556,7 +1575,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_export_sheet_changed(move || {
             if let Some(app) = app_weak.upgrade() {
-                show_edited(&app, &state.borrow().export_presets);
+                show_edited(&app, &state.borrow().work.export_presets);
             }
         });
     }
@@ -1568,11 +1587,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let st = state.borrow();
-            if let Some(p) = sheet::find(&st.export_presets, &name) {
+            if let Some(p) = sheet::find(&st.work.export_presets, &name) {
                 show_sheet(&app, &p.sheet);
                 app.set_status(format!("export preset {}", p.name).into());
             }
-            show_presets_picker(&app, &st.export_presets, Some(&name));
+            show_presets_picker(&app, &st.work.export_presets, Some(&name));
             keep_presets(&st, &app);
         });
     }
@@ -1590,8 +1609,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             let mut st = state.borrow_mut();
             let current = read_sheet(&app);
-            if sheet::save_as(&mut st.export_presets, name, &current) {
-                show_presets_picker(&app, &st.export_presets, Some(name));
+            if sheet::save_as(&mut st.work.export_presets, name, &current) {
+                show_presets_picker(&app, &st.work.export_presets, Some(name));
                 keep_presets(&st, &app);
                 app.set_status(format!("export preset {name} saved").into());
             }
@@ -1601,7 +1620,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     {
         let state = state.clone();
         app.on_export_preset_exists(move |name| {
-            sheet::exists(&state.borrow().export_presets, &name)
+            sheet::exists(&state.borrow().work.export_presets, &name)
         });
     }
     // Delete the preset chosen; the sheet keeps its choices.
@@ -1615,8 +1634,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if sheet::delete(&mut st.export_presets, &name) {
-                show_presets_picker(&app, &st.export_presets, None);
+            if sheet::delete(&mut st.work.export_presets, &name) {
+                show_presets_picker(&app, &st.work.export_presets, None);
                 keep_presets(&st, &app);
                 app.set_status(format!("export preset {name} deleted").into());
             }
@@ -1713,7 +1732,7 @@ fn export_frames(
         let st = state.borrow();
         // One set at a time, and one folder asked about for it: a
         // second would start a set the first could not be told from.
-        if st.exporting.is_some() || st.export_choosing {
+        if st.work.exporting.is_some() || st.work.export_choosing {
             return;
         }
     }
@@ -1747,7 +1766,7 @@ pub(crate) fn pressed_frames(
         // export asked for before the mode can land (its request
         // queued behind a read) with the panel no frame's, and the
         // frame takes its sidecar's edit as any other does.
-        let on_screen = st.current == Some(p) && st.cull.is_none();
+        let on_screen = st.current == Some(p) && st.culling.cull.is_none();
         // The frame on screen with a panel that is not its own (its
         // root offline, its sidecar not read): nothing to export, and
         // the worker's open picture is another frame's.
@@ -1756,7 +1775,7 @@ pub(crate) fn pressed_frames(
             return None;
         }
         let edit = if on_screen {
-            let edit = read_edit(app, &st.edit, st.target);
+            let edit = read_edit(app, &st.develop.edit, st.develop.target);
             // What the panel holds is a state first, as for an
             // undo or a snapshot: the export is recorded on the
             // state it was written from once it is done, and a
@@ -1835,9 +1854,9 @@ fn export_gathered(state: &Rc<RefCell<State>>, app: &App, raw: PathBuf, frames: 
     let folder = sheet_folder(&state.borrow(), &raw);
     let check = {
         let mut st = state.borrow_mut();
-        st.export_checks += 1;
-        st.export_looking = Some(folder.clone());
-        st.export_checks
+        st.work.export_checks += 1;
+        st.work.export_looking = Some(folder.clone());
+        st.work.export_checks
     };
     app.set_status(format!("exporting to {}...", folder.display()).into());
     let go = move |app: &App, folder: PathBuf| {
@@ -1864,13 +1883,13 @@ fn export_gathered(state: &Rc<RefCell<State>>, app: &App, raw: PathBuf, frames: 
             let mut st = state.borrow_mut();
             // Overtaken while the folder was looked at, by a later
             // Export or a Choose, which say so themselves.
-            if st.export_checks != check {
+            if st.work.export_checks != check {
                 tracing::info!("a look at {} answered too late", folder.display());
                 return;
             }
-            st.export_looking = None;
+            st.work.export_looking = None;
             // Another export under way since: this one is not started.
-            if st.exporting.is_some() || st.export_choosing {
+            if st.work.exporting.is_some() || st.work.export_choosing {
                 app.set_status("not exported: another export is under way".into());
                 return;
             }
@@ -1880,11 +1899,11 @@ fn export_gathered(state: &Rc<RefCell<State>>, app: &App, raw: PathBuf, frames: 
         };
         tracing::warn!("export folder: {why}");
         app.set_status(format!("{why}: choose another folder").into());
-        state.borrow_mut().export_choosing = true;
+        state.borrow_mut().work.export_choosing = true;
         ask_folder(app, folder, move |app, chosen| {
             if let Some(state) = STATE.with(|s| s.borrow().clone()) {
                 let mut st = state.borrow_mut();
-                st.export_choosing = false;
+                st.work.export_choosing = false;
                 if let Ok(Some(folder)) = &chosen {
                     remember_export_last_folder(&mut st, app, folder);
                 }
@@ -1913,7 +1932,7 @@ mod tests {
         let app = crate::testing::window(1);
         let (state, _worker) = crate::testing::retouch_state(&app);
         // A batch state: nothing here may write the user's settings.
-        state.borrow_mut().batch = true;
+        state.borrow_mut().window.batch = true;
         let web = Sheet {
             size: "2048".into(),
             quality: 85.0,
@@ -1921,15 +1940,15 @@ mod tests {
             mark_text: "© me".into(),
             ..Sheet::default()
         };
-        state.borrow_mut().export_presets = vec![ExportPreset {
+        state.borrow_mut().work.export_presets = vec![ExportPreset {
             name: "Web".into(),
             sheet: web.clone(),
         }];
-        show_presets_picker(&app, &state.borrow().export_presets, None);
+        show_presets_picker(&app, &state.borrow().work.export_presets, None);
         assert_eq!(app.get_export_preset(), NO_PRESET);
         assert_eq!(app.get_export_presets().row_count(), 2);
         // One an older file named "none" is not listed beside None.
-        let mut with_none = state.borrow().export_presets.clone();
+        let mut with_none = state.borrow().work.export_presets.clone();
         with_none.push(ExportPreset {
             name: "none".into(),
             sheet: Sheet::default(),
@@ -1942,7 +1961,7 @@ mod tests {
             .collect();
         assert_eq!(listed, vec![NO_PRESET.to_string(), "Web".to_string()]);
         assert_eq!(app.get_export_preset(), NO_PRESET);
-        show_presets_picker(&app, &state.borrow().export_presets, None);
+        show_presets_picker(&app, &state.borrow().work.export_presets, None);
         assert!(!app.get_export_preset_edited());
 
         // Chosen: the sheet is the preset's, and not edited.
@@ -1966,19 +1985,19 @@ mod tests {
         app.invoke_export_preset_saved(" Small ".into());
         assert_eq!(app.get_export_preset(), "Small");
         assert!(!app.get_export_preset_edited());
-        assert_eq!(state.borrow().export_presets.len(), 2);
-        assert_eq!(state.borrow().export_presets[1].sheet.quality, 70.0);
+        assert_eq!(state.borrow().work.export_presets.len(), 2);
+        assert_eq!(state.borrow().work.export_presets[1].sheet.quality, 70.0);
         // "None" is the picker's, not a name.
         app.invoke_export_preset_saved(NO_PRESET.into());
-        assert_eq!(state.borrow().export_presets.len(), 2);
+        assert_eq!(state.borrow().work.export_presets.len(), 2);
 
         // Deleted: gone, nothing chosen, the sheet as it was.
         app.invoke_export_preset_deleted();
-        assert_eq!(state.borrow().export_presets.len(), 1);
+        assert_eq!(state.borrow().work.export_presets.len(), 1);
         assert_eq!(app.get_export_preset(), NO_PRESET);
         assert_eq!(app.get_export_quality(), 70.0);
         // Nothing was written: the state has no settings file.
-        assert!(state.borrow().settings_file.is_none());
+        assert!(state.borrow().window.settings_file.is_none());
     }
 
     #[test]
@@ -1994,7 +2013,7 @@ mod tests {
             ..settings::Settings::default()
         }
         .save_to(&file);
-        state.borrow_mut().settings_file = Some(file.clone());
+        state.borrow_mut().window.settings_file = Some(file.clone());
         let read = || settings::Settings::load_from(&file);
 
         app.set_export_size("1024".into());
@@ -2051,7 +2070,7 @@ mod tests {
         settings::Settings::default().save_to(&file);
         {
             let mut st = state.borrow_mut();
-            st.settings_file = Some(file.clone());
+            st.window.settings_file = Some(file.clone());
             st.current = Some(0);
         }
         let shown = |p: &Path| p.display().to_string();
@@ -2069,7 +2088,7 @@ mod tests {
             Some(dir.join("shoot"))
         );
         assert_eq!(
-            state.borrow().export_last_folder.as_deref(),
+            state.borrow().work.export_last_folder.as_deref(),
             Some(out.as_path())
         );
         assert_eq!(row(&app, 500), shown(&out));
@@ -2077,7 +2096,7 @@ mod tests {
             settings::Settings::load_from(&file).export_last_folder,
             out.to_string_lossy()
         );
-        assert!(!state.borrow().export_choosing);
+        assert!(!state.borrow().work.export_choosing);
         assert_eq!(app.get_status(), format!("exports go to {}", shown(&out)));
 
         // A cancel leaves it, and the next chooser opens where the
@@ -2097,7 +2116,7 @@ mod tests {
 
         // A preset with a subfolder: beside each original, the
         // remembered folder kept.
-        state.borrow_mut().export_presets = vec![
+        state.borrow_mut().work.export_presets = vec![
             ExportPreset {
                 name: "Beside".into(),
                 sheet: Sheet {
@@ -2148,7 +2167,7 @@ mod tests {
         let (second, _worker) = crate::testing::state_for(&app2, vec![raw.clone()]);
         {
             let mut st = second.borrow_mut();
-            st.export_last_folder = crate::panel::startup::remembered_folder(&kept);
+            st.work.export_last_folder = crate::panel::startup::remembered_folder(&kept);
             st.current = Some(0);
         }
         assert_eq!(row(&app2, 500), shown(&other));
@@ -2183,13 +2202,18 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.export_last_folder = Some(out.clone());
+            st.work.export_last_folder = Some(out.clone());
         }
         ASKED.with(|a| a.borrow_mut().take());
 
         app.invoke_export();
         assert!(ASKED.with(|a| a.borrow().is_none()), "no dialog");
-        let set = state.borrow().exporting.clone().expect("the set, at once");
+        let set = state
+            .borrow()
+            .work
+            .exporting
+            .clone()
+            .expect("the set, at once");
         assert_eq!(set.total, 1);
         assert_eq!(set.folder.as_deref(), Some(out.as_path()));
         assert_eq!(set.sub, None);
@@ -2226,7 +2250,7 @@ mod tests {
             names(&out)
         );
         // Wait for the set to be let go of, as its end would.
-        state.borrow_mut().exporting = None;
+        state.borrow_mut().work.exporting = None;
 
         // That name is there now: under Overwrite, the sheet asks.
         app.set_export_on_exists("Overwrite".into());
@@ -2240,30 +2264,30 @@ mod tests {
             [written.display().to_string()]
         );
         app.invoke_overwrite_answered(0);
-        assert!(state.borrow().exporting.is_none());
+        assert!(state.borrow().work.exporting.is_none());
         app.set_export_on_exists("Increment".into());
 
         // Gone since it was chosen: said, and the chooser asked on it.
         let gone = dir.join("unplugged");
-        state.borrow_mut().export_last_folder = Some(gone.clone());
+        state.borrow_mut().work.export_last_folder = Some(gone.clone());
         app.invoke_export();
         assert_eq!(ASKED.with(|a| a.borrow_mut().take()), Some(gone.clone()));
         assert_eq!(
             app.get_status(),
             format!("not exported: {} is not there", gone.display())
         );
-        assert!(state.borrow().exporting.is_none());
-        assert!(!state.borrow().export_choosing);
+        assert!(state.borrow().work.exporting.is_none());
+        assert!(!state.borrow().work.export_choosing);
         assert!(!gone.exists(), "never made");
         // Answered: there, and it is the folder from now on.
         let again = dir.join("again");
         std::fs::create_dir_all(&again).unwrap();
         CHOSEN.with(|c| *c.borrow_mut() = Some(Some(again.clone())));
         app.invoke_export();
-        let set = state.borrow().exporting.clone().expect("the set");
+        let set = state.borrow().work.exporting.clone().expect("the set");
         assert_eq!(set.folder.as_deref(), Some(again.as_path()));
         assert_eq!(
-            state.borrow().export_last_folder.as_deref(),
+            state.borrow().work.export_last_folder.as_deref(),
             Some(again.as_path())
         );
         let start = Instant::now();
@@ -2271,7 +2295,7 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(60), "written");
             std::thread::sleep(Duration::from_millis(50));
         }
-        state.borrow_mut().exporting = None;
+        state.borrow_mut().work.exporting = None;
 
         // A folder that will not take files: said the same way.
         #[cfg(unix)]
@@ -2282,14 +2306,14 @@ mod tests {
             std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
             // Not where permissions are not kept (root).
             if folder_problem(&locked).is_some() {
-                state.borrow_mut().export_last_folder = Some(locked.clone());
+                state.borrow_mut().work.export_last_folder = Some(locked.clone());
                 app.invoke_export();
                 assert_eq!(ASKED.with(|a| a.borrow_mut().take()), Some(locked.clone()));
                 assert_eq!(
                     app.get_status(),
                     format!("not exported: {} cannot be written to", locked.display())
                 );
-                assert!(state.borrow().exporting.is_none());
+                assert!(state.borrow().work.exporting.is_none());
             }
             std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
@@ -2310,7 +2334,7 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.picked = vec![0, 2];
+            st.views.picked = vec![0, 2];
             st.sidecars[2].current.light.exposure = 1.0;
             st.sidecars[2].turn = 3;
             st.sidecars[1].current.light.exposure = -2.0;
@@ -2336,7 +2360,7 @@ mod tests {
             export::Settings::default(),
             export::OnExists::Increment,
         ));
-        state.borrow_mut().exporting = Some(set.clone());
+        state.borrow_mut().work.exporting = Some(set.clone());
         app.set_export_running(true);
         crate::testing::press(&app, slint::platform::Key::Escape);
         assert!(set.is_canceled());
@@ -2347,7 +2371,7 @@ mod tests {
         );
         // The set collapses on the next Escape, not this one; the
         // next is the window's again though the frame in hand runs on.
-        assert_eq!(state.borrow().picked, vec![0, 2]);
+        assert_eq!(state.borrow().views.picked, vec![0, 2]);
         assert!(app.get_export_stopping());
         app.set_set_count(2);
         crate::testing::press(&app, slint::platform::Key::Escape);
@@ -2363,7 +2387,7 @@ mod tests {
         deliver(&app, Outcome::SetDone { set, tally });
         assert!(!app.get_export_running());
         assert!(!app.get_export_stopping());
-        assert!(state.borrow().exporting.is_none());
+        assert!(state.borrow().work.exporting.is_none());
         assert!(
             app.get_status()
                 .starts_with("export stopped: 1 of 2 exported to"),
@@ -2405,7 +2429,7 @@ mod tests {
         app.set_export_open(false);
         app.invoke_export();
         assert!(app.get_export_open());
-        assert!(state.borrow().exporting.is_none());
+        assert!(state.borrow().work.exporting.is_none());
         assert!(
             app.get_status().starts_with("not exported: the subfolder"),
             "{}",
@@ -2417,8 +2441,8 @@ mod tests {
         app.set_export_on_exists("Skip".into());
         app.invoke_export();
         let st = state.borrow();
-        assert!(!st.export_choosing);
-        let set = st.exporting.as_ref().expect("a set, with no chooser");
+        assert!(!st.work.export_choosing);
+        let set = st.work.exporting.as_ref().expect("a set, with no chooser");
         assert_eq!(set.total, 1);
         assert_eq!(set.folder, None);
         assert_eq!(set.sub.as_deref(), Some(Path::new("export")));
@@ -2464,7 +2488,7 @@ mod tests {
             app.set_export_open(false);
             app.invoke_export();
             assert!(app.get_export_open(), "{typed}");
-            assert!(state.borrow().exporting.is_none(), "{typed}");
+            assert!(state.borrow().work.exporting.is_none(), "{typed}");
         }
     }
 
@@ -2489,14 +2513,17 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.picked = vec![0, 1, 2];
+            st.views.picked = vec![0, 1, 2];
         }
         app.set_export_subfolder("export".into());
         app.set_export_on_exists("Overwrite".into());
         let ask = || {
             app.invoke_export();
             assert!(app.get_overwrite_open());
-            assert!(state.borrow().exporting.is_none(), "nothing written yet");
+            assert!(
+                state.borrow().work.exporting.is_none(),
+                "nothing written yet"
+            );
         };
 
         ask();
@@ -2522,27 +2549,27 @@ mod tests {
         // Another Export waits for the answer.
         app.set_status("".into());
         app.invoke_export();
-        assert!(state.borrow().export_pending.is_some());
+        assert!(state.borrow().work.export_pending.is_some());
         // No: nothing goes, and Export is free again.
         app.invoke_overwrite_answered(0);
         assert!(!app.get_overwrite_open());
         assert_eq!(app.get_status(), "export canceled");
-        assert!(state.borrow().exporting.is_none() && !state.borrow().export_choosing);
+        assert!(state.borrow().work.exporting.is_none() && !state.borrow().work.export_choosing);
 
         // Keep both: the set, under Increment.
         ask();
         app.invoke_overwrite_answered(1);
-        let set = state.borrow().exporting.clone().expect("the set");
+        let set = state.borrow().work.exporting.clone().expect("the set");
         assert_eq!(set.on_exists, export::OnExists::Increment);
         assert_eq!(set.total, 3);
-        state.borrow_mut().exporting = None;
+        state.borrow_mut().work.exporting = None;
 
         // Overwrite: the set, under Overwrite.
         ask();
         app.invoke_overwrite_answered(2);
-        let set = state.borrow().exporting.clone().expect("the set");
+        let set = state.borrow().work.exporting.clone().expect("the set");
         assert_eq!(set.on_exists, export::OnExists::Overwrite);
-        state.borrow_mut().exporting = None;
+        state.borrow_mut().work.exporting = None;
 
         // Nothing there: no question.
         for i in [0, 2] {
@@ -2550,8 +2577,8 @@ mod tests {
         }
         app.invoke_export();
         assert!(!app.get_overwrite_open());
-        assert!(state.borrow().exporting.is_some());
-        state.borrow_mut().exporting = None;
+        assert!(state.borrow().work.exporting.is_some());
+        state.borrow_mut().work.exporting = None;
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -2590,7 +2617,7 @@ mod tests {
         // own, as a swipe out and its swipe back would cancel.
         let view = || {
             let st = state.borrow();
-            (st.zoom, st.center)
+            (st.develop.zoom, st.develop.center)
         };
         // Left of any sheet's card, over the picture.
         let (x, y) = (400.0, 300.0);
@@ -2725,10 +2752,10 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.export_last_folder = Some(dir.clone());
+            st.work.export_last_folder = Some(dir.clone());
         }
         app.invoke_export();
-        let set = state.borrow().exporting.clone().expect("the set");
+        let set = state.borrow().work.exporting.clone().expect("the set");
         assert_eq!(set.total, 1);
         // Taken off the worker's own answers: the frame was renamed and
         // went without a look.
@@ -2775,13 +2802,13 @@ mod tests {
             line.contains(", without one thing the edit names"),
             "{line}"
         );
-        assert!(state.borrow().export_one_line.is_none());
-        assert!(state.borrow().exporting.is_none());
+        assert!(state.borrow().work.export_one_line.is_none());
+        assert!(state.borrow().work.exporting.is_none());
 
         // Skipped under Skip: the file's own line too, not a count of
         // nothing.
         app.invoke_export();
-        let set = state.borrow().exporting.clone().expect("the set");
+        let set = state.borrow().work.exporting.clone().expect("the set");
         let done = |done| Outcome::SetFrameDone {
             set: set.clone(),
             index: 0,
@@ -2807,9 +2834,14 @@ mod tests {
         );
 
         // Two frames: the count, as before.
-        state.borrow_mut().picked = vec![0, 1];
+        state.borrow_mut().views.picked = vec![0, 1];
         app.invoke_export();
-        let set = state.borrow().exporting.clone().expect("the set of two");
+        let set = state
+            .borrow()
+            .work
+            .exporting
+            .clone()
+            .expect("the set of two");
         assert_eq!(set.total, 2);
         let tally = queue::Tally {
             exported: 2,
@@ -2839,18 +2871,18 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.current = Some(0);
-            st.export_last_folder = Some(first.clone());
+            st.work.export_last_folder = Some(first.clone());
         }
         HELD.with(|h| *h.borrow_mut() = Some(Vec::new()));
         app.invoke_export();
-        assert!(state.borrow().exporting.is_none(), "still looking");
-        assert!(!state.borrow().export_choosing, "nothing held up");
+        assert!(state.borrow().work.exporting.is_none(), "still looking");
+        assert!(!state.borrow().work.export_choosing, "nothing held up");
 
         // Choose works meanwhile, and overtakes the look.
         CHOSEN.with(|c| *c.borrow_mut() = Some(Some(second.clone())));
         app.invoke_export_folder_choose();
         assert_eq!(
-            state.borrow().export_last_folder.as_deref(),
+            state.borrow().work.export_last_folder.as_deref(),
             Some(second.as_path())
         );
         assert_eq!(
@@ -2869,21 +2901,21 @@ mod tests {
         // The first answers late: dropped.
         (held.next().unwrap())(&app);
         assert!(
-            state.borrow().exporting.is_none(),
+            state.borrow().work.exporting.is_none(),
             "the late answer starts nothing"
         );
         // The second: the export, into the folder chosen.
         (held.next().unwrap())(&app);
-        let set = state.borrow().exporting.clone().expect("the set");
+        let set = state.borrow().work.exporting.clone().expect("the set");
         assert_eq!(set.folder.as_deref(), Some(second.as_path()));
         set.cancel();
 
         // A look that answers with an export under way since (the
         // queue's, say): not started, and said.
         HELD.with(|h| *h.borrow_mut() = Some(Vec::new()));
-        state.borrow_mut().exporting = None;
+        state.borrow_mut().work.exporting = None;
         app.invoke_export();
-        state.borrow_mut().exporting = Some(set);
+        state.borrow_mut().work.exporting = Some(set);
         let held = HELD.with(|h| h.borrow_mut().take()).expect("held");
         for answer in held {
             answer(&app);

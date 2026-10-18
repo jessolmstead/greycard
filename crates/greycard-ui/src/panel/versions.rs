@@ -14,7 +14,7 @@ use crate::*;
 /// menu, else the cell on screen.
 fn cell_for(st: &State, from_menu: bool) -> Option<usize> {
     if from_menu {
-        st.menu_file.or(st.current)
+        st.views.menu_file.or(st.current)
     } else {
         st.current
     }
@@ -23,8 +23,8 @@ fn cell_for(st: &State, from_menu: bool) -> Option<usize> {
 /// The panel's edit made a state of the frame on screen first, so what
 /// a maker copies or swaps is what the panel shows.
 fn settle_panel(st: &mut State, app: &App) {
-    if st.cull.is_none() && st.current.is_some() {
-        let edit = read_edit(app, &st.edit, st.target);
+    if st.culling.cull.is_none() && st.current.is_some() {
+        let edit = read_edit(app, &st.develop.edit, st.develop.target);
         save_edit(st, edit);
     }
 }
@@ -33,7 +33,7 @@ fn settle_panel(st: &mut State, app: &App) {
 /// culling (the panel is a stand-in there), a delete under way, or a
 /// sidecar that is not in hand. None when it can.
 fn refused(st: &mut State, app: &App, c: usize) -> Option<String> {
-    if st.cull.is_some() {
+    if st.culling.cull.is_some() {
         return Some("a version is made from the editor, not while culling".into());
     }
     unready(st, app, c)
@@ -131,7 +131,7 @@ pub(crate) fn new_version(
 /// The name sheet over version `id` of `path`: the collections' sheet,
 /// its field holding `name`, all of it chosen.
 fn ask_name(st: &mut State, app: &App, path: &Path, id: &str, name: &str, fresh: bool) {
-    st.collections.asked = Some(crate::panel::collections::Asked::Version {
+    st.views.collections.asked = Some(crate::panel::collections::Asked::Version {
         path: path.to_path_buf(),
         id: id.to_string(),
     });
@@ -261,16 +261,16 @@ pub(crate) fn swap(st: &mut State, app: &App, worker: &Worker, from_menu: bool) 
     // from its line as it now is.
     match own {
         Some(own) => {
-            st.thumb_base.swap(own, c);
-            st.thumb_made.swap(own, c);
-            st.thumb_failed.swap(own, c);
+            st.views.thumb_base.swap(own, c);
+            st.views.thumb_made.swap(own, c);
+            st.views.thumb_failed.swap(own, c);
         }
         // The original's picture is not in the list to trade: the
         // version's is made again.
         None => {
-            st.thumb_base[c] = None;
-            st.thumb_made[c] = 0;
-            st.thumb_failed[c] = false;
+            st.views.thumb_base[c] = None;
+            st.views.thumb_made[c] = 0;
+            st.views.thumb_failed[c] = false;
         }
     }
     for g in own.into_iter().chain([c]) {
@@ -339,7 +339,7 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, cells: &[usize]) {
         }
         .into(),
     );
-    st.version_delete = Some(Asked { frames: keys });
+    st.sheets.version_delete = Some(Asked { frames: keys });
     app.set_delete_open(true);
 }
 
@@ -349,7 +349,7 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, cells: &[usize]) {
 pub(crate) fn answered(st: &mut State, app: &App, worker: &Worker, answer: i32) {
     app.set_delete_open(false);
     app.set_delete_confirm("".into());
-    let Some(asked) = st.version_delete.take() else {
+    let Some(asked) = st.sheets.version_delete.take() else {
         return;
     };
     if answer != 1 {
@@ -440,7 +440,7 @@ pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: boo
         return;
     }
     let focus = if set.contains(&c) { c } else { set[0] };
-    if st.cull.is_none() {
+    if st.culling.cull.is_none() {
         // At one up; the set's own count is put on it below.
         crate::panel::cull::enter_cull(st, app, 1);
     }
@@ -449,7 +449,7 @@ pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: boo
             open_row(st, app, worker, row as i32, false);
         }
     } else {
-        st.picked = vec![focus];
+        st.views.picked = vec![focus];
         crate::panel::browser::show_set(st, app);
     }
     fit_compare(st, app, &path, None);
@@ -493,7 +493,7 @@ pub(crate) fn fit_compare(st: &mut State, app: &App, path: &Path, was: Option<us
         Some((set, left, first))
     });
     let Some((set, left, first)) = first else {
-        if let Some(cull) = st.cull.as_mut() {
+        if let Some(cull) = st.culling.cull.as_mut() {
             cull.leave_versions(app);
         }
         // The set placed again about the frame on screen, as an arrow
@@ -508,7 +508,7 @@ pub(crate) fn fit_compare(st: &mut State, app: &App, path: &Path, was: Option<us
     // first of them, where V's views start from if the compare is left.
     let up = set.len().max(1);
     let note = (left > 0).then(|| left_out(left, &file_name(path)));
-    let Some(cull) = st.cull.as_mut() else {
+    let Some(cull) = st.culling.cull.as_mut() else {
         return;
     };
     let changed = was.unwrap_or(cull.compare) != up;
@@ -523,8 +523,8 @@ pub(crate) fn fit_compare(st: &mut State, app: &App, path: &Path, was: Option<us
     app.set_compare_text(up.to_string().into());
     if changed {
         // The tiles are another size: fitted afresh.
-        st.zoom = 0.0;
-        st.image_size = (0, 0);
+        st.develop.zoom = 0.0;
+        st.develop.image_size = (0, 0);
     }
     crate::panel::cull::cull_refresh(st);
     app.window().request_redraw();
@@ -562,7 +562,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
         app.on_version_delete_asked(move || {
             if let Some(app) = app_weak.upgrade() {
                 let mut st = state.borrow_mut();
-                if st.deleting.is_some() {
+                if st.sheets.deleting.is_some() {
                     app.set_status("a delete is still under way".into());
                     return;
                 }
@@ -634,7 +634,7 @@ mod tests {
 
     fn save(app: &App, state: &Rc<RefCell<State>>) {
         let mut st = state.borrow_mut();
-        let edit = read_edit(app, &st.edit, st.target);
+        let edit = read_edit(app, &st.develop.edit, st.develop.target);
         save_edit(&mut st, edit);
     }
 
@@ -674,7 +674,7 @@ mod tests {
                 [(0, None), (1, None), (1, Some(id.clone())), (2, None)]
             );
             assert_eq!(st.version_name(2).as_deref(), Some("Warm"));
-            assert_eq!(st.shown, [0, 1, 2, 3]);
+            assert_eq!(st.views.shown, [0, 1, 2, 3]);
         }
         assert_eq!(
             rows(&app),
@@ -787,8 +787,8 @@ mod tests {
         save(&app, &state);
         {
             let mut st = state.borrow_mut();
-            st.thumb_base[0] = Some((1, 1, vec![0, 0, 0]));
-            st.thumb_base[1] = Some((1, 1, vec![9, 9, 9]));
+            st.views.thumb_base[0] = Some((1, 1, vec![0, 0, 0]));
+            st.views.thumb_base[1] = Some((1, 1, vec![9, 9, 9]));
         }
         app.invoke_frame_menu_asked(1);
         app.invoke_version_swap_asked();
@@ -801,11 +801,11 @@ mod tests {
         assert_eq!(st.version_of(1), Some(id.as_str()), "the id stays");
         assert_eq!(st.version_name(1).as_deref(), Some("Warm"));
         assert_eq!(
-            st.thumb_base[0].as_ref().unwrap().2,
+            st.views.thumb_base[0].as_ref().unwrap().2,
             [9, 9, 9],
             "the pictures trade"
         );
-        assert_eq!(st.thumb_base[1].as_ref().unwrap().2, [0, 0, 0]);
+        assert_eq!(st.views.thumb_base[1].as_ref().unwrap().2, [0, 0, 0]);
         assert_eq!(st.current, Some(1));
         assert_eq!(
             app.get_exposure(),
@@ -864,11 +864,11 @@ mod tests {
         let app = window(1);
         let (dir, files) = disk_folder("versions-delete-two", 1);
         let (state, worker) = state_for(&app, files.clone());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         let warm = version_of(&state, &app, &worker, 0, "Warm");
         let cool = version_of(&state, &app, &worker, 0, "Cool");
         app.invoke_select(1);
-        state.borrow_mut().picked = vec![1, 2];
+        state.borrow_mut().views.picked = vec![1, 2];
         crate::panel::edit::write_file(&mut state.borrow_mut(), 0);
         let saved = state.borrow().sidecars[0].saved;
         app.invoke_delete_asked("selection".into());
@@ -898,7 +898,7 @@ mod tests {
         let warm = version_of(&state, &app, &worker, 0, "Warm");
         let cool = version_of(&state, &app, &worker, 0, "Cool");
         app.invoke_select(0);
-        state.borrow_mut().picked = vec![0, 1, 2];
+        state.borrow_mut().views.picked = vec![0, 1, 2];
         app.invoke_frame_menu_asked(2);
         assert_eq!(app.get_menu_version(), "Cool");
         app.invoke_version_delete_asked();
@@ -1024,7 +1024,7 @@ mod tests {
         let (a, _b, id) = shoot(&dir);
         let app = window(0);
         let (state, worker) = state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         crate::panel::browser::open_folder(&state, &app, &worker, &dir);
         crate::roots::land_sent(&state, &app, &worker);
         {
@@ -1077,9 +1077,9 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-            st.write_sidecars = true;
-            st.library.roots.add(&root).unwrap();
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.window.write_sidecars = true;
+            st.views.library.roots.add(&root).unwrap();
             crate::roots::recount(&mut st);
         }
         crate::roots::open_view(
@@ -1145,9 +1145,9 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-            st.write_sidecars = true;
-            st.library.roots.add(&root).unwrap();
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.window.write_sidecars = true;
+            st.views.library.roots.add(&root).unwrap();
             crate::roots::recount(&mut st);
         }
         crate::roots::open_view(
@@ -1195,9 +1195,9 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-            st.write_sidecars = true;
-            st.library.roots.add(&root).unwrap();
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.window.write_sidecars = true;
+            st.views.library.roots.add(&root).unwrap();
             crate::roots::recount(&mut st);
         }
         crate::roots::open_view(
@@ -1245,7 +1245,7 @@ mod tests {
         let app = window(1);
         let (dir, files) = disk_folder("versions-picture", 1);
         let (state, worker) = state_for(&app, files);
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         let id = version_of(&state, &app, &worker, 0, "Warm");
         let frame_of = |st: &State, c: usize| match crate::rows::thumb_job(st, c) {
             crate::worker::Job::Thumbnail { index, frame } => (index, frame),
@@ -1340,7 +1340,7 @@ mod tests {
         let app = window(2);
         let (dir, files) = disk_folder("versions-key", 2);
         let (state, worker) = state_for(&app, files.clone());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         version_of(&state, &app, &worker, 0, "Warm");
         crate::panel::edit::write_file(&mut state.borrow_mut(), 0);
         app.invoke_select(1);
@@ -1358,7 +1358,7 @@ mod tests {
         }
         // The file and its version chosen together: one write.
         let saved = state.borrow().sidecars[0].saved;
-        state.borrow_mut().picked = vec![0, 1];
+        state.borrow_mut().views.picked = vec![0, 1];
         assert!(app.invoke_meta_key("5".into()));
         let st = state.borrow();
         assert_eq!(st.sidecars[0].meta.rating, 5);
@@ -1379,7 +1379,7 @@ mod tests {
         let app = window(2);
         let (dir, files) = disk_folder("versions-paste", 2);
         let (state, worker) = state_for(&app, files.clone());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         let warm = version_of(&state, &app, &worker, 0, "Warm");
         let cool = version_of(&state, &app, &worker, 0, "Cool");
         app.invoke_select(0);
@@ -1418,7 +1418,7 @@ mod tests {
         app.invoke_copy_asked();
         app.invoke_select(0);
         let saved = state.borrow().sidecars[0].saved;
-        state.borrow_mut().picked = vec![0, 1, 2];
+        state.borrow_mut().views.picked = vec![0, 1, 2];
         app.invoke_paste_asked();
         assert_eq!(app.get_sync_text(), "Onto 3 frames.");
         app.invoke_sync_applied();
@@ -1452,7 +1452,7 @@ mod tests {
         let app = window(1);
         let (dir, files) = disk_folder("versions-read", 1);
         let (state, worker) = state_for(&app, files.clone());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         let id = version_of(&state, &app, &worker, 0, "Warm");
         crate::panel::edit::write_file(&mut state.borrow_mut(), 0);
         let saved = state.borrow().sidecars[0].saved;
@@ -1541,7 +1541,7 @@ mod tests {
         let app = window(2);
         let (dir, files) = disk_folder("versions-vanished", 2);
         let (state, worker) = state_for(&app, files.clone());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         let id = version_of(&state, &app, &worker, 0, "Warm");
         crate::panel::edit::write_file(&mut state.borrow_mut(), 0);
         // The version taken out of the sidecar behind the cells' back.
@@ -1553,7 +1553,7 @@ mod tests {
         app.set_exposure(-0.6);
         app.invoke_copy_asked();
         app.invoke_select(0);
-        state.borrow_mut().picked = vec![0, 1];
+        state.borrow_mut().views.picked = vec![0, 1];
         app.invoke_paste_asked();
         app.invoke_sync_applied();
         let status = app.get_status().to_string();
@@ -1573,7 +1573,7 @@ mod tests {
             assert!(st.sidecars[0].versions.is_empty());
         }
         // A sync from the file's own onto the vanished cell.
-        state.borrow_mut().picked = vec![0, 1];
+        state.borrow_mut().views.picked = vec![0, 1];
         app.invoke_sync_open_asked();
         app.invoke_sync_applied();
         let status = app.get_status().to_string();
@@ -1584,7 +1584,7 @@ mod tests {
         edit.light.exposure = 1.5;
         let preset =
             greycard_edit::Preset::from_edit("Bright", &edit, &[greycard_edit::Section::Light]);
-        state.borrow_mut().picked = vec![0, 1];
+        state.borrow_mut().views.picked = vec![0, 1];
         crate::panel::sync::preset_pressed(&state, &app, &worker, preset);
         let status = app.get_status().to_string();
         assert!(status.contains("moved or is gone"), "{status}");
@@ -1676,14 +1676,14 @@ mod tests {
         let app = window(2);
         let (dir, files) = disk_folder("versions-vanished-key", 2);
         let (state, worker) = state_for(&app, files.clone());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         let id = version_of(&state, &app, &worker, 0, "Warm");
         crate::panel::edit::write_file(&mut state.borrow_mut(), 0);
         state.borrow_mut().sidecars[0].delete_version(&id).unwrap();
         {
             let mut st = state.borrow_mut();
             st.current = Some(1);
-            st.picked = vec![1];
+            st.views.picked = vec![1];
         }
         assert!(app.invoke_meta_key("4".into()));
         {
@@ -1696,15 +1696,15 @@ mod tests {
         // to show or develop.
         let (panel, generation) = {
             let mut st = state.borrow_mut();
-            st.edit.light.exposure = 0.25;
-            (st.edit.clone(), st.generation)
+            st.develop.edit.light.exposure = 0.25;
+            (st.develop.edit.clone(), st.develop.generation)
         };
         app.invoke_frame_turned(1);
         {
             let st = state.borrow();
             assert_eq!(st.sidecars[0].turn, 1, "the file's turn");
-            assert_eq!(st.edit, panel, "the panel's edit as it was");
-            assert_eq!(st.generation, generation, "no develop asked");
+            assert_eq!(st.develop.edit, panel, "the panel's edit as it was");
+            assert_eq!(st.develop.generation, generation, "no develop asked");
         }
         let disk = Sidecar::load(&files[0]).unwrap().unwrap();
         assert_eq!((disk.meta.rating, disk.turn), (4, 1));
@@ -1714,10 +1714,10 @@ mod tests {
 
     /// The cells the compare view shows now, in its order.
     fn compared(st: &State) -> Vec<usize> {
-        let cull = st.cull.as_ref().expect("culling");
-        cull.rows(&st.shown)
+        let cull = st.culling.cull.as_ref().expect("culling");
+        cull.rows(&st.views.shown)
             .into_iter()
-            .map(|r| st.shown[r])
+            .map(|r| st.views.shown[r])
             .collect()
     }
 
@@ -1765,7 +1765,7 @@ mod tests {
         app.invoke_version_compare_asked();
         {
             let st = state.borrow();
-            let cull = st.cull.as_ref().expect("culling entered");
+            let cull = st.culling.cull.as_ref().expect("culling entered");
             assert_eq!(cull.compare, 2);
             assert_eq!(cull.anchor, 1, "anchored on the file");
             assert_eq!(compared(&st), [1, 2]);
@@ -1779,7 +1779,7 @@ mod tests {
         app.invoke_version_compare_asked();
         {
             let st = state.borrow();
-            let cull = st.cull.as_ref().unwrap();
+            let cull = st.culling.cull.as_ref().unwrap();
             assert_eq!(cull.compare, 3);
             assert_eq!(cull.anchor, 4, "on the file's own cell, no slide");
             assert_eq!(compared(&st), [4, 5, 6], "the three and no other");
@@ -1793,7 +1793,7 @@ mod tests {
         crate::testing::press(&app, "v");
         {
             let st = state.borrow();
-            let cull = st.cull.as_ref().unwrap();
+            let cull = st.culling.cull.as_ref().unwrap();
             assert_eq!(cull.compare, 4);
             assert_eq!(cull.versions_of, None, "the view is V's now");
         }
@@ -1806,7 +1806,7 @@ mod tests {
         app.invoke_frame_menu_asked(4);
         app.invoke_version_compare_asked();
         let st = state.borrow();
-        let cull = st.cull.as_ref().unwrap();
+        let cull = st.culling.cull.as_ref().unwrap();
         assert_eq!(cull.compare, 4);
         assert_eq!(compared(&st), [0, 1, 2, 3]);
         assert_eq!(
@@ -1928,10 +1928,10 @@ mod tests {
                 (3, None)
             ]
         );
-        assert!(st.cull.is_some(), "still culling");
+        assert!(st.culling.cull.is_some(), "still culling");
         assert_eq!(st.current, Some(1), "the file's own frame in focus");
-        assert_eq!(st.cull.as_ref().unwrap().anchor, 1);
-        assert_eq!(st.cull.as_ref().unwrap().compare, 2);
+        assert_eq!(st.culling.cull.as_ref().unwrap().anchor, 1);
+        assert_eq!(st.culling.cull.as_ref().unwrap().compare, 2);
         assert_eq!(compared(&st), [1, 2], "the set closed up, no stranger");
         assert_eq!(app.get_compare(), 2);
         assert_eq!(app.get_status(), "deleted the version Warm of IMG_0001.CR3");
@@ -1942,7 +1942,7 @@ mod tests {
         app.invoke_delete_answered(1);
         let st = state.borrow();
         assert!(st.sidecars[1].versions.is_empty());
-        let cull = st.cull.as_ref().expect("still culling");
+        let cull = st.culling.cull.as_ref().expect("still culling");
         assert_eq!(cull.compare, 1);
         assert_eq!(cull.versions_of, None);
         assert_eq!(st.current, Some(1));
@@ -1961,7 +1961,7 @@ mod tests {
         app.invoke_select(2);
         let st = state.borrow();
         assert_eq!(st.current, Some(2));
-        let asked = st.prefetch.asked();
+        let asked = st.culling.prefetch.asked();
         let w = asked.iter().find(|w| w.file == 2).expect("cell 2 asked");
         assert_eq!(w.version.as_deref(), Some(warm.as_str()), "{asked:?}");
         assert_eq!(Some(w.frame()), st.key_of(2), "the delivery is kept");
@@ -1986,20 +1986,29 @@ mod tests {
         for key in ["1", "3", "p", "x", "u", "6", "[", "]", " ", " ", "z", "z"] {
             crate::testing::press(&app, key);
             let st = state.borrow();
-            let cull = st.cull.as_ref().expect("culling");
+            let cull = st.culling.cull.as_ref().expect("culling");
             assert_eq!(cull.compare, 3, "key {key}");
             assert_eq!(compared(&st), [3, 4, 5], "key {key}");
         }
         app.invoke_select(3);
-        assert!(state.borrow().cull.as_ref().unwrap().versions_of.is_some());
+        assert!(
+            state
+                .borrow()
+                .culling
+                .cull
+                .as_ref()
+                .unwrap()
+                .versions_of
+                .is_some()
+        );
         app.invoke_compare_changed(3);
-        assert_eq!(state.borrow().cull.as_ref().unwrap().compare, 3);
+        assert_eq!(state.borrow().culling.cull.as_ref().unwrap().compare, 3);
         app.invoke_version_new_asked(false, false);
         assert_eq!(state.borrow().cells.len(), 6, "no version made in culling");
         // The arrow off the file.
         app.invoke_select(2);
         let st = state.borrow();
-        let cull = st.cull.as_ref().unwrap();
+        let cull = st.culling.cull.as_ref().unwrap();
         assert_eq!(cull.versions_of, None);
         assert_eq!(cull.note, None);
         assert_eq!(cull.compare, 4, "three up is Compare versions' alone");
@@ -2030,7 +2039,7 @@ mod tests {
         version_of(&state, &app, &worker, 2, "Cool");
         let st = state.borrow();
         assert_eq!(compared(&st), [3, 4, 5]);
-        assert_eq!(st.cull.as_ref().unwrap().compare, 3);
+        assert_eq!(st.culling.cull.as_ref().unwrap().compare, 3);
     }
 
     /// Another file taken out of the list under a versions compare (a
@@ -2051,19 +2060,19 @@ mod tests {
         assert_eq!(compared(&state.borrow()), [2, 3, 4]);
         // At 1:1: the renumber under it keeps the zoom, the set coming
         // back at the count it had.
-        state.borrow_mut().zoom = 1.0;
+        state.borrow_mut().develop.zoom = 1.0;
         crate::panel::cull::drop_files(&mut state.borrow_mut(), &app, &worker, &[0], "gone".into());
         {
             let st = state.borrow();
             // The file is file 1 now: its cells 1, 2, 3.
             assert_eq!(compared(&st), [1, 2, 3]);
-            assert_eq!(st.cull.as_ref().unwrap().compare, 3);
+            assert_eq!(st.culling.cull.as_ref().unwrap().compare, 3);
             assert_eq!(st.current, Some(2), "Warm still in focus");
-            assert_eq!(st.zoom, 1.0, "the zoom stands");
+            assert_eq!(st.develop.zoom, 1.0, "the zoom stands");
         }
         crate::panel::cull::drop_files(&mut state.borrow_mut(), &app, &worker, &[1], "gone".into());
         let st = state.borrow();
-        let cull = st.cull.as_ref().unwrap();
+        let cull = st.culling.cull.as_ref().unwrap();
         assert_eq!(cull.versions_of, None);
         assert_eq!(cull.compare, 4);
         assert_eq!(app.get_compare_text(), "4");
@@ -2111,7 +2120,7 @@ mod tests {
         let warm = version_of(&state, &app, &worker, 0, "Warm");
         {
             let mut st = state.borrow_mut();
-            st.collection_frames = Some(vec![
+            st.views.collection_frames = Some(vec![
                 Key::of(&files[0], Some(&warm)),
                 Key::file(&files[1]),
                 Key::of(&files[0], None),
@@ -2125,7 +2134,7 @@ mod tests {
         app.invoke_version_compare_asked();
         {
             let st = state.borrow();
-            let cull = st.cull.as_ref().expect("culling");
+            let cull = st.culling.cull.as_ref().expect("culling");
             assert_eq!(cull.compare, 2);
             assert_eq!(compared(&st), [0, 2], "the file's cells and no other");
             assert_eq!(st.current, Some(0), "Warm in focus");
@@ -2133,12 +2142,12 @@ mod tests {
         // A click on the file's own tile: still its compare.
         app.invoke_select(2);
         assert_eq!(compared(&state.borrow()), [0, 2]);
-        assert!(state.borrow().cull.as_ref().unwrap().set.is_some());
+        assert!(state.borrow().culling.cull.as_ref().unwrap().set.is_some());
         // An arrow onto IMG_0001: the compare is left, V's two up.
         app.invoke_select(1);
         {
             let st = state.borrow();
-            let cull = st.cull.as_ref().unwrap();
+            let cull = st.culling.cull.as_ref().unwrap();
             assert_eq!(cull.set, None);
             assert_eq!(cull.versions_of, None);
             assert_eq!(cull.compare, 2);
@@ -2156,7 +2165,7 @@ mod tests {
         app.invoke_delete_answered(1);
         let st = state.borrow();
         assert!(st.sidecars[0].versions.is_empty());
-        let cull = st.cull.as_ref().expect("still culling");
+        let cull = st.culling.cull.as_ref().expect("still culling");
         assert_eq!(cull.compare, 1);
         assert_eq!(cull.set, None);
         let own = st.cell_of(0, None).unwrap();
@@ -2186,7 +2195,7 @@ mod tests {
             .collect();
         crate::panel::browser::open_loaded(&state, &app, &worker, files, held, true, 0);
         let st = state.borrow();
-        let cull = st.cull.as_ref().expect("still culling");
+        let cull = st.culling.cull.as_ref().expect("still culling");
         assert_eq!(cull.versions_of, None);
         assert_eq!(cull.set, None);
         assert_eq!(cull.note, None);

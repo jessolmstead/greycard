@@ -124,7 +124,7 @@ pub(crate) fn answered_in(file: &Path, dir: &Path) -> bool {
 /// folder under a root that is offline, whose disk may not answer at all
 /// (it is not counted as looked at, so it is looked at once it is back).
 pub(crate) fn folder_opened(st: &mut State, app: &App) {
-    let dir = st.recent.open.clone();
+    let dir = st.views.recent.open.clone();
     if st.rawtherapee.offered.is_some() && st.rawtherapee.offered != dir {
         st.rawtherapee.offered = None;
         app.set_rt_offer("".into());
@@ -133,16 +133,22 @@ pub(crate) fn folder_opened(st: &mut State, app: &App) {
         return;
     };
     let force = st.rawtherapee.force_offer;
-    if st.batch && !force {
+    if st.window.batch && !force {
         return;
     }
     if !force && st.rawtherapee.answered.contains(&dir) {
         return;
     }
-    if !st.write_sidecars {
+    if !st.window.write_sidecars {
         return;
     }
-    if st.library.offline.iter().any(|root| dir.starts_with(root)) {
+    if st
+        .views
+        .library
+        .offline
+        .iter()
+        .any(|root| dir.starts_with(root))
+    {
         return;
     }
     if let Some(&n) = st.rawtherapee.looked.get(&dir) {
@@ -153,7 +159,7 @@ pub(crate) fn folder_opened(st: &mut State, app: &App) {
         return;
     }
     st.rawtherapee.looking = Some(dir.clone());
-    let file = st.settings_file.clone();
+    let file = st.window.settings_file.clone();
     let weak = app.as_weak();
     let spawned = std::thread::Builder::new()
         .name("greycard rawtherapee look".into())
@@ -190,7 +196,7 @@ pub(crate) fn looked(st: &mut State, app: &App, dir: PathBuf, waiting: Option<us
             dir.display()
         );
     }
-    if st.recent.open.as_ref() == Some(&dir) {
+    if st.views.recent.open.as_ref() == Some(&dir) {
         offer(st, app, &dir, n);
     }
 }
@@ -224,7 +230,7 @@ pub(crate) fn remember(st: &mut State, app: &App, dir: &Path) {
     }
     let dir = dir.to_path_buf();
     st.rawtherapee.answered.insert(dir.clone());
-    if let Some(file) = st.settings_file.clone().filter(|_| !st.batch) {
+    if let Some(file) = st.window.settings_file.clone().filter(|_| !st.window.batch) {
         let mut kept = settings::Settings::load_from(&file);
         let spelled = dir.to_string_lossy().into_owned();
         if !kept.rawtherapee_answered.contains(&spelled) {
@@ -251,7 +257,7 @@ fn options(st: &State, app: &App, write: bool) -> rt::Options {
     rt::Options {
         write,
         force: app.get_rt_force(),
-        sidecars_in_folder: Some(st.placement == greycard_edit::Placement::Folder),
+        sidecars_in_folder: Some(st.window.placement == greycard_edit::Placement::Folder),
     }
 }
 
@@ -358,8 +364,10 @@ pub(crate) fn show(st: &State, app: &App) {
         r.held() + r.profiled.iter().filter(|f| f.forced).count()
     });
     app.set_rt_held(held as i32);
-    app.set_rt_ready(st.write_sidecars && report.is_some_and(|r| !r.write && r.to_write() > 0));
-    if !st.write_sidecars && app.get_rt_note().is_empty() {
+    app.set_rt_ready(
+        st.window.write_sidecars && report.is_some_and(|r| !r.write && r.to_write() > 0),
+    );
+    if !st.window.write_sidecars && app.get_rt_note().is_empty() {
         app.set_rt_note(NO_SIDECARS.into());
     }
     if let (Some(r), Some(dir)) = (report, st.rawtherapee.folder.as_deref()) {
@@ -387,7 +395,7 @@ pub(crate) fn write(state: &Rc<RefCell<State>>, app: &App) {
     let Some(dir) = st.rawtherapee.folder.clone() else {
         return;
     };
-    if !st.write_sidecars {
+    if !st.window.write_sidecars {
         app.set_rt_note(NO_SIDECARS.into());
         return;
     }
@@ -436,9 +444,9 @@ pub(crate) fn write(state: &Rc<RefCell<State>>, app: &App) {
 /// write over it. A panel at rest is the sidecar already, and nothing
 /// is written.
 pub(crate) fn write_options(st: &mut State, app: &App) -> rt::Options {
-    if st.current.is_some() && st.cull.is_none() && st.save_timer.running() {
-        st.save_timer.stop();
-        let outgoing = crate::panel::edit::read_edit(app, &st.edit, st.target);
+    if st.current.is_some() && st.culling.cull.is_none() && st.develop.save_timer.running() {
+        st.develop.save_timer.stop();
+        let outgoing = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
         crate::panel::edit::save_edit(st, outgoing);
     }
     options(st, app, true)
@@ -648,11 +656,11 @@ Enabled=true
         let settings_file = dir.join("settings.json");
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         {
             let mut st = state.borrow_mut();
-            st.settings_file = Some(settings_file.clone());
-            st.recent.open = Some(shots.clone());
+            st.window.settings_file = Some(settings_file.clone());
+            st.views.recent.open = Some(shots.clone());
         }
         // The look, as its thread does it: two frames waiting.
         assert!(!answered_in(&settings_file, &shots));
@@ -674,11 +682,11 @@ Enabled=true
             "RawTherapee profiles found beside 2 frames"
         );
         // Another folder open: the bar goes with its folder.
-        state.borrow_mut().recent.open = Some(dir.clone());
+        state.borrow_mut().views.recent.open = Some(dir.clone());
         state.borrow_mut().rawtherapee.looked.insert(dir.clone(), 0);
         folder_opened(&mut state.borrow_mut(), &app);
         assert_eq!(app.get_rt_offer(), "");
-        state.borrow_mut().recent.open = Some(shots.clone());
+        state.borrow_mut().views.recent.open = Some(shots.clone());
         folder_opened(&mut state.borrow_mut(), &app);
         assert_ne!(app.get_rt_offer(), "");
 
@@ -699,8 +707,8 @@ Enabled=true
         assert_eq!(app.get_rt_offer(), "");
         let app2 = crate::testing::window(0);
         let (next, _w) = crate::testing::state_for(&app2, Vec::new());
-        next.borrow_mut().settings_file = Some(settings_file.clone());
-        next.borrow_mut().recent.open = Some(shots.clone());
+        next.borrow_mut().window.settings_file = Some(settings_file.clone());
+        next.borrow_mut().views.recent.open = Some(shots.clone());
         let waiting = (!answered_in(&settings_file, &shots)).then(|| rt::waiting_in(&shots));
         assert_eq!(waiting, None);
         looked(&mut next.borrow_mut(), &app2, shots.clone(), waiting);
@@ -712,10 +720,10 @@ Enabled=true
         let (third, _w) = crate::testing::state_for(&app3, Vec::new());
         {
             let mut st = third.borrow_mut();
-            st.write_sidecars = true;
-            st.recent.open = Some(shots.clone());
+            st.window.write_sidecars = true;
+            st.views.recent.open = Some(shots.clone());
         }
-        assert!(third.borrow().settings_file.is_none());
+        assert!(third.borrow().window.settings_file.is_none());
         looked(&mut third.borrow_mut(), &app3, shots.clone(), Some(2));
         assert_ne!(app3.get_rt_offer(), "");
         app3.invoke_rt_offer_dismissed();
@@ -728,9 +736,9 @@ Enabled=true
         let (fourth, _w) = crate::testing::state_for(&app4, Vec::new());
         {
             let mut st = fourth.borrow_mut();
-            st.write_sidecars = true;
-            st.batch = true;
-            st.recent.open = Some(shots.clone());
+            st.window.write_sidecars = true;
+            st.window.batch = true;
+            st.views.recent.open = Some(shots.clone());
         }
         folder_opened(&mut fourth.borrow_mut(), &app4);
         assert!(fourth.borrow().rawtherapee.looking.is_none());
@@ -748,8 +756,8 @@ Enabled=true
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = false;
-            st.recent.open = Some(shots.clone());
+            st.window.write_sidecars = false;
+            st.views.recent.open = Some(shots.clone());
         }
         folder_opened(&mut state.borrow_mut(), &app);
         assert!(state.borrow().rawtherapee.looking.is_none(), "no look");
@@ -776,16 +784,16 @@ Enabled=true
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
-            st.write_sidecars = true;
-            st.library.offline.insert(dir.clone());
-            st.recent.open = Some(shots.clone());
+            st.window.write_sidecars = true;
+            st.views.library.offline.insert(dir.clone());
+            st.views.recent.open = Some(shots.clone());
         }
         folder_opened(&mut state.borrow_mut(), &app);
         assert!(state.borrow().rawtherapee.looking.is_none());
         assert!(!state.borrow().rawtherapee.looked.contains_key(&shots));
         assert!(!state.borrow().rawtherapee.busy());
         // Back online: looked at.
-        state.borrow_mut().library.offline.clear();
+        state.borrow_mut().views.library.offline.clear();
         folder_opened(&mut state.borrow_mut(), &app);
         assert_eq!(state.borrow().rawtherapee.looking.as_ref(), Some(&shots));
         crate::testing::remove_scratch(state, &dir);
@@ -797,8 +805,8 @@ Enabled=true
         let shots = folder(&dir);
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
-        state.borrow_mut().recent.open = Some(shots.clone());
+        state.borrow_mut().window.write_sidecars = true;
+        state.borrow_mut().views.recent.open = Some(shots.clone());
         looked(&mut state.borrow_mut(), &app, shots.clone(), Some(2));
         // Import... opens the sheet on its dry run; it answers nothing
         // yet.
@@ -917,11 +925,11 @@ Enabled=true
         let settings_file = dir.join("settings.json");
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         {
             let mut st = state.borrow_mut();
-            st.settings_file = Some(settings_file.clone());
-            st.recent.open = Some(shots.clone());
+            st.window.settings_file = Some(settings_file.clone());
+            st.views.recent.open = Some(shots.clone());
         }
         looked(&mut state.borrow_mut(), &app, shots.clone(), Some(2));
         assert_ne!(app.get_rt_offer(), "");
@@ -933,11 +941,11 @@ Enabled=true
         assert!(!state.borrow().rawtherapee.answered.contains(&shots));
         assert!(!answered_in(&settings_file, &shots));
         // Another folder, then this one again: the offer is back.
-        state.borrow_mut().recent.open = Some(dir.clone());
+        state.borrow_mut().views.recent.open = Some(dir.clone());
         state.borrow_mut().rawtherapee.looked.insert(dir.clone(), 0);
         folder_opened(&mut state.borrow_mut(), &app);
         assert_eq!(app.get_rt_offer(), "");
-        state.borrow_mut().recent.open = Some(shots.clone());
+        state.borrow_mut().views.recent.open = Some(shots.clone());
         folder_opened(&mut state.borrow_mut(), &app);
         assert_eq!(
             app.get_rt_offer(),
@@ -978,7 +986,7 @@ Enabled=true
     fn the_sheet_lists_the_first_frames_and_says_how_many_more() {
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         let frame = |i: usize| rt::FrameReport {
             file: PathBuf::from(format!("/shots/IMG_{i:04}.CR3")),
             profile: PathBuf::from(format!("/shots/IMG_{i:04}.CR3.pp3")),
@@ -1047,7 +1055,7 @@ Enabled=true
         let shots = folder(&dir);
         let app = crate::testing::window(0);
         let (state, worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         crate::panel::browser::open_folder(&state, &app, &worker, &shots);
         crate::roots::land_sent(&state, &app, &worker);
         WORKER.with(|w| *w.borrow_mut() = Some(worker.clone()));
@@ -1084,20 +1092,20 @@ Enabled=true
         let shots = folder(&dir);
         let app = crate::testing::window(0);
         let (state, worker) = crate::testing::state_for(&app, Vec::new());
-        state.borrow_mut().write_sidecars = true;
+        state.borrow_mut().window.write_sidecars = true;
         crate::panel::browser::open_folder(&state, &app, &worker, &shots);
         crate::roots::land_sent(&state, &app, &worker);
         app.invoke_select(0);
         open(&mut state.borrow_mut(), &app, shots.clone());
         land_now(&state, &app);
         app.set_exposure(0.8);
-        state.borrow().save_timer.start(
+        state.borrow().develop.save_timer.start(
             slint::TimerMode::SingleShot,
             std::time::Duration::from_secs(60),
             || {},
         );
         write_now(&state, &app);
-        assert!(!state.borrow().save_timer.running());
+        assert!(!state.borrow().develop.save_timer.running());
         let a = greycard_edit::Sidecar::load(&shots.join("a.tif"))
             .unwrap()
             .unwrap();

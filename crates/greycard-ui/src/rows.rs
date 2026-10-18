@@ -29,7 +29,7 @@
 //!   sidecar lands); so are a key, a turn, a sync, a paste, a preset
 //!   and an export over a selection. A request never cancels another.
 //!   The frame on screen is loaded, unless its root is offline or its
-//!   sidecar is still on its way (`State::picking`). A file and a
+//!   sidecar is still on its way (`Views::pick_pending`). A file and a
 //!   version of it are one sidecar, read once.
 //! - The row lists the versions the sidecar keeps, each with its own
 //!   marks and key (`FromRow::versions`), so a version's cell stands
@@ -357,7 +357,8 @@ pub(crate) fn offline_root(st: &State, c: usize) -> Option<PathBuf> {
 
 /// The root `path` is under that is offline, if any.
 pub(crate) fn offline_root_of(st: &State, path: &Path) -> Option<PathBuf> {
-    st.library
+    st.views
+        .library
         .offline
         .iter()
         .find(|r| path.starts_with(r))
@@ -366,12 +367,12 @@ pub(crate) fn offline_root_of(st: &State, path: &Path) -> Option<PathBuf> {
 
 /// Whether cell `c`'s file is under a root that is offline.
 pub(crate) fn is_offline(st: &State, c: usize) -> bool {
-    !st.library.offline.is_empty() && offline_root(st, c).is_some()
+    !st.views.library.offline.is_empty() && offline_root(st, c).is_some()
 }
 
 /// Whether file `file` is under a root that is offline.
 pub(crate) fn file_is_offline(st: &State, file: usize) -> bool {
-    !st.library.offline.is_empty()
+    !st.views.library.offline.is_empty()
         && st
             .files
             .get(file)
@@ -381,7 +382,7 @@ pub(crate) fn file_is_offline(st: &State, file: usize) -> bool {
 /// The status line's word for a frame that cannot be reached, and what
 /// that costs (`", nothing to sync from"`), or nothing more.
 fn say_offline(st: &State, app: &App, root: &Path, what: &str) {
-    let name = crate::roots::root_name(&st.library.roots, root);
+    let name = crate::roots::root_name(&st.views.library.roots, root);
     app.set_status(format!("{name} is offline{what}").into());
 }
 
@@ -416,8 +417,8 @@ pub(crate) fn file_is_loaded(st: &State, file: usize) -> bool {
 /// still the stand-in's it showed while the sidecar was on its way.
 pub(crate) fn panel_is_frames(st: &State, c: usize) -> bool {
     is_loaded(st, c)
-        && (st.panel_stand_in.is_none()
-            || st.panel_stand_in.as_deref() != st.path_at(c).map(PathBuf::as_path))
+        && (st.views.panel_stand_in.is_none()
+            || st.views.panel_stand_in.as_deref() != st.path_at(c).map(PathBuf::as_path))
 }
 
 /// Why nothing the panel does over frame `i` may be recorded, when its
@@ -442,7 +443,7 @@ pub(crate) fn refused(st: &State, c: usize, what: &str) -> Option<String> {
         return Some(format!("the panel is not {name}'s own yet: {what}"));
     }
     if let Some(root) = offline_root(st, c) {
-        let name = crate::roots::root_name(&st.library.roots, &root);
+        let name = crate::roots::root_name(&st.views.library.roots, &root);
         return Some(format!("{name} is offline: {what}"));
     }
     let name = file_name(st.path_at(c)?);
@@ -450,7 +451,7 @@ pub(crate) fn refused(st: &State, c: usize, what: &str) -> Option<String> {
     Some(
         if st.from_row.get(file).is_some_and(|r| r.unread.is_some()) {
             format!("{name}'s sidecar could not be read: {what}")
-        } else if st.pick_pending.as_deref() == st.path_at(c).map(PathBuf::as_path) {
+        } else if st.views.pick_pending.as_deref() == st.path_at(c).map(PathBuf::as_path) {
             format!("{name}'s sidecar is still being read: {what}")
         } else {
             format!("{name}'s sidecar did not come in: {what}")
@@ -614,6 +615,7 @@ fn queue(
 ) -> Queued {
     let listed = resolve(st, &frames, scope);
     let reading: HashSet<&Path> = st
+        .views
         .loads
         .queue
         .iter()
@@ -631,13 +633,13 @@ fn queue(
         })
         .map(|(k, _)| k.path.clone())
         .collect();
-    if to_read.is_empty() && st.loads.queue.is_empty() {
+    if to_read.is_empty() && st.views.loads.queue.is_empty() {
         return Queued::Inline(action, frames);
     }
-    st.loads.next += 1;
-    let id = st.loads.next;
+    st.views.loads.next += 1;
+    let id = st.views.loads.next;
     let landed = to_read.is_empty();
-    st.loads.queue.push_back(Pending {
+    st.views.loads.queue.push_back(Pending {
         id,
         frames,
         scope,
@@ -698,9 +700,9 @@ pub(crate) fn request_in(
 ) {
     match queue(st, frames, scope, what, pick, action) {
         Queued::Inline(action, frames) => {
-            st.loads.next += 1;
-            let id = st.loads.next;
-            st.loads.queue.push_back(Pending {
+            st.views.loads.next += 1;
+            let id = st.views.loads.next;
+            st.views.loads.queue.push_back(Pending {
                 id,
                 frames,
                 scope,
@@ -746,20 +748,20 @@ thread_local! {
 
 /// The read for request `id`: `to_read`'s sidecars on the pool, landed
 /// on the window's thread when in, under the list it was started on
-/// (`State::view_generation`): started under another list, it fills
+/// (`Views::view_generation`): started under another list, it fills
 /// nothing. In a test, queued for `land_pending`.
 fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
-    let write = st.write_sidecars;
-    let generation = st.view_generation;
+    let write = st.window.write_sidecars;
+    let generation = st.views.view_generation;
     bar_started(st, app, to_read.len());
-    st.loads.in_flight.insert(id, to_read.clone());
+    st.views.loads.in_flight.insert(id, to_read.clone());
     #[cfg(test)]
     {
         QUEUED.with(|q| q.borrow_mut().push((id, generation, to_read, write)));
     }
     #[cfg(not(test))]
     {
-        let progress = st.loads.progress.clone();
+        let progress = st.views.loads.progress.clone();
         let app_weak = app.as_weak();
         let paths = to_read.clone();
         let spawned = std::thread::Builder::new()
@@ -788,7 +790,7 @@ fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
         if let Err(e) = spawned {
             // No thread to be had: read here, on the window's thread.
             tracing::warn!("{e}; the sidecars read on the window's thread");
-            st.loads.in_flight.remove(&id);
+            st.views.loads.in_flight.remove(&id);
             let none = vec![None; paths.len()];
             let held = bring(&paths, &none, write, None);
             let results: Vec<(PathBuf, Held)> = paths.into_iter().zip(held).collect();
@@ -799,10 +801,10 @@ fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
                     take(st, app, file, h);
                 }
             }
-            if let Some(p) = st.loads.queue.iter_mut().find(|p| p.id == id) {
+            if let Some(p) = st.views.loads.queue.iter_mut().find(|p| p.id == id) {
                 p.landed = true;
             }
-            if !st.loads.reading() {
+            if !st.views.loads.reading() {
                 bar_done(st, app);
             }
             // The actions run at the next turn: the caller holds the
@@ -868,7 +870,7 @@ fn landed(
 ) {
     {
         let mut st = state.borrow_mut();
-        if st.view_generation == generation {
+        if st.views.view_generation == generation {
             for (path, h) in results {
                 if let Some(file) = st.file_by_path(&path)
                     && !file_is_loaded(&st, file)
@@ -882,13 +884,13 @@ fn landed(
                 results.len()
             );
         }
-        match st.loads.queue.iter_mut().find(|p| p.id == id) {
+        match st.views.loads.queue.iter_mut().find(|p| p.id == id) {
             Some(p) => p.landed = true,
             None => tracing::debug!("a sidecar read came in for a request since dropped"),
         }
-        st.loads.in_flight.remove(&id);
+        st.views.loads.in_flight.remove(&id);
         crate::panel::look_rename::read_landed(&mut st, app, id);
-        if !st.loads.reading() {
+        if !st.views.loads.reading() {
             bar_done(&mut st, app);
         }
     }
@@ -901,8 +903,8 @@ pub(crate) fn run_ready(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worke
     loop {
         let next = {
             let mut st = state.borrow_mut();
-            match st.loads.queue.front() {
-                Some(p) if p.landed => st.loads.queue.pop_front(),
+            match st.views.loads.queue.front() {
+                Some(p) if p.landed => st.views.loads.queue.pop_front(),
                 _ => None,
             }
         };
@@ -951,13 +953,13 @@ fn say_gone(app: &App, frames: &[Key], at: &[Option<usize>], what: &str, pick: b
 /// mode's own line takes the status over while a slow read is out,
 /// and nothing else there puts the bar up.
 pub(crate) fn pick_over(st: &mut State, app: &App) {
-    if st.pick_pending.take().is_none() {
+    if st.views.pick_pending.take().is_none() {
         return;
     }
     if app.get_status().starts_with("reading ") {
         app.set_status("".into());
         app.set_busy(false);
-    } else if st.cull.is_some() {
+    } else if st.culling.cull.is_some() {
         app.set_busy(false);
     }
 }
@@ -966,13 +968,13 @@ pub(crate) fn pick_over(st: &mut State, app: &App) {
 /// all, since the frames they named are gone; a read still out lands
 /// on whatever of its paths the new list has.
 pub(crate) fn list_replaced(st: &mut State, app: &App) {
-    if !st.loads.queue.is_empty() {
+    if !st.views.loads.queue.is_empty() {
         tracing::debug!(
             "{} request(s) for sidecars dropped with the list",
-            st.loads.queue.len()
+            st.views.loads.queue.len()
         );
     }
-    st.loads.queue.clear();
+    st.views.loads.queue.clear();
     pick_over(st, app);
     bar_done(st, app);
 }
@@ -984,18 +986,19 @@ pub(crate) fn list_replaced(st: &mut State, app: &App) {
 fn bar_started(st: &mut State, app: &App, n: usize) {
     let now = Instant::now();
     let progress = st
+        .views
         .loads
         .progress
         .get_or_insert_with(|| Arc::new(Progress::default()));
     let total = progress.total.fetch_add(n, Ordering::Relaxed) + n;
     let read = progress.read.load(Ordering::Relaxed);
-    if st.loads.since.is_none() {
-        st.loads.since = Some(now);
-        st.loads.moved = Some(now);
-        st.loads.counted = Some(now);
-        st.loads.seen = (read, total);
+    if st.views.loads.since.is_none() {
+        st.views.loads.since = Some(now);
+        st.views.loads.moved = Some(now);
+        st.views.loads.counted = Some(now);
+        st.views.loads.seen = (read, total);
         let app_weak = app.as_weak();
-        st.loads.timer.start(
+        st.views.loads.timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(100),
             move || {
@@ -1019,28 +1022,29 @@ fn bar_started(st: &mut State, app: &App, n: usize) {
 pub(crate) fn bar_tick(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, now: Instant) {
     let gave_up = {
         let mut st = state.borrow_mut();
-        let (Some(since), Some(progress)) = (st.loads.since, st.loads.progress.clone()) else {
+        let (Some(since), Some(progress)) = (st.views.loads.since, st.views.loads.progress.clone())
+        else {
             bar_done(&mut st, app);
             return;
         };
         let total = progress.total.load(Ordering::Relaxed);
         let read = progress.read.load(Ordering::Relaxed).min(total);
-        if (read, total) != st.loads.seen {
-            if read != st.loads.seen.0 {
-                st.loads.moved = Some(now);
+        if (read, total) != st.views.loads.seen {
+            if read != st.views.loads.seen.0 {
+                st.views.loads.moved = Some(now);
             }
-            st.loads.seen = (read, total);
-            st.loads.counted = Some(now);
+            st.views.loads.seen = (read, total);
+            st.views.loads.counted = Some(now);
         }
         let out = now.saturating_duration_since(since);
-        let still = now.saturating_duration_since(st.loads.moved.unwrap_or(since));
-        let settled = now.saturating_duration_since(st.loads.counted.unwrap_or(since));
+        let still = now.saturating_duration_since(st.views.loads.moved.unwrap_or(since));
+        let settled = now.saturating_duration_since(st.views.loads.counted.unwrap_or(since));
         if out > FRAMES_GIVE_UP && still > FRAMES_STALLED {
             // Every request is dropped, those waiting on the read and
             // those queued behind them alike, and said by name; a pick
             // among them is let go, the frame left as an offline one is
             // shown, its stand-in on the panel.
-            let dropped: Vec<Pending> = st.loads.queue.drain(..).collect();
+            let dropped: Vec<Pending> = st.views.loads.queue.drain(..).collect();
             if dropped.iter().any(|p| p.pick) {
                 pick_over(&mut st, app);
                 app.set_busy(false);
@@ -1054,7 +1058,7 @@ pub(crate) fn bar_tick(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker
             app.set_status(said.into());
             true
         } else {
-            if out >= crate::roots::LOADING_SHOWN_AFTER && !st.library.loading {
+            if out >= crate::roots::LOADING_SHOWN_AFTER && !st.views.library.loading {
                 let fraction = if total == 0 {
                     0.0
                 } else {
@@ -1063,10 +1067,10 @@ pub(crate) fn bar_tick(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker
                 app.set_loading_fraction(fraction);
                 let waiting = (settled >= crate::roots::LOADING_WAITING_AFTER && read < total)
                     .then(|| {
-                        let out = st.loads.queue.iter().filter(|p| !p.landed);
+                        let out = st.views.loads.queue.iter().filter(|p| !p.landed);
                         let paths = out.flat_map(|p| &p.frames);
                         crate::roots::one_root_named(
-                            &st.library.roots,
+                            &st.views.library.roots,
                             paths.map(|k| k.path.as_path()),
                         )
                     })
@@ -1087,13 +1091,13 @@ pub(crate) fn bar_tick(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker
 /// No frames' read is out: the bar's timer stopped, and the bar gone
 /// unless a view's read has it.
 pub(crate) fn bar_done(st: &mut State, app: &App) {
-    st.loads.since = None;
-    st.loads.progress = None;
-    st.loads.moved = None;
-    st.loads.counted = None;
-    st.loads.seen = (0, 0);
-    st.loads.timer.stop();
-    if !st.library.loading {
+    st.views.loads.since = None;
+    st.views.loads.progress = None;
+    st.views.loads.moved = None;
+    st.views.loads.counted = None;
+    st.views.loads.seen = (0, 0);
+    st.views.loads.timer.stop();
+    if !st.views.library.loading {
         app.set_loading_shown(false);
     }
 }
@@ -1130,7 +1134,7 @@ pub(crate) fn load_file(st: &mut State, app: &App, file: usize) -> bool {
         app.set_status(why.into());
         return false;
     }
-    let held = from_disk(&st.files[file], st.write_sidecars);
+    let held = from_disk(&st.files[file], st.window.write_sidecars);
     take(st, app, file, held)
 }
 
@@ -1138,7 +1142,7 @@ pub(crate) fn load_file(st: &mut State, app: &App, file: usize) -> bool {
 /// the window held of it: another writer (the Lightroom import) wrote
 /// it. False when the read did not take.
 pub(crate) fn reread_file(st: &mut State, app: &App, file: usize) -> bool {
-    let held = from_disk(&st.files[file], st.write_sidecars);
+    let held = from_disk(&st.files[file], st.window.write_sidecars);
     take(st, app, file, held)
 }
 
@@ -1186,7 +1190,7 @@ pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usi
         0 => {}
         1 => {
             let file = to_read[0];
-            let held = from_disk(&st.files[file], st.write_sidecars);
+            let held = from_disk(&st.files[file], st.window.write_sidecars);
             if !take(st, app, file, held) {
                 failed.push(file);
             }
@@ -1195,7 +1199,7 @@ pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usi
             let started = std::time::Instant::now();
             let paths: Vec<PathBuf> = to_read.iter().map(|&f| st.files[f].clone()).collect();
             let rows = vec![None; n];
-            let held = bring(&paths, &rows, st.write_sidecars, None);
+            let held = bring(&paths, &rows, st.window.write_sidecars, None);
             for (file, h) in to_read.into_iter().zip(held) {
                 if !take(st, app, file, h) {
                     failed.push(file);
@@ -1300,9 +1304,9 @@ fn take(st: &mut State, app: &App, file: usize, held: Held) -> bool {
     // the frame's.
     if let Some(c) = st.current
         && st.file_at(c) == Some(file)
-        && st.cull.is_none()
-        && st.pick_pending.is_none()
-        && st.panel_stand_in.as_deref() == st.files.get(file).map(PathBuf::as_path)
+        && st.culling.cull.is_none()
+        && st.views.pick_pending.is_none()
+        && st.views.panel_stand_in.as_deref() == st.files.get(file).map(PathBuf::as_path)
         && let Some(worker) = crate::WORKER.with(|w| w.borrow().clone())
     {
         crate::panel::browser::open_frame(st, app, &worker, c);
@@ -1374,7 +1378,7 @@ pub(crate) fn apply_row(st: &mut State, file: usize, row: &RowMeta) -> bool {
         st.sidecars[file].versions = versions_of_row(row, || line.clone());
         moved = true;
         if versions_differ(st, file)
-            && let Some(app) = st.app.upgrade()
+            && let Some(app) = st.window.app.upgrade()
         {
             crate::versions::settle_later(&app);
         }
@@ -1417,10 +1421,10 @@ pub(crate) fn roots_changed(
     let mut again = 0;
     for c in 0..st.cells.len() {
         if back.iter().any(|r| st.path_of(c).starts_with(r))
-            && st.thumb_failed.get(c) == Some(&true)
-            && st.thumb_base.get(c).is_some_and(Option::is_none)
+            && st.views.thumb_failed.get(c) == Some(&true)
+            && st.views.thumb_base.get(c).is_some_and(Option::is_none)
         {
-            st.thumb_failed[c] = false;
+            st.views.thumb_failed[c] = false;
             worker.send(thumb_job(st, c));
             again += 1;
         }

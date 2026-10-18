@@ -207,7 +207,7 @@ pub(crate) struct Library {
     /// A view's sidecars are being read on the pool: the list in the
     /// browser is about to be replaced, and is not merged into. (A
     /// selection's sidecars being read for a key or a sync is
-    /// `State::loads`, with a bar of its own.)
+    /// `Views::loads`, with a bar of its own.)
     pub(crate) loading: bool,
     pub(crate) loading_since: Option<Instant>,
     /// How far the view's read has got, bumped on the pool; read by
@@ -639,7 +639,7 @@ impl Checks {
 /// The header's callbacks: a root chosen, all of them, one added by
 /// the chooser or as the folder open, one taken out, one named.
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
-    app.set_library_roots(ModelRc::from(state.borrow().library.rows.clone()));
+    app.set_library_roots(ModelRc::from(state.borrow().views.library.rows.clone()));
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_library_root_rename(move |path| {

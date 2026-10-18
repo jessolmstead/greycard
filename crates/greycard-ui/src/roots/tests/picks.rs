@@ -21,7 +21,7 @@ fn an_edit_during_a_picks_read_is_refused_and_said() {
     {
         let mut st = state.borrow_mut();
         crate::panel::browser::open_row(&mut st, &app, &worker, 1, false);
-        assert_eq!(st.pick_pending, Some(files[1].clone()));
+        assert_eq!(st.views.pick_pending, Some(files[1].clone()));
         assert!(crate::panel::edit::save_edit(&mut st, moved.clone()));
         assert_eq!(
             crate::rows::not_kept(&st, 1).as_deref(),
@@ -39,7 +39,7 @@ fn an_edit_during_a_picks_read_is_refused_and_said() {
         assert_eq!(st.sidecars[1].history.len(), 1, "the sidecar's own");
         assert_eq!(st.sidecars[1].current.geometry.turns, 1);
         assert_eq!(
-            st.edit, st.sidecars[1].current,
+            st.develop.edit, st.sidecars[1].current,
             "the panel is the sidecar's"
         );
     }
@@ -53,7 +53,7 @@ fn an_edit_during_a_picks_read_is_refused_and_said() {
     {
         let mut st = state.borrow_mut();
         crate::panel::browser::open_row(&mut st, &app, &worker, 2, false);
-        st.pick_pending = None;
+        st.views.pick_pending = None;
         assert!(crate::panel::edit::save_edit(&mut st, moved));
         assert_eq!(
             crate::rows::not_kept(&st, 2).as_deref(),
@@ -61,7 +61,7 @@ fn an_edit_during_a_picks_read_is_refused_and_said() {
         );
         assert!(st.sidecars[2].history.is_empty());
     }
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -79,22 +79,26 @@ fn the_command_lines_mask_reaches_a_first_file_read_after_its_pick() {
     e.adjustments.push(greycard_edit::Adjustment::default());
     s.record(e);
     s.save(&files[1]).unwrap();
-    state.borrow_mut().show_mask = Some(0);
+    state.borrow_mut().launch.show_mask = Some(0);
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     assert_eq!(state.borrow().current, None, "nothing opened at the start");
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
-    assert_eq!(state.borrow().pick_pending, Some(files[1].clone()));
+    assert_eq!(state.borrow().views.pick_pending, Some(files[1].clone()));
     assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
     {
         let st = state.borrow();
         assert_eq!(st.current, Some(1));
-        assert_eq!(st.edit.adjustments.len(), 1, "the sidecar's own edit");
-        assert_eq!(st.target, Some(0), "the mask asked for is chosen");
-        assert_eq!(st.show_mask, None, "and taken");
+        assert_eq!(
+            st.develop.edit.adjustments.len(),
+            1,
+            "the sidecar's own edit"
+        );
+        assert_eq!(st.develop.target, Some(0), "the mask asked for is chosen");
+        assert_eq!(st.launch.show_mask, None, "and taken");
     }
     assert!(app.get_show_mask());
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -110,14 +114,14 @@ fn a_pick_in_culling_stops_the_bar_when_its_read_lands() {
     land_all(&state, &app, &worker);
     crate::panel::cull::enter_cull(&mut state.borrow_mut(), &app, 1);
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
-    assert_eq!(state.borrow().pick_pending, Some(files[1].clone()));
+    assert_eq!(state.borrow().views.pick_pending, Some(files[1].clone()));
     assert!(app.get_busy());
     app.set_status("y.tif: waiting for its preview".into());
     assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
     assert_eq!(state.borrow().current, Some(1));
-    assert!(state.borrow().pick_pending.is_none());
+    assert!(state.borrow().views.pick_pending.is_none());
     assert!(!app.get_busy(), "the bar stops with the read");
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -136,9 +140,12 @@ fn an_export_is_of_the_frame_it_was_pressed_on() {
     crate::rows::land_pending(&state, &app, &worker);
     assert!(state.borrow().from_row[2].read);
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
-    assert_eq!(state.borrow().pick_pending, Some(files[1].clone()));
+    assert_eq!(state.borrow().views.pick_pending, Some(files[1].clone()));
     app.invoke_export();
-    assert_eq!(state.borrow().loads.whats(), ["open of y.tif", "export"]);
+    assert_eq!(
+        state.borrow().views.loads.whats(),
+        ["open of y.tif", "export"]
+    );
     // z is loaded: open at once, the export still waiting.
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 2, false);
     assert_eq!(state.borrow().current, Some(2));
@@ -146,12 +153,12 @@ fn an_export_is_of_the_frame_it_was_pressed_on() {
     let st = state.borrow();
     assert_eq!(st.current, Some(2), "the export opened nothing");
     // A set of one, into the folder the sheet shows for it.
-    let set = st.exporting.clone().expect("the set");
+    let set = st.work.exporting.clone().expect("the set");
     assert_eq!(set.total, 1);
     assert_eq!(set.folder.as_deref(), files[1].parent());
     set.cancel();
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -177,12 +184,12 @@ fn an_export_landing_in_culling_takes_each_frames_own_edit() {
     // waits on its read.
     {
         let mut st = state.borrow_mut();
-        st.picked = vec![1, 2];
+        st.views.picked = vec![1, 2];
         assert!(!st.from_row[1].read);
     }
-    state.borrow_mut().export_last_folder = Some(dir.join("out"));
+    state.borrow_mut().work.export_last_folder = Some(dir.join("out"));
     app.invoke_export_queue_add();
-    assert!(state.borrow().export_queue.is_empty(), "waiting");
+    assert!(state.borrow().work.export_queue.is_empty(), "waiting");
     // Into culling, on to y; then the read lands.
     {
         let mut st = state.borrow_mut();
@@ -192,8 +199,8 @@ fn an_export_landing_in_culling_takes_each_frames_own_edit() {
     }
     crate::rows::land_pending(&state, &app, &worker);
     let st = state.borrow();
-    assert_eq!(st.export_queue.len(), 1);
-    let got: Vec<(PathBuf, f32, u8)> = st.export_queue[0]
+    assert_eq!(st.work.export_queue.len(), 1);
+    let got: Vec<(PathBuf, f32, u8)> = st.work.export_queue[0]
         .frames
         .iter()
         .map(|f| {
@@ -215,7 +222,7 @@ fn an_export_landing_in_culling_takes_each_frames_own_edit() {
     );
     assert_ne!(y.light.exposure, 2.0);
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -237,7 +244,7 @@ fn a_failed_read_keeps_the_stand_in() {
     {
         let mut st = state.borrow_mut();
         assert_eq!(st.current, Some(1));
-        assert!(st.pick_pending.is_none());
+        assert!(st.views.pick_pending.is_none());
         assert!(!st.from_row[1].read, "stands in still");
         assert!(st.from_row[1].unread.is_some());
         assert!(
@@ -282,7 +289,7 @@ fn a_failed_read_keeps_the_stand_in() {
         assert!(crate::rows::load_frame(&mut st, &app, 2));
         assert!(st.from_row[2].read);
     }
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -300,9 +307,9 @@ fn a_pick_whose_read_was_discarded_is_read_again() {
     {
         let mut st = state.borrow_mut();
         crate::panel::browser::open_row(&mut st, &app, &worker, 1, false);
-        assert_eq!(st.pick_pending, Some(files[1].clone()));
+        assert_eq!(st.views.pick_pending, Some(files[1].clone()));
         // A view's read asked for meanwhile.
-        st.view_generation += 1;
+        st.views.view_generation += 1;
     }
     assert_eq!(
         crate::rows::land_pending(&state, &app, &worker),
@@ -311,12 +318,12 @@ fn a_pick_whose_read_was_discarded_is_read_again() {
     );
     let st = state.borrow();
     assert_eq!(st.current, Some(1));
-    assert!(st.pick_pending.is_none());
+    assert!(st.views.pick_pending.is_none());
     assert!(st.from_row[1].read);
     assert_eq!(st.sidecars[1].history.len(), 1);
-    assert_eq!(st.edit, st.sidecars[1].current);
+    assert_eq!(st.develop.edit, st.sidecars[1].current);
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -335,13 +342,13 @@ fn a_frame_loaded_after_the_give_up_takes_its_own_edit_onto_the_panel() {
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
     {
         let mut st = state.borrow_mut();
-        let mut e = read_edit(&app, &st.edit, st.target);
+        let mut e = read_edit(&app, &st.develop.edit, st.develop.target);
         e.light.exposure = 0.8;
         assert!(save_edit(&mut st, e), "refused while the read is out");
     }
-    let since = state.borrow().loads.since.expect("a read out");
+    let since = state.borrow().views.loads.since.expect("a read out");
     crate::rows::bar_tick(&state, &app, &worker, since + Duration::from_secs(120));
-    assert!(state.borrow().pick_pending.is_none(), "given up on");
+    assert!(state.borrow().views.pick_pending.is_none(), "given up on");
     assert!(crate::panel::browser::meta_on_selection(
         &state,
         &app,
@@ -353,9 +360,9 @@ fn a_frame_loaded_after_the_give_up_takes_its_own_edit_onto_the_panel() {
         let mut st = state.borrow_mut();
         assert_eq!(st.current, Some(1));
         assert!(st.from_row[1].read);
-        assert!(st.panel_stand_in.is_none());
-        assert_eq!(st.edit.geometry.turns, 1, "the frame's own edit");
-        let mut e = read_edit(&app, &st.edit, st.target);
+        assert!(st.views.panel_stand_in.is_none());
+        assert_eq!(st.develop.edit.geometry.turns, 1, "the frame's own edit");
+        let mut e = read_edit(&app, &st.develop.edit, st.develop.target);
         assert_eq!(e.geometry.turns, 1);
         e.light.exposure = 0.8;
         assert!(!save_edit(&mut st, e), "kept");
@@ -365,7 +372,7 @@ fn a_frame_loaded_after_the_give_up_takes_its_own_edit_onto_the_panel() {
     assert_eq!(on_disk.current.light.exposure, 0.8);
     assert_eq!(on_disk.history.len(), 2, "its own step, then the slider");
     assert_eq!(on_disk.meta.rating, 2);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -380,7 +387,7 @@ fn a_preset_on_a_given_up_pick_goes_over_its_own_edit() {
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
-    let since = state.borrow().loads.since.expect("a read out");
+    let since = state.borrow().views.loads.since.expect("a read out");
     crate::rows::bar_tick(&state, &app, &worker, since + Duration::from_secs(120));
     let bright = {
         let mut e = greycard_edit::Edit::for_picture();
@@ -403,7 +410,7 @@ fn a_preset_on_a_given_up_pick_goes_over_its_own_edit() {
     {
         let st = state.borrow();
         assert!(st.from_row[1].read);
-        assert!(st.panel_stand_in.is_none());
+        assert!(st.views.panel_stand_in.is_none());
         assert_eq!(
             st.sidecars[1].current.geometry.turns, 1,
             "its own turn kept"
@@ -419,7 +426,7 @@ fn a_preset_on_a_given_up_pick_goes_over_its_own_edit() {
     assert_eq!(on_disk.current.geometry.turns, 1);
     assert_eq!(on_disk.history.len(), 2);
     crate::rows::land_pending(&state, &app, &worker);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -438,7 +445,7 @@ fn an_export_of_a_stand_in_on_screen_is_refused() {
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
     crate::rows::land_pending(&state, &app, &worker);
     assert_eq!(
-        state.borrow().panel_stand_in.as_deref(),
+        state.borrow().views.panel_stand_in.as_deref(),
         Some(files[1].as_path())
     );
     app.invoke_export();
@@ -447,9 +454,9 @@ fn an_export_of_a_stand_in_on_screen_is_refused() {
         app.get_status(),
         "y.tif's sidecar could not be read: nothing is exported"
     );
-    assert!(!state.borrow().export_choosing);
+    assert!(!state.borrow().work.export_choosing);
     assert!(!app.get_busy());
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -465,7 +472,7 @@ fn following_the_frame_on_screen_moves_the_stand_in_flag() {
     let to = files[0].with_file_name("renamed.CR3");
     let mut st = state.borrow_mut();
     st.current = Some(0);
-    st.panel_stand_in = Some(files[0].clone());
+    st.views.panel_stand_in = Some(files[0].clone());
     let seen = OnScreen {
         path: Some(files[0].clone()),
         there: false,
@@ -473,7 +480,7 @@ fn following_the_frame_on_screen_moves_the_stand_in_flag() {
     };
     assert!(follow_current(&mut st, &seen));
     assert_eq!(st.files[0], to);
-    assert_eq!(st.panel_stand_in, Some(to));
+    assert_eq!(st.views.panel_stand_in, Some(to));
 }
 
 /// Two roots on a window with the library open, sidecars on: `a`
@@ -514,11 +521,11 @@ fn offline_view(
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.index_path = Some(db);
-        st.write_sidecars = true;
-        st.library.roots.add(&a).unwrap();
-        st.library.roots.add(&b).unwrap();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.index_path = Some(db);
+        st.window.write_sidecars = true;
+        st.views.library.roots.add(&a).unwrap();
+        st.views.library.roots.add(&b).unwrap();
     }
     let away = dir.join("b-away");
     crate::testing::rename_away(&b, &away);
@@ -527,7 +534,7 @@ fn offline_view(
     {
         let st = state.borrow();
         assert_eq!(st.files, [x.clone(), z.clone()]);
-        assert!(st.library.offline.contains(&b));
+        assert!(st.views.library.offline.contains(&b));
         assert!(st.from_row.iter().all(|r| !r.read));
     }
     (dir, away, vec![x, z], writer, app, state, worker)
@@ -574,10 +581,10 @@ fn the_rejects_move_and_a_delete_leave_an_offline_root_alone() {
     {
         let mut st = state.borrow_mut();
         st.current = Some(0);
-        st.picked = vec![0];
+        st.views.picked = vec![0];
         app.set_status("".into());
         crate::panel::delete::ask_delete(&mut st, &app, crate::panel::delete::Which::Selection);
-        assert!(st.delete_asked.is_none(), "nothing to ask about");
+        assert!(st.sheets.delete_asked.is_none(), "nothing to ask about");
         assert!(
             app.get_status().contains("is offline"),
             "{}",
@@ -585,7 +592,7 @@ fn the_rejects_move_and_a_delete_leave_an_offline_root_alone() {
         );
     }
     assert!(away.join("z.tif").exists());
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -613,7 +620,7 @@ fn a_turn_on_a_view_frame_reads_its_sidecar_then_writes_it() {
     let on_disk = Sidecar::load(&files[0]).unwrap().unwrap();
     assert_eq!(on_disk.turn, 1, "written");
     assert_eq!(on_disk.meta.rating, 3);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -633,7 +640,7 @@ fn a_turn_on_a_view_frame_reads_its_sidecar_then_writes_it() {
         );
     }
     assert_eq!(std::fs::read(away.join("z.tif.gcd")).unwrap(), before);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -658,7 +665,7 @@ fn an_offline_frame_is_no_source_for_a_copy_a_sync_or_a_preset() {
         let mut st = state.borrow_mut();
         assert_eq!(st.current, Some(0));
         assert!(st.from_row[0].read);
-        st.edit.light.exposure = 0.7;
+        st.develop.edit.light.exposure = 0.7;
         app.set_exposure(0.7);
         // Then z, under the offline root. Leaving x saves the panel's
         // exposure into x, as leaving any frame does: one step.
@@ -670,7 +677,7 @@ fn an_offline_frame_is_no_source_for_a_copy_a_sync_or_a_preset() {
         x_before = std::fs::read(Sidecar::path_for(&x)).unwrap();
         // The frames are pictures: a picture's default stands in.
         assert_eq!(
-            st.edit,
+            st.develop.edit,
             greycard_edit::Edit::for_picture(),
             "the stand-in's default, not x's"
         );
@@ -682,14 +689,14 @@ fn an_offline_frame_is_no_source_for_a_copy_a_sync_or_a_preset() {
         // Copy: refused.
         app.set_status("".into());
         crate::panel::sync::copy_settings(&mut st, &app);
-        assert!(st.clipboard.is_none());
+        assert!(st.sheets.clipboard.is_none());
         assert!(
             app.get_status().contains("nothing to copy"),
             "{}",
             app.get_status()
         );
         // Sync onto x: refused, x untouched.
-        st.picked = vec![0, 1];
+        st.views.picked = vec![0, 1];
         let synced = crate::panel::sync::sync_selection(
             &mut st,
             &app,
@@ -737,7 +744,7 @@ fn an_offline_frame_is_no_source_for_a_copy_a_sync_or_a_preset() {
         x_before,
         "x's sidecar as it was"
     );
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -767,7 +774,7 @@ fn the_culling_tiles_turn_a_frame_by_its_row() {
         (0, false)
     );
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -794,8 +801,8 @@ fn an_xmp_s_rating_shows_in_a_list_built_from_the_rows() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.write_sidecars = true;
-        st.index_path = Some(db.clone());
+        st.window.write_sidecars = true;
+        st.views.index_path = Some(db.clone());
     }
     open_listing(
         &state,
@@ -814,12 +821,12 @@ fn an_xmp_s_rating_shows_in_a_list_built_from_the_rows() {
         );
         assert_eq!(st.sidecars[1].meta.rating, 0);
         assert_eq!(app.get_thumbs().row_data(0).unwrap().rating, 3);
-        st.filter = filter::Filter {
+        st.views.filter = filter::Filter {
             text: "rating>=3".into(),
             ..filter::Filter::default()
         };
         rebuild_browser(&mut st, &app);
-        assert_eq!(st.shown, [0], "the filter sees it");
+        assert_eq!(st.views.shown, [0], "the filter sees it");
         // As the loader gives it, on opening.
         let (loaded, _) = crate::panel::browser::load_sidecar(&files[0], true);
         assert_eq!(loaded.meta, st.sidecars[0].meta);
@@ -857,13 +864,13 @@ fn many_under_a_root(
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
         // By name over the folders: the frames are told apart by their
         // place in the list this built, in that order.
-        st.sort = crate::sort::Kept::by_name();
-        st.index_path = Some(db);
-        st.write_sidecars = true;
-        st.library.roots.add(&a).unwrap();
+        st.views.sort = crate::sort::Kept::by_name();
+        st.views.index_path = Some(db);
+        st.window.write_sidecars = true;
+        st.views.library.roots.add(&a).unwrap();
     }
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
@@ -894,7 +901,7 @@ fn a_key_during_a_pick_s_read_reaches_the_pick_alone() {
         assert_eq!(st.current, Some(0));
         crate::panel::browser::open_row(&mut st, &app, &worker, 1, false);
         assert_eq!(st.current, Some(1), "current from the pick");
-        assert_eq!(st.picked, [1]);
+        assert_eq!(st.views.picked, [1]);
         assert!(!st.from_row[1].read);
     }
     assert!(crate::panel::browser::meta_on_selection(
@@ -910,17 +917,17 @@ fn a_key_during_a_pick_s_read_reaches_the_pick_alone() {
             "not yet: queued behind the open"
         );
         assert_eq!(st.sidecars[0].meta.rating, 3, "x untouched");
-        assert_eq!(st.loads.queue.len(), 2, "the open, then the key");
+        assert_eq!(st.views.loads.queue.len(), 2, "the open, then the key");
     }
     assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
     {
         let st = state.borrow();
         assert_eq!(st.current, Some(1));
         assert!(st.from_row[1].read);
-        assert!(st.pick_pending.is_none());
+        assert!(st.views.pick_pending.is_none());
         assert_eq!(st.sidecars[1].meta.rating, 5, "the key, after the open");
         assert_eq!(st.sidecars[0].meta.rating, 3);
-        assert!(st.loads.queue.is_empty());
+        assert!(st.views.loads.queue.is_empty());
     }
     assert_eq!(Sidecar::load(&files[1]).unwrap().unwrap().meta.rating, 5);
     assert_eq!(
@@ -928,7 +935,7 @@ fn a_key_during_a_pick_s_read_reaches_the_pick_alone() {
         x_before,
         "the frame before the pick, as it was"
     );
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -944,12 +951,12 @@ fn a_preset_lands_on_the_frames_it_was_pressed_on() {
     // Frame 51 loaded, then frame 0 on screen with 0..50 chosen.
     open_and_land(&state, &app, &worker, 51);
     open_and_land(&state, &app, &worker, 0);
-    state.borrow_mut().picked = (0..50).collect();
+    state.borrow_mut().views.picked = (0..50).collect();
     let mut e = greycard_edit::Edit::for_picture();
     e.light.exposure = 1.5;
     let preset = Preset::from_edit("bright", &e, Section::ALL);
     crate::panel::sync::preset_pressed(&state, &app, &worker, preset);
-    assert!(state.borrow().loads.reading(), "49 sidecars to read");
+    assert!(state.borrow().views.loads.reading(), "49 sidecars to read");
     // Meanwhile: the loaded frame clicked, which opens at once.
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 51, false);
     assert_eq!(state.borrow().current, Some(51));
@@ -967,7 +974,7 @@ fn a_preset_lands_on_the_frames_it_was_pressed_on() {
     );
     assert_eq!(st.current, Some(51));
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -990,14 +997,14 @@ fn two_keys_during_one_read_both_apply_in_order() {
         ));
     }
     assert_eq!(
-        state.borrow().loads.queue.len(),
+        state.borrow().views.loads.queue.len(),
         4,
         "the open and three keys, in order"
     );
     assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
     {
         let st = state.borrow();
-        assert!(st.loads.queue.is_empty());
+        assert!(st.views.loads.queue.is_empty());
         assert_eq!(st.sidecars[1].meta.rating, 2, "the last rating stands");
         assert_eq!(st.sidecars[1].meta.flag, meta::Flag::Pick);
         assert_eq!(
@@ -1012,7 +1019,7 @@ fn two_keys_during_one_read_both_apply_in_order() {
         (on_disk.meta.rating, on_disk.meta.flag),
         (2, meta::Flag::Pick)
     );
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1031,11 +1038,11 @@ fn a_pick_moved_on_from_lands_silently() {
         let mut st = state.borrow_mut();
         crate::panel::browser::open_row(&mut st, &app, &worker, 1, false);
         assert_eq!(st.current, Some(1));
-        assert_eq!(st.pick_pending, Some(files[1].clone()));
+        assert_eq!(st.views.pick_pending, Some(files[1].clone()));
         // Back to x, loaded: opens at once, and the pick is over.
         crate::panel::browser::open_row(&mut st, &app, &worker, 0, false);
         assert_eq!(st.current, Some(0));
-        assert!(st.pick_pending.is_none());
+        assert!(st.views.pick_pending.is_none());
         assert!(
             !app.get_status().contains("reading"),
             "{}",
@@ -1049,9 +1056,9 @@ fn a_pick_moved_on_from_lands_silently() {
     assert!(st.from_row[1].read, "y's sidecar in memory all the same");
     assert_eq!(st.sidecars[1].history.len(), 1, "y's own");
     assert_eq!(app.get_status(), status, "nothing said");
-    assert!(st.loads.queue.is_empty());
+    assert!(st.views.loads.queue.is_empty());
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1066,15 +1073,15 @@ fn a_dropped_read_clears_the_bar() {
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
-    let since = state.borrow().loads.since.expect("a read out");
-    assert!(state.borrow().loads.timer.running());
+    let since = state.borrow().views.loads.since.expect("a read out");
+    assert!(state.borrow().views.loads.timer.running());
     crate::rows::bar_tick(&state, &app, &worker, since + Duration::from_millis(300));
     assert!(app.get_loading_shown(), "the frames' bar, after the moment");
     assert_eq!(app.get_loading_line(), "Reading sidecars… 0 of 1");
     let waited = since + LOADING_WAITING_AFTER + Duration::from_millis(500);
     crate::rows::bar_tick(&state, &app, &worker, waited);
     assert_eq!(app.get_loading_line(), "Waiting on a…");
-    assert!(!state.borrow().library.loading, "not the view's read");
+    assert!(!state.borrow().views.library.loading, "not the view's read");
     // The list replaced: the request goes, the bar with it.
     open_listing(
         &state,
@@ -1088,17 +1095,17 @@ fn a_dropped_read_clears_the_bar() {
     assert_eq!(state.borrow().files, std::slice::from_ref(&files[0]));
     {
         let st = state.borrow();
-        assert!(st.loads.queue.is_empty());
-        assert!(st.loads.since.is_none());
-        assert!(!st.loads.timer.running());
-        assert!(st.pick_pending.is_none());
+        assert!(st.views.loads.queue.is_empty());
+        assert!(st.views.loads.since.is_none());
+        assert!(!st.views.loads.timer.running());
+        assert!(st.views.pick_pending.is_none());
     }
     assert!(!app.get_loading_shown());
     // The dropped request's read lands on nothing, quietly.
     assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
     assert!(!app.get_loading_shown());
-    assert!(state.borrow().loads.queue.is_empty());
-    state.borrow_mut().index_reader = None;
+    assert!(state.borrow().views.loads.queue.is_empty());
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1147,7 +1154,7 @@ fn a_purple_label_and_no_label_reach_an_unloaded_frame() {
         Sidecar::load(&files[1]).unwrap().unwrap().meta.label,
         meta::Label::None
     );
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1186,7 +1193,7 @@ fn an_export_record_reaches_a_frame_that_became_a_stand_in() {
     assert!(on_disk.current_exports[0].file.ends_with("y.jpg"));
     assert_eq!(on_disk.history.len(), 1, "its develop kept");
     drop(worker);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1205,7 +1212,7 @@ fn culling_s_move_on_steps_at_the_press_and_each_key_finds_its_frame() {
     {
         let mut st = state.borrow_mut();
         crate::panel::cull::enter_cull(&mut st, &app, 1);
-        st.cull_move_on = true;
+        st.culling.cull_move_on = true;
     }
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
     assert_eq!(state.borrow().current, Some(0));
@@ -1222,11 +1229,11 @@ fn culling_s_move_on_steps_at_the_press_and_each_key_finds_its_frame() {
         assert_eq!(st.sidecars[1].meta.rating, 2, "y the second");
         assert_eq!(st.sidecars[2].meta.rating, 0);
         assert_eq!(st.current, Some(2));
-        assert!(st.loads.queue.is_empty());
+        assert!(st.views.loads.queue.is_empty());
     }
     assert_eq!(Sidecar::load(&files[0]).unwrap().unwrap().meta.rating, 4);
     assert_eq!(Sidecar::load(&files[1]).unwrap().unwrap().meta.rating, 2);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1236,7 +1243,7 @@ fn culling_s_move_on_steps_at_the_press_and_each_key_finds_its_frame() {
     {
         let mut st = state.borrow_mut();
         crate::panel::cull::enter_cull(&mut st, &app, 1);
-        st.cull_move_on = true;
+        st.culling.cull_move_on = true;
     }
     crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
     for k in 0..10u8 {
@@ -1262,7 +1269,7 @@ fn culling_s_move_on_steps_at_the_press_and_each_key_finds_its_frame() {
     assert_eq!(st.sidecars[10].meta.rating, 0);
     assert_eq!(st.current, Some(10));
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1302,7 +1309,7 @@ fn a_read_from_an_older_list_fills_no_stand_in_of_the_new() {
     assert_eq!(Sidecar::load(&files[1]).unwrap().unwrap().meta.rating, 5);
     // A key on y now: its own read, of the newer bytes, then the key.
     state.borrow_mut().current = Some(1);
-    state.borrow_mut().picked = vec![1];
+    state.borrow_mut().views.picked = vec![1];
     assert!(crate::panel::browser::meta_on_selection(
         &state,
         &app,
@@ -1315,7 +1322,7 @@ fn a_read_from_an_older_list_fills_no_stand_in_of_the_new() {
         (on_disk.meta.rating, on_disk.meta.flag),
         (5, meta::Flag::Pick)
     );
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1342,7 +1349,7 @@ fn giving_up_names_what_was_dropped_and_lets_a_pick_go() {
         meta::Change::Flag(meta::Flag::Pick)
     ));
     assert!(app.get_busy());
-    let since = state.borrow().loads.since.unwrap();
+    let since = state.borrow().views.loads.since.unwrap();
     crate::rows::bar_tick(
         &state,
         &app,
@@ -1355,10 +1362,10 @@ fn giving_up_names_what_was_dropped_and_lets_a_pick_go() {
             app.get_status(),
             "the open of y.tif, 2 rating keys and the flag key dropped: the sidecars did not come in"
         );
-        assert!(st.pick_pending.is_none());
+        assert!(st.views.pick_pending.is_none());
         assert!(!app.get_busy());
-        assert!(st.loads.queue.is_empty());
-        assert!(st.loads.since.is_none());
+        assert!(st.views.loads.queue.is_empty());
+        assert!(st.views.loads.since.is_none());
         assert_eq!(
             st.current,
             Some(1),
@@ -1374,7 +1381,7 @@ fn giving_up_names_what_was_dropped_and_lets_a_pick_go() {
     assert!(st.from_row[1].read);
     assert_eq!(st.sidecars[1].meta.rating, 0);
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1389,7 +1396,7 @@ fn a_frame_gone_before_its_request_ran_is_said() {
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     open_and_land(&state, &app, &worker, 0);
-    state.borrow_mut().picked = vec![0, 1];
+    state.borrow_mut().views.picked = vec![0, 1];
     assert!(crate::panel::browser::meta_on_selection(
         &state,
         &app,
@@ -1408,7 +1415,7 @@ fn a_frame_gone_before_its_request_ran_is_said() {
     );
     assert_eq!(Sidecar::load(&files[1]).unwrap().unwrap().meta.rating, 0);
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1444,24 +1451,24 @@ fn three_picks_culling(
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
         // By name over the folders: the frames are told apart by their
         // place in the list this built, in that order.
-        st.sort = crate::sort::Kept::by_name();
-        st.index_path = Some(db);
-        st.write_sidecars = true;
-        st.library.roots.add(&a).unwrap();
+        st.views.sort = crate::sort::Kept::by_name();
+        st.views.index_path = Some(db);
+        st.window.write_sidecars = true;
+        st.views.library.roots.add(&a).unwrap();
     }
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     {
         let mut st = state.borrow_mut();
         assert_eq!(st.files, files);
-        st.filter = filter::Filter::from_name("Picks").unwrap();
+        st.views.filter = filter::Filter::from_name("Picks").unwrap();
         rebuild_browser(&mut st, &app);
-        assert_eq!(st.shown, [0, 1, 2]);
+        assert_eq!(st.views.shown, [0, 1, 2]);
         crate::panel::cull::enter_cull(&mut st, &app, 1);
-        st.cull_move_on = true;
+        st.culling.cull_move_on = true;
     }
     (dir, files, writer, app, state, worker)
 }
@@ -1487,10 +1494,10 @@ fn a_queued_key_on_the_last_frame_ends_where_the_key_applied_now_would() {
     ));
     {
         let st = state.borrow();
-        assert_eq!(st.shown, [0, 1], "f02 left the list");
+        assert_eq!(st.views.shown, [0, 1], "f02 left the list");
         assert_eq!(st.current, Some(1), "the nearest shown, once");
     }
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1508,16 +1515,16 @@ fn a_queued_key_on_the_last_frame_ends_where_the_key_applied_now_would() {
     crate::rows::land_pending(&state, &app, &worker);
     {
         let st = state.borrow();
-        assert_eq!(st.shown, [0, 1]);
+        assert_eq!(st.views.shown, [0, 1]);
         assert_eq!(
             st.current,
             Some(1),
             "the same frame as the key applied at once"
         );
         assert!(st.from_row[1].read, "opened");
-        assert!(st.pick_pending.is_none());
+        assert!(st.views.pick_pending.is_none());
     }
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1536,10 +1543,10 @@ fn a_queued_key_on_the_last_frame_ends_where_the_key_applied_now_would() {
     ));
     {
         let st = state.borrow();
-        assert_eq!(st.shown, [0, 2]);
+        assert_eq!(st.views.shown, [0, 2]);
         assert_eq!(st.current, Some(2), "the next frame, once");
     }
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1557,10 +1564,10 @@ fn a_queued_key_on_the_last_frame_ends_where_the_key_applied_now_would() {
     crate::rows::land_pending(&state, &app, &worker);
     {
         let st = state.borrow();
-        assert_eq!(st.shown, [0, 2]);
+        assert_eq!(st.views.shown, [0, 2]);
         assert_eq!(st.current, Some(2), "and stays");
     }
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1576,7 +1583,7 @@ fn culling_s_undo_takes_back_the_last_key_pressed_not_the_last_landed() {
     {
         let mut st = state.borrow_mut();
         crate::panel::cull::enter_cull(&mut st, &app, 1);
-        st.cull_move_on = true;
+        st.culling.cull_move_on = true;
     }
     // 5 on f00, loaded: at once, and on to f01, whose read goes out.
     assert!(crate::panel::browser::meta_on_selection(
@@ -1608,7 +1615,7 @@ fn culling_s_undo_takes_back_the_last_key_pressed_not_the_last_landed() {
         );
         // The 1 moved the pick on to f02 at its press, as a key does.
         assert_eq!(
-            st.loads.whats(),
+            st.views.loads.whats(),
             ["open of f01.tif", "rating key", "open of f02.tif", "undo"]
         );
     }
@@ -1621,7 +1628,7 @@ fn culling_s_undo_takes_back_the_last_key_pressed_not_the_last_landed() {
         );
         assert_eq!(st.sidecars[0].meta.rating, 5, "the 5 stands");
         assert_eq!(st.current, Some(1), "over to the frame put back, not f00");
-        assert!(st.loads.queue.is_empty());
+        assert!(st.views.loads.queue.is_empty());
         assert!(
             !app.get_status().starts_with("reading"),
             "the abandoned pick's line is gone: {}",
@@ -1633,7 +1640,7 @@ fn culling_s_undo_takes_back_the_last_key_pressed_not_the_last_landed() {
     // Redo brings the 1 back, at once now.
     app.invoke_redo();
     assert_eq!(state.borrow().sidecars[1].meta.rating, 1);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1658,8 +1665,8 @@ fn a_burst_of_reports_is_one_read_and_one_merge() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.library.roots.add(&root).unwrap();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.library.roots.add(&root).unwrap();
     }
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
@@ -1680,24 +1687,24 @@ fn a_burst_of_reports_is_one_read_and_one_merge() {
         assert!(background_done(&state, &app, d, &report, false, false));
     }
     assert_eq!(sent(), 1, "the rest wait for it");
-    assert!(state.borrow().library.stale);
+    assert!(state.borrow().views.library.stale);
 
     // The read out lands and what it saw is merged; the burst's one
     // read after it goes out, and is merged once.
-    state.borrow_mut().library.painted = None;
+    state.borrow_mut().views.library.painted = None;
     let look = SENT.with(|s| s.borrow_mut().pop()).unwrap();
     land(&state, &app, &worker, look.run());
-    assert!(state.borrow().library.painted.is_some(), "merged");
+    assert!(state.borrow().views.library.painted.is_some(), "merged");
     assert_eq!(state.borrow().files.len(), 7);
     assert_eq!(sent(), 1, "one more read for the burst");
-    state.borrow_mut().library.painted = None;
+    state.borrow_mut().views.library.painted = None;
     assert_eq!(land_all(&state, &app, &worker), 1, "and none after it");
     let st = state.borrow();
-    assert!(st.library.painted.is_some(), "merged");
+    assert!(st.views.library.painted.is_some(), "merged");
     assert_eq!(st.files.len(), 12);
-    assert!(!st.library.merging && !st.library.stale);
+    assert!(!st.views.library.merging && !st.views.library.stale);
     drop(st);
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
@@ -1719,18 +1726,18 @@ fn a_capture_of_an_empty_view_ends() {
     let (state, worker) = state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
-        st.batch = true;
-        st.library.awaiting = true;
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.library.roots.add(&gone).unwrap();
+        st.window.batch = true;
+        st.views.library.awaiting = true;
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.library.roots.add(&gone).unwrap();
     }
     std::fs::remove_dir(&gone).unwrap();
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     {
         let st = state.borrow();
-        assert!(st.failed, "the capture ends");
-        assert!(!st.library.awaiting);
+        assert!(st.launch.failed, "the capture ends");
+        assert!(!st.views.library.awaiting);
     }
     assert!(app.get_status().contains("offline"), "{}", app.get_status());
 
@@ -1738,20 +1745,20 @@ fn a_capture_of_an_empty_view_ends() {
     // launch pass, and ends when the pass brings nothing.
     {
         let mut st = state.borrow_mut();
-        st.failed = false;
-        st.library.awaiting = true;
-        st.library.roots = Roots::default();
-        st.library.roots.add(&empty).unwrap();
-        st.library.launch_left = 1;
+        st.launch.failed = false;
+        st.views.library.awaiting = true;
+        st.views.library.roots = Roots::default();
+        st.views.library.roots.add(&empty).unwrap();
+        st.views.library.launch_left = 1;
     }
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
-    assert!(!state.borrow().failed, "the pass is still to come");
+    assert!(!state.borrow().launch.failed, "the pass is still to come");
     let report = greycard_library::Report::default();
     background_done(&state, &app, &empty, &report, true, false);
-    assert!(state.borrow().failed, "nothing came of the pass");
+    assert!(state.borrow().launch.failed, "nothing came of the pass");
     assert!(app.get_status().contains("nothing"), "{}", app.get_status());
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     crate::testing::remove_dir_retry(&dir);
 }
@@ -1796,9 +1803,9 @@ fn the_last_frame_of_a_folder_deleted_goes_from_the_window() {
     let (state, worker) = state_for(&app, listed.clone());
     {
         let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.library.roots.add(&dir).unwrap();
-        st.view = View::Roots(None);
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.library.roots.add(&dir).unwrap();
+        st.views.view = View::Roots(None);
         crate::library::refresh_ids(&mut st);
         st.current = listed.iter().position(|p| *p == lone);
         rebuild_browser(&mut st, &app);
@@ -1815,7 +1822,7 @@ fn the_last_frame_of_a_folder_deleted_goes_from_the_window() {
         assert!(!st.files.contains(&lone), "{:?}", st.files);
     }
     assert!(!lone.with_extension("tif.gcd").exists());
-    state.borrow_mut().index_reader = None;
+    state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
     crate::testing::remove_dir_retry(&dir);

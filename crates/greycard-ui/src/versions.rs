@@ -193,14 +193,14 @@ impl State {
         let was = std::mem::replace(at, to.clone());
         // Its companions are taken to have gone with it, as every move
         // of ours takes them; the next read of the list says for sure.
-        if let Some(with) = self.companions.remove(&was) {
+        if let Some(with) = self.views.companions.remove(&was) {
             let with = with
                 .iter()
                 .filter_map(|c| Some(to.with_file_name(c.file_name()?)))
                 .collect();
-            self.companions.insert(to.clone(), with);
+            self.views.companions.insert(to.clone(), with);
         }
-        if let Some(frames) = self.collection_frames.as_mut() {
+        if let Some(frames) = self.views.collection_frames.as_mut() {
             for k in frames.iter_mut().filter(|k| k.path == was) {
                 k.path = to.clone();
             }
@@ -217,7 +217,7 @@ impl State {
     /// [`State::wanted_cells`] with the stacks `listed` as the list
     /// shows them.
     fn wanted_cells_with(&self, listed: &[crate::stacks::Listed]) -> Vec<Cell> {
-        match &self.collection_frames {
+        match &self.views.collection_frames {
             Some(frames) => cells_of_frames(&self.files, &self.sidecars, frames),
             None => crate::stacks::arrange(cells_of(&self.sidecars), listed),
         }
@@ -226,13 +226,14 @@ impl State {
     /// The versions the list wants of file `file`, in its order: none
     /// standing for the file's own.
     pub(crate) fn wanted_of_file(&self, file: usize) -> Vec<Option<Arc<str>>> {
-        if self.collection_frames.is_some() {
+        if self.views.collection_frames.is_some() {
             self.wanted_cells()
                 .into_iter()
                 .filter(|c| c.file == file)
                 .map(|c| c.version)
                 .collect()
         } else if self
+            .views
             .stacks_listed
             .iter()
             .any(|l| l.members.iter().any(|m| m.file == file))
@@ -338,12 +339,12 @@ impl State {
     /// one they are the collection's frames of it, wherever its order
     /// puts them. Empty for a file not listed.
     pub(crate) fn cells_of_file(&self, file: usize) -> Vec<usize> {
-        if self.collection_frames.is_none()
-            && let Some(by_file) = &self.cells_by_file
+        if self.views.collection_frames.is_none()
+            && let Some(by_file) = &self.views.cells_by_file
         {
             return by_file.get(file).cloned().unwrap_or_default();
         }
-        if self.collection_frames.is_none() {
+        if self.views.collection_frames.is_none() {
             let first = self.cells.partition_point(|c| c.file < file);
             let end = self.cells.partition_point(|c| c.file <= file);
             return (first..end).collect();
@@ -364,7 +365,7 @@ impl State {
     /// The file's own cell of file `file`, when the list has it: a
     /// collection may hold a version of a file and not the file's own.
     pub(crate) fn own_cell(&self, file: usize) -> Option<usize> {
-        if self.collection_frames.is_some() || self.cells_by_file.is_some() {
+        if self.views.collection_frames.is_some() || self.views.cells_by_file.is_some() {
             return self.cell_of(file, None);
         }
         // A closed stack may keep the file's own out and its versions in.
@@ -458,7 +459,7 @@ pub(crate) fn settle(st: &mut State, app: &App, worker: &Worker) -> bool {
             app.set_selected(-1);
             crate::panel::browser::show_file_name(st, app, None);
         }
-    } else if st.cull.is_some()
+    } else if st.culling.cull.is_some()
         && let Some(c) = st.current
     {
         crate::panel::cull::cull_select(st, app, c);
@@ -479,7 +480,7 @@ pub(crate) enum Compared {
 /// shows, to be taken before a relist, which renumbers the cells under
 /// it.
 pub(crate) fn compared_file(st: &State) -> Option<(Compared, usize)> {
-    let cull = st.cull.as_ref()?;
+    let cull = st.culling.cull.as_ref()?;
     if let Some(id) = &cull.stack_of {
         return Some((Compared::Stack(id.clone()), cull.compare));
     }
@@ -495,7 +496,7 @@ pub(crate) fn compared_file(st: &State) -> Option<(Compared, usize)> {
 /// it: `settle`, the list's merge, a drop of files.
 pub(crate) fn refit_compare(st: &mut State, app: &App, compared: Option<(Compared, usize)>) {
     match compared {
-        Some(_) if st.cull.is_none() => {}
+        Some(_) if st.culling.cull.is_none() => {}
         Some((Compared::File(path), was)) => {
             crate::panel::versions::fit_compare(st, app, &path, Some(was));
         }
@@ -572,7 +573,7 @@ pub(crate) fn relist(
     let old = std::mem::take(&mut st.cells);
     let listed = crate::stacks::listed(st);
     let cells = st.wanted_cells_with(&listed);
-    st.stacks_listed = listed;
+    st.views.stacks_listed = listed;
     let at: HashMap<Cell, usize> = old
         .iter()
         .enumerate()
@@ -598,16 +599,17 @@ pub(crate) fn relist(
     for f in &from {
         match *f {
             Some(i) => {
-                thumb_base.push(st.thumb_base.get_mut(i).and_then(Option::take));
-                thumb_shown.push(st.thumb_shown.get(i).copied().flatten());
-                thumb_made.push(st.thumb_made.get(i).copied().unwrap_or(0));
+                thumb_base.push(st.views.thumb_base.get_mut(i).and_then(Option::take));
+                thumb_shown.push(st.views.thumb_shown.get(i).copied().flatten());
+                thumb_made.push(st.views.thumb_made.get(i).copied().unwrap_or(0));
                 thumb_asked.push(
-                    st.thumb_asked
+                    st.views
+                        .thumb_asked
                         .get(i)
                         .copied()
                         .unwrap_or(crate::worker::THUMB_WIDTH),
                 );
-                thumb_failed.push(st.thumb_failed.get(i).copied().unwrap_or(false));
+                thumb_failed.push(st.views.thumb_failed.get(i).copied().unwrap_or(false));
             }
             None => {
                 thumb_base.push(None);
@@ -626,7 +628,7 @@ pub(crate) fn relist(
     }
     let to_new = |i: usize| new_of.get(i).copied().flatten();
     if renumbered {
-        if let Some(cull) = st.cull.as_mut() {
+        if let Some(cull) = st.culling.cull.as_mut() {
             cull.cache.clear();
             cull.textures.clear();
             cull.clear_failures();
@@ -638,22 +640,25 @@ pub(crate) fn relist(
             cull.leave_versions(app);
         }
         crate::panel::cull::drop_placeholder(st, app);
-        st.hold = None;
-        st.prefetch.want(Vec::new());
-        if let Some(run) = st.thumb_run.as_mut() {
+        st.culling.hold = None;
+        st.culling.prefetch.want(Vec::new());
+        if let Some(run) = st.views.thumb_run.as_mut() {
             run.renumber(&from);
         }
     }
     st.current = st.current.and_then(to_new);
-    st.picked = st.picked.iter().filter_map(|&i| to_new(i)).collect();
-    st.menu_file = st.menu_file.and_then(to_new);
-    st.shown_turn = st.shown_turn.and_then(|(i, t)| Some((to_new(i)?, t)));
-    st.thumb_base = thumb_base;
-    st.thumb_shown = thumb_shown;
-    st.thumb_made = thumb_made;
-    st.thumb_asked = thumb_asked;
-    st.thumb_failed = thumb_failed;
-    st.cells_by_file = crate::stacks::by_file(&cells, st.files.len());
+    st.views.picked = st.views.picked.iter().filter_map(|&i| to_new(i)).collect();
+    st.views.menu_file = st.views.menu_file.and_then(to_new);
+    st.develop.shown_turn = st
+        .develop
+        .shown_turn
+        .and_then(|(i, t)| Some((to_new(i)?, t)));
+    st.views.thumb_base = thumb_base;
+    st.views.thumb_shown = thumb_shown;
+    st.views.thumb_made = thumb_made;
+    st.views.thumb_asked = thumb_asked;
+    st.views.thumb_failed = thumb_failed;
+    st.views.cells_by_file = crate::stacks::by_file(&cells, st.files.len());
     st.cells = cells;
     renumbered
 }
@@ -663,14 +668,14 @@ pub(crate) fn relist(
 pub(crate) fn list(st: &mut State) {
     let listed = crate::stacks::listed(st);
     st.cells = st.wanted_cells_with(&listed);
-    st.stacks_listed = listed;
-    st.cells_by_file = crate::stacks::by_file(&st.cells, st.files.len());
+    st.views.stacks_listed = listed;
+    st.views.cells_by_file = crate::stacks::by_file(&st.cells, st.files.len());
     let count = st.cells.len();
-    st.thumb_base = vec![None; count];
-    st.thumb_shown = vec![None; count];
-    st.thumb_made = vec![0; count];
-    st.thumb_failed = vec![false; count];
-    st.thumb_asked = vec![crate::worker::THUMB_WIDTH; count];
+    st.views.thumb_base = vec![None; count];
+    st.views.thumb_shown = vec![None; count];
+    st.views.thumb_made = vec![0; count];
+    st.views.thumb_failed = vec![false; count];
+    st.views.thumb_asked = vec![crate::worker::THUMB_WIDTH; count];
 }
 
 #[cfg(test)]
@@ -754,7 +759,7 @@ mod tests {
         let mut st = state.borrow_mut();
         let warm = st.sidecars[0].new_version(None, Some("Warm")).unwrap();
         let cool = st.sidecars[2].new_version(None, Some("Cool")).unwrap();
-        st.collection_frames = Some(vec![
+        st.views.collection_frames = Some(vec![
             Key::of(&files[0], Some(&warm)),
             Key::file(&files[1]),
             Key::of(&files[0], None),
@@ -785,7 +790,7 @@ mod tests {
         assert_eq!(st.file_cell(2), Some(3));
         assert_eq!(st.wanted_of_file(0), [Some(Arc::from(warm.as_str())), None]);
         // Outside a collection: each file's own and all its versions.
-        st.collection_frames = None;
+        st.views.collection_frames = None;
         assert_eq!(st.wanted_cells(), cells_of(&st.sidecars));
     }
 
@@ -798,28 +803,31 @@ mod tests {
         let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(3));
         let mut st = state.borrow_mut();
         for i in 0..3 {
-            st.thumb_base[i] = Some((1, 1, vec![i as u8; 3]));
+            st.views.thumb_base[i] = Some((1, 1, vec![i as u8; 3]));
         }
         st.current = Some(2);
-        st.picked = vec![1, 2];
+        st.views.picked = vec![1, 2];
         let id = st.sidecars[0].new_version(None, Some("Warm")).unwrap();
         assert!(relist(&mut st, &app, &worker, &Some));
         assert_eq!(st.cells.len(), 4);
         assert_eq!(st.current, Some(3));
-        assert_eq!(st.picked, [2, 3]);
-        assert!(st.thumb_base[1].is_none(), "the new cell has no picture");
-        assert_eq!(st.thumb_base[2].as_ref().unwrap().2, [1, 1, 1]);
-        assert_eq!(st.thumb_base[3].as_ref().unwrap().2, [2, 2, 2]);
+        assert_eq!(st.views.picked, [2, 3]);
+        assert!(
+            st.views.thumb_base[1].is_none(),
+            "the new cell has no picture"
+        );
+        assert_eq!(st.views.thumb_base[2].as_ref().unwrap().2, [1, 1, 1]);
+        assert_eq!(st.views.thumb_base[3].as_ref().unwrap().2, [2, 2, 2]);
         // The version deleted: its cell goes, and the frame on screen,
         // another cell, keeps its number's picture.
-        st.thumb_base[1] = Some((1, 1, vec![9, 9, 9]));
+        st.views.thumb_base[1] = Some((1, 1, vec![9, 9, 9]));
         st.current = Some(1);
         st.sidecars[0].delete_version(&id);
         assert!(relist(&mut st, &app, &worker, &Some));
         assert_eq!(st.cells.len(), 3);
         assert_eq!(st.current, None, "the cell on screen went");
-        assert_eq!(st.picked, [1, 2]);
-        assert_eq!(st.thumb_base[1].as_ref().unwrap().2, [1, 1, 1]);
+        assert_eq!(st.views.picked, [1, 2]);
+        assert_eq!(st.views.thumb_base[1].as_ref().unwrap().2, [1, 1, 1]);
         // Nothing changed: nothing moves.
         assert!(!relist(&mut st, &app, &worker, &Some));
     }
@@ -833,7 +841,7 @@ mod tests {
         let files = crate::testing::folder(2);
         let (state, worker) = crate::testing::state_for(&app, files.clone());
         let mut st = state.borrow_mut();
-        st.collection_frames = Some(vec![Key::file(&files[0]), Key::file(&files[1])]);
+        st.views.collection_frames = Some(vec![Key::file(&files[0]), Key::file(&files[1])]);
         list(&mut st);
         assert_eq!(st.cells.len(), 2);
         let copy = PathBuf::from("/archive/shoot/a.tif");
@@ -842,6 +850,6 @@ mod tests {
         assert!(!crate::rows::versions_differ(&st, 0));
         assert!(!settle(&mut st, &app, &worker));
         assert_eq!(st.cells.len(), 2, "the followed frame's cell stays");
-        assert_eq!(st.collection_frames.as_ref().unwrap()[0].path, copy);
+        assert_eq!(st.views.collection_frames.as_ref().unwrap()[0].path, copy);
     }
 }
