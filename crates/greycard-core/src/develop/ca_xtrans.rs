@@ -835,19 +835,30 @@ mod tests {
 
     /// The Bayer correction is not this file's: a Bayer frame through
     /// the engine's entry point gives the same bits it gave before the
-    /// X-Trans read changed (the digest is of that build).
+    /// X-Trans read changed (the digest is of that build). The last
+    /// bits of the float math differ between platforms' math
+    /// libraries (Windows' gave another digest on CI), so the digest
+    /// is pinned where it was taken, and every platform checks that
+    /// the correction removes the error a Bayer frame should lose.
     #[test]
     fn a_bayer_frame_s_correction_is_the_same_bits() {
         let (w, h) = (400, 320);
         let p = CfaPattern::rggb();
-        let (_, shifted) = aberrated(w, h, &p, 0.005, -0.004);
+        let (clean, shifted) = aberrated(w, h, &p, 0.005, -0.004);
         let (out, stats) =
             crate::develop::ca::correct_ca(&shifted, w, h, &p, &CaOptions::default()).unwrap();
         assert!(stats.corrected);
-        let digest = out.iter().fold(0xcbf2_9ce4_8422_2325u64, |d, v| {
-            (d ^ u64::from(v.to_bits())).wrapping_mul(0x0100_0000_01b3)
-        });
-        assert_eq!(digest, 0xe656_0455_a985_3fe1, "digest {digest:#018x}");
+        for color in [CfaColor::Red, CfaColor::Blue] {
+            let before = rms_error(&clean, &shifted, w, h, &p, color);
+            let after = rms_error(&clean, &out, w, h, &p, color);
+            assert!(after < 0.32 * before, "{color:?}: {after} of {before}");
+        }
+        if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            let digest = out.iter().fold(0xcbf2_9ce4_8422_2325u64, |d, v| {
+                (d ^ u64::from(v.to_bits())).wrapping_mul(0x0100_0000_01b3)
+            });
+            assert_eq!(digest, 0xe656_0455_a985_3fe1, "digest {digest:#018x}");
+        }
     }
 
     /// The stand-in Bayer mosaic of a plane is the plane: every
