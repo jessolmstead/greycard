@@ -76,6 +76,10 @@ pub(crate) struct Sheets {
     /// The checks the last sync or paste laid over the selection,
     /// for the session: a paste's sheet opens with them.
     pub(crate) sync_last: Option<carry::Checks>,
+    /// The frame the sync sheet was opened from, as it read then: its
+    /// edit and the light its As shot means (none for a frame whose
+    /// raw would not say), for the words the sheet's shifts show.
+    pub(crate) sync_source: Option<(Edit, Option<greycard_core::TempTint>)>,
     /// The settings clipboard: an edit copied from a frame, to paste
     /// over the selection (`clipboard`). The session's, never the
     /// system's.

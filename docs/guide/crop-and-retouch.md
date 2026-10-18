@@ -67,7 +67,7 @@ In **ROTATE**:
 ### Turning and mirroring
 
 The row of four icon buttons in **ROTATE** (rest the pointer on one
-for its name):
+for its name, "Rotate left: part of the edit" and so on):
 
 - turn a quarter left
 - turn a quarter right

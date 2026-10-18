@@ -35,15 +35,7 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] A Sync button in the develop panel over a selection, and a
-      relative mode on the sync sheet for Temperature, Tint and
-      Exposure, each frame shifted from its own value rather than set
-      to one (Lightroom's Quick Develop; a second tester asked) (Pool)
 - [ ] The crop's starting aspect as a setting (Pool)
-- [ ] A keys sheet and a Help menu (Pool)
-- [ ] Library and Develop as two buttons in the header, so the grid is
-      found without a key: two testers took a while to find the
-      library (Pool)
 - [ ] White balance: moving Temperature or Tint turns As shot off by
       itself, the sliders live from the start at the as-shot values,
       instead of a switch to unlock them (a tester's step every frame)
@@ -629,18 +621,9 @@ clears or a tester asks for it.
       Export the queue and Clear; the queued frames marked in the strip
       and the grid. Covers the destination half of the naming-patterns
       line (§157) and the last-location line above
-- [ ] A keys sheet in the window (a Help menu with Keys and the
-      guide, and ? to open it), made from the key table itself so it
-      never goes stale; a tester could not find the shortcuts, and the
-      guide's Keys chapter is not reachable from the editor
 - [ ] Rebindable keys: a sheet in Settings to change any shortcut,
       saved in settings.json, with a conflict warning and a reset to
       defaults
-- [ ] Batch edits findable: a Sync button in the develop panel's head
-      whenever more than one frame is selected, opening the sync sheet
-      Ctrl+Shift+S opens, and the frame menu's copy, paste and sync
-      items named for what they do to the selection; a tester with
-      Lightroom habits could not find a batch edit
 - [ ] The crop's starting aspect as a setting: Original, the last one
       used, or Free, remembered across sessions, where today the crop
       opens under the aspect it was last fitted under in the session;

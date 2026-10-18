@@ -46,6 +46,18 @@ design note behind it.
 
 ### Editing
 
+- A Sync button at the top of the develop panel whenever several
+  frames are selected, and the frame menu's paste and sync named for
+  the frames they go onto. The sync sheet can shift Temperature, Tint
+  and Exposure instead of setting them: each frame moves from its own
+  value by the open frame's difference from its as-shot light, as
+  Lightroom's Quick Develop does
+  ([§346](https://github.com/jessolmstead/greycard/blob/master/docs/notes/346-batch-edits-the-keys-and-the-library-found-without-a-key.md))
+- A keys sheet (? or Help > Keys) made from the keys the editor
+  binds, searchable, and a Help button with the user guide. Library
+  and Develop buttons at the top of the left pane switch between the
+  grid and one frame, as G does
+  ([§346](https://github.com/jessolmstead/greycard/blob/master/docs/notes/346-batch-edits-the-keys-and-the-library-found-without-a-key.md))
 - Presets: Import... takes several `.xmp` or `.gcp` files at once and
   says what a Lightroom preset could not bring (masks, mostly)
   ([§330](https://github.com/jessolmstead/greycard/blob/master/docs/notes/330-importing-presets-from-the-window.md))

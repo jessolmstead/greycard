@@ -33,10 +33,11 @@ unplugged, "isn't reachable; is its drive connected?".
   ground, for judging a set side by side. Press **L**. See
   [the lightbox](culling.md#the-lightbox).
 
-Press **G** to switch between the loupe and the grid. In the grid,
-**Loupe** in the header, a double-click on a frame, **Enter** or
-**Esc** also go back to the loupe. (With several frames selected, the
-first **Esc** clears the selection.)
+**Library** and **Develop** at the top of the left pane switch
+between the grid and the loupe, and the one you are in is lit. **G**
+does the same. In the grid, **Loupe** in the header, a double-click on
+a frame, **Enter** or **Esc** also go back to the loupe. (With several
+frames selected, the first **Esc** clears the selection.)
 
 In the grid:
 

@@ -13,7 +13,7 @@ use rawcolor::{
 
 use crate::dcp::{EmbedPolicy, HueSatMap, HueSatMaps};
 use crate::error::{Error, Result};
-use crate::raw::RawFrame;
+use crate::raw::{Calibration, RawFrame};
 
 /// The engine's working space: linear Rec.2020, D65.
 ///
@@ -43,8 +43,13 @@ pub enum WhitePoint {
 /// there is otherwise. Calibrations with an unknown illuminant or a matrix
 /// that is not an invertible 3x3 are ignored.
 pub fn profile_from_frame(frame: &RawFrame) -> Result<CameraProfile> {
-    let mut calibrations: Vec<(f64, ProfileCalibration)> = frame
-        .calibrations
+    profile_from_calibrations(&frame.calibrations)
+}
+
+/// [`profile_from_frame`] from the calibrations alone, as
+/// [`crate::decode::white_path`] reads them without a sample.
+pub fn profile_from_calibrations(calibrations: &[Calibration]) -> Result<CameraProfile> {
+    let mut calibrations: Vec<(f64, ProfileCalibration)> = calibrations
         .iter()
         .filter_map(|c| {
             let illuminant = CalibrationIlluminant::from_exif_code(c.illuminant)?;
@@ -235,6 +240,19 @@ pub fn white_shift(
 /// The illuminant the camera's as-shot white balance implies.
 pub fn as_shot_temp_tint(frame: &RawFrame, profile: &CameraProfile) -> Result<TempTint> {
     resolve_white_balance(frame, profile, WhitePoint::AsShot).map(|wb| wb.temp_tint)
+}
+
+/// [`as_shot_temp_tint`] from the camera's gains alone, as
+/// [`crate::decode::white_path`] reads them: what [`WhitePoint::AsShot`]
+/// resolves to, without a frame.
+pub fn temp_tint_of_gains(profile: &CameraProfile, gains: [f64; 3]) -> Result<TempTint> {
+    Ok(WhiteBalance::from_coefficients(
+        profile,
+        Vec3::new(gains[0], gains[1], gains[2]),
+        &WORKING_SPACE,
+        CAT,
+    )?
+    .temp_tint)
 }
 
 /// Reshape a flat row-major matrix into an invertible 3x3.
@@ -1035,6 +1053,25 @@ pub(crate) mod tests {
         assert!((tt.cct - 6504.0).abs() < 20.0, "cct {}", tt.cct);
         // D65 itself lies about +0.003 off the Planckian locus.
         assert!(tt.duv.abs() < 5e-3, "duv {}", tt.duv);
+    }
+
+    #[test]
+    fn the_gains_alone_give_the_frames_as_shot_light() {
+        let mut frame = frame_with(vec![Calibration {
+            illuminant: D65,
+            color_matrix: rec2020_camera_matrix(),
+            forward_matrix: None,
+        }]);
+        for gains in [[1.0, 1.0, 1.0], [2.0, 1.0, 1.6], [1.4, 1.0, 2.3]] {
+            frame.as_shot_coefficients = Some(gains);
+            let profile = profile_from_frame(&frame).unwrap();
+            let from_frame = as_shot_temp_tint(&frame, &profile).unwrap();
+            let alone = profile_from_calibrations(&frame.calibrations).unwrap();
+            assert_eq!(alone, profile);
+            let from_gains = temp_tint_of_gains(&alone, gains).unwrap();
+            assert_eq!(from_gains.cct, from_frame.cct, "{gains:?}");
+            assert_eq!(from_gains.duv, from_frame.duv, "{gains:?}");
+        }
     }
 
     #[test]

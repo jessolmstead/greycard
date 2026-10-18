@@ -128,17 +128,17 @@ export component RotateSection inherits Section {
         PanelButton {
             text: "";
             icon: @image-url("../icons/rotate-ccw.svg");
-            words: "Turn left";
+            words: "Rotate left: part of the edit";
             accessible-role: button;
-            accessible-label: "Turn left";
+            accessible-label: "Rotate left";
             clicked => { root.geometry-turned(1); }
         }
         PanelButton {
             text: "";
             icon: @image-url("../icons/rotate-cw.svg");
-            words: "Turn right";
+            words: "Rotate right: part of the edit";
             accessible-role: button;
-            accessible-label: "Turn right";
+            accessible-label: "Rotate right";
             clicked => { root.geometry-turned(-1); }
         }
         PanelButton {
@@ -178,11 +178,13 @@ export component RotateSection inherits Section {
         PanelButton {
             text: "Turn left";
             icon: @image-url("../icons/rotate-ccw.svg");
+            words: "Turn the frame left ([): not part of the edit";
             clicked => { root.frame-turned(-1); }
         }
         PanelButton {
             text: "Turn right";
             icon: @image-url("../icons/rotate-cw.svg");
+            words: "Turn the frame right (]): not part of the edit";
             clicked => { root.frame-turned(1); }
         }
     }

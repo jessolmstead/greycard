@@ -84,6 +84,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(target) = cli.export.as_deref() {
         return crate::headless::export(&cli, target);
     }
+    // A first run is one with no settings file yet: read before
+    // anything this run writes one.
+    let first_run = settings::path().is_some_and(|p| !p.exists());
     let remembered = settings::Settings::load();
     match settings::path() {
         Some(p) => tracing::info!("settings: {}", p.display()),
@@ -186,6 +189,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_show_sharpen_mask(cli.sharpen_mask);
     app.set_warn_shadows(cli.clipping || remembered.warn_shadows);
     app.set_warn_highlights(cli.clipping || remembered.warn_highlights);
+    app.set_sync_shift_temperature(remembered.sync_shift.temperature);
+    app.set_sync_shift_tint(remembered.sync_shift.tint);
+    app.set_sync_shift_exposure(remembered.sync_shift.exposure);
     {
         let key = cli.proof.as_deref().unwrap_or(&remembered.proof_profile);
         let (choice, file) = match display::ProofProfile::from_key(key) {
@@ -718,6 +724,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_patch_handles(ModelRc::from(state.borrow().develop.patch_handles.clone()));
     app.set_guide_kept(ModelRc::from(state.borrow().develop.guide_kept.clone()));
     install_callbacks(&app, state.clone(), worker.clone());
+    // The way round the window, once: where the library is and where
+    // the keys are, which two testers looked for.
+    if first_run && !state.borrow().window.batch {
+        app.set_status(FIRST_RUN.into());
+    }
     // The pane's entry from what the last check found, and this
     // launch's check if a day has gone.
     crate::update::start(&app, state.borrow().window.batch, &remembered.update);
@@ -2065,8 +2076,17 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         update: crate::update::Kept::default(),
         // Written as the match sheet's boxes are ticked.
         match_unchecked: Vec::new(),
+        sync_shift: settings::SyncShift {
+            temperature: app.get_sync_shift_temperature(),
+            tint: app.get_sync_shift_tint(),
+            exposure: app.get_sync_shift_exposure(),
+        },
     }
 }
+
+/// The status line on a first run.
+pub(crate) const FIRST_RUN: &str = "Library and Develop, top left (or G), switch between the grid \
+     and one frame; ? lists the keys";
 
 /// The absolute path of the file now open, kept for the next run to
 /// jump back to; skipped for a screenshot, a snapshot or a one-shot

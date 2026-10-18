@@ -16,6 +16,15 @@
 //! before the sync (or the preset) makes its edit no longer the
 //! default.
 //!
+//! A sync can also move Temperature, Tint and Exposure relatively, as
+//! Lightroom's Quick Develop does: each such field set to "shift" on
+//! the sheet moves every frame by the source's difference from where a
+//! frame starts (its as-shot light, 0 EV) rather than setting it to the
+//! source's value ([`Shift`], [`shifted`]). Temperature moves in mired,
+//! in which Lightroom's scale is near uniform: a source warmed 12 mired
+//! from its as-shot (300 K at 4800 K) moves a frame at 3000 K by 115 K
+//! and one at 6500 K by 560 K, each the same look warmer.
+//!
 //! Copy and paste are a sync with the settings clipboard between
 //! (`crate::clipboard`): [`copy_settings`] takes the current frame's
 //! edit, and [`paste_selection`] lays the sections chosen on this
@@ -30,11 +39,13 @@ use crate::panel::browser::{
 use crate::panel::cull::leave_cull;
 use crate::panel::edit::{panel_state, read_edit, save_edit, write_sidecar};
 use crate::panel::history::{show_history, take_current, take_current_with};
+use crate::settings::SyncShift;
 use crate::*;
+use greycard_core::TempTint;
 use greycard_core::raw::Mosaic;
 use greycard_edit::camera::{self, ProfileChoice};
 use greycard_edit::history::{preset_label, preset_over_set_label, sync_label};
-use greycard_edit::preset::Choice;
+use greycard_edit::preset::{Choice, Part};
 
 /// The frames a sync goes onto: the set, less the frame it comes
 /// from.
@@ -59,6 +70,59 @@ pub(crate) fn show_sync_checks(st: &mut State, app: &App) {
     let lines = st.sheets.sync_rows.show(&st.sheets.sync_checks);
     app.set_sync_rows(ModelRc::from(st.sheets.sync_rows.model.clone()));
     app.set_sync_lines(lines);
+    show_shift(st, app);
+}
+
+/// The sheet's shift choices, as the checks and the source stand:
+/// whether the white balance and the exposure go (a choice for a
+/// field that does not go is greyed), and what a frame moves by.
+/// A paste's sheet has none.
+fn show_shift(st: &State, app: &App) {
+    let Some((edit, shot)) = st
+        .sheets
+        .sync_source
+        .as_ref()
+        .filter(|_| !app.get_sync_paste())
+    else {
+        app.set_sync_shift_shown(false);
+        return;
+    };
+    let preset = Preset::from_choice("", edit, &st.sheets.sync_checks.choice());
+    app.set_sync_shift_shown(true);
+    app.set_sync_shift_white(preset.sections.contains(&Section::WhiteBalance));
+    app.set_sync_shift_light(carries_exposure(&preset));
+    let modes = shift_modes(app);
+    let shift = shift_of(modes, &preset, edit, *shot);
+    let unread = (modes.temperature && app.get_sync_shift_white() && shift.temperature.is_none())
+        || (modes.tint && app.get_sync_shift_white() && shift.tint.is_none());
+    app.set_sync_shift_words(
+        if unread {
+            "This frame's as-shot light cannot be read (it is no raw, or its raw does not \
+             say): its Temperature and Tint are set."
+                .to_string()
+        } else if shift.is_none() {
+            "Set gives every frame this frame's value. Shift moves each frame from its own by \
+             this frame's difference from its as-shot light (Temperature, Tint) or from 0 EV \
+             (Exposure)."
+                .to_string()
+        } else {
+            format!(
+                "Each frame moves from its own value: {}. That is this frame's difference from \
+                 its as-shot light and from 0 EV.",
+                shift.sheet_words()
+            )
+        }
+        .into(),
+    );
+}
+
+/// The sheet's three choices.
+pub(crate) fn shift_modes(app: &App) -> SyncShift {
+    SyncShift {
+        temperature: app.get_sync_shift_temperature(),
+        tint: app.get_sync_shift_tint(),
+        exposure: app.get_sync_shift_exposure(),
+    }
 }
 
 /// Frame `file`'s edit as the sheet lists its masks from: the panel's
@@ -265,6 +329,33 @@ pub(crate) fn lay_over_targets(
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> Synced {
+    lay_shifted_over_targets(
+        st,
+        app,
+        preset,
+        targets,
+        learned_from,
+        label,
+        profiles,
+        probe,
+        None,
+    )
+}
+
+/// [`lay_over_targets`], each target's preset first [`shifted`] from
+/// its own edit when a sync's sheet asked for a shift.
+#[allow(clippy::too_many_arguments)]
+fn lay_shifted_over_targets(
+    st: &mut State,
+    app: &App,
+    preset: &Preset,
+    targets: &[usize],
+    learned_from: Option<&Edit>,
+    label: Option<&str>,
+    profiles: &[camera::Entry],
+    probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
+    shift: Option<&Shift>,
+) -> Synced {
     // Each target's whole sidecar first, read where it stands in from
     // its row (on the pool when there are several); one under a root
     // that is offline is left out, and the status line says so.
@@ -318,6 +409,32 @@ pub(crate) fn lay_over_targets(
             _ => fits.push(f),
         }
     }
+    // The as-shot light of every target at As shot that a shift turns
+    // custom, read from the raws on the pool before the lay, as the
+    // sidecars were above: a read is tens of milliseconds a raw and
+    // more for a DNG, too long a batch's worth for the window's thread.
+    let shift = shift.filter(|s| !s.is_none());
+    let whites = match shift {
+        Some(s) if s.reads_targets(preset) => {
+            let wanted: Vec<(usize, PathBuf, greycard_edit::camera::Camera)> = targets
+                .iter()
+                .filter_map(|&c| {
+                    let current = &st.line(c)?.current;
+                    if current.white_balance != WhiteBalance::AsShot {
+                        return None;
+                    }
+                    let camera = if left_off.contains(&c) {
+                        current.camera.clone()
+                    } else {
+                        profile_choice(preset, current)
+                    };
+                    Some((c, st.path_at(c)?.to_path_buf(), camera))
+                })
+                .collect();
+            read_whites(&wanted)
+        }
+        _ => HashMap::new(),
+    };
     // Each cell's own line takes the preset as a step of its history: a
     // file and a version of it are two lines of one sidecar.
     let lay = |st: &mut State, cells: &[usize], preset: &Preset| -> Vec<usize> {
@@ -325,6 +442,14 @@ pub(crate) fn lay_over_targets(
             .iter()
             .copied()
             .filter(|&c| {
+                // A shift is the frame's own value moved: read from its
+                // line before the lay, its As shot from what was read.
+                let own = shift.and_then(|s| {
+                    let current = st.line(c)?.current.clone();
+                    let shot = whites.get(&c).copied().flatten();
+                    Some(shifted(preset, s, &current, shot))
+                });
+                let preset = own.as_ref().unwrap_or(preset);
                 st.line_mut(c).is_some_and(|line| {
                     greycard_edit::apply_preset_to_line(line, preset, learned_from, label)
                 })
@@ -397,7 +522,17 @@ pub(crate) fn sync_selection(
     };
     let targets = sync_targets(st);
     let choice = Choice::whole(sections);
-    sync_onto(st, app, c, &targets, &choice, profiles, probe)
+    sync_onto(
+        st,
+        app,
+        c,
+        &targets,
+        &choice,
+        SyncShift::default(),
+        profiles,
+        probe,
+    )
+    .0
 }
 
 /// Lay what `choice` picks of frame `from` over `targets`:
@@ -407,6 +542,10 @@ pub(crate) fn sync_selection(
 /// runs when they are in. `from` is read from the panel when it is the
 /// frame on screen outside culling, and from its sidecar otherwise; a
 /// frame whose sidecar stands in (its root offline) is no source.
+///
+/// Each field `modes` shifts moves every target from its own value by
+/// `from`'s own move ([`shifted`]); the shift laid comes back beside
+/// what moved.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_onto(
     st: &mut State,
@@ -414,11 +553,12 @@ pub(crate) fn sync_onto(
     from: usize,
     targets: &[usize],
     choice: &Choice,
+    modes: SyncShift,
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
-) -> Synced {
+) -> (Synced, Shift) {
     let Some(from_edit) = source_edit(st, app, from) else {
-        return Synced::default();
+        return (Synced::default(), Shift::default());
     };
     let preset = Preset::from_choice("", &from_edit, choice);
     // The source's frame is read for its mosaic only when the demosaic
@@ -437,7 +577,18 @@ pub(crate) fn sync_onto(
         .contains(&Section::Noise)
         .then_some(&from_edit);
     let label = Some(sync_label(&frame_name(st, from)));
-    lay_over_targets(
+    // The source's As shot is read only when a shift needs it, to know
+    // how far the source moved from it: one at As shot moved nowhere.
+    let wants_white = (modes.temperature || modes.tint)
+        && preset.sections.contains(&Section::WhiteBalance)
+        && from_edit.white_balance != WhiteBalance::AsShot;
+    let source_shot = if wants_white {
+        frame_shot(st, from, &from_edit.camera)
+    } else {
+        None
+    };
+    let shift = shift_of(modes, &preset, &from_edit, source_shot);
+    let synced = lay_shifted_over_targets(
         st,
         app,
         &preset,
@@ -446,7 +597,240 @@ pub(crate) fn sync_onto(
         label.as_deref(),
         profiles,
         probe,
-    )
+        Some(&shift),
+    );
+    (synced, shift)
+}
+
+/// What a shift moves each frame by: the source's difference from where
+/// a frame starts (its as-shot light for Temperature and Tint, 0 EV, the
+/// default edit's, for Exposure). Temperature in mired, positive
+/// toward the higher kelvin; Tint in Duv; Exposure in stops. `None`
+/// where the sheet sets rather than shifts, where the section does not
+/// go, or where the source's own start could not be read.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct Shift {
+    pub(crate) temperature: Option<f64>,
+    pub(crate) tint: Option<f64>,
+    pub(crate) exposure: Option<f32>,
+    /// The kelvin the source's As shot means, which the sheet says the
+    /// mired shift comes to at; `None` for a source at As shot.
+    pub(crate) from_kelvin: Option<f64>,
+}
+
+/// Mired, the reciprocal megakelvin.
+fn mired(kelvin: f64) -> f64 {
+    1e6 / kelvin
+}
+
+/// `kelvin` moved by `by` mired toward the higher kelvin, held to the
+/// Temperature slider's range.
+pub(crate) fn kelvin_moved(kelvin: f64, by: f64) -> f64 {
+    let at = mired(kelvin) - by;
+    if at <= mired(12000.0) {
+        12000.0
+    } else {
+        (1e6 / at).clamp(2000.0, 12000.0)
+    }
+}
+
+impl Shift {
+    fn moves_white(&self) -> bool {
+        self.temperature.is_some() || self.tint.is_some()
+    }
+
+    pub(crate) fn is_none(&self) -> bool {
+        !self.moves_white() && self.exposure.is_none()
+    }
+
+    /// Whether laying `preset` with this shift reads the targets' own
+    /// as-shot light: it moves the white of a source that moved (one
+    /// at As shot leaves every target's white as it is).
+    fn reads_targets(&self, preset: &Preset) -> bool {
+        self.moves_white() && preset.edit.white_balance != WhiteBalance::AsShot
+    }
+
+    /// The shift in the status line's words: "Temperature +12 mired,
+    /// Exposure +0.50 EV"; empty for none.
+    pub(crate) fn words(&self) -> String {
+        let mut said = Vec::new();
+        if let Some(t) = self.temperature {
+            said.push(format!("Temperature {t:+.0} mired"));
+        }
+        if let Some(d) = self.tint {
+            said.push(format!("Tint {d:+.3}"));
+        }
+        if let Some(e) = self.exposure {
+            said.push(format!("Exposure {e:+.2} EV"));
+        }
+        said.join(", ")
+    }
+
+    /// The shift as the sheet says it: the mired with the kelvin it
+    /// comes to at this frame's own light and at a warm and a cool one,
+    /// since a mired is more kelvin the cooler the light.
+    pub(crate) fn sheet_words(&self) -> String {
+        let mut said = Vec::new();
+        if let Some(t) = self.temperature {
+            let at = |k: f64| kelvin_moved(k, t) - k;
+            let here = self
+                .from_kelvin
+                .map(|k| format!("{:+.0} K at this frame's {k:.0} K, ", at(k)))
+                .unwrap_or_default();
+            said.push(format!(
+                "Temperature {t:+.0} mired ({here}{:+.0} K at 3000 K, {:+.0} K at 6500 K)",
+                at(3000.0),
+                at(6500.0)
+            ));
+        }
+        if let Some(d) = self.tint {
+            said.push(format!("Tint {d:+.3}"));
+        }
+        if let Some(e) = self.exposure {
+            said.push(format!("Exposure {e:+.2} EV"));
+        }
+        said.join(", ")
+    }
+}
+
+/// Whether `preset` carries the exposure: Light whole, or its
+/// Exposure alone.
+fn carries_exposure(preset: &Preset) -> bool {
+    preset.sections.contains(&Section::Light) || preset.parts.contains(&Part::LightExposure)
+}
+
+/// The shift `modes` asks of laying `preset`, made from `source`,
+/// whose As shot is `source_shot`. A source at As shot has moved
+/// nowhere: its white's shifts are nought.
+pub(crate) fn shift_of(
+    modes: SyncShift,
+    preset: &Preset,
+    source: &Edit,
+    source_shot: Option<TempTint>,
+) -> Shift {
+    let white = preset.sections.contains(&Section::WhiteBalance);
+    let (temperature, tint) = match (&source.white_balance, source_shot) {
+        (WhiteBalance::AsShot, _) => (Some(0.0), Some(0.0)),
+        (WhiteBalance::Custom { temperature, tint }, Some(shot)) => (
+            Some(mired(shot.cct) - mired(*temperature)),
+            Some(tint - shot.duv),
+        ),
+        (WhiteBalance::Custom { .. }, None) => (None, None),
+    };
+    Shift {
+        temperature: temperature.filter(|_| white && modes.temperature),
+        tint: tint.filter(|_| white && modes.tint),
+        exposure: (carries_exposure(preset) && modes.exposure)
+            .then(|| source.light.exposure - Edit::default().light.exposure),
+        from_kelvin: source_shot
+            .filter(|_| source.white_balance != WhiteBalance::AsShot)
+            .map(|t| t.cct),
+    }
+}
+
+/// `preset` as it goes onto a frame whose edit is `target`: each field
+/// `shift` moves is the frame's own value moved by it, held to its
+/// slider's range; a field set is the source's. A frame at As shot is
+/// read as the light its camera recorded (`target_shot`), so with a
+/// Temperature shift it becomes custom at its as-shot kelvin moved.
+///
+/// The white is the frame's own, untouched, when the source is at As
+/// shot (it moved nowhere, and a set field would mean the frame's own
+/// as-shot value), when both fields shift by nought, and when the
+/// frame's own light cannot be read.
+pub(crate) fn shifted(
+    preset: &Preset,
+    shift: &Shift,
+    target: &Edit,
+    target_shot: Option<TempTint>,
+) -> Preset {
+    let mut p = preset.clone();
+    if shift.moves_white() {
+        let unmoved = shift.temperature == Some(0.0) && shift.tint == Some(0.0);
+        let own = match &target.white_balance {
+            WhiteBalance::Custom { temperature, tint } => Some((*temperature, *tint)),
+            WhiteBalance::AsShot => target_shot.map(|t| (t.cct, t.duv)),
+        };
+        p.edit.white_balance = match (&preset.edit.white_balance, own) {
+            (WhiteBalance::Custom { temperature, tint }, Some((t, d))) if !unmoved => {
+                WhiteBalance::Custom {
+                    temperature: match shift.temperature {
+                        Some(by) => kelvin_moved(t, by),
+                        None => *temperature,
+                    },
+                    tint: match shift.tint {
+                        Some(by) => (d + by).clamp(-0.05, 0.05),
+                        None => *tint,
+                    },
+                }
+            }
+            _ => target.white_balance.clone(),
+        };
+    }
+    if let Some(by) = shift.exposure {
+        p.edit.light.exposure = (target.light.exposure + by).clamp(-5.0, 5.0);
+    }
+    p
+}
+
+/// The camera profile a frame's As shot is read through once `preset`
+/// is on it: the preset's when it carries the camera, the frame's own
+/// otherwise.
+fn profile_choice(preset: &Preset, target: &Edit) -> greycard_edit::camera::Camera {
+    if preset.sections.contains(&Section::Camera) {
+        preset.edit.camera.clone()
+    } else {
+        target.camera.clone()
+    }
+}
+
+/// The light cell `c`'s camera recorded ([`shot_at`]); `None` for a
+/// cell with no file.
+pub(crate) fn frame_shot(
+    st: &State,
+    c: usize,
+    camera: &greycard_edit::camera::Camera,
+) -> Option<TempTint> {
+    shot_at(st.path_at(c)?, camera)
+}
+
+/// The light the raw at `path` recorded, as the develop reads it
+/// through `camera`'s profile (a DCP's, or the raw's own): the kelvin
+/// and Duv its As shot means. Read from the raw without a sample;
+/// `None` for a picture, or a raw that will not say.
+fn shot_at(path: &Path, camera: &greycard_edit::camera::Camera) -> Option<TempTint> {
+    if greycard_core::picture::is_picture_path(path) {
+        return None;
+    }
+    let white = greycard_core::decode::white_path(path)
+        .inspect_err(|e| tracing::warn!("{}: its as-shot white: {e}", file_name(path)))
+        .ok()?;
+    let profile = match camera.profile() {
+        Some(p) => p.camera.clone(),
+        None => greycard_core::color::profile_from_calibrations(&white.calibrations).ok()?,
+    };
+    greycard_core::color::temp_tint_of_gains(&profile, white.as_shot_coefficients?).ok()
+}
+
+/// [`shot_at`] for each of `wanted` (a cell, its raw, the profile to
+/// read it through), on the pool, by cell.
+fn read_whites(
+    wanted: &[(usize, PathBuf, greycard_edit::camera::Camera)],
+) -> HashMap<usize, Option<TempTint>> {
+    use rayon::prelude::*;
+    let started = std::time::Instant::now();
+    let read: Vec<Option<TempTint>> = wanted
+        .par_iter()
+        .map(|(_, path, camera)| shot_at(path, camera))
+        .collect();
+    if !wanted.is_empty() {
+        tracing::debug!(
+            "{} as-shot whites read on the pool in {:.1} ms",
+            wanted.len(),
+            started.elapsed().as_secs_f64() * 1e3
+        );
+    }
+    wanted.iter().map(|(c, ..)| *c).zip(read).collect()
 }
 
 /// Frame `from`'s edit as a sync reads it: the panel's when it is the
@@ -956,6 +1340,7 @@ pub(crate) fn paste_open(st: &mut State, app: &App) {
         return;
     }
     st.sheets.sync_asked = None;
+    st.sheets.sync_source = None;
     st.sheets.paste_asked = Some((c, targets.clone()));
     st.sheets.sync_checks = paste_checks(st, &clip);
     show_sync_checks(st, app);
@@ -1133,11 +1518,27 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.sheets.sync_asked = Some((c, targets));
             st.sheets.paste_asked = None;
             app.set_sync_paste(false);
-            let masks = carry::masks_of(&edit_shown(&st, &app, c));
+            let shown = edit_shown(&st, &app, c);
+            let shot = if shown.white_balance == WhiteBalance::AsShot {
+                None
+            } else {
+                frame_shot(&st, c, &shown.camera)
+            };
+            st.sheets.sync_source = Some((shown.clone(), shot));
+            let masks = carry::masks_of(&shown);
             st.sheets.sync_checks = carry::Checks::new(masks, Section::syncs_by_default);
             show_sync_checks(&mut st, &app);
             app.set_sync_text(sync_words(&st).into());
             app.set_sync_open(true);
+        });
+    }
+    // A shift chosen or set back.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_sync_shift_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                show_shift(&state.borrow(), &app);
+            }
         });
     }
     // The sheet's checks: a row, all of them, and how the masks land.
@@ -1262,6 +1663,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             // A paste's sheet opens on this choice from now on.
             st.sheets.sync_last = Some(st.sheets.sync_checks.clone());
+            let modes = shift_modes(&app);
             // A request for the source's and the targets' sidecars, and
             // the sync from exactly that frame onto exactly those once
             // they are in: the first path the source, the rest the
@@ -1290,9 +1692,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     let profiles = camera::list();
                     let start = std::time::Instant::now();
                     let mut st = state.borrow_mut();
-                    let synced = sync_onto(&mut st, app, from, &targets, &choice, &profiles, probe);
+                    let (synced, shift) = sync_onto(
+                        &mut st, app, from, &targets, &choice, modes, &profiles, probe,
+                    );
                     let took = start.elapsed();
-                    let said = synced_words(&st, &choice, targets.len(), &synced);
+                    let mut said = synced_words(&st, &choice, targets.len(), &synced);
+                    if !shift.is_none() && !synced.moved.is_empty() {
+                        said.push_str(&format!(", each shifted {}", shift.words()));
+                    }
                     tracing::info!("{said} in {:.1} ms", took.as_secs_f64() * 1e3);
                     app.set_status(said.into());
                 }),
@@ -3187,5 +3594,481 @@ mod tests {
         assert_eq!(out.detail.texture, 0.2);
         assert_eq!(mask_names(&out), ["Face 2"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The relative sync: shifts, set against shift, and what the
+    // frames look like after.
+
+    /// A linear DNG of our own writing, a flat grey card under a light
+    /// the camera's `gains` neutralize: a raw the engine opens, whose
+    /// as-shot white is the one asked for.
+    fn grey_card(path: &Path, gains: [f32; 3]) {
+        use greycard_core::raw::{
+            Calibration, LevelPattern, Levels, Orientation, Samples, SensorLayout,
+        };
+        let m = greycard_core::color::WORKING_SPACE
+            .from_xyz_matrix()
+            .expect("the working space has a matrix");
+        let (width, height) = (24usize, 16usize);
+        let frame = greycard_core::raw::RawFrame {
+            make: "Test".into(),
+            model: "Cam".into(),
+            width,
+            height,
+            channels: 3,
+            layout: SensorLayout::Linear,
+            samples: Samples::U16(Vec::new()),
+            levels: Levels {
+                black: LevelPattern::uniform(0.0, 3),
+                white: LevelPattern::uniform(65535.0, 3),
+            },
+            as_shot_coefficients: Some(gains.map(f64::from)),
+            calibrations: vec![Calibration {
+                illuminant: 21,
+                color_matrix: m.rows.iter().flatten().map(|v| *v as f32).collect(),
+                forward_matrix: None,
+            }],
+            crop: None,
+            orientation: Orientation::Normal,
+            shot: Default::default(),
+        };
+        // The card as the camera saw it: grey, under the light's color.
+        let pixel = [0.18 / gains[0], 0.18 / gains[1], 0.18 / gains[2]];
+        let data: Vec<f32> = (0..width * height).flat_map(|_| pixel).collect();
+        let image = greycard_core::CameraImage::from_data(width, height, data).unwrap();
+        let mut file = std::fs::File::create(path).unwrap();
+        greycard_core::dng::write_linear_dng(&mut file, &frame, &image, gains, &Default::default())
+            .unwrap();
+    }
+
+    /// The light `path`'s As shot means, read the way the develop
+    /// reads it: the whole frame decoded, its own profile.
+    fn decoded_shot(path: &Path) -> TempTint {
+        let frame = greycard_core::decode::decode_path(path).unwrap();
+        let profile = greycard_core::color::profile_from_frame(&frame).unwrap();
+        greycard_core::color::as_shot_temp_tint(&frame, &profile).unwrap()
+    }
+
+    /// The card's middle as `edit` renders it from the raw at `path`:
+    /// the develop and the export's finish, sixteen bits, RGB.
+    fn card(path: &Path, edit: &Edit) -> [f64; 3] {
+        let frame = greycard_core::decode::decode_path(path).unwrap();
+        let developed = greycard_core::develop::develop(&frame, &edit.settings()).unwrap();
+        let image = developed.image;
+        let settings = crate::export::Settings {
+            format: crate::export::Format::Tiff,
+            sharpen: crate::export::Sharpen::Off,
+            ..Default::default()
+        };
+        let rendered = crate::export::render(
+            &image,
+            edit,
+            (image.width as u32, image.height as u32),
+            &settings,
+            &Default::default(),
+            developed.clip_level,
+            None,
+            crate::finish::Source::Scene,
+            None,
+            None,
+        );
+        let crate::export::Pixels::Sixteen(px) = rendered.pixels else {
+            panic!("a TIFF is sixteen bits");
+        };
+        let (w, h) = (rendered.width as usize, rendered.height as usize);
+        let at = ((h / 2) * w + w / 2) * 3;
+        [px[at] as f64, px[at + 1] as f64, px[at + 2] as f64]
+    }
+
+    fn custom(temperature: f64, tint: f64) -> WhiteBalance {
+        WhiteBalance::Custom { temperature, tint }
+    }
+
+    /// The warmth a card renders with: red over blue.
+    fn warmth(c: [f64; 3]) -> f64 {
+        c[0] / c[2]
+    }
+
+    fn at(rgb: [f64; 3], other: [f64; 3]) -> f64 {
+        (0..3)
+            .map(|i| (rgb[i] - other[i]).abs())
+            .fold(0.0, f64::max)
+    }
+
+    /// A preset carrying the white balance and the light, as a sync on
+    /// the sheet's defaults does.
+    fn white_and_light(edit: &Edit) -> Preset {
+        Preset::from_choice(
+            "",
+            edit,
+            &Choice::whole(&[Section::WhiteBalance, Section::Light]),
+        )
+    }
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    #[test]
+    fn a_shift_moves_each_frame_from_its_own_value_and_a_set_does_not() {
+        let mut source = Edit::default();
+        let shot = TempTint {
+            cct: 4800.0,
+            duv: 0.002,
+        };
+        source.white_balance = custom(5100.0, 0.004);
+        source.light.exposure = 0.5;
+        let preset = white_and_light(&source);
+        let all = SyncShift {
+            temperature: true,
+            tint: true,
+            exposure: true,
+        };
+        let shift = shift_of(all, &preset, &source, Some(shot));
+        // The source's difference from its as-shot, in mired.
+        let by = 1e6 / 4800.0 - 1e6 / 5100.0;
+        assert!(close(shift.temperature.unwrap(), by));
+        assert!((shift.tint.unwrap() - 0.002).abs() < 1e-12);
+        assert_eq!(shift.exposure, Some(0.5 - Edit::default().light.exposure));
+        assert_eq!(shift.from_kelvin, Some(4800.0));
+        assert_eq!(
+            shift.words(),
+            "Temperature +12 mired, Tint +0.002, Exposure +0.50 EV"
+        );
+        let sheet = shift.sheet_words();
+        assert!(sheet.contains("+300 K at this frame's 4800 K"), "{sheet}");
+        // Nothing asked, nothing shifted; a section left behind is not
+        // shifted either.
+        assert!(shift_of(SyncShift::default(), &preset, &source, Some(shot)).is_none());
+        let light_only = Preset::from_choice("", &source, &Choice::whole(&[Section::Light]));
+        let s = shift_of(all, &light_only, &source, Some(shot));
+        assert_eq!((s.temperature, s.tint), (None, None));
+        assert!(s.exposure.is_some());
+        // The source's As shot unread: its move cannot be known.
+        assert_eq!(shift_of(all, &preset, &source, None).temperature, None);
+
+        let a = Edit {
+            white_balance: custom(4200.0, 0.0),
+            light: greycard_edit::Light {
+                exposure: -0.25,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let out = shifted(&preset, &shift, &a, None);
+        let WhiteBalance::Custom { temperature, tint } = out.edit.white_balance else {
+            panic!("a shifted custom white is custom");
+        };
+        // The same mired move from its own light: fewer kelvin than the
+        // source's 300, the frame being warmer.
+        assert!(close(1e6 / 4200.0 - 1e6 / temperature, by), "{temperature}");
+        assert!(temperature - 4200.0 < 300.0);
+        assert!((tint - 0.002).abs() < 1e-12);
+        assert_eq!(out.edit.light.exposure, -0.25 + shift.exposure.unwrap());
+        // Temperature shifted, Tint set: the source's tint.
+        let temp_only = shift_of(
+            SyncShift {
+                temperature: true,
+                ..Default::default()
+            },
+            &preset,
+            &source,
+            Some(shot),
+        );
+        let out = shifted(&preset, &temp_only, &a, None);
+        assert_eq!(
+            out.edit.white_balance,
+            custom(kelvin_moved(4200.0, by), 0.004)
+        );
+        assert_eq!(
+            out.edit.light.exposure, source.light.exposure,
+            "exposure set"
+        );
+        // An As shot frame becomes custom at its own as-shot light,
+        // moved.
+        let b = Edit::default();
+        let own = TempTint {
+            cct: 3300.0,
+            duv: -0.001,
+        };
+        let out = shifted(&preset, &shift, &b, Some(own));
+        let WhiteBalance::Custom { temperature, tint } = out.edit.white_balance else {
+            panic!("As shot shifted is custom");
+        };
+        assert!(close(temperature, kelvin_moved(3300.0, by)));
+        assert!((tint - 0.001).abs() < 1e-12);
+        // One whose raw will not say keeps its As shot.
+        let out = shifted(&preset, &shift, &b, None);
+        assert_eq!(out.edit.white_balance, WhiteBalance::AsShot);
+        // The sliders' ends hold.
+        let hot = Edit {
+            white_balance: custom(11900.0, 0.049),
+            light: greycard_edit::Light {
+                exposure: 4.8,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let out = shifted(&preset, &shift, &hot, None);
+        assert_eq!(out.edit.white_balance, custom(12000.0, 0.05));
+        assert_eq!(out.edit.light.exposure, 5.0);
+    }
+
+    /// A mired is more kelvin the cooler the light: the one shift
+    /// moves a warm frame fewer kelvin than a cool one.
+    #[test]
+    fn a_temperature_shift_is_the_same_mired_at_every_light() {
+        let by = 1e6 / 4800.0 - 1e6 / 5100.0;
+        let at = |k: f64| kelvin_moved(k, by) - k;
+        assert!((at(4800.0) - 300.0).abs() < 1e-6);
+        assert!(at(3000.0) < at(4800.0) && at(4800.0) < at(6500.0));
+        assert!((at(3000.0) - 114.5).abs() < 0.5, "{}", at(3000.0));
+        // Back by as much is where it was.
+        assert!(close(kelvin_moved(kelvin_moved(3000.0, by), -by), 3000.0));
+        assert_eq!(kelvin_moved(3000.0, 0.0), 3000.0);
+    }
+
+    /// A source at As shot moved nowhere: whatever the other field's
+    /// choice, every frame's white is its own, custom or As shot, and
+    /// a frame's raw is never read for it.
+    #[test]
+    fn a_source_at_as_shot_leaves_every_frames_white_whatever_is_set() {
+        let mut source = Edit::default();
+        source.light.exposure = 0.5;
+        let preset = white_and_light(&source);
+        let custom_frame = Edit {
+            white_balance: custom(4200.0, 0.0),
+            ..Default::default()
+        };
+        let as_shot_frame = Edit::default();
+        let read = TempTint {
+            cct: 3300.0,
+            duv: -0.001,
+        };
+        for (temperature, tint) in [(true, false), (false, true), (true, true)] {
+            let modes = SyncShift {
+                temperature,
+                tint,
+                exposure: true,
+            };
+            let shift = shift_of(modes, &preset, &source, None);
+            assert!(!shift.reads_targets(&preset), "{modes:?}");
+            for frame in [&custom_frame, &as_shot_frame] {
+                let out = shifted(&preset, &shift, frame, Some(read));
+                assert_eq!(out.edit.white_balance, frame.white_balance, "{modes:?}");
+                assert_eq!(out.edit.light.exposure, 0.5, "the exposure still shifts");
+            }
+        }
+        // Both set: the source's As shot, as a sync always laid it.
+        let out = shifted(
+            &preset,
+            &shift_of(SyncShift::default(), &preset, &source, None),
+            &custom_frame,
+            None,
+        );
+        assert_eq!(out.edit.white_balance, WhiteBalance::AsShot);
+    }
+
+    /// Lightroom's Quick Develop, end to end: a batch synced from a
+    /// frame warmed 300 K and brightened half a stop from its as-shot
+    /// goes as many mired warmer and half a stop brighter each, from
+    /// where each was, and the cards they render say so; where a set
+    /// would have made the two custom frames' cards one.
+    #[test]
+    fn a_relative_sync_moves_each_frames_rendered_card_by_the_shift() {
+        let dir = crate::testing::scratch_dir("relative-sync");
+        let files: Vec<PathBuf> = ["S", "A", "B", "C"]
+            .iter()
+            .map(|n| dir.join(format!("{n}.dng")))
+            .collect();
+        grey_card(&files[0], [2.0, 1.0, 1.6]);
+        grey_card(&files[1], [2.0, 1.0, 1.6]);
+        grey_card(&files[2], [2.0, 1.0, 1.6]);
+        grey_card(&files[3], [1.6, 1.0, 2.2]);
+        let source_shot = decoded_shot(&files[0]);
+        let c_shot = decoded_shot(&files[3]);
+        let app = window(4);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, files.clone());
+        // The light read without a sample is the develop's own, on the
+        // pool as on the window's thread.
+        let read = frame_shot(&state.borrow(), 3, &Edit::default().camera);
+        assert_eq!(read.map(|t| (t.cct, t.duv)), Some((c_shot.cct, c_shot.duv)));
+        let pooled = read_whites(&[(3, files[3].clone(), Edit::default().camera)]);
+        assert_eq!(pooled.get(&3).copied().flatten(), read);
+        {
+            let mut st = state.borrow_mut();
+            st.window.write_sidecars = true;
+            st.window.placement = greycard_edit::Placement::Folder;
+            st.sidecars[1].record(Edit {
+                white_balance: custom(4200.0, 0.0),
+                ..Default::default()
+            });
+            st.sidecars[2].record(Edit {
+                white_balance: custom(5000.0, 0.0),
+                ..Default::default()
+            });
+        }
+        let before: Vec<Edit> = (0..4)
+            .map(|c| state.borrow().sidecars[c].current.clone())
+            .collect();
+        app.invoke_select(0);
+        // The source warmed 300 K from its as-shot and half a stop up.
+        app.set_as_shot(false);
+        app.set_temperature((source_shot.cct + 300.0) as f32);
+        app.set_tint(source_shot.duv as f32);
+        app.set_exposure(0.5);
+        state.borrow_mut().views.picked = vec![0, 1, 2, 3];
+        app.set_set_count(4);
+        app.set_sync_shift_temperature(true);
+        app.set_sync_shift_tint(true);
+        app.set_sync_shift_exposure(true);
+        app.invoke_sync_open_asked();
+        assert!(app.get_sync_open());
+        assert!(app.get_sync_shift_shown());
+        let words = app.get_sync_shift_words().to_string();
+        assert!(words.contains("mired (+300 K at this frame's"), "{words}");
+        assert!(words.contains("Exposure +0.50 EV"), "{words}");
+        app.invoke_sync_applied();
+        assert!(!app.get_sync_open());
+        let status = app.get_status().to_string();
+        assert!(
+            status.contains("each shifted Temperature +") && status.contains("mired"),
+            "{status}"
+        );
+
+        let after: Vec<Edit> = (0..4)
+            .map(|c| state.borrow().sidecars[c].current.clone())
+            .collect();
+        // Each from its own by the source's mired move (300 K at its
+        // own light, the f32 of the panel's slider aside) and half a
+        // stop.
+        let temperature = |e: &Edit| match e.white_balance {
+            WhiteBalance::Custom { temperature, .. } => temperature,
+            WhiteBalance::AsShot => panic!("As shot after a shift"),
+        };
+        let by = 1e6 / source_shot.cct - 1e6 / (source_shot.cct + 300.0);
+        for (c, own) in [(1, 4200.0), (2, 5000.0), (3, c_shot.cct)] {
+            let want = kelvin_moved(own, by);
+            assert!((temperature(&after[c]) - want).abs() < 0.05, "{c}");
+        }
+        for e in &after[1..] {
+            assert_eq!(e.light.exposure, 0.5);
+        }
+        // Geometry and the rest are each frame's own.
+        for c in 1..4 {
+            assert_eq!(after[c].geometry, before[c].geometry);
+            assert_eq!(after[c].adjustments, before[c].adjustments);
+        }
+
+        // What the cards render. The As shot frame first: custom at its
+        // own as-shot light renders as As shot did, so the shift is the
+        // only move.
+        let mut c_at_shot = before[3].clone();
+        c_at_shot.white_balance = custom(c_shot.cct, c_shot.duv);
+        let c_before = card(&files[3], &before[3]);
+        assert!(
+            at(card(&files[3], &c_at_shot), c_before) <= 40.0,
+            "custom at the as-shot light renders as As shot"
+        );
+        let c_after = card(&files[3], &after[3]);
+        assert!(
+            warmth(c_after) > warmth(c_before) * 1.01,
+            "{c_before:?} {c_after:?}"
+        );
+        // Every target warmer and brighter than it was, by the shift:
+        // each renders as its own light the same mired up, half a stop
+        // up.
+        for c in 1..4 {
+            let (was, now) = (card(&files[c], &before[c]), card(&files[c], &after[c]));
+            assert!(warmth(now) > warmth(was), "{c}: {was:?} {now:?}");
+            let mut moved = before[c].clone();
+            moved.white_balance = after[c].white_balance.clone();
+            let same_light = card(&files[c], &moved);
+            assert!(now[1] > same_light[1] * 1.05, "{c}: half a stop up");
+        }
+        // The two custom frames shot under one light stay as far apart
+        // as they were; set, they would have rendered one card.
+        let (a, b) = (card(&files[1], &after[1]), card(&files[2], &after[2]));
+        assert!(warmth(a) < warmth(b), "{a:?} {b:?}");
+        let set = white_and_light(&after[0]);
+        let set_a = card(&files[1], &set.edit);
+        let set_b = card(&files[2], &set.edit);
+        assert_eq!(set_a, set_b);
+        assert!(at(a, b) > 100.0, "{a:?} {b:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_shift_choices_grey_out_with_their_section_and_hide_for_a_paste() {
+        let app = window(3);
+        let (state, _worker) = state_for(&app, folder(3));
+        app.invoke_select(0);
+        state.borrow_mut().views.picked = vec![0, 1, 2];
+        app.set_set_count(3);
+        app.invoke_sync_open_asked();
+        assert!(app.get_sync_shift_shown());
+        assert!(app.get_sync_shift_white() && app.get_sync_shift_light());
+        // Only the white balance unchecked: its two grey, Exposure not.
+        choose(&app, |s| s.syncs_by_default() && s != Section::WhiteBalance);
+        assert!(!app.get_sync_shift_white());
+        assert!(app.get_sync_shift_light());
+        choose(&app, |s| s == Section::WhiteBalance);
+        assert!(app.get_sync_shift_white());
+        assert!(!app.get_sync_shift_light());
+        // A choice made says what a frame moves by.
+        app.set_sync_shift_temperature(true);
+        app.invoke_sync_shift_changed();
+        let words = app.get_sync_shift_words().to_string();
+        assert!(words.contains("Temperature +0 mired"), "{words}");
+        press(&app, Key::Escape);
+        assert!(!app.get_sync_open());
+        // A paste's sheet has none.
+        app.invoke_copy_asked();
+        app.invoke_select(1);
+        state.borrow_mut().views.picked = vec![1, 2];
+        app.invoke_paste_asked();
+        assert!(app.get_sync_open() && app.get_sync_paste());
+        assert!(!app.get_sync_shift_shown());
+    }
+
+    /// The develop panel's head offers the sync sheet over the
+    /// selection, with as many frames named as the sheet goes onto.
+    #[test]
+    fn the_panels_sync_button_opens_the_sheet_on_the_selection() {
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, folder(6));
+        let (x, y) = strip_cell(1);
+        click(&app, x, y);
+        assert_eq!(
+            crate::testing::count_labeled(&app, "Sync"),
+            0,
+            "one frame, no button"
+        );
+        with_modifier(&app, Key::Control, || {
+            let (x, y) = strip_cell(3);
+            click(&app, x, y);
+            let (x, y) = strip_cell(4);
+            click(&app, x, y);
+        });
+        assert_eq!(chosen_frames(&state.borrow()), vec![1, 3, 4]);
+        assert_eq!(crate::testing::count_labeled(&app, "Sync"), 1);
+        let (at, size) = crate::testing::labeled(&app, "Sync");
+        // In the panel's head, on the right, above the tabs.
+        assert!(at.x > 1500.0 - 320.0, "{at:?}");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert!(app.get_sync_open());
+        assert!(!app.get_sync_paste());
+        assert_eq!(
+            app.get_sync_text(),
+            "From IMG_0001.CR3 onto 2 other frames."
+        );
+        // The frame menu names what it does to the selection.
+        app.invoke_frame_menu_asked(-1);
+        assert_eq!(app.get_menu_count(), 3);
+        assert_eq!(app.get_menu_paste_count(), 0, "nothing copied");
     }
 }

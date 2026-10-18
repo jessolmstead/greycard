@@ -48,8 +48,9 @@ unpack it.
 
 1. **Open a folder** with **Ctrl+O** or **Open folder...**. The
    filmstrip along the bottom holds the folder's frames.
-2. **Browse** with the arrow keys. **G** switches between the grid and
-   one frame. You see the camera's own preview first; greycard's
+2. **Browse** with the arrow keys. **Library** and **Develop** at the
+   top of the left pane (or **G**) switch between the grid and one
+   frame. You see the camera's own preview first; greycard's
    develop replaces it a moment later.
 3. **Edit** in the right panel's tabs: **Develop**, **Crop**,
    **Masks** and **Retouch**.
@@ -89,41 +90,79 @@ Finishing and reference:
 
 ## Keys
 
+Press **?** in the editor, or choose **Help** > **Keys (?)** at the
+foot of the left pane, for these on a sheet you can search. The sheet
+is made from the table the editor reads its keys from, so it always
+matches the build you have. **Help** also opens this guide and the
+bug form.
+
+### Moving around
+
 | Key | Does |
 |---|---|
 | ← → | Previous or next frame (in the grid, the mouse's back and forward buttons too) |
 | Shift+← → | Previous or next frame, added to the selection |
+| ↑ ↓ | In the grid, the frame above or below (with Shift, added) |
+| Home, End | The first or the last frame (with Shift, added) |
 | Ctrl+click | Add a frame to the selection, or take it out |
 | Shift+click, Ctrl+Shift+click | Select every frame from the open one to this one; with Ctrl, add them instead |
-| G | Grid, and back (in the grid, Ctrl+wheel or + and − resize it) |
+
+### Views
+
+| Key | Does |
+|---|---|
+| G | Library (the grid) or Develop (one frame) |
+| L | The lightbox, and back |
 | C | Culling mode |
-| L | The lightbox, and back (+ and − set how many frames go across) |
+| V | In culling, compare two or four frames |
+| Enter | Open the frame chosen in the grid or the lightbox; leave culling |
+| + − | Bigger or smaller tiles in the grid (Ctrl+wheel too); fewer or more across the lightbox |
+| Tab | Hide the panels, the filmstrip and the status line, and bring them back (in the grid, the left pane) |
+| F6, F7, F8 | The filmstrip, the left pane or the develop panel alone |
+| Space | Fit or 1:1 |
+| Z | Fit or 3:1 |
+| J | Shadow and highlight clipping warnings |
+| S | Soft proof (in the grid, a stack; below) |
+
+### Rating and sorting
+
+| Key | Does |
+|---|---|
+| 1 to 5, 0 | Set a rating, or clear it |
+| P, X, U | Pick, reject, unflag |
+| 6 to 9 | Red, yellow, green or blue label (press again to clear) |
+| [ ] | Turn the frame a quarter left or right; not part of the edit |
 | B | Add the selected frames to a collection, or take them out |
 | Ctrl+G, Ctrl+Shift+G | Stack the selected frames; unstack them |
 | S, Shift+S (in the grid) | Open or close a stack; make the frame its top |
 | Ctrl+' | New version of the frame |
-| Tab | Hide the panels, the filmstrip and the status line, and bring them back |
-| Space | Fit or 1:1 |
-| Z | Fit or 3:1 |
-| 1 to 5, 0 | Set a rating, or clear it |
-| P, X, U | Pick, reject, unflag |
-| 6 to 9 | Red, yellow, green or blue label (press again to clear) |
-| [ ] | Turn the frame a quarter left or right |
 | Delete | Delete the selected frames, after a confirmation |
-| J | Shadow and highlight clipping warnings |
-| S | Soft proof (in the grid, a stack; see above) |
+
+### Editing
+
+| Key | Does |
+|---|---|
+| Ctrl+Z | Undo |
+| Ctrl+Shift+Z or Ctrl+Y | Redo |
+| Ctrl+C | Copy the open frame's settings |
+| Ctrl+V | Paste them onto the selected frames |
+| Ctrl+Shift+S | Sync the selected frames to the open one |
+
+### Files, sheets and help
+
+| Key | Does |
+|---|---|
 | Ctrl+F or / | Filter the folder by rating, flag, label or words |
-| Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y | Undo, redo |
 | Ctrl+O | Open a folder |
 | Ctrl+Shift+I | Import from a card |
 | Ctrl+Shift+E | Export |
-| Ctrl+Shift+S | Sync settings onto the selected frames |
-| Ctrl+C, Ctrl+V | Copy the open frame's settings; paste them onto the selected frames |
 | Ctrl+, | Settings |
-| Esc | Close a dialog, drop the tool in hand, go back to one frame, or clear the filter |
+| ? | The keys sheet |
+| Esc | Close a sheet, put a tool down, let go of a set, go back to one frame, or clear the filter |
 
-On a Mac, Ctrl is ⌘ (⌘C, ⌘V, ⌘Z, ⌘+click). Control+click is a
-right-click, and delete (⌫) opens the delete sheet.
+On a Mac, Ctrl is ⌘, and the keys sheet says Cmd (⌘C, ⌘V, ⌘Z,
+⌘+click). Control+click is a right-click, and delete (⌫) opens the
+delete sheet.
 
 ## Known rough edges
 
@@ -142,7 +181,8 @@ right-click, and delete (⌫) opens the delete sheet.
 
 ## Reporting a problem
 
-Click **Report a problem...** at the bottom of the left panel. It opens
+Click **Report a problem...** at the bottom of the left panel, or
+choose it from **Help** just above. It opens
 the bug form in your browser with the version, OS and GPU already
 filled in, and it shows the log file in your file manager so you can
 drag it into the form. In the report, include:

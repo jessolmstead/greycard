@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { LightroomRoot, ReportLine, Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow } from "structs.slint";
+import { LightroomRoot, ReportLine, Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -53,6 +53,7 @@ import { FoldersSection } from "panel/folders.slint";
 import { RootsSection } from "panel/roots.slint";
 import { CollectionsSection } from "panel/collections.slint";
 import { CollectionSheet } from "panel/collection-sheet.slint";
+import { KeysSheet } from "panel/keys-sheet.slint";
 
 export component App inherits Window {
     title: "greycard";
@@ -118,6 +119,19 @@ export component App inherits Window {
     in-out property <bool> sync-open: false;
     in property <string> sync-text: "";
     in property <[CarryRow]> sync-rows: [];
+    /// The sync sheet's relative choices: Temperature, Tint and
+    /// Exposure each set to the source's value (false) or shifted by
+    /// its own move (true). Kept in the settings. Shown on a sync's
+    /// sheet, not a paste's; a field whose section does not go is
+    /// greyed; the words say what a frame moves by.
+    in-out property <bool> sync-shift-temperature: false;
+    in-out property <bool> sync-shift-tint: false;
+    in-out property <bool> sync-shift-exposure: false;
+    in property <bool> sync-shift-shown: false;
+    in property <bool> sync-shift-white: false;
+    in property <bool> sync-shift-light: false;
+    in property <string> sync-shift-words;
+    callback sync-shift-changed();
     in property <int> sync-lines: 0;
     callback sync-row-toggled(int);
     callback sync-all(bool);
@@ -134,6 +148,8 @@ export component App inherits Window {
     callback frame-menu-asked(int);
     /// How many frames the menu acts on.
     in property <int> menu-count: 1;
+    /// How many of them a paste goes onto.
+    in property <int> menu-paste-count: 0;
     /// What the selection shares, for the checks; -1 where it differs.
     in property <int> menu-rating: -1;
     in property <int> menu-flag: -1;
@@ -1822,6 +1838,18 @@ export component App inherits Window {
     /// Open the bug report form in the browser, filled in, and the
     /// log's folder beside it.
     callback report-asked();
+    /// The keys sheet: ? or Help > Keys. Its rows are the key table's
+    /// (`keys.rs`), narrowed by its field as it is typed into.
+    in-out property <bool> keys-open: false;
+    in property <[KeyRow]> keys-rows: [];
+    callback keys-searched(string);
+    /// The name the key table gives a press, empty when it binds
+    /// none: the one way the window's key handler reads a key.
+    callback key-chord(string, bool, bool, bool, bool) -> string;
+    /// Help > User guide: the guide in the browser.
+    callback guide-asked();
+    /// Set to open the Help menu, for a capture of it.
+    in-out property <bool> help-menu-shown: false;
     /// The update check: the Settings sheet's switch, its Check now
     /// and the line that answers it; and a newer release found, by
     /// its version as shown ("0.1.4", empty for none) and its page,
@@ -1932,7 +1960,7 @@ export component App inherits Window {
             || root.delete-open || root.look-remove-open || root.look-rename-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
             || root.root-sheet-open || root.collection-sheet-open || root.preset-report-open
-            || root.lr-open || root.rt-open;
+            || root.lr-open || root.rt-open || root.keys-open;
     }
 
     // A value typed into a field, set or let go: the keys are the
@@ -1966,6 +1994,12 @@ export component App inherits Window {
     changed rt-open => {
         if (!root.rt-open && !root.sheet-open()) { keys.focus(); }
     }
+    // Opened, the whole table, whatever the last search left; closed,
+    // the keys back.
+    changed keys-open => {
+        if (root.keys-open) { root.keys-searched(""); }
+        if (!root.keys-open && !root.sheet-open()) { keys.focus(); }
+    }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
     forward-focus: keys;
@@ -1978,50 +2012,58 @@ export component App inherits Window {
             // A key takes the hover text down, as it does a tooltip: a
             // row or a panel the key removes never hears the pointer go.
             root.tip-text = "";
+            // The press by the name the key table gives it
+            // (`keys.rs`), empty for a key the table does not bind.
+            // Nothing below compares the event's text, so the keys sheet,
+            // made from the same table, is every key there is.
+            let chord = root.key-chord(e.text, e.modifiers.control, e.modifiers.shift,
+                e.modifiers.alt, e.modifiers.meta);
+            if (chord == "") { return reject; }
+            if (chord == "Esc" && root.keys-open) { root.keys-open = false; return accept; }
             // The settings sheet is declared last and so drawn over the
             // rest: Escape closes it first.
-            if (e.text == Key.Escape && root.settings-open) { root.settings-open = false; return accept; }
-            if (e.text == Key.Escape && root.export-open) { root.export-open = false; return accept; }
-            if (e.text == Key.Escape && root.import-open) { root.import-open = false; return accept; }
-            if (e.text == Key.Escape && root.fetch-open) { root.fetch-answered(false); return accept; }
-            if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
-            if (e.text == Key.Escape && root.preset-report-open) { root.preset-report-open = false; return accept; }
-            if (e.text == Key.Escape && root.lr-open) {
+            if (chord == "Esc" && root.settings-open) { root.settings-open = false; return accept; }
+            if (chord == "Esc" && root.export-open) { root.export-open = false; return accept; }
+            if (chord == "Esc" && root.import-open) { root.import-open = false; return accept; }
+            if (chord == "Esc" && root.fetch-open) { root.fetch-answered(false); return accept; }
+            if (chord == "Esc" && root.preset-open) { root.preset-open = false; return accept; }
+            if (chord == "Esc" && root.preset-report-open) { root.preset-report-open = false; return accept; }
+            if (chord == "Esc" && root.lr-open) {
                 if (!root.lr-busy) { root.lr-open = false; }
                 return accept;
             }
-            if (e.text == Key.Escape && root.rt-open) {
+            if (chord == "Esc" && root.rt-open) {
                 if (!root.rt-writing) { root.rt-open = false; }
                 return accept;
             }
-            if (e.text == Key.Escape && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
-            if (e.text == Key.Escape && root.collection-sheet-open) { root.collection-sheet-open = false; return accept; }
-            if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
-            if (e.text == Key.Escape && root.delete-open) { root.delete-answered(0); return accept; }
-            if (e.text == Key.Escape && root.look-remove-open) { root.look-remove-answered(0); return accept; }
-            if (e.text == Key.Escape && root.look-rename-open) {
+            if (chord == "Esc" && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
+            if (chord == "Esc" && root.collection-sheet-open) { root.collection-sheet-open = false; return accept; }
+            if (chord == "Esc" && root.rejects-open) { root.rejects-answered(false); return accept; }
+            if (chord == "Esc" && root.delete-open) { root.delete-answered(0); return accept; }
+            if (chord == "Esc" && root.look-remove-open) { root.look-remove-answered(0); return accept; }
+            if (chord == "Esc" && root.look-rename-open) {
                 if (!root.look-rename-working) { root.look-rename-answered(false); }
                 return accept;
             }
-            if (e.text == Key.Escape && root.overwrite-open) { root.overwrite-answered(0); return accept; }
-            if (e.text == Key.Escape && root.archive-open) { root.archive-answered(false); return accept; }
-            if (e.text == Key.Escape && root.archive-rejects-open) { root.archive-rejects-answered(0); return accept; }
-            if (e.text == Key.Escape && root.match-open && !root.match-running) { root.match-close(); return accept; }
-            if (e.text == Key.Escape && root.sync-open) { root.sync-open = false; return accept; }
-            if (e.text == Key.Escape && (root.placing != "" || root.picking != "")) { root.stop-placing(); return accept; }
+            if (chord == "Esc" && root.overwrite-open) { root.overwrite-answered(0); return accept; }
+            if (chord == "Esc" && root.archive-open) { root.archive-answered(false); return accept; }
+            if (chord == "Esc" && root.archive-rejects-open) { root.archive-rejects-answered(0); return accept; }
+            if (chord == "Esc" && root.match-open && !root.match-running) { root.match-close(); return accept; }
+            if (chord == "Esc" && root.sync-open) { root.sync-open = false; return accept; }
+            if (chord == "Esc" && (root.placing != "" || root.picking != "")) { root.stop-placing(); return accept; }
             // A preset's removal asked and not answered: Esc is its
             // Cancel.
-            if (e.text == Key.Escape && root.preset-confirm-remove >= 0) { root.preset-confirm-remove = -1; return accept; }
+            if (chord == "Esc" && root.preset-confirm-remove >= 0) { root.preset-confirm-remove = -1; return accept; }
             // A repair chosen for editing, not one just drawn: Esc
             // lets go of it, so the sliders go back to the brush.
-            if (e.text == Key.Escape && root.patch != -1) { root.patch-changed(-1); return accept; }
-            if (e.text == Key.Escape && root.guide-mode != "") { root.guide-mode = ""; root.guide-dropped(); return accept; }
-            if (e.text == Key.Escape && root.level-mode) { root.level-mode = false; return accept; }
-            if (e.text == Key.Escape && root.crop-draw-armed) { root.crop-draw-armed = false; return accept; }
+            if (chord == "Esc" && root.patch != -1) { root.patch-changed(-1); return accept; }
+            if (chord == "Esc" && root.guide-mode != "") { root.guide-mode = ""; root.guide-dropped(); return accept; }
+            if (chord == "Esc" && root.level-mode) { root.level-mode = false; return accept; }
+            if (chord == "Esc" && root.crop-draw-armed) { root.crop-draw-armed = false; return accept; }
             // A set being exported stops before Escape means anything
             // else: the sheet is gone by then, and this is its cancel.
             // Once stopping, Escape is the window's again.
-            if (e.text == Key.Escape && root.export-running && !root.export-stopping && !root.sheet-open()) {
+            if (chord == "Esc" && root.export-running && !root.export-stopping && !root.sheet-open()) {
                 root.export-stop();
                 return accept;
             }
@@ -2029,7 +2071,7 @@ export component App inherits Window {
             // Escape means anything else: leaving the grid or the
             // culling mode with the set still held would leave it
             // chosen where it cannot be seen.
-            if (e.text == Key.Escape && root.set-count > 1 && !root.sheet-open()) {
+            if (chord == "Esc" && root.set-count > 1 && !root.sheet-open()) {
                 root.set-collapsed();
                 return accept;
             }
@@ -2037,29 +2079,29 @@ export component App inherits Window {
             // frame chosen and Return, Escape or L back from there,
             // Escape out to the grid, G to the grid, plus and minus
             // the tiles' size. The rest is the grid's, below.
-            if (!root.sheet-open() && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta) {
-                let l = e.text == "l" || e.text == "L";
+            if (!root.sheet-open()) {
+                let l = chord == "L";
                 // A held key is one press: held, it would flip in and out
                 // at the repeat's rate. Its repeats are eaten here, not
                 // left to the grid's keys below, which would take the
                 // next step out. Plus and minus may repeat.
-                let ours = l || e.text == "g" || e.text == "G" || e.text == Key.Return
-                    || e.text == Key.Escape;
+                let ours = l || chord == "G" || chord == "Return"
+                    || chord == "Esc";
                 if (root.lightbox && e.repeat && ours) { return accept; }
                 if (root.lightbox && root.lightbox-loupe) {
-                    if (!e.repeat && (l || e.text == Key.Return || e.text == Key.Escape)) {
+                    if (!e.repeat && (l || chord == "Return" || chord == "Esc")) {
                         root.lightbox-from-loupe();
                         return accept;
                     }
-                    if (!e.repeat && (e.text == "g" || e.text == "G")) { root.lightbox-leave(); return accept; }
+                    if (!e.repeat && (chord == "G")) { root.lightbox-leave(); return accept; }
                 } else if (root.lightbox) {
-                    if (!e.repeat && (l || e.text == Key.Escape || e.text == "g" || e.text == "G")) {
+                    if (!e.repeat && (l || chord == "Esc" || chord == "G")) {
                         root.lightbox-leave();
                         return accept;
                     }
-                    if (!e.repeat && e.text == Key.Return) { root.lightbox-to-loupe(); return accept; }
-                    if (e.text == "+" || e.text == "=") { root.lightbox-zoom(1); return accept; }
-                    if (e.text == "-" || e.text == "_") { root.lightbox-zoom(-1); return accept; }
+                    if (!e.repeat && chord == "Return") { root.lightbox-to-loupe(); return accept; }
+                    if (chord == "+" || chord == "=") { root.lightbox-zoom(1); return accept; }
+                    if (chord == "-" || chord == "_") { root.lightbox-zoom(-1); return accept; }
                 } else if (l && !e.repeat) {
                     root.lightbox-enter();
                     return accept;
@@ -2069,44 +2111,49 @@ export component App inherits Window {
             // zoom, and three ways back to the loupe.
             if (root.grid-open && !root.sheet-open()) {
                 // Held, one step out and no further.
-                if (e.text == Key.Escape || e.text == Key.Return) {
+                if (chord == "Esc" || chord == "Return") {
                     if (!e.repeat) { root.grid-open = false; }
                     return accept;
                 }
-                if (e.text == Key.LeftArrow) { root.grid-step(-1, 0, root.grid-cols, e.modifiers.shift); return accept; }
-                if (e.text == Key.RightArrow) { root.grid-step(1, 0, root.grid-cols, e.modifiers.shift); return accept; }
-                if (e.text == Key.UpArrow) { root.grid-step(0, -1, root.grid-cols, e.modifiers.shift); return accept; }
-                if (e.text == Key.DownArrow) { root.grid-step(0, 1, root.grid-cols, e.modifiers.shift); return accept; }
+                if (chord == "Left" || chord == "Shift+Left") { root.grid-step(-1, 0, root.grid-cols, e.modifiers.shift); return accept; }
+                if (chord == "Right" || chord == "Shift+Right") { root.grid-step(1, 0, root.grid-cols, e.modifiers.shift); return accept; }
+                if (chord == "Up" || chord == "Shift+Up") { root.grid-step(0, -1, root.grid-cols, e.modifiers.shift); return accept; }
+                if (chord == "Down" || chord == "Shift+Down") { root.grid-step(0, 1, root.grid-cols, e.modifiers.shift); return accept; }
                 // The sheet's top or its foot, and the frame there
                 // chosen as an arrow chooses one; the scroll is set
                 // as well, since the frame may be chosen already.
-                if (e.text == Key.Home || e.text == Key.End) {
-                    let end = e.text == Key.End;
+                if (chord == "Home" || chord == "End" || chord == "Shift+Home" || chord == "Shift+End"
+                || chord == "Ctrl+Home" || chord == "Ctrl+End" || chord == "Ctrl+Shift+Home"
+                || chord == "Ctrl+Shift+End") {
+                    let end = chord == "End" || chord == "Shift+End" || chord == "Ctrl+End"
+                    || chord == "Ctrl+Shift+End";
                     root.step-end(end, e.modifiers.shift);
                     root.grid-scroll-to(end ? root.grid-max : 0px);
                     return accept;
                 }
-                if (e.text == "+" || e.text == "=") { root.grid-zoom(1); return accept; }
-                if (e.text == "-" || e.text == "_") { root.grid-zoom(-1); return accept; }
+                if (chord == "+" || chord == "=" || chord == "Ctrl++" || chord == "Ctrl+=") {
+                    root.grid-zoom(1);
+                    return accept;
+                }
+                if (chord == "-" || chord == "_" || chord == "Ctrl+-" || chord == "Ctrl+_") {
+                    root.grid-zoom(-1);
+                    return accept;
+                }
             }
             // Delete opens the delete sheet over the selection, in the
             // grid, culling and the loupe: only the sheet, whose
             // confirmation is the delete. A text field with the focus
             // has the key first. On a Mac the key marked delete sends Backspace,
-            // so Backspace there too; elsewhere Backspace is nobody's.
-            if ((e.text == Key.Delete || (e.text == Key.Backspace && Platform.os == OperatingSystemType.macos))
-                && !e.repeat
-                && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta && !e.modifiers.shift
-                && !root.sheet-open()) {
+            // so Backspace there too; elsewhere the table binds no
+            // Backspace and its chord is empty.
+            if ((chord == "Delete" || chord == "Backspace") && !e.repeat && !root.sheet-open()) {
                 root.delete-asked("selection");
                 return accept;
             }
             // Over the grid, F7 and Tab put the left pane away and
             // bring it back: the pane is the one of the three the
             // grid leaves showing.
-            if ((e.text == Key.Tab || e.text == Key.F7) && root.grid-open
-                && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
-                && !e.modifiers.shift && !root.sheet-open()) {
+            if ((chord == "Tab" || chord == "F7") && root.grid-open && !root.sheet-open()) {
                 root.left-hidden = !root.left-hidden;
                 return accept;
             }
@@ -2114,8 +2161,7 @@ export component App inherits Window {
             // a LineEdit with the focus has it first, so typing in the
             // filter or a name never reaches this. Over the grid it is
             // the pane's alone (above).
-            if (e.text == Key.Tab && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
-                && !e.modifiers.shift && !root.sheet-open() && !root.grid-open) {
+            if (chord == "Tab" && !root.sheet-open() && !root.grid-open) {
                 // Any one showing: all away. All away: all back.
                 let hide = !root.all-hidden();
                 root.left-hidden = hide;
@@ -2126,47 +2172,42 @@ export component App inherits Window {
             // One at a time, as Lightroom has F7 and F8 for its side
             // panels. F6 for the strip, where Lightroom has it. The
             // same guards as Tab's.
-            if ((e.text == Key.F6 || e.text == Key.F7 || e.text == Key.F8)
-                && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
-                && !e.modifiers.shift && !root.sheet-open() && !root.grid-open) {
-                if (e.text == Key.F6) { root.strip-hidden = !root.strip-hidden; }
-                if (e.text == Key.F7) { root.left-hidden = !root.left-hidden; }
-                if (e.text == Key.F8) { root.right-hidden = !root.right-hidden; }
+            if ((chord == "F6" || chord == "F7" || chord == "F8") && !root.sheet-open() && !root.grid-open) {
+                if (chord == "F6") { root.strip-hidden = !root.strip-hidden; }
+                if (chord == "F7") { root.left-hidden = !root.left-hidden; }
+                if (chord == "F8") { root.right-hidden = !root.right-hidden; }
                 return accept;
             }
-            if ((e.text == "g" || e.text == "G") && !e.modifiers.control && !root.sheet-open()) {
+            if (chord == "G" && !root.sheet-open()) {
                 root.grid-open = !root.grid-open;
                 return accept;
             }
             // Stacks, as Lightroom has them: Ctrl+G the selection into
             // a stack, Ctrl+Shift+G out of it.
-            if ((e.text == "g" || e.text == "G") && e.modifiers.control && !e.modifiers.alt
-                && !root.sheet-open()) {
-                if (e.modifiers.shift) { root.stack-unmake(); } else { root.stack-make(); }
+            if ((chord == "Ctrl+G" || chord == "Ctrl+Shift+G") && !root.sheet-open()) {
+                if (chord == "Ctrl+Shift+G") { root.stack-unmake(); } else { root.stack-make(); }
                 return accept;
             }
             // S opens or closes the stack, Shift+S puts the frame on its
             // top: in the grid, as Lightroom's Library has them.
             // Elsewhere S is the proof, below; in culling a stack opens
             // and closes by its badge on the strip.
-            if ((e.text == "s" || e.text == "S") && !e.modifiers.control && !e.modifiers.alt
-                && !e.modifiers.meta && root.grid-open && !root.lightbox
+            if ((chord == "S" || chord == "Shift+S") && root.grid-open && !root.lightbox
                 && !root.sheet-open()) {
-                if (e.modifiers.shift) { root.stack-top(false); } else { root.stack-toggle(); }
+                if (chord == "Shift+S") { root.stack-top(false); } else { root.stack-toggle(); }
                 return accept;
             }
             // B, as Lightroom has it for its quick collection: the
             // selection into the collection open, or the last one added
             // to, or out of it when it is all in it already.
-            if ((e.text == "b" || e.text == "B") && !e.modifiers.control && !e.modifiers.alt
-                && !e.modifiers.meta && !root.sheet-open()) {
+            if (chord == "B" && !root.sheet-open()) {
                 root.collection-key();
                 return accept;
             }
             // Culling: Return or Escape leaves it on the frame the
             // selection is on and develops that; V cycles the compare
             // view; C is the way in and out.
-            if (root.culling && !root.sheet-open() && (e.text == Key.Return || e.text == Key.Escape)) {
+            if (root.culling && !root.sheet-open() && (chord == "Return" || chord == "Esc")) {
                 root.cull-leave();
                 return accept;
             }
@@ -2175,30 +2216,30 @@ export component App inherits Window {
             // set is what Escape is for there, and an import is long
             // enough that stopping it by the way would cost a card's
             // worth of waiting. Its Stop button always stops it.
-            if (e.text == Key.Escape && root.import-running && !root.import-stopping && !root.sheet-open()) {
+            if (chord == "Esc" && root.import-running && !root.import-stopping && !root.sheet-open()) {
                 root.import-stop();
                 return accept;
             }
-            if (root.culling && !root.sheet-open() && !e.modifiers.control && (e.text == "v" || e.text == "V")) {
+            if (root.culling && !root.sheet-open() && chord == "V") {
                 // Three up is Compare versions' alone; V goes on from it
                 // to four, as from two.
                 root.compare-changed(root.compare == 1 ? 2 : root.compare == 2 || root.compare == 3 ? 4 : 1);
                 return accept;
             }
-            if ((e.text == "c" || e.text == "C") && !e.modifiers.control && !root.sheet-open()) {
+            if (chord == "C" && !root.sheet-open()) {
                 root.cull-toggled();
                 return accept;
             }
             // Undo and redo move the frame under the sheet, and a sheet
             // reads that frame: a sync would carry the undone state.
             // Under a sheet they are nobody's.
-            if (e.modifiers.control && (e.text == "z" || e.text == "Z")) {
+            if (chord == "Ctrl+Z" || chord == "Ctrl+Shift+Z") {
                 if (!root.sheet-open()) {
-                    if (e.modifiers.shift) { root.redo(); } else { root.undo(); }
+                    if (chord == "Ctrl+Shift+Z") { root.redo(); } else { root.undo(); }
                 }
                 return accept;
             }
-            if (e.modifiers.control && (e.text == "y" || e.text == "Y")) {
+            if (chord == "Ctrl+Y") {
                 if (!root.sheet-open()) { root.redo(); }
                 return accept;
             }
@@ -2207,46 +2248,44 @@ export component App inherits Window {
             // the keys are nobody's: a text field with the focus has
             // its own Ctrl+C and Ctrl+V first. Under a sheet, nothing,
             // as undo: the sync sheet reads the frame behind it.
-            if (e.modifiers.control && !e.modifiers.shift && !e.modifiers.alt
-                && (e.text == "c" || e.text == "C")) {
+            if (chord == "Ctrl+C") {
                 if (!root.sheet-open()) { root.copy-asked(); }
                 return accept;
             }
             // Ctrl+', Lightroom's key: a new version of the frame on
             // screen, its edit copied.
-            if (e.modifiers.control && !e.modifiers.alt && e.text == "'") {
+            if (chord == "Ctrl+'") {
                 if (!root.sheet-open()) { root.version-new-asked(false, false); }
                 return accept;
             }
-            if (e.modifiers.control && !e.modifiers.shift && !e.modifiers.alt
-                && (e.text == "v" || e.text == "V")) {
+            if (chord == "Ctrl+V") {
                 if (!root.sheet-open()) { root.paste-asked(); }
                 return accept;
             }
             // Import: Lightroom's Ctrl+Shift+I. Needs no frame open,
             // since an empty editor is where a first card goes.
-            if (e.modifiers.control && e.modifiers.shift && (e.text == "i" || e.text == "I")) {
+            if (chord == "Ctrl+Shift+I") {
                 if (!root.sheet-open() && !root.import-running) { root.import-asked(); }
                 return accept;
             }
-            if (e.modifiers.control && e.modifiers.shift && (e.text == "e" || e.text == "E")) {
+            if (chord == "Ctrl+Shift+E") {
                 root.export-asked();
                 return accept;
             }
             // Ctrl+, is where a desktop application keeps its
             // settings; nothing else here binds a comma.
-            if (e.modifiers.control && e.text == "," && !root.sheet-open()) {
+            if (chord == "Ctrl+," && !root.sheet-open()) {
                 root.settings-asked();
                 return accept;
             }
-            if (e.modifiers.control && (e.text == "o" || e.text == "O")) {
+            if (chord == "Ctrl+O") {
                 root.open-folder();
                 return accept;
             }
             // Sync settings: Lightroom's Ctrl+Shift+S. The bare S is
             // the proof, and Ctrl+S nothing yet, so this one reads
             // the same to a hand from there.
-            if (e.modifiers.control && e.modifiers.shift && (e.text == "s" || e.text == "S")) {
+            if (chord == "Ctrl+Shift+S") {
                 // Not over a tool in hand either: the sheet would hide
                 // the drag or the pick half done.
                 if (root.set-count > 1 && !root.sheet-open() && !root.tool-in-hand()) { root.sync-open-asked(); }
@@ -2260,13 +2299,19 @@ export component App inherits Window {
             // typed into anything, since the field itself has the
             // keys once it has the focus, and Esc there clears it
             // and gives them back.
-            if (e.modifiers.control && (e.text == "f" || e.text == "F") && !root.sheet-open()) {
+            if (chord == "Ctrl+F" && !root.sheet-open()) {
                 root.filter-asked();
                 return accept;
             }
-            if (e.text == "/" && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
-                && !root.sheet-open()) {
+            if (chord == "/" && !root.sheet-open()) {
                 root.filter-asked();
+                return accept;
+            }
+            // The keys sheet, made from the table this handler reads:
+            // ? where an application keeps its shortcuts, Shift and /
+            // on most boards.
+            if (chord == "?" && !root.sheet-open()) {
+                root.keys-open = true;
                 return accept;
             }
             // The culling keys: stars, the flag, the color label. They
@@ -2276,8 +2321,12 @@ export component App inherits Window {
             // A held key is one press: a repeat has nothing to add
             // to a rating, flickers a label, and with move-on would
             // rate a run of frames.
-            if (!e.repeat && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
-                && !root.sheet-open() && root.meta-key(e.text)) {
+            if (!e.repeat && !root.sheet-open()
+                && (chord == "0" || chord == "1" || chord == "2" || chord == "3" || chord == "4"
+                    || chord == "5" || chord == "6" || chord == "7" || chord == "8" || chord == "9"
+                    || chord == "P" || chord == "X" || chord == "U"
+                    || chord == "Shift+P" || chord == "Shift+X" || chord == "Shift+U")
+                && root.meta-key(e.text)) {
                 return accept;
             }
             // The frame's own turn, a quarter left and a quarter
@@ -2285,9 +2334,8 @@ export component App inherits Window {
             // else in the window binds a bracket, so Lightroom's
             // Ctrl+[ and Ctrl+] are not needed to keep out of the
             // way, and a hand on the arrows reaches these.
-            if (!e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
-                && !root.sheet-open() && (e.text == "[" || e.text == "]")) {
-                root.frame-turned(e.text == "[" ? -1 : 1);
+            if (!root.sheet-open() && (chord == "[" || chord == "]")) {
+                root.frame-turned(chord == "[" ? -1 : 1);
                 return accept;
             }
             // Everything below acts on the frame behind a sheet, and a
@@ -2295,23 +2343,26 @@ export component App inherits Window {
             // source would go stale under an arrow. Under a sheet they
             // do nothing.
             if (root.sheet-open()) { return reject; }
-            if (e.text == Key.LeftArrow) { root.step(-1, e.modifiers.shift); return accept; }
-            if (e.text == Key.RightArrow) { root.step(1, e.modifiers.shift); return accept; }
+            if (chord == "Left" || chord == "Shift+Left") { root.step(-1, e.modifiers.shift); return accept; }
+            if (chord == "Right" || chord == "Shift+Right") { root.step(1, e.modifiers.shift); return accept; }
             // The strip's ends, as the grid's above.
-            if (e.text == Key.Home || e.text == Key.End) {
-                let end = e.text == Key.End;
+            if (chord == "Home" || chord == "End" || chord == "Shift+Home" || chord == "Shift+End"
+                || chord == "Ctrl+Home" || chord == "Ctrl+End" || chord == "Ctrl+Shift+Home"
+                || chord == "Ctrl+Shift+End") {
+                let end = chord == "End" || chord == "Shift+End" || chord == "Ctrl+End"
+                    || chord == "Ctrl+Shift+End";
                 root.step-end(end, e.modifiers.shift);
                 strip.content-x = end ? min(0px, strip.width - strip.content-width) : 0px;
                 return accept;
             }
-            if (e.text == " " && !e.modifiers.control && !root.grid-open) { root.zoom-key(1); return accept; }
-            if ((e.text == "z" || e.text == "Z") && !e.modifiers.control && !root.grid-open) { root.zoom-key(3); return accept; }
-            if ((e.text == "s" || e.text == "S") && !e.modifiers.control && !root.grid-open) {
+            if (chord == "Space" && !root.grid-open) { root.zoom-key(1); return accept; }
+            if (chord == "Z" && !root.grid-open) { root.zoom-key(3); return accept; }
+            if (chord == "S" && !root.grid-open) {
                 root.proofing = !root.proofing;
                 root.proof-changed();
                 return accept;
             }
-            if ((e.text == "j" || e.text == "J") && !e.modifiers.control && !root.grid-open) {
+            if (chord == "J" && !root.grid-open) {
                 // Both on, unless either is: then both off.
                 let on = !(root.warn-shadows || root.warn-highlights);
                 root.warn-shadows = on;
@@ -2462,6 +2513,8 @@ export component App inherits Window {
                     can-redo: root.can-redo;
                     undo => { root.undo(); }
                     redo => { root.redo(); }
+                    set-count: root.set-count;
+                    sync-asked => { root.sync-open-asked(); }
                 }
                 // The panel in the order a photo is developed; the
                 // masks and the retouch on tabs of their own. The bar
@@ -3239,6 +3292,45 @@ export component App inherits Window {
         }
         Rectangle { x: parent.width - 1px; width: 1px; height: 100%; background: Theme.border; }
         VerticalLayout {
+        // Library and Develop: the grid and the one frame, as G has
+        // them, the one on screen pressed. At the pane's top in both,
+        // above what scrolls, so a hand from Lightroom looking for its
+        // modules finds the way to the other from either.
+        HorizontalLayout {
+            padding: Theme.space-4;
+            padding-top: Theme.space-3;
+            padding-bottom: 0;
+            spacing: Theme.space-2;
+            PanelButton {
+                text: "Library";
+                icon: @image-url("icons/library.svg");
+                primary: root.grid-open;
+                accessible-role: button;
+                accessible-label: "Library view";
+                accessible-checked: root.grid-open;
+                // Out of the lightbox first, to the grid, as G and L
+                // leave it.
+                clicked => {
+                    keys.focus();
+                    root.lightbox-leave();
+                    root.grid-open = true;
+                }
+            }
+            PanelButton {
+                text: "Develop";
+                icon: @image-url("icons/sliders-horizontal.svg");
+                primary: !root.grid-open;
+                accessible-role: button;
+                accessible-label: "Develop view";
+                accessible-checked: !root.grid-open;
+                // Out of the lightbox and its loupe both, to the frame.
+                clicked => {
+                    keys.focus();
+                    root.lightbox-leave();
+                    root.grid-open = false;
+                }
+            }
+        }
         // The sections scroll; Settings and Report stay put
         // beneath them, as the develop panel does on the
         // right. Presets, Snapshots and History each cap
@@ -3476,6 +3568,48 @@ export component App inherits Window {
                 text: "Settings...";
                 icon: @image-url("icons/settings.svg");
                 clicked => { root.settings-asked(); }
+            }
+            // Help: the keys sheet, the guide in the browser, and the
+            // report, which also has its own button below, where the
+            // guide has always said it is.
+            PanelButton {
+                text: "Help";
+                icon: @image-url("icons/circle-help.svg");
+                accessible-role: button;
+                accessible-label: "Help menu";
+                clicked => {
+                    keys.focus();
+                    help-menu.show({ x: 0, y: self.height });
+                }
+                property <bool> asked: root.help-menu-shown;
+                changed asked => {
+                    if (self.asked) {
+                        root.help-menu-shown = false;
+                        help-menu.show({ x: 0, y: self.height });
+                    }
+                }
+                help-menu := ContextMenuArea {
+                    width: 0px;
+                    height: 0px;
+                    enabled: false;
+                    Menu {
+                        // The sheet takes the focus itself: no
+                        // `menu-done`, whose timer would take it back.
+                        MenuItem {
+                            title: "Keys (?)";
+                            activated => { root.keys-open = true; }
+                        }
+                        MenuItem {
+                            title: "User guide";
+                            activated => { root.guide-asked(); root.menu-done(); }
+                        }
+                        MenuSeparator { }
+                        MenuItem {
+                            title: "Report a problem...";
+                            activated => { root.report-asked(); root.menu-done(); }
+                        }
+                    }
+                }
             }
             PanelButton {
                 text: "Report a problem...";
@@ -3762,6 +3896,14 @@ export component App inherits Window {
         sync-all(on) => { root.sync-all(on); }
         sync-join-chosen(join) => { root.sync-join-chosen(join); }
         sync-applied => { root.sync-applied(); }
+        shift-temperature <=> root.sync-shift-temperature;
+        shift-tint <=> root.sync-shift-tint;
+        shift-exposure <=> root.sync-shift-exposure;
+        shift-shown: root.sync-shift-shown;
+        shift-white: root.sync-shift-white;
+        shift-light: root.sync-shift-light;
+        shift-words: root.sync-shift-words;
+        shift-changed => { root.sync-shift-changed(); }
     }
 
     // The export sheet, over everything, until a choice is made.
@@ -3872,6 +4014,13 @@ export component App inherits Window {
         update-check-now => { root.update-check-now(); }
     }
 
+    // The keys sheet, over everything, until closed.
+    if root.keys-open: KeysSheet {
+        open <=> root.keys-open;
+        rows: root.keys-rows;
+        searched(t) => { root.keys-searched(t); }
+    }
+
     // The frame menu: one for the window, opened where the
     // right-click was. Declared last, though its menu is a popup and
     // draws over everything wherever it is declared.
@@ -3880,6 +4029,7 @@ export component App inherits Window {
         y: 0;
         count: root.menu-count;
         paste-from: root.clip-from;
+        paste-count: root.menu-paste-count;
         rating: root.menu-rating;
         flag: root.menu-flag;
         label: root.menu-label;

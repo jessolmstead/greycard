@@ -181,6 +181,12 @@ pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
     crate::panel::stacks::menu_asked(&st, app, file);
     app.set_menu_can_meta(!frames.is_empty());
     app.set_menu_count(frames.len().max(1) as i32);
+    app.set_menu_paste_count(
+        st.sheets
+            .clipboard
+            .as_ref()
+            .map_or(0, |clip| clip.targets(&st, &frames).len()) as i32,
+    );
     app.set_menu_rating(shared(metas.iter().map(|m| i32::from(m.rating))));
     app.set_menu_flag(shared(metas.iter().map(|m| m.flag.code())));
     app.set_menu_label(shared(metas.iter().map(|m| m.label.code())));

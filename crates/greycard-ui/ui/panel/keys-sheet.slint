@@ -1,0 +1,108 @@
+// The keys sheet: every key the window binds, grouped as the guide's
+// Keys chapter groups them, made from the table the window's key
+// handler reads (`keys.rs`), so it lists what the keys do and nothing
+// else. ? or Help > Keys opens it; the field narrows it as it is typed
+// into; Escape or a click beside it closes it.
+
+import { LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { PanelButton } from "../controls.slint";
+import { KeyRow } from "../structs.slint";
+
+export component KeysSheet inherits Rectangle {
+    in-out property <bool> open;
+    in property <[KeyRow]> rows;
+    callback searched(string);
+
+    background: #000000a0;
+    TouchArea { clicked => { root.open = false; } }
+    Rectangle {
+        width: min(640px, root.width - 2 * Theme.space-5);
+        height: min(sheet.preferred-height, root.height - 2 * Theme.space-5);
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        // The field has the focus and a key goes up from it: Escape is
+        // taken here, on the card.
+        FocusScope {
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.open = false;
+                    return accept;
+                }
+                return reject;
+            }
+            sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                HorizontalLayout {
+                    spacing: Theme.space-3;
+                    Text {
+                        text: "Keys";
+                        font-size: Theme.font-lg;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                    }
+                    search := LineEdit {
+                        placeholder-text: "Search keys";
+                        accessible-label: "Search keys";
+                        edited(t) => { root.searched(t); }
+                        init => { self.focus(); }
+                    }
+                }
+                ScrollView {
+                    // The window less the sheet's head and foot.
+                    min-height: 80px;
+                    preferred-height: list.preferred-height;
+                    list := VerticalLayout {
+                        alignment: start;
+                        spacing: 2px;
+                        for row in root.rows: HorizontalLayout {
+                            padding-top: row.heading ? Theme.space-3 : 0;
+                            spacing: Theme.space-3;
+                            if row.heading: Text {
+                                text: row.keys;
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-semibold;
+                                color: Theme.text-secondary;
+                            }
+                            if !row.heading: Text {
+                                width: 170px;
+                                text: row.keys;
+                                font-size: Theme.font-sm;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text;
+                                wrap: word-wrap;
+                            }
+                            if !row.heading: Text {
+                                text: row.does;
+                                font-size: Theme.font-sm;
+                                color: Theme.text-secondary;
+                                wrap: word-wrap;
+                            }
+                        }
+                        if root.rows.length == 0: Text {
+                            text: "No key does that.";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-secondary;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    PanelButton {
+                        text: "Close";
+                        accessible-role: button;
+                        accessible-label: "Close the keys";
+                        clicked => { root.open = false; }
+                    }
+                }
+            }
+        }
+    }
+}

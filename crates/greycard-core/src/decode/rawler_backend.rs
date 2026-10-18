@@ -398,18 +398,7 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
     let white = white_pattern(&image.whitelevel.0, image.cpp)?;
 
     let as_shot_coefficients = as_shot(image.wb_coeffs);
-
-    let mut calibrations: Vec<Calibration> = image
-        .color_matrix
-        .iter()
-        .map(|(illuminant, matrix)| Calibration {
-            illuminant: *illuminant as u16,
-            color_matrix: matrix.clone(),
-            // rawler does not surface ForwardMatrix tags on RawImage.
-            forward_matrix: None,
-        })
-        .collect();
-    calibrations.sort_by_key(|c| c.illuminant);
+    let calibrations = calibrations_of(&image);
 
     let crop = image.crop_area.or(image.active_area).map(|r| Rect {
         x: r.p.x,
@@ -460,6 +449,23 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
     };
     frame.validate()?;
     Ok(frame)
+}
+
+/// The image's color matrices as the engine's calibrations, by
+/// illuminant.
+fn calibrations_of(image: &RawImage) -> Vec<Calibration> {
+    let mut calibrations: Vec<Calibration> = image
+        .color_matrix
+        .iter()
+        .map(|(illuminant, matrix)| Calibration {
+            illuminant: *illuminant as u16,
+            color_matrix: matrix.clone(),
+            // rawler does not surface ForwardMatrix tags on RawImage.
+            forward_matrix: None,
+        })
+        .collect();
+    calibrations.sort_by_key(|c| c.illuminant);
+    calibrations
 }
 
 fn cfa_pattern(cfa: &CFA) -> Result<CfaPattern> {
@@ -722,6 +728,23 @@ mod tests {
             let frame = RawlerDecoder.decode_bytes(&finished).unwrap();
             assert_eq!((frame.width, frame.height), (16, 12));
         }
+    }
+
+    /// The white read without a sample is the decoded frame's.
+    #[test]
+    fn the_white_without_the_samples_is_the_frames() {
+        let dir = std::env::temp_dir().join(format!("greycard-white-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("white.dng");
+        std::fs::write(&path, a_dng()).unwrap();
+        let white = white_path(&path);
+        let frame = RawlerDecoder.decode_path(&path);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let (white, frame) = (white.unwrap(), frame.unwrap());
+        assert!(white.as_shot_coefficients.is_some());
+        assert_eq!(white.as_shot_coefficients, frame.as_shot_coefficients);
+        assert_eq!(white.calibrations, frame.calibrations);
+        assert!(!white.calibrations.is_empty());
     }
 
     #[test]
@@ -1139,6 +1162,35 @@ fn stance_unguarded(path: &Path) -> Result<RawStance> {
         .filter(|(w, h)| *w > 0 && *h > 0);
     let mosaic = image.as_ref().and_then(mosaic_of);
     Ok((orientation, size, mosaic))
+}
+
+/// What a frame's camera recorded of the light, and the calibrations a
+/// profile is made from: a [`RawFrame`]'s `as_shot_coefficients` and
+/// `calibrations`, without its samples.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CameraWhite {
+    pub as_shot_coefficients: Option<[f64; 3]>,
+    pub calibrations: Vec<Calibration>,
+}
+
+/// The camera's as-shot white and its calibrations, from rawler's
+/// dummy image as [`stance_path`] reads the crop: what a frame that is
+/// not open needs for the kelvin its As shot means. The same answer
+/// [`frame_from_rawler`] gives the decoded frame.
+pub fn white_path(path: &Path) -> Result<CameraWhite> {
+    guarded(|| tail_of(path), || white_unguarded(path))
+}
+
+fn white_unguarded(path: &Path) -> Result<CameraWhite> {
+    let source = RawSource::new(path)?;
+    let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
+    let image = decoder
+        .raw_image(&source, &RawDecodeParams::default(), true)
+        .map_err(decoder_error)?;
+    Ok(CameraWhite {
+        as_shot_coefficients: as_shot(image.wb_coeffs),
+        calibrations: calibrations_of(&image),
+    })
 }
 
 /// The kind of mosaic in an image's description, which rawler's dummy

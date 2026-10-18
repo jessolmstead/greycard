@@ -711,6 +711,10 @@ pub(crate) enum Shown {
     Part(&'static str),
     /// The grid's Sort menu, open (with `--grid`).
     Sort,
+    /// The keys sheet, as ? opens it.
+    Keys,
+    /// The Help menu at the left pane's foot, open.
+    Help,
 }
 
 /// Which step of the RawTherapee profiles' offer and sheet a capture
@@ -766,13 +770,15 @@ impl Shown {
             "rawtherapee" => Ok(Self::RawTherapee(RawTherapeeStep::Report)),
             "rawtherapee-written" => Ok(Self::RawTherapee(RawTherapeeStep::Written)),
             "sort" => Ok(Self::Sort),
+            "keys" => Ok(Self::Keys),
+            "help" => Ok(Self::Help),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, preset-report, paste, pasted, import, \
                  imported, match, matched, refit, look-remove, look-rename, root-name, \
                  delete, archive, archive-rejects, parts, landscape, lightroom, \
                  lightroom-report, lightroom-written, rawtherapee-offer, rawtherapee, \
-                 rawtherapee-written or sort, not {name}"
+                 rawtherapee-written, sort, keys or help, not {name}"
             )),
         }
     }
@@ -978,6 +984,8 @@ impl Shown {
                 app.invoke_add_part(label.into(), "Add".into());
             }
             Self::Sort => app.set_sort_menu_shown(true),
+            Self::Keys => app.set_keys_open(true),
+            Self::Help => app.set_help_menu_shown(true),
         }
         app.window().request_redraw();
     }
@@ -2700,6 +2708,91 @@ mod tests {
         scroll(&app, 0.0, 10.0);
         assert!((state.borrow().develop.zoom - 1.25).abs() < 1e-4);
         assert_ne!(state.borrow().develop.center, before);
+    }
+
+    /// Library and Develop at the left pane's top: the grid and the
+    /// one frame, as G has them, the one on screen pressed, in the
+    /// same place in both.
+    #[test]
+    fn library_and_develop_switch_the_view_and_the_one_on_screen_is_pressed() {
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(6));
+        app.invoke_select(0);
+        let pressed = |label: &str| {
+            crate::testing::count_labeled(&app, label);
+            ElementHandle::find_by_accessible_label(&app, label)
+                .next()
+                .and_then(|e| e.accessible_checked())
+        };
+        let middle = |label: &str| {
+            let (at, size) = crate::testing::labeled(&app, label);
+            (at.x + size.width / 2.0, at.y + size.height / 2.0, at)
+        };
+        assert!(!app.get_grid_open());
+        assert_eq!(pressed("Develop view"), Some(true));
+        assert_eq!(pressed("Library view"), Some(false));
+        let (lx, ly, library_at) = middle("Library view");
+        // The pane's top left, above everything that scrolls.
+        assert!(
+            library_at.x < 240.0 && library_at.y < 40.0,
+            "{library_at:?}"
+        );
+        click(&app, lx, ly);
+        assert!(app.get_grid_open());
+        assert_eq!(pressed("Library view"), Some(true));
+        assert_eq!(pressed("Develop view"), Some(false));
+        // Where it was in the loupe.
+        let (_, _, there) = middle("Library view");
+        assert_eq!((there.x, there.y), (library_at.x, library_at.y));
+        // Library again is still the library; G agrees with the two.
+        click(&app, lx, ly);
+        assert!(app.get_grid_open());
+        let (dx, dy, _) = middle("Develop view");
+        click(&app, dx, dy);
+        assert!(!app.get_grid_open());
+        crate::testing::press(&app, "g");
+        assert!(app.get_grid_open());
+        assert_eq!(pressed("Library view"), Some(true));
+        // From the lightbox with the pane brought back: Develop leaves
+        // it for the frame, Library for the grid, as its own ways out.
+        for (label, grid) in [("Develop view", false), ("Library view", true)] {
+            app.invoke_lightbox_enter();
+            assert!(app.get_lightbox());
+            app.set_left_hidden(false);
+            let (x, y, _) = middle(label);
+            click(&app, x, y);
+            assert!(!app.get_lightbox(), "{label}");
+            assert_eq!(app.get_grid_open(), grid, "{label}");
+        }
+    }
+
+    /// The Help menu's two of its own: the keys sheet, and the guide,
+    /// which a test never opens a browser for.
+    #[test]
+    fn help_has_the_keys_and_the_guide_and_a_test_opens_no_browser() {
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        assert_eq!(crate::testing::count_labeled(&app, "Help menu"), 1);
+        app.invoke_guide_asked();
+        assert_eq!(app.get_status(), "the guide is open in the browser");
+        assert_eq!(Shown::sheet("keys"), Ok(Shown::Keys));
+        assert_eq!(Shown::sheet("help"), Ok(Shown::Help));
+        Shown::Keys.open(&app);
+        assert!(app.get_keys_open());
+        assert!(app.get_keys_rows().row_count() > 20);
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_keys_open());
+        // The menu asked for opens it, and the ask is spent.
+        slint::platform::update_timers_and_animations();
+        Shown::Help.open(&app);
+        crate::testing::count_labeled(&app, "Help menu");
+        slint::platform::update_timers_and_animations();
+        assert!(!app.get_help_menu_shown());
     }
 
     /// The edge arrows and the undo and redo buttons show a picture

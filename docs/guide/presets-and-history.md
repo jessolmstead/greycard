@@ -296,7 +296,9 @@ Sync copies the open frame's edit onto the other selected frames.
 
 1. Edit one frame.
 2. Ctrl+click or Shift+click the others.
-3. Press **Sync...** under PRESETS, or **Ctrl+Shift+S**.
+3. Press **Sync 4 frames to this one...** at the top of the develop
+   panel (it says how many), **Sync...** under PRESETS, or
+   **Ctrl+Shift+S**.
 4. Check the sections to copy, and press **Apply**.
 
 Every section starts checked except **Masks**, because masks are drawn
@@ -321,6 +323,36 @@ own picture.
 While the sheet is open, the arrow keys and undo do nothing, so the
 frames it names are the frames it syncs.
 
+#### Set or shift
+
+**Temperature**, **Tint** and **Exposure** each have **Set** and
+**Shift** at the top of the sheet:
+
+- **Set** (the default) gives every frame the open frame's value, as
+  above.
+- **Shift** moves each frame from its own value by the open frame's
+  difference from where it started: Temperature and Tint from its
+  as-shot white balance, Exposure from 0 EV. This is Lightroom's Quick
+  Develop: if you warmed the open frame from as shot, every frame gets
+  as much warmer from where it was, rather than all taking the open
+  frame's value.
+
+Temperature shifts by the same step in mired (a million over the
+kelvin), which is how far a change looks alike at any light. A step is
+fewer kelvin on a warm frame than on a cool one: the open frame warmed
+300 K from 4800 K moves a frame at 3000 K about 115 K and one at
+6500 K about 560 K. The sheet says the step and what it comes to at a
+few lights.
+
+A frame at **As shot** that is shifted becomes a custom white balance
+at its own as-shot light, moved. If the open frame is at As shot, it
+has moved nowhere, so with either of Temperature and Tint on Shift
+every frame's white balance stays as it is. If the open frame isn't a
+raw, or its raw doesn't record its white balance, Temperature and Tint
+are set instead, and the sheet says so. The choices are greyed while
+their section is unchecked, and greycard remembers them. A paste has
+no shift: it sets.
+
 ### Copy and paste settings
 
 - **Ctrl+C** copies the open frame's whole edit.
@@ -344,9 +376,10 @@ Right-click a frame in the filmstrip, the grid or the picture for a
 menu. On a Mac, Control+click does the same.
 
 - **Copy settings of** the frame you right-clicked
-- **Paste settings** (greyed until you have copied something)
-- **Sync settings of** the frame on screen **onto** the rest of the
-  selection, with more than one frame selected
+- **Paste settings from** the copied frame **onto** the selected
+  frames (greyed until you have copied something)
+- **Sync 4 frames to** the frame on screen, with more than one frame
+  selected
 - **New version** and **New version from the original**, and on a
   version **Rename version...**, **Swap with the original** and
   **Delete version...**; **Compare versions** on a frame that has

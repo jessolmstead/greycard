@@ -1,6 +1,15 @@
 // The structs App's properties carry, which Rust reads and writes
 // as generated types; here so the panel's files can name them too.
 
+/// A line of the keys sheet (`keys.rs`): a group's heading, its title
+/// in `keys`, or a binding, its keys as the platform names them and
+/// what they do.
+export struct KeyRow {
+    heading: bool,
+    keys: string,
+    does: string,
+}
+
 /// A row of the list of what a sheet carries (`carry.rs`): a
 /// section's heading, a part or a mask under it, or the line that
 /// says whether the masks replace the frames' or join them. Rust lays

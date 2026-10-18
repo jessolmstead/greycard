@@ -33,6 +33,10 @@ export component PanelHead inherits VerticalLayout {
     in property <bool> can-redo;
     callback undo();
     callback redo();
+    /// How many frames are selected, the one on screen among them:
+    /// over one, the Sync button, Ctrl+Shift+S's sheet.
+    in property <int> set-count;
+    callback sync-asked();
 
     padding-left: Theme.space-4;
     padding-right: Theme.space-4;
@@ -107,6 +111,19 @@ export component PanelHead inherits VerticalLayout {
             font-size: Theme.font-sm;
             overflow: elide;
         }
+    }
+    // A batch edit, where a hand from Lightroom looks for it: with
+    // frames chosen beside this one, the sheet that lays this one's
+    // settings over them, which Ctrl+Shift+S and the frame menu open
+    // too, and whose words these are.
+    if root.set-count > 1: PanelButton {
+        text: "Sync " + (root.set-count - 1)
+            + (root.set-count == 2 ? " frame to this one..." : " frames to this one...");
+        icon: @image-url("../icons/layers.svg");
+        accessible-role: button;
+        accessible-label: "Sync";
+        accessible-action-default => { root.sync-asked(); }
+        clicked => { root.sync-asked(); }
     }
     // The scopes read the develop; in culling
     // there is none, and they are not shown.

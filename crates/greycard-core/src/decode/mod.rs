@@ -14,7 +14,9 @@ use crate::raw::{Orientation, RawFrame};
 pub mod rawler_backend;
 pub mod style;
 
-pub use rawler_backend::{MosaicRead, Probe, RawMetadata, RawlerDecoder, inside_decoder};
+pub use rawler_backend::{
+    CameraWhite, MosaicRead, Probe, RawMetadata, RawlerDecoder, inside_decoder,
+};
 pub use style::{Adaptive, AdaptiveKind, CameraStyle, Maker};
 
 pub trait Decoder {
@@ -67,6 +69,12 @@ pub fn exif_models(camera: &str) -> Vec<String> {
 /// A picture's is [`crate::picture::probe_path`].
 pub fn probe_path(path: impl AsRef<Path>) -> Result<Probe> {
     rawler_backend::probe_path(path.as_ref())
+}
+
+/// A raw's as-shot white and calibrations without its samples; see
+/// `rawler_backend::white_path`.
+pub fn white_path(path: impl AsRef<Path>) -> Result<CameraWhite> {
+    rawler_backend::white_path(path.as_ref())
 }
 
 /// [`probe_path`] from the file's head and tail alone, where its format

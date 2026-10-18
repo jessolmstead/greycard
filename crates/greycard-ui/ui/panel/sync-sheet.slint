@@ -5,9 +5,37 @@
 // the frame copied going over the whole selection.
 
 import { Theme } from "../theme.slint";
-import { PanelButton } from "../controls.slint";
+import { PanelButton, Segmented } from "../controls.slint";
 import { CarryList } from "carry-list.slint";
 import { CarryRow } from "../structs.slint";
+
+// One of the relative choices: a field's name, then Set or Shift.
+component ShiftChoice inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <bool> shift;
+    in property <bool> enabled: true;
+    callback changed();
+    spacing: Theme.space-2;
+    Text {
+        text: root.label;
+        font-size: Theme.font-sm;
+        color: root.enabled ? Theme.text : Theme.text-muted;
+        vertical-alignment: center;
+    }
+    Segmented {
+        width: 112px;
+        options: ["Set", "Shift"];
+        current: root.shift ? "Shift" : "Set";
+        enabled: root.enabled;
+        accessible-role: list;
+        accessible-label: root.label + " set or shift";
+        accessible-value: root.shift ? "Shift" : "Set";
+        selected(o) => {
+            root.shift = o == "Shift";
+            root.changed();
+        }
+    }
+}
 
 export component SyncSheet inherits Rectangle {
     in-out property <bool> sync-open;
@@ -24,6 +52,15 @@ export component SyncSheet inherits Rectangle {
     callback sync-all(bool);
     callback sync-join-chosen(bool);
     callback sync-applied();
+    /// The relative choices (`App::sync-shift-*`).
+    in-out property <bool> shift-temperature;
+    in-out property <bool> shift-tint;
+    in-out property <bool> shift-exposure;
+    in property <bool> shift-shown;
+    in property <bool> shift-white;
+    in property <bool> shift-light;
+    in property <string> shift-words;
+    callback shift-changed();
 
     background: #000000a0;
     TouchArea { clicked => { root.sync-open = false; } }
@@ -69,11 +106,45 @@ export component SyncSheet inherits Rectangle {
                     color: Theme.text-secondary;
                     wrap: word-wrap;
                 }
+                // Lightroom's Quick Develop: a field set takes this
+                // frame's value; shifted, each frame moves from its own
+                // by as much as this one moved.
+                if root.shift-shown: VerticalLayout {
+                    spacing: Theme.space-2;
+                    HorizontalLayout {
+                        spacing: Theme.space-4;
+                        alignment: start;
+                        ShiftChoice {
+                            label: "Temperature";
+                            shift <=> root.shift-temperature;
+                            enabled: root.shift-white;
+                            changed => { root.shift-changed(); }
+                        }
+                        ShiftChoice {
+                            label: "Tint";
+                            shift <=> root.shift-tint;
+                            enabled: root.shift-white;
+                            changed => { root.shift-changed(); }
+                        }
+                        ShiftChoice {
+                            label: "Exposure";
+                            shift <=> root.shift-exposure;
+                            enabled: root.shift-light;
+                            changed => { root.shift-changed(); }
+                        }
+                    }
+                    Text {
+                        text: root.shift-words;
+                        font-size: Theme.font-xs;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
+                }
                 CarryList {
                     rows: root.sync-rows;
                     lines: root.sync-lines;
                     // The window less the sheet's words and buttons.
-                    max-list-height: root.height - 300px;
+                    max-list-height: root.height - (root.shift-shown ? 380px : 300px);
                     toggled(i) => { root.sync-row-toggled(i); }
                     all(on) => { root.sync-all(on); }
                     join-chosen(join) => { root.sync-join-chosen(join); }

@@ -33,6 +33,8 @@ pub(crate) fn window(count: usize) -> App {
         })
         .collect();
     crate::cells::set_rows(&app, thumbs);
+    // The key table, without which no key does anything.
+    crate::keys::install(&app);
     app.on_grid_columns(grid::columns);
     app.on_grid_slack(grid::slack);
     app.on_grid_max_scroll(grid::max_scroll);

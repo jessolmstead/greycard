@@ -74,11 +74,13 @@ export component CullSection inherits Section {
         PanelButton {
             text: "[";
             icon: @image-url("../icons/rotate-ccw.svg");
+            words: "Turn the frame left: not part of the edit";
             clicked => { root.frame-turned(-1); }
         }
         PanelButton {
             text: "]";
             icon: @image-url("../icons/rotate-cw.svg");
+            words: "Turn the frame right: not part of the edit";
             clicked => { root.frame-turned(1); }
         }
     }

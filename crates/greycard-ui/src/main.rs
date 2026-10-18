@@ -38,6 +38,7 @@ mod geometry;
 mod grid;
 mod headless;
 mod import;
+mod keys;
 mod library;
 mod lightbox;
 mod log;
@@ -396,8 +397,9 @@ struct Cli {
     /// the open folder's frames, answered or not), rawtherapee (their
     /// import's sheet over the open folder, at its dry run's report),
     /// rawtherapee-written (the same, written as its Write button
-    /// writes it: point it at a scratch folder) or sort (the grid's
-    /// Sort menu, open; with --grid)
+    /// writes it: point it at a scratch folder), sort (the grid's
+    /// Sort menu, open; with --grid), keys (the keys sheet, as ?
+    /// opens it) or help (the Help menu, open)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
@@ -774,6 +776,7 @@ impl State {
                 sync_asked: None,
                 paste_asked: None,
                 sync_last: None,
+                sync_source: None,
                 clipboard: None,
             },
             work: owners::Work {
@@ -969,6 +972,7 @@ fn on_exists_named(name: &str) -> Result<export::OnExists, String> {
 
 pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc<Worker>) {
     entry::install(app);
+    keys::install(app);
     panel::cull::install(app, &state, &worker);
     panel::delete::install(app, &state, &worker);
     panel::look_remove::install(app, &state);

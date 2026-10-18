@@ -157,6 +157,21 @@ pub struct Settings {
     /// Written as a box is ticked. A group not named here, seen for
     /// the first time, is checked.
     pub match_unchecked: Vec<MatchChoice>,
+    /// Which of the sync sheet's Temperature, Tint and Exposure shift
+    /// each frame by the frame synced from's own move rather than set
+    /// it to that frame's value, as the sheet was left.
+    pub sync_shift: SyncShift,
+}
+
+/// The sync sheet's three relative choices: on, a frame is shifted
+/// from its own value; off, set to the source's. All off by default,
+/// which is the sync every earlier build ran.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SyncShift {
+    pub temperature: bool,
+    pub tint: bool,
+    pub exposure: bool,
 }
 
 /// How many scopes' unchecked groups the match sheet remembers.
@@ -264,6 +279,7 @@ impl Default for Settings {
             sort: crate::sort::Kept::default(),
             update: crate::update::Kept::default(),
             match_unchecked: Vec::new(),
+            sync_shift: SyncShift::default(),
         }
     }
 }
@@ -472,6 +488,11 @@ mod tests {
                 scope: "/home/x/Pictures/shoot".into(),
                 unchecked: vec!["Canon EOS R6m2 Standard".into()],
             }],
+            sync_shift: SyncShift {
+                temperature: true,
+                tint: false,
+                exposure: true,
+            },
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);
@@ -527,6 +548,8 @@ mod tests {
         // A file from before the choice has none.
         let read: Settings = serde_json::from_str("{}").unwrap();
         assert!(read.match_unchecked.is_empty());
+        // And none of the sync's shifts: every one sets, as before.
+        assert_eq!(read.sync_shift, SyncShift::default());
     }
 
     #[test]

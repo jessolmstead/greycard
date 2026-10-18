@@ -358,3 +358,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§345. The Sky matte over a diluted map: the sure sky held, and its pockets](notes/345-the-sky-matte-over-a-diluted-map-the-sure-sky-held-and-its-pockets.md) (2026-10-17)
 - [§346. A file chooser without a portal](notes/346-a-file-chooser-without-a-portal.md) (2026-10-17)
 - [§347. The desktop entry runs the editor by its path](notes/347-the-desktop-entry-runs-the-editor-by-its-path.md) (2026-10-17)
+- [§346. Batch edits, the keys and the library, found without a key](notes/346-batch-edits-the-keys-and-the-library-found-without-a-key.md) (2026-10-17)

@@ -14,6 +14,9 @@ export component FrameMenu inherits Rectangle {
     /// The frame the clipboard holds settings from; empty when
     /// nothing has been copied, and Paste is grayed.
     in property <string> paste-from;
+    /// How many frames a paste goes onto: the selection, less the
+    /// frame the settings came from when it is in it.
+    in property <int> paste-count;
     /// Whether any frame is chosen for a rating, a flag or a label to
     /// reach: none is, in the loupe under a filter that hides them all.
     in property <bool> can-meta: true;
@@ -114,15 +117,20 @@ export component FrameMenu inherits Rectangle {
                 title: root.file == "" ? "Copy settings" : "Copy settings of " + root.file;
                 activated => { root.copy(); }
             }
+            // Named for what they do to the selection: a paste onto
+            // how many, a sync of how many to which, as the sync
+            // sheet's words and the develop panel's button say it.
             MenuItem {
-                title: root.paste-from == "" ? "Paste settings" : "Paste settings from " + root.paste-from;
+                title: root.paste-from == "" ? "Paste settings"
+                    : root.paste-count < 1 ? "Paste settings from " + root.paste-from
+                    : "Paste settings from " + root.paste-from + " onto " + root.paste-count
+                        + (root.paste-count == 1 ? " frame..." : " frames...");
                 enabled: root.paste-from != "";
                 activated => { root.paste(); }
             }
             if root.count > 1: MenuItem {
-                title: "Sync settings " + (root.current == "" ? "" : "of " + root.current + " ")
-                    + "onto " + (root.count - 1)
-                    + (root.count == 2 ? " other frame..." : " other frames...");
+                title: "Sync " + (root.count - 1) + (root.count == 2 ? " frame to " : " frames to ")
+                    + (root.current == "" ? "this one" : root.current) + "...";
                 activated => { root.sync(); }
             }
             MenuSeparator { }
