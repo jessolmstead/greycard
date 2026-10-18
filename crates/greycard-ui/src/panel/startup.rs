@@ -1491,7 +1491,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             if finder::arrived() {
                 return;
             }
-            export::choose_folder("Open a folder", start, move |chosen| {
+            chooser::choose_folder("Open a folder", start, move |chosen| {
                 let app_weak = app_weak.clone();
                 // The state and the worker through their thread locals:
                 // this runs on the chooser's own thread, which an `Rc`
@@ -1514,7 +1514,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // where the empty editor's user is looking.
                         Err(e) => {
                             tracing::warn!("file chooser: {e:#}");
-                            app.set_status(export::chooser_failed(&e).into());
+                            app.set_status(chooser::chooser_failed(&e).into());
                         }
                     }
                 });

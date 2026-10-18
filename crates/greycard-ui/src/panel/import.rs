@@ -858,7 +858,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 .unwrap_or_default();
             let which = which.to_string();
             let weak = app.as_weak();
-            export::choose_folder(title, start, move |chosen| {
+            chooser::choose_folder(title, start, move |chosen| {
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     let Some(state) = STATE.with(|s| s.borrow().clone()) else {
                         return;
@@ -880,7 +880,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         Ok(None) => {}
                         Err(e) => {
                             tracing::warn!("folder chooser: {e:#}");
-                            app.set_import_note(export::chooser_failed(&e).into());
+                            app.set_import_note(chooser::chooser_failed(&e).into());
                         }
                     }
                     show(&st, &app);

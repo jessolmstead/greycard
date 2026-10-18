@@ -719,7 +719,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let app_weak = app.as_weak();
             app.set_status("choosing a folder to add to the library...".into());
-            export::choose_folder("Add a folder to the library", start, move |chosen| {
+            chooser::choose_folder("Add a folder to the library", start, move |chosen| {
                 let app_weak = app_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(app) = app_weak.upgrade() else {
@@ -736,7 +736,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         Ok(None) => app.set_status("nothing added".into()),
                         Err(e) => {
                             tracing::warn!("file chooser: {e:#}");
-                            app.set_status(export::chooser_failed(&e).into());
+                            app.set_status(chooser::chooser_failed(&e).into());
                         }
                     }
                 });

@@ -39,10 +39,10 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] The window's structure: the file chooser out of `export.rs`,
-      then a render crate holding the finish and the export (the Slint
-      UI in a crate of its own landed as §351, the window's own build
-      from 115 s and 9 GB to 24 s and 2.3 GB; Pool)
+- [ ] The window's structure: a render crate holding the finish and
+      the export (the Slint UI in a crate of its own landed as §351,
+      the window's own build from 115 s and 9 GB to 24 s and 2.3 GB;
+      the file chooser out of `export.rs` as §356; Pool)
 
 
 ## Tracks
@@ -544,9 +544,8 @@ clears or a tester asks for it.
       (landed, §351: window build 24 s and 2.3 GB, incremental 8 s;
       `cargo build -p greycard-slint` alone still compiles a wasted
       second copy, closed only by a workspace-hack list, left open);
-      the desktop file chooser out of
-      `export.rs` (lines 905 to 1576, zbus and rfd on Slint's event
-      loop, 11 tests) into a window `chooser.rs`; a render crate
+      the desktop file chooser out of `export.rs` into a window
+      `chooser.rs` (landed, §356); a render crate
       between edit and the window holding the finish, agx, detail,
       export, border, watermark and geometry with their test helpers
       (10,100 lines, 103 tests, nothing of `State` or `App` in them,

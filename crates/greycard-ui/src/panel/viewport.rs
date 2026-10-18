@@ -1447,7 +1447,7 @@ pub(crate) fn choose_icc(
         })
         .unwrap_or_else(|| PathBuf::from("/"));
     let app_weak = app.as_weak();
-    export::choose_open(
+    chooser::choose_open(
         title,
         start,
         (
@@ -1467,7 +1467,7 @@ pub(crate) fn choose_icc(
                     Ok(None) => {}
                     Err(e) => {
                         tracing::warn!("{title}: file chooser: {e:#}");
-                        app.set_status(export::chooser_failed(&e).into());
+                        app.set_status(chooser::chooser_failed(&e).into());
                     }
                 }
             });

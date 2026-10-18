@@ -601,7 +601,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
             app.set_status("choosing a Lightroom catalog...".into());
             let weak = app.as_weak();
             // A test opens no chooser: it answers as a cancel.
-            export::choose_open(
+            chooser::choose_open(
                 "Import a Lightroom catalog",
                 start,
                 (
@@ -618,7 +618,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
                             Ok(None) => app.set_status("import canceled".into()),
                             Err(e) => {
                                 tracing::warn!("file chooser: {e:#}");
-                                app.set_status(export::chooser_failed(&e).into());
+                                app.set_status(chooser::chooser_failed(&e).into());
                             }
                         }
                     });
@@ -653,7 +653,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
                 .or_else(dirs::home_dir)
                 .unwrap_or_default();
             let weak = app.as_weak();
-            export::choose_folder("Where the catalog's folder is now", start, move |chosen| {
+            chooser::choose_folder("Where the catalog's folder is now", start, move |chosen| {
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     let Some(state) = STATE.with(|s| s.borrow().clone()) else {
                         return;
@@ -665,7 +665,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
                         Ok(None) => {}
                         Err(e) => {
                             tracing::warn!("folder chooser: {e:#}");
-                            app.set_lr_note(export::chooser_failed(&e).into());
+                            app.set_lr_note(chooser::chooser_failed(&e).into());
                         }
                     }
                 });

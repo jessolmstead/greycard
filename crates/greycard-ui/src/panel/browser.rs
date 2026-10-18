@@ -2786,7 +2786,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let app_weak = app.as_weak();
             app.set_status("choosing a folder to open...".into());
-            export::choose_folder("Open folder", start, move |chosen| {
+            chooser::choose_folder("Open folder", start, move |chosen| {
                 let app_weak = app_weak.clone();
                 // The state and the worker through their thread
                 // locals, as this runs on the chooser's own thread and
@@ -2807,7 +2807,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         Ok(None) => app.set_status("open folder canceled".into()),
                         Err(e) => {
                             tracing::warn!("file chooser: {e:#}");
-                            app.set_status(export::chooser_failed(&e).into());
+                            app.set_status(chooser::chooser_failed(&e).into());
                         }
                     }
                 });

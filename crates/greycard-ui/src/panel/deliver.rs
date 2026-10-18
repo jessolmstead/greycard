@@ -1395,7 +1395,7 @@ fn ask_folder(
     #[cfg(not(test))]
     {
         let weak = app.as_weak();
-        export::choose_folder("Export to a folder", start, move |chosen| {
+        chooser::choose_folder("Export to a folder", start, move |chosen| {
             let _ = weak.upgrade_in_event_loop(move |app| then(&app, chosen));
         });
     }
@@ -1536,7 +1536,7 @@ fn choose_export_folder(state: &Rc<RefCell<State>>, app: &App) {
             Ok(None) => "the export folder is as it was".to_string(),
             Err(e) => {
                 tracing::warn!("folder chooser: {e:#}");
-                export::chooser_failed(&e)
+                chooser::chooser_failed(&e)
             }
         };
         if let Some(waiting) = overtaken {
@@ -1686,7 +1686,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 .or_else(dirs::home_dir)
                 .unwrap_or_else(|| PathBuf::from("/"));
             let weak = app.as_weak();
-            export::choose_open(
+            chooser::choose_open(
                 "Watermark",
                 start,
                 ("PNG".into(), vec!["*.png".into(), "*.PNG".into()]),
@@ -1699,7 +1699,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         Ok(None) => {}
                         Err(e) => {
                             tracing::warn!("file chooser: {e:#}");
-                            app.set_status(export::chooser_failed(&e).into());
+                            app.set_status(chooser::chooser_failed(&e).into());
                         }
                     });
                 },
@@ -1943,7 +1943,7 @@ fn export_gathered(state: &Rc<RefCell<State>>, app: &App, raw: PathBuf, frames: 
                 Err(e) => {
                     tracing::warn!("folder chooser: {e:#}");
                     app.set_status(
-                        format!("not exported: {why}; {}", export::chooser_failed(&e)).into(),
+                        format!("not exported: {why}; {}", chooser::chooser_failed(&e)).into(),
                     );
                 }
             }

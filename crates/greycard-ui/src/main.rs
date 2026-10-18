@@ -19,6 +19,7 @@ mod border;
 mod camera_match;
 mod carry;
 mod cells;
+mod chooser;
 mod clipboard;
 mod collections;
 mod cull;
