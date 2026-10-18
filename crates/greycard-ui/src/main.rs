@@ -785,6 +785,7 @@ impl State {
                 look_rename: None,
                 look_rename_generation: 0,
                 look_renaming: None,
+                time_shift: Default::default(),
                 deleting: None,
                 fetch: None,
                 fetching: false,
@@ -1010,6 +1011,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::delete::install(app, &state, &worker);
     panel::look_remove::install(app, &state);
     panel::look_rename::install(app, &state);
+    panel::time_shift::install(app, &state, &worker);
     panel::look_preview::install(app, &state);
     panel::archive::install(app, &state, &worker);
     sync::install(app, &state);

@@ -43,6 +43,22 @@
 //! meaning, and its reject in `greycard:Flag`; nothing is lost
 //! either way round.
 //!
+//! **The capture time.** A frame whose camera's clock was off carries
+//! a shift in its meta ([`Meta::time_shift`]), and the raw is never
+//! rewritten. The shift goes under greycard's namespace as
+//! `greycard:TimeShift`, whole seconds, and is read back as the
+//! frame's shift. The time it makes goes where every other tool looks
+//! for one, as Lightroom's Edit Capture Time puts it: into
+//! `exif:DateTimeOriginal`, `xmp:CreateDate` and
+//! `photoshop:DateCreated`, as ISO 8601 with no zone (the XMP form of
+//! all three; the EXIF tags' colons are for the EXIF block of an
+//! export). Those three are written only by a caller that knows the
+//! camera's own time ([`save_dated`]), only while the frame is
+//! shifted or a shift of ours is being taken off, and never read: the
+//! corrected time read back against the camera's would shift the
+//! frame a second time. With no shift, another tool's dates are left
+//! exactly as they are.
+//!
 //! **Everything else in the file is kept.** [`write`] does not
 //! rebuild a packet: it finds the properties above, rewrites those
 //! and splices the rest of the bytes through untouched, so
@@ -91,6 +107,11 @@ const LR: &str = "http://ns.adobe.com/lightroom/1.0/";
 /// The TIFF namespace, for `tiff:Orientation`: the EXIF tag as XMP
 /// spells it, which is what Lightroom, Bridge and exiftool read.
 const TIFF: &str = "http://ns.adobe.com/tiff/1.0/";
+/// The EXIF namespace, for `exif:DateTimeOriginal`.
+const EXIF: &str = "http://ns.adobe.com/exif/1.0/";
+/// Photoshop's, for `photoshop:DateCreated`, the one of the three
+/// dates IPTC readers look at.
+const PHOTOSHOP: &str = "http://ns.adobe.com/photoshop/1.0/";
 const HIERARCHICAL: &str = "hierarchicalSubject";
 /// Greycard's own, shared with the packet an export carries (§51).
 /// The pick flag lives here because standard XMP has nowhere for it.
@@ -107,10 +128,18 @@ enum Prop {
     Title,
     Description,
     Orientation,
+    /// The capture time's shift, in seconds, under greycard's own
+    /// namespace: the one statement about the time this module reads.
+    TimeShift,
+    /// The three dates the shifted capture time is written to. Never
+    /// read: see the module's notes on the capture time.
+    DateTimeOriginal,
+    CreateDate,
+    DateCreated,
 }
 
 impl Prop {
-    const ALL: [Prop; 7] = [
+    const ALL: [Prop; 11] = [
         Prop::Rating,
         Prop::Label,
         Prop::Flag,
@@ -118,13 +147,19 @@ impl Prop {
         Prop::Title,
         Prop::Description,
         Prop::Orientation,
+        Prop::TimeShift,
+        Prop::DateTimeOriginal,
+        Prop::CreateDate,
+        Prop::DateCreated,
     ];
 
     fn ns(self) -> &'static str {
         match self {
-            Prop::Rating | Prop::Label => XMP,
-            Prop::Flag => GREYCARD,
+            Prop::Rating | Prop::Label | Prop::CreateDate => XMP,
+            Prop::Flag | Prop::TimeShift => GREYCARD,
             Prop::Orientation => TIFF,
+            Prop::DateTimeOriginal => EXIF,
+            Prop::DateCreated => PHOTOSHOP,
             Prop::Subject | Prop::Title | Prop::Description => DC,
         }
     }
@@ -135,6 +170,8 @@ impl Prop {
             XMP => "xmp",
             GREYCARD => "greycard",
             TIFF => "tiff",
+            EXIF => "exif",
+            PHOTOSHOP => "photoshop",
             _ => "dc",
         }
     }
@@ -148,15 +185,24 @@ impl Prop {
             Prop::Title => "title",
             Prop::Description => "description",
             Prop::Orientation => "Orientation",
+            Prop::TimeShift => "TimeShift",
+            Prop::DateTimeOriginal => "DateTimeOriginal",
+            Prop::CreateDate => "CreateDate",
+            Prop::DateCreated => "DateCreated",
         }
     }
 
     /// Whether the value is one word, so it can sit in an attribute.
     /// The other three are `rdf:Bag`s and `rdf:Alt`s and cannot.
     fn scalar(self) -> bool {
+        !matches!(self, Prop::Subject | Prop::Title | Prop::Description)
+    }
+
+    /// One of the three dates the capture time is written to.
+    fn is_date(self) -> bool {
         matches!(
             self,
-            Prop::Rating | Prop::Label | Prop::Flag | Prop::Orientation
+            Prop::DateTimeOriginal | Prop::CreateDate | Prop::DateCreated
         )
     }
 
@@ -164,7 +210,7 @@ impl Prop {
         Prop::ALL.iter().position(|p| *p == self).unwrap_or(0)
     }
 
-    fn bit(self) -> u8 {
+    fn bit(self) -> u16 {
         1 << self.index()
     }
 }
@@ -210,9 +256,15 @@ fn is_hierarchical(ns: Option<&str>, name: &str) -> bool {
 }
 
 /// The scalar a property should be written as, or None when the meta
-/// says nothing under it.
-fn scalar_value(prop: Prop, meta: &Meta, turn: Option<Turn>) -> Option<String> {
+/// says nothing under it. `when` is the capture time to write to the
+/// three dates, in EXIF's form, when they are to be written at all
+/// ([`dates_for`]).
+fn scalar_value(prop: Prop, meta: &Meta, turn: Option<Turn>, when: Option<&str>) -> Option<String> {
     match prop {
+        Prop::TimeShift => (meta.time_shift != 0).then(|| meta.time_shift.to_string()),
+        Prop::DateTimeOriginal | Prop::CreateDate | Prop::DateCreated => {
+            when.map(greycard_core::exif::iso_8601)
+        }
         // Always written when the caller knows the frame's tag, turn
         // or no turn: it is the field's own meaning rather than
         // something this build has to say, and leaving a stale one
@@ -252,7 +304,7 @@ pub struct Packet {
     /// frame's whole orientation, camera tag and turn together.
     /// [`Packet::turn_over`] takes the turn back out of it.
     orientation: Orientation,
-    present: u8,
+    present: u16,
 }
 
 impl Packet {
@@ -305,6 +357,9 @@ impl Packet {
         }
         if self.has(Prop::Description) {
             out.caption.clone_from(&self.meta.caption);
+        }
+        if self.has(Prop::TimeShift) {
+            out.time_shift = self.meta.time_shift;
         }
         out
     }
@@ -418,6 +473,21 @@ fn put(packet: &mut Packet, prop: Prop, value: &str, flag_is_ours: &mut bool) {
                 packet.mark(prop);
             }
         }
+        // Whole seconds, the shift itself and not a time: read as the
+        // frame's shift, never added to the one it has, so a packet
+        // this module wrote reads back as the shift it was written
+        // from. A count that is not one is not a shift that was said.
+        Prop::TimeShift => {
+            if let Ok(n) = trimmed.parse::<i64>() {
+                meta.set_time_shift(n);
+                packet.mark(prop);
+            }
+        }
+        // The dates are what the shift wrote, or another tool's word
+        // on the time, and neither is a shift: the corrected time read
+        // back and taken against the camera's would shift the frame a
+        // second time over.
+        Prop::DateTimeOriginal | Prop::CreateDate | Prop::DateCreated => {}
     }
 }
 
@@ -485,9 +555,75 @@ fn default_text<'a, 'input: 'a>(node: &roxmltree::Node<'a, 'input>) -> &'a str {
 /// Errors when the packet will not parse or holds no
 /// `rdf:Description`: a file that cannot be read cannot be rewritten
 /// without losing what is in it, so it is left alone instead.
+///
+/// The capture time's dates are left as the file has them: see
+/// [`write_dated`] for a caller that knows the camera's time.
 pub fn write(xml: &str, meta: &Meta, turn: Option<Turn>) -> Result<String> {
+    write_dated(xml, meta, turn, || None)
+}
+
+/// The capture time the three dates are to say, in EXIF's form, or
+/// None when they are to be left as the file has them. `taken` gives
+/// the camera's own time, when the caller knows it, and is asked only
+/// when the answer needs it; `had_shift` is whether the file already
+/// carries a `greycard:TimeShift`. The dates are written when the
+/// frame is shifted, and when a shift this module wrote is still in
+/// the file and is being taken off, which puts the camera's time back;
+/// otherwise they are another tool's (Lightroom writes all three into
+/// every sidecar) and are not touched.
+fn dates_for(
+    meta: &Meta,
+    taken: impl FnOnce() -> Option<String>,
+    had_shift: bool,
+) -> Option<String> {
+    if meta.time_shift == 0 && !had_shift {
+        return None;
+    }
+    greycard_core::exif::shifted(&taken()?, meta.time_shift)
+}
+
+/// A date's new value written over `existing`, with what `existing`
+/// carried past the seconds kept: Lightroom's fraction of a second and
+/// its zone are still true of the shifted time, since a shift moves
+/// the clock and not the zone.
+fn with_tail(prop: Prop, value: String, existing: &str) -> String {
+    let existing = existing.trim();
+    let tail = existing
+        .get(19..)
+        .filter(|t| t.starts_with(['.', '+', '-', 'Z']))
+        .filter(|_| greycard_core::exif::seconds_of(existing).is_some());
+    match tail {
+        Some(tail) if prop.is_date() => value + tail,
+        _ => value,
+    }
+}
+
+/// [`write`] knowing when the frame was taken: `taken` gives the
+/// camera's own time, in EXIF's form or the index's, asked only when
+/// the dates are to move (reading it can mean reading the raw), and
+/// with it the three dates (`exif:DateTimeOriginal`, `xmp:CreateDate`,
+/// `photoshop:DateCreated`) say the shifted time when the meta carries
+/// a shift, as Lightroom's Edit Capture Time writes them. With none,
+/// they are left as the file has them.
+pub fn write_dated(
+    xml: &str,
+    meta: &Meta,
+    turn: Option<Turn>,
+    taken: impl FnOnce() -> Option<String>,
+) -> Result<String> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| Error::Xmp(e.to_string()))?;
     let descs: Vec<_> = descriptions(&doc).collect();
+    let had_shift = descs.iter().any(|d| {
+        d.attributes()
+            .any(|a| prop_of(a.namespace(), a.name()) == Some(Prop::TimeShift))
+            || d.children().any(|n| {
+                n.is_element()
+                    && prop_of(n.tag_name().namespace(), n.tag_name().name())
+                        == Some(Prop::TimeShift)
+            })
+    });
+    let when = dates_for(meta, taken, had_shift);
+    let when = when.as_deref();
     // The one that already carries a property of ours, so a second
     // description with a `crs:` block in it is not where a rating
     // lands.
@@ -505,6 +641,12 @@ pub fn write(xml: &str, meta: &Meta, turn: Option<Turn>) -> Result<String> {
     if turn.is_none() {
         done[Prop::Orientation.index()] = true;
     }
+    // Nor, with no time to write, about when it was taken.
+    if when.is_none() {
+        for prop in Prop::ALL.into_iter().filter(|p| p.is_date()) {
+            done[prop.index()] = true;
+        }
+    }
 
     // What the target already has and can keep: a scalar's value
     // moves and its form does not, and a property that already says
@@ -516,8 +658,9 @@ pub fn write(xml: &str, meta: &Meta, turn: Option<Turn>) -> Result<String> {
         };
         if prop.scalar()
             && !done[prop.index()]
-            && let Some(value) = scalar_value(prop, meta, turn)
+            && let Some(value) = scalar_value(prop, meta, turn, when)
         {
+            let value = with_tail(prop, value, a.value());
             splices.push((a.range_value(), escape(&value, true)));
             done[prop.index()] = true;
             kept.push(a.range().start);
@@ -539,8 +682,9 @@ pub fn write(xml: &str, meta: &Meta, turn: Option<Turn>) -> Result<String> {
             }
         } else if let Some(text) = text
             && child.children().count() == 1
-            && let Some(value) = scalar_value(prop, meta, turn)
+            && let Some(value) = scalar_value(prop, meta, turn, when)
         {
+            let value = with_tail(prop, value, text.text().unwrap_or_default());
             splices.push((text.range(), escape(&value, false)));
             done[prop.index()] = true;
             kept.push(child.range().start);
@@ -555,6 +699,7 @@ pub fn write(xml: &str, meta: &Meta, turn: Option<Turn>) -> Result<String> {
     // Everything else of ours goes, wherever in the packet it sits.
     let mine = |ns: Option<&str>, name: &str| match prop_of(ns, name) {
         Some(Prop::Orientation) => turn.is_some(),
+        Some(p) if p.is_date() => when.is_some(),
         Some(_) => true,
         None => false,
     };
@@ -591,7 +736,7 @@ pub fn write(xml: &str, meta: &Meta, turn: Option<Turn>) -> Result<String> {
             continue;
         }
         let mut bind = |uri: &str, want: &str| bound(target, &mut decls, uri, want);
-        if let Some(text) = element(prop, meta, turn, &mut bind, &inner) {
+        if let Some(text) = element(prop, meta, turn, when, &mut bind, &inner) {
             body.push('\n');
             body.push_str(&inner);
             body.push_str(&text);
@@ -640,9 +785,23 @@ pub fn write(xml: &str, meta: &Meta, turn: Option<Turn>) -> Result<String> {
 /// A whole packet for a meta, with nothing else in it. Written
 /// straight out rather than through [`write`]: there is nothing to
 /// preserve and nothing to parse, and [`element`] is still the one
-/// place a property is rendered.
+/// place a property is rendered. No dates: see [`fresh_dated`].
 pub fn fresh(meta: &Meta, turn: Option<Turn>) -> String {
+    fresh_dated(meta, turn, || None)
+}
+
+/// [`fresh`] knowing when the frame was taken, as [`write_dated`]
+/// does: a shifted frame's packet carries the shifted time in the
+/// three dates, and an unshifted one's carries none, since a new file
+/// has no other tool's dates to keep.
+pub fn fresh_dated(
+    meta: &Meta,
+    turn: Option<Turn>,
+    taken: impl FnOnce() -> Option<String>,
+) -> String {
     const INDENT: &str = "   ";
+    let when = dates_for(meta, taken, false);
+    let when = when.as_deref();
     let mut decls: Vec<(String, String)> = Vec::new();
     let mut body = String::new();
     for prop in Prop::ALL {
@@ -652,7 +811,7 @@ pub fn fresh(meta: &Meta, turn: Option<Turn>) -> String {
             }
             want.to_string()
         };
-        if let Some(text) = element(prop, meta, turn, &mut bind, INDENT) {
+        if let Some(text) = element(prop, meta, turn, when, &mut bind, INDENT) {
             body.push('\n');
             body.push_str(INDENT);
             body.push_str(&text);
@@ -693,11 +852,12 @@ fn element(
     prop: Prop,
     meta: &Meta,
     turn: Option<Turn>,
+    when: Option<&str>,
     bind: &mut impl FnMut(&str, &str) -> String,
     indent: &str,
 ) -> Option<String> {
     if prop.scalar() {
-        let value = scalar_value(prop, meta, turn)?;
+        let value = scalar_value(prop, meta, turn, when)?;
         let name = format!("{}:{}", bind(prop.ns(), prop.prefix()), prop.name());
         return Some(format!("<{name}>{}</{name}>", escape(&value, false)));
     }
@@ -1137,7 +1297,22 @@ pub fn adopt(
 /// A file whose bytes would not change is left alone, mark and all,
 /// so taking a snapshot or renaming a preset does not bump every
 /// XMP's modification time.
+///
+/// The capture time's dates are left as the file has them: see
+/// [`save_dated`].
 pub fn save(frame: &Path, meta: &Meta, turn: Option<Turn>) -> Result<Option<Adopted>> {
+    save_dated(frame, meta, turn, || None)
+}
+
+/// [`save`] knowing when the frame was taken (`taken` gives the
+/// camera's own time, asked only when the dates are to move), so the
+/// three dates carry a shift: see [`write_dated`].
+pub fn save_dated(
+    frame: &Path,
+    meta: &Meta,
+    turn: Option<Turn>,
+    taken: impl FnOnce() -> Option<String>,
+) -> Result<Option<Adopted>> {
     let says_something = !meta.is_empty() || turn.is_some_and(|t| t.quarters != 0);
     let Some(path) = write_path(frame, says_something) else {
         return Ok(None);
@@ -1148,8 +1323,8 @@ pub fn save(frame: &Path, meta: &Meta, turn: Option<Turn>) -> Result<Option<Adop
         Err(e) => return Err(e.into()),
     };
     let text = match &existing {
-        Some(bytes) => write(&String::from_utf8_lossy(bytes), meta, turn)?,
-        None => fresh(meta, turn),
+        Some(bytes) => write_dated(&String::from_utf8_lossy(bytes), meta, turn, taken)?,
+        None => fresh_dated(meta, turn, taken),
     };
     let mark = Adopted::of(&path, text.as_bytes());
     if existing.as_deref() == Some(text.as_bytes()) {
@@ -1216,6 +1391,116 @@ mod tests {
         assert!(!xml.contains("subject"), "{xml}");
         assert!(!xml.contains("Flag"), "{xml}");
         assert_eq!(meta_of(&xml).rating, 2);
+    }
+
+    fn shifted_by(seconds: i64) -> Meta {
+        Meta {
+            rating: 3,
+            time_shift: seconds,
+            ..Meta::default()
+        }
+    }
+
+    const TAKEN: &str = "2026-09-01 10:20:30";
+
+    fn taken() -> Option<String> {
+        Some(TAKEN.into())
+    }
+
+    #[test]
+    fn a_shift_writes_the_corrected_time_and_reads_back_as_itself() {
+        let meta = shifted_by(300);
+        let xml = fresh_dated(&meta, None, taken);
+        for line in [
+            "<greycard:TimeShift>300</greycard:TimeShift>",
+            "<exif:DateTimeOriginal>2026-09-01T10:25:30</exif:DateTimeOriginal>",
+            "<xmp:CreateDate>2026-09-01T10:25:30</xmp:CreateDate>",
+            "<photoshop:DateCreated>2026-09-01T10:25:30</photoshop:DateCreated>",
+        ] {
+            assert!(xml.contains(line), "{line}\n{xml}");
+        }
+        assert!(xml.contains(&format!(r#"xmlns:exif="{EXIF}""#)), "{xml}");
+        // Read back, the shift is the one written: not the dates taken
+        // against the camera's time, and not added to the frame's own.
+        let packet = read(&xml).unwrap();
+        assert_eq!(packet.meta, meta);
+        assert_eq!(packet.over(&meta).time_shift, 300);
+        assert_eq!(packet.over(&Meta::default()).time_shift, 300);
+        // A second write over the first changes nothing.
+        assert_eq!(write_dated(&xml, &meta, None, taken).unwrap(), xml);
+        // A further minute moves all three, and the shift with them.
+        let more = write_dated(&xml, &shifted_by(360), None, taken).unwrap();
+        assert!(more.contains("<xmp:CreateDate>2026-09-01T10:26:30</xmp:CreateDate>"));
+        assert_eq!(meta_of(&more).time_shift, 360);
+
+        // Taken off: the camera's time back in the dates, the shift gone.
+        let cleared = write_dated(&more, &shifted_by(0), None, taken).unwrap();
+        assert!(!cleared.contains("TimeShift"), "{cleared}");
+        assert!(
+            cleared.contains("<exif:DateTimeOriginal>2026-09-01T10:20:30</exif:DateTimeOriginal>"),
+            "{cleared}"
+        );
+        assert_eq!(meta_of(&cleared).time_shift, 0);
+        // And from then on they are dates like any other tool's.
+        assert_eq!(
+            write_dated(&cleared, &shifted_by(0), None, taken).unwrap(),
+            cleared
+        );
+
+        // An unshifted frame's new packet says nothing about the time.
+        let plain = fresh_dated(&shifted_by(0), None, taken);
+        assert!(
+            !plain.contains("Date") && !plain.contains("TimeShift"),
+            "{plain}"
+        );
+        // A caller that does not know the camera's time writes the
+        // shift and leaves the dates as the file has them.
+        let blind = write(&xml, &shifted_by(-60), None).unwrap();
+        assert!(blind.contains("<greycard:TimeShift>-60</greycard:TimeShift>"));
+        assert!(blind.contains("<xmp:CreateDate>2026-09-01T10:25:30</xmp:CreateDate>"));
+        assert!(!fresh(&meta, None).contains("Date"));
+    }
+
+    #[test]
+    fn another_tools_dates_stand_until_the_frame_is_shifted() {
+        let xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+    xmlns:exif="http://ns.adobe.com/exif/1.0/"
+    xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"
+   xmp:Rating="2"
+   xmp:CreateDate="2026-09-01T10:20:30.45+01:00"
+   photoshop:DateCreated="2026-09-01T10:20:30.45+01:00">
+   <exif:DateTimeOriginal>2026-09-01T10:20:30.45+01:00</exif:DateTimeOriginal>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"#;
+        // A star pressed on an unshifted frame is one character, the
+        // dates and their fraction and zone untouched, and the camera's
+        // time is not even asked for.
+        let rated = write_dated(xml, &shifted_by(0), None, || panic!("not asked")).unwrap();
+        assert_eq!(rated, xml.replace(r#"xmp:Rating="2""#, r#"xmp:Rating="3""#));
+        // Shifted, each date moves where it sits, in the form it has,
+        // keeping what it said past the seconds.
+        let moved = write_dated(xml, &shifted_by(300), None, taken).unwrap();
+        assert!(
+            moved.contains(r#"xmp:CreateDate="2026-09-01T10:25:30.45+01:00""#),
+            "{moved}"
+        );
+        assert!(
+            moved.contains(r#"photoshop:DateCreated="2026-09-01T10:25:30.45+01:00""#),
+            "{moved}"
+        );
+        assert!(
+            moved.contains(
+                "<exif:DateTimeOriginal>2026-09-01T10:25:30.45+01:00</exif:DateTimeOriginal>"
+            ),
+            "{moved}"
+        );
+        assert_eq!(moved.matches("DateTimeOriginal>").count(), 2, "{moved}");
+        assert_eq!(meta_of(&moved).time_shift, 300);
     }
 
     /// The whole composition table: every camera tag against every

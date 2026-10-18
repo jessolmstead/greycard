@@ -272,7 +272,7 @@ mod tests {
                 Change::Rating(n) => menu_change("rating", i32::from(n)),
                 Change::Flag(f) => menu_change("flag", f.code()),
                 Change::Label(l) => menu_change("label", l.code()),
-                _ => unreachable!("no key types words"),
+                _ => unreachable!("no key types words or shifts a time"),
             };
             assert_eq!(got, Some(want), "{key}");
         }

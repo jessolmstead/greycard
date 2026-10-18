@@ -1166,8 +1166,15 @@ fn write_frame(
         sidecar.migrate_with_frame(h > w);
     }
     let mut changed = false;
-    if sidecar.meta != image.meta {
-        sidecar.meta = image.meta.clone();
+    // The catalog's meta over the sidecar's, but for the capture time's
+    // shift: the import does not read Lightroom's corrected time, so it
+    // has no shift to say, and one set here stays.
+    let meta = Meta {
+        time_shift: sidecar.meta.time_shift,
+        ..image.meta.clone()
+    };
+    if sidecar.meta != meta {
+        sidecar.meta = meta;
         changed = true;
     }
     let label = greycard_edit::history::import_label("Lightroom");
@@ -3571,6 +3578,27 @@ pub(crate) mod tests {
         let again = Sidecar::load(&first).unwrap().unwrap();
         assert_eq!(again.versions.len(), 1);
         assert_eq!(again.history.len(), a.history.len());
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// A forced import lays the catalog's rating and the rest over the
+    /// sidecar's, and leaves the capture time's shift set here alone:
+    /// the catalog's meta has none to say.
+    #[test]
+    fn a_forced_import_keeps_the_capture_time_shift() {
+        let s = setup("force-shift");
+        let first = s.here.join("2026/harbor/IMG_0001.CR3");
+        let mut mine = Sidecar::default();
+        mine.meta.rating = 1;
+        mine.meta.set_time_shift(300);
+        mine.save(&first).unwrap();
+        let forced = Options {
+            force: true,
+            ..writing(&s)
+        };
+        import(&s.catalog, &forced).unwrap();
+        let a = Sidecar::load(&first).unwrap().unwrap();
+        assert_eq!((a.meta.rating, a.meta.time_shift), (4, 300));
         std::fs::remove_dir_all(&s.dir).unwrap();
     }
 

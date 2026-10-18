@@ -353,6 +353,10 @@ pub enum Outcome {
         kind: SourceKind,
         /// What the file says the frame was shot at, for the panel.
         shot: ShotSummary,
+        /// When the camera's clock says it was taken, the index's form
+        /// (`greycard_library::normalize_taken`): the panel's capture
+        /// time line for a frame the library index does not hold.
+        taken: Option<String>,
         /// The learned-denoiser blend seeded from the ISO, when the
         /// job asked for one and the file was a raw.
         blend: Option<f32>,

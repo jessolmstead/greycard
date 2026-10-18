@@ -372,14 +372,125 @@ pub const PIXEL_Y_DIMENSION: u16 = 0xa003;
 /// Seconds since the epoch as the EXIF date format, `YYYY:MM:DD
 /// HH:MM:SS`, in UTC.
 pub fn date_time(secs: u64) -> String {
-    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
-    let rem = secs % 86_400;
+    date_time_at(secs.min(i64::MAX as u64) as i64)
+}
+
+/// [`date_time`] for a time either side of the epoch: what a capture
+/// time moved by a shift is written back as.
+pub fn date_time_at(secs: i64) -> String {
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    let rem = secs.rem_euclid(86_400);
     format!(
         "{y:04}:{m:02}:{d:02} {:02}:{:02}:{:02}",
         rem / 3600,
         (rem / 60) % 60,
         rem % 60
     )
+}
+
+/// A capture time as seconds since the epoch, the wall clock read as
+/// though it were UTC: a camera's clock keeps no zone, and a shift of
+/// it is a count of seconds whatever the zone was. Takes EXIF's
+/// `YYYY:MM:DD HH:MM:SS`, and the index's and ISO 8601's dashes with a
+/// space or a `T` before the time; whatever follows the seconds (a
+/// fraction, a zone) is not read, and a caller that wants none checks
+/// the length. A date with no time is its midnight. None for anything
+/// that is not a date: a day the month has not got, a date spelled
+/// with one colon and one dash.
+pub fn seconds_of(date: &str) -> Option<i64> {
+    let s = date.trim().as_bytes();
+    let digits = |from: usize, len: usize| -> Option<i64> {
+        let part = s.get(from..from + len)?;
+        part.iter()
+            .all(u8::is_ascii_digit)
+            .then(|| part.iter().fold(0i64, |n, d| n * 10 + i64::from(d - b'0')))
+    };
+    let sep = |at: usize, allowed: &[u8]| s.get(at).is_some_and(|c| allowed.contains(c));
+    // The date's two separators one spelling: EXIF's colons or the
+    // dashes, never one of each.
+    if !sep(4, b":-") || s.get(7) != s.get(4) {
+        return None;
+    }
+    let (y, m, d) = (digits(0, 4)?, digits(5, 2)?, digits(8, 2)?);
+    if y == 0 || !(1..=12).contains(&m) || d < 1 || d > days_in_month(y, m as u32) {
+        return None;
+    }
+    let (hh, mm, ss) = if s.len() == 10 {
+        (0, 0, 0)
+    } else {
+        if !sep(10, b" T") || !sep(13, b":") || !sep(16, b":") {
+            return None;
+        }
+        (digits(11, 2)?, digits(14, 2)?, digits(17, 2)?)
+    };
+    if hh > 23 || mm > 59 || ss > 59 {
+        return None;
+    }
+    Some(days_from_civil(y, m as u32, d as u32) * 86_400 + hh * 3600 + mm * 60 + ss)
+}
+
+/// `date` (as [`seconds_of`] reads it) moved by `by` seconds, in
+/// EXIF's form. None when `date` is not a date.
+pub fn shifted(date: &str, by: i64) -> Option<String> {
+    Some(date_time_at(seconds_of(date)?.saturating_add(by)))
+}
+
+/// EXIF's `YYYY:MM:DD HH:MM:SS` as ISO 8601's `YYYY-MM-DDTHH:MM:SS`,
+/// with no zone, since the camera gave none: the form XMP's dates
+/// take. Anything not in EXIF's form comes back as it was.
+pub fn iso_8601(exif: &str) -> String {
+    let b = exif.as_bytes();
+    if b.len() != 19 || b[4] != b':' || b[7] != b':' || b[10] != b' ' {
+        return exif.to_string();
+    }
+    format!(
+        "{}-{}-{}T{}",
+        &exif[0..4],
+        &exif[5..7],
+        &exif[8..10],
+        &exif[11..]
+    )
+}
+
+/// `metadata` with the capture times it carries moved by `by`
+/// seconds: `DateTimeOriginal` and `CreateDate` (EXIF's
+/// `DateTimeDigitized`), each where it is there and is a date. What an
+/// export of a frame whose camera's clock was off carries, so the
+/// picture says when it was taken and not what the clock said. The
+/// modify date is the export's own and [`payload`] sets it anyway.
+pub fn with_capture_shifted(metadata: &RawMetadata, by: i64) -> RawMetadata {
+    let mut out = metadata.clone();
+    if by == 0 {
+        return out;
+    }
+    for date in [&mut out.exif.date_time_original, &mut out.exif.create_date] {
+        if let Some(moved) = date.as_deref().and_then(|d| shifted(d, by)) {
+            *date = Some(moved);
+        }
+    }
+    out
+}
+
+/// The days in month `m` (1 to 12) of year `y`, by the Gregorian rule.
+fn days_in_month(y: i64, m: u32) -> i64 {
+    match m {
+        2 if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+/// A proleptic Gregorian date to days since 1970-01-01: the inverse
+/// of [`civil_from_days`], by the same author.
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let m = i64::from(m);
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 /// Days since 1970-01-01 to a proleptic Gregorian date. Howard
@@ -711,5 +822,90 @@ mod tests {
         assert_eq!(date_time(951_782_400 + 86_399), "2000:02:29 23:59:59");
         assert_eq!(date_time(1_757_808_000), "2025:09:14 00:00:00");
         assert_eq!(civil_from_days(-1), (1969, 12, 31));
+    }
+
+    #[test]
+    fn a_capture_time_reads_in_every_spelling_and_moves_by_seconds() {
+        // EXIF's, the index's and ISO 8601's spellings are one time.
+        let exif = seconds_of("2026:09:01 10:20:30").unwrap();
+        assert_eq!(seconds_of("2026-09-01 10:20:30"), Some(exif));
+        assert_eq!(seconds_of("2026-09-01T10:20:30"), Some(exif));
+        assert_eq!(seconds_of("2026-09-01T10:20:30.45+02:00"), Some(exif));
+        assert_eq!(date_time_at(exif), "2026:09:01 10:20:30");
+        assert_eq!(
+            seconds_of("2026-09-01"),
+            Some(exif - 10 * 3600 - 20 * 60 - 30)
+        );
+        // Round trips across the calendar, either side of the epoch.
+        for secs in [0, -1, 951_782_400, 4_102_444_799, -2_208_988_800] {
+            assert_eq!(seconds_of(&date_time_at(secs)), Some(secs), "{secs}");
+        }
+        // Five minutes on, across midnight and a leap day, and back
+        // across a new year.
+        assert_eq!(
+            shifted("2024:02:28 23:58:00", 300).as_deref(),
+            Some("2024:02:29 00:03:00")
+        );
+        assert_eq!(
+            shifted("2026-01-01 00:02:00", -300).as_deref(),
+            Some("2025:12:31 23:57:00")
+        );
+        // A clock that wrote nothing, or nonsense, is no date.
+        for bad in [
+            "",
+            "    :  :     :  :  ",
+            "0000:00:00 00:00:00",
+            "2026:13:01 00:00:00",
+            "2026:09:01 25:00:00",
+            "2026:09:01 10:20",
+            "2026/09/01 10:20:30",
+            // No such day, and one of each separator.
+            "2026-02-30 10:00:00",
+            "2026-02-29",
+            "2026-04-31",
+            "2026:09-01 10:20:30",
+            "2026-09:01",
+        ] {
+            assert_eq!(seconds_of(bad), None, "{bad:?}");
+        }
+        // A leap year's last of February is a day.
+        assert!(seconds_of("2024-02-29 12:00:00").is_some());
+        assert!(seconds_of("2000:02:29 12:00:00").is_some());
+        assert_eq!(seconds_of("1900:02:29 12:00:00"), None);
+        assert_eq!(iso_8601("2026:09:01 10:20:30"), "2026-09-01T10:20:30");
+        assert_eq!(iso_8601("2026-09-01"), "2026-09-01");
+    }
+
+    #[test]
+    fn a_shifted_export_carries_the_corrected_capture_time() {
+        let mut m = metadata();
+        m.exif.create_date = Some("2026:09:01 10:20:30".into());
+        let moved = with_capture_shifted(&m, 5 * 60);
+        let bytes = payload(&Provenance {
+            metadata: &moved,
+            software: "greycard test",
+            width: 1,
+            height: 1,
+            srgb: true,
+            written: None,
+            source_name: None,
+            output: None,
+            edit: None,
+        })
+        .unwrap();
+        let (_, exif) = read(&bytes);
+        assert_eq!(
+            text(&exif, ExifTag::DateTimeOriginal).as_deref(),
+            Some("2026:09:01 10:25:30")
+        );
+        assert_eq!(
+            text(&exif, ExifTag::CreateDate).as_deref(),
+            Some("2026:09:01 10:25:30")
+        );
+        // No shift is the source as it was, and a missing date stays
+        // missing.
+        assert_eq!(with_capture_shifted(&m, 0), m);
+        m.exif.create_date = None;
+        assert_eq!(with_capture_shifted(&m, 60).exif.create_date, None);
     }
 }

@@ -187,7 +187,7 @@ impl Facet {
             Facet::Style => "files.style",
             Facet::Iso => "files.iso",
             Facet::Focal => "round(files.focal, 1)",
-            Facet::Date => "substr(files.taken, 1, 10)",
+            Facet::Date => "substr(files.taken_at, 1, 10)",
             Facet::Keyword => "ulower(k.word)",
         }
     }
@@ -929,7 +929,7 @@ impl Term {
             Term::Date { op, value } => {
                 params.push(Param::Int(value.len() as i64));
                 params.push(Param::Text(value.clone()));
-                format!("substr(files.taken, 1, ?) {} ?", op.sql())
+                format!("substr(files.taken_at, 1, ?) {} ?", op.sql())
             }
             Term::Flag { is, flag } => {
                 params.push(Param::Text(flag_name(*flag).to_string()));
@@ -1167,7 +1167,7 @@ mod tests {
         );
         let (sql, params) = f.to_sql();
         assert!(sql.starts_with("ulower(files.camera) LIKE ?"), "{sql}");
-        assert!(sql.ends_with("substr(files.taken, 1, ?) = ?"), "{sql}");
+        assert!(sql.ends_with("substr(files.taken_at, 1, ?) = ?"), "{sql}");
         assert_eq!(sql.matches('?').count(), params.len(), "{sql}\n{params:?}");
         assert_eq!(params.len(), 7, "{params:?}");
     }
@@ -1332,9 +1332,9 @@ mod tests {
             ("focal:50", "(files.focal >= ? AND files.focal <= ?)"),
             ("shutter!=1/250", "(files.shutter < ? OR files.shutter > ?)"),
             ("aperture<2", "files.aperture < ?"),
-            ("date:2026-09", "substr(files.taken, 1, ?) = ?"),
-            ("date<=2026", "substr(files.taken, 1, ?) <= ?"),
-            ("date!=2026", "substr(files.taken, 1, ?) <> ?"),
+            ("date:2026-09", "substr(files.taken_at, 1, ?) = ?"),
+            ("date<=2026", "substr(files.taken_at, 1, ?) <= ?"),
+            ("date!=2026", "substr(files.taken_at, 1, ?) <> ?"),
             ("flag:pick", "files.flag = ?"),
             ("label!=red", "files.label <> ?"),
             ("missing:yes", "files.missing_since IS NOT NULL"),

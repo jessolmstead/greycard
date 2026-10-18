@@ -54,6 +54,8 @@ export component FrameMenu inherits Rectangle {
     /// A rating, a flag or a label ("rating", "flag", "label") and its
     /// value: the stars, or the flag's or label's code.
     callback meta(string, int);
+    /// The shift-capture-time sheet over the selection.
+    callback time-shift();
     callback reveal();
     callback export();
     /// The sync sheet over the selection, from the frame on screen:
@@ -233,6 +235,12 @@ export component FrameMenu inherits Rectangle {
                     enabled: root.can-meta && (n > 0 || root.label != 0);
                     activated => { root.meta("label", n); }
                 }
+            }
+            MenuItem {
+                title: root.count > 1 ? "Shift capture time of " + root.count + " frames..."
+                    : "Shift capture time...";
+                enabled: root.can-meta;
+                activated => { root.time-shift(); }
             }
             MenuSeparator { }
             Menu {

@@ -310,6 +310,7 @@ pub(super) fn run(
                                     &mut ai,
                                     opened_path.as_deref(),
                                     metadata.as_deref(),
+                                    frame.time_shift,
                                     &set.settings,
                                     &path,
                                 )?);
@@ -410,6 +411,12 @@ pub(super) fn run(
                 stance_known,
             } => match open_told(&path, stance_known, &deliver) {
                 Ok((opened, m)) => {
+                    let taken = m
+                        .exif
+                        .date_time_original
+                        .as_deref()
+                        .or(m.exif.create_date.as_deref())
+                        .and_then(greycard_library::normalize_taken);
                     metadata = Some(Arc::new(m));
                     let blend = match &opened {
                         Input::Raw(f) if seed_blend => Some(Noise::blend_for_iso(f.shot.iso)),
@@ -453,6 +460,7 @@ pub(super) fn run(
                             let (make, model, shot) = opened.identity();
                             shot.summary(make, model)
                         },
+                        taken,
                         blend,
                     });
                     discard_base(&mut base, gpu.as_ref());

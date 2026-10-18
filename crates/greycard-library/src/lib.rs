@@ -95,7 +95,20 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 11;
+pub const SCHEMA_VERSION: i32 = 12;
+
+/// `taken_at`'s expression, one text for [`SCHEMA`] and the step from
+/// schema 11 both: `taken` moved by `shift` seconds, worked out by
+/// SQLite as the row is read (a virtual column, which `ALTER TABLE`
+/// can add where a stored one it cannot) and kept in an index, so a
+/// hundred thousand frames sort by it without a pass in Rust. `taken`
+/// itself stays the EXIF's own, and a row with no shift reads it as
+/// it is, so a date with no time keeps its form.
+macro_rules! taken_at {
+    () => {
+        "CASE WHEN shift = 0 THEN taken ELSE datetime(taken, shift || ' seconds') END"
+    };
+}
 
 /// The steps a library is brought up by in place rather than rebuilt:
 /// from the version on the left to the next, the statements on the
@@ -140,7 +153,15 @@ pub const SCHEMA_VERSION: i32 = 11;
 /// that would not say), which the editor's demosaic menu and a sync's
 /// demosaic check ask before reading the file; a schema 10 row has it
 /// NULL, and the next pass over its folder reads it (an image's
-/// description, no samples) and nothing else of the file.
+/// description, no samples) and nothing else of the file. Schema 12
+/// adds the capture time's shift from the sidecar's meta (`shift`,
+/// seconds) and the time it makes (`taken_at`, a virtual column worked
+/// out from `taken` and `shift`, with an index, which is what a list
+/// sorted by capture time and the Day facet read). A schema 11 row
+/// comes up with no shift, and every sidecar hash is cleared as schema
+/// 10's step did, so the next pass over each folder reads the shift a
+/// sidecar may already carry (written by this build on another
+/// machine, and indexed here by an older one that passed it over).
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -189,6 +210,17 @@ const MIGRATIONS: &[(i32, &str)] = &[
          UPDATE files SET sidecar_hash = NULL WHERE sidecar IS NOT NULL;",
     ),
     (10, "ALTER TABLE files ADD COLUMN mosaic TEXT;"),
+    (
+        11,
+        concat!(
+            "ALTER TABLE files ADD COLUMN shift INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE files ADD COLUMN taken_at TEXT GENERATED ALWAYS AS (",
+            taken_at!(),
+            ") VIRTUAL;
+             CREATE INDEX IF NOT EXISTS files_taken_at ON files(taken_at);
+             UPDATE files SET sidecar_hash = NULL WHERE sidecar IS NOT NULL;"
+        ),
+    ),
 ];
 
 /// The index's own facts about itself, by name: `develop_keys`, what
@@ -264,7 +296,8 @@ pub const APPLICATION_ID: i32 = 0x4752_4359;
 /// The database's name under the data directory.
 pub const FILE_NAME: &str = "library.sqlite";
 
-const SCHEMA: &str = "
+const SCHEMA: &str = concat!(
+    "
 CREATE TABLE IF NOT EXISTS files (
     id            INTEGER PRIMARY KEY,
     path          BLOB NOT NULL UNIQUE,
@@ -301,11 +334,16 @@ CREATE TABLE IF NOT EXISTS files (
     whole_hash    TEXT,
     exported      INTEGER NOT NULL DEFAULT 0,
     develop_key   INTEGER,
-    mosaic        TEXT
+    mosaic        TEXT,
+    shift         INTEGER NOT NULL DEFAULT 0,
+    taken_at      TEXT GENERATED ALWAYS AS (",
+    taken_at!(),
+    ") VIRTUAL
 );
 CREATE INDEX IF NOT EXISTS files_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
 CREATE INDEX IF NOT EXISTS files_taken ON files(taken);
+CREATE INDEX IF NOT EXISTS files_taken_at ON files(taken_at);
 CREATE INDEX IF NOT EXISTS files_style ON files(model, style);
 CREATE TABLE IF NOT EXISTS keywords (
     file INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -325,7 +363,8 @@ CREATE TABLE IF NOT EXISTS versions (
     develop_key INTEGER,
     PRIMARY KEY (file, version)
 );
-";
+"
+);
 
 /// What we last wrote to a frame's sidecar on an archive copy
 /// ([`Library::record_archive_write`]).
@@ -393,7 +432,7 @@ const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash
     files.aperture, files.shutter, files.taken, files.sidecar, files.sidecar_mtime, \
     files.rating, files.flag, files.label, files.keywords, files.missing_since, \
     files.maker, files.style, files.style_fixed, files.peripheral, files.edited, \
-    files.turns, files.exported, files.mosaic";
+    files.turns, files.exported, files.mosaic, files.taken_at, files.shift";
 
 /// The columns [`RowMeta`] is read from, in the order `row_meta`
 /// reads them, after the path.
@@ -402,7 +441,7 @@ const META_COLUMNS: &str = "files.id, files.hash, files.mtime, files.rating, fil
     files.develop_key, \
     (SELECT json_group_array(json_array(v.version, v.name, v.made, v.edited, v.exported, \
      v.develop_key) ORDER BY v.position) FROM versions v WHERE v.file = files.id), \
-    files.taken, CASE WHEN files.edited <> 0 THEN files.sidecar_mtime END";
+    files.taken_at, CASE WHEN files.edited <> 0 THEN files.sidecar_mtime END, files.shift";
 
 /// Whether the learned denoiser's `blend` is what nobody has touched:
 /// the default, or what the first open or export of a raw seeds from
@@ -492,7 +531,9 @@ pub struct Exif {
     /// Seconds.
     pub shutter: Option<f64>,
     /// `YYYY-MM-DD HH:MM:SS`, as far as the file said; lexically
-    /// ordered, which is what the date filter compares.
+    /// ordered. The camera's own time, never moved by a shift: a list
+    /// and the date filter read [`Entry::taken_at`] and
+    /// [`RowMeta::taken`], which are.
     pub taken: Option<String>,
     /// The maker's rendering tags, read beside the EXIF from the
     /// maker note; empty for a picture and for a raw the reader does
@@ -612,8 +653,18 @@ impl Exif {
 /// character for a byte it could not decode — is no date rather
 /// than a date that `date:2024-01` would find and `date:2024-01-05`
 /// would not. Counted in characters, not bytes: the first cut split
-/// inside a multibyte character and took the process down.
+/// inside a multibyte character and took the process down. A shape
+/// that holds no real time (month 00, the 30th of February, hour 25)
+/// is no date either: unshifted it would sort by its text, and
+/// shifted SQLite's `datetime` would make it NULL or another day, so
+/// the one frame would sort in two places.
 pub fn normalize_taken(exif: &str) -> Option<String> {
+    let taken = shaped_taken(exif)?;
+    greycard_core::exif::seconds_of(&taken).map(|_| taken)
+}
+
+/// [`normalize_taken`]'s shape alone.
+fn shaped_taken(exif: &str) -> Option<String> {
     let s = exif.trim();
     let date: String = s
         .chars()
@@ -652,6 +703,11 @@ pub struct Entry {
     /// The content hash, hex; see [`hash`].
     pub hash: String,
     pub exif: Exif,
+    /// When the frame was taken as every list reads it: the EXIF's
+    /// [`Exif::taken`] moved by the meta's `time_shift`, and the
+    /// EXIF's own when there is none. In the index's form, as the
+    /// `taken_at` column gives it.
+    pub taken_at: Option<String>,
     pub meta: Meta,
     /// The sidecar the meta came from, wherever it was found, and
     /// its mtime; `None` when the file has none.
@@ -675,7 +731,7 @@ impl Entry {
     pub fn sort_key(&self) -> SortKey<'_> {
         SortKey {
             path: &self.path,
-            taken: self.exif.taken.as_deref(),
+            taken: self.taken_at.as_deref(),
             rating: self.meta.rating,
             edited_at: self.sidecar_mtime.filter(|_| self.edited),
         }
@@ -738,8 +794,10 @@ pub struct RowMeta {
     /// The versions the sidecar keeps beside the file's own, in the
     /// sidecar's order, as the `versions` table mirrors them.
     pub versions: Vec<VersionRow>,
-    /// When the frame was taken, the index's `taken`: what a list
-    /// sorted by capture time reads ([`order::capture_time`]).
+    /// When the frame was taken, the index's `taken_at`: the EXIF's
+    /// time moved by the meta's `time_shift`, what a list sorted by
+    /// capture time reads ([`order::capture_time`]). The camera's own
+    /// time is this moved back by `meta.time_shift`.
     pub taken: Option<String>,
     /// The sidecar's last write, nanoseconds since the epoch, when it
     /// holds a develop; none when it holds none: what a list sorted by
@@ -823,7 +881,10 @@ pub fn unpack_turns(packed: u8) -> (u8, bool) {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HashRow {
     pub path: PathBuf,
-    /// As [`Exif::taken`] has it.
+    /// When the frame was taken as a list sorts it, the index's
+    /// `taken_at`: as [`RowMeta::taken`] has it, the EXIF's time moved
+    /// by the shift, so a frame shown from its reference sorts with the
+    /// rest.
     pub taken: Option<String>,
     pub row: RowMeta,
 }
@@ -1593,7 +1654,7 @@ impl Library {
     /// can be shown from.
     pub fn rows_by_hash(&self, hash: &str) -> Result<Vec<HashRow>> {
         let sql = format!(
-            "SELECT files.path, files.taken, {META_COLUMNS} FROM files WHERE hash = ? \
+            "SELECT files.path, files.taken_at, {META_COLUMNS} FROM files WHERE hash = ? \
              AND missing_since IS NULL ORDER BY files.path"
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
@@ -2632,7 +2693,9 @@ fn entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
         ..Meta::default()
     };
     meta.set_keywords(serde_json::from_str(&keywords).unwrap_or_default());
+    meta.set_time_shift(row.get(30)?);
     Ok(Entry {
+        taken_at: row.get(29)?,
         id: row.get(0)?,
         path: path_from_bytes(&row.get::<_, Vec<u8>>(1)?),
         size: row.get::<_, i64>(2)? as u64,
@@ -2681,6 +2744,7 @@ fn row_meta(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<RowMeta> {
         ..Meta::default()
     };
     meta.set_keywords(serde_json::from_str(&keywords).unwrap_or_default());
+    meta.set_time_shift(row.get(from + 16)?);
     Ok(RowMeta {
         id: row.get(from)?,
         hash: row.get(from + 1)?,
@@ -2732,6 +2796,23 @@ mod tests {
         assert_eq!(normalize_taken("2024:01:05 10:00"), None);
         assert_eq!(normalize_taken("2024:01:05 10:00:0x"), None);
         assert_eq!(normalize_taken("2024:1:5"), None);
+        // The shape with no real time in it: no date, so a shift and
+        // no shift sort the frame in the same place.
+        for unreal in [
+            "2024:00:05 10:00:00",
+            "2024:01:00 10:00:00",
+            "2026:02:30 10:00:00",
+            "2024:01:05 25:00:00",
+            "2024:01:05 10:60:00",
+            "2024:01:05 10:00:60",
+            "2024:13:05",
+        ] {
+            assert_eq!(normalize_taken(unreal), None, "{unreal}");
+        }
+        assert_eq!(
+            normalize_taken("2024:02:29 23:59:59").as_deref(),
+            Some("2024-02-29 23:59:59")
+        );
         assert_eq!(normalize_taken("2024-01-05T10:00:00"), None);
         assert_eq!(
             normalize_taken("2024:01:05 10:00:00").as_deref(),

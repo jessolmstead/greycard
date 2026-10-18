@@ -597,7 +597,14 @@ pub(crate) fn set_meta(
         })
         .collect();
     st.culling.tags.record(step);
-    (settled, tags_shown(st, app, cells, &was_shown, &moved))
+    let next = tags_shown(st, app, cells, &was_shown, &moved);
+    if matches!(
+        settled,
+        meta::Change::TimeShift(_) | meta::Change::ClearTimeShift
+    ) {
+        crate::panel::time_shift::moved(st, app, &moved);
+    }
+    (settled, next)
 }
 
 /// What follows a change to files' tags, from a key or an undo: each
@@ -2106,6 +2113,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     app.set_shot_camera("".into());
     app.set_shot_exposure("".into());
     app.set_shot_size("".into());
+    app.set_shot_time("".into());
     app.set_status("decoding...".into());
     app.set_busy(true);
     show_history(st, app);
@@ -2193,10 +2201,18 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
         .iter()
         .map(|(f, tags)| tags::between(&Tags::of(&st.sidecars[*f].meta), tags))
         .collect();
+    let shifted: Vec<usize> = landing
+        .iter()
+        .filter(|(f, tags)| st.sidecars[*f].meta.time_shift != tags.time_shift)
+        .map(|(f, _)| *f)
+        .collect();
     for (f, tags) in landing {
         tags.put(&mut st.sidecars[f].meta);
     }
     let next = tags_shown(st, app, &cells, &was_shown, &files);
+    if !shifted.is_empty() {
+        crate::panel::time_shift::moved(st, app, &shifted);
+    }
     // The step's word, as a key's: silent only when it found no
     // frame to put back.
     if !landed.is_empty() {
@@ -2275,9 +2291,9 @@ pub(crate) fn meta_on_keys(
     // when the key landed, every key pressed during the first frame's
     // read named that frame, and each stepped again.
     //
-    // Not for words typed in the panel: the switch is for the keys,
-    // and a keyword that moved the selection on would leave the next
-    // one typed on another frame.
+    // Not for words typed in the panel, nor a time shift from its
+    // sheet: the switch is for the keys, and a keyword that moved the
+    // selection on would leave the next one typed on another frame.
     let move_on = {
         let st = state.borrow();
         st.culling.cull.is_some() && st.culling.cull_move_on && paths.len() == 1 && change.is_key()
@@ -2301,6 +2317,7 @@ pub(crate) fn meta_on_keys(
         meta::Change::Label(_) => "label key",
         meta::Change::AddKeywords(_) | meta::Change::RemoveKeyword(_) => "keyword",
         meta::Change::Title(_) => "title",
+        meta::Change::TimeShift(_) | meta::Change::ClearTimeShift => "time shift",
     };
     // The meta is the file's: a key on a version's cell whose line a
     // read just found gone still rates the file.

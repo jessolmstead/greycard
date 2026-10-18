@@ -29,6 +29,7 @@ pub(crate) mod sort;
 pub(crate) mod stacks;
 pub(crate) mod startup;
 pub(crate) mod sync;
+pub(crate) mod time_shift;
 pub(crate) mod versions;
 pub(crate) mod viewport;
 pub(crate) mod words;

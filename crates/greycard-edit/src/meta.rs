@@ -1,6 +1,7 @@
 //! What a frame is worth and what it is called: the rating, the
 //! pick or reject flag, the color label, the keywords, the title and
-//! the caption.
+//! the caption; and when it was taken, where the camera's clock was
+//! off, as a shift of the time the camera wrote.
 //!
 //! This is not part of the edit and never goes through its history.
 //! A rating is a judgment about the picture, not a step in
@@ -174,6 +175,30 @@ pub struct Meta {
     pub title: String,
     #[serde(deserialize_with = "text")]
     pub caption: String,
+    /// How far the camera's clock was off, in seconds: what is added
+    /// to the capture time the file's EXIF gives, for every list,
+    /// filter and export to read as when the frame was taken. A second
+    /// body five minutes slow carries +300. The raw is never
+    /// rewritten; the EXIF's own time is kept, and a shift of zero
+    /// takes the frame back to it. Not written when zero, held to
+    /// [`SHIFT_LIMIT`] either way.
+    #[serde(deserialize_with = "time_shift", skip_serializing_if = "is_zero")]
+    pub time_shift: i64,
+}
+
+/// The most a capture time is shifted, either way: two hundred
+/// years, past any clock set wrong and short of a date no reader can
+/// write.
+pub const SHIFT_LIMIT: i64 = 200 * 366 * 86_400;
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
+}
+
+/// A shift as a file gives it: whole seconds, held to the limit, and
+/// none when it is not a count at all.
+fn time_shift<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+    Ok(loose::<D, i64>(d)?.clamp(-SHIFT_LIMIT, SHIFT_LIMIT))
 }
 
 /// A rating as a file gives it: held to [`STARS`], and none of them
@@ -258,6 +283,11 @@ impl Meta {
     /// Replace the keywords, normalized as a file's are.
     pub fn set_keywords(&mut self, words: Vec<String>) {
         self.keywords = normalize(words);
+    }
+
+    /// Set the capture time's shift, in seconds, held to the limit.
+    pub fn set_time_shift(&mut self, seconds: i64) {
+        self.time_shift = seconds.clamp(-SHIFT_LIMIT, SHIFT_LIMIT);
     }
 }
 
@@ -378,6 +408,8 @@ pub struct Times {
     pub caption: Set,
     #[serde(deserialize_with = "loose", skip_serializing_if = "Set::is_unset")]
     pub turn: Set,
+    #[serde(deserialize_with = "loose", skip_serializing_if = "Set::is_unset")]
+    pub time_shift: Set,
 }
 
 /// The fields of the facts, in one place, so that stamping, pinning
@@ -391,10 +423,15 @@ pub enum Field {
     Title,
     Caption,
     Turn,
+    /// The capture time's shift: a field of its own, joined between
+    /// two copies of a frame as any other is. It is the frame's alone
+    /// and nothing copies it to another frame (no preset or paste
+    /// carries the meta at all).
+    TimeShift,
 }
 
 impl Field {
-    pub const ALL: [Field; 7] = [
+    pub const ALL: [Field; 8] = [
         Field::Rating,
         Field::Flag,
         Field::Label,
@@ -402,6 +439,7 @@ impl Field {
         Field::Title,
         Field::Caption,
         Field::Turn,
+        Field::TimeShift,
     ];
 
     /// Whether `a` and `b` say the same for this field.
@@ -414,6 +452,7 @@ impl Field {
             Field::Title => a.meta.title == b.meta.title,
             Field::Caption => a.meta.caption == b.meta.caption,
             Field::Turn => a.turn == b.turn,
+            Field::TimeShift => a.meta.time_shift == b.meta.time_shift,
         }
     }
 
@@ -432,6 +471,7 @@ impl Field {
             Field::Title => into.meta.title = from.meta.title.clone(),
             Field::Caption => into.meta.caption = from.meta.caption.clone(),
             Field::Turn => into.turn = from.turn,
+            Field::TimeShift => into.meta.time_shift = from.meta.time_shift,
         }
     }
 
@@ -448,6 +488,7 @@ impl Field {
             Field::Title => serde_json::to_string(&facts.meta.title),
             Field::Caption => serde_json::to_string(&facts.meta.caption),
             Field::Turn => serde_json::to_string(&facts.turn),
+            Field::TimeShift => serde_json::to_string(&facts.meta.time_shift),
         }
         .expect("a value serializes");
         blake3::hash(json.as_bytes()).to_hex()[..8].to_string()
@@ -462,6 +503,7 @@ impl Field {
             Field::Title => &times.title,
             Field::Caption => &times.caption,
             Field::Turn => &times.turn,
+            Field::TimeShift => &times.time_shift,
         }
     }
 
@@ -474,6 +516,7 @@ impl Field {
             Field::Title => &mut times.title,
             Field::Caption => &mut times.caption,
             Field::Turn => &mut times.turn,
+            Field::TimeShift => &mut times.time_shift,
         }
     }
 }
@@ -625,6 +668,13 @@ pub enum Change {
     RemoveKeyword(String),
     /// The title, the same on every frame; empty for none.
     Title(String),
+    /// Move the capture time by this many seconds, on top of whatever
+    /// shift each frame already carries: a selection of frames from
+    /// one body, some shifted before and some not, all move by the
+    /// same difference. No key makes it; the shift sheet does.
+    TimeShift(i64),
+    /// Put each frame back to the time its camera wrote.
+    ClearTimeShift,
 }
 
 impl Change {
@@ -717,6 +767,12 @@ impl Change {
                 meta.set_title(text);
                 meta.title != was
             }
+            Change::TimeShift(by) => {
+                let was = meta.time_shift;
+                meta.set_time_shift(was.saturating_add(*by));
+                meta.time_shift != was
+            }
+            Change::ClearTimeShift => std::mem::take(&mut meta.time_shift) != 0,
         }
     }
 
@@ -933,6 +989,100 @@ mod tests {
         meta.rating = 2;
         Change::Flag(Flag::Pick).apply(&mut meta);
         assert_eq!(meta.rating, 2);
+    }
+
+    #[test]
+    fn a_time_shift_is_kept_beside_the_rating_and_left_out_when_zero() {
+        let mut meta = Meta {
+            rating: 3,
+            ..Meta::default()
+        };
+        // Zero is the camera's own time, and is not written.
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(!json.contains("time_shift"), "{json}");
+        meta.set_time_shift(300);
+        assert!(!meta.is_empty());
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(json.contains(r#""time_shift":300"#), "{json}");
+        assert_eq!(serde_json::from_str::<Meta>(&json).unwrap(), meta);
+        // Read loosely and held to the limit, as the rating is.
+        let shift = |json: &str| serde_json::from_str::<Meta>(json).unwrap().time_shift;
+        assert_eq!(shift(r#"{"time_shift":-90}"#), -90);
+        assert_eq!(shift(r#"{"time_shift":"five minutes"}"#), 0);
+        assert_eq!(shift(r#"{"time_shift":1e300}"#), 0);
+        assert_eq!(shift(r#"{"time_shift":9223372036854775807}"#), SHIFT_LIMIT);
+        assert_eq!(shift(r#"{"rating":2}"#), 0);
+        meta.set_time_shift(i64::MIN);
+        assert_eq!(meta.time_shift, -SHIFT_LIMIT);
+    }
+
+    #[test]
+    fn a_time_shift_adds_to_what_each_frame_carries_and_a_clear_takes_it_off() {
+        let mut slow = Meta::default();
+        let mut moved = Meta {
+            time_shift: 60,
+            rating: 4,
+            ..Meta::default()
+        };
+        assert!(Change::TimeShift(300).apply(&mut slow));
+        assert!(Change::TimeShift(300).apply(&mut moved));
+        assert_eq!((slow.time_shift, moved.time_shift), (300, 360));
+        assert!(!Change::TimeShift(0).apply(&mut slow));
+        assert!(Change::TimeShift(-300).apply(&mut slow));
+        assert_eq!(slow.time_shift, 0);
+        // A clear is the camera's time again, and nothing else moves.
+        assert!(Change::ClearTimeShift.apply(&mut moved));
+        assert_eq!((moved.time_shift, moved.rating), (0, 4));
+        assert!(!Change::ClearTimeShift.apply(&mut moved));
+        // Not a toggle, and not a key: the culling pass does not move
+        // on after it.
+        let all = [moved.clone()];
+        assert_eq!(
+            Change::TimeShift(5).settled(all.iter()),
+            Change::TimeShift(5)
+        );
+        assert!(!Change::TimeShift(5).is_key() && !Change::ClearTimeShift.is_key());
+        assert!(Change::Rating(1).is_key() && Change::Label(Label::Red).is_key());
+        assert!(Change::Flag(Flag::Pick).is_key());
+    }
+
+    #[test]
+    fn two_copies_join_the_time_shift_as_a_field_of_its_own() {
+        // One copy shifted the frame, the other rated it: both stand.
+        let shifted = Facts {
+            meta: Meta {
+                time_shift: 300,
+                ..Meta::default()
+            },
+            turn: 0,
+        };
+        let rated = Facts {
+            meta: Meta {
+                rating: 4,
+                ..Meta::default()
+            },
+            turn: 0,
+        };
+        let mut a_times = Times::default();
+        a_times.stamp(&Facts::default(), &shifted, 200, "aa");
+        let mut b_times = Times::default();
+        b_times.stamp(&Facts::default(), &rated, 100, "bb");
+        assert_eq!(a_times.time_shift.at, 200);
+        assert!(b_times.time_shift.is_unset());
+        let (joined, _) = join(
+            Side {
+                facts: &shifted,
+                times: &a_times,
+                knows: &[],
+            },
+            Side {
+                facts: &rated,
+                times: &b_times,
+                knows: &[],
+            },
+        );
+        assert_eq!((joined.meta.time_shift, joined.meta.rating), (300, 4));
+        assert!(!Field::TimeShift.same(&shifted, &rated));
     }
 
     #[test]

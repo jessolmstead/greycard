@@ -415,6 +415,7 @@ pub(crate) fn cull_select(st: &mut State, app: &App, cell: usize) {
     app.set_shot_camera(shot.camera.as_str().into());
     app.set_shot_exposure(shot.exposure.as_str().into());
     app.set_shot_size("".into());
+    crate::panel::time_shift::show_shot_time(st, app);
     show_history(st, app);
     show_frame_tags(st, app);
     let count = st.views.shown.len();

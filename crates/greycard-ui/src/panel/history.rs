@@ -250,7 +250,8 @@ pub(crate) fn record_export_on_disk(
         let turn = greycard_core::decode::stance_path(source)
             .ok()
             .map(|s| xmp::Turn::new(s.orientation, sidecar.turn));
-        match xmp::save(source, &sidecar.meta, turn) {
+        let taken = || crate::panel::time_shift::camera_time_of(source);
+        match xmp::save_dated(source, &sidecar.meta, turn, taken) {
             Ok(Some(mark)) => sidecar.xmp = Some(mark),
             Ok(None) => {}
             Err(e) => tracing::warn!("{}: xmp not written: {e}", file_name(source)),

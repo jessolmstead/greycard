@@ -31,6 +31,9 @@ pub(crate) struct Sheets {
     pub(crate) look_rename_generation: u64,
     /// A rename out on its thread, until it lands.
     pub(crate) look_renaming: Option<panel::look_rename::Renaming>,
+    /// The shift-capture-time sheet's question, the camera times read
+    /// so far, and the rows a list by capture time waits on.
+    pub(crate) time_shift: panel::time_shift::Shifts,
     /// A delete is out on its thread, with the frames it has planned:
     /// another is refused until it lands, and so is Move rejects, and
     /// no sidecar of those frames is written meanwhile

@@ -269,7 +269,9 @@ frame count ("8 frames · by capture time"), as the CULLING section
 does beside its count. Rest the pointer on the arrows for the whole
 of it, as "Sort: Capture time, oldest first". The menu offers:
 
-- **Capture time**, from each frame's own date in its EXIF;
+- **Capture time**, from each frame's own date in its EXIF, moved by
+  its [shift](culling.md#shift-capture-time) when a camera's clock was
+  off;
 - **Name**, the file's name;
 - **Rating**;
 - **Date edited**, when the frame's edit was last saved;
@@ -305,7 +307,10 @@ frame.
 
 The order is read when the list is: a frame you rate stays where it
 is while you cull, and moves to its new place the next time the list
-is read, when you choose the order again or open the view again.
+is read, when you choose the order again or open the view again. A
+[capture time shift](culling.md#shift-capture-time) is the exception:
+a list by capture time is read again as soon as the shift is saved,
+since putting the frames in their right places is what it is for.
 
 ## Collections
 

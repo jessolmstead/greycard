@@ -95,6 +95,7 @@ pub(super) fn export_other(
         ai,
         Some(&frame.source),
         Some(&metadata),
+        frame.time_shift,
         settings,
         path,
     )?);
@@ -104,8 +105,9 @@ pub(super) fn export_other(
 /// Finish `image`, the develop `base` was made for, under `edit` and
 /// the sheet's `settings`, and write it to `path`: the learned masks
 /// made now if they are not yet, the edit's geometry, the finish, the
-/// mark, and the file with the source's EXIF. What of the edit's
-/// masks could not be made, and so was left out.
+/// mark, and the file with the source's EXIF, its capture times moved
+/// by the frame's `time_shift`. What of the edit's masks could not be
+/// made, and so was left out.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn write_export(
     image: Arc<WorkingImage>,
@@ -114,9 +116,12 @@ pub(super) fn write_export(
     ai: &mut Ai,
     source_path: Option<&std::path::Path>,
     metadata: Option<&greycard_core::decode::RawMetadata>,
+    time_shift: i64,
     settings: &crate::export::Settings,
     path: &std::path::Path,
 ) -> Result<Vec<String>, String> {
+    let shifted = metadata.map(|m| greycard_core::exif::with_capture_shifted(m, time_shift));
+    let metadata = shifted.as_ref();
     let (mut rendered, left_out) = finish_export(image, edit, base, ai, settings);
     let origin = crate::export::Origin {
         source_name: source_path

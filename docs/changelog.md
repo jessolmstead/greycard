@@ -57,6 +57,12 @@ design note behind it.
 - One Import... button in the left pane, with a menu: From a card or
   folder..., or A Lightroom catalog...
   ([§353](https://github.com/jessolmstead/greycard/blob/master/docs/notes/353-one-import-button.md))
+- Shift capture time... in the frame menu: a selection moved by a
+  typed difference, or one frame set to a time and the rest moved
+  with it, for a second body whose clock was off. The sort by
+  capture time and the Day chips follow; the export's EXIF and the
+  XMP carry the corrected time; Clear shift goes back to the camera's
+  ([§354](https://github.com/jessolmstead/greycard/blob/master/docs/notes/354-the-capture-time-shifted.md))
 
 ### Editing
 

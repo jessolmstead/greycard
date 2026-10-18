@@ -29,6 +29,10 @@ pub struct Frame {
     pub version: Option<Version>,
     /// The frame's quarter turns (`Sidecar::turn`).
     pub turn: u8,
+    /// The capture time's shift in seconds (`Meta::time_shift`): what
+    /// the export's EXIF and XMP dates are moved by, so the picture says
+    /// when it was taken rather than what a wrong clock said.
+    pub time_shift: i64,
     /// A raw with no sidecar yet: its learned-denoiser blend is seeded
     /// from its ISO, as its first open would.
     pub seed_blend: bool,
@@ -806,6 +810,7 @@ mod tests {
             source: dir.join("X.CR3"),
             edit: Edit::default(),
             turn: 0,
+            time_shift: 0,
             seed_blend: false,
             out: dir.join("X-1.jpg"),
             moved_from: Some(dir.join("X.jpg")),

@@ -341,6 +341,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             lens,
             kind,
             shot,
+            taken,
             blend,
         } => {
             let mut st = state.borrow_mut();
@@ -389,6 +390,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             show_looks(&st, &st.develop.edit.look_lut, app);
             app.set_shot_camera(shot.camera.as_str().into());
             app.set_shot_exposure(shot.exposure.as_str().into());
+            // The camera's time from the decode, for a frame the index
+            // does not hold (a folder outside the roots).
+            if let (Some(taken), Some(c)) = (taken, st.current) {
+                let file = st.file_of(c);
+                crate::panel::time_shift::seed(&mut st, file, taken);
+            }
+            crate::panel::time_shift::show_shot_time(&mut st, app);
             match &kind {
                 SourceKind::Raw => {
                     // The body's baseline, from the camera the file names.
@@ -1099,6 +1107,21 @@ pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetF
         .collect()
 }
 
+/// The capture time's shift of the file at `source`, as an export
+/// carries it: the meta the window holds for a file it lists (read, or
+/// standing in from its row), and otherwise the sidecar beside it. The
+/// shift is the meta's and not the edit's, so it is taken as the set
+/// starts, a queued entry's included, rather than when it was queued.
+fn time_shift_of(st: &State, source: &Path) -> i64 {
+    match st.file_by_path(source) {
+        Some(f) => st.sidecars[f].meta.time_shift,
+        None => greycard_edit::Sidecar::load(source)
+            .ok()
+            .flatten()
+            .map_or(0, |s| s.meta.time_shift),
+    }
+}
+
 /// The version cell `c` is, as an export names it: none for the file's
 /// own.
 pub(crate) fn frame_version(st: &State, c: usize) -> Option<queue::Version> {
@@ -1191,6 +1214,7 @@ pub(crate) fn start_set(
         .zip(outs)
         .map(
             |((source, edit, turn, seed_blend, version), (out, moved_from))| queue::Frame {
+                time_shift: time_shift_of(st, &source),
                 source,
                 edit,
                 version,

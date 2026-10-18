@@ -377,3 +377,131 @@ fn a_collection_keeps_its_hand_order_until_a_sort_and_comes_back_to_it() {
     );
     teardown(&dir, state, writer);
 }
+
+/// The second body's clock two seconds slow: its two frames chosen, the
+/// shift sheet set from the one on screen, and once the index has their
+/// rows the list by capture time is read again, the two bodies in their
+/// new order, the frame on screen still chosen and its capture time
+/// line marked. Culling's undo takes the shift back, and the list
+/// follows again once the index has that.
+#[test]
+fn a_time_shift_reorders_a_list_by_capture_time_once_the_index_has_it() {
+    use crate::panel::time_shift::{SET, indexed};
+    let (dir, root, mut writer) = two_bodies("time-shift");
+    let (app, state, worker) = window_on(&dir, &root);
+    state.borrow_mut().window.write_sidecars = true;
+    open_view(&state, &app, &worker, View::Roots(None));
+    land_all(&state, &app, &worker);
+    let by_camera = [
+        "_DSC0001.tif",
+        "IMG_0001.tif",
+        "_DSC0002.tif",
+        "IMG_0002.tif",
+    ];
+    assert_eq!(listed(&state.borrow()), by_camera);
+
+    // The second body's two, _DSC0001 on screen.
+    app.invoke_select(0);
+    state.borrow_mut().views.picked = vec![0, 2];
+    app.invoke_time_shift_asked();
+    assert!(app.get_time_shift_open());
+    assert!(
+        app.get_time_shift_frame()
+            .starts_with("_DSC0001.tif: taken 2026-05-01 10:00:00 by its camera's clock"),
+        "{}",
+        app.get_time_shift_frame()
+    );
+    assert_eq!(app.get_time_shift_to(), "2026-05-01 10:00:00");
+    app.set_time_shift_mode(SET.into());
+    app.set_time_shift_to("2026-05-01 10:00:02".into());
+    app.invoke_time_shift_edited();
+    assert_eq!(
+        app.get_time_shift_said(),
+        "Moves 2 frames 0:02 later; _DSC0001.tif to 2026-05-01 10:00:02"
+    );
+    app.invoke_time_shift_answered(1);
+    assert!(!app.get_time_shift_open());
+    // The two frames' sidecars read in, and the shift made over them.
+    crate::rows::land_pending(&state, &app, &worker);
+    let b = root.join("b");
+    for name in ["_DSC0001.tif", "_DSC0002.tif"] {
+        let on_disk = greycard_edit::Sidecar::load(&b.join(name))
+            .unwrap()
+            .unwrap();
+        assert_eq!(on_disk.meta.time_shift, 2, "{name}");
+    }
+    assert_eq!(app.get_shot_time(), "2026-05-01 10:00:02 (shifted +0:02)");
+    // Not read again before the index has the rows.
+    assert!(!indexed(&state, &app, &worker));
+    assert_eq!(listed(&state.borrow()), by_camera);
+
+    // The index writes them, and the window hears it.
+    writer.index_tree(&root, &mut |_| {}).unwrap();
+    assert!(indexed(&state, &app, &worker));
+    land_all(&state, &app, &worker);
+    let by_true_time = [
+        "IMG_0001.tif",
+        "_DSC0001.tif",
+        "IMG_0002.tif",
+        "_DSC0002.tif",
+    ];
+    assert_eq!(listed(&state.borrow()), by_true_time);
+    assert_eq!(rows_shown(&app), by_true_time);
+    assert_eq!(on_screen(&state.borrow()).as_deref(), Some("_DSC0001.tif"));
+    // Heard again with nothing new: no read.
+    assert!(!indexed(&state, &app, &worker));
+
+    // Culling's undo: the shift off both, and the list back.
+    let _ = crate::panel::browser::step_tags(&mut state.borrow_mut(), &app, true);
+    for name in ["_DSC0001.tif", "_DSC0002.tif"] {
+        let on_disk = greycard_edit::Sidecar::load(&b.join(name))
+            .unwrap()
+            .unwrap();
+        assert_eq!(on_disk.meta.time_shift, 0, "{name}");
+    }
+    writer.index_tree(&root, &mut |_| {}).unwrap();
+    assert!(indexed(&state, &app, &worker));
+    land_all(&state, &app, &worker);
+    assert_eq!(listed(&state.borrow()), by_camera);
+
+    // A day on, typed: the second body's frames after the first's, and
+    // the Day chips count them on the next day.
+    let days = |st: &State| -> Vec<(String, usize)> {
+        crate::library::facet_counts(st)
+            .into_iter()
+            .find(|(f, _)| *f == greycard_library::Facet::Date)
+            .map(|(_, chips)| chips.into_iter().map(|c| (c.value, c.count)).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(days(&state.borrow()), [("2026-05-01".to_string(), 4)]);
+    let dsc: Vec<usize> = {
+        let st = state.borrow();
+        (0..st.files.len())
+            .filter(|&i| st.files[i].starts_with(&b))
+            .collect()
+    };
+    app.invoke_select(dsc[0] as i32);
+    state.borrow_mut().views.picked = dsc;
+    app.invoke_time_shift_asked();
+    app.set_time_shift_delta("1d".into());
+    app.invoke_time_shift_edited();
+    app.invoke_time_shift_answered(1);
+    crate::rows::land_pending(&state, &app, &worker);
+    writer.index_tree(&root, &mut |_| {}).unwrap();
+    assert!(indexed(&state, &app, &worker));
+    land_all(&state, &app, &worker);
+    assert_eq!(
+        listed(&state.borrow()),
+        [
+            "IMG_0001.tif",
+            "IMG_0002.tif",
+            "_DSC0001.tif",
+            "_DSC0002.tif"
+        ]
+    );
+    assert_eq!(
+        days(&state.borrow()),
+        [("2026-05-01".to_string(), 2), ("2026-05-02".to_string(), 2)]
+    );
+    teardown(&dir, state, writer);
+}

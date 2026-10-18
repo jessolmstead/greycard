@@ -1856,7 +1856,7 @@ fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
     tx.prepare_cached(
         "UPDATE files SET sidecar = ?, sidecar_hash = ?, sidecar_mtime = ?, rating = ?, \
          flag = ?, label = ?, keywords = ?, edited = ?, turns = ?, exported = ?, \
-         develop_key = ? WHERE id = ?",
+         develop_key = ?, shift = ? WHERE id = ?",
     )?
     .execute(params![
         sidecar.and_then(|s| s.path.as_deref().map(path_bytes)),
@@ -1870,6 +1870,7 @@ fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
         i64::from(summary.turns),
         i64::from(summary.exported),
         develop_key,
+        meta.time_shift,
         id
     ])?;
     tx.prepare_cached("DELETE FROM keywords WHERE file = ?")?
@@ -2620,6 +2621,148 @@ pub(crate) mod tests {
             mosaic(&lib, &bayer),
             Some(FileMosaic::Mosaic(Mosaic::Bayer))
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Two bodies at one event, the second's clock five minutes slow,
+    /// one of its frames shot just after midnight by the first's clock.
+    /// Returned with the four frames: the first body's two, the second
+    /// body's two.
+    fn two_bodies(dir: &Path) -> [PathBuf; 4] {
+        use crate::fixture::Frame;
+        let at = |frame: &Frame<'static>, taken: &'static str| Frame { taken, ..*frame };
+        let frames = [
+            (dir.join("a1.tif"), at(&R5, "2026:09:19 23:57:00")),
+            (dir.join("a2.tif"), at(&R5, "2026:09:20 00:04:00")),
+            (dir.join("b1.tif"), at(&R6, "2026:09:19 23:56:00")),
+            (dir.join("b2.tif"), at(&R6, "2026:09:20 00:00:00")),
+        ];
+        for (i, (path, frame)) in frames.iter().enumerate() {
+            write_frame(path, frame, i as u16 + 1);
+        }
+        frames.map(|(path, _)| path)
+    }
+
+    /// The second body's frames given a shift in their sidecars' meta.
+    fn shift_by(paths: &[PathBuf], seconds: i64) {
+        for path in paths {
+            let mut s = Sidecar::default();
+            s.meta.set_time_shift(seconds);
+            s.save(path).unwrap();
+        }
+    }
+
+    /// A shift kept in a sidecar's meta is the frame's time for the
+    /// index: a list by capture time interleaves the two bodies, the
+    /// date filter and the Day chips go by it, and the EXIF's own
+    /// time is kept beside it. Taken off, the frames go back.
+    #[test]
+    fn a_shift_in_the_sidecar_moves_the_frame_for_the_sort_and_the_days() {
+        let dir = scratch("shift");
+        let [a1, _, b1, b2] = two_bodies(&dir);
+        let mut lib = Library::open_in_memory().unwrap();
+        let order = |lib: &Library| -> Vec<String> {
+            lib.rows_under_canonical(std::slice::from_ref(&dir), crate::Order::TAKEN)
+                .unwrap()
+                .iter()
+                .map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        let days = |lib: &Library| -> Vec<(String, usize)> {
+            lib.facet_counts(crate::Facet::Date, None, &Filter::parse("").unwrap())
+                .unwrap()
+                .into_iter()
+                .map(|c| (c.value, c.count))
+                .collect()
+        };
+        let day = |d: &str| d.to_string();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        // By the clocks as they were set: the slow body's frames early.
+        assert_eq!(order(&lib), ["b1.tif", "a1.tif", "b2.tif", "a2.tif"]);
+        assert_eq!(days(&lib), [(day("2026-09-19"), 2), (day("2026-09-20"), 2)]);
+
+        shift_by(&[b1.clone(), b2.clone()], 300);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.meta_refreshed, 2, "{report:?}");
+        assert_eq!(order(&lib), ["a1.tif", "b1.tif", "a2.tif", "b2.tif"]);
+        // b1 crossed midnight: the 20th has three frames now.
+        assert_eq!(days(&lib), [(day("2026-09-19"), 1), (day("2026-09-20"), 3)]);
+        let mut on_20th = names(&lib, "date:2026-09-20");
+        on_20th.sort();
+        assert_eq!(on_20th, ["a2.tif", "b1.tif", "b2.tif"]);
+        // The row's time is the shifted one; the EXIF's is kept.
+        let e = lib.by_path(&b1).unwrap().unwrap();
+        assert_eq!(e.exif.taken.as_deref(), Some("2026-09-19 23:56:00"));
+        assert_eq!(e.taken_at.as_deref(), Some("2026-09-20 00:01:00"));
+        assert_eq!(e.meta.time_shift, 300);
+        // A collection's reference, shown from its hash, sorts by the
+        // same time.
+        let by_hash = lib.rows_by_hash(&e.hash).unwrap();
+        assert_eq!(by_hash[0].taken.as_deref(), Some("2026-09-20 00:01:00"));
+        let rows = lib
+            .rows_under_canonical(std::slice::from_ref(&dir), crate::Order::TAKEN)
+            .unwrap();
+        let (_, row) = rows.iter().find(|(p, _)| p.ends_with("b1.tif")).unwrap();
+        assert_eq!(row.taken.as_deref(), Some("2026-09-20 00:01:00"));
+        assert_eq!(row.meta.time_shift, 300);
+        // A frame with no shift reads its EXIF's time as it is.
+        let e = lib.by_path(&a1).unwrap().unwrap();
+        assert_eq!(e.taken_at, e.exif.taken);
+        // The Rust order over the rows agrees with the SQL's.
+        let mut keys: Vec<_> = rows.iter().map(|(p, r)| r.sort_key(p)).collect();
+        keys.reverse();
+        keys.sort_by(|a, b| crate::Order::TAKEN.compare(a, b));
+        let by_rust: Vec<&Path> = keys.iter().map(|k| k.path).collect();
+        let by_sql: Vec<&Path> = rows.iter().map(|(p, _)| p.as_path()).collect();
+        assert_eq!(by_rust, by_sql);
+
+        // Taken off: back to the clocks as they were set.
+        shift_by(&[b1, b2], 0);
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(order(&lib), ["b1.tif", "a1.tif", "b2.tif", "a2.tif"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A schema 11 library comes up with the shift's columns and its
+    /// rows kept, and the next pass reads a shift a sidecar already
+    /// carried.
+    #[test]
+    fn a_schema_11_library_is_brought_up_and_reads_the_shifts_already_there() {
+        let dir = scratch("migrate-11");
+        let db = dir.join("library.sqlite");
+        let shoot_dir = dir.join("shoot");
+        std::fs::create_dir_all(&shoot_dir).unwrap();
+        let [_, _, b1, _] = two_bodies(&shoot_dir);
+        shift_by(std::slice::from_ref(&b1), 300);
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+            // Back to schema 11, as an older build left it: the shift
+            // never read.
+            lib.conn_mut()
+                .execute_batch(
+                    "DROP INDEX files_taken_at;
+                     ALTER TABLE files DROP COLUMN taken_at;
+                     ALTER TABLE files DROP COLUMN shift;
+                     PRAGMA user_version = 11;",
+                )
+                .unwrap();
+        }
+        let mut lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn_mut()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        assert_eq!(lib.len().unwrap(), 4);
+        let e = lib.by_path(&b1).unwrap().unwrap();
+        assert_eq!((e.meta.time_shift, e.taken_at.clone()), (0, e.exif.taken));
+        let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+        assert_eq!(report.added + report.changed, 0, "{report:?}");
+        let e = lib.by_path(&b1).unwrap().unwrap();
+        assert_eq!(e.meta.time_shift, 300);
+        assert_eq!(e.taken_at.as_deref(), Some("2026-09-20 00:01:00"));
+        drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -4613,7 +4756,9 @@ pub(crate) mod tests {
                      ALTER TABLE files DROP COLUMN turns;
                      ALTER TABLE files DROP COLUMN whole_hash;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 2;",
+                     ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at;
+                     ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift;
+                     PRAGMA user_version = 2;",
                 )
                 .unwrap();
         }
@@ -4913,7 +5058,7 @@ pub(crate) mod tests {
             assert_eq!(key_of(&mut lib, &plain), None, "no sidecar, no key");
             lib.conn_mut()
                 .execute_batch(
-                    "ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 8;",
+                    "ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 8;",
                 )
                 .unwrap();
         }
@@ -5073,7 +5218,7 @@ pub(crate) mod tests {
             let mut lib = Library::open(&db).unwrap();
             lib.index_folder(&dir, &mut quiet()).unwrap();
             lib.conn_mut()
-                .execute_batch("DROP TABLE versions; ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 9;")
+                .execute_batch("DROP TABLE versions; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 9;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -5209,7 +5354,7 @@ pub(crate) mod tests {
                 )
                 .unwrap();
             lib.conn_mut()
-                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 7;")
+                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 7;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -5272,7 +5417,7 @@ pub(crate) mod tests {
                      ALTER TABLE files DROP COLUMN turns;
                      ALTER TABLE files DROP COLUMN whole_hash;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 3;",
+                     ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 3;",
                 )
                 .unwrap();
         }
@@ -5491,7 +5636,7 @@ pub(crate) mod tests {
                 .execute_batch(
                     "DROP TABLE pending; DROP TABLE archive_writes;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 5;",
+                     ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 5;",
                 )
                 .unwrap();
         }
@@ -5540,7 +5685,7 @@ pub(crate) mod tests {
                 )
                 .unwrap();
             lib.conn_mut()
-                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 6;")
+                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 6;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -5786,8 +5931,11 @@ pub(crate) mod tests {
                 .unwrap();
             conn.pragma_update(None, "application_id", crate::APPLICATION_ID)
                 .unwrap();
-            conn.execute_batch("ALTER TABLE files DROP COLUMN mosaic;")
-                .unwrap();
+            conn.execute_batch(
+                "ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at;
+                 ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift;",
+            )
+            .unwrap();
             conn.pragma_update(None, "user_version", 5).unwrap();
         }
         let before = std::fs::read(&db).unwrap();
@@ -5839,7 +5987,7 @@ pub(crate) mod tests {
                 .execute_batch(
                     "ALTER TABLE files DROP COLUMN whole_hash;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 4;",
+                     ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 4;",
                 )
                 .unwrap();
         }

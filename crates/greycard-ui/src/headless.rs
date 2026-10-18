@@ -295,6 +295,7 @@ pub(crate) fn plan(
             // The version `--version-name` named, none without it.
             version: frame_version,
             turn: sidecar.turn,
+            time_shift: sidecar.meta.time_shift,
             seed_blend: seed,
             out: PathBuf::new(),
             moved_from: None,
@@ -1285,6 +1286,58 @@ mod tests {
         assert!(!kept.needs_frame(), "written back up to date");
         assert_eq!(kept.current.light.exposure, 0.25);
         assert_eq!(kept.current_exports.len(), 1, "the export is noted");
+    }
+
+    /// A frame whose sidecar carries a capture time shift exports with
+    /// the moved time in its EXIF, read back by the engine's own
+    /// reader, and the `.xmp` beside it says the moved time too; the
+    /// frame's own file is never rewritten.
+    #[test]
+    fn a_shifted_frame_exports_its_corrected_capture_time() {
+        use greycard_library::fixture::{R5, write_frame};
+        let scratch = Scratch::new("shifted");
+        let source = scratch.0.join("frame.tif");
+        // Taken 2024:08:24 15:32:39 by its clock, five minutes slow.
+        write_frame(&source, &R5, 1);
+        let before = std::fs::read(&source).unwrap();
+        let mut sidecar = Sidecar {
+            line: greycard_edit::Line::of(Edit::for_picture()),
+            ..Sidecar::default()
+        };
+        sidecar.meta.set_time_shift(300);
+        sidecar
+            .save_in(&source, greycard_edit::Placement::Beside)
+            .unwrap();
+        let out = scratch.0.join("out.jpg");
+        let remembered = settings::Settings::default();
+        let planned = plan(
+            &cli(&[
+                source.as_os_str(),
+                "--xmp-sidecars".as_ref(),
+                "--export".as_ref(),
+                out.as_os_str(),
+            ]),
+            &out,
+            &remembered,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(planned.frames[0].time_shift, 300);
+        assert!(run(planned).succeeded());
+        let taken = |path: &Path| greycard_core::picture::probe_path(path).unwrap().taken;
+        assert_eq!(taken(&out).as_deref(), Some("2024:08:24 15:37:39"));
+        assert_eq!(taken(&source).as_deref(), Some("2024:08:24 15:32:39"));
+        assert_eq!(std::fs::read(&source).unwrap(), before, "never rewritten");
+        let xmp = std::fs::read_to_string(scratch.0.join("frame.xmp")).expect("the .xmp");
+        assert!(
+            xmp.contains("<exif:DateTimeOriginal>2024-08-24T15:37:39</exif:DateTimeOriginal>"),
+            "{xmp}"
+        );
+        assert!(
+            xmp.contains("<greycard:TimeShift>300</greycard:TimeShift>"),
+            "{xmp}"
+        );
     }
 
     /// `--xmp-sidecars`: the frame's `.xmp` is written with the sidecar

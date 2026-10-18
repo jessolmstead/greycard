@@ -988,6 +988,7 @@ mod tests {
             edit: frames[1].1.clone(),
             version: frames[1].4.clone(),
             turn: 0,
+            time_shift: 0,
             seed_blend: false,
             out: named[1].0.clone(),
             moved_from: None,

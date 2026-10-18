@@ -93,19 +93,20 @@ impl<'a> SortKey<'a> {
     }
 }
 
-/// When a frame was taken, from the index's `taken` column (the EXIF's
-/// date, normalized so it sorts as text). Every reader of a capture
-/// time for an order goes through here and through
-/// [`CAPTURE_TIME_SQL`], so a shift of the capture time kept in the
-/// sidecar's meta (a camera's clock set wrong, or a second body
-/// brought into line with the first) can later be laid over it in this
-/// one place, on both spellings, rather than in every list.
+/// When a frame was taken, from the index's `taken_at` column: the
+/// EXIF's date, normalized so it sorts as text, moved by the shift the
+/// sidecar's meta keeps (a camera's clock set wrong, or a second body
+/// brought into line with the first). Every reader of a capture time
+/// for an order goes through here and through [`CAPTURE_TIME_SQL`];
+/// the shift is laid over the EXIF's time once, by the column, so a
+/// [`SortKey`]'s `taken` already carries it.
 pub fn capture_time(taken: Option<&str>) -> Option<&str> {
     taken
 }
 
-/// [`capture_time`] in SQL, over a `files` row.
-pub const CAPTURE_TIME_SQL: &str = "files.taken";
+/// [`capture_time`] in SQL, over a `files` row: the virtual column
+/// that moves `taken` by `shift`, under an index of its own.
+pub const CAPTURE_TIME_SQL: &str = "files.taken_at";
 
 /// [`SortBy::Edited`]'s value in SQL, over a `files` row.
 pub const EDITED_AT_SQL: &str = "CASE WHEN files.edited <> 0 THEN files.sidecar_mtime END";
@@ -522,7 +523,8 @@ mod tests {
 
     /// The all-roots query by capture time against the same by name,
     /// over 100,000 rows in 200 folders: within the same order of time,
-    /// with the index on `taken` and without it. Printed for the notes;
+    /// with the index on `taken_at` and without it, one frame in ten
+    /// shifted. Printed for the notes;
     /// asserted loosely, since a loaded machine moves both.
     #[test]
     fn capture_time_over_a_hundred_thousand_rows_costs_about_what_name_does() {
@@ -532,7 +534,7 @@ mod tests {
             let mut stmt = tx
                 .prepare(
                     "INSERT INTO files (path, folder, folder_text, name, size, mtime, hash, \
-                     taken, rating) VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)",
+                     taken, rating, shift) VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?)",
                 )
                 .unwrap();
             for i in 0..100_000u32 {
@@ -563,7 +565,8 @@ mod tests {
                     name,
                     path,
                     taken,
-                    i % 6
+                    i % 6,
+                    if i % 10 == 3 { 300 } else { 0 }
                 ])
                 .unwrap();
             }
@@ -637,7 +640,7 @@ mod tests {
             lib.paths_under_canonical(&roots).unwrap();
             t.elapsed().as_secs_f64() * 1e3
         };
-        lib.conn.execute_batch("DROP INDEX files_taken").unwrap();
+        lib.conn.execute_batch("DROP INDEX files_taken_at").unwrap();
         let bare = time(Order::TAKEN);
         let bare_alone = sorted(Order::TAKEN);
         eprintln!(

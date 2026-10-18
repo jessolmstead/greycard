@@ -43,12 +43,6 @@ ours, so a tester brings a library over in one go.
       then a render crate holding the finish and the export (the Slint
       UI in a crate of its own landed as §351, the window's own build
       from 115 s and 9 GB to 24 s and 2.3 GB; Pool)
-- [ ] The capture time shifted on a selection, for a second body
-      whose clock was off (two testers, wedding work): a shift kept
-      in the sidecar's meta beside the rating, never a rewrite of the
-      raw, read by the index as the frame's time, sorted and filtered
-      by, and written to the export's EXIF and XMP as the corrected
-      time
 
 
 ## Tracks

@@ -1,5 +1,5 @@
-//! The session's rating, flag, label, keyword and title changes, for
-//! culling's undo.
+//! The session's rating, flag, label, keyword and title changes, and
+//! its capture time shifts, for culling's undo.
 //!
 //! A develop edit has its history in the sidecar; the culling keys'
 //! changes have none there, since a rating is a fact about the frame
@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 
 use greycard_edit::meta::{Change, Flag, Label, Meta};
 
-/// The fields the culling keys and the panel's words write.
+/// The fields the culling keys and the panel's words write, and the
+/// capture time's shift, which the shift sheet writes down the same
+/// path and takes back with the same undo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Tags {
     pub(crate) rating: u8,
@@ -27,6 +29,7 @@ pub(crate) struct Tags {
     pub(crate) label: Label,
     pub(crate) keywords: Vec<String>,
     pub(crate) title: String,
+    pub(crate) time_shift: i64,
 }
 
 impl Tags {
@@ -37,6 +40,7 @@ impl Tags {
             label: meta.label,
             keywords: meta.keywords.clone(),
             title: meta.title.clone(),
+            time_shift: meta.time_shift,
         }
     }
 
@@ -46,6 +50,7 @@ impl Tags {
         meta.label = self.label;
         meta.keywords = self.keywords;
         meta.title = self.title;
+        meta.set_time_shift(self.time_shift);
     }
 }
 
@@ -68,6 +73,8 @@ pub(crate) fn notice(change: &Change) -> String {
         Change::RemoveKeyword(word) => format!("No keyword {word}"),
         Change::Title(text) if text.is_empty() => "No title".into(),
         Change::Title(_) => "Titled".into(),
+        Change::TimeShift(by) => format!("Capture time {}", crate::panel::time_shift::signed(*by)),
+        Change::ClearTimeShift => "Capture time as the camera set it".into(),
     }
 }
 
@@ -89,6 +96,7 @@ pub(crate) fn hidden_by_filter(change: &Change, who: &str, many: bool, filter: &
         Change::RemoveKeyword(word) => format!("untagged {word}"),
         Change::Title(text) if text.is_empty() => "untitled".into(),
         Change::Title(_) => "titled".into(),
+        Change::TimeShift(_) | Change::ClearTimeShift => "moved in time".into(),
     };
     let it = if many { "them" } else { "it" };
     format!("{who} {done} and hidden by the filter ({filter}); Clear the filter to see {it}")
@@ -123,6 +131,11 @@ pub(crate) fn between(from: &Tags, to: &Tags) -> Option<Change> {
             .map(|w| Change::RemoveKeyword(w.clone()))
     } else if from.title != to.title {
         Some(Change::Title(to.title.clone()))
+    } else if from.time_shift != to.time_shift {
+        Some(match to.time_shift {
+            0 => Change::ClearTimeShift,
+            _ => Change::TimeShift(to.time_shift - from.time_shift),
+        })
     } else {
         None
     }
@@ -231,6 +244,7 @@ mod tests {
             label: Label::None,
             keywords: Vec::new(),
             title: String::new(),
+            time_shift: 0,
         }
     }
 
@@ -362,6 +376,37 @@ mod tests {
             "Undone"
         );
         assert_eq!(step_notice(false, &[None, None]), "Redone");
+    }
+
+    #[test]
+    fn a_time_shift_is_a_step_with_words_of_its_own() {
+        let none = tags(3, Flag::None);
+        let shifted = Tags {
+            time_shift: 300,
+            ..none.clone()
+        };
+        let a_minute = Tags {
+            time_shift: 60,
+            ..none.clone()
+        };
+        assert_eq!(notice(&Change::TimeShift(300)), "Capture time +5:00");
+        assert_eq!(
+            notice(&Change::ClearTimeShift),
+            "Capture time as the camera set it"
+        );
+        assert_eq!(between(&none, &shifted), Some(Change::TimeShift(300)));
+        assert_eq!(between(&shifted, &none), Some(Change::ClearTimeShift));
+        assert_eq!(
+            step_notice(true, &[between(&shifted, &a_minute)]),
+            "Undo: Capture time -4:00"
+        );
+        // The shift is put back with the rest of the tags.
+        let mut meta = Meta::default();
+        shifted.clone().put(&mut meta);
+        assert_eq!((meta.rating, meta.time_shift), (3, 300));
+        assert_eq!(Tags::of(&meta), shifted);
+        let said = hidden_by_filter(&Change::TimeShift(60), "f.CR3", false, "date:2026");
+        assert!(said.contains("moved in time"), "{said}");
     }
 
     #[test]

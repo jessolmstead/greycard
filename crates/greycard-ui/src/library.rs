@@ -2354,6 +2354,11 @@ pub(crate) fn told(app: &App, told: Told) {
                 crate::panel::stacks::healed(&state, app, &[], &rehashed);
             }
             reread(&state, app, false);
+            // A shift's rows written: a list by capture time is read
+            // again in the new order.
+            if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
+                crate::panel::time_shift::indexed(&state, app, &worker);
+            }
         }
         Told::Moved(folders) => {
             let mut st = state.borrow_mut();

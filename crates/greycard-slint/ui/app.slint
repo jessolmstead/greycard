@@ -30,6 +30,7 @@ import { RejectsSheet } from "panel/rejects-sheet.slint";
 import { DeleteSheet } from "panel/delete-sheet.slint";
 import { LookRemoveSheet } from "panel/look-remove-sheet.slint";
 import { LookRenameSheet } from "panel/look-rename-sheet.slint";
+import { TimeShiftSheet } from "panel/time-shift-sheet.slint";
 import { OverwriteSheet } from "panel/overwrite-sheet.slint";
 import { ArchiveSheet, ArchiveCard } from "panel/archive-sheet.slint";
 import { ArchiveRejectsSheet } from "panel/archive-rejects-sheet.slint";
@@ -1457,6 +1458,22 @@ export component App inherits Window {
     in property <bool> look-rename-working: false;
     callback look-rename-edited();
     callback look-rename-answered(bool);
+    /// The shift-capture-time sheet over the selection, from the frame
+    /// menu (panel/time-shift-sheet.slint): its answer is 0 Cancel, 1
+    /// Apply, 2 Clear shift.
+    callback time-shift-asked();
+    in-out property <bool> time-shift-open: false;
+    in property <string> time-shift-title;
+    in property <string> time-shift-frame;
+    in-out property <string> time-shift-mode: "Shift by";
+    in-out property <string> time-shift-delta;
+    in-out property <string> time-shift-to;
+    in property <string> time-shift-said;
+    in property <string> time-shift-refusal;
+    in property <bool> time-shift-ready;
+    in property <bool> time-shift-can-clear;
+    callback time-shift-edited();
+    callback time-shift-answered(int);
     /// An export about to write over files that are there, under the
     /// Overwrite policy: every one of them, until answered (0 no, 1
     /// keep both, 2 overwrite).
@@ -1537,6 +1554,9 @@ export component App inherits Window {
     // from the develop rather than the file, so a picture that is
     // not a raw reads the same way.
     in property <string> shot-size;
+    // When the frame was taken, its shift marked: "2026-09-20 00:01:00
+    // (shifted +5:00)"; empty when the file gave no time.
+    in property <string> shot-time;
     // The scope over the panel: its picture, which one is shown and
     // the ones on offer.
     // The navigator: the whole frame as shown, and the part of it the
@@ -2033,6 +2053,7 @@ export component App inherits Window {
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
             || root.delete-open || root.look-remove-open || root.look-rename-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
+            || root.time-shift-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
             || root.root-sheet-open || root.collection-sheet-open || root.preset-report-open
             || root.lr-open || root.rt-open || root.keys-open;
@@ -2052,6 +2073,7 @@ export component App inherits Window {
     changed delete-open => { if (!root.delete-open && !root.sheet-open()) { keys.focus(); } }
     changed look-remove-open => { if (!root.look-remove-open && !root.sheet-open()) { keys.focus(); } }
     changed look-rename-open => { if (!root.look-rename-open && !root.sheet-open()) { keys.focus(); } }
+    changed time-shift-open => { if (!root.time-shift-open && !root.sheet-open()) { keys.focus(); } }
     changed overwrite-open => { if (!root.overwrite-open && !root.sheet-open()) { keys.focus(); } }
     changed archive-open => { if (!root.archive-open && !root.sheet-open()) { keys.focus(); } }
     changed archive-rejects-open => {
@@ -2120,6 +2142,7 @@ export component App inherits Window {
                 if (!root.look-rename-working) { root.look-rename-answered(false); }
                 return accept;
             }
+            if (chord == "Esc" && root.time-shift-open) { root.time-shift-answered(0); return accept; }
             if (chord == "Esc" && root.overwrite-open) { root.overwrite-answered(0); return accept; }
             if (chord == "Esc" && root.archive-open) { root.archive-answered(false); return accept; }
             if (chord == "Esc" && root.archive-rejects-open) { root.archive-rejects-answered(0); return accept; }
@@ -2573,6 +2596,7 @@ export component App inherits Window {
                     shot-camera: root.shot-camera;
                     shot-exposure: root.shot-exposure;
                     shot-size: root.shot-size;
+                    shot-time: root.shot-time;
                     scope-picture: root.scope-picture;
                     scopes: root.scopes;
                     scope <=> root.scope;
@@ -3887,6 +3911,25 @@ export component App inherits Window {
         }
     }
 
+    // The shift-capture-time sheet over the selection. The keys go back
+    // to the window after.
+    if root.time-shift-open: TimeShiftSheet {
+        shift-title: root.time-shift-title;
+        shift-frame: root.time-shift-frame;
+        shift-mode <=> root.time-shift-mode;
+        shift-delta <=> root.time-shift-delta;
+        shift-to <=> root.time-shift-to;
+        shift-said: root.time-shift-said;
+        shift-refusal: root.time-shift-refusal;
+        shift-ready: root.time-shift-ready;
+        shift-can-clear: root.time-shift-can-clear;
+        shift-edited => { root.time-shift-edited(); }
+        shift-answered(a) => {
+            root.time-shift-answered(a);
+            if (!root.time-shift-open) { keys.focus(); }
+        }
+    }
+
     // The overwrite sheet: the files an export would write over, and
     // keep both or overwrite. The keys go back to the window after.
     if root.overwrite-open: OverwriteSheet {
@@ -4225,6 +4268,12 @@ export component App inherits Window {
         copy => { root.menu-copy(); root.menu-done(); }
         paste => { root.paste-asked(); root.menu-done(); }
         meta(k, v) => { root.menu-meta(k, v); root.menu-done(); }
+        // The sheet takes the focus itself: no `menu-done` when it
+        // opens, whose timer would take it back.
+        time-shift => {
+            if (!root.sheet-open()) { root.time-shift-asked(); }
+            if (!root.time-shift-open) { root.menu-done(); }
+        }
         reveal => { root.menu-reveal(); root.menu-done(); }
         export => { root.menu-export(); root.menu-done(); }
         // The sheet takes the focus itself: no `menu-done`, whose

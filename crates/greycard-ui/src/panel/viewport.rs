@@ -846,6 +846,9 @@ pub(crate) enum Shown {
     /// over the first look in the directory when none is chosen. A
     /// capture never renames, whatever `--keys` answers.
     LookRename,
+    /// The shift-capture-time sheet over the selection, as the frame
+    /// menu's Shift capture time... opens it.
+    TimeShift,
     /// The root sheet over the library's first root, as its chip's
     /// Rename... opens it.
     RootName,
@@ -925,6 +928,7 @@ impl Shown {
             "refit" => Ok(Self::Refit),
             "look-remove" => Ok(Self::LookRemove),
             "look-rename" => Ok(Self::LookRename),
+            "time-shift" => Ok(Self::TimeShift),
             "root-name" => Ok(Self::RootName),
             "delete" => Ok(Self::Delete),
             "archive" => Ok(Self::Archive),
@@ -943,7 +947,8 @@ impl Shown {
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, preset-report, paste, pasted, import, \
-                 imported, import-in-place, match, matched, refit, look-remove, look-rename, root-name, \
+                 imported, import-in-place, match, matched, refit, look-remove, look-rename, \
+                 time-shift, root-name, \
                  delete, archive, archive-rejects, parts, landscape, lightroom, \
                  lightroom-report, lightroom-written, rawtherapee-offer, rawtherapee, \
                  rawtherapee-written, sort, keys or help, not {name}"
@@ -1129,6 +1134,7 @@ impl Shown {
                 app.invoke_match_asked();
                 crate::panel::camera_match::fit_when_read(app, 100);
             }
+            Self::TimeShift => app.invoke_time_shift_asked(),
             Self::Delete => app.invoke_delete_asked("selection".into()),
             Self::Archive => app.invoke_archive_header_pressed(0),
             Self::ArchiveRejects => app.invoke_archive_rejects_asked(0),

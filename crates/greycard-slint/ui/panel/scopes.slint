@@ -13,6 +13,7 @@ export component PanelHead inherits VerticalLayout {
     in property <string> shot-camera;
     in property <string> shot-exposure;
     in property <string> shot-size;
+    in property <string> shot-time;
     in property <image> scope-picture;
     in property <[string]> scopes;
     in-out property <string> scope;
@@ -113,6 +114,13 @@ export component PanelHead inherits VerticalLayout {
         }
         Text {
             text: root.shot-size;
+            height: 16px;
+            color: Theme.text-secondary;
+            font-size: Theme.font-sm;
+            overflow: elide;
+        }
+        if root.shot-time != "": Text {
+            text: root.shot-time;
             height: 16px;
             color: Theme.text-secondary;
             font-size: Theme.font-sm;

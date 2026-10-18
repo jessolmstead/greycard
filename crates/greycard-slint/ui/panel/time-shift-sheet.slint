@@ -1,0 +1,133 @@
+// The shift-capture-time sheet, Lightroom's Edit Capture Time: the
+// chosen frames' times moved by a typed difference, or one frame set to
+// a time and the rest moved by the same difference, or every shift
+// taken off. The camera's own time is kept and never written over. A
+// shift that does not read says why under the field and leaves Apply
+// off; Enter is Apply's only when it is on, and Escape is Cancel.
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { PanelButton, Segmented } from "../controls.slint";
+
+export component TimeShiftSheet inherits Rectangle {
+    in property <string> shift-title;
+    /// The frame the sheet names: its camera's time and the time it
+    /// reads now.
+    in property <string> shift-frame;
+    /// "Shift by" or "Set this frame to".
+    in-out property <string> shift-mode;
+    in-out property <string> shift-delta;
+    in-out property <string> shift-to;
+    /// What Apply would do, in words; empty when it would do nothing.
+    in property <string> shift-said;
+    /// Why the field does not read; empty when it does.
+    in property <string> shift-refusal;
+    in property <bool> shift-ready;
+    in property <bool> shift-can-clear;
+    callback shift-edited();
+    /// 0 Cancel, 1 Apply, 2 Clear shift.
+    callback shift-answered(int);
+
+    background: #000000a0;
+    TouchArea { clicked => { root.shift-answered(0); } }
+    Rectangle {
+        width: 480px;
+        height: sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        // The field has the focus, and a key goes up from it: Escape is
+        // taken here, on the card, as the root sheet takes it.
+        FocusScope {
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.shift-answered(0);
+                    return accept;
+                }
+                return reject;
+            }
+            sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: root.shift-title;
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.shift-frame;
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                Segmented {
+                    options: ["Shift by", "Set this frame to"];
+                    current <=> root.shift-mode;
+                    selected(o) => { root.shift-edited(); }
+                }
+                if root.shift-mode == "Shift by": LineEdit {
+                    text <=> root.shift-delta;
+                    placeholder-text: "+1:00:00, 5m, -30s";
+                    edited(t) => { root.shift-edited(); }
+                    accepted(t) => {
+                        if (root.shift-ready) { root.shift-answered(1); }
+                    }
+                    init => { self.focus(); self.select-all(); }
+                }
+                if root.shift-mode != "Shift by": LineEdit {
+                    text <=> root.shift-to;
+                    placeholder-text: "2026-09-20 14:05:00";
+                    edited(t) => { root.shift-edited(); }
+                    accepted(t) => {
+                        if (root.shift-ready) { root.shift-answered(1); }
+                    }
+                    init => { self.focus(); self.select-all(); }
+                }
+                if root.shift-refusal != "": Text {
+                    text: root.shift-refusal;
+                    font-size: Theme.font-sm;
+                    color: Theme.label-red;
+                    wrap: word-wrap;
+                }
+                if root.shift-said != "": Text {
+                    text: root.shift-said;
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "The camera's own time is kept: Clear shift goes back to it.";
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: Theme.space-2; }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Clear shift";
+                        enabled: root.shift-can-clear;
+                        clicked => { root.shift-answered(2); }
+                    }
+                    Rectangle { }
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.shift-answered(0); }
+                    }
+                    PanelButton {
+                        text: "Apply";
+                        primary: true;
+                        enabled: root.shift-ready;
+                        clicked => { root.shift-answered(1); }
+                    }
+                }
+            }
+        }
+    }
+}

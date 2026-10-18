@@ -1178,7 +1178,8 @@ fn write_copy(write: &Write, target: &Copy, index: &Path, beat: &Beat, again: bo
         let turn = greycard_core::decode::stance_path(copy)
             .ok()
             .map(|s| xmp::Turn::new(s.orientation, sidecar.turn));
-        if let Err(e) = xmp::save(copy, &sidecar.meta, turn) {
+        let taken = || crate::panel::time_shift::camera_time_of(copy);
+        if let Err(e) = xmp::save_dated(copy, &sidecar.meta, turn, taken) {
             tracing::warn!("sync: {}: xmp not written: {e}", file_name(copy));
         }
     }

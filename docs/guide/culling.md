@@ -42,6 +42,32 @@ A rating, flag and label belong to the file, so a frame and its
 [versions](presets-and-history.md#versions-of-a-frame) share them: set
 one on a version and every cell of that file follows.
 
+### Shift capture time
+
+When a second camera's clock was off, its frames sort in the wrong
+place among the first camera's. Select every frame from that camera
+(the **Camera** chip in the [filter](library.md#chips) does it in one
+click), right-click one, and choose **Shift capture time...**. Type
+the difference, such as `+0:05:00` for a clock five minutes slow, or
+`5m`, `-1h`, `30s`; or switch to **Set this frame to** and type the
+time the named frame was really taken, and the others move by the
+same difference. **Apply** shifts them; **Clear shift** takes every
+selected frame back to the time its camera wrote.
+
+The raw is never changed: the shift is saved beside the rating, and
+the camera's own time is kept. The capture time under the frame's
+name in the panel shows the shifted time, marked "(shifted +5:00)".
+An export's EXIF carries the shifted time, and so does the `.xmp`
+with **Write XMP sidecars** on. Ctrl+Z in culling takes a shift back,
+as it does a rating.
+
+Sorting and the Day chips need the library index, so they follow a
+shift for frames under one of your
+[roots](library.md#roots-your-library): there a list sorted by capture
+time puts the frames in their new places, and the Day chips count
+them on their new day. Frames the index does not hold keep their
+place.
+
 ### How they show
 
 Small badges over each thumbnail show the flag, the stars and the

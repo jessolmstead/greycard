@@ -71,6 +71,7 @@ fn run_fake_set(
                 edit: Edit::default(),
                 version: None,
                 turn: 0,
+                time_shift: 0,
                 seed_blend: false,
                 moved_from: None,
                 out: dir.join("out").join(format!("{n}.jpg")),

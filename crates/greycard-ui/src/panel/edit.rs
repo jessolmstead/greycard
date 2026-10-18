@@ -70,7 +70,11 @@ pub(crate) fn write_file(st: &mut State, file: usize) {
             .file_cell(file)
             .and_then(|c| camera_tag(st, c))
             .map(|o| xmp::Turn::new(o, st.sidecars[file].turn));
-        match xmp::save(&st.files[file], &st.sidecars[file].meta, turn) {
+        // The capture time's dates, from the camera's own time, asked
+        // only when a shift moves them.
+        let (path, meta) = (st.files[file].clone(), st.sidecars[file].meta.clone());
+        let taken = || crate::panel::time_shift::camera_time(st, file);
+        match xmp::save_dated(&path, &meta, turn, taken) {
             Ok(Some(mark)) => st.sidecars[file].xmp = Some(mark),
             Ok(None) => {}
             Err(e) => tracing::warn!("{}: xmp not written: {e}", file_name(&st.files[file])),
