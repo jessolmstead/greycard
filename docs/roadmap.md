@@ -44,6 +44,14 @@ ours, so a tester brings a library over in one go.
       the CLI split landed as §341, the State grouping as §344), then
       the file chooser out of `export.rs` and a render crate holding
       the finish and the export (Pool)
+- [ ] A badge on the viewport while the soft proof is on, beside the
+      clipping lamps, naming the profile, and the gamut warning off by
+      default as Lightroom has it: the proof is one S away with the
+      pointer on the picture and is not remembered, and with the
+      warning on a stray S paints flat grey patches that move with
+      the exposure and look like a broken render (it cost an hour on
+      2026-10-18; the scopes bin the painted picture too, so the
+      histogram grew a spike at mid grey)
 
 
 ## Tracks
@@ -328,14 +336,6 @@ ask for first.
       one frame: a refined table is still one fit over a sample, so
       the replacement rule still counts frames
 - [ ] Profile making from a chart shot, after dcamprof (§78)
-- [ ] A badge on the viewport while the soft proof is on, beside the
-      clipping lamps, naming the profile: the proof is one S away with
-      the pointer on the picture and is not remembered, and with the
-      gamut warning on by default a stray S paints flat grey patches
-      that move with the exposure and look like a broken render (it
-      cost an hour on 2026-10-18; the scopes bin the painted picture
-      too, so the histogram grew a spike at mid grey). Decide with it
-      whether the gamut warning stays on by default
 - [ ] RawTherapee's DCP profiles offered for a fetch: they are made by
       that project under the GPL, so they can be hosted by us as the
       Sky model is and fetched into the profile directory from the
