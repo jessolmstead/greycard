@@ -410,6 +410,18 @@ comes across with its ratings and collections.
 - [ ] The RawTherapee sheet: a menu entry back into it for a folder
       already answered, and its frame list laid out lazily rather than
       capped at 200 (§340)
+- [ ] A time zone shift beside the capture time shift: a "Time zone"
+      choice in the sheet that moves the local time and the EXIF
+      offset (OffsetTimeOriginal, OffsetTimeDigitized, the XMP date's
+      zone) together, so the moment stays the same and a camera left
+      on home time reads local; the plain shift keeps the offset as
+      the camera wrote it, right for clock drift and wrong by the
+      shift for a zone, which readers that combine the two will show
+      (decided 2026-10-18, kept simple for 0.8.0)
+- [ ] A Lightroom catalog's corrected capture times carried across:
+      the import does not read `Adobe_images.captureTime`, so a time
+      fixed in Lightroom comes in at the raw's EXIF time; compare the
+      two and write the difference as the frame's shift
 - [ ] Lightroom catalog import follow-ups (§337): a catalog row for a
       camera's JPEG beside its raw mapped onto the raw's frame (wants a
       catalog made with JPEGs as separate photos; none held has one); a
