@@ -357,3 +357,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§344. The window's State, by owner](notes/344-the-windows-state-by-owner.md) (2026-10-17)
 - [§345. The Sky matte over a diluted map: the sure sky held, and its pockets](notes/345-the-sky-matte-over-a-diluted-map-the-sure-sky-held-and-its-pockets.md) (2026-10-17)
 - [§346. A file chooser without a portal](notes/346-a-file-chooser-without-a-portal.md) (2026-10-17)
+- [§347. The desktop entry runs the editor by its path](notes/347-the-desktop-entry-runs-the-editor-by-its-path.md) (2026-10-17)

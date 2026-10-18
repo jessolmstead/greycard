@@ -115,6 +115,10 @@ design note behind it.
   zenity or kdialog instead, and with neither it says what is missing
   and what to install
   ([§346](https://github.com/jessolmstead/greycard/blob/master/docs/notes/346-a-file-chooser-without-a-portal.md))
+- On Linux the menu entry starts greycard when `~/.local/bin` is not
+  on the session's PATH, as under a window manager started from
+  `startx`: install.sh writes the editor's full path into it
+  ([§347](https://github.com/jessolmstead/greycard/blob/master/docs/notes/347-the-desktop-entry-runs-the-editor-by-its-path.md))
 
 ## 0.7.0, 2026-10-15
 

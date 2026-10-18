@@ -83,6 +83,24 @@ else
             echo "  $data_dir/${f#"$here"/share/}"
         done
 
+        # The entry runs the editor by its full path, so a menu, a file
+        # manager or an Open with finds it whether or not the session's
+        # PATH has $bin_dir on it; many a window manager's does not.
+        # Quoted, as the spec wants a path with a space in it. A path
+        # with a character that would need escaping inside the quotes
+        # keeps the bare name, found on PATH as before.
+        entry="$data_dir/applications/greycard.desktop"
+        case "$bin_dir" in
+        *[\"\`\$\\]*) ;;
+        *)
+            if [ -f "$entry" ]; then
+                exec_path=$(printf '%s' "$bin_dir/greycard-ui" | sed 's/[&|]/\\&/g')
+                sed "s|^Exec=greycard-ui |Exec=\"$exec_path\" |" "$entry" >"$entry.new"
+                mv "$entry.new" "$entry"
+            fi
+            ;;
+        esac
+
         # The desktop's own caches. None are fatal: the entry, the icon,
         # and the MIME type are already on disk where a session will find
         # them at next login or when the caches are rebuilt. The icon
