@@ -39,9 +39,11 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] The window's structure: the library views measured for a crate
-      of their own (Pool; the CLI split landed as §341, the State
-      grouping as §344)
+- [ ] The window's structure: the Slint UI in a crate of its own,
+      the one cut that halves the window's build (measured 2026-10-18;
+      the CLI split landed as §341, the State grouping as §344), then
+      the file chooser out of `export.rs` and a render crate holding
+      the finish and the export (Pool)
 
 
 ## Tracks
@@ -509,27 +511,60 @@ clears or a tester asks for it.
 - [ ] The long `run` and `develop_job` in `worker/` and `Look::run` in
       `roots/` cut into functions, a later round after the splits
       (§316, §318, §321)
-- [ ] The window's structure (0.8.0), in three mechanical passes
-      each landing green, each alone with no other window branch in
-      flight: the CLI's `main.rs` split one file a
-      subcommand (landed, §341); the window's `State` grouped by owner
-      (landed, §344: views, develop, culling, sheets, work, window,
-      launch; 17 fields left at the top); the window's `State` (about 216 fields in `main.rs`,
-      every panel reaching in) grouped into a few structs by owner
-      (library, develop, culling, sheets, worker handles), the
-      `st.cull` pattern made the rule; then the library views (the
-      browser, grid, culling, lightbox, collections, stacks, tree)
-      carved into a crate of their own that owns their state and hands
-      the develop side a selection, halving the 148,000-line crate's
-      compile (7.5 GB for rustc) and giving its 1,300 tests two
-      processes; and, if that pass's measurement names it, a fourth:
-      the finish (the viewport's CPU reference with the edit schema
-      in it, 4,200 lines) and the export (3,000) carved into a render
-      crate between edit and the window, which the CLI and a headless
-      worker would use without the window (an outside review asked
-      why they sit in the window crate; keeping the edit schema and
-      the tone choice out of core is deliberate, the crate between is
-      the answer). The crate tree otherwise stays as it is: core knows
+- [ ] The window's structure (0.8.0), in mechanical passes each
+      landing green, each alone with no other window branch in
+      flight. Landed: the CLI's `main.rs` split one file a subcommand
+      (§341); the window's `State` grouped by owner (§344: views,
+      develop, culling, sheets, work, window, launch; 17 fields left
+      at the top). Measured 2026-10-18 before carving the library
+      views: one rustc compiles the crate's 163,000 hand-written
+      lines with 392,000 generated from 17,400 lines of `.slint`,
+      six times the hand-written code by bytes, at 96 to 106 s and
+      10.6 GB for rustc from clean (`-j 4`); the library side is
+      44,000 lines, about 7 s of that, and 257 of its 419 tests build
+      the whole window, so a views crate alone halves nothing, and
+      it cannot compile its own `.slint` (one component tree a crate,
+      the grid and strip children of `App`). Tried in a workspace
+      copy, the Slint UI in a crate below the window took the
+      window's build to 28 s and 2.4 GB, its test build from 120 s
+      to 40 s, an incremental rebuild from 28 s to 13 s, with a
+      three-line change to the window and every `app.set_*` call
+      kept; the Slint crate's 74 s and 9.6 GB are paid only when a
+      `.slint` file changes (`cargo build -p` on it alone picks a
+      different feature set and forces a rebuild; build through the
+      window). So the order is: the Slint UI into its own crate
+      (`ui/` moves with it, the two `include_str!` paths to
+      `mask.slint` in `panel/landscape.rs` and `panel/parts.rs`
+      fixed, the window's `build.rs` keeping only the Windows
+      resource), measured again; the desktop file chooser out of
+      `export.rs` (lines 905 to 1576, zbus and rfd on Slint's event
+      loop, 11 tests) into a window `chooser.rs`; a render crate
+      between edit and the window holding the finish, agx, detail,
+      export, border, watermark and geometry with their test helpers
+      (10,100 lines, 103 tests, nothing of `State` or `App` in them,
+      the window re-exporting the module names so call sites stand;
+      the CLI and a headless worker then render without the window,
+      which is what an outside review asked for, and keeping the
+      edit schema and the tone choice out of core stays deliberate);
+      a thin views crate with only the shared types
+      (`versions::{Key, Cell}`, `rows::FromRow`, `file_name`, called
+      from 51 places outside), depending on the Slint and render
+      crates and never the window; the model modules with no outward
+      edge (filter, sort, grid, selection, tags, mounts, placeholder:
+      3,800 lines, 60 tests); then those with one seam each
+      (collections, culling's prefetcher, previews, thumbpool and
+      `worker/thumbs.rs` behind a thumbnails handle the views crate
+      defines and the worker implements: 6,900 lines, 68 tests);
+      measured again. The bindings (browser, culling, roots, tree,
+      library, lightbox, rows, cells, the small panels) wait for
+      0.9.0 behind three seams: opening a frame (`open_frame`,
+      `open_row`, `pick_pending` reach two dozen develop functions
+      and 70 develop fields; a small Develop trait, the mosaic
+      tracking moved to the develop side), culling drawing through
+      the develop's viewport (`st.develop.zoom` 15 times, the
+      renderer, `lut_for`, `render::Tile`; the loupe and compare
+      drawing stay in the window), and the thumbnails on the worker
+      handle. The crate tree otherwise stays as it is: core knows
       nothing, edit and library sit on it, the window on everything
 - [ ] Every test's scratch folder removed through the testing helpers
       (`remove_scratch` where the state holds the index open,
