@@ -820,6 +820,17 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 app.invoke_view_changed();
             }
         }
+        Outcome::PersonOn {
+            batch,
+            frame,
+            found,
+        } => {
+            let landed =
+                crate::panel::parts_all::landed(&mut state.borrow_mut(), app, batch, frame, found);
+            if landed == crate::panel::parts_all::Landed::Open {
+                app.invoke_view_changed();
+            }
+        }
         Outcome::MaskFailed { key, message } => {
             let mut st = state.borrow_mut();
             tracing::error!("mask: {message}");

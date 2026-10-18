@@ -225,8 +225,6 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       hair alone
 - [ ] People: the solid fill Whole person has, for Top, Hair and the
       other whole-picture parts (§263)
-- [ ] People: "use this person on all N pictures" after a paste or
-      sync onto many (§263)
 - [ ] Face recognition to find the same person across outfits and
       days. Waits on a license search (the strong face-embedding
       models are mostly non-commercial) and on whether a sidecar may
@@ -767,7 +765,7 @@ clears or a tester asks for it.
 - [ ] Reference view
 - [ ] MIDI Controller support
 - [ ] Different frameline options when cropping
-- [ ] Camera tethering. Low priority.
+- [ ] Camera tethering
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
 - [ ] Idea: AI highlight recovery

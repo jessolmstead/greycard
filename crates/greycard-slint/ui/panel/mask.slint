@@ -218,6 +218,14 @@ export component AdjustmentsSection inherits Section {
     in-out property <[string]> landscape-offers;
     in-out property <[string]> landscape-kinds;
     in-out property <bool> landscape-menu-shown;
+    // A person picked for a People shape that a paste or a sync took
+    // to other frames as well: the offer's words ("Use this person on
+    // all 8 pictures"), empty for none, and the mask its shape is in,
+    // as `target` counts them; taken, or put away.
+    in property <string> people-offer;
+    in property <int> people-offer-mask;
+    callback people-offer-used();
+    callback people-offer-dismissed();
     callback delete-shape-at(int);
     callback shape-toggled(int);
     callback invert-shape-toggled(int);
@@ -399,6 +407,42 @@ export component AdjustmentsSection inherits Section {
                                 }
                             }
                         }
+                    }
+                }
+            }
+            // Under the shapes of the mask a person was picked in, and
+            // only that mask: the same person on the other frames the
+            // paste or sync reached, one press, or put away with the
+            // cross.
+            if root.people-offer != "" && root.target == root.people-offer-mask: HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: root.people-offer;
+                    // Whole at the pointer when a narrow panel elides it.
+                    words: root.people-offer;
+                    icon: @image-url("../icons/users-round.svg");
+                    primary: true;
+                    horizontal-stretch: 1;
+                    clicked => { root.people-offer-used(); }
+                }
+                Rectangle {
+                    width: Theme.control-height;
+                    accessible-role: button;
+                    accessible-label: "Not now";
+                    accessible-action-default => { root.people-offer-dismissed(); }
+                    Text {
+                        text: "\u{00d7}";
+                        color: offer-cross.has-hover ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                    offer-cross := TipArea {
+                        words: "Not now";
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => { root.people-offer-dismissed(); }
                     }
                 }
             }

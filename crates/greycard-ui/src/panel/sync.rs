@@ -599,6 +599,8 @@ pub(crate) fn sync_onto(
         probe,
         Some(&shift),
     );
+    // A person picked on one of them is offered for the rest.
+    crate::panel::parts_all::reached(st, app, &preset, targets);
     (synced, shift)
 }
 
@@ -1420,6 +1422,8 @@ pub(crate) fn paste_onto(
         profiles,
         probe,
     );
+    // A person picked on one of them is offered for the rest.
+    crate::panel::parts_all::reached(st, app, &preset, &targets);
     // The current frame's step went to disk with the set's write when
     // a target shares its file (a version of it): one write, one
     // revision; else its own, below.

@@ -47,7 +47,7 @@ use self::{
     engine::{left_out_of, run},
     export::{export_other, finish_export, open_picture, scene_export, seeded, write_export},
     keep::keep_open,
-    masks::{MasksMade, learned_masks, masks_for},
+    masks::{MasksMade, learned_masks, masks_for, person_on},
     thumbs::{cached_thumbnail_noting, thumb_lookup},
 };
 
@@ -222,12 +222,33 @@ pub enum Job {
     /// does, taken only when nothing else is queued. Answered with
     /// `EditedKept` so the frame is asked for again.
     MasksFor(Frame),
+    /// A person picked on one frame looked for on another the same
+    /// People shape reached ("use this person on all"): answered with
+    /// `PersonOn`. One a frame, so a develop asked for goes first
+    /// between any two.
+    PersonOn(Box<PersonJob>),
     /// Fetch a model into the store; on its own thread.
     Fetch { model: &'static greycard_ai::Model },
     /// Fetch the lens database into its store; on its own thread.
     FetchLenses,
     /// The worker's own: a device arrived and nothing else is queued.
     Gpu,
+}
+
+/// A frame to look for a person on ([`Job::PersonOn`]).
+#[derive(Debug, Clone)]
+pub struct PersonJob {
+    /// Which run of "use this person on all" it is of.
+    pub batch: u64,
+    pub frame: Frame,
+    /// The frame's line's edit, and its quarter turns.
+    pub edit: Edit,
+    pub turn: u8,
+    /// The person the shape came to the frame of, which is left where
+    /// it is decided alone; none for everyone's.
+    pub carried: Option<greycard_edit::mask::Person>,
+    /// The person picked on the other frame, and how.
+    pub wanted: crate::ai::Picked,
 }
 
 /// What the learned denoiser did for a develop.
@@ -487,6 +508,13 @@ pub enum Outcome {
         file: Option<PathBuf>,
         people: Result<(Vec<crate::ai::Candidate>, &'static str, f64), String>,
     },
+    /// What came of a person looked for on `frame`, for run `batch` of
+    /// "use this person on all"; or why they could not be looked for.
+    PersonOn {
+        batch: u64,
+        frame: Frame,
+        found: Result<crate::ai::PersonOn, String>,
+    },
     /// What the Landscape button offers on the open picture, `file`,
     /// the largest first, with the provider and the seconds; or why it
     /// could not be found.
@@ -554,6 +582,10 @@ struct Queue {
     /// from the mask cache (`Job::MasksFor`): made here, behind
     /// everything else, since each is a decode and a model run.
     masks_for: std::collections::VecDeque<Frame>,
+    /// Frames to look for a person picked on another on
+    /// (`Job::PersonOn`), behind the open frame's own masks and the
+    /// exports.
+    people_on: std::collections::VecDeque<Job>,
     /// A Subject model arrived since the one loaded, if any: drop it,
     /// so the next Subject mask picks up the new file rather than the
     /// one already running.
@@ -773,12 +805,13 @@ impl FrameDevelop {
 
 /// Who a job's panic is reported to: the outcome the UI is waiting
 /// on for that job, when it is waiting on one.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Blame {
     Develop(u64),
     Mask(Key),
     People,
     Landscape,
+    PersonOn(u64, Frame),
     Nobody,
 }
 
@@ -794,6 +827,7 @@ impl Blame {
             Job::Mask { key, .. } => Blame::Mask(*key),
             Job::People => Blame::People,
             Job::Landscape => Blame::Landscape,
+            Job::PersonOn(job) => Blame::PersonOn(job.batch, job.frame.clone()),
             Job::Thumbnail { .. }
             | Job::CachedThumbnail { .. }
             | Job::Fetch { .. }
@@ -819,6 +853,11 @@ impl Blame {
             Blame::Landscape => Outcome::Landscape {
                 file: None,
                 offers: Err(message),
+            },
+            Blame::PersonOn(batch, frame) => Outcome::PersonOn {
+                batch,
+                frame,
+                found: Err(message),
             },
             Blame::Nobody => return None,
         })

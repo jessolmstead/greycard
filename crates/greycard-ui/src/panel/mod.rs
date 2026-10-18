@@ -21,6 +21,7 @@ pub(crate) mod look_rename;
 pub(crate) mod mask;
 pub(crate) mod menu;
 pub(crate) mod parts;
+pub(crate) mod parts_all;
 pub(crate) mod prefs;
 pub(crate) mod rawtherapee;
 pub(crate) mod recent;

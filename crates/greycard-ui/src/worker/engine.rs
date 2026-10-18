@@ -67,6 +67,9 @@ pub(super) fn run(
     // (`Job::MasksFor`), made on the first such frame and dropped when
     // none is waiting, as `set_ai` is for a set's frames.
     let mut masks_ai: Option<Ai> = None;
+    // The same for a person picked on one frame and looked for on the
+    // others (`Job::PersonOn`), dropped when none is waiting.
+    let mut people_ai: Option<Ai> = None;
     let cache = greycard_ai::DenoiseCache::user()
         .inspect_err(|e| tracing::warn!("no denoise cache: {e}"))
         .ok();
@@ -145,7 +148,14 @@ pub(super) fn run(
                 if let Some((key, shape, model)) = q.masks.pop_front() {
                     break Job::Mask { key, shape, model };
                 }
+                // An export before a person looked for: the export was
+                // asked first and is the thing delivered, while a frame
+                // the run has not reached yet can still be picked by
+                // hand.
                 if let Some(job) = q.exports.pop_front() {
+                    break job;
+                }
+                if let Some(job) = q.people_on.pop_front() {
                     break job;
                 }
                 // Not while a frame is open in the editor: a decode and
@@ -245,6 +255,54 @@ pub(super) fn run(
         // never held at once.
         if matches!(job, Job::Open { .. } | Job::Develop { .. }) {
             shown = None;
+        }
+        // A person looked for on a frame of a run of "use this person on
+        // all", on an `Ai` of its own with the editor's People model
+        // lent to it, so the open frame's views and people stay its
+        // own. A panic in it is that frame's answer: the open frame's
+        // develop, denoise and masks are not what failed and are kept;
+        // the borrowed `Ai` is not trusted and goes, the model with it.
+        if let Job::PersonOn(job) = job {
+            let other = people_ai.get_or_insert_with(Ai::new);
+            ai.lend_parts(other);
+            let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                person_on(&job, other, lenses.as_deref())
+            }));
+            let found = match held {
+                Ok(found) => {
+                    if let Some(other) = people_ai.as_mut() {
+                        other.lend_parts(&mut ai);
+                    }
+                    found
+                }
+                Err(payload) => {
+                    tracing::warn!(
+                        "the person picked, on {}: the worker panicked: {}",
+                        job.frame.said(),
+                        panic_message(payload.as_ref())
+                    );
+                    people_ai = None;
+                    Err(format!(
+                        "the worker panicked: {}",
+                        panic_message(payload.as_ref())
+                    ))
+                }
+            };
+            // The run is over: its `Ai` goes, and the model with it
+            // unless the open frame has a People shape of its own, as a
+            // develop of an edit without one would have let it go.
+            if lock.lock().expect("worker queue").people_on.is_empty() {
+                people_ai = None;
+                if !picking && !base.as_ref().is_some_and(|b| has_live_part(&b.edit)) {
+                    ai.release_parts();
+                }
+            }
+            deliver(Outcome::PersonOn {
+                batch: job.batch,
+                frame: job.frame,
+                found,
+            });
+            continue;
         }
         // A frame of a set: written, counted, and the set said to be
         // done after its last; a panic in it is that frame's failure.
@@ -387,9 +445,14 @@ pub(super) fn run(
         if matches!(job, Job::Open { .. }) {
             picking = false;
         }
+        // Nor while a run of "use this person on all" still has frames
+        // queued: it borrows the model between them, and would load it
+        // from disk again for every frame while the user browses. Its
+        // last frame lets it go.
         if let Job::Open { edit, .. } | Job::Develop { edit, .. } = &job
             && !has_live_part(edit)
             && !picking
+            && lock.lock().expect("worker queue").people_on.is_empty()
         {
             ai.release_parts();
         }
@@ -611,9 +674,10 @@ pub(super) fn run(
             | Job::CachedThumbnail { .. }
             | Job::ExportSet { .. }
             | Job::ExportFrame { .. }
+            | Job::PersonOn(_)
             | Job::Keep { .. } => {
                 unreachable!(
-                    "fetches and thumbnails run on threads of their own; the device, a set's frames and a save are taken above"
+                    "fetches and thumbnails run on threads of their own; the device, a set's frames, a save and a person looked for are taken above"
                 )
             }
         }));

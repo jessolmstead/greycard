@@ -126,6 +126,10 @@ pub(crate) struct Develop {
     /// The asks put down with Escape on the open picture: not brought
     /// back by returning to the Masks tab, only by choosing their mask.
     pub(crate) part_dismissed: std::collections::HashSet<Key>,
+    /// The frames a paste or a sync took People shapes to, a person
+    /// picked on one of them offered for the rest, and the run that
+    /// looks for them there ("use this person on all").
+    pub(crate) people_all: panel::parts_all::All,
     /// A dropper's press, while the pointer is down.
     pub(crate) picking: Option<Picking>,
     /// A shape's handle being dragged.

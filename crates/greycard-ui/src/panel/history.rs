@@ -418,6 +418,9 @@ pub(crate) fn take_current_with(st: &mut State, app: &App, worker: &Worker, save
     // The panel is the sidecar's again: the command line's overrides,
     // if they were on it, are done with (`panel_state`).
     st.launch.overridden = None;
+    // An undo, a redo, a row or a snapshot made current: a person
+    // offered for the other frames was picked on the state left.
+    crate::panel::parts_all::history_moved(st, app);
     // In culling the sidecar's current state is what the leaving
     // develops; the history moved, and the mode ends on that.
     if st.culling.cull.is_some() {

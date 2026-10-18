@@ -1089,6 +1089,11 @@ export component App inherits Window {
     in-out property <[string]> landscape-offers;
     in-out property <[string]> landscape-kinds;
     in-out property <bool> landscape-menu-shown: false;
+    // "Use this person on all N pictures" after a person picked, or "".
+    in-out property <string> people-offer;
+    in-out property <int> people-offer-mask;
+    callback people-offer-used();
+    callback people-offer-dismissed();
     callback delete-shape-at(int);
     callback shape-toggled(int);
     callback invert-shape-toggled(int);
@@ -2796,6 +2801,10 @@ export component App inherits Window {
                             landscape-offers <=> root.landscape-offers;
                             landscape-kinds <=> root.landscape-kinds;
                             landscape-menu-shown <=> root.landscape-menu-shown;
+                            people-offer: root.people-offer;
+                            people-offer-mask: root.people-offer-mask;
+                            people-offer-used => { root.people-offer-used(); }
+                            people-offer-dismissed => { root.people-offer-dismissed(); }
                             delete-shape-at(a) => { root.delete-shape-at(a); }
                             shape-toggled(a) => { root.shape-toggled(a); }
                             invert-shape-toggled(a) => { root.invert-shape-toggled(a); }

@@ -812,6 +812,9 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     // undo or a preset that brings a look says so at once.
     show_looks(st, &edit.look_lut, app);
     app.set_retouch_enabled(edit.retouch.enabled);
+    // "Use this person on all" only while the shape still has them,
+    // under the mask it is in.
+    crate::panel::parts_all::shown(st, edit, app);
     // The look as the panel now holds it, the baseline for the next
     // change (see `mask::look_edited`).
     *st.develop.look_seen.borrow_mut() = Some(read_look(app));

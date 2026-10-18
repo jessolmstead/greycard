@@ -434,6 +434,7 @@ impl Worker {
             }
             Job::People => q.people = true,
             Job::Landscape => q.landscape = true,
+            job @ Job::PersonOn(_) => q.people_on.push_back(job),
             Job::Keep {
                 frame,
                 edit,

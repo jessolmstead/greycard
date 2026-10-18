@@ -369,3 +369,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§354. The capture time shifted](notes/354-the-capture-time-shifted.md) (2026-10-18)
 - [§355. A capture time corrected in Lightroom](notes/355-a-capture-time-corrected-in-lightroom.md) (2026-10-18)
 - [§356. The file chooser out of the export](notes/356-the-file-chooser-out-of-the-export.md) (2026-10-18)
+- [§357. Use this person on all the pictures](notes/357-use-this-person-on-all-the-pictures.md) (2026-10-18)

@@ -190,7 +190,17 @@ everyone's; press **Esc**, or carry on, and the mask stays empty. If
 you were on another tab, the outlines come back when you return to
 **Masks**. On a picture with no one in it, the mask stays empty and
 the status line says so. Nothing stops a paste or sync onto many
-pictures: each one asks when you open it. An export with a People
+pictures: each one asks when you open it. After a paste or sync onto
+several pictures, a person clicked on one of them brings up **Use this
+person on all N pictures** under the shapes: press it and greycard
+looks for that person on the other pictures that still have the mask
+as it came, by their clothes, hair and skin and by where they stood on
+the picture you clicked, and gives it to them where it finds them
+(each picture's history gets a step, "Person from" the picture you
+clicked, that undoes on its own). Where it can't tell, the picture
+keeps asking, and the status line counts them ("used this person on 6
+of 8 pictures; 2 not found"); the cross beside it puts the offer away.
+An export with a People
 shape that hasn't found its person writes the mask empty and says so
 in its result line and the log ("a People mask needs a person picked",
 or "a People mask's person isn't in this picture").

@@ -183,3 +183,42 @@ pub(super) fn masks_for(
         MasksMade::Short
     }
 }
+
+/// A person picked on one frame, looked for on another frame of the
+/// set ([`Job::PersonOn`]): the frame decoded and developed reduced
+/// under its line's edit, as [`masks_for`] does, and its people found
+/// on the People model's look-neutral view of that.
+pub(super) fn person_on(
+    job: &PersonJob,
+    ai: &mut Ai,
+    lenses: Option<&greycard_lens::Database>,
+) -> Result<crate::ai::PersonOn, String> {
+    let started = Instant::now();
+    // A Fill's patch is the open frame's alone, and refuses the reduced
+    // develop; the people are found on the base, which it is not in.
+    let mut edit = job.edit.clone();
+    edit.retouch = Default::default();
+    let developed = crate::reduced::develop(&job.frame.path, &edit, job.turn, lenses)
+        .map_err(|why| why.to_string())?;
+    // Another file: its hash is the one a person found here records.
+    ai.forget(Some(job.frame.path.clone()));
+    let found = ai.person_on(
+        &developed.image,
+        developed.kind,
+        job.turn,
+        job.carried.as_ref(),
+        &job.wanted,
+    );
+    let what = match &found {
+        Ok(crate::ai::PersonOn::Found(_)) => "found".to_string(),
+        Ok(crate::ai::PersonOn::Settled) => "its own person decided already".to_string(),
+        Ok(crate::ai::PersonOn::NotFound) => "not found".to_string(),
+        Err(why) => format!("not looked for ({why})"),
+    };
+    tracing::info!(
+        "the person picked: {what} on {} in {:.1} s",
+        job.frame.said(),
+        started.elapsed().as_secs_f64()
+    );
+    found
+}

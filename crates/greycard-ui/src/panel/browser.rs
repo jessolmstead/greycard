@@ -2080,8 +2080,9 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     };
     st.develop.placing = None;
     app.set_placing("".into());
-    // Its people are not the last picture's.
+    // Its people are not the last picture's, nor is an offer of one.
     crate::panel::parts::another_picture(st);
+    crate::panel::parts_all::another_picture(st, app);
     // Another picture: a guide stroke drawn on the last one
     // means nothing here, and the source's size is not known
     // again until this frame's develop lands — a turn before

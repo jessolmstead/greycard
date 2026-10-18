@@ -936,6 +936,7 @@ impl State {
                 landscape_offer: None,
                 part_asks: HashMap::new(),
                 part_dismissed: Default::default(),
+                people_all: Default::default(),
                 picking: None,
                 mask_drag: None,
                 rasters: HashMap::new(),
@@ -1018,6 +1019,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     sync::install(app, &state);
     panel::mask::install(app, &state, &worker);
     panel::parts::install(app, &state);
+    panel::parts_all::install(app, &state, &worker);
     panel::landscape::install(app, &state);
     panel::browser::install(app, &state, &worker);
     panel::words::install(app, &state, &worker);

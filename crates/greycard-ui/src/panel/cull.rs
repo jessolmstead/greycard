@@ -281,6 +281,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
         crate::panel::parts::stopped(st);
     } else {
         crate::panel::parts::another_picture(st);
+        crate::panel::parts_all::another_picture(st, app);
     }
     crate::panel::browser::panel_frame(st, Some(c));
     show_edit(st, &edit, app, None);

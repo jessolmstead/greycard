@@ -234,8 +234,16 @@ fn add(st: &mut State, app: &App, pending: &Pending, person: Option<Person>) -> 
 }
 
 /// Put the person `person` (none: everyone) into the placed part
-/// `component` of adjustment `id`; whether it went in.
-fn repick(st: &mut State, app: &App, id: u64, component: usize, person: Option<Person>) -> bool {
+/// `component` of adjustment `id`, picked out of an ask of two or more
+/// when `group`; whether it went in.
+fn repick(
+    st: &mut State,
+    app: &App,
+    id: u64,
+    component: usize,
+    person: Option<Person>,
+    group: bool,
+) -> bool {
     let edit = read_edit(app, &st.develop.edit, st.develop.target);
     st.develop.edit = edit;
     let Some(c) = st
@@ -248,13 +256,14 @@ fn repick(st: &mut State, app: &App, id: u64, component: usize, person: Option<P
     else {
         return false;
     };
+    let before = c.shape.clone();
     if let Shape::Part {
         person: p,
         route,
         phrase,
     } = &mut c.shape
     {
-        *p = person;
+        *p = person.clone();
         let route = route.clone();
         let label = greycard_edit::mask::part_of(phrase).map_or("part", |k| k.label);
         let status = before_run(&route)
@@ -263,6 +272,8 @@ fn repick(st: &mut State, app: &App, id: u64, component: usize, person: Option<P
         st.develop.part_asks.remove(&(id, component));
         show_edit(st, &st.develop.edit, app, st.develop.target);
         app.set_status(status.into());
+        // The other frames a paste or a sync took it to, offered.
+        crate::panel::parts_all::picked(st, app, id, &before, person.as_ref(), group);
         return true;
     }
     false
@@ -281,6 +292,7 @@ pub(crate) fn pressed(st: &mut State, app: &App, x: f32, y: f32) -> Option<bool>
         return Some(false);
     };
     let person = choosing.ask.people[i].person();
+    let group = choosing.ask.people.len() > 1;
     let choosing = st.develop.choosing.take().expect("checked above");
     app.set_placing("".into());
     Some(match choosing.component {
@@ -294,7 +306,7 @@ pub(crate) fn pressed(st: &mut State, app: &App, x: f32, y: f32) -> Option<bool>
             },
             Some(person),
         ),
-        Some(c) => repick(st, app, choosing.id, c, Some(person)),
+        Some(c) => repick(st, app, choosing.id, c, Some(person), group),
     })
 }
 
@@ -316,7 +328,7 @@ pub(crate) fn all_people(st: &mut State, app: &App) -> bool {
             },
             None,
         ),
-        Some(c) => repick(st, app, choosing.id, c, None),
+        Some(c) => repick(st, app, choosing.id, c, None, false),
     }
 }
 

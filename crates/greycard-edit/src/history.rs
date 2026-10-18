@@ -68,6 +68,12 @@ pub fn paste_label(from: &str) -> String {
     format!("Paste from {from}")
 }
 
+/// A People mask's person on a frame, found there as the one picked on
+/// the frame named `from` (its file name): "use this person on all".
+pub fn person_label(from: &str) -> String {
+    format!("Person from {from}")
+}
+
 /// A profile from another editor imported as a frame's state, named
 /// for the editor: "Imported from RawTherapee".
 pub fn import_label(from: &str) -> String {

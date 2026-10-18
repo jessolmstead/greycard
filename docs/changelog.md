@@ -125,6 +125,12 @@ design note behind it.
   hue. Sky masks are made again once, and a frame edited with a Sky,
   Landscape or People mask gets its thumbnail remade once
   ([§345](https://github.com/jessolmstead/greycard/blob/master/docs/notes/345-the-sky-matte-over-a-diluted-map-the-sure-sky-held-and-its-pockets.md))
+- People: after a paste or sync of a People mask onto several
+  pictures, clicking the person on one of them offers "Use this person
+  on all N pictures". Each other picture is looked at on its own and
+  gets a history step of its own; where the person is not found it
+  keeps asking, and the status line says how many
+  ([§357](https://github.com/jessolmstead/greycard/blob/master/docs/notes/357-use-this-person-on-all-the-pictures.md))
 
 ### Cameras
 

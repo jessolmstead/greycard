@@ -313,6 +313,21 @@ impl Ask {
     }
 }
 
+/// What became of a person picked on one frame, looked for on another
+/// frame a paste or a sync took the same People shape to ("use this
+/// person on all").
+#[derive(Debug, Clone, PartialEq)]
+pub enum PersonOn {
+    /// The shape's own person is decided alone here already: it is
+    /// left as it is.
+    Settled,
+    /// The person picked is found here: this frame's own pick of them,
+    /// as a click on their face here would store it.
+    Found(greycard_edit::mask::Person),
+    /// Not found here, nor told apart from the others: left asking.
+    NotFound,
+}
+
 /// A person on a picture as the panel shows and picks them.
 #[derive(Debug, Clone)]
 pub struct Candidate {
@@ -1432,6 +1447,73 @@ impl Ai {
         Ok((out, sam.providers().0, start.elapsed().as_secs_f64()))
     }
 
+    /// `wanted`, a person picked on another frame, on the look-neutral
+    /// view of `image` (a frame's reduced develop, at `turn`), for a
+    /// People shape that came here of `carried`: left as it is when
+    /// `carried` is decided alone here, else this frame's own pick of
+    /// `wanted` when they are found ([`same_person`]), else not found.
+    pub fn person_on(
+        &mut self,
+        image: &WorkingImage,
+        kind: crate::finish::Source,
+        turn: u8,
+        carried: Option<&greycard_edit::mask::Person>,
+        wanted: &Picked,
+    ) -> Result<PersonOn, String> {
+        greycard_ai::runtime::status().map_err(|why| why.to_string())?;
+        let store = self
+            .store
+            .clone()
+            .ok_or("no cache directory for the models")?;
+        self.parts_model(&store)?;
+        // One frame's develop a call: the stamp says nothing more.
+        let stamp = 1;
+        self.parts_view_of(stamp, turn, image, kind);
+        let hash = self.picture_hash();
+        let Ai {
+            sam3,
+            presets,
+            encodings,
+            parts_view,
+            people,
+            ..
+        } = self;
+        let sam = sam3.as_mut().expect("the People model was just loaded");
+        let presets = presets.as_ref().expect("the table was just read");
+        let view = parts_view.as_ref().expect("the view was just made");
+        let size = unturned_size(image, turn);
+        let mut region = |r: sam3::Rect| parts_region(image, kind, turn, size, r);
+        let mut picture = Picture {
+            preview: &view.preview,
+            luma: &view.luma,
+            size,
+            key: stamp,
+            region: &mut region,
+            encodings,
+            matte: None,
+        };
+        let found = people_of(sam, presets, &mut picture, people)?;
+        let aspect = image.height as f32 / image.width as f32;
+        let vaspect = view.preview.height as f32 / view.preview.width as f32;
+        let candidates: Vec<Candidate> = found
+            .iter()
+            .map(|q| Candidate::of(q, turn, aspect, &hash))
+            .collect();
+        if let Some(p) = carried {
+            let own = hash.is_some() && p.picture == hash;
+            if let Choice::Person(..) = settle(p, found, &candidates, own, turn, (aspect, vaspect))
+            {
+                return Ok(PersonOn::Settled);
+            }
+        }
+        Ok(
+            match same_person(wanted, found, &candidates, turn, (aspect, vaspect)) {
+                Some(i) => PersonOn::Found(candidates[i].person()),
+                None => PersonOn::NotFound,
+            },
+        )
+    }
+
     /// The People model's view of base develop `stamp`, made at `turn`
     /// (`parts_view`), made if it is not the one kept; the encodings
     /// and the people made on the one before go with it.
@@ -2174,6 +2256,72 @@ fn decided(choice: Choice, people: Vec<Candidate>) -> Result<usize, Unresolved> 
         Choice::Nobody => (None, Asking::SomeoneElse),
     };
     Err(Unresolved::Ask(Ask { people, guess, why }))
+}
+
+/// Which face on another frame of the set a person picked on one frame
+/// is, for "use this person on all": the face the match decides alone
+/// (`choice`, `sam3::choose` of their signature: the one person of a
+/// portrait within BOUND), else on a group the match's guess (within
+/// BOUND and clearly the nearest) when it is also the face where theirs
+/// was on the frame picked on (`placed`, `at_face` of the pick's
+/// place). On a group colors alone never decide, and neither does the
+/// place alone, which is whoever stands there; the two together are
+/// the people of one sequence. A frame where they part, reframed or
+/// its people moved, finds no one and is left asking.
+///
+/// A person picked out of a group (`group`) is one of several who were
+/// near in colors there, so on a frame where the match decides alone,
+/// one face found, the place must agree too: a groupmate standing on
+/// her own is not taken for them. A person of a portrait is decided by
+/// their colors alone, as a pasted mask's is.
+fn taken(choice: Choice, placed: Option<usize>, group: bool) -> Option<usize> {
+    match choice {
+        Choice::Person(i, _) if !group || placed == Some(i) => Some(i),
+        Choice::Ask { guess: Some(g) } if placed == Some(g) => Some(g),
+        Choice::Person(..) | Choice::Ask { .. } | Choice::Nobody => None,
+    }
+}
+
+/// A person picked for a People shape, as "use this person on all"
+/// looks for them on the other frames.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Picked {
+    /// As the pick stored them.
+    pub person: greycard_edit::mask::Person,
+    /// Picked out of an ask of two or more people.
+    pub group: bool,
+    /// The frame picked on, its quarter turns and its height over its
+    /// width as it stood: the place is compared only on a frame that
+    /// stands the same way.
+    pub turn: u8,
+    pub aspect: f32,
+}
+
+/// [`taken`] of `wanted` among `found` (and `candidates`, the same as
+/// the panel has them), on a picture turned `turn`, `aspect` its
+/// height over its width and `vaspect` the People view's. A frame
+/// turned another way than the one picked on, or of another shape,
+/// has no place to compare: there the place is unknown, which on a
+/// group takes no one.
+fn same_person(
+    wanted: &Picked,
+    found: &[sam3::Person],
+    candidates: &[Candidate],
+    turn: u8,
+    (aspect, vaspect): (f32, f32),
+) -> Option<usize> {
+    let p = &wanted.person;
+    let w = sam3::Signature::new(
+        sam3::SignatureKind::from_name(&p.signature.kind),
+        p.signature.values.clone(),
+    )?;
+    let there: Vec<(sam3::Signature, [f32; 2])> =
+        found.iter().map(|q| (q.signature.clone(), q.at)).collect();
+    let f = turn_frac((4 - turn % 4) % 4, [p.at[0], p.at[1] / aspect]);
+    let choice = sam3::choose(&w, [f[0], f[1] * vaspect], &there);
+    let alike = wanted.turn % 4 == turn % 4 && (wanted.aspect - aspect).abs() <= 0.01;
+    let placed = alike.then(|| at_face(candidates, p.at)).flatten();
+    taken(choice, placed, wanted.group)
 }
 
 /// The people on the preview `picture` shows, found once for its key.
@@ -3142,6 +3290,89 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(matches!(decided(Choice::Person(2, 0.1), one(3)), Ok(2)));
+    }
+
+    /// A person picked on one frame of a group, looked for on another
+    /// frame of it: found where the match's guess and the place she was
+    /// picked at agree; not where they part, nor where her colors leave
+    /// no guess; on a portrait of her, found where she stood, and never
+    /// by her colors alone, since she was picked out of a group; on a
+    /// stranger's, not. A frame turned or shaped otherwise has no place
+    /// to compare. Picked on a portrait of her, her colors decide alone
+    /// wherever she stands.
+    #[test]
+    fn a_person_picked_on_one_frame_is_found_on_another_by_colors_and_place() {
+        let a = 0.75;
+        let on = |found: &[sam3::Person]| -> Vec<Candidate> {
+            found
+                .iter()
+                .map(|q| Candidate::of(q, 0, a, &Some("another".into())))
+                .collect()
+        };
+        let left = [0.1, 0.2, 0.22, 0.36];
+        let right = [0.6, 0.2, 0.72, 0.36];
+        let hers = [Some(60.0), Some(40.0), Some(30.0)];
+        let picked = Picked {
+            person: Candidate::of(
+                &found_person(left, hers, a),
+                0,
+                a,
+                &Some("picked on".into()),
+            )
+            .person(),
+            group: true,
+            turn: 0,
+            aspect: a,
+        };
+        let find = |found: &[sam3::Person]| same_person(&picked, found, &on(found), 0, (a, a));
+        let her_later = |face| found_person(face, [Some(61.0), Some(41.0), Some(31.0)], a);
+        let stranger = |face| found_person(face, [Some(50.0), Some(10.0), Some(90.0)], a);
+        let twin = |face| found_person(face, [Some(59.0), Some(39.0), Some(29.0)], a);
+        // Where she was, and the nearest by far: her.
+        assert_eq!(find(&[her_later(left), stranger(right)]), Some(0));
+        assert_eq!(find(&[stranger(right), her_later(left)]), Some(1));
+        // The two moved places: the guess is her, the place someone
+        // else's, so no one.
+        assert_eq!(find(&[stranger(left), her_later(right)]), None);
+        // Someone as alike as a stranger in a group can be beside her:
+        // no guess, so no one, whatever stands at her place.
+        assert_eq!(find(&[her_later(left), twin(right)]), None);
+        // Alone on a frame: her where she stood, not elsewhere, since a
+        // groupmate alone is as near in colors as she is.
+        assert_eq!(find(&[her_later(left)]), Some(0));
+        assert_eq!(find(&[her_later(right)]), None);
+        // A stranger's portrait, at her very place: no one.
+        assert_eq!(find(&[stranger(left)]), None);
+        assert_eq!(find(&[]), None);
+        // Turned another way, or of another shape: no place to compare.
+        let turned = |found: &[sam3::Person]| same_person(&picked, found, &on(found), 2, (a, a));
+        assert_eq!(turned(&[her_later(left), stranger(right)]), None);
+        let wider = |found: &[sam3::Person]| same_person(&picked, found, &on(found), 0, (0.5, a));
+        assert_eq!(wider(&[her_later(left), stranger(right)]), None);
+        // Picked on a portrait of her: her colors decide alone, wherever
+        // she stands and however the frame is turned.
+        let portrait = Picked {
+            group: false,
+            ..picked.clone()
+        };
+        let alone = |found: &[sam3::Person], turn: u8| {
+            same_person(&portrait, found, &on(found), turn, (a, a))
+        };
+        assert_eq!(alone(&[her_later(right)], 0), Some(0));
+        assert_eq!(alone(&[her_later(right)], 2), Some(0));
+        assert_eq!(alone(&[stranger(left)], 0), None);
+        // The rule itself: a decision stands, from a group only at the
+        // place; a guess only at the place.
+        assert_eq!(taken(Choice::Person(2, 0.1), None, false), Some(2));
+        assert_eq!(taken(Choice::Person(2, 0.1), None, true), None);
+        assert_eq!(taken(Choice::Person(2, 0.1), Some(2), true), Some(2));
+        assert_eq!(
+            taken(Choice::Ask { guess: Some(1) }, Some(1), true),
+            Some(1)
+        );
+        assert_eq!(taken(Choice::Ask { guess: Some(1) }, Some(0), true), None);
+        assert_eq!(taken(Choice::Ask { guess: None }, Some(0), true), None);
+        assert_eq!(taken(Choice::Nobody, Some(0), false), None);
     }
 
     /// An export of a part not settled writes it empty and says why:
