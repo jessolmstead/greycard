@@ -816,7 +816,15 @@ fn main() {
             save_mask(&out.join(format!("{stem}.feather.{name}.png")), &feather);
             let t = Instant::now();
             let matte = linear.as_ref().and_then(|lin| {
-                greycard_ai::matte::color_line(&outline, &prior, lin, &[], lin.width, lin.height)
+                greycard_ai::matte::color_line(
+                    &outline,
+                    &prior,
+                    lin,
+                    &[],
+                    greycard_ai::matte::Hold::None,
+                    lin.width,
+                    lin.height,
+                )
             });
             let t_matte = t.elapsed().as_secs_f64();
             if let Some(m) = &matte {

@@ -311,7 +311,15 @@ fn the_sky_over_real_frames() {
                     }
                 }
                 let t = Instant::now();
-                let _ = greycard_ai::matte::color_line(outline, prior, &small, &[], w, h);
+                let _ = greycard_ai::matte::color_line(
+                    outline,
+                    prior,
+                    &small,
+                    &[],
+                    greycard_ai::matte::Hold::Sure,
+                    w,
+                    h,
+                );
                 format!("{:.3}s at {w}x{h}", t.elapsed().as_secs_f64())
             }
             _ => "-".to_string(),
@@ -1448,5 +1456,122 @@ fn the_dehaze_viewport_against_the_export_on_real_frames() {
                 dots(&viewport),
             );
         }
+    }
+}
+
+/// The models' inputs for the AI crate's real-frame harnesses
+/// (`greycard-ai`'s `sky_matte` example, `tests/landscape.rs`), made
+/// as the worker makes them: each raw of the folders
+/// `GREYCARD_SAMPLES` names (a path list; copies or links, since
+/// nothing is written beside them) opened and developed under the
+/// default edit, then written to `GREYCARD_DUMP` as `<stem>.png`, the
+/// models' preview (`ai::preview`), and `<stem>.lin`, the linear base
+/// at `GREYCARD_DUMP_LONG` on its long side (box-averaged; the frame's
+/// own size without it): b"GCLN", u32 width, u32 height, then f16 RGB
+/// in the working space. A frame already dumped is passed over.
+/// `GREYCARD_MODELS` names the store the develop reads, as the other
+/// real-frame suites take it. Ignored, and it passes at once without
+/// the three variables.
+#[test]
+#[ignore]
+fn dump_the_models_inputs() {
+    let (Some(samples), Some(out), Some(models)) = (
+        std::env::var_os("GREYCARD_SAMPLES"),
+        std::env::var_os("GREYCARD_DUMP"),
+        std::env::var_os("GREYCARD_MODELS"),
+    ) else {
+        return;
+    };
+    let out = PathBuf::from(out);
+    std::fs::create_dir_all(&out).unwrap();
+    let long: Option<usize> = std::env::var("GREYCARD_DUMP_LONG")
+        .ok()
+        .and_then(|s| s.parse().ok());
+    let store = greycard_ai::Store::at(models);
+    let mut develop_ai = Ai::for_test(store, vec![greycard_ai::Provider::Cpu]);
+    let mut frames: Vec<PathBuf> = std::env::split_paths(&samples)
+        .flat_map(|d| {
+            std::fs::read_dir(d)
+                .unwrap()
+                .filter_map(|e| e.ok().map(|e| e.path()))
+        })
+        .filter(|p| greycard_core::decode::is_raw_path(p))
+        .collect();
+    frames.sort();
+    let deliver: Deliver = Arc::new(|_| {});
+    for path in frames {
+        let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+        if out.join(format!("{stem}.lin")).exists() {
+            continue;
+        }
+        let t = Instant::now();
+        let input = match open(&path) {
+            Ok((input, _)) => input,
+            Err(e) => {
+                println!("{stem}: will not open: {e:#}");
+                continue;
+            }
+        };
+        let mut base = None;
+        let _ = develop_job(
+            &input,
+            &Edit::default(),
+            0,
+            1,
+            &mut base,
+            &mut None,
+            &mut develop_ai,
+            None,
+            None,
+            &mut None,
+            &deliver,
+        );
+        let Some(b) = base.as_ref() else {
+            println!("{stem}: did not develop");
+            continue;
+        };
+        let develop = t.elapsed().as_secs_f64();
+        let rgb = crate::ai::preview(&b.image, &b.edit, b.source);
+        image::RgbImage::from_raw(rgb.width as u32, rgb.height as u32, rgb.data.clone())
+            .unwrap()
+            .save(out.join(format!("{stem}.png")))
+            .unwrap();
+        let (fw, fh) = (b.image.width, b.image.height);
+        let s = long.map_or(1.0, |l| (l as f64 / fw.max(fh) as f64).min(1.0));
+        let (w, h) = (
+            ((fw as f64 * s).round() as usize).max(1),
+            ((fh as f64 * s).round() as usize).max(1),
+        );
+        let c = WorkingImage::CHANNELS;
+        let mut bytes = Vec::with_capacity(12 + w * h * 6);
+        bytes.extend_from_slice(b"GCLN");
+        bytes.extend_from_slice(&(w as u32).to_le_bytes());
+        bytes.extend_from_slice(&(h as u32).to_le_bytes());
+        for y in 0..h {
+            let (y0, y1) = (y * fh / h, ((y + 1) * fh / h).max(y * fh / h + 1));
+            for x in 0..w {
+                let (x0, x1) = (x * fw / w, ((x + 1) * fw / w).max(x * fw / w + 1));
+                let mut acc = [0.0f64; 3];
+                for yy in y0..y1 {
+                    for xx in x0..x1 {
+                        let i = (yy * fw + xx) * c;
+                        for (k, a) in acc.iter_mut().enumerate() {
+                            *a += b.image.data[i + k] as f64;
+                        }
+                    }
+                }
+                let n = ((y1 - y0) * (x1 - x0)) as f64;
+                for v in acc {
+                    bytes.extend_from_slice(&half::f16::from_f32((v / n) as f32).to_le_bytes());
+                }
+            }
+        }
+        std::fs::write(out.join(format!("{stem}.lin")), bytes).unwrap();
+        println!(
+            "{stem}: {fw}x{fh}, preview {}x{}, linear {w}x{h}, develop {develop:.1}s, total {:.1}s",
+            rgb.width,
+            rgb.height,
+            t.elapsed().as_secs_f64()
+        );
     }
 }

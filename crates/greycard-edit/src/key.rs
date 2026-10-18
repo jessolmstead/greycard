@@ -6,6 +6,9 @@
 //! edit itself, less what never reaches a pixel (an adjustment's name,
 //! the schema version it was written at); a recipe number for the
 //! pipeline, raised when the same edit comes to make another picture;
+//! the version of the learned stages each of its Sky, Landscape and
+//! People masks is made by ([`mask_pipelines`]), so a mask made again
+//! by a newer rule makes the frames that have one again and no other;
 //! the contents of every file outside the sidecar that the develop
 //! reads by name: the look's table (a `.cube` or a HaldCLUT, the camera
 //! match's fitted tables among them, and its variant for the edit's
@@ -34,6 +37,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::SystemTime;
 
 use crate::look::LutChoice;
+use crate::mask::{LandscapeGroup, Shape};
 use crate::{Edit, Sidecar};
 
 /// The pipeline's own part of the key: raise it when the develop or
@@ -46,6 +50,38 @@ use crate::{Edit, Sidecar};
 /// 3: highlights by the frame's own range and whites pivoting at the
 /// span's foot, 2026-10-13.
 pub const DEVELOP_RECIPE: u32 = 3;
+
+/// The learned masks' stages, by version: raise one when its raster
+/// comes to be another from the same shape. greycard-ui's mask cache
+/// keys its rasters by these, and the develop key of an edit with such
+/// a mask takes them in, so the pictures kept of it are made again.
+///
+/// The Sky's: the prior, the gate, SAM's outline and the color-line
+/// matte. 2: the gate's core over the kept queries, 2026-10-17. 3: the
+/// sure sky held up over a diluted map, and its pockets, 2026-10-17.
+pub const SKY_PIPELINE: &str = "sky-3";
+/// The landscape groups' gates and edges.
+pub const LANDSCAPE_PIPELINE: &str = "landscape-2";
+/// A People mask's routes and the people found.
+pub const PART_PIPELINE: &str = "part-2";
+/// A whole person's edge, Subject's once a Subject model is in.
+pub const PERSON_EDGE: &str = "person-edge-1";
+
+/// The learned stages `shape`'s raster is made by: Foliage is cut by
+/// the found sky, so takes the sky's too; every People mask takes the
+/// whole person's edge, which only a whole person reads, so a change
+/// to that edge remakes the pictures of the other routes once as well.
+pub fn mask_pipelines(shape: &Shape) -> &'static [&'static str] {
+    match shape {
+        Shape::Sky { .. } => &[SKY_PIPELINE],
+        Shape::Landscape {
+            group: LandscapeGroup::Foliage,
+        } => &[LANDSCAPE_PIPELINE, SKY_PIPELINE],
+        Shape::Landscape { .. } => &[LANDSCAPE_PIPELINE],
+        Shape::Part { .. } => &[PART_PIPELINE, PERSON_EDGE],
+        _ => &[],
+    }
+}
 
 /// What the develop of `edit` reads outside the sidecar, with the
 /// directories it reads them from: the look directory and the profile
@@ -118,6 +154,23 @@ impl Edit {
         profiles: Option<&Path>,
         lenses: Option<&str>,
     ) -> u64 {
+        self.develop_key_by(looks, profiles, lenses, |shape| {
+            mask_pipelines(shape)
+                .iter()
+                .map(|v| v.to_string())
+                .collect()
+        })
+    }
+
+    /// [`Edit::develop_key_in`] with the masks' stages as `pipelines`
+    /// names them: for the tests, which raise one.
+    fn develop_key_by(
+        &self,
+        looks: Option<&Path>,
+        profiles: Option<&Path>,
+        lenses: Option<&str>,
+        pipelines: impl Fn(&Shape) -> Vec<String>,
+    ) -> u64 {
         // What reaches no pixel is taken out: the version the edit was
         // written at (a migration that changes nothing changes no
         // picture), an adjustment's name, and the light a mask's
@@ -137,6 +190,19 @@ impl Edit {
         let json = serde_json::to_vec(&edit).expect("an edit serializes");
         hasher.update(&(json.len() as u64).to_le_bytes());
         hasher.update(&json);
+        // The learned masks' stages, each once, in order: only an edit
+        // with such a mask takes them in.
+        let stages: std::collections::BTreeSet<String> = self
+            .adjustments
+            .iter()
+            .flat_map(|a| &a.mask.components)
+            .flat_map(|c| pipelines(&c.shape))
+            .collect();
+        for stage in stages {
+            hasher.update(b"mask stages\0");
+            hasher.update(&(stage.len() as u64).to_le_bytes());
+            hasher.update(stage.as_bytes());
+        }
         for path in files_read(self, looks, profiles) {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
             let name = name.unwrap_or_default();
@@ -174,12 +240,13 @@ impl Sidecar {
 }
 
 /// What every develop key made now is made under, beside each edit's
-/// own: [`DEVELOP_RECIPE`], the lens database's name as the caller gives
+/// own: [`DEVELOP_RECIPE`], the learned masks' stages, the lens
+/// database's name as the caller gives
 /// it, and the look and profile directories as they stand (each file's
 /// name, length and modification time; not their contents, which only
 /// the files an edit names are read for). A store of keys made under
 /// another (the index's) holds keys that may no longer be the edits'
-/// own: a recipe raised, a lens database fetched or wiped with its
+/// own: a recipe or a mask's stages raised, a lens database fetched or wiped with its
 /// cache, a look refitted or a profile replaced.
 pub fn keys_made_under(lenses: Option<&str>) -> String {
     keys_made_under_in(
@@ -229,7 +296,8 @@ pub fn keys_made_under_in(
     }
     let files = hasher.finalize();
     format!(
-        "recipe {DEVELOP_RECIPE}; lenses {lenses:?}; files {}",
+        "recipe {DEVELOP_RECIPE}; masks {SKY_PIPELINE} {LANDSCAPE_PIPELINE} {PART_PIPELINE} \
+         {PERSON_EDGE}; lenses {lenses:?}; files {}",
         &files.to_hex()[..16]
     )
 }
@@ -420,6 +488,54 @@ mod tests {
             with
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A learned mask's stages raised changes the key of an edit with
+    /// such a mask and of no other: a Sky's and a Foliage's when the
+    /// sky's stages move, a Water's not.
+    #[test]
+    fn a_learned_mask_s_stages_raised_change_the_keys_of_its_edits_alone() {
+        use crate::mask::{Component, LandscapeGroup, Shape};
+        let with = |shape: Shape| {
+            let mut edit = Edit::default();
+            let mut adjustment = crate::Adjustment::default();
+            adjustment.mask.components.push(Component {
+                shape,
+                ..Component::default()
+            });
+            edit.adjustments.push(adjustment);
+            edit
+        };
+        let raised = |shape: &Shape| -> Vec<String> {
+            mask_pipelines(shape)
+                .iter()
+                .map(|&v| if v == SKY_PIPELINE { "sky-raised" } else { v }.to_string())
+                .collect()
+        };
+        let both = |edit: &Edit| {
+            (
+                edit.develop_key_in(None, None, None),
+                edit.develop_key_by(None, None, None, raised),
+            )
+        };
+        let (a, b) = both(&with(Shape::Sky { picks: Vec::new() }));
+        assert_ne!(a, b, "a Sky");
+        let (a, b) = both(&with(Shape::Landscape {
+            group: LandscapeGroup::Foliage,
+        }));
+        assert_ne!(a, b, "a Foliage, cut by the sky");
+        let (a, b) = both(&with(Shape::Landscape {
+            group: LandscapeGroup::Water,
+        }));
+        assert_eq!(a, b, "a Water");
+        let (a, b) = both(&Edit::default());
+        assert_eq!(a, b, "no mask");
+        // And the stages are in the key at all: a Sky's key is not the
+        // one it would have with no stages.
+        assert_ne!(
+            with(Shape::Sky { picks: Vec::new() }).develop_key_in(None, None, None),
+            with(Shape::Sky { picks: Vec::new() }).develop_key_by(None, None, None, |_| Vec::new()),
+        );
     }
 
     /// What a store of keys was made under moves with a refit of any

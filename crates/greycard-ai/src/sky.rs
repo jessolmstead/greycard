@@ -313,13 +313,15 @@ pub struct Prior {
     pub height: usize,
     /// The soft sky map, 0 to 1: Σ p(sky|q)·m_q over the sure sky
     /// queries, over Σ p(any|q)·m_q over all of them. The seeds, the
-    /// clip and the matte read it.
+    /// clip, and the matte's floor and cap read it.
     pub sky: Vec<f32>,
     /// The same over the kept queries alone, Σ p(any|q)·m_q over them
-    /// the denominator: the gate's core reads it, over the labeled sky.
-    /// Over every query, the model's leftover queries dilute a sure sky
-    /// to under 0.8 on some frames (a peak above a sea of cloud, 54.7%
-    /// of the frame labeled sky at 0.997, had no pixel over 0.8).
+    /// the denominator: the gate's core reads it, over the labeled sky,
+    /// and so do the matte's growth and its floor for the sure sky
+    /// (`crate::matte`). Over every query, the model's leftover queries
+    /// dilute a sure sky to under 0.8 on some frames (a peak above a
+    /// sea of cloud, 54.7% of the frame labeled sky at 0.997, had no
+    /// pixel over 0.8, and a quarter over the cloud).
     pub sky_kept: Vec<f32>,
     /// Each pixel's class, `UNLABELED` where no kept query claims it,
     /// `DOUBT` where a sky query the model is not sure of does.
@@ -894,8 +896,17 @@ pub fn refine_sky(
     negatives: &[[f32; 2]],
     size: (usize, usize),
 ) -> Mask {
-    crate::matte::color_line(mask, prior, frame.linear, negatives, size.0, size.1)
-        .unwrap_or_else(|| feathered(mask, frame).resampled(size.0, size.1))
+    use crate::matte::{Hold, color_line};
+    color_line(
+        mask,
+        prior,
+        frame.linear,
+        negatives,
+        Hold::Sure,
+        size.0,
+        size.1,
+    )
+    .unwrap_or_else(|| feathered(mask, frame).resampled(size.0, size.1))
 }
 
 /// The outline brought to the preview's edges by the guided filter at

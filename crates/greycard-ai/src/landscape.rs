@@ -402,6 +402,7 @@ pub fn refine(
             &scene.as_sky(group),
             frame.linear,
             &[],
+            matte::Hold::None,
             size.0,
             size.1,
         )

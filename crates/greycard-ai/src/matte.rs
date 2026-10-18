@@ -47,6 +47,26 @@
 //!   local sky and not near a person's negative pick. Tree, flower and
 //!   unlabeled pixels, the ones sky shows through, are the
 //!   projection's alone.
+//! - The soft map over every query is diluted by the model's leftover
+//!   queries, on some frames to a quarter over a sky the model is sure
+//!   of (a sea of cloud under a peak). The floor above reads it as it
+//!   is, since there a low value is the prior's doubt and the floor
+//!   overrides the pixel's color. Two places read the map over the
+//!   kept queries instead, as the gate does, within the labeled sky:
+//!   which pixels may join the known sky in the growth (still on the
+//!   sky's color, near the line and not past it), and the sure sky's
+//!   own floor. That floor holds a pixel up to all sky where the kept
+//!   map is sure and the pixel is the sky's own color a little darker:
+//!   in the last part of the line toward the sky (from `LINE_FLOOR`),
+//!   and, read off the preview's pixel where the frame's noise is
+//!   averaged out, near the line and of the sky's hue. That is the
+//!   frame's own noise on a flat sky the projection clamps at the sky's
+//!   end, which left a pale sky blotched where nothing held it up; a
+//!   pixel of another color is the projection's, as before. It applies
+//!   to the labeled sky inside the outline, and to the unlabeled
+//!   pockets the labels leave at the logits' grid inside it
+//!   ([`pockets`]); a pole the labels' coarse step calls sky lies near
+//!   the not-sky end of the line and is not held.
 //!
 //! The known regions and their colors are made at the preview (the
 //! growth) and at about 512 pixels (the blurs); only the projection
@@ -60,7 +80,7 @@ use greycard_core::guided;
 use greycard_core::image::WorkingImage;
 
 use crate::image::Mask;
-use crate::sky::{Prior, UNLABELED, dilate, erode};
+use crate::sky::{Prior, SKY_CLASS, UNLABELED, dilate, erode};
 
 /// `tree-merged` and `flower` among the model's classes: sky shows
 /// through them.
@@ -100,6 +120,16 @@ const HUE: (f32, f32) = (0.04, 0.10);
 /// is held down to none outside the outline.
 const FLOOR: (f32, f32) = (0.7, 0.95);
 const CAP: (f32, f32) = (0.05, 0.35);
+/// For a pixel of the sure sky inside the outline: how far along the
+/// line toward the sky it must lie before the kept map holds it up,
+/// and where it is held up to all of it.
+const LINE_FLOOR: (f32, f32) = (0.4, 0.7);
+/// An unlabeled pocket of the sky keeps at least this share of the
+/// soft map of the sky around it, and covers no more than this share
+/// of the frame: a few dozen of the logits' cells (the largest of a sea
+/// of cloud's pockets was 0.40%), not a foreground the labels left.
+const POCKET: f32 = 0.8;
+const POCKET_MOST: f32 = 0.005;
 /// How far a person's negative pick reaches over the region it was
 /// made on, as a share of the long side.
 const NEGATIVE_REACH: f32 = 0.2;
@@ -155,6 +185,80 @@ pub fn trimap(outline: &Mask, prior: &Prior) -> Vec<Known> {
             }
         })
         .collect()
+}
+
+/// The unlabeled pockets of the sky, at the prior's size: each region
+/// (four ways) of pixels no kept query claims that borders only
+/// labeled sky (and the frame's edge), all of that border inside the
+/// outline, no larger than `POCKET_MOST` of the frame, and whose soft
+/// map over all the queries keeps at least `POCKET` of its border's on
+/// average. The labels leave such pockets at the logits' grid where
+/// the winning mask dips under a half in open sky. What borders a tree
+/// or any other label is not one. A thing in the sky the labels did
+/// not name is often kept out by the soft map, which the sky's masks
+/// let fall over it (a lantern keeps a third of the sky's, a railing a
+/// ninth), but not always: a thin dark post the labels' coarse step
+/// surrounds keeps nearly all of it, and is a pocket where the outline
+/// is the labels. What keeps such a thing out is the sure sky's floor
+/// itself, which holds only the sky's own color.
+pub fn pockets(outline: &[f32], prior: &Prior) -> Vec<bool> {
+    let mut out = vec![false; prior.width * prior.height];
+    mark_pockets(outline, prior, &mut out);
+    out
+}
+
+/// [`pockets`] set in `out`, which is left as it is elsewhere.
+fn mark_pockets(outline: &[f32], prior: &Prior, out: &mut [bool]) {
+    let (w, h) = (prior.width, prior.height);
+    let unlabeled = |i: usize| prior.labels[i] == UNLABELED;
+    let mut seen: Vec<bool> = Vec::new();
+    let mut stack = Vec::new();
+    let mut region = Vec::new();
+    for start in 0..w * h {
+        if !unlabeled(start) || seen.get(start).copied().unwrap_or(false) {
+            continue;
+        }
+        if seen.is_empty() {
+            seen = vec![false; w * h];
+        }
+        seen[start] = true;
+        stack.push(start);
+        region.clear();
+        let mut enclosed = true;
+        let (mut border, mut n) = (0.0f64, 0usize);
+        while let Some(i) = stack.pop() {
+            region.push(i);
+            let (x, y) = (i % w, i / w);
+            let steps = [
+                (x > 0).then(|| i - 1),
+                (x + 1 < w).then(|| i + 1),
+                (y > 0).then(|| i - w),
+                (y + 1 < h).then(|| i + w),
+            ];
+            for j in steps.into_iter().flatten() {
+                if unlabeled(j) {
+                    if !seen[j] {
+                        seen[j] = true;
+                        stack.push(j);
+                    }
+                } else if prior.labels[j] == SKY_CLASS && outline[j] > 0.5 {
+                    border += prior.sky[j] as f64;
+                    n += 1;
+                } else {
+                    enclosed = false;
+                }
+            }
+        }
+        if !enclosed || n == 0 || region.len() as f32 > POCKET_MOST * (w * h) as f32 {
+            continue;
+        }
+        let inside = region.iter().map(|&i| prior.sky[i] as f64).sum::<f64>() / region.len() as f64;
+        if inside >= POCKET as f64 * border / n as f64 {
+            for &i in &region {
+                out[i] = true;
+            }
+        }
+    }
 }
 
 /// What a person's negative picks say is not sky, at the prior's size:
@@ -459,15 +563,30 @@ fn luminance(p: [f32; 3]) -> f32 {
     0.2627 * p[0] + 0.6780 * p[1] + 0.0593 * p[2]
 }
 
+/// Whether the matte holds the sure sky up near the sky's end of the
+/// line (the module's header says why).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hold {
+    /// The Sky's rule: the labeled sky inside the outline and its
+    /// unlabeled pockets, where the map over the kept queries is sure.
+    Sure,
+    /// No such floor: the landscape's groups, whose soft map is over
+    /// the kept queries already and whose edges were measured without
+    /// it.
+    None,
+}
+
 /// The matte of the sky, `out_w` × `out_h`, from the outline (one or
 /// nothing at the prior's size), the prior, and the frame's linear
-/// picture at its own size. `None` when the frame is empty or not the
-/// prior's shape, for the caller to fall back on.
+/// picture at its own size, holding the sure sky up as `hold` says.
+/// `None` when the frame is empty or not the prior's shape, for the
+/// caller to fall back on.
 pub fn color_line(
     outline: &Mask,
     prior: &Prior,
     linear: &WorkingImage,
     negatives: &[[f32; 2]],
+    hold: Hold,
     out_w: usize,
     out_h: usize,
 ) -> Option<Mask> {
@@ -521,6 +640,18 @@ pub fn color_line(
         return None;
     }
     let floor = 1e-4 * y_sky * y_sky;
+    // What the growth asks of the prior: the map over the kept queries
+    // within the labeled sky, as the gate reads it, since over all the
+    // queries a sky the model is sure of can sit at a quarter; the map
+    // over all of them elsewhere, where a low value is the prior's
+    // doubt.
+    let grow_p = |i: usize| {
+        if prior.labels[i] == SKY_CLASS {
+            prior.sky_kept[i]
+        } else {
+            prior.sky[i]
+        }
+    };
     // The known sky grows toward each gap: clearly-sky pixels join it
     // after each pass but the last, whose colors the full-size matte
     // uses.
@@ -542,7 +673,7 @@ pub fn color_line(
                     return false;
                 };
                 let p = [lin_p.data[i * 3], lin_p.data[i * 3 + 1], lin_p.data[i * 3 + 2]];
-                (treeish(prior.labels[i]) || prior.sky[i] >= CAP.1)
+                (treeish(prior.labels[i]) || grow_p(i) >= CAP.1)
                     && chroma_distance(p, sky) < HUE.0
                     && matches!(project(p, sky, not, floor), Some((a, off)) if (CLEARLY..=BEYOND.0).contains(&a) && off < OFF_LINE.0)
             })
@@ -564,6 +695,21 @@ pub fn color_line(
     let near_negative = |u: f32, v: f32| {
         negated_map[((v * h as f32) as usize).min(h - 1) * w + ((u * w as f32) as usize).min(w - 1)]
     };
+    // The sure sky the kept map holds up near the sky's end of the
+    // line: the labeled sky inside the outline, and its pockets.
+    let sure: Vec<bool> = match hold {
+        Hold::Sure => {
+            let mut sure: Vec<bool> = prior
+                .labels
+                .par_iter()
+                .zip(&m)
+                .map(|(&l, &o)| l == SKY_CLASS && o > 0.5)
+                .collect();
+            mark_pockets(&m, prior, &mut sure);
+            sure
+        }
+        Hold::None => vec![false; w * h],
+    };
 
     // Full size, a block of the output at a time.
     let (ow, oh) = (out_w.max(1), out_h.max(1));
@@ -578,27 +724,55 @@ pub fn color_line(
                 let o = (y * fw + x) * 3;
                 let p = [linear.data[o], linear.data[o + 1], linear.data[o + 2]];
                 let (u, v) = ((x as f32 + 0.5) / fw as f32, (y as f32 + 0.5) / fh as f32);
-                let a = colors
-                    .at(u, v)
-                    .and_then(|(sky, not)| project(p, sky, not, floor).map(|t| (t, sky)))
-                    .map_or(m[i], |((a, off), sky)| share(a, off) * hue(p, sky, a));
-                if treeish(prior.labels[i]) {
-                    a
+                let local = colors.at(u, v);
+                let projected =
+                    local.and_then(|(sky, not)| project(p, sky, not, floor).map(|t| (t, sky)));
+                let a = projected.map_or(m[i], |((a, off), sky)| share(a, off) * hue(p, sky, a));
+                // Both floors are for a pixel darker than the local sky
+                // and nowhere near a person's word that it is not sky.
+                let dark = || local.is_some_and(|(sky, _)| luminance(p) < luminance(sky));
+                let (a, dark, negated) = if treeish(prior.labels[i]) {
+                    // Sky shows through: the projection's alone, but for
+                    // a pocket of the sure sky below.
+                    if !sure[i] {
+                        return a;
+                    }
+                    (a, dark(), near_negative(u, v))
                 } else {
-                    // The floor is for a dark cloud the outline missed:
-                    // darker than the local sky, and nowhere near a
-                    // person's word that it is not sky.
-                    let dark = colors
-                        .at(u, v)
-                        .is_some_and(|(sky, _)| luminance(p) < luminance(sky));
-                    let negated = near_negative(u, v);
-                    bounded(
+                    let (dark, negated) = (dark(), near_negative(u, v));
+                    // The floor is for a dark cloud the outline missed.
+                    let a = bounded(
                         a,
                         sample(&prior.sky, w, h, u, v),
                         m[i] > 0.5,
                         dark && !negated,
                         negated,
-                    )
+                    );
+                    (a, dark, negated)
+                };
+                match projected {
+                    Some(((t, _), sky)) if sure[i] && dark && !negated => {
+                        // The place on the line from the frame's own
+                        // pixel; whether it is the sky's color at all
+                        // from the preview's, whose noise is averaged
+                        // out: near the line, and of the sky's hue at
+                        // any place on it.
+                        let q = [
+                            lin_p.data[i * 3],
+                            lin_p.data[i * 3 + 1],
+                            lin_p.data[i * 3 + 2],
+                        ];
+                        let off = local
+                            .and_then(|(sky, not)| project(q, sky, not, floor))
+                            .map_or(1.0, |(_, off)| off);
+                        a.max(
+                            ramp(sample(&prior.sky_kept, w, h, u, v), FLOOR.0, FLOOR.1)
+                                * ramp(t, LINE_FLOOR.0, LINE_FLOOR.1)
+                                * hue(q, sky, 1.0)
+                                * (1.0 - ramp(off, OFF_LINE.0, OFF_LINE.1)),
+                        )
+                    }
+                    _ => a,
                 }
             }
         }
@@ -709,7 +883,6 @@ pub fn color_line(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sky::SKY_CLASS;
 
     const TREE: u8 = TREE_CLASS;
     const PERSON: u8 = 0;
@@ -809,7 +982,8 @@ mod tests {
         assert_eq!(map[(h - 5) * w + 100], Known::NotSky);
         // At full size, so each line and gap can be read.
         let (fw, fh) = (w * s, h * s);
-        let matte = color_line(&sc.outline, &sc.prior, &sc.linear, &[], fw, fh).expect("a matte");
+        let matte = color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::Sure, fw, fh)
+            .expect("a matte");
         let row = (0.55 * fh as f32) as usize;
         let (mut gaps, mut lines) = (Vec::new(), Vec::new());
         for x in 20..fw - 20 {
@@ -838,7 +1012,16 @@ mod tests {
     fn a_thing_takes_no_alpha() {
         let (w, h, s) = (200usize, 150usize, 2usize);
         let sc = scene(w, h, s, Some((100, 60, 12)));
-        let matte = color_line(&sc.outline, &sc.prior, &sc.linear, &[], w * s, h * s).unwrap();
+        let matte = color_line(
+            &sc.outline,
+            &sc.prior,
+            &sc.linear,
+            &[],
+            Hold::Sure,
+            w * s,
+            h * s,
+        )
+        .unwrap();
         assert!(
             matte.at(100 * s, 60 * s) < 0.02,
             "{}",
@@ -852,8 +1035,17 @@ mod tests {
     fn the_matte_at_a_smaller_size_is_the_full_one_averaged() {
         let (w, h, s) = (120usize, 90usize, 4usize);
         let sc = scene(w, h, s, None);
-        let full = color_line(&sc.outline, &sc.prior, &sc.linear, &[], w * s, h * s).unwrap();
-        let small = color_line(&sc.outline, &sc.prior, &sc.linear, &[], w, h).unwrap();
+        let full = color_line(
+            &sc.outline,
+            &sc.prior,
+            &sc.linear,
+            &[],
+            Hold::Sure,
+            w * s,
+            h * s,
+        )
+        .unwrap();
+        let small = color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::Sure, w, h).unwrap();
         assert_eq!((small.width, small.height), (w, h));
         for y in [5usize, 40, 45, 80] {
             let a: f32 = (0..w).map(|x| small.at(x, y)).sum::<f32>() / w as f32;
@@ -873,9 +1065,20 @@ mod tests {
         let (w, h, s) = (100usize, 80usize, 2usize);
         let mut sc = scene(w, h, s, None);
         sc.outline = Mask::new(w, h, vec![0.0; w * h]);
-        assert!(color_line(&sc.outline, &sc.prior, &sc.linear, &[], w, h).is_none());
+        assert!(color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::Sure, w, h).is_none());
         let sc = scene(w, h, s, None);
-        assert!(color_line(&sc.outline, &sc.prior, &WorkingImage::new(0, 0), &[], w, h).is_none());
+        assert!(
+            color_line(
+                &sc.outline,
+                &sc.prior,
+                &WorkingImage::new(0, 0),
+                &[],
+                Hold::Sure,
+                w,
+                h
+            )
+            .is_none()
+        );
         // A frame of another shape.
         assert!(
             color_line(
@@ -883,6 +1086,7 @@ mod tests {
                 &sc.prior,
                 &WorkingImage::new(300, 50),
                 &[],
+                Hold::Sure,
                 w,
                 h
             )
@@ -953,7 +1157,8 @@ mod tests {
                 sc.linear.data[(y * fw + x) * 3..][..3].copy_from_slice(&p);
             }
         }
-        let matte = color_line(&sc.outline, &sc.prior, &sc.linear, &[], fw, fh).unwrap();
+        let matte =
+            color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::Sure, fw, fh).unwrap();
         assert!(
             matte.at(fw / 2, (canopy + 8) * s) < 0.1,
             "{}",
@@ -971,5 +1176,252 @@ mod tests {
         let (_, off) = project([0.9, 0.9, 0.05], sky, not, 1e-6).unwrap();
         assert!(off > 0.3);
         assert!(project(sky, sky, sky, 1e-6).is_none());
+    }
+
+    /// A pale overcast over a dark ground, as a sea of cloud under a
+    /// peak: the labels sky above `GROUND` of the height and ground
+    /// below, the outline the labels themselves (no seed for SAM), and
+    /// the soft map over all the queries diluted to a quarter over the
+    /// sky while the map over the kept ones is sure of it. A square of
+    /// the prior's pixels, `side` wide about (cx, cy), is cloud a fifth
+    /// of the way down the line toward the ground, and the labels leave
+    /// it unlabeled, as they leave pockets at the logits' grid.
+    const GROUND: f32 = 0.6;
+    const OVERCAST: [f32; 3] = [0.12, 0.135, 0.17];
+    const EARTH: [f32; 3] = [0.03, 0.035, 0.045];
+
+    fn mix(t: f32) -> [f32; 3] {
+        [0, 1, 2].map(|c| EARTH[c] + t * (OVERCAST[c] - EARTH[c]))
+    }
+
+    fn overcast(w: usize, h: usize, s: usize, square: (usize, usize, usize)) -> Scene {
+        let (cx, cy, side) = square;
+        let in_square = |x: usize, y: usize| x.abs_diff(cx) * 2 < side && y.abs_diff(cy) * 2 < side;
+        let (fw, fh) = (w * s, h * s);
+        let mut linear = WorkingImage::new(fw, fh);
+        for y in 0..fh {
+            for x in 0..fw {
+                let p = if in_square(x / s, y / s) {
+                    mix(0.8)
+                } else if (y as f32) < GROUND * fh as f32 {
+                    OVERCAST
+                } else {
+                    EARTH
+                };
+                linear.data[(y * fw + x) * 3..][..3].copy_from_slice(&p);
+            }
+        }
+        let mut labels = vec![0u8; w * h];
+        let mut sky = vec![0.0f32; w * h];
+        let mut kept = vec![0.0f32; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                (labels[i], sky[i], kept[i]) = if in_square(x, y) {
+                    (UNLABELED, 0.24, 0.99)
+                } else if (y as f32) < GROUND * h as f32 {
+                    (SKY_CLASS, 0.25, 1.0)
+                } else {
+                    (126, 0.01, 0.02)
+                };
+            }
+        }
+        let outline = labels
+            .iter()
+            .map(|&l| if l == SKY_CLASS { 1.0 } else { 0.0 })
+            .collect();
+        Scene {
+            prior: Prior {
+                width: w,
+                height: h,
+                sky,
+                sky_kept: kept,
+                labels,
+                sure: 0.997,
+            },
+            outline: Mask::new(w, h, outline),
+            linear,
+        }
+    }
+
+    /// The least of the matte over the square's middle, at full size.
+    fn least(matte: &Mask, s: usize, square: (usize, usize, usize)) -> f32 {
+        let (cx, cy, side) = square;
+        let r = side / 4;
+        let mut least = f32::INFINITY;
+        for y in (cy - r) * s..(cy + r) * s {
+            for x in (cx - r) * s..(cx + r) * s {
+                least = least.min(matte.at(x, y));
+            }
+        }
+        least
+    }
+
+    /// An unlabeled pocket of a sure sky, of the sky's own color a
+    /// fifth of the way down the line, fills: before, the projection
+    /// alone held it at about 0.8, a square hole in flat cloud, since
+    /// the diluted map gave the sky around it no floor either.
+    #[test]
+    fn an_unlabeled_pocket_of_a_sure_sky_fills() {
+        let (w, h, s) = (200usize, 150usize, 2usize);
+        let square = (100, 45, 12);
+        let sc = overcast(w, h, s, square);
+        let (fw, fh) = (w * s, h * s);
+        let pockets = pockets(&sc.outline.data, &sc.prior);
+        assert!(pockets[45 * w + 100] && !pockets[10 * w + 10]);
+        let held = color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::Sure, fw, fh).unwrap();
+        assert!(
+            least(&held, s, square) > 0.95,
+            "{}",
+            least(&held, s, square)
+        );
+        // Master's rule, for the record of what the hole was.
+        let open = color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::None, fw, fh).unwrap();
+        assert!(least(&open, s, square) < 0.9, "{}", least(&open, s, square));
+        // The ground stays out either way.
+        assert!(held.at(fw / 2, fh - 4) < 0.02);
+    }
+
+    /// The same square touching a tree is no pocket of the sky: the
+    /// tree's region, which sky shows through, is the projection's,
+    /// and so is the square with it.
+    #[test]
+    fn the_same_square_touching_a_tree_does_not_fill() {
+        let (w, h, s) = (200usize, 150usize, 2usize);
+        let square = (100, 45, 12);
+        let mut sc = overcast(w, h, s, square);
+        // A trunk from the ground up to the square's foot, labeled tree
+        // and dark, a column four of the prior's pixels wide.
+        let (fw, fh) = (w * s, h * s);
+        let foot = 45 + 6;
+        let ground = (GROUND * h as f32) as usize;
+        for y in foot..ground {
+            for x in 98..102 {
+                sc.prior.labels[y * w + x] = TREE;
+                sc.prior.sky[y * w + x] = 0.05;
+                sc.prior.sky_kept[y * w + x] = 0.2;
+                sc.outline.data[y * w + x] = 0.0;
+            }
+        }
+        for y in foot * s..ground * s {
+            for x in 98 * s..102 * s {
+                sc.linear.data[(y * fw + x) * 3..][..3].copy_from_slice(&EARTH);
+            }
+        }
+        assert!(!pockets(&sc.outline.data, &sc.prior)[45 * w + 100]);
+        let matte =
+            color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::Sure, fw, fh).unwrap();
+        assert!(
+            least(&matte, s, square) < 0.9,
+            "{}",
+            least(&matte, s, square)
+        );
+        // The trunk itself stays dark.
+        assert!(matte.at(100 * s, (ground - 8) * s) < 0.2);
+    }
+
+    /// What is no pocket: a thing in the sky the sky's masks pass over
+    /// (its soft map a fifth of the sky's), an unlabeled region whose
+    /// sky is outside the outline (what SAM left out stays out), and a
+    /// foreground the labels left unlabeled from the bottom of the
+    /// frame to both its sides, larger than any pocket of the logits'
+    /// grid.
+    #[test]
+    fn a_lantern_and_what_the_outline_left_out_are_no_pockets() {
+        let (w, h, s) = (200usize, 150usize, 1usize);
+        let square = (100, 45, 12);
+        let mut lantern = overcast(w, h, s, square);
+        for v in lantern.prior.sky.iter_mut().zip(&lantern.prior.labels) {
+            if *v.1 == UNLABELED {
+                *v.0 = 0.05;
+            }
+        }
+        assert!(!pockets(&lantern.outline.data, &lantern.prior)[45 * w + 100]);
+        let mut left_out = overcast(w, h, s, square);
+        for y in 30..60 {
+            for x in 85..115 {
+                left_out.outline.data[y * w + x] = 0.0;
+            }
+        }
+        assert!(!pockets(&left_out.outline.data, &left_out.prior)[45 * w + 100]);
+        let mut foreground = overcast(w, h, s, square);
+        for (l, v) in foreground
+            .prior
+            .labels
+            .iter_mut()
+            .zip(foreground.prior.sky.iter_mut())
+        {
+            if *l == 126 {
+                (*l, *v) = (UNLABELED, 0.25);
+            }
+        }
+        let found = pockets(&foreground.outline.data, &foreground.prior);
+        assert!(!found[(h - 2) * w + 100]);
+        assert!(found[45 * w + 100], "the cloud's pocket is still one");
+    }
+
+    /// A pocket of the sure sky of another color, a rose a little darker
+    /// than the overcast that sits near the sky's end of the line in
+    /// brightness, is no sky the floor holds up: it keeps the
+    /// projection's share, as under master's rule, whatever its place.
+    #[test]
+    fn an_off_hue_pocket_stays_out() {
+        let (w, h, s) = (200usize, 150usize, 2usize);
+        let square = (100, 45, 12);
+        let (fw, fh) = (w * s, h * s);
+        for rose in [[0.16, 0.08, 0.11], [0.15, 0.06, 0.16]] {
+            let mut sc = overcast(w, h, s, square);
+            for y in (45 - 6) * s..(45 + 6) * s {
+                for x in (100 - 6) * s..(100 + 6) * s {
+                    sc.linear.data[(y * fw + x) * 3..][..3].copy_from_slice(&rose);
+                }
+            }
+            assert!(pockets(&sc.outline.data, &sc.prior)[45 * w + 100]);
+            let held =
+                color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::Sure, fw, fh).unwrap();
+            let open =
+                color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::None, fw, fh).unwrap();
+            let (x, y) = (100 * s, 45 * s);
+            assert!(held.at(x, y) < 0.5, "{rose:?}: {}", held.at(x, y));
+            assert!(
+                (held.at(x, y) - open.at(x, y)).abs() < 0.02,
+                "{rose:?}: {} against {}",
+                held.at(x, y),
+                open.at(x, y)
+            );
+        }
+    }
+
+    /// A dark pole the labels' coarse step calls sky, on a sure sky,
+    /// lies near the not-sky end of the line and is not held up.
+    #[test]
+    fn a_dark_pole_the_labels_call_sky_is_not_held_up() {
+        let (w, h, s) = (800usize, 600usize, 1usize);
+        let mut sc = overcast(w, h, s, (400, 180, 0));
+        let (fw, fh) = (w * s, h * s);
+        let ground = (GROUND * h as f32) as usize;
+        // The pole, twelve pixels wide, inside the labeled
+        // sky's shrink band near the ground, where the matte decides.
+        for y in (ground - 20) * s..ground * s {
+            for x in 240..252 {
+                sc.linear.data[(y * fw + x) * 3..][..3].copy_from_slice(&mix(0.1));
+            }
+        }
+        let held = color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::Sure, fw, fh).unwrap();
+        let open = color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::None, fw, fh).unwrap();
+        let (x, y) = (246, ground - 2);
+        assert!(
+            held.at(x, y) < 0.5,
+            "{} against {}",
+            held.at(x, y),
+            open.at(x, y)
+        );
+        assert!(
+            (held.at(x, y) - open.at(x, y)).abs() < 0.02,
+            "{} against {}",
+            held.at(x, y),
+            open.at(x, y)
+        );
+        assert!(held.at(500, ground - 2) > 0.98);
     }
 }

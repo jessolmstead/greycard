@@ -204,10 +204,11 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       data we assemble); a 4096-wide raster for Sky so a 100 MP
       frame's twigs are not averaged fourfold; more hard negatives
       for the gate (sky-blue walls, a lake reflecting sky with none
-      above it, a snowfield filling the frame); the matte's rule for
-      unlabeled pixels inside a found sky (a peak above a sea of cloud
-      shows square holes and stepped plateaus in the cloud, §335),
-      measured over the 32 skies; the sky's outline at the frame's top
+      above it, a snowfield filling the frame); the fog's own plateaus
+      where the labels are the sky's outline, and full-size noise
+      wherever no floor applies (§345; the seeds and the clip still
+      read the diluted map, seeding from the kept one made the
+      outline worse); the sky's outline at the frame's top
       edge (a block of blue above a tree left to Foliage); the bimodal
       WebGPU prior
 - [ ] Landscape masks, after the first four (§335): Mountain cut by

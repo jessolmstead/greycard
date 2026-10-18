@@ -68,6 +68,12 @@ design note behind it.
   found sky. A true sky above a sea of cloud that the Sky gate refused
   now passes
   ([§335](https://github.com/jessolmstead/greycard/blob/master/docs/notes/335-the-landscape-masks-as-built.md))
+- Sky over a sea of cloud or flat overcast no longer shows square
+  holes and stepped plateaus: a sure sky's noisy pixels and the
+  unlabeled pockets inside it are held up, never a thing of another
+  hue. Sky masks are made again once, and a frame edited with a Sky,
+  Landscape or People mask gets its thumbnail remade once
+  ([§345](https://github.com/jessolmstead/greycard/blob/master/docs/notes/345-the-sky-matte-over-a-diluted-map-the-sure-sky-held-and-its-pockets.md))
 
 ### Cameras
 

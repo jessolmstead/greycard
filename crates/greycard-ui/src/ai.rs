@@ -25,7 +25,11 @@ use greycard_ai::{
 use greycard_core::develop::retouch::Region;
 use greycard_core::image::WorkingImage;
 use greycard_edit::Edit;
+// The learned rasters' stages, by version, in the disk cache's keys
+// below: the develop key takes the same in for an edit with such a
+// mask, so the pictures kept of it are made again too.
 use greycard_edit::brush::{RASTER_WIDTH, Raster};
+use greycard_edit::key::{LANDSCAPE_PIPELINE, PART_PIPELINE, PERSON_EDGE, SKY_PIPELINE};
 use greycard_edit::mask::Shape;
 use greycard_edit::retouch::Patch;
 
@@ -114,17 +118,6 @@ fn sky_model(have: impl Fn(&Model) -> bool, unavailable: &[&str]) -> &'static Mo
     }
 }
 
-/// What a Sky raster was made from, beside the file and the shape, in
-/// its disk cache's key: the stages' version, and whether SAM made the
-/// outline, so a sky made without SAM is made again once SAM is in,
-/// and one made by an older pipeline once the pipeline changes.
-const SKY_PIPELINE: &str = "sky-2";
-
-/// What a Landscape raster was made by beside the file and the shape,
-/// in its disk cache's key: the groups' gates and edges, so one made by
-/// an older rule is made again.
-const LANDSCAPE_PIPELINE: &str = "landscape-2";
-
 /// The found sky Foliage is cut by, by base develop and raster size,
 /// and what the status line said of it: a Sky with no picks too.
 type SkyCut = (
@@ -132,11 +125,6 @@ type SkyCut = (
     Option<greycard_ai::Mask>,
     Option<String>,
 );
-
-/// What a Part raster was made by beside the file and the shape, in
-/// its disk cache's key: the routes' and the people's version, so a
-/// part made by an older rule is made again.
-const PART_PIPELINE: &str = "part-2";
 
 /// The crops' encodings kept beside the preview's, each about 117 MB:
 /// two faces and their four eyes, so Iris then Eyebrows then Lips on a
@@ -2083,10 +2071,6 @@ pub fn takes_subject_edge(shape: &Shape) -> bool {
             if phrase == sam3::PERSON
     )
 }
-
-/// What a Whole person's raster was made with beside the shape, in its
-/// disk cache's key: Subject's edge, once a Subject model is in.
-const PERSON_EDGE: &str = "person-edge-1";
 
 /// A Part as `Ai::part` takes it: the phrase, its route and the person.
 type PartAsked<'a> = (
