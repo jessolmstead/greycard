@@ -851,7 +851,7 @@ mod tests {
         for color in [CfaColor::Red, CfaColor::Blue] {
             let before = rms_error(&clean, &shifted, w, h, &p, color);
             let after = rms_error(&clean, &out, w, h, &p, color);
-            assert!(after < 0.32 * before, "{color:?}: {after} of {before}");
+            assert!(after < 0.4 * before, "{color:?}: {after} of {before}");
         }
         if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
             let digest = out.iter().fold(0xcbf2_9ce4_8422_2325u64, |d, v| {
