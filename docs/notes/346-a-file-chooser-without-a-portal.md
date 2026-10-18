@@ -27,11 +27,13 @@ manager tends to have one or the other, zenity far more often; rfd
 falls back to zenity alone.
 
 Exit 1 is a cancel, except that GTK also exits 1 when it cannot
-open the display, and says "cannot open display" on stderr (Qt says
-"could not connect to display" and aborts): that is an error naming
-the line. Only those phrases count, since GTK mentions the display
-in warnings on a dialog that works, as Xlib's missing RANDR under
-Xvfb does on every run. zenity takes its exit codes from `ZENITY_OK` and the like
+open the display, and says so on stderr: "cannot open display" in
+GTK 3, "Failed to open display" in GTK 4, which zenity 4 is built on
+(Qt says "could not connect to display" and aborts). That is an
+error naming the line. Only those phrases count, since GTK mentions
+the display in warnings on a dialog that works, as Xlib's missing
+RANDR under Xvfb does on every run. zenity takes its exit codes from
+`ZENITY_OK` and the like
 when they are set, so the child gets none of them. A path picked to
 open comes back through the helper's stdout, one a line, and a name
 with a newline in it splits in two; kdialog prints in the locale's
@@ -47,11 +49,14 @@ a D-Bus error that means nothing was there to take it:
 `ServiceUnknown` or `NameHasNoOwner` (no portal), `UnknownMethod`,
 `UnknownInterface` or `UnknownObject` (a portal with no file chooser
 backend configured), a `Spawn.*` error or `TimedOut` (a portal the
-bus could not start, or not in time), or systemd's `NoSuchUnit`,
-`UnitMasked` or `LoadFailed`, where the bus starts the portal as a
-unit (masked by hand, as some i3 users do to skip its start-up
-wait). Nothing is on the screen until that call returns, so the
-user has seen no dialog. Any other error from the call is a portal
+bus could not start, or not in time, or a backend the portal could
+not start), or any `org.freedesktop.systemd1.*` error, which
+dbus-daemon passes on when it starts the portal as a unit and
+systemd will not queue it: none installed, masked (as some i3 users
+do to skip its start-up wait), a bad setting. dbus-broker answers
+all of those with `NameHasNoOwner`. Every error reply to the call
+comes before the portal asks its backend, so nothing is on the
+screen yet and the user has seen no dialog. Any other error from the call is a portal
 that took the request and refused it, as `InvalidArgument` for
 §88's empty filter: that is our mistake, and a helper answering
 instead would hide it. `NoReply` is not on the list: the call
@@ -60,13 +65,15 @@ reached a portal, which may still put its dialog up.
 A portal that answered and then failed is reported as it is rather
 than asked again in another program: the chooser went away, or a
 reply without a file. The `Response` code is the exception. 1 is the
-Cancel button, but 2, "ended some other way", is what the GTK and
-GNOME backends send when the chooser's window is closed or Escape is
-pressed, and also what the portal sends when its backend fails after
+Cancel button, but 2, "ended some other way", is what the released
+GTK and GNOME backends send when the chooser's window is closed or
+Escape is pressed (xdg-desktop-portal-gtk's main branch answers 1
+for a closed window since August 2025, not yet in a release), and also what the portal sends when its backend fails after
 the call returned, as xdg-desktop-portal-gtk does when it cannot
 reach the display. From here the two look the same, and the first
 is the everyday one, so 2 is a cancel with a warning in the log;
-the portal's own log says which it was. (A first pass made 2 an
+the portal's own log says which it was. Once the GTK change ships, a
+2 will mostly be a failure, and this is worth revisiting then. (A first pass made 2 an
 error, which turned every Escape on GNOME into "the file chooser
 failed"; the review caught it before it shipped.)
 

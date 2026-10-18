@@ -1047,10 +1047,14 @@ fn absent(e: &zbus::Error) -> bool {
 
 /// `absent` by the error's D-Bus name. The bus's own: no owner, no
 /// such method, a start that failed (`Spawn.*`), or a start that
-/// timed out, which the bus answers before the call reaches the
-/// portal. systemd's, where the bus starts the portal as a unit: none
-/// installed, masked, or one that would not load. `NoReply` is not
-/// one: the call did reach a portal, which may yet show its dialog.
+/// timed out. dbus-daemon sends `TimedOut` only for a start, and
+/// drops the call; the portal sends it only when its backend would
+/// not start, before it asks the backend. Either way no dialog was
+/// shown. Any of systemd's, which dbus-daemon passes on when systemd
+/// will not queue the portal's unit (none, masked, a bad setting);
+/// dbus-broker says `NameHasNoOwner` for all of those. `NoReply` is
+/// not one: the call did reach a portal, which may yet show its
+/// dialog.
 #[cfg(target_os = "linux")]
 fn absent_name(name: &str) -> bool {
     if let Some(name) = name.strip_prefix("org.freedesktop.DBus.Error.") {
@@ -1063,10 +1067,8 @@ fn absent_name(name: &str) -> bool {
                 | "UnknownInterface"
                 | "TimedOut"
         ) || name.starts_with("Spawn.")
-    } else if let Some(name) = name.strip_prefix("org.freedesktop.systemd1.") {
-        matches!(name, "NoSuchUnit" | "UnitMasked" | "LoadFailed")
     } else {
-        false
+        name.starts_with("org.freedesktop.systemd1.")
     }
 }
 
@@ -1272,15 +1274,22 @@ impl Helper {
 }
 
 /// The line of a helper's stderr that says it could not reach the
-/// display: GTK's "cannot open display" before it exits 1, Qt's
-/// "could not connect to display" before it aborts. Only those: GTK
+/// display: GTK 3's "cannot open display" and GTK 4's "failed to
+/// open display" before they exit 1, Qt's "could not connect to
+/// display" before it aborts. Only those: GTK
 /// mentions the display in warnings it prints on a dialog that works,
 /// as Xlib's missing RANDR under Xvfb.
 #[cfg(target_os = "linux")]
 fn display_failure(stderr: &str) -> Option<&str> {
     stderr.lines().map(str::trim).find(|line| {
         let line = line.to_lowercase();
-        line.contains("cannot open display") || line.contains("could not connect to display")
+        [
+            "cannot open display",
+            "failed to open display",
+            "could not connect to display",
+        ]
+        .iter()
+        .any(|phrase| line.contains(phrase))
     })
 }
 
@@ -1508,8 +1517,9 @@ fn portal(request: &Ask) -> Result<Vec<PathBuf>> {
     let message = responses.next().context("the file chooser went away")?;
     let (code, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize()?;
     // 1 is the Cancel button. 2 is the chooser ended some other way:
-    // its window closed or Escape pressed, which the GTK and GNOME
-    // backends answer with 2, or the backend failing after the call
+    // its window closed or Escape pressed, which the released GTK and
+    // GNOME backends answer with 2 (xdg-desktop-portal-gtk's main
+    // answers 1 since 2025), or the backend failing after the call
     // returned. The two cannot be told apart from here, and the first
     // is the common one, so 2 is a cancel too, with a line in the log
     // for the second; the portal's own log says which it was.
@@ -1743,8 +1753,9 @@ mod tests {
         }
         // The bus timing out a start answers before the portal.
         assert!(absent_name("org.freedesktop.DBus.Error.TimedOut"));
-        // A portal started as a systemd unit that is not there.
-        for name in ["NoSuchUnit", "UnitMasked", "LoadFailed"] {
+        // A portal started as a systemd unit that systemd would not
+        // queue.
+        for name in ["NoSuchUnit", "UnitMasked", "BadUnitSetting", "LoadFailed"] {
             assert!(absent_name(&format!("org.freedesktop.systemd1.{name}")));
         }
         // A portal that took the request and refused it is ours to
@@ -1753,7 +1764,6 @@ mod tests {
             "org.freedesktop.DBus.Error.InvalidArgs",
             "org.freedesktop.DBus.Error.NoReply",
             "org.freedesktop.portal.Error.InvalidArgument",
-            "org.freedesktop.systemd1.JobFailed",
             "ServiceUnknown",
         ] {
             assert!(!absent_name(name), "{name}");
@@ -1850,6 +1860,11 @@ mod tests {
         .unwrap()
         .unwrap_err();
         assert!(no_display.to_string().contains("cannot open display"));
+        // GTK 4's, as zenity 4 says it.
+        let no_display = run("echo 'Failed to open display' >&2; exit 1", "no-display-4")
+            .unwrap()
+            .unwrap_err();
+        assert!(no_display.to_string().contains("Failed to open display"));
         // A warning that mentions the display is still a cancel.
         assert_eq!(
             run(
