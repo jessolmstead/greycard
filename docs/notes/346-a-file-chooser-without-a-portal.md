@@ -18,21 +18,49 @@ and kdialog when zenity is not installed. Each draws a chooser of its
 own and prints the paths picked, one a line, exiting 1 for a cancel.
 The request goes over as it would to the portal: the folder it opens
 on, the name a save offers, a folder chooser or a chooser of several
-files, and the one filter as `NAME | *.a *.b` to zenity and
-`*.a *.b|NAME` to kdialog. A save through zenity asks before it
-replaces a file (`--confirm-overwrite`, a no-op on zenity 4, which
-always asks), as the portal's GTK chooser does. We try both because
-a bare window manager tends to have one or the other, zenity far
-more often; rfd falls back the same way.
+files, and the one filter as `NAME | *.a *.b` to zenity and in Qt's
+form, `NAME (*.a *.b)`, to kdialog, which splits its filter on `|`.
+A save through zenity asks before it replaces a file
+(`--confirm-overwrite`, a no-op on zenity 4, which always asks), as
+the portal's GTK chooser does. We try both because a bare window
+manager tends to have one or the other, zenity far more often; rfd
+falls back to zenity alone.
 
-"Cannot be asked" is narrower than "failed". The portal's errors up
-to and including the `OpenFile` or `SaveFile` call carry
-`Unreached::Bus` (no session bus) or `Unreached::Portal` (a bus, but
-no portal or no file chooser behind it), and only those go to a
-helper. Nothing is on the screen until that call returns, so the
-user has seen no dialog. A portal that answered and then failed (the
-chooser went away, a reply without a file) is reported as it is
-rather than asked again in another program.
+Exit 1 is a cancel, except that GTK also exits 1 when it cannot
+open the display, which it says on stderr: that is an error naming
+the line. zenity takes its exit codes from `ZENITY_OK` and the like
+when they are set, so the child gets none of them. A path picked to
+open comes back through the helper's stdout, one a line, and a name
+with a newline in it splits in two; kdialog prints in the locale's
+encoding, and zenity under `LANG=C` converts too, so a name that is
+not UTF-8 or not ASCII can come back changed. The command-line
+programs give no way around that, so a returned path that is not
+there is said rather than opened.
+
+"Cannot be asked" is narrower than "failed". Only two errors go to a
+helper. `Unreached::Bus` is no session bus to connect to.
+`Unreached::Portal` is the `OpenFile` or `SaveFile` call failing with
+a D-Bus error that means nothing was there to take it:
+`ServiceUnknown` or `NameHasNoOwner` (no portal), `UnknownMethod`,
+`UnknownInterface` or `UnknownObject` (a portal with no file chooser
+backend configured), or a `Spawn.*` error (a portal that would not
+start). Nothing is on the screen until that call returns, so the
+user has seen no dialog. Any other error from the call is a portal
+that took the request and refused it, as `InvalidArgument` for
+§88's empty filter: that is our mistake, and a helper answering
+instead would hide it. `NoReply` is not on the list either, since a
+portal slow to start may still put its dialog up.
+
+A portal that answered and then failed is reported as it is rather
+than asked again in another program: the chooser went away, a reply
+without a file, or the `Response` code 2. The portal replies to the
+call as soon as it has handed the request to its backend, and when
+the backend then fails, as xdg-desktop-portal-gtk does when it
+cannot reach the display, the response is 2. We used to read every
+code but 0 as a cancel, so that showed as "canceled"; only 1 is a
+cancel now, and 2 says the portal's chooser ended without an answer.
+It is not sent to a helper because 2 can also end a dialog that was
+shown.
 
 ## Saying what is missing
 
@@ -42,9 +70,10 @@ cause: the empty filter of §88 and a missing bus read the same.
 error is shown: no session bus says to install zenity or see the
 user guide, no portal says to install xdg-desktop-portal-gtk or
 zenity, and anything else is "the file chooser failed:" and the
-error. The user
-guide's Before you start has the Linux line: a portal, or zenity,
-or a folder named on the command line.
+error. The monitor and soft-proof profile pickers, which only logged
+a failure, show it too. The user guide's Before you start has the
+Linux line: a portal, or zenity, or a folder named on the command
+line.
 
 ## Left alone
 
@@ -54,3 +83,16 @@ the folder. On the tester's machine that opened RawTherapee, the
 application their desktop had for `inode/directory`. That is the
 desktop's choice, and `xdg-mime default` changes it; we leave the
 fallback as it is.
+
+## Tested
+
+`route` is tested apart from the bus: the portal's own answer
+stands, a portal that failed once asked is not asked again, an
+unreached one takes the helper's answer, and with no helper the
+unreached error and its line come back. `absent_name` is tested
+against the names above and against `InvalidArgs`, `NoReply` and
+the portal's own `InvalidArgument`. `Helper::run` takes the program
+by path, so shell-script stand-ins check the exits: two paths, a
+cancel, GTK's display failure, a crash, a path not there, and a
+program not installed, which is skipped. The arguments for each
+mode are tested against what zenity and kdialog document.

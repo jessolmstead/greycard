@@ -1272,7 +1272,10 @@ pub(crate) fn choose_icc(
                         app.window().request_redraw();
                     }
                     Ok(None) => {}
-                    Err(e) => tracing::warn!("{title}: file chooser: {e:#}"),
+                    Err(e) => {
+                        tracing::warn!("{title}: file chooser: {e:#}");
+                        app.set_status(export::chooser_failed(&e).into());
+                    }
                 }
             });
         },

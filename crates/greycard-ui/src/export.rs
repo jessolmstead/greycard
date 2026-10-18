@@ -1009,17 +1009,80 @@ fn ask(request: Ask, done: impl FnOnce(Result<Vec<PathBuf>>) + Send + 'static) {
 /// `chooser_failed` says what to install.
 #[cfg(target_os = "linux")]
 fn choose(request: &Ask) -> Result<Vec<PathBuf>> {
-    let e = match portal(request) {
+    route(portal(request), || {
+        [Helper::Zenity, Helper::Kdialog]
+            .into_iter()
+            .find_map(|helper| helper.ask(request))
+    })
+}
+
+/// The portal's answer, or `helper`'s when the portal could not be
+/// asked and a helper is installed to ask instead.
+#[cfg(target_os = "linux")]
+fn route(
+    answer: Result<Vec<PathBuf>>,
+    helper: impl FnOnce() -> Option<Result<Vec<PathBuf>>>,
+) -> Result<Vec<PathBuf>> {
+    let e = match answer {
         Err(e) if e.downcast_ref::<Unreached>().is_some() => e,
         answer => return answer,
     };
     tracing::info!("file chooser: {e:#}; trying zenity, then kdialog");
-    for helper in [Helper::Zenity, Helper::Kdialog] {
-        if let Some(answer) = helper.ask(request) {
-            return answer;
+    helper().unwrap_or(Err(e))
+}
+
+/// Whether the portal's call failed because nothing was there to
+/// take it: no portal on the bus, one that would not start, or no
+/// file chooser behind it. Any other error is a portal that took the
+/// request and refused it, our mistake (§88's empty filter was one)
+/// and not a reason to ask zenity. A call that timed out is not one
+/// of these either: the portal may be slow to start and still put
+/// its dialog up.
+#[cfg(target_os = "linux")]
+fn absent(e: &zbus::Error) -> bool {
+    match e {
+        zbus::Error::MethodError(name, _, _) => absent_name(name.as_str()),
+        zbus::Error::FDO(e) => {
+            use zbus::fdo::Error as F;
+            matches!(
+                **e,
+                F::ServiceUnknown(_)
+                    | F::NameHasNoOwner(_)
+                    | F::UnknownMethod(_)
+                    | F::UnknownObject(_)
+                    | F::UnknownInterface(_)
+                    | F::SpawnExecFailed(_)
+                    | F::SpawnForkFailed(_)
+                    | F::SpawnChildExited(_)
+                    | F::SpawnChildSignaled(_)
+                    | F::SpawnFailed(_)
+                    | F::SpawnFailedToSetup(_)
+                    | F::SpawnConfigInvalid(_)
+                    | F::SpawnServiceNotValid(_)
+                    | F::SpawnServiceNotFound(_)
+                    | F::SpawnPermissionsInvalid(_)
+                    | F::SpawnFileInvalid(_)
+                    | F::SpawnNoMemory(_)
+            )
         }
+        _ => false,
     }
-    Err(e)
+}
+
+/// `absent` by the error's D-Bus name.
+#[cfg(target_os = "linux")]
+fn absent_name(name: &str) -> bool {
+    let Some(name) = name.strip_prefix("org.freedesktop.DBus.Error.") else {
+        return false;
+    };
+    matches!(
+        name,
+        "ServiceUnknown"
+            | "NameHasNoOwner"
+            | "UnknownMethod"
+            | "UnknownObject"
+            | "UnknownInterface"
+    ) || name.starts_with("Spawn.")
 }
 
 /// Why the portal could not be asked, as against a portal asked that
@@ -1030,7 +1093,8 @@ enum Unreached {
     /// No session bus: `DBUS_SESSION_BUS_ADDRESS` unset and nothing at
     /// `$XDG_RUNTIME_DIR/bus`.
     Bus,
-    /// A bus, but no portal on it with a file chooser behind it.
+    /// A bus, but no portal on it with a file chooser behind it, or
+    /// one that would not start.
     Portal,
 }
 
@@ -1145,7 +1209,10 @@ impl Helper {
                 if let Some((name, globs)) = filter
                     && !request.directory
                 {
-                    args.push(format!("{globs}|{name}").into());
+                    // Qt's form: kdialog splits on `|` into separate
+                    // filters, so `*.jpg|JPEG` would offer one that
+                    // matches a file named JPEG.
+                    args.push(format!("{name} ({globs})").into());
                 }
                 if request.multiple {
                     args.push("--multiple".into());
@@ -1156,29 +1223,66 @@ impl Helper {
         args
     }
 
-    /// The chooser, waited on: the paths picked, none for a cancel
-    /// (both programs exit 1 for one), and nothing at all when the
-    /// program is not installed, so the next is tried.
+    /// The chooser, waited on: the paths picked, none for a cancel,
+    /// and nothing at all when the program is not installed, so the
+    /// next is tried.
     fn ask(self, request: &Ask) -> Option<Result<Vec<PathBuf>>> {
-        let program = self.program();
-        let output = match std::process::Command::new(program)
+        self.run(self.program().as_ref(), request)
+    }
+
+    /// `ask` with the program named by path, for the tests' stand-ins.
+    /// Both programs exit 1 for a cancel, but GTK exits 1 too when it
+    /// cannot open the display, which is told apart by what it says.
+    /// zenity takes its exit codes from `ZENITY_OK` and the like when
+    /// they are set, so they are not passed on. A path picked to open
+    /// that is not there was mangled on its way back (kdialog prints
+    /// in the locale's encoding, and a name with a newline in it
+    /// splits in two), and is said so rather than opened.
+    fn run(self, program: &std::ffi::OsStr, request: &Ask) -> Option<Result<Vec<PathBuf>>> {
+        let name = self.program();
+        let mut command = std::process::Command::new(program);
+        for var in [
+            "ZENITY_OK",
+            "ZENITY_CANCEL",
+            "ZENITY_ESC",
+            "ZENITY_ERROR",
+            "ZENITY_EXTRA",
+            "ZENITY_TIMEOUT",
+        ] {
+            command.env_remove(var);
+        }
+        let output = match command
             .args(self.args(request))
             .stdin(std::process::Stdio::null())
             .output()
         {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(e) => return Some(Err(e).with_context(|| format!("starting {program}"))),
+            Err(e) => return Some(Err(e).with_context(|| format!("starting {name}"))),
             Ok(output) => output,
         };
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
         Some(match output.status.code() {
-            Some(0) => Ok(helper_paths(&output.stdout)),
-            Some(1) => Ok(Vec::new()),
+            Some(0) => {
+                let paths = helper_paths(&output.stdout);
+                match paths.iter().find(|p| request.name.is_none() && !p.exists()) {
+                    Some(gone) => Err(anyhow::anyhow!(
+                        "{name} answered with {}, which is not there",
+                        gone.display()
+                    )),
+                    None => Ok(paths),
+                }
+            }
+            Some(1) if !stderr.to_lowercase().contains("display") => Ok(Vec::new()),
             _ => {
-                tracing::warn!(
-                    "file chooser: {program}: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                );
-                Err(anyhow::anyhow!("{program} {}", output.status))
+                tracing::warn!("file chooser: {name}: {stderr}");
+                match stderr
+                    .lines()
+                    .find(|l| l.to_lowercase().contains("display"))
+                {
+                    Some(line) => Err(anyhow::anyhow!("{name}: {}", line.trim())),
+                    None => Err(anyhow::anyhow!("{name} {}", output.status)),
+                }
             }
         })
     }
@@ -1373,18 +1477,14 @@ fn portal(request: &Ask) -> Result<Vec<PathBuf>> {
         PORTAL,
         request_path.as_str(),
         "org.freedesktop.portal.Request",
-    )
-    .context(Unreached::Portal)?;
-    let mut responses = signals
-        .receive_signal("Response")
-        .context(Unreached::Portal)?;
+    )?;
+    let mut responses = signals.receive_signal("Response")?;
     let chooser = Proxy::new(
         &conn,
         PORTAL,
         "/org/freedesktop/portal/desktop",
         "org.freedesktop.portal.FileChooser",
-    )
-    .context(Unreached::Portal)?;
+    )?;
     let mut folder = request.folder.as_os_str().as_bytes().to_vec();
     folder.push(0);
     let options = Options {
@@ -1396,11 +1496,14 @@ fn portal(request: &Ask) -> Result<Vec<PathBuf>> {
         directory: request.directory.then_some(true),
         multiple: request.multiple.then_some(true),
     };
-    let handle: OwnedObjectPath = chooser
-        .call(method, &("", request.title, options))
-        // Nothing is on the screen until the call returns, so its
-        // failing is the portal not being there to ask.
-        .context(Unreached::Portal)?;
+    // Nothing is on the screen until the call returns, so a call that
+    // found nothing to take it can go to a helper without a second
+    // dialog.
+    let handle: OwnedObjectPath = match chooser.call(method, &("", request.title, options)) {
+        Ok(handle) => handle,
+        Err(e) if absent(&e) => return Err(e).context(Unreached::Portal),
+        Err(e) => return Err(e).context("the file chooser portal"),
+    };
     if handle.as_str() != request_path {
         // An old portal names the request itself.
         let signals = Proxy::new(&conn, PORTAL, handle, "org.freedesktop.portal.Request")?;
@@ -1408,8 +1511,17 @@ fn portal(request: &Ask) -> Result<Vec<PathBuf>> {
     }
     let message = responses.next().context("the file chooser went away")?;
     let (code, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize()?;
-    if code != 0 {
-        return Ok(Vec::new());
+    // 1 is the user's cancel. 2 is the portal's backend failing after
+    // the call returned, as xdg-desktop-portal-gtk does when it cannot
+    // reach the display; it may follow a dialog that was shown, so it
+    // is said rather than asked again elsewhere.
+    match code {
+        0 => {}
+        1 => return Ok(Vec::new()),
+        _ => anyhow::bail!(
+            "the desktop portal's chooser ended without an answer \
+             (its backend may not run here; the log says more)"
+        ),
     }
     let uris = results.get("uris").context("a reply without a file")?;
     let uris = Vec::<String>::try_from(uris.clone()).context("the reply's file")?;
@@ -1586,7 +1698,7 @@ mod tests {
                 "Pick",
                 "--getsavefilename",
                 "/home/me/My Pictures/a.jpg",
-                "*.jpg *.jpeg|JPEG"
+                "JPEG (*.jpg *.jpeg)"
             ]
         );
         assert_eq!(
@@ -1596,7 +1708,7 @@ mod tests {
                 "Pick",
                 "--getopenfilename",
                 "/home/me/My Pictures",
-                "*.jpg *.jpeg|JPEG",
+                "JPEG (*.jpg *.jpeg)",
                 "--multiple",
                 "--separate-output"
             ]
@@ -1612,6 +1724,129 @@ mod tests {
         );
         assert_eq!(helper_paths(b""), Vec::<PathBuf>::new());
         assert_eq!(helper_paths(b"\n"), Vec::<PathBuf>::new());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_a_portal_that_is_not_there_goes_to_a_helper() {
+        for name in [
+            "ServiceUnknown",
+            "NameHasNoOwner",
+            "UnknownMethod",
+            "UnknownObject",
+            "UnknownInterface",
+            "Spawn.ChildExited",
+            "Spawn.ExecFailed",
+        ] {
+            assert!(absent_name(&format!("org.freedesktop.DBus.Error.{name}")));
+        }
+        // A portal that took the request and refused it is ours to
+        // hear, and one that timed out may yet show its dialog.
+        for name in [
+            "org.freedesktop.DBus.Error.InvalidArgs",
+            "org.freedesktop.DBus.Error.NoReply",
+            "org.freedesktop.DBus.Error.TimedOut",
+            "org.freedesktop.portal.Error.InvalidArgument",
+            "ServiceUnknown",
+        ] {
+            assert!(!absent_name(name), "{name}");
+        }
+        let fdo = |e| zbus::Error::FDO(Box::new(e));
+        assert!(absent(&fdo(zbus::fdo::Error::ServiceUnknown("x".into()))));
+        assert!(!absent(&fdo(zbus::fdo::Error::InvalidArgs("x".into()))));
+        assert!(!absent(&zbus::Error::InvalidReply));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_helper_is_asked_only_when_the_portal_was_not_reached() {
+        let unreached =
+            || Err::<Vec<PathBuf>, _>(anyhow::anyhow!("ServiceUnknown")).context(Unreached::Portal);
+        let picked = || Some(Ok(vec![PathBuf::from("/picked")]));
+        // The portal's own answer, picked or canceled, stands.
+        let asked = std::cell::Cell::new(false);
+        let answer = route(Ok(vec![PathBuf::from("/portal")]), || {
+            asked.set(true);
+            picked()
+        });
+        assert_eq!(answer.unwrap(), [PathBuf::from("/portal")]);
+        assert!(!asked.get());
+        // A portal that failed after it was asked is not asked again.
+        let failed = route(Err(anyhow::anyhow!("the file chooser went away")), || {
+            asked.set(true);
+            picked()
+        });
+        assert!(failed.is_err());
+        assert!(!asked.get());
+        // Not reached: the helper's answer.
+        assert_eq!(
+            route(unreached(), picked).unwrap(),
+            [PathBuf::from("/picked")]
+        );
+        // Not reached and no helper: the portal's error, which says
+        // what to install.
+        let none = route(unreached(), || None).unwrap_err();
+        assert!(chooser_failed(&none).contains("xdg-desktop-portal-gtk"));
+    }
+
+    /// A stand-in for zenity: a shell script with `body`, in `dir`.
+    #[cfg(target_os = "linux")]
+    fn stub(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_helpers_exit_says_picked_canceled_or_failed() {
+        let dir = crate::testing::scratch_dir("helper-exits");
+        std::fs::create_dir_all(dir.join("a b")).unwrap();
+        std::fs::create_dir_all(dir.join("c")).unwrap();
+        let run = |body: &str, name: &str| {
+            let program = stub(&dir, name, body);
+            Helper::Zenity.run(program.as_os_str(), &asking(None, false, true))
+        };
+        // Two picked, one a line.
+        let two = format!(
+            "printf '%s\\n%s\\n' '{}' '{}'",
+            dir.join("a b").display(),
+            dir.join("c").display()
+        );
+        assert_eq!(
+            run(&two, "two").unwrap().unwrap(),
+            [dir.join("a b"), dir.join("c")]
+        );
+        // A cancel is nothing picked, not an error.
+        assert_eq!(
+            run("exit 1", "cancel").unwrap().unwrap(),
+            Vec::<PathBuf>::new()
+        );
+        // GTK's exit 1 without a display is an error that says so.
+        let no_display = run(
+            "echo '(zenity:1): Gtk-WARNING **: cannot open display: :9' >&2; exit 1",
+            "no-display",
+        )
+        .unwrap()
+        .unwrap_err();
+        assert!(no_display.to_string().contains("cannot open display"));
+        // Anything else is an error.
+        assert!(run("exit 255", "crash").unwrap().is_err());
+        // A path that is not there came back mangled.
+        assert!(
+            run(&format!("echo '{}'", dir.join("gone").display()), "mangled")
+                .unwrap()
+                .is_err()
+        );
+        // Not installed: the next helper is tried.
+        assert!(
+            Helper::Zenity
+                .run(dir.join("missing").as_os_str(), &asking(None, true, false))
+                .is_none()
+        );
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[cfg(target_os = "linux")]
