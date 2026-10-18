@@ -376,6 +376,7 @@ impl Renderer {
             };
             let lut_view = lut.create_view(&Default::default());
             let brushes_view = self.brushes.view();
+            let wide_view = self.wide.view();
             let guide_view = self.guide.create_view(&Default::default());
             let detail_view = self.detail.create_view(&Default::default());
             let look_view = self.look.texture.create_view(&Default::default());
@@ -434,6 +435,10 @@ impl Renderer {
                     gpu::BindGroupEntry {
                         binding: 12,
                         resource: gpu::BindingResource::TextureView(&detail_view),
+                    },
+                    gpu::BindGroupEntry {
+                        binding: 13,
+                        resource: gpu::BindingResource::TextureView(&wide_view),
                     },
                 ],
             });
@@ -648,8 +653,10 @@ impl Renderer {
         }
         self.redraw = false;
         self.drawn = Some((width, height, v.clone()));
+        let locals = locals_gpu(&v.locals);
         self.brushes
-            .sync(&self.device, &self.queue, &locals_gpu(&v.locals).rasters);
+            .sync(&self.device, &self.queue, &locals.rasters);
+        self.wide.sync(&self.device, &self.queue, &locals.wide);
         let target = match &self.target {
             Some(t) if t.width() == width && t.height() == height => t.clone(),
             _ => {

@@ -398,6 +398,10 @@ pub(crate) fn look_ready(edit: &Edit) -> Result<(), Why> {
 pub(crate) fn masks_ready(ai: &mut Ai, path: &Path, edit: &Edit, turn: u8) -> Result<(), Why> {
     let mut to_make = Vec::new();
     let mut no_model = Vec::new();
+    // The frame's size as its file says it stands, read only for a Sky,
+    // the one shape whose raster's width follows it: a frame the rule
+    // gives the wide raster is not ready on its old narrow one.
+    let mut frame = None;
     for a in &edit.adjustments {
         if !a.enabled || a.mask.is_empty() {
             continue;
@@ -406,7 +410,16 @@ pub(crate) fn masks_ready(ai: &mut Ai, path: &Path, edit: &Edit, turn: u8) -> Re
             if !c.shape.is_learned() || !crate::ai::prompted(&c.shape) {
                 continue;
             }
-            match ai.raster_ready(path, &c.shape, turn) {
+            let size = match &c.shape {
+                greycard_edit::mask::Shape::Sky { .. } => *frame.get_or_insert_with(|| {
+                    greycard_core::decode::stance_path(path)
+                        .ok()
+                        .and_then(|s| s.shown_size(turn))
+                        .map(|(w, h)| (w as usize, h as usize))
+                }),
+                _ => None,
+            };
+            match ai.raster_ready(path, &c.shape, turn, size) {
                 crate::ai::Ready::Cached => {}
                 crate::ai::Ready::ToMake => {
                     to_make.push(format!("{}'s {}", a.name, c.shape.name()))
@@ -440,7 +453,6 @@ pub(crate) fn rasters(
 ) -> Result<Rasters, Why> {
     let mut rasters = Rasters::new();
     let mut missing = Vec::new();
-    let aspect = full.1 as f32 / full.0 as f32;
     for a in &edit.adjustments {
         if !a.enabled || a.mask.is_empty() {
             continue;
@@ -449,7 +461,7 @@ pub(crate) fn rasters(
             if !c.shape.is_learned() || !crate::ai::prompted(&c.shape) {
                 continue;
             }
-            match ai.cached_raster(path, &c.shape, turn, aspect) {
+            match ai.cached_raster(path, &c.shape, turn, full) {
                 Some(raster) => {
                     rasters.insert((a.id, i), raster);
                 }

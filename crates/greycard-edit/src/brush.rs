@@ -12,6 +12,56 @@ use crate::mask::{Pos, smoothstep};
 /// The raster's width, texels; its height follows the picture.
 pub const RASTER_WIDTH: usize = 2048;
 
+/// A Sky's raster on a frame whose width would spread a texel of
+/// [`RASTER_WIDTH`] over more than [`MOST_ACROSS`] of its pixels: the
+/// matte is made at the frame's own resolution and averaged to the
+/// raster, so on a 45 MP frame each texel of a 2048 one is the mean of
+/// four pixels across and four down, and the light rim along a leaf or
+/// a twig that the averaging leaves is plain at 1:1. Twice as wide
+/// halves it.
+pub const WIDE_RASTER_WIDTH: usize = 4096;
+/// The most of the frame's pixels across that a texel of a Sky's
+/// raster may stand for before the raster is the wide one: the width,
+/// not the megapixels, decides. A 24 MP frame 6000 wide (2.9 a texel)
+/// keeps the raster it had, to the bit, as does any frame up to 6144
+/// wide; but some 24 and 26 MP bodies are wider, 6240 for one (3.05 a
+/// texel), and take the wide one, as do a 45 MP frame (8192, 4.0) and
+/// a 100 MP one upright (8736, 4.3) or not (11648, 5.7).
+pub const MOST_ACROSS: usize = 3;
+/// The longest side a raster may have: 8192, the 2D texture size every
+/// device wgpu runs on guarantees (its default
+/// `max_texture_dimension_2d`), whatever more a given GPU takes. A
+/// frame whose wide raster would be taller keeps the narrow one.
+pub const MOST_SIDE: usize = 8192;
+
+/// The width of the raster `shape` is made at on a frame of `frame`
+/// (width, height), the full develop's size as the frame is turned:
+/// [`WIDE_RASTER_WIDTH`] for a Sky on a frame wider than
+/// [`MOST_ACROSS`] times [`RASTER_WIDTH`] and no taller than twice its
+/// width, [`RASTER_WIDTH`] for everything else. The frame's size, not
+/// the picture the models are run on: a reduced develop's half-size
+/// picture of a 100 MP frame makes the same raster the full one does.
+pub fn raster_width(shape: &crate::mask::Shape, frame: (usize, usize)) -> usize {
+    let (w, h) = frame;
+    let wide = matches!(shape, crate::mask::Shape::Sky { .. })
+        && w > MOST_ACROSS * RASTER_WIDTH
+        && raster_height(WIDE_RASTER_WIDTH, h as f32 / w as f32) <= MOST_SIDE;
+    if wide {
+        WIDE_RASTER_WIDTH
+    } else {
+        RASTER_WIDTH
+    }
+}
+
+/// A raster's height at `width` for a picture `aspect` (height over
+/// width) tall.
+pub fn raster_height(width: usize, aspect: f32) -> usize {
+    ((width as f32 * aspect).round() as usize).max(1)
+}
+
+// A row of a raster is a whole number of the GPU copy's row alignment.
+const _: () = assert!(RASTER_WIDTH.is_multiple_of(256) && WIDE_RASTER_WIDTH.is_multiple_of(256));
+
 /// What a stroke does to the paint under it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -154,7 +204,7 @@ impl Raster {
     /// An empty raster for a picture `aspect` (height over width) tall.
     pub fn new(aspect: f32) -> Self {
         let width = RASTER_WIDTH;
-        let height = ((width as f32 * aspect).round() as usize).max(1);
+        let height = raster_height(width, aspect);
         Self {
             width,
             height,
@@ -328,6 +378,50 @@ mod tests {
             points: vec![at],
             ..Stroke::new(op, radius, feather, flow)
         }
+    }
+
+    /// The Sky's raster is the wide one past three of the frame's
+    /// pixels a texel across, and only the Sky's; a frame under that
+    /// keeps the raster every shape had.
+    #[test]
+    fn a_sky_raster_is_wide_only_past_three_pixels_a_texel() {
+        use crate::mask::{LandscapeGroup, Shape};
+        let sky = Shape::Sky { picks: Vec::new() };
+        // 24 MP both ways, 45 MP upright: today's raster.
+        for frame in [(6000, 4000), (4000, 6000), (5464, 8192), (6144, 4096)] {
+            assert_eq!(raster_width(&sky, frame), RASTER_WIDTH, "{frame:?}");
+        }
+        // A 24 MP body 6240 wide, 45 MP, 61 MP, 100 MP upright and
+        // not: the wide one.
+        for frame in [
+            (6145, 4096),
+            (6240, 4160),
+            (8192, 5464),
+            (9504, 6336),
+            (8736, 11648),
+            (11648, 8736),
+        ] {
+            assert_eq!(raster_width(&sky, frame), WIDE_RASTER_WIDTH, "{frame:?}");
+        }
+        // A wide raster taller than every device takes keeps the
+        // narrow one.
+        assert_eq!(raster_width(&sky, (7000, 14000)), WIDE_RASTER_WIDTH);
+        assert_eq!(raster_height(WIDE_RASTER_WIDTH, 14001.0 / 7000.0), 8193);
+        assert_eq!(raster_width(&sky, (7000, 14001)), RASTER_WIDTH);
+        // No other shape, a Foliage the sky cuts among them.
+        for shape in [
+            Shape::Subject {},
+            Shape::Landscape {
+                group: LandscapeGroup::Foliage,
+            },
+            Shape::Brush {
+                strokes: Vec::new(),
+            },
+        ] {
+            assert_eq!(raster_width(&shape, (11648, 8736)), RASTER_WIDTH);
+        }
+        assert_eq!(raster_height(WIDE_RASTER_WIDTH, 8736.0 / 11648.0), 3072);
+        assert_eq!(raster_height(RASTER_WIDTH, 2.0 / 3.0), 1365);
     }
 
     #[test]

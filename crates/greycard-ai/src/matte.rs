@@ -828,56 +828,141 @@ pub fn color_line(
         };
         return Some(Mask::new(fw, fh, full).resampled(ow, oh));
     }
-    let blocks: Vec<(usize, usize)> = (0..oh.div_ceil(BLOCK))
-        .flat_map(|by| (0..ow.div_ceil(BLOCK)).map(move |bx| (bx, by)))
-        .collect();
-    let done: Vec<((usize, usize), Vec<f32>)> = blocks
-        .into_par_iter()
-        .map(|(bx, by)| {
-            let (ox0, oy0) = (bx * BLOCK, by * BLOCK);
-            let (ox1, oy1) = ((ox0 + BLOCK).min(ow), (oy0 + BLOCK).min(oh));
-            let (x0, y0) = (span(ox0, ow, fw).0, span(oy0, oh, fh).0);
-            let (x1, y1) = (span(ox1 - 1, ow, fw).1, span(oy1 - 1, oh, fh).1);
-            let rw = x1 - x0;
-            let full = if unknown_near(
-                x0.saturating_sub(2 * RADIUS + 2),
-                y0.saturating_sub(2 * RADIUS + 2),
-                (x1 + 2 * RADIUS + 2).min(fw),
-                (y1 + 2 * RADIUS + 2).min(fh),
-            ) {
-                region(x0, y0, x1, y1)
-            } else {
-                (y0..y1)
-                    .flat_map(|y| (x0..x1).map(move |x| (x, y)))
-                    .map(|(x, y)| alpha_at(x, y))
-                    .collect()
-            };
-            let mut out = Vec::with_capacity((ox1 - ox0) * (oy1 - oy0));
-            for oy in oy0..oy1 {
-                let (ya, yb) = span(oy, oh, fh);
-                for ox in ox0..ox1 {
-                    let (xa, xb) = span(ox, ow, fw);
-                    let mut acc = 0.0f32;
-                    for y in ya..yb {
-                        let row = (y - y0) * rw;
-                        acc += full[row + xa - x0..row + xb - x0].iter().sum::<f32>();
-                    }
-                    out.push(acc / ((yb - ya) * (xb - xa)) as f32);
+    log::debug!(
+        "sky matte at {ow}x{oh} from {fw}x{fh}: {:?}",
+        footprint((w, h), (fw, fh), (ow, oh), rayon::current_num_threads())
+    );
+    // A block of the output, from the frame's pixels under it.
+    let block = |bx: usize, by: usize| -> Vec<f32> {
+        let (ox0, oy0) = (bx * BLOCK, by * BLOCK);
+        let (ox1, oy1) = ((ox0 + BLOCK).min(ow), (oy0 + BLOCK).min(oh));
+        let (x0, y0) = (span(ox0, ow, fw).0, span(oy0, oh, fh).0);
+        let (x1, y1) = (span(ox1 - 1, ow, fw).1, span(oy1 - 1, oh, fh).1);
+        let rw = x1 - x0;
+        let full = if unknown_near(
+            x0.saturating_sub(2 * RADIUS + 2),
+            y0.saturating_sub(2 * RADIUS + 2),
+            (x1 + 2 * RADIUS + 2).min(fw),
+            (y1 + 2 * RADIUS + 2).min(fh),
+        ) {
+            region(x0, y0, x1, y1)
+        } else {
+            (y0..y1)
+                .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+                .map(|(x, y)| alpha_at(x, y))
+                .collect()
+        };
+        let mut out = Vec::with_capacity((ox1 - ox0) * (oy1 - oy0));
+        for oy in oy0..oy1 {
+            let (ya, yb) = span(oy, oh, fh);
+            for ox in ox0..ox1 {
+                let (xa, xb) = span(ox, ow, fw);
+                let mut acc = 0.0f32;
+                for y in ya..yb {
+                    let row = (y - y0) * rw;
+                    acc += full[row + xa - x0..row + xb - x0].iter().sum::<f32>();
+                }
+                out.push(acc / ((yb - ya) * (xb - xa)) as f32);
+            }
+        }
+        out
+    };
+    // A row of blocks at a time, written into the output where it
+    // goes: the output is held once, and beside it only the rows of
+    // blocks under way.
+    let mut data = vec![0.0f32; ow * oh];
+    data.par_chunks_mut(BLOCK * ow)
+        .enumerate()
+        .for_each(|(by, rows)| {
+            let done: Vec<Vec<f32>> = (0..ow.div_ceil(BLOCK))
+                .into_par_iter()
+                .map(|bx| block(bx, by))
+                .collect();
+            for (bx, b) in done.iter().enumerate() {
+                let ox0 = bx * BLOCK;
+                let bw = (ox0 + BLOCK).min(ow) - ox0;
+                for (k, row) in b.chunks(bw).enumerate() {
+                    rows[k * ow + ox0..k * ow + ox0 + bw].copy_from_slice(row);
                 }
             }
-            ((bx, by), out)
-        })
-        .collect();
-    let mut data = vec![0.0f32; ow * oh];
-    for ((bx, by), block) in done {
-        let (ox0, oy0) = (bx * BLOCK, by * BLOCK);
-        let bw = (ox0 + BLOCK).min(ow) - ox0;
-        for (k, row) in block.chunks(bw).enumerate() {
-            let at = (oy0 + k) * ow + ox0;
-            data[at..at + bw].copy_from_slice(row);
-        }
-    }
+        });
     Some(Mask::new(ow, oh, data))
+}
+
+/// What [`color_line`] is expected to hold at once, in bytes: for a
+/// prior (and outline) of `preview` (width, height), a frame of
+/// `frame` and an output of `out`, with `threads` at work, from the
+/// buffers' sizes rather than a measure of the allocator. The blocks
+/// under way are counted as one a thread, which is rayon's usual
+/// schedule and not a hard bound: the rows, the blocks in a row, a
+/// region's fill and the guided filter all run in parallel within one
+/// another, and a thread waiting in an inner join may steal another
+/// block and start its region. The preview's part and the output are
+/// held once whatever the schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Footprint {
+    /// At the preview, whatever the output: the trimap, the preview's
+    /// linear picture, the outline, the sure sky, the negated picks,
+    /// the growth's joined pixels and plane and the pockets' fill, and
+    /// the local colors at `COLOR_SIDE`. Linear in the preview's
+    /// pixels, so the growth and the pockets cost the same at any
+    /// raster width.
+    pub preview: usize,
+    /// The output, once, and the rows of blocks under way beside it.
+    pub output: usize,
+    /// The blocks under way, one a thread: each its region of the
+    /// frame and its filter's margin, the guided filter's planes over
+    /// it.
+    pub blocks: usize,
+}
+
+impl Footprint {
+    pub fn total(&self) -> usize {
+        self.preview + self.output + self.blocks
+    }
+}
+
+/// Bytes a preview pixel holds at most: the trimap (1), the linear
+/// picture (12), the outline (4), the sure sky and the negated picks
+/// (1 each), and the larger of the growth's joined pixels and plane
+/// (8 + 4) and the pockets' seen, stack and region (1 + 8 + 8).
+const PER_PREVIEW_PIXEL: usize = 1 + 12 + 4 + 1 + 1 + 17;
+/// Floats a pixel of the local colors' planes holds at most.
+const COLOR_FLOATS: usize = 40;
+/// The planes over a block's region at once: the alpha and the guide,
+/// and the guided filter's eleven and its box mean's two.
+const PLANES_A_REGION: usize = 2 + 11 + 2;
+
+/// See [`Footprint`].
+pub fn footprint(
+    preview: (usize, usize),
+    frame: (usize, usize),
+    out: (usize, usize),
+    threads: usize,
+) -> Footprint {
+    let f = std::mem::size_of::<f32>();
+    let (pw, ph) = preview;
+    let long = pw.max(ph).max(1);
+    let colors = ((pw * COLOR_SIDE).div_ceil(long)) * ((ph * COLOR_SIDE).div_ceil(long));
+    // The color planes at `COLOR_SIDE`: the linear picture and the
+    // two known planes, and for each side its blurs near and far, its
+    // colors and the blur's temporaries.
+    let preview = pw * ph * PER_PREVIEW_PIXEL + colors * COLOR_FLOATS * f;
+    let (ow, oh) = (out.0.max(1), out.1.max(1));
+    let threads = threads.max(1);
+    let rows = threads.min(oh.div_ceil(BLOCK));
+    let output = ow * oh * f + rows * BLOCK * ow * f;
+    // A block's region: its share of the frame, a pixel more for the
+    // spans' rounding, and the filter's margin either side.
+    let margin = 2 * (2 * RADIUS + 2);
+    let side = |o: usize, f: usize| (BLOCK * f).div_ceil(o).min(f) + 1 + margin;
+    let region = side(ow, frame.0) * side(oh, frame.1);
+    let blocks = threads * region * PLANES_A_REGION * f;
+    Footprint {
+        preview,
+        output,
+        blocks,
+    }
 }
 
 #[cfg(test)]
@@ -1056,6 +1141,76 @@ mod tests {
                 / (w * s * s) as f32;
             assert!((a - b).abs() < 1e-3, "row {y}: {a} against {b}");
         }
+    }
+
+    /// A matte twice as wide, a Sky's wide raster, brought down two by
+    /// two is the narrow one: within two levels where the frame's
+    /// pixels split evenly (four a narrow texel, two a wide one; the
+    /// blocks cover other parts of the frame, so a block's filter may
+    /// run where the other's is skipped), and within 0.15 at a thin
+    /// line, a hundredth on average, where a narrow texel's five
+    /// pixels split three and two. What the wider one adds is
+    /// resolution, not another matte.
+    #[test]
+    fn a_matte_twice_as_wide_averages_to_the_narrow_one() {
+        let (w, h) = (120usize, 90usize);
+        for (s, most, mean_most) in [(4usize, 2.0 / 255.0, 1e-4f32), (5, 0.15, 0.01)] {
+            let sc = scene(w, h, s, None);
+            let matte =
+                |ow, oh| color_line(&sc.outline, &sc.prior, &sc.linear, &[], Hold::Sure, ow, oh);
+            let narrow = matte(w, h).unwrap();
+            let wide = matte(2 * w, 2 * h).unwrap();
+            assert_eq!((wide.width, wide.height), (2 * w, 2 * h));
+            let (mut worst, mut sum) = (0.0f32, 0.0f32);
+            for y in 0..h {
+                for x in 0..w {
+                    let down = (wide.at(2 * x, 2 * y)
+                        + wide.at(2 * x + 1, 2 * y)
+                        + wide.at(2 * x, 2 * y + 1)
+                        + wide.at(2 * x + 1, 2 * y + 1))
+                        / 4.0;
+                    let d = (down - narrow.at(x, y)).abs();
+                    worst = worst.max(d);
+                    sum += d;
+                }
+            }
+            let mean = sum / (w * h) as f32;
+            eprintln!("{s} pixels a texel: worst {worst}, mean {mean}");
+            assert!(worst <= most, "{s} a texel: worst {worst}");
+            assert!(mean <= mean_most, "{s} a texel: mean {mean}");
+        }
+    }
+
+    /// The matte's working set at a 100 MP frame's wide raster: the
+    /// preview's part is the same at either width and linear in the
+    /// preview's pixels, so the growth and the pockets do not follow
+    /// the raster; the output is held once; and a wider output has
+    /// smaller blocks of the frame under way, not larger.
+    #[test]
+    fn the_matte_s_expected_working_set() {
+        let (preview, frame) = ((1536, 2048), (8736, 11648));
+        let narrow = footprint(preview, frame, (2048, 2731), 4);
+        let wide = footprint(preview, frame, (4096, 5461), 4);
+        eprintln!(
+            "narrow {narrow:?} {}, wide {wide:?} {}",
+            narrow.total(),
+            wide.total()
+        );
+        assert_eq!(narrow.preview, wide.preview);
+        let twice = footprint((2 * 1536, 2048), frame, (4096, 5461), 4);
+        assert!(twice.preview < 2 * wide.preview && twice.preview > wide.preview * 3 / 2);
+        // The output: 4096 by 5461 floats, and four rows of blocks.
+        assert_eq!(wide.output, 4096 * 5461 * 4 + 4 * 128 * 4096 * 4);
+        assert!(wide.blocks < narrow.blocks);
+        // As said: under 280 MB on four threads, and the most a
+        // thread adds a block's region, under 6 MB.
+        assert!(wide.total() < 280_000_000, "{}", wide.total());
+        let one = footprint(preview, frame, (4096, 5461), 1);
+        assert!(wide.blocks / 4 == one.blocks && one.blocks < 6_000_000);
+        // The rule's largest wide raster, 4096 by 8192, a frame twice
+        // as tall as wide: still a fixed share past its output.
+        let tallest = footprint((1024, 2048), (6200, 12400), (4096, 8192), 4);
+        assert!(tallest.total() < 300_000_000, "{}", tallest.total());
     }
 
     /// No known sky, or an empty frame: nothing to go on, and the

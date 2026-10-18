@@ -61,20 +61,27 @@ pub(super) struct ShapeGpu {
     kind: u32,
     flags: u32,
     layer: u32,
-    pad: u32,
+    /// 1 when the layer is in the wide rasters' array, 0 when in the
+    /// narrow ones'.
+    wide: u32,
     a: [f32; 4],
     b: [f32; 4],
 }
 
 impl ShapeGpu {
-    fn of(c: &greycard_edit::mask::Component, raster: Option<&RasterRef>, layer: u32) -> Self {
+    fn of(
+        c: &greycard_edit::mask::Component,
+        raster: Option<&RasterRef>,
+        layer: u32,
+        wide: bool,
+    ) -> Self {
         let flags = c.mode as u32 | ((c.invert as u32) << 2);
         match &c.shape {
             Shape::Linear { from, to } => Self {
                 kind: 0,
                 flags,
                 layer: 0,
-                pad: 0,
+                wide: 0,
                 a: [from[0], from[1], to[0], to[1]],
                 b: [0.0; 4],
             },
@@ -87,7 +94,7 @@ impl ShapeGpu {
                 kind: 1,
                 flags,
                 layer: 0,
-                pad: 0,
+                wide: 0,
                 a: [center[0], center[1], radius[0], radius[1]],
                 b: [angle.to_radians(), *feather, 0.0, 0.0],
             },
@@ -100,7 +107,7 @@ impl ShapeGpu {
                 kind: 4,
                 flags,
                 layer: 0,
-                pad: 0,
+                wide: 0,
                 a: [*low, *high, low_feather.max(0.0), high_feather.max(0.0)],
                 b: [0.0; 4],
             },
@@ -114,7 +121,7 @@ impl ShapeGpu {
                 kind: 5,
                 flags,
                 layer: 0,
-                pad: 0,
+                wide: 0,
                 a: [*hue, (width * 0.5).max(0.0), hue_feather.max(0.0), *chroma],
                 b: [chroma_feather.max(0.0), 0.0, 0.0, 0.0],
             },
@@ -127,7 +134,7 @@ impl ShapeGpu {
                 kind: 3,
                 flags,
                 layer: 0,
-                pad: 0,
+                wide: 0,
                 a: [0.0; 4],
                 b: [0.0; 4],
             },
@@ -142,15 +149,15 @@ impl ShapeGpu {
                     kind: 2,
                     flags,
                     layer,
-                    pad: 0,
+                    wide: wide as u32,
                     a: [0.0; 4],
-                    b: [r.0.aspect, 0.0, 0.0, 0.0],
+                    b: [r.0.aspect, r.0.width as f32, r.0.height as f32, 0.0],
                 },
                 None => Self {
                     kind: 3,
                     flags,
                     layer: 0,
-                    pad: 0,
+                    wide: 0,
                     a: [0.0; 4],
                     b: [0.0; 4],
                 },
@@ -164,18 +171,23 @@ pub(super) struct LocalsGpu {
     pub(super) params: Vec<LocalGpu>,
     pub(super) tables: Vec<[f32; 4]>,
     pub(super) shapes: Vec<ShapeGpu>,
-    /// The brushes' rasters, in the order of their layers.
+    /// The narrow rasters (a brush's, a learned mask's at
+    /// `RASTER_WIDTH`), in the order of their layers.
     pub(super) rasters: Vec<RasterRef>,
+    /// The wide ones (a Sky's past the rule), in the order of theirs.
+    pub(super) wide: Vec<RasterRef>,
 }
 
 /// The locals' buffers: their parameters, their tables and their
 /// shapes, never empty since a storage buffer cannot be; and their
-/// brushes' rasters, a layer each.
+/// rasters, a layer each, the narrow ones in one array and the wide ones
+/// (wider than `RASTER_WIDTH`) in another.
 pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
     let mut params = Vec::new();
     let mut tables = Vec::new();
     let mut shapes = Vec::new();
     let mut rasters: Vec<RasterRef> = Vec::new();
+    let mut wide: Vec<RasterRef> = Vec::new();
     for local in locals.iter().take(MAX_LOCALS) {
         let b = &local.baked;
         // The shapes first, so a switched-off one is simply not
@@ -184,11 +196,17 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
         let start = shapes.len() as u32;
         for (i, c) in local.mask.live() {
             let raster = local.rasters.get(i).and_then(|r| r.as_ref());
-            shapes.push(ShapeGpu::of(c, raster, rasters.len() as u32));
+            let is_wide = raster.is_some_and(|r| is_wide(&r.0));
+            let layer = if is_wide { wide.len() } else { rasters.len() };
+            shapes.push(ShapeGpu::of(c, raster, layer as u32, is_wide));
             if c.shape.is_raster()
                 && let Some(r) = raster
             {
-                rasters.push(r.clone());
+                if is_wide {
+                    wide.push(r.clone());
+                } else {
+                    rasters.push(r.clone());
+                }
             }
         }
         params.push(LocalGpu {
@@ -240,12 +258,26 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
         tables,
         shapes,
         rasters,
+        wide,
     }
 }
 
-/// The brushes' rasters on the GPU: one texture array, a layer each,
-/// a layer written again only when its raster changed.
+/// Whether `raster` goes in the wide rasters' array: wider than
+/// `RASTER_WIDTH`, a Sky's on a frame past `brush::raster_width`'s rule.
+/// So one wide Sky does not make every brush's and mask's layer its
+/// size: the narrow array stays the narrow rasters' own.
+pub(super) fn is_wide(raster: &greycard_edit::brush::Raster) -> bool {
+    raster.width > greycard_edit::brush::RASTER_WIDTH
+}
+
+/// Rasters on the GPU: one texture array as large as the largest of
+/// them, a layer each, each raster in its layer's top left corner and
+/// read inside its own size (the shape carries it), a layer written
+/// again only when its raster changed. The renderer keeps two, the
+/// narrow rasters' and the wide ones' ([`is_wide`]), so the narrow
+/// layers are the size they always were.
 pub(super) struct Brushes {
+    label: &'static str,
     texture: gpu::Texture,
     /// Each layer's raster: its allocation and version.
     layers: Vec<(usize, u64)>,
@@ -253,16 +285,23 @@ pub(super) struct Brushes {
 
 impl Brushes {
     /// One empty layer, so the binding always has a texture.
-    pub(super) fn empty(device: &gpu::Device) -> Self {
+    pub(super) fn empty(device: &gpu::Device, label: &'static str) -> Self {
         Self {
-            texture: Self::texture(device, 1, 1, 1),
+            label,
+            texture: Self::texture(device, label, 1, 1, 1),
             layers: vec![(0, 0)],
         }
     }
 
-    fn texture(device: &gpu::Device, width: u32, height: u32, layers: u32) -> gpu::Texture {
+    fn texture(
+        device: &gpu::Device,
+        label: &'static str,
+        width: u32,
+        height: u32,
+        layers: u32,
+    ) -> gpu::Texture {
         device.create_texture(&gpu::TextureDescriptor {
-            label: Some("brushes"),
+            label: Some(label),
             size: gpu::Extent3d {
                 width,
                 height,
@@ -285,20 +324,21 @@ impl Brushes {
     }
 
     /// Bring the array to `rasters`: made anew when their number or
-    /// size changes, each layer written when its raster did.
+    /// the largest size changes, each layer written when its raster
+    /// did.
     pub(super) fn sync(&mut self, device: &gpu::Device, queue: &gpu::Queue, rasters: &[RasterRef]) {
-        let Some(first) = rasters.first() else {
+        if rasters.is_empty() {
             if self.layers.len() != 1 || self.texture.width() != 1 {
-                *self = Self::empty(device);
+                *self = Self::empty(device, self.label);
             }
             return;
-        };
-        let (w, h) = (first.0.width as u32, first.0.height as u32);
+        }
+        let (w, h) = Self::size(rasters);
         if self.texture.width() != w
             || self.texture.height() != h
             || self.layers.len() != rasters.len()
         {
-            self.texture = Self::texture(device, w, h, rasters.len() as u32);
+            self.texture = Self::texture(device, self.label, w, h, rasters.len() as u32);
             self.layers = vec![(0, 0); rasters.len()];
         }
         for (i, r) in rasters.iter().enumerate() {
@@ -306,9 +346,7 @@ impl Brushes {
             if self.layers[i] == key {
                 continue;
             }
-            if r.0.width as u32 != w || r.0.height as u32 != h {
-                continue;
-            }
+            let (rw, rh) = (r.0.width as u32, r.0.height as u32);
             queue.write_texture(
                 gpu::TexelCopyTextureInfo {
                     texture: &self.texture,
@@ -323,22 +361,26 @@ impl Brushes {
                 r.0.data(),
                 gpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(w),
-                    rows_per_image: Some(h),
+                    bytes_per_row: Some(rw),
+                    rows_per_image: Some(rh),
                 },
                 gpu::Extent3d {
-                    width: w,
-                    height: h,
+                    width: rw,
+                    height: rh,
                     depth_or_array_layers: 1,
                 },
             );
             self.layers[i] = key;
         }
     }
-}
 
-// A row of the raster is a whole number of the copy's row alignment.
-const _: () = assert!(RASTER_WIDTH.is_multiple_of(256));
+    /// The array's size for `rasters`: the widest and the tallest.
+    pub(super) fn size(rasters: &[RasterRef]) -> (u32, u32) {
+        rasters.iter().fold((1, 1), |(w, h), r| {
+            (w.max(r.0.width as u32), h.max(r.0.height as u32))
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {

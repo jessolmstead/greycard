@@ -327,7 +327,7 @@ fn the_sky_over_real_frames() {
         let line = format!(
             "{stem}: {} {:.1}% seeded {} | develop {develop:.1}s | {} | CPU: {} | \
              against the CPU: max {max}/255, mean {:.2e}, {:.4}% across a half | \
-             matte at the preview's size {at_preview}, at the frame's {}x{}",
+             matte at the preview's size {at_preview}, at the frame's {}x{} | raster {}x{}",
             match r.no_sky {
                 Some(why) => format!("no sky ({why})"),
                 None => "sky".to_string(),
@@ -340,6 +340,8 @@ fn the_sky_over_real_frames() {
             flips as f64 / n * 100.0,
             b.image.width,
             b.image.height,
+            made.raster.width,
+            made.raster.height,
         );
         println!("{line}");
         lines.push(line);
@@ -653,11 +655,11 @@ fn parts_on_real_frames() {
     };
     let save = |name: &str, raster: &Raster| {
         if let Some(out) = &out {
-            let height = raster.data().len() / greycard_edit::brush::RASTER_WIDTH;
+            let height = raster.height;
             image::save_buffer(
                 out.join(format!("{name}.png")),
                 raster.data(),
-                greycard_edit::brush::RASTER_WIDTH as u32,
+                raster.width as u32,
                 height as u32,
                 image::ExtendedColorType::L8,
             )
@@ -682,7 +684,7 @@ fn parts_on_real_frames() {
     // tenths for each pixel of its edge (over a half, a neighbor
     // under it).
     let band = |r: &Raster| {
-        let (d, w) = (r.data(), greycard_edit::brush::RASTER_WIDTH);
+        let (d, w) = (r.data(), r.width);
         let h = d.len() / w;
         let soft = d.iter().filter(|&&v| v > 25 && v < 230).count();
         let mut edge = 0usize;

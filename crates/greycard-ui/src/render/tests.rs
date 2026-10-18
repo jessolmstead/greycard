@@ -2,6 +2,7 @@ use super::scopes::ANALYSIS_WIDTH;
 use super::*;
 use crate::finish::Baked;
 use greycard_core::image::WorkingImage;
+use greycard_edit::brush::{RASTER_WIDTH, WIDE_RASTER_WIDTH};
 use greycard_edit::mask::{Component, Mode, Shape};
 use greycard_edit::{Look, Mask};
 use rayon::prelude::*;
@@ -571,6 +572,74 @@ fn the_shaders_range_masks_are_the_cpus() {
     let image = field();
     let (worst, mean) = gpu_against_cpu(&device, &queue, &image, &range_locals(), -0.3, true);
     eprintln!("range masks, GPU against CPU: max {worst:.4}, mean {mean:.5}");
+    assert!(worst <= 3.0 / 255.0, "max {worst}");
+    assert!(mean <= 0.5 / 255.0, "mean {mean}");
+}
+
+/// Two Skies' wide rasters beside a brush's and a learned mask's
+/// narrow ones: the narrow ones in their array at their own size, the
+/// wide ones in an array of their own, each read inside its own size
+/// as `Raster::at` reads it on the CPU. The wide ones' patterns are
+/// finer than a narrow texel and differ from each other, so reading a
+/// layer in the wrong array, the wrong layer, or at the wrong size is
+/// far off; and each local is checked alone.
+#[test]
+fn wide_rasters_beside_narrow_ones_are_the_cpus() {
+    use greycard_edit::brush::Raster;
+    let image = field();
+    let aspect = image.height as f32 / image.width as f32;
+    let pattern = |w: usize, period: f32| {
+        let h = greycard_edit::brush::raster_height(w, aspect);
+        let data = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let (u, v) = (x as f32 / w as f32, y as f32 / w as f32);
+                let ring = 0.5 + 0.5 * ((u * 7.0 + v * 5.0) * period).sin();
+                let block = if (u - 0.3).abs() < 0.2 && v < 0.4 {
+                    1.0
+                } else {
+                    0.0
+                };
+                ((ring * 0.6 + block * 0.4) * 255.0).round() as u8
+            })
+            .collect();
+        RasterRef(Arc::new(Raster::from_data(aspect, w, data)))
+    };
+    let sky = pattern(WIDE_RASTER_WIDTH, 37.0);
+    let other_sky = pattern(WIDE_RASTER_WIDTH, 23.0);
+    assert_eq!((sky.0.width, sky.0.height), (4096, 2731));
+    let subject = pattern(RASTER_WIDTH, 11.0);
+    let mut stroke =
+        greycard_edit::brush::Stroke::new(greycard_edit::brush::Op::Add, 0.12, 0.6, 1.0);
+    stroke.points = vec![[0.2, 0.2], [0.5, 0.4], [0.8, 0.3]];
+    let strokes = vec![stroke];
+    let brush = RasterRef(Arc::new(Raster::of(&strokes, aspect)));
+    let with = |shape: Shape, raster: &RasterRef| {
+        let mut l = local_of(vec![(shape, Mode::Add)]);
+        l.rasters = vec![Some(raster.clone())];
+        l
+    };
+    // Narrow, wide, narrow, wide: each array's layers in their order.
+    let locals = vec![
+        with(Shape::Brush { strokes }, &brush),
+        with(Shape::Sky { picks: Vec::new() }, &sky),
+        with(Shape::Subject {}, &subject),
+        with(Shape::Sky { picks: Vec::new() }, &other_sky),
+    ];
+    let gpu_locals = super::locals::locals_gpu(&locals);
+    assert_eq!(gpu_locals.rasters.len(), 2);
+    assert_eq!(gpu_locals.wide.len(), 2);
+    assert_eq!(
+        super::locals::Brushes::size(&gpu_locals.rasters),
+        (2048, 1365),
+        "the narrow array keeps the narrow size"
+    );
+    assert_eq!(super::locals::Brushes::size(&gpu_locals.wide), (4096, 2731));
+    let Some((device, queue)) = device("the wide rasters' GPU check") else {
+        return;
+    };
+    let (worst, mean) = gpu_against_cpu(&device, &queue, &image, &locals, 0.0, true);
+    eprintln!("narrow and wide rasters, GPU against CPU: max {worst:.4}, mean {mean:.5}");
     assert!(worst <= 3.0 / 255.0, "max {worst}");
     assert!(mean <= 0.5 / 255.0, "mean {mean}");
 }

@@ -219,17 +219,20 @@ struct Local {
 
 // A mask's shape, as `mask.rs` has it: kind 0 is linear (a: from,
 // to), kind 1 radial (a: center, radii; b: angle in radians,
-// feather), kind 2 a brush (its layer of `brushes`, its raster's
-// aspect in b.x), kind 3 a raster not made yet; kind 4 a luminance
-// window (a: low, high, their feathers), kind 5 a color window (a:
-// hue in degrees, half its width, the hue's feather, the chroma
-// floor; b.x the floor's feather). The low two bits of the flags are the mode (0 adds,
-// 1 subtracts, 2 intersects); bit 2 inverts.
+// feather), kind 2 a brush (its layer of `brushes`, or of
+// `wide_rasters` where `wide` says so, its raster's aspect in b.x and
+// its size in texels in b.yz), kind 3 a raster not made yet; kind 4 a
+// luminance window (a: low, high, their feathers), kind 5 a color
+// window (a: hue in degrees, half its width, the hue's feather, the
+// chroma floor; b.x the floor's feather). The low two bits of the
+// flags are the mode (0 adds, 1 subtracts, 2 intersects); bit 2
+// inverts.
 struct Shape {
     kind: u32,
     flags: u32,
     layer: u32,
-    pad: u32,
+    // 1 when the layer is one of `wide_rasters`', 0 of `brushes`'.
+    wide: u32,
     a: vec4<f32>,
     b: vec4<f32>,
 };
@@ -301,9 +304,13 @@ const LUMA: vec3<f32> = vec3<f32>(0.2627, 0.6780, 0.0593);
 @group(0) @binding(6) var<storage, read> locals: array<Local>;
 @group(0) @binding(7) var<storage, read> local_tables: array<vec4<f32>>;
 @group(0) @binding(8) var<storage, read> shapes: array<Shape>;
-// The brushes' rasters, a layer each, over u 0 to 1 and v 0 to the
-// picture's aspect.
+// The narrow rasters (a brush's, a learned mask's), a layer each, over
+// u 0 to 1 and v 0 to the picture's aspect, each in its layer's top
+// left corner at its own size (the array is the largest's).
 @group(0) @binding(9) var brushes: texture_2d_array<f32>;
+// The wide rasters (a Sky's on a large frame), likewise, in an array
+// of their own so the narrow layers keep their size.
+@group(0) @binding(13) var wide_rasters: texture_2d_array<f32>;
 // The tone equalizer's guide plane: the smoothed log luminance of the
 // source over mid grey, in stops, at a reduced scale (`guide_plane` in
 // `finish.rs`). One texel of mid grey when there is none.
@@ -735,23 +742,31 @@ fn vignette_at(uv: vec2<f32>, aspect: f32) -> f32 {
     return smoothstep(m, e1, d);
 }
 
-// A raster's value at (u, v / aspect), its layer of `brushes`, as
-// `Raster::at` in `brush.rs`: by texel, bilinear in f32, the edges
-// clamped. Not through the sampler, whose filtered read of an R8Unorm
-// texture Vulkan holds to no more than the format's eight bits:
-// lavapipe's came back a third of a level from the exact bilinear,
-// which two masks' stacked looks made whole levels.
-fn raster_at(layer: u32, u: f32, v: f32) -> f32 {
-    let size = vec2<f32>(textureDimensions(brushes).xy);
+// One texel of a raster's layer: of `wide_rasters` when `wide` is 1,
+// of `brushes` otherwise.
+fn raster_texel(wide: u32, layer: u32, at: vec2<i32>) -> f32 {
+    if (wide == 1u) {
+        return textureLoad(wide_rasters, at, layer, 0).r;
+    }
+    return textureLoad(brushes, at, layer, 0).r;
+}
+
+// A raster's value at (u, v / aspect), its layer of `size` texels, as
+// `Raster::at` in `brush.rs`: by texel, bilinear in f32, the edges of
+// its own size clamped. Not through the sampler, whose filtered read
+// of an R8Unorm texture Vulkan holds to no more than the format's
+// eight bits: lavapipe's came back a third of a level from the exact
+// bilinear, which two masks' stacked looks made whole levels.
+fn raster_at(wide: u32, layer: u32, size: vec2<f32>, u: f32, v: f32) -> f32 {
     let last = size - vec2<f32>(1.0);
     let at = clamp(vec2<f32>(u, v) * size - vec2<f32>(0.5), vec2<f32>(0.0), last);
     let lo = floor(at);
     let f = at - lo;
     let hi = min(lo + vec2<f32>(1.0), last);
-    let a = textureLoad(brushes, vec2<i32>(lo), layer, 0).r;
-    let b = textureLoad(brushes, vec2<i32>(i32(hi.x), i32(lo.y)), layer, 0).r;
-    let c = textureLoad(brushes, vec2<i32>(i32(lo.x), i32(hi.y)), layer, 0).r;
-    let d = textureLoad(brushes, vec2<i32>(hi), layer, 0).r;
+    let a = raster_texel(wide, layer, vec2<i32>(lo));
+    let b = raster_texel(wide, layer, vec2<i32>(i32(hi.x), i32(lo.y)));
+    let c = raster_texel(wide, layer, vec2<i32>(i32(lo.x), i32(hi.y)));
+    let d = raster_texel(wide, layer, vec2<i32>(hi));
     let top = a * (1.0 - f.x) + b * f.x;
     let bottom = c * (1.0 - f.x) + d * f.x;
     return top * (1.0 - f.y) + bottom * f.y;
@@ -813,7 +828,7 @@ fn shape_at(sh: Shape, uv: vec2<f32>, sample: vec3<f32>) -> f32 {
             s = 1.0 - clamp(dot(uv - sh.a.xy, d) / len2, 0.0, 1.0);
         }
     } else if (sh.kind == 2u) {
-        s = raster_at(sh.layer, uv.x, uv.y / sh.b.x);
+        s = raster_at(sh.wide, sh.layer, sh.b.yz, uv.x, uv.y / sh.b.x);
     } else if (sh.kind == 3u) {
         // A raster shape whose raster is not made yet: nothing, which
         // is what `Local::weight` reads a missing raster as. It takes

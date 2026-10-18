@@ -154,7 +154,11 @@ pub(super) fn masks_for(
                 return MasksMade::GaveWay;
             }
             wanted += 1;
-            match ai.raster(
+            // The raster's width is the frame's, not the half-size
+            // picture's: the open frame makes the same one.
+            let full = (developed.full.0 as usize, developed.full.1 as usize);
+            match ai.raster_for(
+                full,
                 1,
                 &developed.image,
                 &edit,

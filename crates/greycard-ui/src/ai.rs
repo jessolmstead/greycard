@@ -28,7 +28,7 @@ use greycard_edit::Edit;
 // The learned rasters' stages, by version, in the disk cache's keys
 // below: the develop key takes the same in for an edit with such a
 // mask, so the pictures kept of it are made again too.
-use greycard_edit::brush::{RASTER_WIDTH, Raster};
+use greycard_edit::brush::{RASTER_WIDTH, Raster, WIDE_RASTER_WIDTH, raster_height, raster_width};
 use greycard_edit::key::{LANDSCAPE_PIPELINE, PART_PIPELINE, PERSON_EDGE, SKY_PIPELINE};
 use greycard_edit::mask::Shape;
 use greycard_edit::retouch::Patch;
@@ -941,6 +941,22 @@ impl Ai {
         model: Option<&'static Model>,
         turn: u8,
     ) -> Option<PathBuf> {
+        self.cached_path_at(shape, model, turn, RASTER_WIDTH)
+    }
+
+    /// [`Ai::cached_path`] for a raster `width` texels wide
+    /// (`brush::raster_width`): a raster of another width than
+    /// `RASTER_WIDTH`, a Sky's on a frame past the rule, has a slot of
+    /// its own, so a frame the rule moved to the wide raster makes it
+    /// again rather than read the narrow one, and every narrow raster
+    /// keeps the slot it had.
+    fn cached_path_at(
+        &self,
+        shape: &Shape,
+        model: Option<&'static Model>,
+        turn: u8,
+        width: usize,
+    ) -> Option<PathBuf> {
         if !self.disk {
             return None;
         }
@@ -990,6 +1006,10 @@ impl Ai {
         if !turn.is_multiple_of(4) {
             (turn % 4).hash(&mut h);
         }
+        // Only hashed when not the narrow width, for the same reason.
+        if width != RASTER_WIDTH {
+            ("raster width", width).hash(&mut h);
+        }
         Some(root.join(format!("{:016x}.png", h.finish())))
     }
 
@@ -997,15 +1017,38 @@ impl Ai {
     /// can be had, asked before anything of the frame is decoded: from
     /// the disk cache (a file in its slot; its aspect is checked when it
     /// is read), or made by a model in the store, or not at all until a
-    /// model is fetched. Nothing is loaded.
-    pub(crate) fn raster_ready(&mut self, file: &Path, shape: &Shape, turn: u8) -> Ready {
+    /// model is fetched. Nothing is loaded. `frame` is the frame's size
+    /// as its file says it stands, turned (`decode::stance_path`): the
+    /// raster in the slot of the width the frame takes
+    /// (`brush::raster_width`) is the one that counts, so a frame past
+    /// the rule with only its old narrow raster is not ready and its
+    /// masks are made before a develop is spent on it. Where the file
+    /// will not say, a Sky's raster in either width's slot counts, and
+    /// one of the width the frame does not take is not read after the
+    /// develop ([`Ai::cached_raster`]).
+    pub(crate) fn raster_ready(
+        &mut self,
+        file: &Path,
+        shape: &Shape,
+        turn: u8,
+        frame: Option<(usize, usize)>,
+    ) -> Ready {
         if self.file.as_deref() != Some(file) {
             self.forget(Some(file.to_path_buf()));
         }
-        if self
-            .cached_path(shape, None, turn)
-            .is_some_and(|p| p.is_file())
-        {
+        let rule;
+        let widths: &[usize] = match (shape, frame) {
+            (_, Some(frame)) => {
+                rule = [raster_width(shape, frame)];
+                &rule
+            }
+            (Shape::Sky { .. }, None) => &[RASTER_WIDTH, WIDE_RASTER_WIDTH],
+            _ => &[RASTER_WIDTH],
+        };
+        if widths.iter().any(|&w| {
+            self.cached_path_at(shape, None, turn, w)
+                .is_some_and(|p| p.is_file())
+        }) {
             return Ready::Cached;
         }
         // A Sky is the prior's to make, SAM only sharpening its outline;
@@ -1046,26 +1089,29 @@ impl Ai {
     }
 
     /// The raster for `shape` of the frame at `file` from the disk cache
-    /// alone, for a develop of aspect `aspect` (height over width) at
-    /// `turn`: nothing is loaded and no model runs. The reduced
-    /// develop's, which keeps no picture of a frame whose masks are not
-    /// made yet.
+    /// alone, for a develop of the frame whose full develop is `full`
+    /// (width, height) at `turn`: nothing is loaded and no model runs.
+    /// The reduced develop's, which keeps no picture of a frame whose
+    /// masks are not made yet. The raster's width is the frame's
+    /// (`brush::raster_width`).
     pub(crate) fn cached_raster(
         &mut self,
         file: &Path,
         shape: &Shape,
         turn: u8,
-        aspect: f32,
+        full: (u32, u32),
     ) -> Option<Arc<Raster>> {
         if self.file.as_deref() != Some(file) {
             self.forget(Some(file.to_path_buf()));
         }
-        let height = ((RASTER_WIDTH as f32 * aspect).round() as usize).max(1);
-        let path = self.cached_path(shape, None, turn)?;
+        let aspect = full.1 as f32 / full.0 as f32;
+        let width = raster_width(shape, (full.0 as usize, full.1 as usize));
+        let height = raster_height(width, aspect);
+        let path = self.cached_path_at(shape, None, turn, width)?;
         // A row either way is the same aspect rounded at another size:
         // the open frame's develop and the reduced one's halved mosaic.
-        let data = read_raster_near(&path, height)?;
-        Some(Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data)))
+        let data = read_raster_near(&path, width, height)?;
+        Some(Arc::new(Raster::from_data(aspect, width, data)))
     }
 
     /// The raster for `shape`, from the cache when it was made for this
@@ -1094,7 +1140,31 @@ impl Ai {
         shape: &Shape,
         model: Option<&'static Model>,
     ) -> Result<Made, String> {
-        self.raster_of(stamp, image, edit, kind, turn, key, shape, model)
+        let frame = (image.width, image.height);
+        self.raster_for(frame, stamp, image, edit, kind, turn, key, shape, model)
+    }
+
+    /// [`Ai::raster`] on a picture of a frame whose full develop is
+    /// `frame` (width, height): a reduced develop's, whose picture is
+    /// smaller than the frame. The raster's width (`brush::raster_width`),
+    /// its height and its aspect all follow the frame, not the picture,
+    /// whose binning rounds its height: so the reduced develop, the
+    /// index's masks and the open frame make the same raster, row for
+    /// row, and keep it in the same slot.
+    #[allow(clippy::too_many_arguments)]
+    pub fn raster_for(
+        &mut self,
+        frame: (usize, usize),
+        stamp: u64,
+        image: &WorkingImage,
+        edit: &Edit,
+        kind: crate::finish::Source,
+        turn: u8,
+        key: Key,
+        shape: &Shape,
+        model: Option<&'static Model>,
+    ) -> Result<Made, String> {
+        self.raster_of(frame, stamp, image, edit, kind, turn, key, shape, model)
             .map_err(|e| match greycard_ai::runtime::status() {
                 Err(why) => why.to_string(),
                 Ok(_) => e,
@@ -1104,6 +1174,7 @@ impl Ai {
     #[allow(clippy::too_many_arguments)]
     fn raster_of(
         &mut self,
+        frame: (usize, usize),
         stamp: u64,
         image: &WorkingImage,
         edit: &Edit,
@@ -1127,11 +1198,15 @@ impl Ai {
         if !prompted(shape) {
             return Err("nothing picked yet".into());
         }
-        let aspect = image.height as f32 / image.width as f32;
-        let height = ((RASTER_WIDTH as f32 * aspect).round() as usize).max(1);
-        let cached = self.cached_path(shape, model, turn);
-        if let Some(data) = cached.as_deref().and_then(|p| read_raster(p, height)) {
-            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+        let width = raster_width(shape, frame);
+        let aspect = frame.1 as f32 / frame.0.max(1) as f32;
+        let height = raster_height(width, aspect);
+        let cached = self.cached_path_at(shape, model, turn, width);
+        if let Some(data) = cached
+            .as_deref()
+            .and_then(|p| read_raster(p, width, height))
+        {
+            let raster = Arc::new(Raster::from_data(aspect, width, data));
             self.cache
                 .insert((key, turn), (shape.clone(), raster.clone()));
             return Ok(Made {
@@ -1156,7 +1231,7 @@ impl Ai {
             if let Some(path) = &cached {
                 write_raster(path, height, &data);
             }
-            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            let raster = Arc::new(Raster::from_data(aspect, width, data));
             self.cache
                 .insert((key, turn), (shape.clone(), raster.clone()));
             return Ok(Made {
@@ -1192,10 +1267,10 @@ impl Ai {
                 image,
                 kind,
                 (phrase, route, person.as_ref()),
-                (RASTER_WIDTH, height),
+                (width, height),
                 &store,
             )?;
-            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            let raster = Arc::new(Raster::from_data(aspect, width, data));
             let seconds = start.elapsed().as_secs_f64();
             // Only a settled person's part is kept: an ask is asked
             // again, so the panel can show it and an export can say it.
@@ -1232,7 +1307,7 @@ impl Ai {
         }
         if let Shape::Sky { picks } = shape {
             let start = Instant::now();
-            let size = (RASTER_WIDTH, height);
+            let size = (width, height);
             // With no picks, the sky a Foliage was cut by on this
             // develop, when one was: the same sky, made once.
             let kept = match (&self.sky_cut, &self.scene) {
@@ -1249,8 +1324,11 @@ impl Ai {
             };
             let t = Instant::now();
             let data = match &matte {
-                Some(m) => m.resampled(RASTER_WIDTH, height).to_u8(),
-                None => vec![0u8; RASTER_WIDTH * height],
+                // The matte is made at the raster's size: no resample,
+                // which at the same size would only copy it.
+                Some(m) if (m.width, m.height) == size => m.to_u8(),
+                Some(m) => m.resampled(width, height).to_u8(),
+                None => vec![0u8; width * height],
             };
             if let Some(report) = &mut self.last_sky {
                 report.raster = t.elapsed().as_secs_f64();
@@ -1258,7 +1336,7 @@ impl Ai {
             if let Some(path) = &cached {
                 write_raster(path, height, &data);
             }
-            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            let raster = Arc::new(Raster::from_data(aspect, width, data));
             self.cache
                 .insert((key, turn), (shape.clone(), raster.clone()));
             return Ok(Made {
@@ -1272,15 +1350,15 @@ impl Ai {
         if let Shape::Landscape { group } = shape {
             let start = Instant::now();
             let (matte, provider, note) =
-                self.landscape_matte(stamp, image, group, (RASTER_WIDTH, height), &store)?;
+                self.landscape_matte(stamp, image, group, (width, height), &store)?;
             let data = match &matte {
                 Some(m) => m.to_u8(),
-                None => vec![0u8; RASTER_WIDTH * height],
+                None => vec![0u8; width * height],
             };
             if let Some(path) = &cached {
                 write_raster(path, height, &data);
             }
-            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            let raster = Arc::new(Raster::from_data(aspect, width, data));
             self.cache
                 .insert((key, turn), (shape.clone(), raster.clone()));
             return Ok(Made {
@@ -1296,13 +1374,12 @@ impl Ai {
             let chosen = self
                 .subject_model(model)
                 .ok_or("no Subject model to load")?;
-            let (base, provider) =
-                self.subject_base(stamp, (RASTER_WIDTH, height), chosen, &store)?;
+            let (base, provider) = self.subject_base(stamp, (width, height), chosen, &store)?;
             let data = background_or_not(shape, &base);
             if let Some(path) = &cached {
                 write_raster(path, height, &data);
             }
-            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            let raster = Arc::new(Raster::from_data(aspect, width, data));
             self.cache
                 .insert((key, turn), (shape.clone(), raster.clone()));
             return Ok(Made {
@@ -1351,11 +1428,11 @@ impl Ai {
         let radius = (rgb.width / 256).max(2);
         let refined = refine(&mask, luma, rgb.width, rgb.height, radius, 1e-3);
         dump(rgb, &mask, &refined);
-        let data = refined.resampled(RASTER_WIDTH, height).to_u8();
+        let data = refined.resampled(width, height).to_u8();
         if let Some(path) = &cached {
             write_raster(path, height, &data);
         }
-        let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+        let raster = Arc::new(Raster::from_data(aspect, width, data));
         self.cache
             .insert((key, turn), (shape.clone(), raster.clone()));
         Ok(Made {
@@ -1776,7 +1853,7 @@ impl Ai {
             .map(|(_, base, _)| base.clone());
         let on_disk = || {
             let path = self.cached_path(&Shape::Subject {}, Some(model), turn)?;
-            read_raster(&path, raster.1)
+            read_raster(&path, raster.0, raster.1)
         };
         let base = match kept.or_else(on_disk) {
             Some(base) => base,
@@ -2121,12 +2198,22 @@ impl Ai {
         self.last_sky = Some(report);
         // A sky with no picks is the one Foliage is cut by: kept for
         // the develop, so a Foliage after it, or a Sky after a Foliage,
-        // costs no second sky.
-        if picks.is_empty() {
+        // costs no second sky. Only at a size Foliage asks for: a Sky's
+        // wide matte is no Foliage's cut, and kept it would hold its
+        // floats for nothing and put out the narrow one.
+        if is_foliages_cut(!picks.is_empty(), size) {
             self.sky_cut = Some(((stamp, size), matte.clone(), note.clone()));
         }
         Ok((matte, provider, note))
     }
+}
+
+/// Whether a Sky made at `size`, `picked` or not, is the sky Foliage is
+/// cut by, kept for the develop: no picks, and the width Foliage's
+/// raster takes (`brush::raster_width` gives Foliage the narrow one on
+/// every frame).
+fn is_foliages_cut(picked: bool, size: (usize, usize)) -> bool {
+    !picked && size.0 == RASTER_WIDTH
 }
 
 /// A Part's raster as `Ai::part` made it.
@@ -2496,26 +2583,27 @@ fn dump(rgb: &Rgb8, mask: &greycard_ai::Mask, refined: &greycard_ai::Mask) {
     );
 }
 
-/// A cached raster, if the file is there and is `RASTER_WIDTH` by
-/// `height` (another height means another aspect: made for a
-/// different develop of the file).
-fn read_raster(path: &Path, height: usize) -> Option<Vec<u8>> {
+/// A cached raster, if the file is there and is `width` by `height`
+/// (another height means another aspect: made for a different develop
+/// of the file).
+fn read_raster(path: &Path, width: usize, height: usize) -> Option<Vec<u8>> {
     let img = image::open(path).ok()?.into_luma8();
-    if img.width() as usize != RASTER_WIDTH || img.height() as usize != height {
+    if img.width() as usize != width || img.height() as usize != height {
         return None;
     }
     Some(img.into_raw())
 }
 
 /// [`read_raster`], a row more or less than `height` taken too.
-fn read_raster_near(path: &Path, height: usize) -> Option<Vec<u8>> {
+fn read_raster_near(path: &Path, width: usize, height: usize) -> Option<Vec<u8>> {
     let img = image::open(path).ok()?.into_luma8();
-    if img.width() as usize != RASTER_WIDTH || (img.height() as usize).abs_diff(height) > 1 {
+    if img.width() as usize != width || (img.height() as usize).abs_diff(height) > 1 {
         return None;
     }
     Some(img.into_raw())
 }
 
+/// A raster `height` rows tall, as wide as `data` makes it.
 fn write_raster(path: &Path, height: usize, data: &[u8]) {
     use image::ImageEncoder;
     let write = || -> Result<(), Box<dyn std::error::Error>> {
@@ -2526,7 +2614,7 @@ fn write_raster(path: &Path, height: usize, data: &[u8]) {
         let file = std::fs::File::create(&part)?;
         image::codecs::png::PngEncoder::new(std::io::BufWriter::new(file)).write_image(
             data,
-            RASTER_WIDTH as u32,
+            (data.len() / height.max(1)) as u32,
             height as u32,
             image::ExtendedColorType::L8,
         )?;
@@ -2794,6 +2882,207 @@ mod tests {
         assert!(store.have(&SAM));
         assert_ne!(ai.cached_path(&shape, None, 0), Some(without_sam));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Sky on a frame past the raster rule (`brush::raster_width`) is
+    /// kept in a slot of its own, the wide raster's; a Sky on a frame
+    /// under it, and every other shape on any frame, keeps the slot it
+    /// had, so its raster is read as it was. A frame the rule moved
+    /// finds its old narrow raster ready before the decode (its size
+    /// is not known yet) and not readable after it, so its masks are
+    /// made again; the reduced develop reads the wide one back, and so
+    /// does the open frame's.
+    #[test]
+    fn a_wide_frames_sky_is_kept_in_a_slot_of_its_own() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/test-scratch/greycard-ai-wide-sky-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut ai = Ai::new();
+        ai.store = Some(Store::at(dir.join("models")));
+        let file = PathBuf::from("frame.RAF");
+        ai.file = Some(file.clone());
+        let sky = Shape::Sky { picks: Vec::new() };
+        let slot = |ai: &Ai, shape: &Shape, frame: (usize, usize)| {
+            ai.cached_path_at(shape, None, 0, raster_width(shape, frame))
+                .expect("a slot")
+        };
+        let narrow = ai.cached_path(&sky, None, 0).expect("a slot");
+        // Under the rule: 24 MP either way, 45 MP upright.
+        for frame in [(6000, 4000), (4000, 6000), (5464, 8192)] {
+            assert_eq!(slot(&ai, &sky, frame), narrow, "{frame:?}");
+        }
+        // Past it: 45 MP and 100 MP.
+        let wide = slot(&ai, &sky, (8736, 11648));
+        assert_ne!(wide, narrow);
+        assert_eq!(slot(&ai, &sky, (8192, 5464)), wide);
+        // Every other shape keeps its slot on the largest frame.
+        for shape in [
+            Shape::Landscape {
+                group: greycard_edit::mask::LandscapeGroup::Foliage,
+            },
+            Shape::Landscape {
+                group: greycard_edit::mask::LandscapeGroup::Water,
+            },
+            Shape::Subject {},
+        ] {
+            assert_eq!(
+                slot(&ai, &shape, (11648, 8736)),
+                ai.cached_path(&shape, None, 0).expect("a slot"),
+                "{shape:?}"
+            );
+        }
+
+        // A 100 MP frame upright, 3 by 4: its old narrow raster.
+        let full = (8736u32, 11648u32);
+        assert_eq!(raster_height(RASTER_WIDTH, 4.0 / 3.0), 2731);
+        write_raster(&narrow, 2731, &vec![9u8; RASTER_WIDTH * 2731]);
+        let sized = Some((full.0 as usize, full.1 as usize));
+        // Its size known before the decode: not ready, so its masks are
+        // made before a develop is spent on it. Not known: either slot.
+        assert!(!matches!(
+            ai.raster_ready(&file, &sky, 0, sized),
+            Ready::Cached
+        ));
+        assert!(matches!(
+            ai.raster_ready(&file, &sky, 0, None),
+            Ready::Cached
+        ));
+        assert!(matches!(
+            ai.raster_ready(&file, &sky, 0, Some((3000, 4000))),
+            Ready::Cached
+        ));
+        assert!(ai.cached_raster(&file, &sky, 0, full).is_none());
+        // A frame of that aspect under the rule still reads it.
+        let small = ai
+            .cached_raster(&file, &sky, 0, (3000, 4000))
+            .expect("the narrow raster");
+        assert_eq!((small.width, small.height), (RASTER_WIDTH, 2731));
+
+        // The wide one made: ready, read back at its width.
+        std::fs::remove_file(&narrow).unwrap();
+        assert!(!matches!(
+            ai.raster_ready(&file, &sky, 0, None),
+            Ready::Cached
+        ));
+        write_raster(&wide, 5461, &vec![7u8; WIDE_RASTER_WIDTH * 5461]);
+        assert!(matches!(
+            ai.raster_ready(&file, &sky, 0, sized),
+            Ready::Cached
+        ));
+        assert!(matches!(
+            ai.raster_ready(&file, &sky, 0, None),
+            Ready::Cached
+        ));
+        let read = ai
+            .cached_raster(&file, &sky, 0, full)
+            .expect("the wide raster");
+        assert_eq!((read.width, read.height), (WIDE_RASTER_WIDTH, 5461));
+        assert!(read.data().iter().all(|&v| v == 7));
+        // The open frame's raster, from a picture of the frame's shape.
+        let made = ai
+            .raster_for(
+                (full.0 as usize, full.1 as usize),
+                1,
+                &WorkingImage::new(3, 4),
+                &Edit::default(),
+                crate::finish::Source::SCENE,
+                0,
+                (3, 0),
+                &sky,
+                None,
+            )
+            .expect("the cached wide raster");
+        assert_eq!(made.raster.width, WIDE_RASTER_WIDTH);
+        assert!(made.provider.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The index's masks are made on the reduced develop's binned
+    /// picture, whose height the binning rounds; the raster takes its
+    /// rows from the frame, so the one the index writes is the one the
+    /// reduced develop and the open frame read back, exactly. An X-Trans
+    /// frame of 6240 by 4160 binned by three is 2080 by 1386: its
+    /// picture's aspect gives 2729 rows at 4096, the frame's 2731; one of
+    /// 7728 by 5152 is 2576 by 1717, 2730 rows against 2731.
+    #[test]
+    fn a_binned_pictures_raster_has_the_frames_rows() {
+        for (frame, picture, rows) in [
+            ((6240usize, 4160usize), (2080usize, 1386usize), 2731usize),
+            ((7728, 5152), (2576, 1717), 2731),
+        ] {
+            let off = raster_height(WIDE_RASTER_WIDTH, picture.1 as f32 / picture.0 as f32);
+            assert_ne!(
+                off, rows,
+                "{frame:?}: the picture's rows are not the frame's"
+            );
+            let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+                "../../target/test-scratch/greycard-ai-binned-sky-{}-{:?}-{}",
+                std::process::id(),
+                std::thread::current().id(),
+                frame.0
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            let mut ai = Ai::new();
+            ai.store = Some(Store::at(dir.join("models")));
+            let file = PathBuf::from("frame.RAF");
+            ai.file = Some(file.clone());
+            let sky = Shape::Sky { picks: Vec::new() };
+            assert_eq!(raster_width(&sky, frame), WIDE_RASTER_WIDTH);
+            let slot = ai
+                .cached_path_at(&sky, None, 0, WIDE_RASTER_WIDTH)
+                .expect("a slot");
+            write_raster(&slot, rows, &vec![5u8; WIDE_RASTER_WIDTH * rows]);
+            // The index's ask, on the binned picture: the frame's rows,
+            // read from the slot exactly, nothing made.
+            let made = ai
+                .raster_for(
+                    frame,
+                    1,
+                    &WorkingImage::new(picture.0, picture.1),
+                    &Edit::default(),
+                    crate::finish::Source::SCENE,
+                    0,
+                    (4, 0),
+                    &sky,
+                    None,
+                )
+                .expect("the cached raster, read on the binned picture");
+            assert!(made.provider.is_none(), "{frame:?}: read, not made");
+            assert_eq!(
+                (made.raster.width, made.raster.height),
+                (WIDE_RASTER_WIDTH, rows)
+            );
+            assert_eq!(made.raster.aspect, frame.1 as f32 / frame.0 as f32);
+            // The reduced develop's read, by the frame's size.
+            let read = ai
+                .cached_raster(&file, &sky, 0, (frame.0 as u32, frame.1 as u32))
+                .expect("the reduced develop reads it");
+            assert_eq!(read.height, rows);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// A Sky's wide matte is not kept as Foliage's cut: only a sky
+    /// with no picks at a size Foliage asks for is, so the wide one
+    /// holds no floats for nothing and does not put out a narrow cut
+    /// already kept.
+    #[test]
+    fn a_wide_sky_is_not_kept_as_foliages_cut() {
+        let frame = (8736, 11648);
+        let foliage = Shape::Landscape {
+            group: greycard_edit::mask::LandscapeGroup::Foliage,
+        };
+        let sky = Shape::Sky { picks: Vec::new() };
+        let size = |shape: &Shape| {
+            let w = raster_width(shape, frame);
+            (w, raster_height(w, frame.1 as f32 / frame.0 as f32))
+        };
+        assert!(is_foliages_cut(false, size(&foliage)));
+        assert!(!is_foliages_cut(false, size(&sky)));
+        assert!(!is_foliages_cut(true, size(&foliage)));
     }
 
     /// A rectangle's rendering is the preview's rendering of the same

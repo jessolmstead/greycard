@@ -150,6 +150,11 @@ design note behind it.
   the status lines say so. `greycard models --fetch onnxruntime` does
   the same from the command line
   ([§358](https://github.com/jessolmstead/greycard/blob/master/docs/notes/358-microsofts-onnx-runtime-where-ours-cannot-run.md))
+- Sky on a frame wider than 6144 pixels, the 100 MP bodies and the
+  45 MP ones as shot, gets a raster twice as wide, so twigs, wires and
+  leaf rims against the sky lose the light rim they had at 1:1.
+  Smaller frames are unchanged
+  ([§360](https://github.com/jessolmstead/greycard/blob/master/docs/notes/360-a-wider-sky-raster-for-the-large-frames.md))
 
 ### Cameras
 

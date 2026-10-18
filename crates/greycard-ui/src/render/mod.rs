@@ -12,7 +12,6 @@ use crate::finish::{Local, MAX_LOCALS, RasterRef, Source};
 use crate::gpu;
 use crate::scope::{self, Scope};
 use greycard_core::lut;
-use greycard_edit::brush::RASTER_WIDTH;
 use greycard_edit::curve::LUT_SIZE;
 use greycard_edit::mask::Shape;
 use greycard_edit::{BlackWhite, Color, CurveLut, Grain, Light, Mixer, Tint, Vignette};
@@ -249,6 +248,9 @@ pub struct Renderer {
     lut_encoded: gpu::Texture,
     lut_sampler: gpu::Sampler,
     brushes: Brushes,
+    /// The wide rasters, a Sky's past the raster rule, in an array of
+    /// their own.
+    wide: Brushes,
     /// The tone equalizer's guide plane, R16Float: a stop is a stop, so
     /// half floats hold it to a thousandth of one, and at a texel to
     /// every few dozen source pixels the whole plane is a few megabytes.
@@ -447,6 +449,17 @@ impl Renderer {
                     },
                     count: None,
                 },
+                // The wide rasters, a layer each.
+                gpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: gpu::ShaderStages::FRAGMENT,
+                    ty: gpu::BindingType::Texture {
+                        sample_type: gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: gpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
                 // The look table. Read by node, not sampled: the
                 // interpolation is tetrahedral, so it needs no
                 // sampler and takes no filtering.
@@ -542,7 +555,8 @@ impl Renderer {
             lut,
             lut_encoded,
             lut_sampler,
-            brushes: Brushes::empty(device),
+            brushes: Brushes::empty(device, "brushes"),
+            wide: Brushes::empty(device, "wide rasters"),
             guide,
             guide_cover: [1.0, 1.0, 0.0, 0.0],
             detail,

@@ -184,8 +184,7 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
 
 - [ ] AI masks, after Sky (§175): a learned sky matte for dense canopies and twigs
       against glare, where the color-line matte fails (needs clean
-      data we assemble); a 4096-wide raster for Sky so a 100 MP
-      frame's twigs are not averaged fourfold; more hard negatives
+      data we assemble); more hard negatives
       for the gate (sky-blue walls, a lake reflecting sky with none
       above it, a snowfield filling the frame); the fog's own plateaus
       where the labels are the sky's outline, and full-size noise

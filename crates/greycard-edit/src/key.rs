@@ -61,6 +61,20 @@ pub const DEVELOP_RECIPE: u32 = 4;
 /// The Sky's: the prior, the gate, SAM's outline and the color-line
 /// matte. 2: the gate's core over the kept queries, 2026-10-17. 3: the
 /// sure sky held up over a diluted map, and its pockets, 2026-10-17.
+///
+/// Not raised for the Sky's wide raster (`brush::raster_width`, twice
+/// as wide on a frame past three of its pixels a texel), which every
+/// frame under the rule does not take, to the bit. The frame's size is
+/// not in the key, which is made from the sidecar alone (the index
+/// makes it without a decode); the mask cache keeps a wide raster in a
+/// slot of its own, so a frame past the rule makes its sky again, and
+/// what the open frame, an export and every picture made from now on
+/// read is the wide one. A picture kept already of such a frame stays
+/// until the frame is opened, whose develop makes its own in its
+/// place, or its edit changes. Read at that picture's 2048, the two
+/// rasters differ by under a level on a 45 MP frame as shot; on a
+/// 100 MP one upright by a seventh of a level on average and by up to
+/// half the mask in a gap between twigs.
 pub const SKY_PIPELINE: &str = "sky-3";
 /// The landscape groups' gates and edges.
 pub const LANDSCAPE_PIPELINE: &str = "landscape-2";

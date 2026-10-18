@@ -29,7 +29,12 @@
 //!   any gets a pixel.
 //! - `SKY_COMPARE=A,B`: no model run; the alphas of two earlier runs'
 //!   `SKY_OUT`s compared frame by frame (the largest difference, the
-//!   mean, the pixels across a half).
+//!   mean, the pixels across a half), the wider brought to the
+//!   narrower's size when their widths differ.
+//! - `SKY_WIDTH=N`: the matte made at N wide (its height by the
+//!   preview's aspect), as the editor makes a wider raster, and its
+//!   alpha written at that size; the measures below read it brought to
+//!   the preview's size. Without it the matte is at the preview's size.
 //! - `SKY_REGIONS=1`: each region of unlabeled pixels inside the sky
 //!   (below) of 20 pixels or more printed with its soft maps, over all
 //!   the queries and over the kept ones, against its border's, and the
@@ -290,10 +295,24 @@ fn compare(a: &Path, b: &Path) {
                 .ok()
                 .map(|i| i.to_luma8())
         };
-        let (Some(x), Some(y)) = (read(a), read(b)) else {
+        let (Some(mut x), Some(mut y)) = (read(a), read(b)) else {
             println!("{stem}\tmissing");
             continue;
         };
+        // Two widths (`SKY_WIDTH`): the wider brought to the narrower.
+        let down = |i: &image::GrayImage, to: &image::GrayImage| {
+            image::imageops::resize(
+                i,
+                to.width(),
+                to.height(),
+                image::imageops::FilterType::Triangle,
+            )
+        };
+        if x.width() > y.width() {
+            x = down(&x, &y);
+        } else if y.width() > x.width() {
+            y = down(&y, &x);
+        }
         let n = x.as_raw().len() as f64;
         let (mut max, mut sum, mut flips) = (0u8, 0u64, 0usize);
         for (p, q) in x.as_raw().iter().zip(y.as_raw()) {
@@ -393,6 +412,16 @@ fn main() {
             luma: &luma,
             linear: &linear,
         };
+        let size = match std::env::var("SKY_WIDTH")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+        {
+            Some(n) => (
+                n,
+                ((n as f32 * h as f32 / w as f32).round() as usize).max(1),
+            ),
+            None => (w, h),
+        };
         let mut times = sky::Times::default();
         let found = match sam.as_mut() {
             Some(s) => {
@@ -406,17 +435,17 @@ fn main() {
                     s.decode(embedding.as_ref().unwrap(), p).map(|(m, _)| m)
                 };
                 let decode: &mut sky::Decode = &mut decode;
-                sky::find(&prior, &frame, &[], Some(decode), (w, h), &mut times)
+                sky::find(&prior, &frame, &[], Some(decode), size, &mut times)
             }
-            None => sky::find(&prior, &frame, &[], None, (w, h), &mut times),
+            None => sky::find(&prior, &frame, &[], None, size, &mut times),
         }
         .expect("the sky");
         row.t_outline = times.outline;
         row.t_edge = times.edge;
-        let matte = match found {
+        let made = match found {
             sky::Found::None(why) => {
                 row.verdict = format!("none: {why}");
-                Mask::new(w, h, vec![0.0; w * h])
+                Mask::new(size.0, size.1, vec![0.0; size.0 * size.1])
             }
             sky::Found::Sky { matte, seeded, .. } => {
                 row.verdict = "sky".to_string();
@@ -424,6 +453,11 @@ fn main() {
                 row.seeded = seeded;
                 matte
             }
+        };
+        let matte = if (made.width, made.height) == (w, h) {
+            made.clone()
+        } else {
+            made.resampled(w, h)
         };
         let n_labels = prior
             .labels
@@ -484,7 +518,12 @@ fn main() {
         if none.contains(&stem) && matte.data.iter().any(|&a| a > 0.0) {
             painted.push(stem.clone());
         }
-        save_gray(&out.join(format!("{stem}.alpha.png")), w, h, matte.to_u8());
+        save_gray(
+            &out.join(format!("{stem}.alpha.png")),
+            made.width,
+            made.height,
+            made.to_u8(),
+        );
         over(&picture, &matte)
             .save(out.join(format!("{stem}.over.png")))
             .unwrap();
