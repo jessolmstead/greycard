@@ -47,6 +47,13 @@ ours, so a tester brings a library over in one go.
 - [ ] White balance: moving Temperature or Tint turns As shot off by
       itself, the sliders live from the start at the as-shot values,
       instead of a switch to unlock them (a tester's step every frame)
+- [ ] Import a folder in place: the Import sheet opens with Add in
+      place (any folder, its subfolders kept, added as a root: Add a
+      root behind the door a Lightroom user looks for) beside Copy
+      (today's card import), and Copy's Folders pattern gains a
+      `{folder}` token, the frame's path under the source, so a
+      copied job keeps its camera subfolders (a tester asked to
+      import a folder with its subfolders)
 - [ ] The window's structure: `State` grouped by owner, the library
       views measured for a crate of their own (Pool; the CLI split
       landed, §341)
