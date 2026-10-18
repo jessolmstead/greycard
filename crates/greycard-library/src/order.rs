@@ -253,6 +253,18 @@ mod tests {
         path.replace('/', std::path::MAIN_SEPARATOR_STR)
     }
 
+    /// The folder column's range for everything under a root, as the
+    /// query spells it: the root's bytes with the platform's separator
+    /// after, and the same with its last byte one up.
+    fn under(root: &str) -> (Vec<u8>, Vec<u8>) {
+        let from = crate::index::under_prefix(&crate::path_bytes(Path::new(&sep(root))));
+        let mut past = from.clone();
+        if let Some(last) = past.last_mut() {
+            *last = last.saturating_add(1);
+        }
+        (from, past)
+    }
+
     /// A row's path back in the test's spelling.
     fn unsep(path: &Path) -> String {
         path.display()
@@ -494,7 +506,7 @@ mod tests {
         );
         // One folder alone by name is the camera's numbering.
         let one = names(
-            &lib.rows_in_canonical(Path::new("/p/a"), Order::NAME)
+            &lib.rows_in_canonical(Path::new(&sep("/p/a")), Order::NAME)
                 .unwrap(),
         );
         assert_eq!(
@@ -560,6 +572,7 @@ mod tests {
         }
         lib.conn.execute_batch("ANALYZE").unwrap();
         let roots = [std::path::PathBuf::from(sep("/archive"))];
+        let range = under("/archive");
         let time = |order: Order| {
             // The first read warms the statement's cache; the best of
             // three after it is what is kept.
@@ -586,10 +599,9 @@ mod tests {
                         .conn
                         .prepare_cached(&sql)
                         .unwrap()
-                        .query_map(
-                            rusqlite::params![&b"/archive/"[..], &b"/archive0"[..]],
-                            |r| r.get::<_, Vec<u8>>(0),
-                        )
+                        .query_map(rusqlite::params![&range.0[..], &range.1[..]], |r| {
+                            r.get::<_, Vec<u8>>(0)
+                        })
                         .unwrap()
                         .count();
                     assert_eq!(n, 100_000);
@@ -606,10 +618,9 @@ mod tests {
             );
             let mut stmt = lib.conn.prepare(&sql).unwrap();
             let rows = stmt
-                .query_map(
-                    rusqlite::params![&b"/archive/"[..], &b"/archive0"[..]],
-                    |r| r.get::<_, String>(3),
-                )
+                .query_map(rusqlite::params![&range.0[..], &range.1[..]], |r| {
+                    r.get::<_, String>(3)
+                })
                 .unwrap();
             rows.map(|r| r.unwrap()).collect::<Vec<_>>().join("; ")
         };
