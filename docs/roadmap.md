@@ -41,6 +41,10 @@ ours, so a tester brings a library over in one go.
 
 - [ ] The window's structure: a render crate holding the finish and
       the export (Pool)
+- [ ] The window no longer dies when its surface is reconfigured
+      while the worker is on the GPU (issue #27)
+- [ ] The curve's end points slide along their edges, for the input
+      black and white (issue #28)
 
 
 ## Tracks
