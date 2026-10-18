@@ -449,6 +449,10 @@ impl Renderer {
         self.source = Some(texture);
         self.encoded = false;
         self.scopes.image_changed = true;
+        // A new picture, perhaps of another shape: the readout under
+        // the pointer reads nothing until its own analysis is back.
+        self.scopes.pixels = None;
+        self.scopes.source_changed = true;
         self.redraw = true;
     }
 
@@ -579,6 +583,10 @@ impl Renderer {
         self.source = Some(texture);
         self.encoded = false;
         self.scopes.image_changed = true;
+        // A new picture, perhaps of another shape: the readout under
+        // the pointer reads nothing until its own analysis is back.
+        self.scopes.pixels = None;
+        self.scopes.source_changed = true;
         self.redraw = true;
     }
 

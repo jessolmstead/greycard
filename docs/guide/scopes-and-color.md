@@ -22,6 +22,20 @@ cull. Pick one from the row under it:
 The scope you pick is remembered. The histogram also shows behind the
 curve in **CURVES**, on the Develop tab and in a mask.
 
+Point at the picture and the scope shows that spot. Its levels, 0 to
+255, appear at the top of the scope: **R**, **G** and **B**, and **L**
+for its brightness. On **RGB** a line runs through each one; on
+**Wave** and **Parade** a dot per channel sits at the spot's place
+across the frame; on **Vector** a ring shows where its color falls,
+so you can rest the pointer on a cheek and see it against the skin
+line. The readout is of a small area around the pointer as the
+scopes see it, not of one pixel at 1:1.
+
+With **Selection** on, a spot outside the mask is not counted on the
+scope, so its marks show faded and its numbers dimmed: rest the
+pointer on the background with a skin mask chosen to see where it
+falls against the skin.
+
 The scopes read the picture as it will be written, in the color space
 set in the export sheet, not the camera's raw data. For Adobe RGB
 they read the value on the sRGB curve, not the file's own gamma, so

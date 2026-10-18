@@ -909,6 +909,8 @@ impl State {
                 bins: None,
                 scope: scope::Scope::default(),
                 curve_drag: None,
+                hover: None,
+                hover_shown: None,
                 // Nothing until a develop says so: a turn pressed
                 // before one lands must not measure the frame by the
                 // last frame's shape, or by a square.

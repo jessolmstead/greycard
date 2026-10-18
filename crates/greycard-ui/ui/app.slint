@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { LightroomRoot, ReportLine, Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow } from "structs.slint";
+import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -1519,6 +1519,13 @@ export component App inherits Window {
     in property <[string]> scopes;
     in-out property <string> scope: "RGB";
     callback scope-changed(string);
+    // The color under the pointer on the picture: its marks on the
+    // scope and its numbers; empty with the pointer elsewhere.
+    in property <[ScopeMark]> scope-marks;
+    in property <string> scope-readout;
+    // The color is outside the scopes' selection, on no trace.
+    in property <bool> scope-marks-outside;
+    callback view-hovered(bool, length, length);
     // The scopes weighed by the chosen adjustment's mask, and whether
     // there is one to weigh by. The toggle lives for the session.
     in-out property <bool> scope-selection: false;
@@ -2416,6 +2423,7 @@ export component App inherits Window {
                 pan(a, b) => { root.pan(a, b); }
                 wheel-pan(a, b) => { root.wheel-pan(a, b); }
                 toggle-zoom(a, b) => { root.toggle-zoom(a, b); }
+                hovered(a, b, c) => { root.view-hovered(a, b, c); }
                 placeholder: root.placeholder;
                 compare-tiles: root.compare-tiles;
                 culling: root.culling;
@@ -2521,6 +2529,9 @@ export component App inherits Window {
                     scopes: root.scopes;
                     scope <=> root.scope;
                     scope-changed(a) => { root.scope-changed(a); }
+                    scope-marks: root.scope-marks;
+                    scope-readout: root.scope-readout;
+                    scope-marks-outside: root.scope-marks-outside;
                     scope-selection <=> root.scope-selection;
                     scope-mask-active: root.scope-mask-active;
                     scope-selection-changed => { root.scope-selection-changed(); }

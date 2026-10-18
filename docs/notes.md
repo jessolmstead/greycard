@@ -361,3 +361,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§346. Batch edits, the keys and the library, found without a key](notes/346-batch-edits-the-keys-and-the-library-found-without-a-key.md) (2026-10-17)
 - [§347. Three things a tester did on every frame: the crop's starting aspect, As shot that lets go by itself, and a folder imported in place](notes/347-three-things-a-tester-did-on-every-frame.md) (2026-10-17)
 - [§348. The baseline per body](notes/348-the-baseline-per-body.md) (2026-10-17)
+- [§349. The color under the pointer on the scopes](notes/349-the-color-under-the-pointer-on-the-scopes.md) (2026-10-18)

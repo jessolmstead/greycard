@@ -16,6 +16,9 @@ export component Viewport inherits Rectangle {
     /// at its edges, and still where it fits the view.
     callback wheel-pan(length, length);
     callback toggle-zoom(length, length);
+    /// The pointer over the view, and where, for the color under it
+    /// on the scopes; false when it leaves.
+    callback hovered(bool, length, length);
     /// The dropper drawn at the pointer while picking. Empty if the
     /// icon is missing, and then the cursor stays a crosshair.
     property <image> dropper: @image-url("../icons/pipette.svg");
@@ -207,7 +210,12 @@ export component Viewport inherits Rectangle {
         // picture must not end the typing; a press on it does.
         changed has-hover => {
             if (self.has-hover && !root.typing) { root.focus-keys(); }
+            root.hovered(self.has-hover, self.mouse-x, self.mouse-y);
         }
+        // The pointer's place as one value, so a diagonal move, which
+        // changes both, is one report and not two.
+        property <{x: length, y: length}> pointer-at: { x: self.mouse-x, y: self.mouse-y };
+        changed pointer-at => { root.hovered(self.has-hover, self.mouse-x, self.mouse-y); }
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down) {
                 root.focus-keys();

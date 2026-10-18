@@ -769,6 +769,11 @@ fn show_overlays(st: &mut State, app: &App, up: bool) {
         app.set_curve_image(draw_curve(app, None));
         app.set_clip_shadows_lit(false);
         app.set_clip_highlights_lit(false);
+        // And the color under the pointer, which `show_hover` leaves
+        // off while the camera's picture stands in.
+        st.develop.hover_shown = None;
+        app.set_scope_readout("".into());
+        app.set_scope_marks(ModelRc::default());
     }
 }
 
@@ -2697,9 +2702,17 @@ mod tests {
     fn a_frame_chosen_shows_its_camera_picture_until_its_develop_lands() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
-        // A scope and a navigator from the frame before it.
+        // A scope and a navigator from the frame before it, and the
+        // color under a pointer resting on the picture.
         app.set_nav_partial(true);
         app.set_clip_highlights_lit(true);
+        app.set_scope_readout("R 1  G 2  B 3  L 2".into());
+        app.set_scope_marks(ModelRc::new(VecModel::from(vec![ScopeMark {
+            x: 0.5,
+            y: 0.5,
+            channel: 3,
+        }])));
+        state.borrow_mut().develop.hover = Some((300.0, 200.0));
         app.invoke_select(1);
         {
             let st = state.borrow();
@@ -2736,6 +2749,8 @@ mod tests {
         assert!(!app.get_clip_highlights_lit());
         assert!(state.borrow().develop.bins.is_none());
         assert_eq!(app.get_scope_picture().size().width, 0);
+        assert_eq!(app.get_scope_readout(), "");
+        assert_eq!(app.get_scope_marks().row_count(), 0);
 
         // The develop lands: ours takes its place and the panel comes
         // back to it.

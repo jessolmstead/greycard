@@ -308,6 +308,13 @@ struct Scopes {
     picture_staging: Option<gpu::Buffer>,
     picture_in_flight: Option<std::sync::mpsc::Receiver<Result<(), gpu::BufferAsyncError>>>,
     picture: Option<slint::Image>,
+    /// The last picture read, kept: what the readout under the
+    /// pointer reads, so it lands on the scopes' own traces.
+    pixels: Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>,
+    /// A new source came in since the picture in flight was taken:
+    /// that picture is the last image's, perhaps at another shape,
+    /// and is not kept for the readout.
+    source_changed: bool,
     /// The edit, scope and weighing mask the bins in flight or latest
     /// were taken under; a new analysis only when one of those, or the
     /// image, changes.

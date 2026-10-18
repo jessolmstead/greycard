@@ -92,11 +92,11 @@ impl Scope {
 
 // The binning below is the reference: `scope.wgsl` is written from
 // it and the tests measure the drawing against it. The running
-// program bins on the GPU, so nothing else calls these.
+// program bins on the GPU; only the marks of the color under the
+// pointer call these, to put each mark in the cell its color bins to.
 
 /// The level a channel value falls in, as the shader rounds it.
-#[allow(dead_code)]
-fn level(v: f32) -> usize {
+pub fn level(v: f32) -> usize {
     (v.clamp(0.0, 1.0) * 255.0 + 0.5) as usize
 }
 
@@ -104,7 +104,6 @@ fn level(v: f32) -> usize {
 /// when its chroma is off the grid. Rec.709 luma, and Cb and Cr each
 /// from -0.5 to 0.5; the grid runs left to right in Cb and top to
 /// bottom in falling Cr, as the picture is drawn.
-#[allow(dead_code)]
 pub fn wheel_cell(c: [f32; 3]) -> Option<usize> {
     let (cb, cr) = chroma(c);
     let u = ((cb + 0.5) * WHEEL as f32).floor();
@@ -116,9 +115,8 @@ pub fn wheel_cell(c: [f32; 3]) -> Option<usize> {
 }
 
 /// Rec.709 Cb and Cr of an encoded color.
-#[allow(dead_code)]
 pub fn chroma(c: [f32; 3]) -> (f32, f32) {
-    let y = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let y = luma(c);
     ((c[2] - y) / 1.8556, (c[0] - y) / 1.5748)
 }
 
@@ -275,6 +273,190 @@ impl Clipping {
             return None;
         }
         Some(chans.map(|c| if c { 0xff } else { 0x00 }))
+    }
+}
+
+/// The color under the pointer on a scope, one mark of it: where, as
+/// fractions of the scope's picture from its top left, and what it
+/// marks, 0 to 2 a channel and 3 the luma. On the histogram a mark is
+/// a line the height of the picture and its `y` says nothing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mark {
+    pub x: f32,
+    pub y: f32,
+    pub channel: usize,
+}
+
+/// The Rec.709 luma of an encoded color, the Y the vectorscope's Cb
+/// and Cr are taken against.
+pub fn luma(c: [f32; 3]) -> f32 {
+    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+/// The color under the pointer in words: each channel's level and
+/// the luma's, 0 to 255, as the scopes bin them.
+pub fn readout(c: [f32; 3]) -> String {
+    format!(
+        "R {}  G {}  B {}  L {}",
+        level(c[0]),
+        level(c[1]),
+        level(c[2]),
+        level(luma(c))
+    )
+}
+
+/// The color under the pointer as the analysis picture holds it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Reading {
+    /// Encoded, 0 to 1: one of the picture's own pixels, so it is in
+    /// the bins that picture made.
+    pub color: [f32; 3],
+    /// Whether any of the box read is in the scopes' selection.
+    /// Unweighed, every pixel is.
+    pub selected: bool,
+    /// How far across the frame that pixel is, 0 to 1: the middle of
+    /// its column, which the waveform and the parade bin it in.
+    pub across: f32,
+}
+
+/// The color the readout reads about a point of the analysis picture,
+/// `width` by `height` with the scopes' selection's coverage in the
+/// alpha (one everywhere unweighed): `u` and `v` are fractions of the
+/// frame, and the box read reaches `radius` of the width about the
+/// pixel under them (that one pixel when it is under one).
+///
+/// The box's mean calms the marks over a textured area, but a mean
+/// can fall between the colors the box holds, on a cell nothing lit:
+/// an edge between two hues puts the vectorscope's ring between their
+/// two clouds. So the color is the box's own pixel nearest the mean,
+/// and every mark sits on a lit cell. The mean is weighed by the
+/// coverage, as the bins are, and only covered pixels are candidates,
+/// so on a mask's soft edge it is the selected part's color. With
+/// nothing in the box selected it is the plain mean's nearest, and
+/// the pixel is on no trace. `None` for an empty picture.
+pub fn under_pointer(
+    pixels: &[slint::Rgba8Pixel],
+    width: usize,
+    height: usize,
+    u: f32,
+    v: f32,
+    radius: f32,
+) -> Option<Reading> {
+    if width == 0 || height == 0 || pixels.len() < width * height {
+        return None;
+    }
+    let (w, h) = (width as i64, height as i64);
+    let x = ((u * w as f32) as i64).clamp(0, w - 1);
+    let y = ((v * h as f32) as i64).clamp(0, h - 1);
+    let reach = (radius * w as f32).round().max(0.0) as i64;
+    let (xs, ys) = (
+        (x - reach).max(0)..=(x + reach).min(w - 1),
+        (y - reach).max(0)..=(y + reach).min(h - 1),
+    );
+    let at = |x: i64, y: i64| pixels[(y * w + x) as usize];
+    let (mut weighed, mut covered) = ([0u64; 3], 0u64);
+    let (mut plain, mut n) = ([0u64; 3], 0u64);
+    for y in ys.clone() {
+        for x in xs.clone() {
+            let p = at(x, y);
+            let q = u64::from(p.a);
+            for (i, c) in [p.r, p.g, p.b].into_iter().enumerate() {
+                weighed[i] += q * u64::from(c);
+                plain[i] += u64::from(c);
+            }
+            covered += q;
+            n += 1;
+        }
+    }
+    let selected = covered > 0;
+    let mean = if selected {
+        weighed.map(|s| s as f32 / covered as f32)
+    } else {
+        plain.map(|s| s as f32 / n as f32)
+    };
+    // The nearest in the box, the first in reading order of any tied.
+    let mut best: Option<(f32, i64, slint::Rgba8Pixel)> = None;
+    for y in ys {
+        for x in xs.clone() {
+            let p = at(x, y);
+            if selected && p.a == 0 {
+                continue;
+            }
+            let d: f32 = [p.r, p.g, p.b]
+                .into_iter()
+                .zip(mean)
+                .map(|(c, m)| (f32::from(c) - m).powi(2))
+                .sum();
+            if best.is_none_or(|(b, _, _)| d < b) {
+                best = Some((d, x, p));
+            }
+        }
+    }
+    let (_, x, p) = best?;
+    Some(Reading {
+        color: [p.r, p.g, p.b].map(|c| f32::from(c) / 255.0),
+        selected,
+        across: (x as f32 + 0.5) / w as f32,
+    })
+}
+
+/// Where an encoded color lands on `scope`, `across` being how far
+/// across the frame it is, from 0 to 1, which the waveform and the
+/// parade place it by. Each mark sits in the middle of the cell the
+/// binning puts the color in and the drawing draws that cell at, so
+/// it is on the trace the pixel is part of: the histogram's bar for
+/// each channel and the luma's level, the waveform's three channels
+/// at the pixel's column, the parade's the same in their panels, and
+/// the vectorscope's one cell.
+pub fn marks(scope: Scope, c: [f32; 3], across: f32) -> Vec<Mark> {
+    let (w, h) = scope.size();
+    let (w, h) = (w as usize, h as usize);
+    let column = ((across.clamp(0.0, 1.0) * COLUMNS as f32) as usize).min(COLUMNS - 1);
+    // The picture's row a level is drawn on, as `waveform` draws it.
+    let row = |v: f32| (h - 1 - (level(v) * h / LEVELS).min(h - 1)) as f32;
+    let mid = |x: f32, y: f32| ((x + 0.5) / w as f32, (y + 0.5) / h as f32);
+    match scope {
+        Scope::Rgb => [c[0], c[1], c[2], luma(c)]
+            .into_iter()
+            .enumerate()
+            .map(|(channel, v)| Mark {
+                x: (level(v) as f32 + 0.5) / LEVELS as f32,
+                y: 0.5,
+                channel,
+            })
+            .collect(),
+        Scope::Waveform | Scope::Parade => {
+            let parade = scope == Scope::Parade;
+            let panel = if parade { (w - 2) / 3 } else { w };
+            (0..3)
+                .map(|channel| {
+                    let x0 = if parade { channel * (panel + 1) } else { 0 };
+                    // The panel's pixel whose columns hold this one:
+                    // the last x with `x * COLUMNS / panel <= column`.
+                    let x = ((column + 1) * panel - 1) / COLUMNS;
+                    let (x, y) = mid((x0 + x) as f32, row(c[channel]));
+                    Mark { x, y, channel }
+                })
+                .collect()
+        }
+        Scope::Vector => {
+            // The middle of the cell it bins to, which is where
+            // `vector` draws that cell. A chroma off the grid bins
+            // nowhere, so it has no mark: one on the edge cell would
+            // sit on a cell the pixel never lit.
+            let Some(cell) = wheel_cell(c) else {
+                return Vec::new();
+            };
+            let n = WHEEL as f32;
+            let cb = ((cell % WHEEL) as f32 + 0.5) / n - 0.5;
+            let cr = 0.5 - ((cell / WHEEL) as f32 + 0.5) / n;
+            let (cx, cy) = ((w - 1) as f32 / 2.0, (h - 1) as f32 / 2.0);
+            let (x, y) = mid(
+                (cx + 2.0 * cb * RADIUS).round(),
+                (cy - 2.0 * cr * RADIUS).round(),
+            );
+            vec![Mark { x, y, channel: 3 }]
+        }
     }
 }
 
@@ -800,5 +982,199 @@ mod tests {
             assert_eq!(Scope::from_name(scope.name()), Some(scope));
         }
         assert_eq!(Scope::from_name("Nope"), None);
+    }
+
+    /// The pixel of a scope's picture a mark is on, and its channel's
+    /// value there; the luma's mark reads the brightest.
+    fn under(px: &[slint::Rgb8Pixel], w: usize, h: usize, m: Mark) -> u8 {
+        let x = ((m.x * w as f32) as usize).min(w - 1);
+        let y = ((m.y * h as f32) as usize).min(h - 1);
+        let p = px[y * w + x];
+        match m.channel {
+            0 => p.r,
+            1 => p.g,
+            2 => p.b,
+            _ => p.r.max(p.g).max(p.b),
+        }
+    }
+
+    #[test]
+    fn a_colors_marks_land_on_its_histogram_bars_and_its_wheel_cell() {
+        let colors = [
+            [0.8, 0.45, 0.3],
+            [0.2, 0.6, 0.9],
+            [0.5, 0.5, 0.5],
+            [0.95, 0.1, 0.6],
+        ];
+        for scope in [Scope::Rgb, Scope::Vector] {
+            for (i, &c) in colors.iter().enumerate() {
+                let (w, h) = (16, 8);
+                let bins = bins(scope, &flat(w, h, c), w, h);
+                let (px, pw, ph) = pixels(&draw(scope, &bins));
+                // The histogram's bar reaches the top for a flat
+                // picture; read its foot, under the luma's line, which
+                // has no bar of its own.
+                let foot = |m: Mark| Mark {
+                    y: if scope == Scope::Rgb { 0.99 } else { m.y },
+                    ..m
+                };
+                for m in marks(scope, c, 0.5)
+                    .into_iter()
+                    .filter(|m| scope == Scope::Vector || m.channel < 3)
+                {
+                    assert!(
+                        under(&px, pw, ph, foot(m)) > 0xc0,
+                        "{scope:?} {c:?} {m:?} is on the trace"
+                    );
+                }
+                // Another color's marks are not, for the channels
+                // whose levels differ; the graticule where the wheel's
+                // axes cross the skin line is lit to about 0x78.
+                let other = colors[(i + 1) % colors.len()];
+                for m in marks(scope, other, 0.5) {
+                    let differs = match m.channel {
+                        3 => scope == Scope::Vector && wheel_cell(c) != wheel_cell(other),
+                        ch => level(c[ch]) != level(other[ch]),
+                    };
+                    if differs {
+                        assert!(
+                            under(&px, pw, ph, foot(m)) < 0x90,
+                            "{scope:?} {other:?} {m:?} is off it"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_pixels_marks_land_on_its_column_of_the_waveform_and_the_parade() {
+        // A color a column, every channel on its own path, so each
+        // column's trace is somewhere else.
+        let (w, h) = (256, 4);
+        let at = |x: usize| {
+            let t = x as f32 / (w - 1) as f32;
+            [t, 1.0 - t, ((x * 7) % w) as f32 / (w - 1) as f32]
+        };
+        let picture: Vec<[f32; 3]> = (0..w * h).map(|i| at(i % w)).collect();
+        for scope in [Scope::Waveform, Scope::Parade] {
+            let bins = bins(scope, &picture, w, h);
+            let (px, pw, ph) = pixels(&draw(scope, &bins));
+            for x in (0..w).step_by(5) {
+                let across = (x as f32 + 0.5) / w as f32;
+                for m in marks(scope, at(x), across) {
+                    assert!(
+                        under(&px, pw, ph, m) > GROUND + 0x10,
+                        "{scope:?} column {x} {m:?} is on the trace"
+                    );
+                }
+            }
+            // The first column's color at the middle column is off
+            // the trace: there the levels are elsewhere.
+            for m in marks(scope, at(0), 0.5) {
+                assert!(
+                    under(&px, pw, ph, m) <= GROUND + 0x04,
+                    "{scope:?} {m:?} is off it"
+                );
+            }
+        }
+    }
+
+    /// A picture 8 by 4, red on its left half and blue on its right,
+    /// the alpha `cover` gives each.
+    fn two_colors(cover: impl Fn(bool) -> u8) -> Vec<slint::Rgba8Pixel> {
+        (0..8 * 4)
+            .map(|i| {
+                let left = i % 8 < 4;
+                let (r, b) = if left { (200, 40) } else { (40, 200) };
+                slint::Rgba8Pixel {
+                    r,
+                    g: 40,
+                    b,
+                    a: cover(left),
+                }
+            })
+            .collect()
+    }
+
+    const RED: [f32; 3] = [200.0 / 255.0, 40.0 / 255.0, 40.0 / 255.0];
+    const BLUE: [f32; 3] = [40.0 / 255.0, 40.0 / 255.0, 200.0 / 255.0];
+
+    #[test]
+    fn a_box_straddling_two_colors_reads_one_of_its_own_pixels() {
+        let px = two_colors(|_| 0xff);
+        // One pixel: the one under the point, at its column's middle.
+        let r = under_pointer(&px, 8, 4, 0.3, 0.5, 0.0).unwrap();
+        assert_eq!((r.color, r.selected, r.across), (RED, true, 2.5 / 8.0));
+        // A box from x 2 to 6 over the edge, two red and three blue:
+        // its mean is a purple neither half holds, and the reading is
+        // the nearer of the two the box does, at that pixel's column.
+        let r = under_pointer(&px, 8, 4, 4.5 / 8.0, 0.5, 2.0 / 8.0).unwrap();
+        assert_eq!(r.color, BLUE, "{r:?}");
+        assert!(r.selected);
+        assert_eq!(r.across, 4.5 / 8.0, "the first blue in the box");
+        // Its marks are on the cells the picture lit: the vectorscope's
+        // ring on blue's, which a purple mean's would not be.
+        let wheel = bins(
+            Scope::Vector,
+            &px.iter()
+                .map(|p| [p.r, p.g, p.b].map(|c| f32::from(c) / 255.0))
+                .collect::<Vec<_>>(),
+            8,
+            4,
+        );
+        let mean: [f32; 3] = std::array::from_fn(|i| (2.0 * RED[i] + 3.0 * BLUE[i]) / 5.0);
+        assert!(wheel[HIST + wheel_cell(r.color).unwrap()] > 0);
+        assert_eq!(
+            wheel[HIST + wheel_cell(mean).unwrap()],
+            0,
+            "the mean is off it"
+        );
+        // Clipped at the picture's edge, and never outside it.
+        let r = under_pointer(&px, 8, 4, 1.0, 1.0, 0.5).unwrap();
+        assert!(r.color == RED || r.color == BLUE);
+        assert!((0.0..1.0).contains(&r.across));
+        assert_eq!(under_pointer(&[], 0, 0, 0.5, 0.5, 0.0), None);
+    }
+
+    #[test]
+    fn a_weighed_box_reads_its_covered_pixels_and_says_when_none_are() {
+        // Only the red half selected: the box over the edge, though
+        // mostly blue, reads red, the selection's color.
+        let px = two_colors(|left| if left { 0xff } else { 0 });
+        let r = under_pointer(&px, 8, 4, 4.5 / 8.0, 0.5, 2.0 / 8.0).unwrap();
+        assert_eq!((r.color, r.selected), (RED, true), "{r:?}");
+        assert!(r.across < 0.5, "a red pixel's column: {r:?}");
+        // Nothing in the box selected: the plain color, on no trace.
+        let r = under_pointer(&px, 8, 4, 7.5 / 8.0, 0.5, 1.0 / 8.0).unwrap();
+        assert_eq!((r.color, r.selected), (BLUE, false), "{r:?}");
+    }
+
+    #[test]
+    fn a_color_off_the_wheel_has_no_vectorscope_mark() {
+        // Pure blue's Cb is a half, on the grid's far edge: it bins to
+        // no cell, so a ring on the edge cell would be on nothing lit.
+        assert_eq!(wheel_cell([0.0, 0.0, 1.0]), None);
+        assert!(marks(Scope::Vector, [0.0, 0.0, 1.0], 0.5).is_empty());
+        // Its levels still mark the other scopes.
+        assert_eq!(marks(Scope::Rgb, [0.0, 0.0, 1.0], 0.5).len(), 4);
+        assert_eq!(marks(Scope::Vector, [0.2, 0.3, 0.9], 0.5).len(), 1);
+    }
+
+    #[test]
+    fn the_parade_puts_each_channel_in_its_own_panel() {
+        let m = marks(Scope::Parade, [0.5; 3], 1.0);
+        assert!(
+            m[0].x < 1.0 / 3.0 && m[1].x > 1.0 / 3.0 && m[1].x < 2.0 / 3.0 && m[2].x > 2.0 / 3.0
+        );
+        // Grey is in the middle of the wheel, and on the histogram
+        // all four lines are one.
+        let v = marks(Scope::Vector, [0.5; 3], 0.0)[0];
+        assert!(
+            (v.x - 0.5).abs() < 0.01 && (v.y - 0.5).abs() < 0.01,
+            "{v:?}"
+        );
+        let rgb = marks(Scope::Rgb, [0.5; 3], 0.0);
+        assert!(rgb.iter().all(|m| m.x == rgb[0].x));
     }
 }

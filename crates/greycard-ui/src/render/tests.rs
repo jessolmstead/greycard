@@ -402,6 +402,166 @@ fn the_weighted_scopes_are_the_cpus() {
     }
 }
 
+/// The color the readout under the pointer reads is the analysis
+/// picture's at that point of the frame, or over a reach one of the
+/// box's own pixels, and it is in the bins the compute pass made of
+/// that picture where `scope::marks` puts it: each channel's
+/// histogram level, the waveform's column of that pixel, the
+/// vectorscope's cell. So no mark is ever drawn off the trace. A new
+/// image reads nothing until its own analysis is back.
+#[test]
+fn the_color_under_the_pointer_is_in_the_scopes_bins() {
+    let Some((device, queue)) = device("the readout's GPU check") else {
+        return;
+    };
+    let image = field();
+    let (w, h) = (image.width, image.height);
+    let mut renderer = Renderer::new(&device, &queue);
+    let halves = crate::worker::Halves::from_image(&image, None);
+    renderer.upload(&halves);
+    assert_eq!(
+        renderer.analyzed_at(0.5, 0.5, 0.0),
+        None,
+        "nothing before an analysis"
+    );
+    let mut view = View::blank();
+    view.center = (w as f32 / 2.0, h as f32 / 2.0);
+    view.plane = (w as f32, h as f32);
+    view.frame_size = (w as f32, h as f32);
+    let _ = renderer.render(w as u32, h as u32, &view).0;
+    let aw = ANALYSIS_WIDTH;
+    let ah = (aw * h as u32 / w as u32).max(1);
+    let whole = View {
+        zoom: aw as f32 / w as f32,
+        center: (w as f32 / 2.0, h as f32 / 2.0),
+        ..view.clone()
+    };
+    let t = renderer.render(aw, ah, &whole).0;
+    let picture = renderer.read_back(&t).expect("read back");
+    let color = |x: u32, y: u32| {
+        let p = picture.get_pixel(x, y);
+        [0, 1, 2].map(|i| f32::from(p[i]) / 255.0)
+    };
+    let points = [
+        (0.0, 0.0),
+        (0.13, 0.71),
+        (0.5, 0.5),
+        (0.77, 0.21),
+        (0.999, 0.999),
+    ];
+    // The bins `marks` puts a reading in all have something in them.
+    let on_trace = |bins: &[u32], scope: Scope, r: scope::Reading, what: &str| {
+        let level = |ch: usize| scope::level(r.color[ch]);
+        for ch in 0..3 {
+            assert!(
+                bins[ch * scope::LEVELS + level(ch)] > 0,
+                "{scope:?} {what} histogram"
+            );
+        }
+        match scope.kind() {
+            1 => {
+                let column = (r.across * scope::COLUMNS as f32) as usize;
+                for ch in 0..3 {
+                    let at =
+                        scope::HIST + (ch * scope::COLUMNS + column) * scope::LEVELS + level(ch);
+                    assert!(bins[at] > 0, "{scope:?} {what} channel {ch}");
+                }
+            }
+            2 => {
+                let cell = scope::wheel_cell(r.color).expect("on the wheel");
+                assert!(bins[scope::HIST + cell] > 0, "{scope:?} {what}");
+            }
+            _ => {}
+        }
+    };
+    let reach = 2u32;
+    for scope in Scope::ALL {
+        let bins = gpu_bins(&mut renderer, &view, scope, None);
+        for &(u, v) in &points {
+            let r = renderer
+                .analyzed_at(u, v, 0.0)
+                .expect("an analysis was read");
+            assert!(r.selected, "unweighed, every pixel is counted");
+            let (x, y) = ((u * aw as f32) as u32, (v * ah as f32) as u32);
+            assert_eq!(r.color, color(x, y), "({u}, {v})");
+            assert_eq!(r.across, (x as f32 + 0.5) / aw as f32, "({u}, {v})");
+            on_trace(&bins, scope, r, &format!("({u}, {v})"));
+            // Over a reach, one of the box's own pixels, cut at the
+            // picture's edge, and in the bins at its own column.
+            let r = renderer
+                .analyzed_at(u, v, reach as f32 / aw as f32)
+                .unwrap();
+            let in_box = (y.saturating_sub(reach)..=(y + reach).min(ah - 1)).any(|by| {
+                (x.saturating_sub(reach)..=(x + reach).min(aw - 1))
+                    .any(|bx| color(bx, by) == r.color && r.across == (bx as f32 + 0.5) / aw as f32)
+            });
+            assert!(in_box, "({u}, {v}) over a reach: {r:?}");
+            on_trace(&bins, scope, r, &format!("({u}, {v}) over a reach"));
+        }
+    }
+    // Weighed by a gradient across the frame: one end is outside the
+    // selection, on no trace, and reads the plain color with that
+    // said; the other is in it, and its color is in the weighed bins,
+    // over a reach as at a point.
+    view.locals = vec![local_of(vec![(
+        Shape::Linear {
+            from: [0.3, 0.0],
+            to: [0.7, 0.0],
+        },
+        Mode::Add,
+    )])];
+    let plain = |u: f32, v: f32| color((u * aw as f32) as u32, (v * ah as f32) as u32);
+    let bins = gpu_bins(&mut renderer, &view, Scope::Rgb, Some(0));
+    let ends = [(0.05, 0.5), (0.95, 0.5)];
+    let read = ends.map(|(u, v)| renderer.analyzed_at(u, v, 0.0).unwrap());
+    assert!(
+        read[0].selected != read[1].selected,
+        "one end in the selection and one out: {read:?}"
+    );
+    for (&(u, v), r) in ends.iter().zip(read) {
+        // The weighing leaves the picture's colors alone.
+        assert_eq!(r.color, plain(u, v), "({u}, {v})");
+        if r.selected {
+            on_trace(&bins, Scope::Rgb, r, &format!("weighed ({u}, {v})"));
+            let r = renderer
+                .analyzed_at(u, v, reach as f32 / aw as f32)
+                .unwrap();
+            assert!(r.selected);
+            on_trace(
+                &bins,
+                Scope::Rgb,
+                r,
+                &format!("weighed ({u}, {v}) over a reach"),
+            );
+        }
+    }
+    // A new image: its own analysis, not the last one's pixels at its
+    // shape, is what a reading waits for, and a picture taken before
+    // it came in is not kept when it lands.
+    view.locals.clear();
+    let (_, in_flight) = renderer.analyze(&view, Scope::Rgb, None);
+    assert!(in_flight, "an analysis under way");
+    renderer.upload(&halves);
+    assert_eq!(renderer.analyzed_at(0.5, 0.5, 0.0), None, "after an upload");
+    let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+    let _ = renderer.analyze(&view, Scope::Rgb, None);
+    assert_eq!(
+        renderer.analyzed_at(0.5, 0.5, 0.0),
+        None,
+        "the picture taken before the upload"
+    );
+    let mut read = None;
+    for _ in 0..100 {
+        let _ = renderer.analyze(&view, Scope::Rgb, None);
+        read = renderer.analyzed_at(0.5, 0.5, 0.0);
+        if read.is_some() {
+            break;
+        }
+        let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+    }
+    assert!(read.is_some(), "the new image's analysis is read");
+}
+
 /// The shader's range masks are the CPU's, on the field.
 #[test]
 fn the_shaders_range_masks_are_the_cpus() {

@@ -398,27 +398,191 @@ pub(crate) fn view_to_source(st: &State, app: &App, x: f32, y: f32) -> (f32, f32
 /// as shown, the crop's frame (or the whole plane in crop mode), not
 /// on the grey around it.
 pub(crate) fn view_on_picture(st: &State, app: &App, x: f32, y: f32) -> bool {
+    let source = (
+        st.develop.source_size.0 as f32,
+        st.develop.source_size.1 as f32,
+    );
+    let ((fx, fy), (fw, fh)) = view_in_frame(st, app, x, y, source, &read_geometry(app));
+    (0.0..=fw).contains(&fx) && (0.0..=fh).contains(&fy)
+}
+
+/// A point of the view (logical pixels) on the picture as shown, as
+/// fractions of the frame's width and height, which is how the
+/// scopes' analysis picture covers it, and the frame's size in its
+/// pixels; `None` off the picture, and while the picture on the GPU
+/// is not the open frame's own develop (a held one, or another
+/// frame's), whose frame the scopes measure by an edit the panel no
+/// longer shows.
+pub(crate) fn view_to_frame(
+    st: &State,
+    app: &App,
+    x: f32,
+    y: f32,
+) -> Option<((f32, f32), (f32, f32))> {
+    own_develop(st)?;
+    // The picture and the edit the frame's notifier draws and
+    // analyzes by: the drawn picture, turned as it is drawn, under
+    // the peeked edit or the panel's. The held one is excluded above.
+    let ((dw, dh), _) = drawn_picture(st);
+    let geometry = match &st.develop.peek {
+        Some(peek) => peek.geometry.clone(),
+        None => read_geometry(app),
+    };
+    let ((fx, fy), (fw, fh)) = view_in_frame(st, app, x, y, (dw as f32, dh as f32), &geometry);
+    let (u, v) = (fx / fw, fy / fh);
+    ((0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v)).then_some(((u, v), (fw, fh)))
+}
+
+/// A point of the view (logical pixels) in the frame's pixels from
+/// its top left, and the frame's size, for a picture of `(sw, sh)`
+/// under `geometry`.
+fn view_in_frame(
+    st: &State,
+    app: &App,
+    x: f32,
+    y: f32,
+    (sw, sh): (f32, f32),
+    geometry: &Geometry,
+) -> ((f32, f32), (f32, f32)) {
     let scale = app.window().scale_factor();
     let (vw, vh) = (
         app.get_view_width().max(1) as u32,
         app.get_view_height().max(1) as u32,
     );
     let zoom = effective_zoom(st, vw, vh);
-    let (sw, sh) = (
-        st.develop.source_size.0 as f32,
-        st.develop.source_size.1 as f32,
-    );
-    let geometry = read_geometry(app);
     let frame = if app.get_crop_mode() {
         geometry.bounds(sw, sh)
     } else {
         geometry.frame(sw, sh)
     };
-    let (fx, fy) = (
+    let at = (
         (x * scale - vw as f32 / 2.0) / zoom + st.develop.center.0,
         (y * scale - vh as f32 / 2.0) / zoom + st.develop.center.1,
     );
-    (0.0..=frame.size.0).contains(&fx) && (0.0..=frame.size.1).contains(&fy)
+    (at, frame.size)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The analysis picture the readout under the pointer reads in a
+    /// test, which has no GPU to read one back from: its pixels, with
+    /// the coverage in the alpha, and its width and height.
+    pub(crate) static HOVER_PICTURE: std::cell::RefCell<Option<(Vec<slint::Rgba8Pixel>, usize, usize)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// [`Renderer::analyzed_at`] for the state.
+fn analyzed_at(st: &State, u: f32, v: f32, radius: f32) -> Option<scope::Reading> {
+    #[cfg(test)]
+    if let Some(read) = HOVER_PICTURE.with(|p| {
+        p.borrow()
+            .as_ref()
+            .map(|(px, w, h)| scope::under_pointer(px, *w, *h, u, v, radius))
+    }) {
+        return read;
+    }
+    st.develop.renderer.as_ref()?.analyzed_at(u, v, radius)
+}
+
+/// The color under the pointer on the scopes: its marks and its
+/// levels, read from the analysis picture the scopes binned, so each
+/// mark sits on the trace it is part of. None off the picture, in
+/// culling, where there are no scopes, while the camera's JPEG stands
+/// in for a develop, which they do not describe, or before the first
+/// analysis.
+pub(crate) fn show_hover(st: &mut State, app: &App) {
+    let at = st
+        .develop
+        .hover
+        .filter(|_| !app.get_culling() && !app.get_placeholder())
+        .and_then(|(x, y)| {
+            let ((u, v), (fw, _)) = view_to_frame(st, app, x, y)?;
+            // A few screen pixels about the pointer, so the marks
+            // follow the picture's tones and not each blade of grass
+            // in it; at 1:1 that is under one analysis pixel.
+            let (vw, vh) = (
+                app.get_view_width().max(1) as u32,
+                app.get_view_height().max(1) as u32,
+            );
+            let radius = HOVER_REACH * app.window().scale_factor()
+                / effective_zoom(st, vw, vh)
+                / fw.max(1.0);
+            Some((u, v, radius))
+        });
+    let reading = at.and_then(|(u, v, radius)| analyzed_at(st, u, v, radius));
+    let Some(reading) = reading else {
+        // On the open frame's own develop, its analysis not back yet:
+        // a re-develop of this frame just landed and dropped the last
+        // one's pixels. What is shown on this scope stays until the
+        // new picture lands, rather than blink off and come back
+        // without the glide.
+        if at.is_some()
+            && st
+                .develop
+                .hover_shown
+                .is_some_and(|(scope, _)| scope == st.develop.scope)
+        {
+            return;
+        }
+        st.develop.hover_shown = None;
+        if !app.get_scope_readout().is_empty() || app.get_scope_marks().row_count() > 0 {
+            app.set_scope_readout("".into());
+            app.set_scope_marks(ModelRc::default());
+        }
+        return;
+    };
+    // A move within the same reading, or the two reports of one
+    // diagonal move, changes nothing on the scope.
+    let shown = (st.develop.scope, reading);
+    if st.develop.hover_shown == Some(shown) {
+        return;
+    }
+    st.develop.hover_shown = Some(shown);
+    let marks: Vec<ScopeMark> = scope::marks(st.develop.scope, reading.color, reading.across)
+        .into_iter()
+        .map(|m| ScopeMark {
+            x: m.x,
+            y: m.y,
+            channel: m.channel as i32,
+        })
+        .collect();
+    // The same rows moved where there are as many, so the marks glide
+    // to the next color (the `.slint` side animates them) rather than
+    // being made anew at it.
+    let shown = app.get_scope_marks();
+    match shown.as_any().downcast_ref::<VecModel<ScopeMark>>() {
+        Some(rows) if rows.row_count() == marks.len() => {
+            for (i, m) in marks.into_iter().enumerate() {
+                rows.set_row_data(i, m);
+            }
+        }
+        _ => app.set_scope_marks(ModelRc::new(VecModel::from(marks))),
+    }
+    app.set_scope_readout(scope::readout(reading.color).into());
+    // Outside the scopes' selection the pixel is on no trace: its
+    // marks show faded where it would be, against the selection's.
+    app.set_scope_marks_outside(!reading.selected);
+}
+
+/// How far about the pointer the readout reads, logical pixels.
+const HOVER_REACH: f32 = 3.0;
+
+/// The pointer left the view: the color under it comes off the
+/// scope, now, or a frame's time later while the state is borrowed
+/// now: a delay, not the loop's next turn, so a nested event loop
+/// holding the borrow does not spin it.
+fn hover_left(state: Rc<RefCell<State>>, app_weak: slint::Weak<App>) {
+    let Some(app) = app_weak.upgrade() else {
+        return;
+    };
+    if let Ok(mut st) = state.try_borrow_mut() {
+        st.develop.hover = None;
+        show_hover(&mut st, &app);
+        return;
+    }
+    slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
+        hover_left(state, app_weak)
+    });
 }
 
 /// A point of the view (logical pixels) in the crop's own units:
@@ -1387,8 +1551,29 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             if let Some(chosen) = scope::Scope::from_name(name.as_str()) {
-                state.borrow_mut().develop.scope = chosen;
+                let mut st = state.borrow_mut();
+                st.develop.scope = chosen;
+                show_hover(&mut st, &app);
                 app.window().request_redraw();
+            }
+        });
+    }
+    // The pointer over the view: the color under it, on the scope.
+    // Slint reports it as a change, after the event that made it; a
+    // borrow held then (a test dispatching events with the state in
+    // hand) skips one move rather than panicking. A leave is not
+    // skipped, or the readout would stand with the pointer gone: it
+    // is tried again from the event loop.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_view_hovered(move |on, x, y| {
+            if !on {
+                hover_left(state.clone(), app_weak.clone());
+            } else if let Some(app) = app_weak.upgrade()
+                && let Ok(mut st) = state.try_borrow_mut()
+            {
+                st.develop.hover = Some((x, y));
+                show_hover(&mut st, &app);
             }
         });
     }
@@ -2004,6 +2189,307 @@ mod tests {
         });
         app.invoke_pick_released();
         assert_eq!(app.get_picking(), "Curve", "a curve pick leaves it in hand");
+    }
+
+    /// The pointer over the picture reaches the state, from the
+    /// `.slint` side's own report of it, and leaving takes the color
+    /// under it off the scope. The color itself needs an analysis
+    /// read back from a real device (`render::tests`).
+    #[test]
+    fn the_readout_follows_the_pointer_and_goes_with_it() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(600.0, 400.0),
+            });
+        slint::platform::update_timers_and_animations();
+        // In the viewport's own pixels, as the droppers' presses are:
+        // the left pane's width in from the window's.
+        let hover = state.borrow().develop.hover;
+        assert!(hover.is_some_and(|(x, _)| x < 600.0), "{hover:?}");
+        // Nothing to read yet, so nothing shown.
+        assert_eq!(app.get_scope_readout(), "");
+        // A diagonal move within the view, its one report of both.
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(640.0, 430.0),
+            });
+        slint::platform::update_timers_and_animations();
+        let (x0, y0) = hover.unwrap();
+        let moved = state.borrow().develop.hover;
+        assert_eq!(moved, Some((x0 + 40.0, y0 + 30.0)));
+
+        app.set_scope_readout("R 1  G 2  B 3  L 2".into());
+        app.set_scope_marks(ModelRc::new(VecModel::from(vec![ScopeMark {
+            x: 0.5,
+            y: 0.5,
+            channel: 0,
+        }])));
+        app.invoke_view_hovered(false, 600.0, 400.0);
+        assert_eq!(state.borrow().develop.hover, None);
+        assert_eq!(app.get_scope_readout(), "");
+        assert_eq!(app.get_scope_marks().row_count(), 0);
+    }
+
+    /// A window at `scale` with frame 0 open and its own develop of
+    /// 6000 by 4000 on the GPU, at the fit: the state `view_to_frame`
+    /// and the readout measure by. Nothing is drawn.
+    fn hover_frame(scale: f32) -> (App, Rc<RefCell<State>>, Rc<crate::worker::Worker>) {
+        let app = window(1);
+        if scale != 1.0 {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged {
+                    scale_factor: scale,
+                });
+        }
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.set_placeholder(false);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.held = None;
+            st.develop.peek = None;
+            st.develop.shown_size = (6000, 4000);
+            st.develop.source_size = (6000, 4000);
+            st.develop.shown_turn = Some((0, current_turn(&st)));
+            st.develop.image_size = (6000, 4000);
+            st.develop.center = (3000.0, 2000.0);
+            st.develop.zoom = 0.0;
+        }
+        (app, state, worker)
+    }
+
+    /// The view's middle, logical pixels.
+    fn view_middle(app: &App) -> (f32, f32) {
+        let scale = app.window().scale_factor();
+        (
+            app.get_view_width() as f32 / scale / 2.0,
+            app.get_view_height() as f32 / scale / 2.0,
+        )
+    }
+
+    /// The view onto the frame as the scopes' analysis picture covers
+    /// it, pure geometry: the middle at the fit is the frame's middle,
+    /// the grey around the picture is on none of it, and at 1:1 an
+    /// off-center view, a crop, crop mode's whole plane and a quarter
+    /// turn (of the edit, or one the develop has yet to catch up with)
+    /// each give the fraction their arithmetic says, at a scale factor
+    /// of one and of two.
+    #[test]
+    fn the_view_maps_onto_the_frame_the_scopes_cover() {
+        for scale in [1.0f32, 2.0] {
+            let (app, state, _worker) = hover_frame(scale);
+            assert_eq!(app.window().scale_factor(), scale);
+            let (mx, my) = view_middle(&app);
+            let near = |got: Option<(f32, f32)>, want: (f32, f32), what: &str| {
+                let got = got.unwrap_or_else(|| panic!("{what} at {scale}: off the picture"));
+                assert!(
+                    (got.0 - want.0).abs() < 1e-4 && (got.1 - want.1).abs() < 1e-4,
+                    "{what} at {scale}: {got:?}, not {want:?}"
+                );
+            };
+            let at = |x: f32, y: f32| view_to_frame(&state.borrow(), &app, x, y).map(|(at, _)| at);
+            near(at(mx, my), (0.5, 0.5), "the fit's middle");
+
+            // Small in the view: grey all about it.
+            state.borrow_mut().develop.zoom = 0.05;
+            assert_eq!(at(2.0, 2.0), None, "the grey at {scale}");
+            near(at(mx, my), (0.5, 0.5), "the small picture's middle");
+
+            // At 1:1 off the frame's middle: a logical pixel is `scale`
+            // of the frame's.
+            {
+                let mut st = state.borrow_mut();
+                st.develop.zoom = 1.0;
+                st.develop.center = (1000.0, 500.0);
+            }
+            let (x, y) = (mx + 30.0, my - 20.0);
+            let (dx, dy) = (30.0 * scale, -20.0 * scale);
+            near(
+                at(x, y),
+                ((1000.0 + dx) / 6000.0, (500.0 + dy) / 4000.0),
+                "1:1 off the middle",
+            );
+
+            // A crop of the middle quarter: its frame is the crop, and
+            // in crop mode the whole plane about it.
+            app.set_geo_has_crop(true);
+            app.set_geo_crop_x(0.25);
+            app.set_geo_crop_y(0.25);
+            app.set_geo_crop_w(0.5);
+            app.set_geo_crop_h(0.5);
+            near(
+                at(x, y),
+                ((1000.0 + dx) / 3000.0, (500.0 + dy) / 2000.0),
+                "the crop",
+            );
+            app.set_crop_mode(true);
+            near(
+                at(x, y),
+                ((1000.0 + dx) / 6000.0, (500.0 + dy) / 4000.0),
+                "crop mode's bounds",
+            );
+            app.set_crop_mode(false);
+            app.set_geo_has_crop(false);
+
+            // A quarter turn stands the frame on end, the edit's own
+            // and one the develop on the GPU lags by alike.
+            let turned = ((1000.0 + dx) / 4000.0, (500.0 + dy) / 6000.0);
+            app.set_geo_turns(1);
+            near(at(x, y), turned, "the edit's quarter turn");
+            app.set_geo_turns(0);
+            {
+                let mut st = state.borrow_mut();
+                let turn = current_turn(&st);
+                st.develop.shown_turn = Some((0, (turn + 3) % 4));
+            }
+            near(at(x, y), turned, "a turn the develop lags by");
+
+            // Not the open frame's own develop: another frame's, or one
+            // held while the next develops, which the scopes measure by
+            // another edit than the panel's.
+            state.borrow_mut().develop.shown_turn = Some((7, 0));
+            assert_eq!(at(x, y), None, "another frame's develop");
+            {
+                let mut st = state.borrow_mut();
+                st.develop.shown_turn = Some((0, current_turn(&st)));
+                st.develop.held = Some(Edit::default());
+            }
+            assert_eq!(at(x, y), None, "a held develop");
+        }
+    }
+
+    /// The readout and the marks are those of the analysis picture
+    /// under the pointer; a reading the same as the last leaves the
+    /// scope be; a zoom under the resting pointer reads the new spot;
+    /// and the camera's picture standing in, or a held develop, takes
+    /// them off.
+    #[test]
+    fn the_readout_reads_the_spot_under_the_pointer() {
+        let (app, state, _worker) = hover_frame(1.0);
+        // The analysis picture: red on its left half, blue on its
+        // right, all selected.
+        let picture: Vec<slint::Rgba8Pixel> = (0..16 * 8)
+            .map(|i| {
+                let (r, b) = if i % 16 < 8 { (200, 40) } else { (40, 200) };
+                slint::Rgba8Pixel {
+                    r,
+                    g: 40,
+                    b,
+                    a: 0xff,
+                }
+            })
+            .collect();
+        HOVER_PICTURE.with(|p| *p.borrow_mut() = Some((picture, 16, 8)));
+        let red = scope::readout([200.0, 40.0, 40.0].map(|c| c / 255.0));
+        let blue = scope::readout([40.0, 40.0, 200.0].map(|c| c / 255.0));
+        let (mx, my) = view_middle(&app);
+        let show = |x: f32, y: f32| {
+            let mut st = state.borrow_mut();
+            st.develop.hover = Some((x, y));
+            show_hover(&mut st, &app);
+        };
+        // A quarter of the way across the fitted frame: red.
+        let fit = effective_zoom(
+            &state.borrow(),
+            app.get_view_width() as u32,
+            app.get_view_height() as u32,
+        );
+        let quarter = mx - 1500.0 * fit;
+        show(quarter, my);
+        assert_eq!(app.get_scope_readout(), red.as_str());
+        assert_eq!(
+            app.get_scope_marks().row_count(),
+            4,
+            "three channels and the luma"
+        );
+        assert!(!app.get_scope_marks_outside());
+
+        // A move that reads the same pixel changes nothing shown.
+        app.set_scope_readout("left be".into());
+        show(quarter + 0.5, my + 0.5);
+        assert_eq!(app.get_scope_readout(), "left be");
+        state.borrow_mut().develop.hover_shown = None;
+        show(quarter, my);
+        assert_eq!(app.get_scope_readout(), red.as_str());
+
+        // Zoomed in on the right half with the pointer resting: the
+        // spot under it is blue now.
+        {
+            let mut st = state.borrow_mut();
+            st.develop.zoom = 1.0;
+            st.develop.center = (4500.0, 2000.0);
+        }
+        show_hover(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_scope_readout(), blue.as_str());
+
+        // The camera's picture standing in: none of it describes that.
+        app.set_placeholder(true);
+        show_hover(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_scope_readout(), "");
+        assert_eq!(app.get_scope_marks().row_count(), 0);
+        app.set_placeholder(false);
+        show_hover(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_scope_readout(), blue.as_str());
+
+        // This frame developed again under the resting pointer: the
+        // upload drops the analysis, and what is shown stays until
+        // the new one is back, rather than blink.
+        let picture = HOVER_PICTURE.with(|p| p.borrow_mut().replace((Vec::new(), 0, 0)));
+        show_hover(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_scope_readout(), blue.as_str(), "a re-develop");
+        assert_eq!(app.get_scope_marks().row_count(), 4);
+        // Not on another scope, whose marks those are not.
+        state.borrow_mut().develop.scope = scope::Scope::Vector;
+        show_hover(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_scope_readout(), "", "another scope");
+        state.borrow_mut().develop.scope = scope::Scope::Rgb;
+        HOVER_PICTURE.with(|p| *p.borrow_mut() = picture.clone());
+        show_hover(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_scope_readout(), blue.as_str());
+
+        // A develop held under the last frame's edit: none of it.
+        state.borrow_mut().develop.held = Some(Edit::default());
+        show_hover(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_scope_readout(), "");
+        assert_eq!(app.get_scope_marks().row_count(), 0);
+        state.borrow_mut().develop.held = None;
+        show_hover(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_scope_readout(), blue.as_str());
+
+        // A step to another frame, its develop not landed: the one on
+        // the GPU is the last frame's, and the readout goes.
+        HOVER_PICTURE.with(|p| *p.borrow_mut() = Some((Vec::new(), 0, 0)));
+        state.borrow_mut().develop.shown_turn = Some((7, 0));
+        show_hover(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_scope_readout(), "", "a frame step");
+        assert_eq!(app.get_scope_marks().row_count(), 0);
+        HOVER_PICTURE.with(|p| p.borrow_mut().take());
+    }
+
+    /// The pointer leaving while the state is borrowed still takes the
+    /// color under it off the scope, a frame's time later.
+    #[test]
+    fn a_leave_while_the_state_is_borrowed_still_clears_the_readout() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        state.borrow_mut().develop.hover = Some((10.0, 10.0));
+        app.set_scope_readout("R 1  G 2  B 3  L 2".into());
+        {
+            let _held = state.borrow_mut();
+            app.invoke_view_hovered(false, 10.0, 10.0);
+        }
+        assert_eq!(app.get_scope_readout(), "R 1  G 2  B 3  L 2", "not yet");
+        // Not tried again at once, so a borrow held across a nested
+        // event loop does not spin it.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+        assert_eq!(app.get_scope_readout(), "R 1  G 2  B 3  L 2", "not at once");
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+        assert_eq!(state.borrow().develop.hover, None);
+        assert_eq!(app.get_scope_readout(), "");
     }
 
     #[test]

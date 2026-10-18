@@ -52,6 +52,11 @@ design note behind it.
 
 ### Editing
 
+- Point at the picture and the scopes show that spot: its R, G, B and
+  luma levels at the top of the scope, lines through them on the
+  histogram, a dot per channel at its column on Wave and Parade, and a
+  ring on Vector, to see a cheek against the skin line
+  ([§349](https://github.com/jessolmstead/greycard/blob/master/docs/notes/349-the-color-under-the-pointer-on-the-scopes.md))
 - A Sync button at the top of the develop panel whenever several
   frames are selected, and the frame menu's paste and sync named for
   the frames they go onto. The sync sheet can shift Temperature, Tint

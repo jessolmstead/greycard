@@ -56,6 +56,13 @@ pub(crate) struct Develop {
     pub(crate) bins: Option<Vec<u32>>,
     /// Which scope the panel shows.
     pub(crate) scope: scope::Scope,
+    /// The pointer on the view, logical pixels, while it is there:
+    /// the color under it is marked on the scope.
+    pub(crate) hover: Option<(f32, f32)>,
+    /// What the scope shows of the color under the pointer, and on
+    /// which scope: a move that reads the same leaves the marks be,
+    /// rather than restart their glide to where they already are.
+    pub(crate) hover_shown: Option<(scope::Scope, scope::Reading)>,
     /// The curve point under the pointer while it is held.
     pub(crate) curve_drag: Option<usize>,
     /// The developed picture's size, the source of the geometry.

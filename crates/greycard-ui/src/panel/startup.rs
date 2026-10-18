@@ -12,8 +12,8 @@ use crate::panel::mask::{ask_for, bake_locals};
 use crate::panel::retouch::patch_outlines;
 use crate::panel::viewport::{
     ViewMap, display_key, drawn_picture, effective_zoom, proof_settings, schedule_snapshot,
-    settle_source_size, show_crop_on_view, show_source_shape, source_to_view, sync_display,
-    write_screenshot, zoom_label,
+    settle_source_size, show_crop_on_view, show_hover, show_source_shape, source_to_view,
+    sync_display, write_screenshot, zoom_label,
 };
 use crate::*;
 
@@ -1350,7 +1350,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     if let Some((taken, bins)) = bins {
                         app.set_scope_picture(scope::draw(taken, bins));
                     }
-                    if let Some(picture) = renderer.take_navigator() {
+                    let picture = renderer.take_navigator();
+                    let new_picture = picture.is_some();
+                    if let Some(picture) = picture {
                         if let Some(path) = std::env::var_os("GREYCARD_UI_NAVIGATOR")
                             && let Some(rgba) = picture.to_rgba8()
                             && let Some(img) = image::RgbaImage::from_raw(
@@ -1413,6 +1415,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     }
                     if let Some(b) = fresh {
                         bins_read(st, &app, b);
+                    }
+                    // A new analysis picture under a resting pointer:
+                    // the color there has changed, or the scope has.
+                    // And a frame drawn anew under it: a zoom, a pan,
+                    // the fit or a resize puts another spot there.
+                    if new_picture || (drew && st.develop.hover.is_some()) {
+                        show_hover(st, &app);
                     }
                     // The variable is the gate; the line is kept at info so
                     // asking for it is enough to get it.

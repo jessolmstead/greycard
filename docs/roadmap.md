@@ -15,7 +15,9 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-None at present.
+- [ ] The scopes, the clipping lamps and the readout under the pointer
+      read the picture through the monitor's display table, not in the
+      export space §42 and the guide promise (§349)
 
 ## Open Questions
 
@@ -726,8 +728,6 @@ clears or a tester asks for it.
 - [ ] MIDI Controller support
 - [ ] Different frameline options when cropping
 - [ ] Camera tethering. Low priority.
-- [ ] Idea: Show the R, G, B, and W points on the histogram when hovering
-      over a point on the photo.
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
 - [ ] Idea: AI highlight recovery

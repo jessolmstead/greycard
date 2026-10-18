@@ -3,6 +3,7 @@
 
 import { Theme } from "../theme.slint";
 import { PanelButton, Segmented, ClipMark } from "../controls.slint";
+import { ScopeMark } from "../structs.slint";
 
 export component PanelHead inherits VerticalLayout {
     in-out property <bool> culling;
@@ -16,6 +17,19 @@ export component PanelHead inherits VerticalLayout {
     in property <[string]> scopes;
     in-out property <string> scope;
     callback scope-changed(string);
+    // The color under the pointer on the picture: where it lands on
+    // the scope, and its levels in words; empty for none.
+    in property <[ScopeMark]> scope-marks;
+    in property <string> scope-readout;
+    // With Selection on, the pointer is outside the mask: its pixel is
+    // counted on no trace, so its marks show faded, where it would sit
+    // against the selection's, and its numbers dimmed.
+    in property <bool> scope-marks-outside;
+    // A channel's color for its mark, bright enough to read over the
+    // trace it sits on; the luma's is white.
+    pure function mark-tone(channel: int) -> color {
+        return channel == 0 ? #ff5a5a : channel == 1 ? #5ae05a : channel == 2 ? #6a9cff : #ffffff;
+    }
     // The scopes weighed by the chosen adjustment's mask: off by
     // default, for the session only, and greyed while there is no
     // mask to weigh by.
@@ -148,6 +162,58 @@ export component PanelHead inherits VerticalLayout {
                 height: parent.height - 2px;
                 image-fit: fill;
                 image-rendering: smooth;
+            }
+            // The color under the pointer in numbers, drawn before its
+            // marks so they lie over it: a mark at the top of the trace
+            // is never hidden.
+            if root.scope-readout != "": Rectangle {
+                y: 3px;
+                width: readout.preferred-width + 2 * Theme.space-2;
+                height: readout.preferred-height + 2px;
+                border-radius: Theme.radius-sm;
+                background: Theme.base.with-alpha(0.85);
+                readout := Text {
+                    text: root.scope-readout;
+                    color: root.scope-marks-outside ? Theme.text-secondary : Theme.text;
+                    font-size: Theme.font-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            // The color under the pointer: a line on the histogram
+            // through each channel's bar and the luma's level, a dot
+            // on the others where the pixel's cell is. Each has a dark
+            // edge, since it sits on the trace of its own color: the
+            // vectorscope's white ring a dark one just outside it.
+            for m in root.scope-marks: Rectangle {
+                property <length> cx: 1px + m.x * (parent.width - 2px);
+                property <length> cy: 1px + m.y * (parent.height - 2px);
+                property <bool> line: root.scope == "RGB";
+                property <length> size: self.line ? 3px : (m.channel == 3 ? 9px : 7px);
+                x: self.cx - self.size / 2;
+                y: self.line ? 1px : self.cy - self.size / 2;
+                width: self.size;
+                height: self.line ? parent.height - 2px : self.size;
+                border-radius: self.line ? 0 : self.size / 2;
+                background: self.line ? #000000a0 : (m.channel == 3 ? transparent : root.mark-tone(m.channel));
+                border-width: self.line ? 0 : (m.channel == 3 ? 2px : 1px);
+                border-color: m.channel == 3 ? root.mark-tone(3) : #000000c0;
+                opacity: root.scope-marks-outside ? 0.4 : 1;
+                animate x, y { duration: 120ms; easing: ease-out; }
+                if root.scope == "RGB": Rectangle {
+                    x: 1px;
+                    width: 1px;
+                    background: root.mark-tone(m.channel);
+                }
+                if root.scope == "Vector": Rectangle {
+                    x: -1px;
+                    y: -1px;
+                    width: parent.width + 2px;
+                    height: parent.height + 2px;
+                    border-radius: self.width / 2;
+                    border-width: 1px;
+                    border-color: #000000c0;
+                }
             }
             if root.scope == "RGB": ClipMark {
                 x: 1px;

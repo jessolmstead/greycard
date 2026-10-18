@@ -135,6 +135,8 @@ impl Scopes {
             picture_staging: None,
             picture_in_flight: None,
             picture: None,
+            pixels: None,
+            source_changed: false,
             analyzed: None,
             image_changed: false,
         }
@@ -198,6 +200,13 @@ impl Renderer {
                     buf.make_mut_bytes()
                         .copy_from_slice(&data[..(w * h * 4) as usize]);
                     drop(data);
+                    // Kept with the mask's coverage in the alpha, which
+                    // the readout weighs by as the bins were weighed;
+                    // not when a new source came in after it was taken,
+                    // which is the last image's picture at its shape.
+                    if !self.scopes.source_changed {
+                        self.scopes.pixels = Some(buf.clone());
+                    }
                     // A weighed analysis holds the mask in its alpha;
                     // the navigator shows the picture whole.
                     if matches!(self.scopes.analyzed, Some((_, _, Some(_)))) {
@@ -219,6 +228,7 @@ impl Renderer {
         {
             self.scopes.analyzed = Some(key);
             self.scopes.image_changed = false;
+            self.scopes.source_changed = false;
             // The whole frame, small, at the view's edit.
             let (iw, ih) = (
                 v.frame_size.0.max(1.0) as u32,
@@ -366,5 +376,24 @@ impl Renderer {
     /// the navigator.
     pub fn take_navigator(&mut self) -> Option<slint::Image> {
         self.scopes.picture.take()
+    }
+
+    /// The analysis picture's color about a point of the frame, `u`
+    /// and `v` fractions of its width and height, within `radius` of
+    /// it (a fraction of the frame's width): [`scope::under_pointer`]
+    /// on the last picture read, its coverage in the alpha as the bins
+    /// were weighed. `None` before the first picture of the image now
+    /// on the GPU is read, so a new frame's geometry never reads the
+    /// last frame's pixels.
+    pub fn analyzed_at(&self, u: f32, v: f32, radius: f32) -> Option<scope::Reading> {
+        let buf = self.scopes.pixels.as_ref()?;
+        scope::under_pointer(
+            buf.as_slice(),
+            buf.width() as usize,
+            buf.height() as usize,
+            u,
+            v,
+            radius,
+        )
     }
 }
