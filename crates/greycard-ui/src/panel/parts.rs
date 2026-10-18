@@ -1011,7 +1011,7 @@ mod tests {
     /// person first, on its own above the groups.
     #[test]
     fn the_menu_is_the_tables_labels() {
-        let slint = include_str!("../../ui/panel/mask.slint");
+        let slint = greycard_slint::MASK_SLINT;
         let mut menu: Vec<&str> = slint
             .split("root.add-part(\"")
             .skip(1)

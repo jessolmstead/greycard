@@ -1,5 +1,5 @@
 //! The frame menu: a right-click over a frame in the strip, the grid
-//! or the viewport (`ui/panel/frame-menu.slint`).
+//! or the viewport (greycard-slint's `ui/panel/frame-menu.slint`).
 //!
 //! Which frames it is about is `selection::right_click`'s: a frame in
 //! the selection keeps the selection, one outside it is opened first

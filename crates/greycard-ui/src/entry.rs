@@ -167,9 +167,9 @@ mod tests {
     /// carry a `scale` of its own.
     #[test]
     fn every_slider_scale_matches_its_text() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/panel");
+        let dir = std::path::Path::new(greycard_slint::PANEL_DIR);
         let (mut checked, mut indirect) = (0, 0);
-        for file in std::fs::read_dir(&dir).expect("the panel's sources") {
+        for file in std::fs::read_dir(dir).expect("the panel's sources") {
             let path = file.expect("a panel source").path();
             if path.extension().is_none_or(|e| e != "slint") {
                 continue;

@@ -2,17 +2,13 @@ fn main() {
     // No runpath: nothing the binary loads at exec sits beside it.
     // ONNX Runtime is opened by its full path at the first model, and
     // it finds Dawn through its own runpath (crates/ort-dylib).
+    // The Slint UI is compiled in greycard-slint's build script; what
+    // is left here reads nothing but itself and the icon, so it runs
+    // again only when one of them changes rather than at every edit.
+    println!("cargo:rerun-if-changed=build.rs");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         windows_resource();
     }
-    // A debug build, which is what the tests run, carries the element
-    // names the testing backend finds controls by (a slider's value
-    // field, the curve's In and Out); a release build goes without.
-    let debug = std::env::var("PROFILE").as_deref() == Ok("debug");
-    let config = slint_build::CompilerConfiguration::new()
-        .with_style("fluent-dark".into())
-        .with_debug_info(debug);
-    slint_build::compile_with_config("ui/app.slint", config).expect("the Slint UI compiles");
 }
 
 // The icon and the version fields go into the executable's own resource

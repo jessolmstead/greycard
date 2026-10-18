@@ -447,7 +447,7 @@ mod tests {
     /// entry making its kind.
     #[test]
     fn the_button_is_beside_sky_and_its_menu_is_what_was_found() {
-        let slint = include_str!("../../ui/panel/mask.slint");
+        let slint = greycard_slint::MASK_SLINT;
         let (before, button) = slint
             .split_once("landscape-button := PanelButton {")
             .expect("the button");

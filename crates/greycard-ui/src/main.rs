@@ -124,7 +124,8 @@ pub(crate) use render::{Renderer, View};
 pub(crate) use worker::{
     Developed, Job, LearnedReport, LensReport, Outcome, SourceKind, WhiteBase, Worker,
 };
-slint::include_modules!();
+// The window and its panels, compiled from `.slint` in greycard-slint.
+pub(crate) use greycard_slint::*;
 
 #[derive(Parser)]
 #[command(

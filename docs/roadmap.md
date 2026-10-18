@@ -39,11 +39,10 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] The window's structure: the Slint UI in a crate of its own,
-      the one cut that halves the window's build (measured 2026-10-18;
-      the CLI split landed as §341, the State grouping as §344), then
-      the file chooser out of `export.rs` and a render crate holding
-      the finish and the export (Pool)
+- [ ] The window's structure: the file chooser out of `export.rs`,
+      then a render crate holding the finish and the export (the Slint
+      UI in a crate of its own landed as §351, the window's own build
+      from 115 s and 9 GB to 24 s and 2.3 GB; Pool)
 - [ ] A badge on the viewport while the soft proof is on, beside the
       clipping lamps, naming the profile, and the gamut warning off by
       default as Lightroom has it: the proof is one S away with the
@@ -547,10 +546,10 @@ clears or a tester asks for it.
       `.slint` file changes (`cargo build -p` on it alone picks a
       different feature set and forces a rebuild; build through the
       window). So the order is: the Slint UI into its own crate
-      (`ui/` moves with it, the two `include_str!` paths to
-      `mask.slint` in `panel/landscape.rs` and `panel/parts.rs`
-      fixed, the window's `build.rs` keeping only the Windows
-      resource), measured again; the desktop file chooser out of
+      (landed, §351: window build 24 s and 2.3 GB, incremental 8 s;
+      `cargo build -p greycard-slint` alone still compiles a wasted
+      second copy, closed only by a workspace-hack list, left open);
+      the desktop file chooser out of
       `export.rs` (lines 905 to 1576, zbus and rfd on Slint's event
       loop, 11 tests) into a window `chooser.rs`; a render crate
       between edit and the window holding the finish, agx, detail,

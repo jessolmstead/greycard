@@ -22,7 +22,13 @@ greycard-gpu = { path = "../greycard-gpu" }
 greycard-library = { path = "../greycard-library" }
 # The camera match: the fit the Look section runs over a group.
 greycard-match = { path = "../greycard-match" }
+# The window, its panels and its sheets, compiled from `.slint` in a
+# crate of their own so a change here does not compile them again.
+greycard-slint = { path = "../greycard-slint" }
 # winit's window behind Slint's, for the monitor the window opens on.
+# greycard-slint's Slint has the same features; keep the two lists the
+# same, or a build of that crate alone compiles it for a Slint of its
+# own and the next build of this one compiles it again.
 slint = { version = "1.18", features = ["unstable-wgpu-30", "unstable-winit-030", "renderer-femtovg-wgpu"] }
 bytemuck = { version = "1", features = ["derive"] }
 half = { version = "2", features = ["bytemuck"] }
@@ -70,9 +76,6 @@ trash = "5.2"
 [features]
 # Nikon High Efficiency raws; off by default, see greycard-core.
 nikon-he = ["greycard-core/nikon-he"]
-
-[build-dependencies]
-slint-build = "1.18"
 
 # The icon and the version fields Explorer, the taskbar and the file
 # properties sheet read out of the executable itself. Windows only:

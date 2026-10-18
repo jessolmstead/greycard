@@ -2095,6 +2095,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "greycard-slint"
+version = "0.7.0"
+dependencies = [
+ "slint",
+ "slint-build",
+]
+
+[[package]]
 name = "greycard-ui"
 version = "0.7.0"
 dependencies = [
@@ -2114,6 +2122,7 @@ dependencies = [
  "greycard-lens",
  "greycard-library",
  "greycard-match",
+ "greycard-slint",
  "half",
  "i-slint-backend-testing",
  "image",
@@ -2130,7 +2139,6 @@ dependencies = [
  "serde",
  "serde_json",
  "slint",
- "slint-build",
  "tracing",
  "tracing-log",
  "tracing-subscriber",

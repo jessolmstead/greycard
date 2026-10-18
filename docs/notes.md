@@ -363,3 +363,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§348. The baseline per body](notes/348-the-baseline-per-body.md) (2026-10-17)
 - [§349. The color under the pointer on the scopes](notes/349-the-color-under-the-pointer-on-the-scopes.md) (2026-10-18)
 - [§350. Keywords and a title typed in the window](notes/350-keywords-and-a-title-typed-in-the-window.md) (2026-10-18)
+- [§351. The Slint UI in a crate of its own](notes/351-the-slint-ui-in-a-crate-of-its-own.md) (2026-10-18)

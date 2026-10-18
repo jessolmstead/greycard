@@ -2,7 +2,7 @@
 //! the keys sheet.
 //!
 //! A press reaches the window's key handler (`keys := FocusScope` in
-//! `ui/app.slint`), which asks [`chord`] for its name: "G",
+//! greycard-slint's `ui/app.slint`), which asks [`chord`] for its name: "G",
 //! "Ctrl+Shift+S", "Shift+Left", "?". The name comes back only when
 //! the table binds it, so a key the table does not hold does nothing
 //! however the handler is written, and the handler compares names,
@@ -546,7 +546,7 @@ mod tests {
     }
 
     fn handler() -> String {
-        handler_in(include_str!("../ui/app.slint")).0
+        handler_in(greycard_slint::APP_SLINT).0
     }
 
     /// The names a handler compares a chord with, less the empty one
@@ -568,7 +568,7 @@ mod tests {
     }
 
     fn handler_chords() -> BTreeSet<String> {
-        chords_in(include_str!("../ui/app.slint"))
+        chords_in(greycard_slint::APP_SLINT)
     }
 
     /// A comment or a string that looks like a comparison, or holds a
