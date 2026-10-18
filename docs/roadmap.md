@@ -35,9 +35,18 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] A Sync button in the develop panel over a selection (Pool)
+- [ ] A Sync button in the develop panel over a selection, and a
+      relative mode on the sync sheet for Temperature, Tint and
+      Exposure, each frame shifted from its own value rather than set
+      to one (Lightroom's Quick Develop; a second tester asked) (Pool)
 - [ ] The crop's starting aspect as a setting (Pool)
 - [ ] A keys sheet and a Help menu (Pool)
+- [ ] Library and Develop as two buttons in the header, so the grid is
+      found without a key: two testers took a while to find the
+      library (Pool)
+- [ ] White balance: moving Temperature or Tint turns As shot off by
+      itself, the sliders live from the start at the as-shot values,
+      instead of a switch to unlock them (a tester's step every frame)
 - [ ] The window's structure: `State` grouped by owner, the library
       views measured for a crate of their own (Pool; the CLI split
       landed, §341)
@@ -392,6 +401,7 @@ comes across with its ratings and collections.
       already answered, and its frame list laid out lazily rather than
       capped at 200 (§340)
 - [ ] The capture time shifted on a selection, for a second body
+      (two testers now, wedding work; a 0.8.0 candidate)
       whose clock was off (a wedding's two cameras sorted together):
       a shift kept in the sidecar's meta beside the rating, never a
       rewrite of the raw, read by the index as the frame's time, sorted
