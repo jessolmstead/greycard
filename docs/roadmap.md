@@ -57,6 +57,11 @@ ours, so a tester brings a library over in one go.
       raw, read by the index as the frame's time, sorted and filtered
       by, and written to the export's EXIF and XMP as the corrected
       time
+- [ ] One Import... button in the left pane opening a menu, "From a
+      card or folder..." and "A Lightroom catalog...", in place of two
+      buttons whose long label truncates at the pane's width; the
+      running states (Stop import, Importing the catalog...) stay on
+      the button's face; room for the imports to come
 
 
 ## Tracks
