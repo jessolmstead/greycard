@@ -781,6 +781,7 @@ mod tests {
         );
         let indexer = state.borrow_mut().views.index.take().unwrap();
         indexer.stop(Duration::from_secs(20));
+        drop(reader);
         drop(worker);
         testing::remove_scratch(state, &dir);
     }
