@@ -45,15 +45,19 @@ pub(crate) fn presets(
     // the end if any was refused.
     let mut refused = 0;
     for path in import {
-        let (written, greycard_edit::lightroom::Imported { preset, unmapped }) =
-            match store.import(path, replace) {
-                Ok(got) => got,
-                Err(e) => {
-                    eprintln!("{}", not_imported(path, &e));
-                    refused += 1;
-                    continue;
-                }
-            };
+        let (
+            written,
+            greycard_edit::lightroom::Imported {
+                preset, unmapped, ..
+            },
+        ) = match store.import(path, replace) {
+            Ok(got) => got,
+            Err(e) => {
+                eprintln!("{}", not_imported(path, &e));
+                refused += 1;
+                continue;
+            }
+        };
         println!(
             "imported      {} ({}) into {}",
             preset.name,

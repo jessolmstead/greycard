@@ -102,16 +102,34 @@ pub(crate) struct Options {
     pub(crate) folders: Vec<PathBuf>,
     pub(crate) limit: Option<usize>,
     pub(crate) out: Option<PathBuf>,
+    /// Where each measured frame's blocks are kept for the fit
+    /// (`--blocks DIR`, [`crate::fit_lightroom`]); none keeps nothing.
+    pub(crate) blocks: Option<PathBuf>,
+    /// Measure with the bodies' offsets taken back off the Exposure
+    /// slider (`--no-body-offset`).
+    pub(crate) no_body_offset: bool,
+    /// The mapper's scales for the run: the shipped ones unless
+    /// `--scale` moved some.
+    pub(crate) scales: greycard_edit::lightroom::Scales,
 }
 
 /// `--measure-lightroom`, from the command line to the exit code.
 pub(crate) fn headless(cli: &crate::Cli, catalog: &Path) -> Result<std::process::ExitCode> {
+    let mut scales = greycard_edit::lightroom::Scales::DEFAULT;
+    for given in &cli.scale {
+        scales
+            .set_from(given)
+            .map_err(|e| anyhow::anyhow!("--scale {e}"))?;
+    }
     let opts = Options {
         catalog: catalog.to_path_buf(),
         roots: cli.root.clone(),
         folders: cli.exports.clone(),
         limit: cli.limit,
         out: cli.out.clone(),
+        blocks: cli.blocks.clone(),
+        no_body_offset: cli.no_body_offset,
+        scales,
     };
     let report = run(&opts)?;
     print!("{}", text(&report));
@@ -176,6 +194,10 @@ pub(crate) struct Measured {
     /// The registration's correlation and scale.
     pub(crate) ncc: f32,
     pub(crate) scale: f32,
+    /// The stops the render was shifted by for the registration when
+    /// the mapped exposure's render would not lay under the export
+    /// ([`median_shift`]); none when it laid as mapped.
+    pub(crate) laid_at: Option<f32>,
     pub(crate) seconds: f32,
 }
 
@@ -196,6 +218,11 @@ pub(crate) struct FrameLine {
     /// ones, which `sliders` holds them against.
     pub(crate) arrived: BTreeMap<String, f32>,
     pub(crate) camera: String,
+    /// The stops the mapper added to the Exposure slider for the body
+    /// ([`greycard_edit::lightroom::body_offset`]); with
+    /// `--no-body-offset`, the stops it would have added and did not.
+    pub(crate) body_offset: f32,
+    pub(crate) offset_applied: bool,
     pub(crate) profile: String,
     pub(crate) kind: Option<Kind>,
     pub(crate) look: Option<String>,
@@ -586,6 +613,7 @@ fn long_edge_for(crop: Option<&Crop>, size: Option<(f64, f64)>) -> u32 {
 
 /// One raw developed under `edit` and compared with `export`: the error
 /// at the edit's own exposure, then with the brightness matched.
+#[cfg(test)]
 pub(crate) fn measure_frame(
     raw: &Path,
     edit: &Edit,
@@ -594,6 +622,29 @@ pub(crate) fn measure_frame(
     export: &Picture,
     lenses: Option<&greycard_lens::Database>,
 ) -> Result<Measured, String> {
+    measure_frame_with(raw, edit, crop, size, export, lenses, false).map(|(m, _)| m)
+}
+
+/// What the fit keeps of a frame's kept blocks: what the finish read
+/// over each (the scene's mean, the guide's, the vignette's stops) and
+/// what both sides came out as.
+pub(crate) struct Kept {
+    pub(crate) range: [f32; 2],
+    pub(crate) blocks: Vec<crate::fit_lightroom::Block>,
+}
+
+/// [`measure_frame`], and with `keep` the blocks the fit reads
+/// ([`Kept`]): the scene the finish was handed, cut and turned as the
+/// render was, averaged over the same blocks.
+pub(crate) fn measure_frame_with(
+    raw: &Path,
+    edit: &Edit,
+    crop: Option<&Crop>,
+    size: Option<(f64, f64)>,
+    export: &Picture,
+    lenses: Option<&greycard_lens::Database>,
+    keep: bool,
+) -> Result<(Measured, Option<Kept>), String> {
     let start = Instant::now();
     let own = greycard_core::decode::stance_path(raw)
         .map(|s| s.orientation)
@@ -604,8 +655,73 @@ pub(crate) fn measure_frame(
     };
     let mut developed = crate::worker::FrameDevelop::develop(raw, edit, lenses)?;
     let render = cm::picture_of(&developed.finish(edit, &settings));
-    let laid = lay(&cut(&render, own, crop, size), own, export)?;
+    // The registration is of the picture's structure, which the
+    // tone curve bends a little differently at every brightness: a
+    // render a stop from the export can miss the correlation on a frame
+    // that registers once their medians agree. So a miss is tried
+    // again with the render shifted to the export's median; the blocks
+    // and the offset are taken on the mapped render either way, since
+    // the registration is geometry alone.
+    let mapped = cut(&render, own, crop, size);
+    let (laid, laid_at) = match lay(&mapped, own, export) {
+        Ok(l) => (l, None),
+        Err(why) => {
+            let shift = median_shift(&mapped, export);
+            let mut moved = edit.clone();
+            moved.light.exposure += shift;
+            let shifted = cm::picture_of(&developed.finish(&moved, &settings));
+            match lay(&cut(&shifted, own, crop, size), own, export) {
+                Ok(l) => (l, Some(shift)),
+                Err(_) => return Err(why),
+            }
+        }
+    };
     let first = pairs_of(&render, own, crop, size, &laid);
+    let kept = keep.then(|| {
+        let scene = developed.scene(edit, &settings);
+        let n = scene.image.width * scene.image.height;
+        let scene_picture = to_picture(scene.image);
+        // The guide and the vignette's stops as a picture of their own,
+        // so they are cut, turned and averaged exactly as the scene is.
+        let aux = Picture::new(
+            scene_picture.width,
+            scene_picture.height,
+            (0..n)
+                .map(|i| {
+                    [
+                        scene.guide.as_ref().map_or(0.0, |g| g[i]),
+                        scene.stops[i],
+                        0.0,
+                    ]
+                })
+                .collect(),
+        );
+        let turned = |p: &Picture| {
+            let c = cut(p, own, crop, size);
+            to_picture(greycard_core::develop::orient(to_working(&c), laid.turn))
+        };
+        let (sm, _, _, cols) =
+            greycard_match::pairs::block_stats(&turned(&scene_picture), greycard_match::BLOCK);
+        let (am, _, _, _) =
+            greycard_match::pairs::block_stats(&turned(&aux), greycard_match::BLOCK);
+        Kept {
+            range: scene.range,
+            blocks: first
+                .pairs
+                .iter()
+                .map(|p| {
+                    let i = p.row * cols + p.col;
+                    crate::fit_lightroom::Block {
+                        s: sm[i],
+                        g: scene.guide.is_some().then_some(am[i][0]),
+                        v: am[i][1],
+                        e: p.jpeg,
+                        r: p.render,
+                    }
+                })
+                .collect(),
+        }
+    });
     let offset =
         greycard_match::exposure::offset_stops(&first).ok_or("no flat, unclipped blocks")?;
     let at = |developed: &mut crate::worker::FrameDevelop, o: f32| {
@@ -623,7 +739,7 @@ pub(crate) fn measure_frame(
     });
     let s = summary_of(&first);
     let m = summary_of(&matched);
-    Ok(Measured {
+    let measured = Measured {
         de: s.de,
         dl: s.dl,
         dl_abs: s.dl_abs,
@@ -638,8 +754,33 @@ pub(crate) fn measure_frame(
         matched_dc: m.dc,
         ncc: laid.reg.ncc,
         scale: laid.reg.scale,
+        laid_at,
         seconds: start.elapsed().as_secs_f32(),
-    })
+    };
+    Ok((measured, kept))
+}
+
+/// The stops between two pictures' median luminance, the second over
+/// the first: a whole-picture reading that needs no registration, for
+/// a render to be shifted toward an export before the registration is
+/// tried again. Every eighth pixel each way.
+fn median_shift(render: &Picture, export: &Picture) -> f32 {
+    let med = |p: &Picture| {
+        let mut v: Vec<f32> = (0..p.height)
+            .step_by(8)
+            .flat_map(|y| {
+                (0..p.width)
+                    .step_by(8)
+                    .map(move |x| greycard_match::color::luminance(decode3(p.at(y, x))))
+            })
+            .collect();
+        if v.is_empty() {
+            return 1.0;
+        }
+        let mid = v.len() / 2;
+        *v.select_nth_unstable_by(mid, f32::total_cmp).1
+    };
+    (med(export).max(1e-6) / med(render).max(1e-6)).log2()
 }
 
 // ---------------------------------------------------------------------
@@ -872,6 +1013,14 @@ pub(crate) struct Report {
     pub(crate) measured: usize,
     pub(crate) of: usize,
     pub(crate) looks: Vec<LookLine>,
+    /// Each body measured and the offset the mapper applied to it.
+    pub(crate) bodies: Vec<(String, f32)>,
+    /// Whether the offsets were applied (`--no-body-offset` leaves
+    /// them off).
+    pub(crate) offsets_applied: bool,
+    /// The scales the settings were mapped with, where they are not
+    /// the shipped ones.
+    pub(crate) scales_moved: BTreeMap<String, f32>,
     pub(crate) frames: Vec<FrameLine>,
     pub(crate) by_profile: Vec<ProfileLine>,
     /// Over the frames with a global edit, then over every frame.
@@ -896,8 +1045,16 @@ pub(crate) fn report(pairing: PairingLine, frames: Vec<FrameLine>) -> Report {
             .or_insert((f.look.clone(), 0));
         e.1 += 1;
     }
+    let mut bodies: Vec<(String, f32)> = frames
+        .iter()
+        .filter(|f| !f.camera.is_empty())
+        .map(|f| (f.camera.clone(), f.body_offset))
+        .collect();
+    bodies.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    bodies.dedup();
     Report {
         pairing,
+        bodies,
         looks: looks
             .into_iter()
             .map(|((camera, profile), (look, frames))| LookLine {
@@ -957,11 +1114,22 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
         eprintln!("measure lightroom: no lens database; the develop runs without lens corrections");
     }
     let store = greycard_edit::look::store_dir();
+    if let Some(dir) = &opts.blocks {
+        std::fs::create_dir_all(dir).with_context(|| format!("making {}", dir.display()))?;
+    }
     let mut frames = Vec::new();
     for (k, &i) in take.iter().enumerate() {
         let pair = measurable[i];
         let shot = &pairing.shots[pair.shot];
-        let line = frame(pair, shot, store.as_deref(), lenses.as_ref());
+        let line = frame(
+            pair,
+            shot,
+            store.as_deref(),
+            lenses.as_ref(),
+            opts.blocks.as_deref(),
+            !opts.no_body_offset,
+            &opts.scales,
+        );
         eprintln!(
             "measure lightroom: {}/{} {}: {}",
             k + 1,
@@ -979,6 +1147,14 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
         frames.push(line);
     }
     let mut out = report(line, frames);
+    out.offsets_applied = !opts.no_body_offset;
+    out.scales_moved = greycard_edit::lightroom::Scales::NAMES
+        .iter()
+        .filter_map(|n| {
+            let v = opts.scales.get(n)?;
+            (v != greycard_edit::lightroom::Scales::DEFAULT.get(n)?).then(|| (n.to_string(), v))
+        })
+        .collect();
     out.schema = schema;
     out.measured = take.len();
     out.of = measurable.len();
@@ -992,6 +1168,9 @@ fn frame(
     shot: &lx::Shot,
     store: Option<&Path>,
     lenses: Option<&greycard_lens::Database>,
+    blocks: Option<&Path>,
+    apply_offset: bool,
+    scales: &greycard_edit::lightroom::Scales,
 ) -> FrameLine {
     let words = lx::words(&pair.settings);
     let profile = profile_of(&words);
@@ -1066,18 +1245,28 @@ fn frame(
         line.failed = Some("the raw is not here".into());
         return line;
     };
-    let (mut edit, unmapped) =
-        match greycard_library::lightroom_catalog::imported_edit(raw, &pair.settings, None) {
-            Ok(e) => e,
-            Err(e) => {
-                line.failed = Some(format!("the settings: {e}"));
-                return line;
-            }
-        };
-    line.unmapped = unmapped;
-    line.camera = greycard_core::decode::probe_path(raw)
-        .map(|p| greycard_library::Exif::from_probe(&p).camera)
-        .unwrap_or_default();
+    let imported = match greycard_library::lightroom_catalog::imported_edit_with(
+        raw,
+        &pair.settings,
+        None,
+        scales,
+    ) {
+        Ok(e) => e,
+        Err(e) => {
+            line.failed = Some(format!("the settings: {e}"));
+            return line;
+        }
+    };
+    let mut edit = imported.edit;
+    line.unmapped = imported.unmapped;
+    line.camera = imported.camera.unwrap_or_default();
+    line.body_offset = imported.offset;
+    line.offset_applied = apply_offset;
+    if !apply_offset {
+        // The Light section is carried whenever an offset is, so taking
+        // it back off is exact.
+        edit.light.exposure -= imported.offset;
+    }
     line.kind = Some(if profile.starts_with("Camera ") {
         line.look = store.and_then(|s| look_for(s, &line.camera, &profile, edit.display_curve));
         if line.look.is_some() {
@@ -1103,8 +1292,37 @@ fn frame(
             return line;
         }
     };
-    match measure_frame(raw, &edit, crop.as_ref(), shot.size, &export, lenses) {
-        Ok(m) => line.measured = Some(m),
+    match measure_frame_with(
+        raw,
+        &edit,
+        crop.as_ref(),
+        shot.size,
+        &export,
+        lenses,
+        blocks.is_some(),
+    ) {
+        Ok((m, kept)) => {
+            line.measured = Some(m);
+            if let (Some(dir), Some(kept)) = (blocks, kept) {
+                let hash = line.look.as_deref().zip(store).and_then(|(name, s)| {
+                    crate::fit_lightroom::look_hash(s, name, edit.display_curve)
+                });
+                let record = crate::fit_lightroom::FrameBlocks::of(
+                    &line,
+                    &pair.settings,
+                    &edit,
+                    kept,
+                    scales,
+                    hash,
+                );
+                if let Err(e) = record.write(dir) {
+                    eprintln!(
+                        "measure lightroom: {}: the blocks were not kept: {e}",
+                        line.name
+                    );
+                }
+            }
+        }
         Err(e) => line.failed = Some(e),
     }
     line
@@ -1176,6 +1394,28 @@ pub(crate) fn text(r: &Report) -> String {
             l.frames
         );
     }
+    for (name, v) in &r.scales_moved {
+        let _ = writeln!(
+            out,
+            "{:<13} the settings were mapped with {name} at {v} rather than the shipped {}",
+            "scale",
+            greycard_edit::lightroom::Scales::DEFAULT
+                .get(name)
+                .unwrap_or(f32::NAN)
+        );
+    }
+    for (camera, offset) in &r.bodies {
+        let _ = writeln!(
+            out,
+            "{:<13} {camera}: the mapper {} the Exposure slider by {offset:+.2} stops",
+            "body",
+            if r.offsets_applied {
+                "moved"
+            } else {
+                "would have moved, and did not move,"
+            }
+        );
+    }
     let _ = writeln!(out);
     for f in &r.frames {
         let off: Vec<String> = f.sliders.iter().map(|(k, v)| format!("{k} {v}")).collect();
@@ -1200,6 +1440,16 @@ pub(crate) fn text(r: &Report) -> String {
             (None, Some(why)) => format!("not measured: {why}"),
             (None, None) => "not measured".into(),
         };
+        if let Some(at) = f.measured.as_ref().and_then(|m| m.laid_at) {
+            notes.push(format!("laid at {at:+.2} stops"));
+        }
+        if f.body_offset != 0.0 {
+            notes.push(if f.offset_applied {
+                format!("body {:+.2} stops", f.body_offset)
+            } else {
+                format!("body {:+.2} stops not applied", f.body_offset)
+            });
+        }
         let _ = writeln!(out, "{:<13} {}  {said}", "frame", f.name);
         let _ = writeln!(
             out,
@@ -1435,7 +1685,15 @@ mod tests {
             step: Some("Export - Hard Drive (1/1/26 12:00:00 PM)".into()),
             settings: "s = { ProcessVersion = \"5.7\", Temperature = 5200, Tint = 3 }".into(),
         };
-        let line = frame(&pair, &shot, None, None);
+        let line = frame(
+            &pair,
+            &shot,
+            None,
+            None,
+            None,
+            true,
+            &greycard_edit::lightroom::Scales::DEFAULT,
+        );
         assert_eq!(line.process.as_deref(), Some("5.7"));
         assert!(line.old_process && !line.global());
         assert_eq!(line.image, 7);
@@ -1608,8 +1866,9 @@ mod tests {
         dng(&raw, 840, 560);
         let settings = "s = { Exposure2012 = 0.3, Contrast2012 = 10, WhiteBalance = \"As Shot\",\n\
             CropLeft = 0.25, CropRight = 0.75 }";
-        let (edit, _) =
-            greycard_library::lightroom_catalog::imported_edit(&raw, settings, None).unwrap();
+        let edit = greycard_library::lightroom_catalog::imported_edit(&raw, settings, None)
+            .unwrap()
+            .edit;
         assert!((edit.light.exposure - 0.3).abs() < 1e-6);
         let crop = Crop::of(&lx::words(settings));
         let mut developed = crate::worker::FrameDevelop::develop(&raw, &edit, None).unwrap();

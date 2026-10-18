@@ -134,6 +134,28 @@ pub(super) fn write_export(
     Ok(left_out)
 }
 
+/// What [`finish_export`] would hand the finish for `image` under
+/// `edit` and `settings`, before any pixel is finished
+/// ([`crate::export::Scene`]): the edit's geometry, the resize, the
+/// guide plane and the vignette, as the export has them. No masks: the
+/// measurement this serves carries none.
+pub(super) fn scene_export(
+    image: &WorkingImage,
+    edit: &Edit,
+    base: Option<&Base>,
+    settings: &crate::export::Settings,
+) -> crate::export::Scene {
+    let source = (image.width as u32, image.height as u32);
+    let framed;
+    let image: &WorkingImage = if edit.geometry.is_identity() {
+        image
+    } else {
+        framed = crate::geometry::apply(image, &edit.geometry);
+        &framed
+    };
+    crate::export::scene_framed(image, edit, source, settings, base.map(|b| &*b.guide))
+}
+
 /// `image`, the develop `base` was made for, finished under `edit` and
 /// `settings` as an export is: the learned masks made now if they are
 /// not yet, the edit's geometry, then the finish. No mark and no file.

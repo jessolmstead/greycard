@@ -1263,7 +1263,7 @@ fn radial_lines(model: &Model, kept: &[Kept]) -> Vec<RadialLine> {
 /// and frames, so nothing has to be read back out of the title. Written
 /// beside, flushed to the disk and renamed, so the picker never reads
 /// half a table and a crash never leaves one.
-fn write_look(
+pub(crate) fn write_look(
     dir: &Path,
     group: &Group,
     fitted_on: &str,

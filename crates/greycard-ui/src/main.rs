@@ -33,6 +33,7 @@ mod files;
 mod filter;
 mod finder;
 mod finish;
+mod fit_lightroom;
 mod geometry;
 mod grid;
 mod headless;
@@ -269,9 +270,64 @@ struct Cli {
     /// through the catalog, rather than all
     #[arg(long, value_name = "N", requires = "measure_lightroom")]
     limit: Option<usize>,
-    /// With --measure-lightroom: write the report as JSON here too
-    #[arg(long, value_name = "FILE", requires = "measure_lightroom")]
+    /// With --measure-lightroom or --fit-lightroom: write the report as
+    /// JSON here too
+    #[arg(long, value_name = "FILE")]
     out: Option<PathBuf>,
+    /// With --measure-lightroom: keep each measured frame's blocks (what
+    /// the finish read over each kept block and what both sides came
+    /// out as, no pixels) under this folder, for --fit-lightroom
+    #[arg(long, value_name = "DIR", requires = "measure_lightroom")]
+    blocks: Option<PathBuf>,
+    /// With --measure-lightroom: leave the bodies' exposure offsets off,
+    /// so the measurement reads where Lightroom sits against the
+    /// engine's own default; the report says which offset was not
+    /// applied
+    #[arg(long, requires = "measure_lightroom")]
+    no_body_offset: bool,
+    /// With --measure-lightroom: map the settings with this scale at
+    /// this value rather than the shipped one (NAME=VALUE, a name as
+    /// --fit-lightroom's scale table prints it), to measure an earlier
+    /// or a proposed mapper; the report says so. Repeatable
+    #[arg(long, value_name = "NAME=VALUE", requires = "measure_lightroom")]
+    scale: Vec<String>,
+    /// Fit the Lightroom mapper's scales and its per-body exposure
+    /// offsets to Lightroom's own exports, from the blocks
+    /// --measure-lightroom --blocks kept under these folders (one a
+    /// catalog; repeatable), with no window, and print the report:
+    /// the error before and after by body and profile, held out by
+    /// catalog, body and pasted edit, and each scale's profile.
+    /// Writes nothing but --out
+    #[arg(long, value_name = "DIR")]
+    fit_lightroom: Vec<PathBuf>,
+    /// With --fit-lightroom: rounds of the search over the parameters
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 4,
+        requires = "fit_lightroom"
+    )]
+    fit_rounds: usize,
+    /// With --fit-lightroom: fit the bodies' offsets alone, the scales
+    /// left as shipped
+    #[arg(long, requires = "fit_lightroom")]
+    offsets_only: bool,
+    /// With --fit-lightroom: skip the hold-outs (a fit each), for a
+    /// quick look at the scales
+    #[arg(long, requires = "fit_lightroom")]
+    no_hold_out: bool,
+    /// With --fit-lightroom: start from this scale at this value rather
+    /// than the shipped one (NAME=VALUE, a name as the report's scale
+    /// table prints it); the "before" numbers are then at it too.
+    /// Repeatable
+    #[arg(long, value_name = "NAME=VALUE", requires = "fit_lightroom")]
+    fit_scale: Vec<String>,
+    /// With --match-compare: write each fitted group's tables under
+    /// this folder, as the sheet would write them into the look store
+    /// (both curves), so a refit can run with no window and nothing
+    /// in the store touched
+    #[arg(long, value_name = "DIR", requires = "match_compare")]
+    match_write: Option<PathBuf>,
     /// With --measure-lightroom: measure the import's crop rather than
     /// its color. Each cropped pair's raw is developed under the edit
     /// the import writes, its crop with it, finished at the export's

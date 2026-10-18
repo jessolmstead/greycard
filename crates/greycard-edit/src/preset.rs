@@ -946,6 +946,7 @@ pub fn import(path: &Path) -> Result<crate::lightroom::Imported> {
     Ok(crate::lightroom::Imported {
         preset,
         unmapped: Vec::new(),
+        offset: 0.0,
     })
 }
 

@@ -80,9 +80,15 @@ design note behind it.
   each CR3 and RAF, and says how far it has got. macOS `._` files
   beside raws are skipped
   ([§324](https://github.com/jessolmstead/greycard/blob/master/docs/notes/324-the-camera-matchs-survey-over-a-network-share.md))
-- A measurement for us: `greycard-ui --measure-lightroom` compares a
-  catalog's imported edits against Lightroom's own exports
-  ([§333](https://github.com/jessolmstead/greycard/blob/master/docs/notes/333-measuring-the-lightroom-mapper-against-its-exports.md))
+- A Lightroom import lands closer to Lightroom's own render: the
+  Fujifilm GFX 100S II came in about a stop bright, measured from a
+  catalog's exports and now corrected per body on import, and the
+  Shadows slider's mapping is fitted from the same exports. A
+  measurement for us, `greycard-ui --measure-lightroom`, compares the
+  imported edits against the exports, and `--fit-lightroom` proposes
+  the mapper's scales from them
+  ([§333](https://github.com/jessolmstead/greycard/blob/master/docs/notes/333-measuring-the-lightroom-mapper-against-its-exports.md),
+  [§342](https://github.com/jessolmstead/greycard/blob/master/docs/notes/342-fitting-the-lightroom-mapper-to-its-exports-the-bodys-stop-and-what-the-sliders-would-not-give.md))
 
 ### Fixes
 

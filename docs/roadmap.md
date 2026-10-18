@@ -23,6 +23,11 @@ None at present.
   Having to bump the exposure on every single frame can be a bit annoying,
   and it seems to *roughly* match Lightroom's default exposure. Decides
   the feel track's baseline exposure item (§231)
+  §342 measured it: against Lightroom's exports the R5 Mark II sits
+  within a few hundredths of a stop and the GFX 100S II about 0.9
+  stops bright, so one constant for every body is wrong by most of a
+  stop on the GFX; the import now corrects per body, the default
+  develop does not yet
 
 ## Next: 0.8.0
 
@@ -36,15 +41,6 @@ ours, so a tester brings a library over in one go.
 - [ ] The window's structure: `State` grouped by owner, the library
       views measured for a crate of their own (Pool; the CLI split
       landed, §341)
-- [ ] The Lightroom mapper fitted from the measurement (§323, §333):
-      the per-body baseline exposure first (the GFX 100S II renders
-      about a stop brighter than Lightroom under every profile, the
-      R5 Mark II within 0.05), then a within-body regression over
-      every history pair with the body's offset removed, masks
-      included, since almost no export is a global edit; history
-      pairs only; the fit-1 look tables for Provia, Reala Ace and R5
-      Mark II Faithful refitted first, and looks fitted for the
-      monochrome styles, which have none
 
 
 ## Tracks
@@ -367,6 +363,19 @@ comes across with its ratings and collections.
 - [ ] `greycard develop --tint -4` is refused as an unexpected argument
       (`--tint=-4` works): `tint` lacks `allow_hyphen_values`, unlike
       texture, clarity and the lens flags (found by the §341 review)
+- [ ] The Lightroom mapper, after §342: the scales the fit proposes and
+      did not ship (highlights, blacks, the curve, the mixer's bands)
+      wait on a second shoot with export history; a frame per body
+      exported from Lightroom at every slider zero, then with Shadows
+      alone moved, to tell the profile curve's shadow lift from the
+      sliders' reach (both bodies sit a stop under Lightroom below L
+      0.3); the mixer's green band against Lightroom's; Adobe's
+      `BaselineExposure` from a DNG per body as the generalization
+      check; whether an unedited frame of a body takes its offset on
+      import (today only edited frames do, so neighbors land 0.9
+      stops apart); the refitted Provia, Reala Ace and R5 Mark II
+      tables proposed by the fit darken against the no-look render,
+      a question for the camera match before they are installed
 - [ ] darktable's XMP history imported as RawTherapee's profiles are
       (§328, §340), if a tester asks
 - [ ] The RawTherapee sheet: a menu entry back into it for a folder

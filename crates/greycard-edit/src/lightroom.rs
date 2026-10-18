@@ -38,6 +38,179 @@ pub struct Imported {
     /// Settings the file had, set to something, that have no place
     /// here; Lightroom's names for them.
     pub unmapped: Vec<String>,
+    /// The stops added to the Exposure slider for the body the settings
+    /// are read for ([`body_offset`]); zero for a preset.
+    pub offset: f32,
+}
+
+/// The scales the mapper lays Lightroom's sliders onto this engine's
+/// with. Each is a number chosen to land about where the slider lands
+/// there, measured against Lightroom's own exports where the archive
+/// allowed (`greycard-ui --fit-lightroom` proposes them; the shipped
+/// values are [`Scales::DEFAULT`]). The fit is a tool that proposes
+/// constants, not a table shipped per user, since the mapping is
+/// between two programs and not between a body and a style.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Scales {
+    /// Contrast: ±100 onto a contrast of 1 ± this.
+    pub contrast: f32,
+    /// Highlights: ±100 onto ± this of the slider (whose range is ±2).
+    pub highlights: f32,
+    /// Shadows: ±100 onto ± this.
+    pub shadows: f32,
+    /// Whites: ±100 onto ± this.
+    pub whites: f32,
+    /// Blacks: ±100 onto ± this (the slider's range is ±0.3).
+    pub blacks: f32,
+    /// Vibrance and Saturation: ±100 onto ± this.
+    pub vibrance: f32,
+    pub saturation: f32,
+    /// The tone curve: a point's departure from the diagonal, and a
+    /// parametric amount, times this.
+    pub curve: f32,
+    /// The mixer's luminance and saturation bands: ±100 onto ± this.
+    pub mixer_luminance: f32,
+    pub mixer_saturation: f32,
+    /// Tint: Lightroom's units to one of Duv.
+    pub tint_per_duv: f32,
+}
+
+impl Scales {
+    /// The shipped scales.
+    pub const DEFAULT: Scales = Scales {
+        contrast: 0.5,
+        highlights: 2.0,
+        shadows: 0.6,
+        whites: 0.75,
+        blacks: 0.3,
+        vibrance: 1.0,
+        saturation: 1.0,
+        curve: 1.0,
+        mixer_luminance: 1.0,
+        mixer_saturation: 1.0,
+        // The DNG SDK's `dng_temperature` sets it at about 3000 a unit
+        // of Duv.
+        tint_per_duv: 3000.0,
+    };
+}
+
+impl Scales {
+    /// The scales by name, as a tool's command line names one.
+    pub const NAMES: [&'static str; 11] = [
+        "contrast",
+        "highlights",
+        "shadows",
+        "whites",
+        "blacks",
+        "vibrance",
+        "saturation",
+        "curve",
+        "mixer_luminance",
+        "mixer_saturation",
+        "tint_per_duv",
+    ];
+
+    fn field(&mut self, name: &str) -> Option<&mut f32> {
+        Some(match name {
+            "contrast" => &mut self.contrast,
+            "highlights" => &mut self.highlights,
+            "shadows" => &mut self.shadows,
+            "whites" => &mut self.whites,
+            "blacks" => &mut self.blacks,
+            "vibrance" => &mut self.vibrance,
+            "saturation" => &mut self.saturation,
+            "curve" => &mut self.curve,
+            "mixer_luminance" => &mut self.mixer_luminance,
+            "mixer_saturation" => &mut self.mixer_saturation,
+            "tint_per_duv" => &mut self.tint_per_duv,
+            _ => return None,
+        })
+    }
+
+    /// The scale named `name`; none for a name not in [`Self::NAMES`].
+    pub fn get(&self, name: &str) -> Option<f32> {
+        let mut s = *self;
+        s.field(name).map(|v| *v)
+    }
+
+    /// Set the scale named `name`; false for a name not in
+    /// [`Self::NAMES`].
+    pub fn set(&mut self, name: &str, value: f32) -> bool {
+        match self.field(name) {
+            Some(v) => {
+                *v = value;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `NAME=VALUE` as a command line gives it, onto `self`.
+    pub fn set_from(&mut self, given: &str) -> std::result::Result<(), String> {
+        let (name, value) = given
+            .split_once('=')
+            .ok_or_else(|| format!("{given}: not NAME=VALUE"))?;
+        let value: f32 = value
+            .trim()
+            .parse()
+            .map_err(|_| format!("{given}: not a number"))?;
+        if self.set(name.trim(), value) {
+            Ok(())
+        } else {
+            Err(format!("{given}: no scale named {}", name.trim()))
+        }
+    }
+}
+
+impl Default for Scales {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// Where Lightroom's Exposure zero sits against this engine's, per
+/// body, in stops: what the Exposure slider is moved by when a body's
+/// settings come across, so the import lands at Lightroom's brightness
+/// rather than the engine's default. Measured on Lightroom's own
+/// exports (`greycard-ui --measure-lightroom`, then `--fit-lightroom
+/// --offsets-only` over its blocks): the median, over the body's
+/// history pairs, of the stops the Exposure slider moved to match the
+/// export (`matched_offset`), with the body's camera-matched look
+/// tables as the user's store has them, the fit-1 tables. A look
+/// table carries some brightness of its own, so installing refitted
+/// tables means measuring again and changing the constant in the same
+/// commit. A body not here takes [`UNKNOWN_BODY_OFFSET`]. The names
+/// are as the library names a camera (`camera_name`), compared with
+/// case, spaces and punctuation dropped.
+pub const BODY_OFFSETS: &[(&str, f32)] = &[
+    ("Fujifilm GFX 100S II", -0.90),
+    ("Canon EOS R5 Mark II", 0.0),
+];
+
+/// The offset for a body not in [`BODY_OFFSETS`]: nothing, as the R5
+/// Mark II measured on history pairs takes nothing. The R6 Mark II
+/// read about -0.8 on name pairs alone (exports of another catalog's
+/// settings), a lead and not a number, and was not adopted.
+pub const UNKNOWN_BODY_OFFSET: f32 = 0.0;
+
+/// The stops the Exposure slider is moved by for `camera` (as the
+/// library names one); [`UNKNOWN_BODY_OFFSET`] for none or one not
+/// measured.
+pub fn body_offset(camera: Option<&str>) -> f32 {
+    let key = |s: &str| -> String {
+        s.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    let Some(camera) = camera else {
+        return UNKNOWN_BODY_OFFSET;
+    };
+    let want = key(camera);
+    BODY_OFFSETS
+        .iter()
+        .find(|(name, _)| key(name) == want)
+        .map_or(UNKNOWN_BODY_OFFSET, |(_, o)| *o)
 }
 
 /// Read a Lightroom preset or a picture's XMP sidecar. `fallback` is
@@ -89,7 +262,7 @@ pub fn read(xml: &str, fallback: &str) -> Result<Imported> {
     let name = name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or_else(|| fallback.to_string());
-    Ok(map(name, &keys, &curves))
+    Ok(map(name, &keys, &curves, &Scales::DEFAULT, 0.0))
 }
 
 /// Read the develop settings a Lightroom catalog keeps for an image:
@@ -98,8 +271,21 @@ pub fn read(xml: &str, fallback: &str) -> Result<Imported> {
 /// ... }`), mapped as [`read`] maps them. The tables inside it that
 /// are not curves (the masks, the spots healed, the Enhance filters)
 /// are kept as their key alone, so what they hold is named among what
-/// did not come across.
+/// did not come across. With no body named, no offset is applied.
 pub fn read_table(text: &str, name: &str) -> Result<Imported> {
+    read_table_with(text, name, &Scales::DEFAULT, 0.0)
+}
+
+/// [`read_table`] for a frame of `camera`'s (as the library names a
+/// body): the body's offset ([`body_offset`]) goes onto the Exposure
+/// slider.
+pub fn read_table_for(text: &str, name: &str, camera: Option<&str>) -> Result<Imported> {
+    read_table_with(text, name, &Scales::DEFAULT, body_offset(camera))
+}
+
+/// [`read_table`] under `scales` with `offset` stops added to the
+/// Exposure slider: the fit's way in, and the two above.
+pub fn read_table_with(text: &str, name: &str, scales: &Scales, offset: f32) -> Result<Imported> {
     let top = parse_table(text).map_err(Error::Preset)?;
     let mut keys: BTreeMap<String, String> = BTreeMap::new();
     let mut curves: BTreeMap<String, Vec<Point>> = BTreeMap::new();
@@ -135,7 +321,7 @@ pub fn read_table(text: &str, name: &str) -> Result<Imported> {
     if keys.is_empty() && curves.is_empty() {
         return Err(Error::Preset("no Camera Raw settings in the table".into()));
     }
-    Ok(map(name.to_string(), &keys, &curves))
+    Ok(map(name.to_string(), &keys, &curves, scales, offset))
 }
 
 /// One value of a serialized table: a word as written (a string's
@@ -417,6 +603,8 @@ fn map(
     name: String,
     keys: &BTreeMap<String, String>,
     curves: &BTreeMap<String, Vec<Point>>,
+    s: &Scales,
+    offset: f32,
 ) -> Imported {
     let get = |k: &str| keys.get(k).map(String::as_str);
     let num = |k: &str| get(k).and_then(|v| v.trim().parse::<f32>().ok());
@@ -434,19 +622,22 @@ fn map(
     let shadows = num("Shadows2012");
     let whites = num("Whites2012");
     let blacks = either("Blacks2012", "Blacks");
+    // The body's offset moves the slider even when the settings leave
+    // it alone: the picture lands where Lightroom's does either way.
     if [exposure, contrast, highlights, shadows, whites, blacks]
         .iter()
         .any(Option::is_some)
+        || offset != 0.0
     {
         sections.push(Section::Light);
-        edit.light.exposure = exposure.unwrap_or(0.0).clamp(-5.0, 5.0);
-        edit.light.tone.contrast = (1.0 + contrast.unwrap_or(0.0) / 100.0 * 0.5).clamp(0.5, 2.0);
-        // Lightroom's ±100 is about the slider's ±2 at the top (§146).
-        edit.light.tone.highlights = (highlights.unwrap_or(0.0) / 100.0 * 2.0).clamp(-2.0, 2.0);
-        edit.light.tone.shadows = (shadows.unwrap_or(0.0) / 100.0).clamp(-2.0, 2.0);
-        edit.light.tone.whites = (whites.unwrap_or(0.0) / 100.0 * 0.75).clamp(-2.0, 2.0);
-        // Lightroom's ±100 is the slider's ±0.3 both ways, measured (§143).
-        edit.light.tone.blacks = (blacks.unwrap_or(0.0) / 100.0 * 0.3).clamp(-0.3, 0.3);
+        edit.light.exposure = (exposure.unwrap_or(0.0) + offset).clamp(-5.0, 5.0);
+        edit.light.tone.contrast =
+            (1.0 + contrast.unwrap_or(0.0) / 100.0 * s.contrast).clamp(0.5, 2.0);
+        edit.light.tone.highlights =
+            (highlights.unwrap_or(0.0) / 100.0 * s.highlights).clamp(-2.0, 2.0);
+        edit.light.tone.shadows = (shadows.unwrap_or(0.0) / 100.0 * s.shadows).clamp(-2.0, 2.0);
+        edit.light.tone.whites = (whites.unwrap_or(0.0) / 100.0 * s.whites).clamp(-2.0, 2.0);
+        edit.light.tone.blacks = (blacks.unwrap_or(0.0) / 100.0 * s.blacks).clamp(-0.3, 0.3);
     }
 
     // White balance: a named one at its kelvin, a custom one as it
@@ -466,9 +657,8 @@ fn map(
             (1000.0..=50000.0).contains(&temperature).then(|| {
                 // Lightroom's tint names the light, as ours does: a
                 // positive tint is a green white point that renders
-                // magenta. The DNG SDK's `dng_temperature` sets it at
-                // about 3000 a unit of Duv.
-                let tint = num("Tint").unwrap_or(0.0) / 3000.0;
+                // magenta.
+                let tint = num("Tint").unwrap_or(0.0) / s.tint_per_duv;
                 custom(
                     temperature.clamp(2000.0, 12000.0) as f64,
                     f64::from(tint.clamp(-0.05, 0.05)),
@@ -484,13 +674,18 @@ fn map(
         }
     }
 
-    // The point curves, 0..255 both ways.
+    // The point curves, 0..255 both ways, each point's departure from
+    // the diagonal scaled.
     let curve = |names: [&str; 2]| {
         names
             .iter()
             .find_map(|n| curves.get(*n))
             .filter(|p| p.len() >= 2)
-            .cloned()
+            .map(|p| {
+                p.iter()
+                    .map(|[x, y]| [*x, (x + (y - x) * s.curve).clamp(0.0, 1.0)])
+                    .collect::<Vec<Point>>()
+            })
     };
     let rgb = curve(["ToneCurvePV2012", "ToneCurve"]);
     let red = curve(["ToneCurvePV2012Red", "ToneCurveRed"]);
@@ -498,7 +693,7 @@ fn map(
     let blue = curve(["ToneCurvePV2012Blue", "ToneCurveBlue"]);
     // The parametric curve: the amounts ±100, the splits 0 to 100
     // along the axis.
-    let amount = |k: &str| num(k).map(|v| (v / 100.0).clamp(-1.0, 1.0));
+    let amount = |k: &str| num(k).map(|v| (v / 100.0 * s.curve).clamp(-1.0, 1.0));
     let split = |k: &str| num(k).map(|v| (v / 100.0).clamp(0.0, 1.0));
     let parametric = [
         amount("ParametricHighlights"),
@@ -554,12 +749,12 @@ fn map(
             edit.mixer.hue[i] = (h / 100.0 * 30.0).clamp(-30.0, 30.0);
             mixer_touched = true;
         }
-        if let Some(s) = num(&format!("SaturationAdjustment{band}")) {
-            edit.mixer.saturation[i] = (s / 100.0).clamp(-1.0, 1.0);
+        if let Some(v) = num(&format!("SaturationAdjustment{band}")) {
+            edit.mixer.saturation[i] = (v / 100.0 * s.mixer_saturation).clamp(-1.0, 1.0);
             mixer_touched = true;
         }
         if let Some(l) = num(&format!("LuminanceAdjustment{band}")) {
-            edit.mixer.luminance[i] = (l / 100.0).clamp(-1.0, 1.0);
+            edit.mixer.luminance[i] = (l / 100.0 * s.mixer_luminance).clamp(-1.0, 1.0);
             mixer_touched = true;
         }
         // GrayMixerRed..GrayMixerMagenta are the black and white
@@ -586,8 +781,8 @@ fn map(
     let saturation = num("Saturation");
     if vibrance.is_some() || saturation.is_some() {
         sections.push(Section::Color);
-        edit.color.vibrance = (vibrance.unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
-        edit.color.saturation = (saturation.unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
+        edit.color.vibrance = (vibrance.unwrap_or(0.0) / 100.0 * s.vibrance).clamp(-1.0, 1.0);
+        edit.color.saturation = (saturation.unwrap_or(0.0) / 100.0 * s.saturation).clamp(-1.0, 1.0);
     }
 
     // Color grading: the split toning keys are the shadows' and the
@@ -748,7 +943,11 @@ fn map(
     }
 
     let preset = Preset::from_edit(&name, &edit, &sections);
-    Imported { preset, unmapped }
+    Imported {
+        preset,
+        unmapped,
+        offset,
+    }
 }
 
 fn custom(temperature: f64, tint: f64) -> WhiteBalance {
@@ -874,7 +1073,9 @@ mod tests {
 
     #[test]
     fn a_lightroom_preset_comes_across() {
-        let Imported { preset, unmapped } = read(SAMPLE, "file").unwrap();
+        let Imported {
+            preset, unmapped, ..
+        } = read(SAMPLE, "file").unwrap();
         assert_eq!(preset.name, "Warm Film");
         assert_eq!(
             preset.sections,
@@ -897,7 +1098,7 @@ mod tests {
         assert_eq!(e.light.exposure, 0.5);
         assert!((e.light.tone.contrast - 1.1).abs() < 1e-6);
         assert!((e.light.tone.highlights + 0.8).abs() < 1e-6);
-        assert!((e.light.tone.shadows - 0.3).abs() < 1e-6);
+        assert!((e.light.tone.shadows - 0.3 * Scales::DEFAULT.shadows).abs() < 1e-6);
         assert!((e.light.tone.whites - 0.075).abs() < 1e-6);
         assert!((e.light.tone.blacks + 0.075).abs() < 1e-6);
         match e.white_balance {
@@ -994,7 +1195,9 @@ mod tests {
             <crs:Exposure>-1.0</crs:Exposure>
             <crs:Sharpness>0</crs:Sharpness>
           </rdf:Description></rdf:RDF></x:xmpmeta>"#;
-        let Imported { preset, unmapped } = read(xml, "x").unwrap();
+        let Imported {
+            preset, unmapped, ..
+        } = read(xml, "x").unwrap();
         assert!(
             matches!(preset.edit.white_balance, WhiteBalance::Custom { temperature, .. } if temperature == 2850.0)
         );
@@ -1005,7 +1208,9 @@ mod tests {
         let xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
           <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
             crs:WhiteBalance="Custom" crs:Temperature="+12" crs:Tint="0"/></rdf:RDF></x:xmpmeta>"#;
-        let Imported { preset, unmapped } = read(xml, "x").unwrap();
+        let Imported {
+            preset, unmapped, ..
+        } = read(xml, "x").unwrap();
         assert!(preset.sections.is_empty());
         assert_eq!(unmapped, vec!["WhiteBalance"]);
     }
@@ -1023,7 +1228,9 @@ mod tests {
             <crs:RetouchAreas><rdf:Seq><rdf:li>x</rdf:li></rdf:Seq></crs:RetouchAreas>
             <crs:PaintBasedCorrections><rdf:Seq/></crs:PaintBasedCorrections>
           </rdf:Description></rdf:RDF></x:xmpmeta>"#;
-        let Imported { preset, unmapped } = read(xml, "x").unwrap();
+        let Imported {
+            preset, unmapped, ..
+        } = read(xml, "x").unwrap();
         assert_eq!(preset.edit.light.exposure, 0.5);
         assert_eq!(unmapped, vec!["spots", "masks"]);
         // Only an empty list: nothing.
@@ -1098,7 +1305,9 @@ mod tests {
             FilterList = { Filters = { { Name = \"Enhance\" } } },\n\
             LensBlur = {  },\n\
             }\n";
-        let Imported { preset, unmapped } = read_table(text, "From the catalog").unwrap();
+        let Imported {
+            preset, unmapped, ..
+        } = read_table(text, "From the catalog").unwrap();
         assert_eq!(preset.name, "From the catalog");
         let e = &preset.edit;
         assert_eq!(e.light.exposure, 0.5);
@@ -1117,6 +1326,97 @@ mod tests {
         assert!(!unmapped.iter().any(|u| u == "lens blur"));
         assert!(read_table("s = { }", "x").is_err());
         assert!(read_table("not a table", "x").is_err());
+    }
+
+    /// A body in the table moves the Exposure slider by its offset,
+    /// however its name is spelled; one not in it, or none, by the
+    /// fallback; the Light section is carried for the offset alone.
+    #[test]
+    fn a_body_s_offset_goes_onto_the_exposure() {
+        let gfx = "Fujifilm GFX 100S II";
+        let want = body_offset(Some(gfx));
+        assert_eq!(want, -0.90, "the GFX offset as measured");
+        assert_eq!(body_offset(Some("fujifilm gfx-100s ii")), want);
+        assert_eq!(body_offset(Some("Some Other Body")), UNKNOWN_BODY_OFFSET);
+        assert_eq!(body_offset(None), UNKNOWN_BODY_OFFSET);
+        let settings = "s = { Exposure2012 = 0.5, Highlights2012 = -40 }";
+        let on = read_table_for(settings, "x", Some(gfx)).unwrap();
+        assert_eq!(on.offset, want);
+        assert!((on.preset.edit.light.exposure - (0.5 + want)).abs() < 1e-6);
+        let off = read_table_for(settings, "x", Some("Some Other Body")).unwrap();
+        assert_eq!(off.offset, UNKNOWN_BODY_OFFSET);
+        assert!((off.preset.edit.light.exposure - 0.5).abs() < 1e-6);
+        assert_eq!(read_table(settings, "x").unwrap(), off);
+        // The highlights come across the same either way: the offset
+        // touches the exposure alone.
+        assert_eq!(
+            on.preset.edit.light.tone.highlights,
+            off.preset.edit.light.tone.highlights
+        );
+        // Settings with no Light key still carry the section when the
+        // body has an offset, and do not when it has none.
+        let bare = "s = { Saturation = -10 }";
+        let on = read_table_for(bare, "x", Some(gfx)).unwrap();
+        assert!(on.preset.sections.contains(&Section::Light));
+        assert!((on.preset.edit.light.exposure - want).abs() < 1e-6);
+        let off = read_table_for(bare, "x", None).unwrap();
+        assert!(!off.preset.sections.contains(&Section::Light));
+    }
+
+    /// The scales scale: each slider's mapped value is its Lightroom
+    /// value over 100 times the scale, the curve's departure from the
+    /// diagonal and the parametric amounts with it.
+    #[test]
+    fn the_scales_scale_the_sliders() {
+        let settings = "s = { Highlights2012 = -50, Shadows2012 = 50, Whites2012 = 40,\n\
+            Blacks2012 = -20, Contrast2012 = 40, Saturation = 20, Vibrance = -10,\n\
+            LuminanceAdjustmentGreen = -60, SaturationAdjustmentBlue = 30,\n\
+            ParametricLights = 20, ToneCurvePV2012 = { 0, 0, 128, 148, 255, 255 },\n\
+            WhiteBalance = \"Custom\", Temperature = 5000, Tint = 30 }";
+        let scales = Scales {
+            contrast: 0.25,
+            highlights: 1.0,
+            shadows: 0.5,
+            whites: 2.0,
+            blacks: 1.0,
+            vibrance: 2.0,
+            saturation: 0.5,
+            curve: 0.5,
+            mixer_luminance: 0.5,
+            mixer_saturation: 2.0,
+            tint_per_duv: 1500.0,
+        };
+        let e = read_table_with(settings, "x", &scales, 0.0)
+            .unwrap()
+            .preset
+            .edit;
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(near(e.light.tone.highlights, -0.5));
+        assert!(near(e.light.tone.shadows, 0.25));
+        assert!(near(e.light.tone.whites, 0.8));
+        assert!(near(e.light.tone.blacks, -0.2));
+        assert!(near(e.light.tone.contrast, 1.1));
+        assert!(near(e.color.saturation, 0.1));
+        assert!(near(e.color.vibrance, -0.2));
+        assert!(near(e.mixer.luminance[3], -0.3));
+        assert!(near(e.mixer.saturation[5], 0.6));
+        assert!(near(e.curves.parametric.lights, 0.1));
+        // The curve's middle point halfway back toward the diagonal.
+        assert!(
+            near(e.curves.rgb[1][1], (128.0 + 10.0) / 255.0),
+            "{:?}",
+            e.curves.rgb
+        );
+        match e.white_balance {
+            WhiteBalance::Custom { tint, .. } => assert!((tint - 0.02).abs() < 1e-6),
+            _ => panic!("custom"),
+        }
+        // The shipped scales are the defaults, and read_table is them.
+        assert_eq!(Scales::default(), Scales::DEFAULT);
+        assert_eq!(
+            read_table_with(settings, "x", &Scales::DEFAULT, 0.0).unwrap(),
+            read_table(settings, "x").unwrap()
+        );
     }
 
     #[test]

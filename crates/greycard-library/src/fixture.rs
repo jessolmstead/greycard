@@ -105,6 +105,12 @@ pub const A7: Frame<'static> = Frame {
 /// index reads a raw's kind of mosaic from without any real raw in the
 /// tree.
 pub fn write_mosaic_dng(path: &Path, pattern: &str) {
+    write_mosaic_dng_for(path, pattern, "Synthetic", "Mosaic");
+}
+
+/// [`write_mosaic_dng`] naming `make` and `model` as its body, for
+/// what reads a body off a raw (the Lightroom mapper's offset).
+pub fn write_mosaic_dng_for(path: &Path, pattern: &str, make: &str, model: &str) {
     use rawler::RawImage;
     use rawler::cfa::{CFA, PlaneColor};
     use rawler::decoders::Camera;
@@ -117,8 +123,8 @@ pub fn write_mosaic_dng(path: &Path, pattern: &str) {
     let data: Vec<u16> = (0..w * h).map(|i| (i as u16).wrapping_mul(97)).collect();
     let cfa = CFA::new(pattern);
     let mut camera = Camera::new();
-    camera.make = "Synthetic".into();
-    camera.model = "Mosaic".into();
+    camera.make = make.into();
+    camera.model = model.into();
     camera.clean_make = camera.make.clone();
     camera.clean_model = camera.model.clone();
     camera.cfa = cfa.clone();

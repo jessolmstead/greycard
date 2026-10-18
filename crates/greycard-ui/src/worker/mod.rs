@@ -45,7 +45,7 @@ use self::{
     decode::{correct_lens, lens_report, open_told, timed_open},
     develop::develop_job,
     engine::{left_out_of, run},
-    export::{export_other, finish_export, open_picture, seeded, write_export},
+    export::{export_other, finish_export, open_picture, scene_export, seeded, write_export},
     keep::keep_open,
     masks::{MasksMade, learned_masks, masks_for},
     thumbs::{cached_thumbnail_noting, thumb_lookup},
@@ -748,6 +748,16 @@ impl FrameDevelop {
             tracing::warn!("{item}");
         }
         rendered
+    }
+
+    /// What the finish would be handed for `edit` and `settings`,
+    /// before any pixel goes through it ([`crate::export::Scene`]).
+    pub(crate) fn scene(
+        &self,
+        edit: &Edit,
+        settings: &crate::export::Settings,
+    ) -> crate::export::Scene {
+        scene_export(&self.image, edit, self.base.as_ref(), settings)
     }
 }
 

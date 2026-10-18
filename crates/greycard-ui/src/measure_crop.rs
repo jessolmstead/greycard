@@ -250,7 +250,7 @@ fn frame(pair: &lx::Pair, shot: &lx::Shot, lenses: Option<&greycard_lens::Databa
     let edit =
         match greycard_library::lightroom_catalog::imported_edit(raw, &pair.settings, Some(&shape))
         {
-            Ok((edit, _)) => edit,
+            Ok(f) => f.edit,
             Err(e) => {
                 line.failed = Some(format!("the settings: {e}"));
                 return line;

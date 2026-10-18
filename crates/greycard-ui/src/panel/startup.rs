@@ -35,6 +35,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(out) = cli.match_compare.as_deref() {
         return crate::match_compare::headless(&cli, out);
     }
+    // `--fit-lightroom` likewise: the mapper fitted to the blocks the
+    // measurement kept.
+    if !cli.fit_lightroom.is_empty() {
+        return crate::fit_lightroom::headless(&cli, &cli.fit_lightroom);
+    }
     // `--measure-lightroom` likewise: a catalog against its exports.
     if let Some(catalog) = cli.measure_lightroom.as_deref() {
         if cli.crops {

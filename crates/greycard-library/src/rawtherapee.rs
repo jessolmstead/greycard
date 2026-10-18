@@ -646,7 +646,9 @@ fn sidecar_for(file: &Path) -> Result<Sidecar, String> {
     let mut sidecar = match Sidecar::load(file) {
         Ok(Some(s)) => s,
         Ok(None) => Sidecar {
-            line: greycard_edit::Line::of(crate::lightroom_catalog::starting_edit(file)),
+            // The edit alone: the body is the Lightroom mapper's business,
+            // and a RawTherapee import takes no offset for it.
+            line: greycard_edit::Line::of(crate::lightroom_catalog::starting_edit(file).0),
             ..Sidecar::default()
         },
         Err(e) => return Err(format!("reading the sidecar of {}: {e}", file.display())),
@@ -878,6 +880,25 @@ Enabled=true
         let sidecar = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!(sidecar.current.light.exposure, 0.0);
         assert_eq!(sidecar.history.len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The body's offset is the Lightroom mapper's: a GFX 100S II
+    /// frame's profile comes across at its own compensation.
+    #[test]
+    fn a_body_s_lightroom_offset_is_not_a_profile_s() {
+        let dir = scratch("pp3-no-body-offset");
+        let raw = dir.join("DSCF0001.DNG");
+        crate::fixture::write_mosaic_dng_for(&raw, "RGGB", "Fujifilm", "GFX 100S II");
+        std::fs::write(dir.join("DSCF0001.DNG.pp3"), PROFILE).unwrap();
+        assert!(greycard_edit::lightroom::body_offset(Some("Fujifilm GFX 100S II")) < -0.5);
+        assert_eq!(fate(&raw, write(true, false)), Some(Fate::Wrote));
+        let sidecar = Sidecar::load(&raw).unwrap().unwrap();
+        assert!(
+            (sidecar.current.light.exposure + 0.7).abs() < 1e-6,
+            "{}",
+            sidecar.current.light.exposure
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

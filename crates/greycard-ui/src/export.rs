@@ -601,6 +601,87 @@ pub(crate) fn render_framed(
     }
 }
 
+/// What the finish is handed for a frame, before any pixel goes
+/// through it: the picture through the resize (never the sharpen), in
+/// the linear working space, with the guide plane's value and the
+/// vignette's stops at each of its pixels. For a measurement that
+/// emulates the finish on a block's means rather than finishing the
+/// whole picture again for every setting tried
+/// (`--fit-lightroom`).
+pub(crate) struct Scene {
+    pub(crate) image: WorkingImage,
+    /// The guide at each pixel, none when no shift reads it or the
+    /// frame has no plane; the plane's range beside it.
+    pub(crate) guide: Option<Vec<f32>>,
+    pub(crate) range: [f32; 2],
+    /// The vignette's stops at each pixel, zero where it is off.
+    pub(crate) stops: Vec<f32>,
+}
+
+/// [`render`]'s picture, guide and vignette before the finish, as
+/// [`Scene`] has them: the same resize, the same mapping of a pixel to
+/// the source and the same reading of the plane, so a block's mean of
+/// these is what the finish would have read over that block.
+pub(crate) fn scene_framed(
+    image: &WorkingImage,
+    edit: &greycard_edit::Edit,
+    source: (u32, u32),
+    settings: &Settings,
+    guide: Option<&finish::Guide>,
+) -> Scene {
+    let fitted;
+    let image = match fit(image, settings.long_edge) {
+        Some(f) => {
+            fitted = f;
+            &fitted
+        }
+        None => image,
+    };
+    let (sw, sh) = (source.0 as f32, source.1 as f32);
+    let frame = edit.geometry.frame(sw, sh);
+    let scale = sw / image.width as f32;
+    let position = |x: usize, y: usize| {
+        let r = (
+            frame.origin.0 + (x as f32 + 0.5) * scale,
+            frame.origin.1 + (y as f32 + 0.5) * scale,
+        );
+        let s = edit.geometry.to_source(r, sw, sh);
+        (s.0 / sw, s.1 / sw)
+    };
+    let plane = guide
+        .filter(|g| !g.data.is_empty())
+        .filter(|_| reads_guide(edit));
+    let (w, h) = (image.width, image.height);
+    let guide_at = plane.map(|g| {
+        let mut out = Vec::with_capacity(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let (u, v) = position(x, y);
+                out.push(g.at(u * sw, v * sw));
+            }
+        }
+        out
+    });
+    let vignette = edit.vignette;
+    let (iw, ih) = (w as f32, h as f32);
+    let mut stops = Vec::with_capacity(w * h);
+    for y in 0..h {
+        for x in 0..w {
+            stops.push(if vignette.is_off() {
+                0.0
+            } else {
+                vignette.amount * vignette.at((x as f32 + 0.5) / iw, (y as f32 + 0.5) / ih, iw / ih)
+            });
+        }
+    }
+    Scene {
+        image: image.clone(),
+        guide: guide_at,
+        range: plane.map_or([0.0, 0.0], |g| g.range),
+        stops,
+    }
+}
+
 /// Add the settings' border, if any, round a rendered picture: on the
 /// finished, encoded pixels, after the resize and the sharpening,
 /// before the watermark and the file's encode. The picture grows by

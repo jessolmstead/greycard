@@ -904,17 +904,20 @@ fn copy_name(image: &Image) -> String {
         .to_string()
 }
 
-/// The edit a frame nobody has developed starts from.
-pub(crate) fn starting_edit(raw: &Path) -> Edit {
+/// The edit a frame nobody has developed starts from, and the body
+/// that shot it as the library names one (none for a picture, or a
+/// file that will not probe), which the Lightroom mapper's offset is
+/// for; another importer takes the edit alone.
+pub(crate) fn starting_edit(raw: &Path) -> (Edit, Option<String>) {
     if greycard_core::picture::is_picture_path(raw) {
-        return Edit::for_picture();
+        return (Edit::for_picture(), None);
     }
-    let iso = greycard_core::decode::probe_path(raw)
-        .ok()
-        .and_then(|p| p.iso);
+    let probe = greycard_core::decode::probe_path(raw).ok();
+    let iso = probe.as_ref().and_then(|p| p.iso);
+    let camera = probe.map(|p| greycard_core::raw::camera_name(&p.make, &p.model));
     let mut edit = Edit::default();
     edit.noise.learned_strength = greycard_edit::Noise::blend_for_iso(iso);
-    edit
+    (edit, camera)
 }
 
 /// The crop an image's develop settings hold, and whether Lightroom
@@ -1032,7 +1035,13 @@ pub fn turn_onto(edit: &mut Edit, raw: &Path, shape: &Shape, turn: u8) -> Turned
 /// `turn` over its tag; and what became of the crop and the turn. An
 /// image never developed takes only its turn, when it has one; there is
 /// no edit when it has neither or the settings will not read.
-fn developed(image: &Image, base: &Edit, raw: &Path, turn: u8) -> (Option<Edit>, Cropped, Turned) {
+fn developed(
+    image: &Image,
+    base: &Edit,
+    raw: &Path,
+    camera: Option<&str>,
+    turn: u8,
+) -> (Option<Edit>, Cropped, Turned) {
     let mut edit = base.clone();
     if !image.edited {
         let turned = turn_onto(&mut edit, raw, &image.shape, turn);
@@ -1042,7 +1051,7 @@ fn developed(image: &Image, base: &Edit, raw: &Path, turn: u8) -> (Option<Edit>,
     let Some(imported) = image
         .develop
         .as_deref()
-        .and_then(|s| lightroom::read_table(s, "").ok())
+        .and_then(|s| lightroom::read_table_for(s, "", camera).ok())
     else {
         return (None, Cropped::None, Turned::Same);
     };
@@ -1053,20 +1062,50 @@ fn developed(image: &Image, base: &Edit, raw: &Path, turn: u8) -> (Option<Edit>,
     (Some(edit), cropped, turned)
 }
 
+/// What [`imported_edit`] gives: the edit, what the mapper had no
+/// place for, the body the offset was looked up for and the offset
+/// applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameEdit {
+    pub edit: Edit,
+    pub unmapped: Vec<String>,
+    /// The body as the library names it, none when the file would not
+    /// probe.
+    pub camera: Option<String>,
+    /// The stops added to the Exposure slider for the body
+    /// ([`lightroom::body_offset`]).
+    pub offset: f32,
+}
+
 /// The edit an import writes for the raw at `raw` from the develop
 /// settings `settings` (a catalog's Lua table) when the frame has no
-/// sidecar yet: the settings mapped and laid over the frame's starting
-/// edit, and with `shape` (the catalog's size and orientation of the
-/// file) its crop. Beside it, what the mapper had no place for, the
-/// crop among them when it was not carried. Without `shape` the crop is
-/// left off and named, for a caller that cuts Lightroom's crop itself.
+/// sidecar yet: the settings mapped for the frame's body and laid over
+/// the frame's starting edit, and with `shape` (the catalog's size and
+/// orientation of the file) its crop. Beside it, what the mapper had
+/// no place for, the crop among them when it was not carried. Without
+/// `shape` the crop is left off and named, for a caller that cuts
+/// Lightroom's crop itself.
 pub fn imported_edit(
     raw: &Path,
     settings: &str,
     shape: Option<&Shape>,
-) -> greycard_edit::Result<(Edit, Vec<String>)> {
-    let imported = lightroom::read_table(settings, "")?;
-    let mut edit = imported.preset.applied(&starting_edit(raw));
+) -> greycard_edit::Result<FrameEdit> {
+    imported_edit_with(raw, settings, shape, &lightroom::Scales::DEFAULT)
+}
+
+/// [`imported_edit`] under `scales` rather than the shipped ones: the
+/// measurement's way to read an edit as an earlier or a proposed
+/// mapper would.
+pub fn imported_edit_with(
+    raw: &Path,
+    settings: &str,
+    shape: Option<&Shape>,
+    scales: &lightroom::Scales,
+) -> greycard_edit::Result<FrameEdit> {
+    let (starting, camera) = starting_edit(raw);
+    let offset = lightroom::body_offset(camera.as_deref());
+    let imported = lightroom::read_table_with(settings, "", scales, offset)?;
+    let mut edit = imported.preset.applied(&starting);
     let mut unmapped = imported.unmapped;
     if let Some(shape) = shape {
         turn_onto(&mut edit, raw, shape, 0);
@@ -1074,7 +1113,12 @@ pub fn imported_edit(
             unmapped.retain(|n| n != "crop");
         }
     }
-    Ok((edit, unmapped))
+    Ok(FrameEdit {
+        edit,
+        unmapped,
+        camera,
+        offset: imported.offset,
+    })
 }
 
 /// Where a frame's sidecar goes: where it is, when it has one; else
@@ -1107,7 +1151,7 @@ fn write_frame(
     written: &mut Written,
 ) -> Result<FrameWritten, String> {
     let found = Sidecar::load(raw).map_err(|e| e.to_string())?;
-    let starting = starting_edit(raw);
+    let (starting, camera) = starting_edit(raw);
     let mut sidecar = found.unwrap_or_else(|| Sidecar {
         line: greycard_edit::Line::of(starting.clone()),
         ..Sidecar::default()
@@ -1144,7 +1188,7 @@ fn write_frame(
             Turned::Unread(code) => *written.orientations_unread.entry(code).or_default() += 1,
         }
     };
-    let (edit, cropped, turned) = developed(image, &sidecar.current, raw, turn);
+    let (edit, cropped, turned) = developed(image, &sidecar.current, raw, camera.as_deref(), turn);
     tally(cropped, turned);
     if let Some(edit) = edit {
         changed |= sidecar.record_as(edit, Some(label.clone()));
@@ -1169,7 +1213,8 @@ fn write_frame(
             }
         };
         if let Some(line) = sidecar.line_mut(Some(&id)) {
-            let (edit, cropped, turned) = developed(copy, &line.current, raw, turn);
+            let (edit, cropped, turned) =
+                developed(copy, &line.current, raw, camera.as_deref(), turn);
             tally(cropped, turned);
             if let Some(edit) = edit {
                 changed |= line.record_as(edit, Some(label.clone()));
@@ -4072,6 +4117,97 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&s.dir).unwrap();
     }
 
+    /// The import applies the body's offset where the user takes it:
+    /// a GFX 100S II frame at Lightroom's Exposure 0 and its virtual
+    /// copy both land at the body's offset in the sidecar, a second
+    /// import leaves them there rather than adding it again, and a
+    /// frame of another body and a picture land at zero.
+    #[test]
+    fn a_body_s_offset_is_written_once_and_only_for_that_body() {
+        use crate::fixture::write_mosaic_dng_for;
+        let gfx = "Fujifilm GFX 100S II";
+        let want = lightroom::body_offset(Some(gfx));
+        assert_eq!(want, -0.90);
+        let dir = scratch("lrcat-body-offset");
+        let catalog = dir.join("Offsets.lrcat");
+        let here = dir.join("photos");
+        let shoot = here.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        write_mosaic_dng_for(
+            &shoot.join("DSCF0001.DNG"),
+            "RGGB",
+            "Fujifilm",
+            "GFX 100S II",
+        );
+        write_mosaic_dng_for(&shoot.join("IMG_0002.DNG"), "RGGB", "Other", "Body");
+        std::fs::write(shoot.join("IMG_0003.jpg"), b"not a picture either").unwrap();
+        let db = empty_catalog(&catalog, "1504001");
+        db.execute_batch(
+            "INSERT INTO AgLibraryRootFolder VALUES (1, 'r', 'D:/Shoots/', 'Shoots', NULL);
+             INSERT INTO AgLibraryFolder VALUES (2, 'f', NULL, 'shoot/', 1);
+             INSERT INTO AgLibraryFile VALUES (10, 'a', 'DSCF0001', 'DNG', 2);
+             INSERT INTO AgLibraryFile VALUES (11, 'b', 'IMG_0002', 'DNG', 2);
+             INSERT INTO AgLibraryFile VALUES (12, 'c', 'IMG_0003', 'jpg', 2);
+             INSERT INTO Adobe_images VALUES (100, 'i', 10, NULL, NULL, 0.0, 0.0, '');
+             INSERT INTO Adobe_images VALUES (101, 'j', 11, NULL, NULL, 0.0, 0.0, '');
+             INSERT INTO Adobe_images VALUES (102, 'k', 12, NULL, NULL, 0.0, 0.0, '');
+             INSERT INTO Adobe_images VALUES (103, 'l', 10, 100, 'Mono', 0.0, 0.0, '');
+             INSERT INTO Adobe_libraryImageDevelopHistoryStep VALUES (1, 100, 'Import');
+             INSERT INTO Adobe_libraryImageDevelopHistoryStep VALUES (2, 101, 'Import');
+             INSERT INTO Adobe_libraryImageDevelopHistoryStep VALUES (3, 102, 'Import');
+             INSERT INTO Adobe_libraryImageDevelopHistoryStep VALUES (4, 103, 'Import');",
+        )
+        .unwrap();
+        let insert = "INSERT INTO Adobe_imageDevelopSettings (image, text, processVersion, \
+                      hasDevelopAdjustmentsEx) VALUES (?1, ?2, '15.4', 1.0)";
+        for image in [100, 101, 102, 103] {
+            db.execute(insert, rusqlite::params![image, develop_at(0.0)])
+                .unwrap();
+        }
+        drop(db);
+        let options = Options {
+            roots: vec![("D:/Shoots".into(), here.clone())],
+            library: dir.join("library").join("library.sqlite"),
+            write: true,
+            ..Options::default()
+        };
+        let exposures = || {
+            let read = |name: &str| {
+                Sidecar::load(&shoot.join(name))
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("a sidecar for {name}"))
+            };
+            let a = read("DSCF0001.DNG");
+            (
+                a.current.light.exposure,
+                a.versions[0].line.current.light.exposure,
+                read("IMG_0002.DNG").current.light.exposure,
+                read("IMG_0003.jpg").current.light.exposure,
+            )
+        };
+        let report = import(&catalog, &options).unwrap();
+        assert_eq!(report.written.as_ref().unwrap().sidecars, 3, "{report}");
+        let (frame, copy, other, picture) = exposures();
+        assert!((frame - want).abs() < 1e-6, "the GFX frame: {frame}");
+        assert!((copy - want).abs() < 1e-6, "its copy: {copy}");
+        assert_eq!(other, 0.0, "another body takes none");
+        assert_eq!(picture, 0.0, "a picture takes none");
+        // Again, forced so the frames go through the mapping again
+        // rather than being skipped as imported already: the offset is
+        // of the settings, not added to what the sidecar holds, so the
+        // same edit comes out and nothing needs writing.
+        let forced = Options {
+            force: true,
+            ..options.clone()
+        };
+        let again = import(&catalog, &forced).unwrap();
+        let w = again.written.as_ref().unwrap();
+        assert_eq!((w.left_alone, w.sidecars), (0, 0), "{again}");
+        assert!(w.failed.is_empty(), "{again}");
+        assert_eq!(exposures(), (frame, copy, other, picture));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn imported_edit_carries_the_crop_given_the_catalog_s_shape() {
         let s = cropped_shoot("imported-edit");
@@ -4081,12 +4217,13 @@ pub(crate) mod tests {
             size: Some((4.0, 3.0)),
             orientation: Some("AB".into()),
         };
-        let (edit, unmapped) = imported_edit(&frame, settings, Some(&shape)).unwrap();
+        let FrameEdit { edit, unmapped, .. } =
+            imported_edit(&frame, settings, Some(&shape)).unwrap();
         assert!(edit.geometry.crop.is_some());
         assert!(!unmapped.iter().any(|n| n == "crop"));
         // Without the shape, left off and named, for a caller that cuts
         // it itself.
-        let (edit, unmapped) = imported_edit(&frame, settings, None).unwrap();
+        let FrameEdit { edit, unmapped, .. } = imported_edit(&frame, settings, None).unwrap();
         assert!(edit.geometry.crop.is_none());
         assert!(unmapped.iter().any(|n| n == "crop"));
         std::fs::remove_dir_all(&s.dir).unwrap();

@@ -80,6 +80,10 @@ pub(crate) struct Options {
     pub(crate) only: Vec<String>,
     /// Other builds whose records are taken, by [`build`]'s string.
     pub(crate) reuse: Vec<String>,
+    /// Where each fitted group's tables are written, as the sheet
+    /// would write them into the store (`--match-write DIR`); none
+    /// writes no table.
+    pub(crate) write: Option<PathBuf>,
 }
 
 /// `--match-compare`, from the command line to the exit code.
@@ -95,6 +99,7 @@ pub(crate) fn headless(cli: &crate::Cli, out: &Path) -> Result<std::process::Exi
         frames: cli.match_frames.unwrap_or(cm::SAMPLE),
         only: cli.match_group.clone(),
         reuse: cli.match_reuse_records.clone(),
+        write: cli.match_write.clone(),
     };
     let report = run(&opts)?;
     eprintln!(
@@ -1320,6 +1325,20 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
                 let d = data(&recs, curve, Blocks::Own, true);
                 let started = Instant::now();
                 let f = cm::fit_group(&d.x, &d.y, &d.ids);
+                // The sheet's table, written where asked rather than
+                // into the store.
+                if let Some(dir) = &opts.write {
+                    let frames = d.frames().len();
+                    match cm::write_look(dir, g, &g.camera, frames, curve, &f.model) {
+                        Ok(path) => eprintln!(
+                            "match compare: wrote {} ({frames} frames, fitted ΔE {:.4}, held out {})",
+                            path.display(),
+                            f.fitted,
+                            f.held_out.map_or("-".to_string(), |h| format!("{h:.4}"))
+                        ),
+                        Err(e) => eprintln!("match compare: {} not written: {e}", g.name()),
+                    }
+                }
                 [
                     f.fitted,
                     f.held_out.unwrap_or(f32::NAN),
