@@ -13,7 +13,9 @@ the import is done, you format the card in the camera as usual.
 ## Opening the sheet
 
 Press **Ctrl+Shift+I**, or click **Import...** at the top of the left
-pane while the grid is up. You don't need a folder open first.
+pane while the grid is up and choose **From a card or folder...**. You
+don't need a folder open first. The same menu has **A Lightroom
+catalog...**.
 
 When the sheet opens, greycard looks for a card: the first mounted
 drive with a `DCIM` folder on it. If it finds none, the **From** line

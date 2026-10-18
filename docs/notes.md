@@ -365,3 +365,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§350. Keywords and a title typed in the window](notes/350-keywords-and-a-title-typed-in-the-window.md) (2026-10-18)
 - [§351. The Slint UI in a crate of its own](notes/351-the-slint-ui-in-a-crate-of-its-own.md) (2026-10-18)
 - [§352. The soft proof named on the picture](notes/352-the-soft-proof-named-on-the-picture.md) (2026-10-18)
+- [§353. One Import button](notes/353-one-import-button.md) (2026-10-18)

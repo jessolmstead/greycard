@@ -3544,13 +3544,40 @@ export component App inherits Window {
                 // status plate. Ctrl+Shift+I reaches the same sheet.
                 if root.grid-open: VerticalLayout {
                     spacing: 2px;
+                    // One button for the ways in: a click opens a menu
+                    // of them. While a card import runs it is that
+                    // import's Stop, and while a catalog writes its
+                    // face says so and it waits.
                     PanelButton {
-                        text: root.import-running ? (root.import-stopping ? "Stopping..." : "Stop import") : "Import...";
+                        text: root.import-running ? (root.import-stopping ? "Stopping..." : "Stop import")
+                            : root.lr-running ? "Importing the catalog..." : "Import...";
                         icon: @image-url("icons/camera.svg");
-                        enabled: !root.import-stopping;
+                        enabled: !root.import-stopping && (root.import-running || !root.lr-running);
                         clicked => {
                             keys.focus();
-                            if (root.import-running) { root.import-stop(); } else { root.import-asked(); }
+                            if (root.import-running) {
+                                root.import-stop();
+                            } else {
+                                import-menu.show({ x: 0, y: self.height });
+                            }
+                        }
+                        import-menu := ContextMenuArea {
+                            width: 0px;
+                            height: 0px;
+                            enabled: false;
+                            Menu {
+                                // The sheets take the focus themselves:
+                                // no `menu-done`, whose timer would take
+                                // it back.
+                                MenuItem {
+                                    title: "From a card or folder...";
+                                    activated => { root.import-asked(); }
+                                }
+                                MenuItem {
+                                    title: "A Lightroom catalog...";
+                                    activated => { root.lr-asked(); }
+                                }
+                            }
                         }
                     }
                     if root.import-status != "": Text {
@@ -3559,14 +3586,7 @@ export component App inherits Window {
                         font-size: Theme.font-xs;
                         wrap: word-wrap;
                     }
-                    // A Lightroom catalog brought across, the same way:
-                    // its progress under it while it writes.
-                    PanelButton {
-                        text: root.lr-running ? "Importing the catalog..." : "Import a Lightroom catalog...";
-                        icon: @image-url("icons/folder-open.svg");
-                        enabled: !root.lr-running;
-                        clicked => { keys.focus(); root.lr-asked(); }
-                    }
+                    // A catalog's progress, under it while it writes.
                     if root.lr-status != "": Text {
                         text: root.lr-status;
                         color: Theme.text-secondary;

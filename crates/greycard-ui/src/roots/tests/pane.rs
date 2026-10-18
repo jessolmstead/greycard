@@ -550,9 +550,8 @@ fn the_panes_import_and_the_keys_still_reach_their_sheets() {
     let s = seen.clone();
     app.on_open_folder(move || s.borrow_mut().push("open"));
     slint::platform::update_timers_and_animations();
-    let (at, size) = crate::testing::labeled(&app, "Import...");
+    let (at, _) = crate::testing::labeled(&app, "Import...");
     assert!(at.x < 240.0, "in the pane");
-    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     let chord = |mods: &[Key], key: &str| {
         for k in mods {
             app.window()
@@ -566,7 +565,7 @@ fn the_panes_import_and_the_keys_still_reach_their_sheets() {
     };
     chord(&[Key::Control], "o");
     chord(&[Key::Control, Key::Shift], "I");
-    assert_eq!(*seen.borrow(), ["import", "open", "import"]);
+    assert_eq!(*seen.borrow(), ["open", "import"]);
 
     let line = "Copying 3 of 10";
     app.set_import_running(true);
@@ -594,4 +593,111 @@ fn escape_closes_the_preset_sheet_from_its_field() {
     assert_eq!(app.get_preset_name(), "Q", "the field has the keys");
     crate::testing::press(&app, slint::platform::Key::Escape);
     assert!(!app.get_preset_open());
+}
+
+/// The pane's one Import... button, clicked, opens a menu of the ways
+/// in; its second item asks for the Lightroom sheet.
+fn open_import_menu(app: &App) {
+    slint::platform::update_timers_and_animations();
+    let (at, size) = crate::testing::labeled(app, "Import...");
+    assert!(at.x < 240.0, "in the pane");
+    assert!(!app.get_menu_up());
+    crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    assert!(app.get_menu_up(), "the menu opened");
+}
+
+/// One Import... button opens a menu with the two ways in, and each
+/// item asks for its own sheet.
+#[test]
+fn the_import_button_opens_a_menu_of_the_two_ways_in() {
+    let app = window(3);
+    app.window()
+        .set_size(slint::LogicalSize::new(1200.0, 700.0));
+    app.set_grid_open(true);
+    let seen = Rc::new(RefCell::new(Vec::<&str>::new()));
+    let s = seen.clone();
+    app.on_import_asked(move || s.borrow_mut().push("card"));
+    let s = seen.clone();
+    app.on_lr_asked(move || s.borrow_mut().push("catalog"));
+    slint::platform::update_timers_and_animations();
+    assert_eq!(
+        crate::testing::count_labeled(&app, "Import a Lightroom catalog..."),
+        0
+    );
+    for (i, want) in ["card", "catalog"].into_iter().enumerate() {
+        open_import_menu(&app);
+        assert_eq!(
+            crate::testing::count_labeled(&app, "From a card or folder..."),
+            1
+        );
+        assert_eq!(
+            crate::testing::count_labeled(&app, "A Lightroom catalog..."),
+            1
+        );
+        // The menu's keys: Down to the item, Return to pick it.
+        for _ in 0..=i {
+            crate::testing::press(&app, slint::platform::Key::DownArrow);
+        }
+        crate::testing::press(&app, slint::platform::Key::Return);
+        assert_eq!(seen.borrow().last(), Some(&want));
+        slint::platform::update_timers_and_animations();
+        assert!(!app.get_menu_up(), "the pick closed the menu");
+    }
+    assert_eq!(*seen.borrow(), ["card", "catalog"]);
+}
+
+/// Escape closes the menu and picks nothing.
+#[test]
+fn escape_closes_the_import_menu() {
+    let app = window(3);
+    app.window()
+        .set_size(slint::LogicalSize::new(1200.0, 700.0));
+    app.set_grid_open(true);
+    let seen = Rc::new(RefCell::new(0));
+    let s = seen.clone();
+    app.on_import_asked(move || *s.borrow_mut() += 1);
+    let s = seen.clone();
+    app.on_lr_asked(move || *s.borrow_mut() += 1);
+    open_import_menu(&app);
+    crate::testing::press(&app, slint::platform::Key::Escape);
+    assert!(!app.get_menu_up(), "Escape closed it");
+    assert_eq!(*seen.borrow(), 0);
+}
+
+/// While a card import runs the button is its Stop and a click stops
+/// it with no menu; while a catalog writes it says so and is disabled.
+#[test]
+fn the_import_button_stops_a_card_import_and_waits_for_a_catalog() {
+    let app = window(3);
+    app.window()
+        .set_size(slint::LogicalSize::new(1200.0, 700.0));
+    app.set_grid_open(true);
+    let stops = Rc::new(RefCell::new(0));
+    let s = stops.clone();
+    app.on_import_stop(move || *s.borrow_mut() += 1);
+    let asked = Rc::new(RefCell::new(0));
+    let s = asked.clone();
+    app.on_import_asked(move || *s.borrow_mut() += 1);
+    app.set_import_running(true);
+    slint::platform::update_timers_and_animations();
+    let (at, size) = crate::testing::labeled(&app, "Stop import");
+    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    assert_eq!(*stops.borrow(), 1, "a click stops it");
+    assert!(!app.get_menu_up(), "with no menu");
+    assert_eq!(*asked.borrow(), 0);
+    app.set_import_stopping(true);
+    slint::platform::update_timers_and_animations();
+    let (at, size) = crate::testing::labeled(&app, "Stopping...");
+    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    assert_eq!(*stops.borrow(), 1, "once stopping, a click does nothing");
+    app.set_import_stopping(false);
+    app.set_import_running(false);
+    app.set_lr_running(true);
+    slint::platform::update_timers_and_animations();
+    let (at, size) = crate::testing::labeled(&app, "Importing the catalog...");
+    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    assert!(!app.get_menu_up(), "a catalog writing opens no menu");
+    assert_eq!(*stops.borrow(), 1);
+    assert_eq!(*asked.borrow(), 0);
+    assert_eq!(crate::testing::count_labeled(&app, "Import..."), 0);
 }

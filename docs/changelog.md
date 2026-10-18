@@ -54,6 +54,9 @@ design note behind it.
   completed from the library's own, written to the sidecar and the
   XMP over the whole selection as a rating is
   ([§350](https://github.com/jessolmstead/greycard/blob/master/docs/notes/350-keywords-and-a-title-typed-in-the-window.md))
+- One Import... button in the left pane, with a menu: From a card or
+  folder..., or A Lightroom catalog...
+  ([§353](https://github.com/jessolmstead/greycard/blob/master/docs/notes/353-one-import-button.md))
 
 ### Editing
 
