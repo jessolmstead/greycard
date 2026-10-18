@@ -1,11 +1,13 @@
-// The import sheet: the export sheet's twin, the other way. Where the
-// frames come from (a card, found when there is one), where they go,
-// the folders and names they are given, a preset laid over each, and
-// a second copy for a backup; over everything until a choice is made.
+// The import sheet: the export sheet's twin, the other way. Copy, its
+// opening choice: where the frames come from (a card, found when there
+// is one), where they go, the folders and names they are given, a
+// preset laid over each, and a second copy for a backup. Or Add in
+// place: a folder added to the library where it is, nothing copied.
+// Over everything until a choice is made.
 
-import { ComboBox, LineEdit } from "std-widgets.slint";
+import { ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { PanelButton, Toggle } from "../controls.slint";
+import { PanelButton, Toggle, Segmented } from "../controls.slint";
 
 // A folder: its path, or what is missing, and the button that asks
 // the desktop for one.
@@ -58,8 +60,13 @@ export component ImportSheet inherits Rectangle {
     /// patterns that make names.
     in property <bool> import-ready;
     in-out property <bool> import-verify;
-    /// Which folder to ask the desktop for: source, destination or
-    /// backup.
+    /// "Copy" or "Add in place".
+    in-out property <string> import-mode;
+    /// Add in place's folder, and what it holds.
+    in property <string> import-place;
+    in property <string> import-place-note;
+    /// Which folder to ask the desktop for: source, destination,
+    /// backup, or place (Add in place's).
     callback import-choose(string);
     callback import-backup-cleared();
     callback import-started();
@@ -68,7 +75,9 @@ export component ImportSheet inherits Rectangle {
     TouchArea { clicked => { root.import-open = false; } }
     Rectangle {
         width: 520px;
-        height: min(body.preferred-height, root.height - 2 * Theme.space-5);
+        // As tall as it needs, up to the window less a margin; past
+        // that the rows scroll and the buttons stay in reach below.
+        height: min(body.preferred-height + buttons.preferred-height, root.height - 2 * Theme.space-5);
         background: Theme.surface;
         border-radius: Theme.radius-lg;
         border-width: 1px;
@@ -77,117 +86,153 @@ export component ImportSheet inherits Rectangle {
         drop-shadow-color: #00000099;
         clip: true;
         TouchArea { }
-        body := VerticalLayout {
-            padding: Theme.space-5;
-            spacing: Theme.space-2;
-            Text {
-                text: "Import";
-                font-size: Theme.font-lg;
-                font-weight: Theme.weight-medium;
-                color: Theme.text;
-            }
-            Text {
-                text: "Copies are verified; the card is untouched.";
-                wrap: word-wrap;
-                font-size: Theme.font-xs;
-                color: Theme.text-secondary;
-            }
-            Rectangle { height: Theme.space-1; }
-            FolderRow {
-                label: "From";
-                path: root.import-source;
-                empty: "No card found";
-                choose => { root.import-choose("source"); }
-            }
-            HorizontalLayout {
-                padding-left: 76px + Theme.space-2;
-                Text {
-                    text: root.import-note;
-                    wrap: word-wrap;
-                    font-size: Theme.font-xs;
-                    color: Theme.text-secondary;
+        VerticalLayout {
+            ScrollView {
+                min-height: 80px;
+                vertical-stretch: 1;
+                body := VerticalLayout {
+                    padding: Theme.space-5;
+                    padding-right: Theme.space-5 + Theme.scrollbar-band;
+                    padding-bottom: Theme.space-2;
+                    spacing: Theme.space-2;
+                    Text {
+                        text: "Import";
+                        font-size: Theme.font-lg;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text;
+                    }
+                    Segmented {
+                        options: ["Copy", "Add in place"];
+                        current <=> root.import-mode;
+                    }
+                    Text {
+                        text: root.import-mode == "Copy"
+                            ? "Copies are verified; the card is untouched."
+                            : "Adds a folder and its subfolders to the library where it is; nothing is copied.";
+                        wrap: word-wrap;
+                        font-size: Theme.font-xs;
+                        color: Theme.text-secondary;
+                    }
+                    Rectangle { height: Theme.space-1; }
+                    if root.import-mode == "Add in place": VerticalLayout {
+                        spacing: Theme.space-2;
+                        FolderRow {
+                            label: "Folder";
+                            path: root.import-place;
+                            empty: "No folder chosen";
+                            choose => { root.import-choose("place"); }
+                        }
+                        HorizontalLayout {
+                            padding-left: 76px + Theme.space-2;
+                            Text {
+                                text: root.import-place-note;
+                                wrap: word-wrap;
+                                font-size: Theme.font-xs;
+                                color: Theme.text-secondary;
+                            }
+                        }
+                    }
+                    if root.import-mode == "Copy": VerticalLayout {
+                        spacing: Theme.space-2;
+                        FolderRow {
+                            label: "From";
+                            path: root.import-source;
+                            empty: "No card found";
+                            choose => { root.import-choose("source"); }
+                        }
+                        HorizontalLayout {
+                            padding-left: 76px + Theme.space-2;
+                            Text {
+                                text: root.import-note;
+                                wrap: word-wrap;
+                                font-size: Theme.font-xs;
+                                color: Theme.text-secondary;
+                            }
+                        }
+                        FolderRow {
+                            label: "To";
+                            path: root.import-destination;
+                            empty: "No folder chosen";
+                            choose => { root.import-choose("destination"); }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Folders"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text <=> root.import-subfolder;
+                                placeholder-text: "none";
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Name"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text <=> root.import-name;
+                                placeholder-text: "{name}";
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 76px + Theme.space-2;
+                            Text {
+                                text: "{date} {yyyy} {mm} {dd} {name} {camera} {seq} {folder}; a / in Folders makes a folder in a folder.";
+                                wrap: word-wrap;
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 76px + Theme.space-2;
+                            Text {
+                                text: root.import-preview;
+                                wrap: word-wrap;
+                                font-size: Theme.font-sm;
+                                color: Theme.text;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Preset"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            ComboBox {
+                                horizontal-stretch: 1;
+                                model: root.import-presets;
+                                current-value <=> root.import-preset;
+                            }
+                        }
+                        FolderRow {
+                            label: "Backup";
+                            path: root.import-backup;
+                            empty: "None: one copy only";
+                            clearable: true;
+                            choose => { root.import-choose("backup"); }
+                            clear => { root.import-backup-cleared(); }
+                        }
+                        if root.import-folders-note != "": HorizontalLayout {
+                            padding-left: 76px + Theme.space-2;
+                            Text {
+                                text: root.import-folders-note;
+                                wrap: word-wrap;
+                                font-size: Theme.font-xs;
+                                color: Theme.text-secondary;
+                            }
+                        }
+                        Toggle {
+                            label: "Verify against the card";
+                            checked <=> root.import-verify;
+                        }
+                        Text {
+                            text: "Verify compares every byte (slower).";
+                            wrap: word-wrap;
+                            font-size: Theme.font-xs;
+                            color: Theme.text-muted;
+                        }
+                    }
                 }
             }
-            FolderRow {
-                label: "To";
-                path: root.import-destination;
-                empty: "No folder chosen";
-                choose => { root.import-choose("destination"); }
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Folders"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                LineEdit {
-                    horizontal-stretch: 1;
-                    text <=> root.import-subfolder;
-                    placeholder-text: "none";
-                }
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Name"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                LineEdit {
-                    horizontal-stretch: 1;
-                    text <=> root.import-name;
-                    placeholder-text: "{name}";
-                }
-            }
-            HorizontalLayout {
-                padding-left: 76px + Theme.space-2;
-                Text {
-                    text: "{date} {yyyy} {mm} {dd} {name} {camera} {seq}; a / in Folders makes a folder in a folder.";
-                    wrap: word-wrap;
-                    font-size: Theme.font-xs;
-                    color: Theme.text-muted;
-                }
-            }
-            HorizontalLayout {
-                padding-left: 76px + Theme.space-2;
-                Text {
-                    text: root.import-preview;
-                    wrap: word-wrap;
-                    font-size: Theme.font-sm;
-                    color: Theme.text;
-                }
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Preset"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                ComboBox {
-                    horizontal-stretch: 1;
-                    model: root.import-presets;
-                    current-value <=> root.import-preset;
-                }
-            }
-            FolderRow {
-                label: "Backup";
-                path: root.import-backup;
-                empty: "None: one copy only";
-                clearable: true;
-                choose => { root.import-choose("backup"); }
-                clear => { root.import-backup-cleared(); }
-            }
-            if root.import-folders-note != "": HorizontalLayout {
-                padding-left: 76px + Theme.space-2;
-                Text {
-                    text: root.import-folders-note;
-                    wrap: word-wrap;
-                    font-size: Theme.font-xs;
-                    color: Theme.text-secondary;
-                }
-            }
-            Toggle {
-                label: "Verify against the card";
-                checked <=> root.import-verify;
-            }
-            Text {
-                text: "Verify compares every byte (slower).";
-                wrap: word-wrap;
-                font-size: Theme.font-xs;
-                color: Theme.text-muted;
-            }
-            Rectangle { height: Theme.space-2; }
-            HorizontalLayout {
+            buttons := HorizontalLayout {
+                padding: Theme.space-5;
+                padding-top: Theme.space-2;
                 spacing: Theme.space-2;
                 alignment: end;
                 PanelButton {
@@ -195,7 +240,9 @@ export component ImportSheet inherits Rectangle {
                     clicked => { root.import-open = false; }
                 }
                 PanelButton {
-                    text: root.import-count == 1 ? "Import 1 frame" : "Import " + root.import-count + " frames";
+                    // Add in place copies nothing, and says so.
+                    property <string> verb: root.import-mode == "Copy" ? "Import" : "Add";
+                    text: root.import-count == 1 ? verb + " 1 frame" : verb + " " + root.import-count + " frames";
                     icon: @image-url("../icons/camera.svg");
                     primary: true;
                     enabled: root.import-ready;

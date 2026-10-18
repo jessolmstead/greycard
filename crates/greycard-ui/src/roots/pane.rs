@@ -161,11 +161,21 @@ pub(crate) fn add(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, di
     send_check(state, app, worker, dir.to_path_buf(), Check::Add);
 }
 
+/// [`add`], and the folder's frames opened once it is in: its own
+/// view as a root, or, under a root already, that root's view of it
+/// and the folders under it. The Import sheet's Add in place.
+pub(crate) fn add_and_open(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+    app.set_status(format!("adding {}...", dir.display()).into());
+    send_check(state, app, worker, dir.to_path_buf(), Check::AddOpen);
+}
+
 /// What a folder is looked at off the window's thread for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Check {
     /// To be added: made canonical, and a folder.
     Add,
+    /// The same, and its frames opened once it is in.
+    AddOpen,
     /// To be taken out, named by a path the list does not have as it
     /// is: made canonical, to be found in the list by that.
     Remove,
@@ -175,7 +185,7 @@ impl Check {
     /// The look itself, which asks the disk.
     fn run(self, dir: &Path) -> std::result::Result<PathBuf, greycard_library::roots::RootError> {
         match self {
-            Check::Add => Roots::checked(dir),
+            Check::Add | Check::AddOpen => Roots::checked(dir),
             // A path that cannot be made canonical (gone, say) is looked
             // for in the list as it is.
             Check::Remove => Ok(dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())),
@@ -192,7 +202,8 @@ impl Check {
         checked: std::result::Result<PathBuf, greycard_library::roots::RootError>,
     ) {
         match self {
-            Check::Add => add_checked(state, app, worker, checked),
+            Check::Add => add_checked(state, app, worker, checked, false),
+            Check::AddOpen => add_checked(state, app, worker, checked, true),
             Check::Remove => match checked {
                 Ok(canonical)
                     if state
@@ -306,12 +317,14 @@ fn send_check(
     check.land(state, app, worker, &dir, checked);
 }
 
-/// A folder to add, looked at: kept, watched, passed over.
+/// A folder to add, looked at: kept, watched, passed over; and with
+/// `then_open`, its frames opened.
 fn add_checked(
     state: &Rc<RefCell<State>>,
     app: &App,
     worker: &Rc<Worker>,
     checked: std::result::Result<PathBuf, greycard_library::roots::RootError>,
+    then_open: bool,
 ) {
     let dir = match checked {
         Ok(dir) => dir,
@@ -322,6 +335,7 @@ fn add_checked(
         }
     };
     let mut st = state.borrow_mut();
+    let asked = dir.clone();
     let added = match edit_roots(&mut st, |r| r.add_checked(dir)) {
         Ok(a) => a,
         Err(e) => {
@@ -361,6 +375,20 @@ fn add_checked(
                 )
                 .into(),
             );
+            if then_open {
+                drop(st);
+                // The root itself chosen is its own view.
+                let view = if asked == root {
+                    View::Roots(Some(root))
+                } else {
+                    View::Branch {
+                        root,
+                        folder: asked,
+                        deep: true,
+                    }
+                };
+                open_view(state, app, worker, view);
+            }
             return;
         }
         Err(e) => {
@@ -371,14 +399,16 @@ fn add_checked(
     };
     tracing::info!("library: added {}", new.display());
     if let Some(indexer) = &st.views.index {
-        indexer.roots(vec![new]);
+        indexer.roots(vec![new.clone()]);
     }
     watch(&mut st, app);
     recount(&mut st);
     show(&st, app);
     let refresh = matches!(st.views.view, View::Roots(None));
     drop(st);
-    if refresh {
+    if then_open {
+        open_view(state, app, worker, View::Roots(Some(new)));
+    } else if refresh {
         refresh_view(state, app, worker);
     }
 }

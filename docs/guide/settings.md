@@ -43,6 +43,28 @@ beside each raw. An `.xmp` that is already there is read either way.
 
 Picks and rejects have no XMP field, so they stay in the `.gcd`.
 
+## Crop
+
+### Aspect
+
+The aspect a frame's crop opens at when the frame has no crop of its
+own: as you press **Crop**, **Draw**, **Level**, **Verticals** or
+**Horizontals** on the Crop tab, or move to another frame while you
+crop.
+
+| Choice | The crop opens at |
+|---|---|
+| **Original** (default) | The frame's own shape, so dragging a corner keeps it |
+| **Last used** | The aspect you last picked from the **Aspect** list, on any frame, this session or an earlier one |
+| **Free** | Any shape |
+
+Opening the crop changes nothing in the frame's edit until you drag,
+draw or pick an aspect, with one exception: under **Last used** at a
+ratio, pressing **Crop** crops the frame to it at once. A frame you
+move to while cropping is not cropped until you touch its crop. A
+frame you have already cropped keeps its crop and its aspect. See
+[Cropping](crop-and-retouch.md#cropping).
+
 ## Thumbnails
 
 The first line says what the cache holds, such as "312 thumbnails

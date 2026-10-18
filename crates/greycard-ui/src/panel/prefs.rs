@@ -529,6 +529,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_sidecar_placement(placement_name(st.window.placement).into());
             app.set_xmp_sidecars(st.window.xmp_sidecars);
             app.set_jpegs_apart(st.views.jpegs_apart);
+            app.set_crop_start(st.develop.crop_start.name().into());
             app.set_settings_note("".into());
             // A Check now still on its way keeps its "Checking...".
             if !app.get_update_checking() {
@@ -576,6 +577,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             jpegs_apart_changed(&state, &app, &worker, app.get_jpegs_apart());
+        });
+    }
+    // The aspect an uncropped frame's crop opens at: kept as chosen.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_crop_start_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            crate::panel::crop::start_chosen(&mut state.borrow_mut(), &app.get_crop_start());
         });
     }
     // The folder's sidecars put where the setting says, confirmed.

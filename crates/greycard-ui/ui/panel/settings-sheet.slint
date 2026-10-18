@@ -3,7 +3,8 @@
 // whether an XMP goes beside them; and, with frames open, the move
 // that puts their sidecars where the setting says now, since flipping
 // it moves nothing by itself. Whether the camera's JPEG beside a raw is
-// a frame of its own. And the check for a newer release.
+// a frame of its own. The aspect an uncropped frame's crop opens at.
+// And the check for a newer release.
 
 import { Theme } from "../theme.slint";
 import { Toggle, PanelButton, Segmented } from "../controls.slint";
@@ -32,6 +33,10 @@ export component SettingsSheet inherits Rectangle {
     /// frames again.
     in-out property <bool> jpegs-apart;
     callback jpegs-apart-changed();
+    /// The aspect the crop opens under on a frame not cropped yet:
+    /// "Original", "Last used" or "Free".
+    in-out property <string> crop-start;
+    callback crop-start-changed();
     /// The thumbnail cache: whether this run has one, what it holds
     /// in words, and the button that empties it.
     in property <bool> thumb-cache-on;
@@ -205,6 +210,32 @@ export component SettingsSheet inherits Rectangle {
                         text: root.jpegs-apart
                             ? "IMG_0001.JPG is a frame of its own, with its own rating."
                             : "IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: Theme.space-1; }
+                    Text {
+                        text: "CROP";
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-secondary;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Aspect"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Segmented {
+                            options: ["Original", "Last used", "Free"];
+                            current <=> root.crop-start;
+                            selected => { root.crop-start-changed(); }
+                        }
+                    }
+                    Text {
+                        text: root.crop-start == "Last used"
+                            ? "An uncropped frame's crop opens at the aspect last picked."
+                            : root.crop-start == "Free"
+                            ? "An uncropped frame's crop opens free, any shape."
+                            : "An uncropped frame's crop opens at the frame's own shape.";
                         font-size: Theme.font-xs;
                         color: Theme.text-muted;
                         wrap: word-wrap;

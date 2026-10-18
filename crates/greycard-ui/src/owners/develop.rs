@@ -25,6 +25,10 @@ pub(crate) struct Develop {
     pub(crate) mosaics: HashMap<PathBuf, crate::panel::browser::OpenMosaic>,
     /// A raw's scene or a picture already rendered, from the open.
     pub(crate) source: finish::Source,
+    /// The open raw's own white as a temperature and tint, as its
+    /// decode read it: what the white balance sliders show under As
+    /// shot. None until the decode lands, and for a picture.
+    pub(crate) as_shot_white: Option<(f32, f32)>,
     /// The last preview matrix, keyed by what it was computed for.
     pub(crate) white_cache: Option<(WhiteKey, Matrix3)>,
     /// What the picture on screen's masks made their white balances
@@ -76,6 +80,16 @@ pub(crate) struct Develop {
     /// The anchor of a crop being drawn fresh from a press outside
     /// today's, fractions of the leveled plane, [`Crop`]'s own units.
     pub(crate) crop_draw: Option<(f32, f32)>,
+    /// The aspect the crop opens under on a frame with no crop of its
+    /// own (the Settings sheet's choice, `settings.crop_start`), and
+    /// the aspect last picked from the list, which "Last used" opens
+    /// under (`settings.crop_last`, as `panel::crop::aspect_key`
+    /// spells it).
+    pub(crate) crop_start: crate::panel::crop::Start,
+    pub(crate) crop_last: String,
+    /// A frame opened with crop mode on: the starting aspect is laid
+    /// on it once, when its develop lands and its shape is known.
+    pub(crate) crop_start_due: bool,
     /// Which look the panel edits: an adjustment by index, or the
     /// global one. The panel is the truth for that look; `edit` is
     /// for everything else, the other adjustments included.

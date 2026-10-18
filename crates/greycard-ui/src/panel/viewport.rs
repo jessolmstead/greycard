@@ -644,6 +644,9 @@ pub(crate) enum Shown {
     /// read, as its button would, for a snapshot of the run or of the
     /// folder it opens.
     Imported,
+    /// The import sheet on Add in place, `--import`'s folder read as
+    /// its folder.
+    ImportInPlace,
     /// The model sheet, with sample text where the download's goes.
     Fetch,
     /// The preset import's report sheet, over sample presets: two in,
@@ -752,6 +755,7 @@ impl Shown {
             "pasted" => Ok(Self::Pasted),
             "import" => Ok(Self::Import),
             "imported" => Ok(Self::Imported),
+            "import-in-place" => Ok(Self::ImportInPlace),
             "match" => Ok(Self::Match),
             "matched" => Ok(Self::Matched),
             "refit" => Ok(Self::Refit),
@@ -775,7 +779,7 @@ impl Shown {
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, preset-report, paste, pasted, import, \
-                 imported, match, matched, refit, look-remove, look-rename, root-name, \
+                 imported, import-in-place, match, matched, refit, look-remove, look-rename, root-name, \
                  delete, archive, archive-rejects, parts, landscape, lightroom, \
                  lightroom-report, lightroom-written, rawtherapee-offer, rawtherapee, \
                  rawtherapee-written, sort, keys or help, not {name}"
@@ -850,6 +854,17 @@ impl Shown {
             Self::Imported => {
                 app.invoke_import_asked();
                 crate::panel::import::start_when_read(app, 100);
+            }
+            Self::ImportInPlace => {
+                app.invoke_import_asked();
+                app.set_import_mode(crate::panel::import::ADD_IN_PLACE.into());
+                if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                    let mut st = state.borrow_mut();
+                    match st.import.source.clone() {
+                        Some(dir) => crate::panel::import::read_place(&mut st, app, dir),
+                        None => tracing::warn!("--sheet import-in-place wants --import DIR"),
+                    }
+                }
             }
             Self::Fetch => {
                 app.set_fetch_title("Download the Subject model?".into());
@@ -2170,6 +2185,170 @@ mod tests {
             orientation: Orientation::Normal,
             shot: Default::default(),
         }
+    }
+
+    /// The Temperature and Tint sliders are live under As shot, showing
+    /// the camera's white; a drag of Temperature turns As shot off by
+    /// itself, leaves the slider where the pointer let go, and is one
+    /// step of the history; As shot switched back on puts the sliders
+    /// and the picture back. Judged on the picture developed: a white
+    /// patch, neutral as shot, warms with the move and is neutral again
+    /// after.
+    #[test]
+    fn moving_temperature_turns_as_shot_off_and_as_shot_puts_it_back() {
+        use greycard_core::color::{WhitePoint, profile_from_frame, resolve_white_balance};
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        // A white patch, 32 by 32, under daylight.
+        let frame = RawFrame {
+            width: 32,
+            height: 32,
+            samples: greycard_core::raw::Samples::U16(vec![500; 32 * 32]),
+            ..daylight_frame()
+        };
+        let profile = profile_from_frame(&frame).unwrap();
+        let shot = resolve_white_balance(&frame, &profile, WhitePoint::AsShot).unwrap();
+        let as_shot = (shot.temp_tint.cct as f32, shot.temp_tint.duv as f32);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.base_white = Some(WhiteBase::from(&shot, 1.0));
+            st.develop.frame = Some((Arc::new(frame.clone()), Box::new(profile)));
+            st.develop.shown_turn = Some((0, current_turn(&st)));
+            // As the decode's landing leaves the panel.
+            st.develop.as_shot_white = Some(as_shot);
+        }
+        app.set_raw_input(true);
+        app.set_temperature(as_shot.0);
+        app.set_tint(as_shot.1);
+        let wait = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ))
+        };
+        wait();
+        assert!(app.get_as_shot());
+        let steps = state.borrow().sidecars[0].history.len();
+        // The white patch's middle as the edit on the panel develops it.
+        let patch = |app: &App| {
+            let edit = read_edit(app, &state.borrow().develop.edit, None);
+            let developed = greycard_core::develop::develop(&frame, &edit.settings())
+                .expect("the patch develops");
+            developed.image.pixel(16, 16)
+        };
+        let neutral = patch(&app);
+        assert!(
+            (neutral[0] / neutral[2] - 1.0).abs() < 0.02,
+            "as shot, the white is white: {neutral:?}"
+        );
+
+        // A drag of the Temperature handle, a third of the track to
+        // the right: live under As shot, and the move turns it off.
+        let (at, size) = crate::testing::labeled(&app, "Temperature");
+        let (left, right) = (at.x + 68.0, at.x + size.width - 60.0);
+        let fraction = (as_shot.0 - 2000.0) / 10000.0;
+        let x = left + fraction * (right - left);
+        let y = at.y + size.height / 2.0;
+        crate::testing::drag(&app, &[(x, y), (x + 10.0, y), (x + 60.0, y)]);
+        wait();
+        assert!(!app.get_as_shot(), "the move turned As shot off");
+        let moved = app.get_temperature();
+        assert!(moved > as_shot.0 + 2000.0, "{moved} from {}", as_shot.0);
+        assert_eq!(app.get_tint(), as_shot.1, "the tint stays the camera's");
+        assert_eq!(
+            state.borrow().develop.edit.white_balance,
+            WhiteBalance::Custom {
+                temperature: moved as f64,
+                tint: as_shot.1 as f64,
+            }
+        );
+        assert_eq!(
+            state.borrow().sidecars[0].history.len(),
+            steps + 1,
+            "the move is one step"
+        );
+        let warmed = patch(&app);
+        assert!(
+            warmed[0] / warmed[2] > neutral[0] / neutral[2] * 1.1,
+            "a higher temperature renders warmer: {warmed:?} against {neutral:?}"
+        );
+
+        // As shot back on: the camera's white on the sliders and on
+        // the picture.
+        let (at, size) = crate::testing::labeled(&app, "As shot");
+        crate::testing::click(&app, at.x + size.width - 12.0, at.y + size.height / 2.0);
+        wait();
+        assert!(app.get_as_shot());
+        assert_eq!((app.get_temperature(), app.get_tint()), as_shot);
+        assert_eq!(
+            state.borrow().develop.edit.white_balance,
+            WhiteBalance::AsShot
+        );
+        assert_eq!(patch(&app), neutral);
+        assert_eq!(state.borrow().sidecars[0].history.len(), steps + 2);
+
+        // A custom pair, from a drag of each slider.
+        let drag_slider = |label: &str, value: f32, low: f32, high: f32, by: f32| {
+            let (at, size) = crate::testing::labeled(&app, label);
+            let (left, right) = (at.x + 68.0, at.x + size.width - 60.0);
+            let x = left + (value - low) / (high - low) * (right - left);
+            let y = at.y + size.height / 2.0;
+            crate::testing::drag(&app, &[(x, y), (x + by / 6.0, y), (x + by, y)]);
+            wait();
+        };
+        drag_slider("Temperature", as_shot.0, 2000.0, 12000.0, 60.0);
+        drag_slider("Tint", as_shot.1, -0.05, 0.05, -40.0);
+        let custom = (app.get_temperature(), app.get_tint());
+        assert!(!app.get_as_shot());
+        assert!(custom.0 > as_shot.0 && custom.1 < as_shot.1, "{custom:?}");
+        let steps = state.borrow().sidecars[0].history.len();
+        // A double-click on a slider puts it alone back to the camera's
+        // value, and nothing else: As shot stays off. One step each.
+        let double_click = |label: &str| {
+            // Clear of the last click, so the two here are a pair.
+            slint::platform::update_timers_and_animations();
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(600));
+            slint::platform::update_timers_and_animations();
+            let (at, size) = crate::testing::labeled(&app, label);
+            let (x, y) = (at.x + 30.0, at.y + size.height / 2.0);
+            crate::testing::click(&app, x, y);
+            crate::testing::click(&app, x, y);
+            wait();
+        };
+        double_click("Temperature");
+        assert_eq!(
+            (app.get_temperature(), app.get_tint()),
+            (as_shot.0, custom.1)
+        );
+        assert!(!app.get_as_shot());
+        assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
+        double_click("Tint");
+        assert_eq!((app.get_temperature(), app.get_tint()), as_shot);
+        assert!(!app.get_as_shot(), "both at the camera's, and still custom");
+        assert_eq!(
+            state.borrow().develop.edit.white_balance,
+            WhiteBalance::Custom {
+                temperature: as_shot.0 as f64,
+                tint: as_shot.1 as f64,
+            }
+        );
+        assert_eq!(state.borrow().sidecars[0].history.len(), steps + 2);
+
+        // As shot switched on from a custom pair: both sliders, and the
+        // picture, at the camera's.
+        drag_slider("Temperature", as_shot.0, 2000.0, 12000.0, -60.0);
+        drag_slider("Tint", as_shot.1, -0.05, 0.05, 40.0);
+        assert!(!app.get_as_shot());
+        assert_ne!(patch(&app), neutral);
+        let (at, size) = crate::testing::labeled(&app, "As shot");
+        crate::testing::click(&app, at.x + size.width - 12.0, at.y + size.height / 2.0);
+        wait();
+        assert!(app.get_as_shot());
+        assert_eq!((app.get_temperature(), app.get_tint()), as_shot);
+        assert_eq!(patch(&app), neutral);
     }
 
     /// The Auto button reads the whole picture and sets the white it

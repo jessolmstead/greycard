@@ -2081,8 +2081,13 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // The frame's mosaic as far as the session knows it, with no read
     // here: the worker says ahead of its decode.
     panel_frame(st, Some(i));
+    // Its own white is not known until its decode reads it.
+    st.develop.as_shot_white = None;
     show_edit(st, &edit, app, st.develop.target);
     st.develop.edit = edit.clone();
+    // Opened with the crop in hand: the starting aspect once its
+    // develop says which way up it stands (`crop::start_landed`).
+    st.develop.crop_start_due = app.get_crop_mode();
     st.current = Some(i);
     st.develop.generation += 1;
     // The key's moment, until the frame that shows this

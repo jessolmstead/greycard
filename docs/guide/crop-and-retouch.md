@@ -34,10 +34,19 @@ The tab has three sections: **CROP**, **ROTATE** and **PERSPECTIVE**.
 
 | Aspect | Meaning |
 |---|---|
-| **Free** | Any shape. The default. |
+| **Free** | Any shape. |
 | **Original** | The frame's own shape. |
 | **1:1**, **3:2**, **4:3**, **5:4**, **16:9**, **65:24** | That ratio. 65:24 is the XPan panorama. |
 | **Custom** | Type your own ratio as width:height, such as `7:5`. |
+
+A frame with no crop of its own opens its crop at **Original**, so
+dragging a corner keeps the frame's shape; only opening the crop
+leaves the frame's edit as it was. The **Aspect** row in
+[Settings](settings.md#crop) changes that: **Last used** opens every
+uncropped frame at the aspect you last picked from the list, kept
+from one session to the next, and **Free** at any shape. A frame you
+have cropped keeps its own crop and aspect, and **Reset all** puts a
+frame back to no crop.
 
 **Portrait** means the crop is tall: on, 3:2 becomes 2:3. It reads
 the same way under **Original**, a ratio and **Custom**, so on a photo

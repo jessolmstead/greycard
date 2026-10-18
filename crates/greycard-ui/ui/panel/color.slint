@@ -17,9 +17,16 @@ export component WhiteBalanceSection inherits Section {
     // A mask's own: no As shot and no Auto, its switch on the
     // section's title, its sliders live while it is on.
     in property <bool> local: false;
-    // Whether the sliders move the picture.
-    property <bool> live: root.raw-input && (root.local ? root.on : !root.as-shot);
+    // Whether the sliders move the picture. The global's always do:
+    // under As shot they show the camera's white, and moving either
+    // turns As shot off and keeps the white where the pointer left it.
+    property <bool> live: root.raw-input && (root.local ? root.on : true);
     callback develop-changed();
+    // As shot switched: on, the sliders go back to the camera's white.
+    callback as-shot-toggled();
+    // A double-click on Temperature or Tint ("temperature", "tint"):
+    // that slider alone back to the camera's value.
+    callback wb-slider-reset(string);
     // A mask's: a double-click on Temperature or Tint forgets the
     // light it names, both at once, and the mask follows the global.
     callback local-reset();
@@ -32,7 +39,7 @@ export component WhiteBalanceSection inherits Section {
         label: "As shot";
         enabled: root.raw-input;
         checked <=> root.as-shot;
-        toggled => { root.develop-changed(); }
+        toggled => { root.as-shot-toggled(); }
     }
     // The tracks show what the picture becomes: a
     // higher temperature renders warmer, a positive
@@ -48,9 +55,18 @@ export component WhiteBalanceSection inherits Section {
         step: 50;
         value <=> root.temperature;
         text: round(root.temperature) + " K";
-        changed(v) => { root.develop-changed(); }
-        owner-resets: root.local;
-        reset => { root.local-reset(); }
+        changed(v) => {
+            if (!root.local) { root.as-shot = false; }
+            root.develop-changed();
+        }
+        owner-resets: true;
+        reset => {
+            if (root.local) {
+                root.local-reset();
+            } else {
+                root.wb-slider-reset("temperature");
+            }
+        }
     }
     EditSlider {
         label: "Tint";
@@ -63,9 +79,18 @@ export component WhiteBalanceSection inherits Section {
         step: 0.001;
         value <=> root.tint;
         text: round(root.tint * 1000) / 1000;
-        changed(v) => { root.develop-changed(); }
-        owner-resets: root.local;
-        reset => { root.local-reset(); }
+        changed(v) => {
+            if (!root.local) { root.as-shot = false; }
+            root.develop-changed();
+        }
+        owner-resets: true;
+        reset => {
+            if (root.local) {
+                root.local-reset();
+            } else {
+                root.wb-slider-reset("tint");
+            }
+        }
     }
     HorizontalLayout {
         spacing: Theme.space-2;

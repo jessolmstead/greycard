@@ -385,6 +385,21 @@ fn start_at_global(st: &mut State, app: &App) {
     }
 }
 
+/// The sliders' temperature and tint once `which` ("temperature" or
+/// "tint") is put back to the camera's own, the other kept; none for
+/// a name that is neither.
+pub(crate) fn slider_reset(
+    panel: (f32, f32),
+    camera: (f32, f32),
+    which: &str,
+) -> Option<(f32, f32)> {
+    match which {
+        "temperature" => Some((camera.0, panel.1)),
+        "tint" => Some((panel.0, camera.1)),
+        _ => None,
+    }
+}
+
 pub(crate) fn panel_white((as_shot, temperature, tint): WhiteKey) -> WhiteBalance {
     if as_shot {
         WhiteBalance::AsShot
@@ -397,6 +412,48 @@ pub(crate) fn panel_white((as_shot, temperature, tint): WhiteKey) -> WhiteBalanc
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+    // As shot switched on the panel: on, the sliders show the
+    // camera's white again; either way the picture develops as a
+    // slider's move does. Moving a slider turns it off on the panel's
+    // side, in the same change, so the move is one step.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_as_shot_toggled(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            if app.get_as_shot()
+                && let Some((temperature, tint)) = state.borrow().develop.as_shot_white
+            {
+                app.set_temperature(temperature);
+                app.set_tint(tint);
+            }
+            app.invoke_develop_changed();
+        });
+    }
+    // A double-click on Temperature or Tint: that slider alone back
+    // to the camera's value, the other left where it stands, and
+    // nothing else: As shot is left as it is, off after a move, even
+    // when both sliders then stand at the camera's values. Turning As
+    // shot on is what puts both back. One step, as a move is.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_wb_slider_reset(move |which| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(camera) = state.borrow().develop.as_shot_white else {
+                return;
+            };
+            let panel = (app.get_temperature(), app.get_tint());
+            let Some((temperature, tint)) = slider_reset(panel, camera, which.as_str()) else {
+                return;
+            };
+            app.set_temperature(temperature);
+            app.set_tint(tint);
+            app.invoke_develop_changed();
+        });
+    }
     // A mask's own white balance switched. Off, the sliders keep the
     // light they name, as every switched-off section keeps its values,
     // so the switch compares the two. On, that light comes back; with

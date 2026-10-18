@@ -103,7 +103,9 @@ The roots are in the left pane while the grid is up, under **ROOTS**:
 
 To add a root, click **+ Add a root...** at the foot of the section
 and choose a folder. When the open folder is in no root,
-**+ Add this folder** adds it in one click.
+**+ Add this folder** adds it in one click. The Import sheet's **Add
+in place** does the same and opens the folder (see
+[Adding a folder in place](import.md#adding-a-folder-in-place)).
 
 Right-click a root's row (Control+click on a Mac) for its menu. The
 first line is the root's full path.

@@ -50,7 +50,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // `--import` with no sheet asked for is a run with no window.
     let import_sheet = matches!(
         cli.sheet,
-        Some(crate::panel::viewport::Shown::Import | crate::panel::viewport::Shown::Imported)
+        Some(
+            crate::panel::viewport::Shown::Import
+                | crate::panel::viewport::Shown::Imported
+                | crate::panel::viewport::Shown::ImportInPlace
+        )
     );
     if let Some(source) = cli.import.as_deref().filter(|_| !import_sheet) {
         let to = cli.to.as_deref().context("--import wants --to DEST")?;
@@ -502,6 +506,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.develop.monitors = monitors;
         st.develop.presets = presets;
         st.develop.preset_store = preset_store;
+        crate::panel::crop::take_settings(&mut st, &remembered);
         st
     }));
     app.set_compare_tiles(ModelRc::from(state.borrow().culling.compare_tiles.clone()));
@@ -913,6 +918,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // A turn pressed since its delivery stands it
                         // on end again.
                         settle_source_size(st);
+                        crate::panel::crop::start_landed(st, &app);
                         app.set_shot_size(size_text(w, h).into());
                         st.develop.base_white = Some(landed.white);
                         st.develop.white_cache = None;
@@ -1208,7 +1214,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     }
                     show_source_shape(st, &app);
                     if app.get_crop_mode() {
-                        show_crop_on_view(st, &app, &edit.geometry);
+                        // An aspect held on the panel draws its box,
+                        // though the edit and the picture keep theirs
+                        // until the crop is touched.
+                        if app.get_aspect_held() {
+                            let held = crate::panel::crop::read_geometry(&app);
+                            show_crop_on_view(st, &app, &held);
+                        } else {
+                            show_crop_on_view(st, &app, &edit.geometry);
+                        }
                     }
                     // The look table, read once per choice; the export
                     // resolves the same name through the same cache and
@@ -1554,6 +1568,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.import = kept.import;
         settings.update = kept.update;
         settings.match_unchecked = kept.match_unchecked;
+        settings.crop_start = kept.crop_start;
+        settings.crop_last = kept.crop_last;
         // A run opened with `--hide-panels` was a look at the picture
         // alone: the panes stay as the run before it left them.
         if cli.hide_panels {
@@ -2081,6 +2097,10 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
             tint: app.get_sync_shift_tint(),
             exposure: app.get_sync_shift_exposure(),
         },
+        // Written as the Settings sheet's row is chosen, and as an
+        // aspect is picked from the crop's list.
+        crop_start: String::new(),
+        crop_last: String::new(),
     }
 }
 

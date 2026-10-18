@@ -591,12 +591,13 @@ struct Cli {
     #[arg(long, value_name = "DIR")]
     backup: Option<PathBuf>,
     /// The names --import gives, a pattern of {date}, {yyyy}, {mm},
-    /// {dd}, {name}, {camera} and {seq} with any text between; {name}
-    /// without it
+    /// {dd}, {name}, {camera}, {seq} and {folder} with any text
+    /// between; {name} without it
     #[arg(long, value_name = "PATTERN")]
     name: Option<String>,
     /// The folders under --to that --import makes, a pattern as --name
-    /// takes, `/` between levels; none without it
+    /// takes, `/` between levels; {folder}, the frame's folder under
+    /// --import, keeps the source's subfolders; none without it
     #[arg(long, value_name = "PATTERN")]
     subfolder: Option<String>,
     /// With --import, compare a frame already in the destination with
@@ -871,6 +872,7 @@ impl State {
                 panel_mosaic: None,
                 mosaics: HashMap::new(),
                 source: finish::Source::Scene,
+                as_shot_white: None,
                 white_cache: None,
                 shown_white: None,
                 debounce: slint::Timer::default(),
@@ -892,6 +894,9 @@ impl State {
                 turn_pressed: None,
                 crop_drag: None,
                 crop_draw: None,
+                crop_start: Default::default(),
+                crop_last: "Free".into(),
+                crop_start_due: false,
                 target: None,
                 fresh_mask: None,
                 placing: None,

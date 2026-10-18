@@ -73,6 +73,9 @@ pub struct Scan {
     /// Files left on the card: ones the editor does not open (a
     /// video, the camera's own catalog) and XMPs with no frame.
     pub left: Vec<PathBuf>,
+    /// Folders under the source that could not be read, and so were
+    /// passed over with whatever is in them.
+    pub unreadable: usize,
 }
 
 impl Scan {
@@ -107,16 +110,20 @@ fn stem_of(p: &Path) -> String {
 /// imported, and a link back up a card's tree would list its frames
 /// over and over. A camera writes none. A folder reached twice (a
 /// bind mount, a Windows junction) is walked once, by its canonical
-/// path.
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+/// path. A folder under `dir` that cannot be read is passed over and
+/// counted, the count returned; `dir` itself not read is the error.
+fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<usize> {
     let mut seen = HashSet::new();
-    walk_from(dir, out, &mut seen)
+    let mut unreadable = 0;
+    walk_from(dir, out, &mut seen, &mut unreadable)?;
+    Ok(unreadable)
 }
 
 fn walk_from(
     dir: &Path,
     out: &mut Vec<PathBuf>,
     seen: &mut HashSet<PathBuf>,
+    unreadable: &mut usize,
 ) -> std::io::Result<()> {
     let canonical = dunce::canonicalize(dir)?;
     if !seen.insert(canonical) {
@@ -133,12 +140,42 @@ fn walk_from(
             Ok(t) if t.is_symlink() => {
                 tracing::debug!("import: {} is a link, not followed", path.display());
             }
-            Ok(t) if t.is_dir() => walk_from(&path, out, seen)?,
+            Ok(t) if t.is_dir() => {
+                if let Err(e) = walk_from(&path, out, seen, unreadable) {
+                    tracing::warn!("import: {} not read: {e}", path.display());
+                    *unreadable += 1;
+                }
+            }
             Ok(t) if t.is_file() => out.push(path),
             _ => {}
         }
     }
     Ok(())
+}
+
+/// How many folders are under `dir`, at any depth, as [`walk`] goes
+/// through them: hidden ones and links left out, a folder reached
+/// twice counted once. One that cannot be read counts, and nothing
+/// under it.
+pub fn subfolders(dir: &Path) -> usize {
+    fn count(dir: &Path, seen: &mut HashSet<PathBuf>) -> usize {
+        let Ok(canonical) = dunce::canonicalize(dir) else {
+            return 0;
+        };
+        if !seen.insert(canonical) {
+            return 0;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        entries
+            .filter_map(|e| e.ok())
+            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| 1 + count(&e.path(), seen))
+            .sum()
+    }
+    count(dir, &mut HashSet::new())
 }
 
 /// The frames under `source`, in the order the camera numbered them
@@ -155,7 +192,8 @@ fn walk_from(
 pub fn scan(source: &Path) -> Result<Scan> {
     anyhow::ensure!(source.is_dir(), "{} is not a folder", source.display());
     let mut files = Vec::new();
-    walk(source, &mut files).with_context(|| format!("reading {}", source.display()))?;
+    let unreadable =
+        walk(source, &mut files).with_context(|| format!("reading {}", source.display()))?;
     files.sort();
     let key = |p: &Path| (p.parent().map(Path::to_path_buf), stem_of(p).to_lowercase());
     // The raws by folder and stem: they take the companions.
@@ -206,7 +244,11 @@ pub fn scan(source: &Path) -> Result<Scan> {
     // Lone pictures joined the list after the raws; the camera's order
     // is the path's.
     items.sort_by(|a, b| a.file.cmp(&b.file));
-    Ok(Scan { items, left })
+    Ok(Scan {
+        items,
+        left,
+        unreadable,
+    })
 }
 
 /// The tokens' values for `file`, the `seq`th frame of the run: the
@@ -242,8 +284,24 @@ pub fn probe_file(file: &Path, seq: usize) -> (Fields, Option<(String, String)>)
         name: stem_of(file),
         camera,
         seq,
+        folder: String::new(),
     };
     (fields, body)
+}
+
+/// `file`'s folder under `source`, its levels joined by `/` whatever
+/// the platform: what `{folder}` fills with. Empty for a file in the
+/// source itself, or one not under it.
+pub fn folder_under(source: &Path, file: &Path) -> String {
+    file.parent()
+        .and_then(|dir| dir.strip_prefix(source).ok())
+        .map(|rel| {
+            rel.components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default()
 }
 
 /// The local day a file was last written: what a card's clock stamped
@@ -383,6 +441,10 @@ pub struct Report {
     /// The folders written to and how many frames each took, in the
     /// order they were first written.
     pub folders: Vec<(PathBuf, usize)>,
+    /// Folders under the source the scan could not read: frames there
+    /// were not reached, so the import is not whole however the rest
+    /// went (`Scan::unreadable`).
+    pub unreadable: usize,
 }
 
 impl Report {
@@ -460,10 +522,23 @@ impl Report {
                 frames(self.profile_left_off)
             ));
         }
+        match self.unreadable {
+            0 => {}
+            1 => s.push_str("; 1 folder could not be read, its frames not imported"),
+            n => s.push_str(&format!(
+                "; {n} folders could not be read, their frames not imported"
+            )),
+        }
         if let Some((file, why)) = &self.error {
             s.push_str(&format!(": {}: {why}", name_of(file)));
         }
         s
+    }
+
+    /// Whether every frame under the source was reached and the run
+    /// went through: no error, no stop, no folder unread.
+    pub fn whole(&self) -> bool {
+        self.error.is_none() && !self.canceled && self.unreadable == 0
     }
 }
 
@@ -474,7 +549,7 @@ pub fn log_report(opts: &Options, scan: &Scan, report: &Report) {
     let line = format!(
         "import: {} to {}: {} of {} imported ({} files, {} bytes in {:.2} s, {:.1} MB/s), \
          {} backed up{}, {} already there, {} renamed, {} companions not copied, \
-         {} given {}, profile left off {}, {} left on the card{}{}",
+         {} given {}, profile left off {}, {} left on the card, {} folders unread{}{}",
         opts.source.display(),
         opts.destination.display(),
         report.frames,
@@ -497,6 +572,7 @@ pub fn log_report(opts: &Options, scan: &Scan, report: &Report) {
             .map_or_else(|| "no preset".to_string(), |p| format!("\"{}\"", p.name)),
         report.profile_left_off,
         scan.left.len(),
+        report.unreadable,
         if report.canceled { "; stopped" } else { "" },
         report
             .error
@@ -504,8 +580,7 @@ pub fn log_report(opts: &Options, scan: &Scan, report: &Report) {
             .map(|(f, why)| format!("; failed on {}: {why}", f.display()))
             .unwrap_or_default(),
     );
-    if report.error.is_some() || report.canceled || report.renamed > 0 || report.companions_left > 0
-    {
+    if !report.whole() || report.renamed > 0 || report.companions_left > 0 {
         tracing::warn!("{line}");
     } else {
         tracing::info!("{line}");
@@ -1328,6 +1403,7 @@ fn sample() -> Fields {
         name: "IMG_0001".into(),
         camera: String::new(),
         seq: 1,
+        folder: "100CANON".into(),
     }
 }
 
@@ -1422,6 +1498,7 @@ pub fn run(
     let total = scan.items.len();
     let mut report = Report {
         total,
+        unreadable: scan.unreadable,
         ..Report::default()
     };
     // Compared as the file system has them from here on: a library
@@ -1472,7 +1549,8 @@ pub fn run(
 
 fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -> Result<()> {
     let opts = run.opts;
-    let (fields, body) = probe_file(&item.file, seq);
+    let (mut fields, body) = probe_file(&item.file, seq);
+    fields.folder = folder_under(&opts.source, &item.file);
     let reserve = companion_reserve(item);
     let rel = relative_within(opts, &item.file, &fields, reserve)?;
     let planned = opts.destination.join(&rel);
@@ -2608,6 +2686,83 @@ mod tests {
         let xmp = names.iter().find(|n| n.ends_with(".CR3.xmp")).unwrap();
         assert_eq!(format!("{raw}.xmp"), *xmp);
         assert!(xmp.len() <= naming::LONGEST, "{}", xmp.len());
+    }
+
+    /// A source with two subfolders, and a frame in the source itself:
+    /// `{folder}` makes the two again under the destination and puts
+    /// the third straight in it; `{date}/{folder}` nests them under the
+    /// day. The backup takes the same folders.
+    #[test]
+    fn the_folder_token_keeps_the_sources_subfolders() {
+        let root = dir("folder-token");
+        let job = root.join("job");
+        write(&job.join("ceremony/A001.CR3"), b"a1");
+        write(&job.join("ceremony/A001.JPG"), b"a1 jpeg");
+        write(&job.join("reception/late/B001.CR3"), b"b1");
+        write(&job.join("C001.CR3"), b"c1");
+        let dest = root.join("photos");
+        let backup = root.join("backup");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::create_dir_all(&backup).unwrap();
+        let mut o = options(&job, &dest);
+        o.subfolder = "{folder}".into();
+        o.backup = Some(backup.clone());
+        o.placement = None;
+        let r = go(&o);
+        assert!(r.error.is_none(), "{r:?}");
+        assert_eq!(r.frames, 3);
+        let rel = |d: &Path| -> Vec<String> {
+            all(d)
+                .iter()
+                .map(|p| {
+                    p.strip_prefix(d)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                })
+                .collect()
+        };
+        let want = [
+            "C001.CR3",
+            "ceremony/A001.CR3",
+            "ceremony/A001.JPG",
+            "reception/late/B001.CR3",
+        ];
+        assert_eq!(rel(&dest), want);
+        assert_eq!(rel(&backup), want);
+
+        // Nested under the day: the day the files say, their own
+        // modification day here.
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let mut o = options(&job, &nested);
+        o.subfolder = "{date}/{folder}".into();
+        o.placement = None;
+        let r = go(&o);
+        assert!(r.error.is_none(), "{r:?}");
+        let day = |f: &str| {
+            let fields = fields_of(&job.join(f), 1);
+            naming::expand("{date}", &fields).unwrap()
+        };
+        let got = rel(&nested);
+        assert!(
+            got.contains(&format!("{}/C001.CR3", day("C001.CR3"))),
+            "{got:?}"
+        );
+        assert!(
+            got.contains(&format!(
+                "{}/reception/late/B001.CR3",
+                day("reception/late/B001.CR3")
+            )),
+            "{got:?}"
+        );
+        assert_eq!(got.len(), 4, "{got:?}");
+        assert_eq!(
+            folder_under(&job, &job.join("reception/late/B001.CR3")),
+            "reception/late"
+        );
+        assert_eq!(folder_under(&job, &job.join("C001.CR3")), "");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A camera string or a stem from a file's own data never adds a

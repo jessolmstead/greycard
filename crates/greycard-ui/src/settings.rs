@@ -161,6 +161,14 @@ pub struct Settings {
     /// each frame by the frame synced from's own move rather than set
     /// it to that frame's value, as the sheet was left.
     pub sync_shift: SyncShift,
+    /// The aspect the crop opens under on a frame not cropped yet, by
+    /// the Settings sheet's word for it (`panel::crop::Start`):
+    /// "Original", "Last used" or "Free". Written as it is chosen.
+    pub crop_start: String,
+    /// The aspect last picked from the crop's list, as
+    /// `panel::crop::aspect_key` spells it ("3:2", "Custom 7:5"):
+    /// what "Last used" opens under. Written as it is picked.
+    pub crop_last: String,
 }
 
 /// The sync sheet's three relative choices: on, a frame is shifted
@@ -280,6 +288,8 @@ impl Default for Settings {
             update: crate::update::Kept::default(),
             match_unchecked: Vec::new(),
             sync_shift: SyncShift::default(),
+            crop_start: "Original".into(),
+            crop_last: "Free".into(),
         }
     }
 }
@@ -493,6 +503,8 @@ mod tests {
                 tint: false,
                 exposure: true,
             },
+            crop_start: "Last used".into(),
+            crop_last: "Custom 7:5".into(),
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);

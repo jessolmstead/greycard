@@ -97,11 +97,19 @@ neutral.
 
 | Control | What it does |
 |---|---|
-| **As shot** | On by default: the camera's own white balance. Turn it off to set your own. |
+| **As shot** | On by default: the camera's own white balance. Turn it back on to return to it. |
 | **Temperature** | 2000 to 12000 K. Higher makes the picture warmer. |
 | **Tint** | −0.05 to +0.05. Positive makes it more magenta, negative more green. |
 | **Auto** | Reads the white balance from the picture. |
 | **Neutral** | A dropper: click something in the picture that should be grey. |
+
+Under **As shot**, **Temperature** and **Tint** show the camera's own
+white. Move either and **As shot** turns off by itself, with the
+slider where you left it; it is one step in the history, as any
+slider's move is. Turn **As shot** back on to go back to the camera's
+white. After a move, a double-click puts one slider back to the
+camera's value and leaves the other where you set it; **As shot**
+stays off. Under **As shot** a double-click changes nothing.
 
 **Auto** reads the light from the edges in the picture, so a large
 sky or sea does not throw it off. It takes most of the warmth out of

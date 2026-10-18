@@ -450,7 +450,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.develop.lens = lens;
             st.develop.white_cache = None;
             // Show the frame's own white balance on the sliders, so a
-            // custom setting starts from it.
+            // custom setting starts from it; and keep it, for As shot
+            // switched back on.
+            st.develop.as_shot_white =
+                matches!(kind, SourceKind::Raw).then_some((as_shot.0 as f32, as_shot.1 as f32));
             if st.develop.edit.white_balance == WhiteBalance::AsShot {
                 app.set_temperature(as_shot.0 as f32);
                 app.set_tint(as_shot.1 as f32);

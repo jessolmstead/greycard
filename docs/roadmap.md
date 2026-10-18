@@ -35,20 +35,6 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] The crop's starting aspect as a setting (Pool)
-- [ ] White balance: moving Temperature or Tint turns As shot off by
-      itself, the sliders live from the start at the as-shot values,
-      instead of a switch to unlock them (a tester's step every frame)
-- [ ] Import a folder in place: the Import sheet opens with Add in
-      place (any folder, its subfolders kept, added as a root: Add a
-      root behind the door a Lightroom user looks for) beside Copy
-      (today's card import, unchanged and still the sheet's opening
-      choice: the card found by its DCIM folder, From filled in, the
-      count, the rename, the preset, the verified backup, the card
-      never written), and Copy's Folders pattern gains a
-      `{folder}` token, the frame's path under the source, so a
-      copied job keeps its camera subfolders (a tester asked to
-      import a folder with its subfolders)
 - [ ] The window's structure: the library views measured for a crate
       of their own (Pool; the CLI split landed as §341, the State
       grouping as §344)
@@ -624,10 +610,6 @@ clears or a tester asks for it.
 - [ ] Rebindable keys: a sheet in Settings to change any shortcut,
       saved in settings.json, with a conflict warning and a reset to
       defaults
-- [ ] The crop's starting aspect as a setting: Original, the last one
-      used, or Free, remembered across sessions, where today the crop
-      opens under the aspect it was last fitted under in the session;
-      a tester wants Original locked as their preference
 
 
 #### Library

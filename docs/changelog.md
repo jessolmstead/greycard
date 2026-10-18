@@ -34,6 +34,12 @@ design note behind it.
 - A Kind row in the filter bar (Raw, JPEG, PNG, TIFF) when a folder
   mixes them; `kind:raw` works in the field too
   ([§326](https://github.com/jessolmstead/greycard/blob/master/docs/notes/326-a-files-kind-as-a-facet-and-a-term.md))
+- Import: Add in place adds any folder, with its subfolders, to the
+  library where it is and opens it, beside the card copy, which is
+  unchanged; the Folders pattern's new `{folder}` keeps a copied job's
+  subfolders, and a copy that could not read a folder says so and
+  exits 2
+  ([§347](https://github.com/jessolmstead/greycard/blob/master/docs/notes/347-three-things-a-tester-did-on-every-frame.md))
 - A sort for the grid: the arrow button at the right of the filter
   bar picks capture time, name, rating or date edited, oldest or
   newest first, and the header says which. Remembered per view. A
@@ -58,6 +64,13 @@ design note behind it.
   and Develop buttons at the top of the left pane switch between the
   grid and one frame, as G does
   ([§346](https://github.com/jessolmstead/greycard/blob/master/docs/notes/346-batch-edits-the-keys-and-the-library-found-without-a-key.md))
+- The crop opens at the frame's own shape on a frame not yet cropped;
+  Settings has the choice of Original, Last used (kept from one session
+  to the next) or Free. Temperature and Tint are live under As shot and
+  show the camera's white: moving either turns As shot off by itself, a
+  double-click puts that slider back to the camera's value, and As shot
+  puts both back
+  ([§347](https://github.com/jessolmstead/greycard/blob/master/docs/notes/347-three-things-a-tester-did-on-every-frame.md))
 - Presets: Import... takes several `.xmp` or `.gcp` files at once and
   says what a Lightroom preset could not bring (masks, mostly)
   ([§330](https://github.com/jessolmstead/greycard/blob/master/docs/notes/330-importing-presets-from-the-window.md))

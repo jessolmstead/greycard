@@ -58,12 +58,19 @@ pub struct Fields {
     pub camera: String,
     /// The frame's place in the run, from one.
     pub seq: usize,
+    /// The frame's folder under the import's source, its levels
+    /// joined by `/`; empty for a frame in the source itself.
+    pub folder: String,
 }
 
 /// The tokens a pattern may hold, for the sheet's hint and the error.
-pub const TOKENS: [&str; 7] = [
-    "{date}", "{yyyy}", "{mm}", "{dd}", "{name}", "{camera}", "{seq}",
+pub const TOKENS: [&str; 8] = [
+    "{date}", "{yyyy}", "{mm}", "{dd}", "{name}", "{camera}", "{seq}", "{folder}",
 ];
+
+/// What an empty `{folder}` takes with it from beside it: the
+/// characters a pattern puts between its parts.
+const JOINERS: [char; 6] = ['-', '_', ' ', '.', '/', '\\'];
 
 /// `{seq}`'s width: 0001.
 pub const SEQ_WIDTH: usize = 4;
@@ -90,13 +97,23 @@ impl std::error::Error for PatternError {}
 
 /// The pattern with its tokens filled, the literal text between them
 /// as it is. A token's value never adds a folder: a separator in it
-/// is refused as any other character is. Nothing else is made safe
+/// is refused as any other character is. `{folder}` alone keeps its
+/// levels, `/` between them, so in the Folders pattern it makes the
+/// source's folders again; in a name [`file_name`] turns its `/`
+/// into `_` as it does the pattern's own. Nothing else is made safe
 /// here; [`file_name`] and [`folders`] do that.
 pub fn expand(pattern: &str, f: &Fields) -> Result<String, PatternError> {
     let mut out = String::with_capacity(pattern.len() + 16);
     let mut rest = pattern;
+    // Whether `out` ends in the pattern's own text rather than a
+    // token's value: only a separator the pattern wrote is one an empty
+    // `{folder}` may take with it.
+    let mut ends_literal = false;
     while let Some(open) = rest.find('{') {
         out.push_str(&rest[..open]);
+        if open > 0 {
+            ends_literal = true;
+        }
         let after = &rest[open + 1..];
         let close = after.find('}').ok_or(PatternError::Unclosed)?;
         let token = &after[..close];
@@ -109,9 +126,35 @@ pub fn expand(pattern: &str, f: &Fields) -> Result<String, PatternError> {
             "camera" if f.camera.trim().is_empty() => "Unknown camera".into(),
             "camera" => f.camera.trim().to_string(),
             "seq" => format!("{:0width$}", f.seq, width = SEQ_WIDTH),
+            // Its levels are `/` alone (`import::folder_under` joins
+            // them so on every platform); a `\` is a character of a
+            // folder's name on Linux, and refused as any other is.
+            // Empty, it takes a separator beside it with it, so
+            // `{folder}-{name}` in the source itself is `{name}`.
+            "folder" if f.folder.is_empty() => {
+                rest = &after[close + 1..];
+                match rest.chars().next() {
+                    Some(c) if JOINERS.contains(&c) => rest = &rest[c.len_utf8()..],
+                    _ => {
+                        if ends_literal && out.ends_with(JOINERS) {
+                            out.pop();
+                        }
+                    }
+                }
+                continue;
+            }
+            "folder" => {
+                out.push_str(&f.folder.replace('\\', "_"));
+                ends_literal = false;
+                rest = &after[close + 1..];
+                continue;
+            }
             other => return Err(PatternError::Unknown(other.to_string())),
         };
         out.push_str(&value.replace(['/', '\\'], "_"));
+        if !value.is_empty() {
+            ends_literal = false;
+        }
         rest = &after[close + 1..];
     }
     out.push_str(rest);
@@ -265,6 +308,7 @@ mod tests {
             name: "IMG_0042".into(),
             camera: "Canon EOS R5".into(),
             seq: 7,
+            folder: String::new(),
         }
     }
 
@@ -295,6 +339,75 @@ mod tests {
             ..fields()
         };
         assert_eq!(expand("{camera}", &none).unwrap(), "Unknown camera");
+    }
+
+    /// `{folder}` makes the source's folders again under the Folders
+    /// pattern, a level a level, and nothing for a frame in the source
+    /// itself; in a name its levels are joined by `_`.
+    #[test]
+    fn the_folder_token_keeps_its_levels_in_folders_alone() {
+        let f = Fields {
+            folder: "100CANON/day two".into(),
+            ..fields()
+        };
+        assert_eq!(expand("{folder}", &f).unwrap(), "100CANON/day two");
+        assert_eq!(folders("{folder}", &f).unwrap(), ["100CANON", "day two"]);
+        assert_eq!(
+            folders("{date}/{folder}", &f).unwrap(),
+            ["2026-09-04", "100CANON", "day two"]
+        );
+        assert_eq!(
+            file_name("{folder}-{name}", &f, "CR3").unwrap(),
+            "100CANON_day two-IMG_0042.CR3"
+        );
+        let top = fields();
+        assert!(folders("{folder}", &top).unwrap().is_empty());
+        assert_eq!(folders("{date}/{folder}", &top).unwrap(), ["2026-09-04"]);
+        // Empty, it takes the separator beside it, after or before.
+        assert_eq!(
+            file_name("{folder}-{name}", &top, "CR3").unwrap(),
+            "IMG_0042.CR3"
+        );
+        assert_eq!(
+            file_name("{name}_{folder}", &top, "CR3").unwrap(),
+            "IMG_0042.CR3"
+        );
+        assert_eq!(folders("{folder}/{date}", &top).unwrap(), ["2026-09-04"]);
+        // Never a character of a token's value: the name's own
+        // trailing `_` stays.
+        let trailing = Fields {
+            name: "IMG_0001_".into(),
+            ..fields()
+        };
+        assert_eq!(
+            file_name("{name}{folder}", &trailing, "CR3").unwrap(),
+            "IMG_0001_.CR3"
+        );
+        assert_eq!(
+            file_name("{name}-{folder}", &trailing, "CR3").unwrap(),
+            "IMG_0001_.CR3"
+        );
+        // A `\` in a Linux folder's name is a character, not a level.
+        let slashed = Fields {
+            folder: "back\\slash/day".into(),
+            ..fields()
+        };
+        assert_eq!(
+            folders("{folder}", &slashed).unwrap(),
+            ["back_slash", "day"]
+        );
+        // Each level made safe as any other.
+        let odd = Fields {
+            folder: "a:b/ c. ".into(),
+            ..fields()
+        };
+        assert_eq!(folders("{folder}", &odd).unwrap(), ["a_b", "c"]);
+        // And none climbs out: a level of dots is no level.
+        let up = Fields {
+            folder: "../x/./y".into(),
+            ..fields()
+        };
+        assert_eq!(folders("{folder}", &up).unwrap(), ["x", "y"]);
     }
 
     #[test]

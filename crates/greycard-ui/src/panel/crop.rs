@@ -3,6 +3,7 @@ use crate::*;
 
 /// Put a geometry on the panel.
 pub(crate) fn show_geometry(geometry: &Geometry, app: &App) {
+    app.set_aspect_held(false);
     app.set_geo_turns(geometry.turns as i32);
     app.set_geo_flip(geometry.flip);
     app.set_geo_angle(geometry.angle);
@@ -35,6 +36,143 @@ fn aspect_of_key(key: &str) -> Aspect {
     }
 }
 
+/// The aspect the crop opens under on a frame with no crop of its
+/// own, as the Settings sheet offers it: the frame's own shape, the
+/// aspect last picked from the list (kept across sessions), or none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Start {
+    #[default]
+    Original,
+    LastUsed,
+    Free,
+}
+
+impl Start {
+    /// The sheet's words, in the order its row shows them.
+    pub(crate) const NAMES: [&str; 3] = ["Original", "Last used", "Free"];
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Start::Original => Self::NAMES[0],
+            Start::LastUsed => Self::NAMES[1],
+            Start::Free => Self::NAMES[2],
+        }
+    }
+
+    /// The choice a word names; Original, the default, for anything
+    /// else (a file from before the setting, or one edited by hand).
+    pub(crate) fn from_name(name: &str) -> Self {
+        match name {
+            "Last used" => Start::LastUsed,
+            "Free" => Start::Free,
+            _ => Start::Original,
+        }
+    }
+}
+
+/// The settings file's two, on the state: read at launch.
+pub(crate) fn take_settings(st: &mut State, kept: &settings::Settings) {
+    st.develop.crop_start = Start::from_name(&kept.crop_start);
+    st.develop.crop_last = kept.crop_last.clone();
+}
+
+/// Change the settings file this run writes, now rather than at the
+/// close, so a session that never closes cleanly keeps it too; none
+/// written by a capture or a batch run, nor by a test that gave no
+/// file.
+fn keep_in_file(st: &State, change: impl FnOnce(&mut settings::Settings)) {
+    if st.window.batch {
+        return;
+    }
+    if let Some(file) = &st.window.settings_file {
+        let mut kept = settings::Settings::load_from(file);
+        change(&mut kept);
+        kept.save_to(file);
+    }
+}
+
+/// The Settings sheet's row chosen.
+pub(crate) fn start_chosen(st: &mut State, name: &str) {
+    st.develop.crop_start = Start::from_name(name);
+    let word = st.develop.crop_start.name().to_string();
+    keep_in_file(st, |s| s.crop_start = word);
+}
+
+/// An aspect picked from the list or typed in the custom box: what
+/// "Last used" opens under from now on, this session and the next.
+fn remember_last(st: &mut State, key: String) {
+    if st.develop.crop_last == key {
+        return;
+    }
+    st.develop.crop_last = key.clone();
+    keep_in_file(st, |s| s.crop_last = key);
+}
+
+/// How the starting aspect went on the panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Laid {
+    /// Not at all: the frame has its own, or the start is Free.
+    No,
+    /// On the panel alone (`aspect-held`): the edit keeps its own
+    /// until the user acts on the crop, so nothing is stored.
+    Held,
+    /// On the panel and so in the edit: a ratio, which crops.
+    Taken,
+}
+
+/// The aspect the crop opens under, laid on a frame that has no crop
+/// of its own: one never cropped, or reset, which the panel shows as
+/// no crop under Free. A frame that holds a crop, or an aspect picked
+/// for it, keeps its own. Set as a pick from the list sets it (the
+/// Portrait switch the way the frame stands), and the crop left to
+/// the aspect.
+///
+/// Original over no crop is the whole frame, so there is nothing to
+/// store: it is held on the panel, and the first drag, draw or pick
+/// takes it into the edit. A ratio opened with the Crop button crops
+/// the frame, which is what the setting asks; on a frame `arrived`
+/// with the crop already open it is held too, so moving through a
+/// shoot crops nothing the user has not touched.
+pub(crate) fn open_under_start(st: &State, app: &App, arrived: bool) -> Laid {
+    let geometry = read_geometry(app);
+    if geometry.crop.is_some() || geometry.aspect != Aspect::Free {
+        return Laid::No;
+    }
+    let aspect = match st.develop.crop_start {
+        Start::Original => Aspect::Original,
+        Start::LastUsed => aspect_of_key(&st.develop.crop_last),
+        Start::Free => return Laid::No,
+    };
+    if aspect == Aspect::Free {
+        return Laid::No;
+    }
+    let (name, custom) = aspect.name();
+    app.set_aspect_name(name.into());
+    if let Some(custom) = custom {
+        app.set_aspect_custom(custom.into());
+    }
+    let (sw, sh) = (
+        st.develop.source_size.0 as f32,
+        st.develop.source_size.1 as f32,
+    );
+    pick_aspect(app, sw, sh);
+    let held = arrived || aspect == Aspect::Original;
+    app.set_aspect_held(held);
+    if held { Laid::Held } else { Laid::Taken }
+}
+
+/// A frame opened with crop mode on: its develop has landed and its
+/// shape is known, so the starting aspect goes on the panel, once,
+/// held there until the user acts on this frame's crop.
+pub(crate) fn start_landed(st: &mut State, app: &App) {
+    if !std::mem::take(&mut st.develop.crop_start_due) {
+        return;
+    }
+    if app.get_crop_mode() && open_under_start(st, app, true) != Laid::No {
+        app.window().request_redraw();
+    }
+}
+
 /// After the aspect list, the custom box or the Portrait switch:
 /// the switch set the way a new aspect asks
 /// ([`Geometry::with_aspect`]), against the aspect the crop was
@@ -46,26 +184,39 @@ fn aspect_of_key(key: &str) -> Aspect {
 /// the "16:9" a key later would be a ratio picked over Free and
 /// would set aside a switch set by hand. So it is passed over, and
 /// the aspect before it stands.
-pub(crate) fn pick_aspect(app: &App, sw: f32, sh: f32) {
+///
+/// The aspect it settles on, when it is another than the crop was
+/// fitted under: a pick, which "Last used" remembers.
+pub(crate) fn pick_aspect(app: &App, sw: f32, sh: f32) -> Option<String> {
     if sw >= 1.0 && sh >= 1.0 {
         app.set_source_tall(sh > sw);
     }
     let geometry = read_geometry(app);
     if geometry.aspect == Aspect::Free && app.get_aspect_name() == "Custom" {
-        return;
+        return None;
     }
+    let fitted = app.get_aspect_fitted();
     let was = Geometry {
-        aspect: aspect_of_key(app.get_aspect_fitted().as_str()),
+        aspect: aspect_of_key(fitted.as_str()),
         ..geometry.clone()
     };
     app.set_portrait(was.with_aspect(geometry.aspect, sw, sh).portrait);
-    app.set_aspect_fitted(aspect_key(geometry.aspect).into());
+    let key = aspect_key(geometry.aspect);
+    app.set_aspect_fitted(key.as_str().into());
+    (key != fitted.as_str()).then_some(key)
 }
 
 /// Every crop the panel takes comes through here, so whatever a
 /// change of shape was asked to keep is let go the moment anything
 /// else moves the crop.
+///
+/// A crop taken is the user's act on it (a drag, a draw, a pick, a
+/// turn), so a starting aspect held on the panel is the edit's from
+/// here.
 pub(crate) fn set_crop(app: &App, crop: Option<Crop>) {
+    if crop.is_some() {
+        app.set_aspect_held(false);
+    }
     app.set_crop_kept_area(0.0);
     app.set_geo_has_crop(crop.is_some());
     if let Some(c) = crop {
@@ -188,6 +339,19 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             st.develop.image_size = (0, 0); // re-centered on the next frame
             st.develop.crop_drag = None;
             st.develop.crop_draw = None;
+            // The crop opens under the starting aspect, on a frame
+            // with none of its own; a ratio taken crops it, an aspect
+            // held changes nothing stored.
+            let laid = if app.get_crop_mode() {
+                open_under_start(&st, &app, false)
+            } else {
+                Laid::No
+            };
+            st.develop.crop_start_due = false;
+            drop(st);
+            if laid == Laid::Taken {
+                app.invoke_view_changed();
+            }
             app.window().request_redraw();
         });
     }
@@ -202,6 +366,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 st.develop.source_size.0 as f32,
                 st.develop.source_size.1 as f32,
             );
+            // From the box on show: under an aspect held, the held
+            // aspect's, which the panel's geometry says.
             st.develop.crop_drag = Some(read_geometry(&app).effective_crop(sw, sh));
         });
     }
@@ -329,7 +495,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                     !st.develop.edit.needs_frame(),
                 )
             };
-            pick_aspect(&app, sw, sh);
+            if let Some(picked) = pick_aspect(&app, sw, sh) {
+                remember_last(&mut state.borrow_mut(), picked);
+            }
             refit_crop(&app, sw, sh, settled);
             app.invoke_view_changed();
         });
@@ -346,6 +514,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             app.set_geo_turns(0);
             app.set_geo_flip(false);
             set_crop(&app, None);
+            app.set_aspect_held(false);
             app.set_aspect_name("Free".into());
             app.set_aspect_fitted("Free".into());
             app.set_portrait(false);
@@ -1498,5 +1667,296 @@ mod tests {
             c.w * pw > c.h * ph,
             "a turned tall frame's own shape is wide"
         );
+    }
+
+    /// A frame of the window's folder opened, as a click on its cell
+    /// opens it, with its develop landed: `sw` by `sh`, and the
+    /// crop mode as it was.
+    fn open_frame(app: &App, state: &Rc<RefCell<crate::State>>, i: i32, (sw, sh): (u32, u32)) {
+        app.invoke_select(i);
+        let mut st = state.borrow_mut();
+        st.develop.source_size = (sw, sh);
+        super::start_landed(&mut st, app);
+    }
+
+    /// The Crop button, as the Crop tab's own: crop mode on.
+    fn press_crop(app: &App) {
+        app.set_crop_mode(true);
+        app.invoke_crop_toggled();
+    }
+
+    /// The Done button: crop mode off.
+    fn press_done(app: &App) {
+        app.set_crop_mode(false);
+        app.invoke_crop_toggled();
+    }
+
+    /// The Settings sheet's Aspect row, chosen.
+    fn choose_start(app: &App, name: &str) {
+        app.set_crop_start(name.into());
+        app.invoke_crop_start_changed();
+    }
+
+    /// The crop's starting aspect, each of the Settings sheet's three:
+    /// a frame with no crop of its own opens its crop under it when
+    /// the Crop button is pressed, and a frame whose sidecar holds a
+    /// crop keeps that crop and its aspect whichever is chosen.
+    #[test]
+    fn the_crop_opens_under_the_starting_aspect() {
+        let app = window(8);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(8));
+        app.set_panel_tab("Crop".into());
+        let kept = Crop {
+            x: 0.1,
+            y: 0.2,
+            w: 0.5,
+            h: 0.3,
+        };
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars[7].current.geometry.crop = Some(kept);
+            st.sidecars[7].current.geometry.aspect = crate::Aspect::Ratio { w: 16.0, h: 9.0 };
+        }
+        let wide = (6000, 4000);
+        let tall = (4000, 6000);
+
+        // Original, the default: the frame's own shape, the switch
+        // off for it on a tall frame as on a wide one, and no crop
+        // laid down until one is drawn.
+        assert_eq!(app.get_crop_start(), "Original");
+        open_frame(&app, &state, 0, wide);
+        assert_eq!(
+            app.get_aspect_name(),
+            "Free",
+            "nothing before the crop opens"
+        );
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "Original");
+        assert!(!app.get_portrait() && !app.get_geo_has_crop());
+        // A corner dragged keeps the frame's shape.
+        let g = super::read_geometry(&app);
+        let (pw, ph) = g.plane_size(6000.0, 4000.0);
+        assert_eq!(g.aspect.ratio(pw, ph, g.portrait), Some(1.5));
+        press_done(&app);
+        open_frame(&app, &state, 1, tall);
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "Original");
+        assert!(!app.get_portrait());
+        press_done(&app);
+
+        // A frame cropped already keeps its own.
+        open_frame(&app, &state, 7, wide);
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "16:9");
+        assert_eq!(super::read_geometry(&app).crop, Some(kept));
+        press_done(&app);
+
+        // Free: as before the setting, any shape.
+        choose_start(&app, "Free");
+        open_frame(&app, &state, 2, wide);
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "Free");
+        assert!(!app.get_geo_has_crop());
+
+        // Last used: nothing picked yet is Free; a pick from the list
+        // on one frame is where the next uncropped one opens, the
+        // switch the way that frame stands.
+        choose_start(&app, "Last used");
+        open_frame(&app, &state, 3, wide);
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "Free");
+        pick(&app, "3:2");
+        press_done(&app);
+        open_frame(&app, &state, 4, tall);
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "3:2");
+        assert!(app.get_portrait(), "a tall frame's 3:2 is tall");
+        // A custom ratio typed is a pick too.
+        app.set_aspect_custom("7:5".into());
+        pick(&app, "Custom");
+        press_done(&app);
+        open_frame(&app, &state, 5, wide);
+        press_crop(&app);
+        assert_eq!(
+            (app.get_aspect_name(), app.get_aspect_custom()),
+            ("Custom".into(), "7:5".into())
+        );
+        press_done(&app);
+        // And the cropped frame still keeps its own.
+        open_frame(&app, &state, 7, wide);
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "16:9");
+        assert_eq!(super::read_geometry(&app).crop, Some(kept));
+    }
+
+    /// A frame opened with crop mode still on, moving through a shoot
+    /// cropping each: it takes the starting aspect once its develop
+    /// has said which way up it stands; and once only, so a Free
+    /// picked on it stands.
+    #[test]
+    fn a_frame_opened_while_cropping_opens_under_the_starting_aspect() {
+        let app = window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.set_panel_tab("Crop".into());
+        choose_start(&app, "Last used");
+        open_frame(&app, &state, 0, (6000, 4000));
+        press_crop(&app);
+        pick(&app, "1:1");
+        open_frame(&app, &state, 1, (4000, 6000));
+        assert!(app.get_crop_mode());
+        assert_eq!(app.get_aspect_name(), "1:1");
+        pick(&app, "Free");
+        super::start_landed(&mut state.borrow_mut(), &app);
+        assert_eq!(
+            app.get_aspect_name(),
+            "Free",
+            "laid once, not on every develop"
+        );
+    }
+
+    /// The choice and the last aspect picked are kept in the settings
+    /// file as they change, and a run started afresh on that file
+    /// opens the crop where the last one left off.
+    #[test]
+    fn the_starting_aspect_and_the_last_pick_outlive_the_session() {
+        let dir = crate::testing::scratch_dir("crop-start");
+        let file = dir.join("settings.json");
+        {
+            let app = window(2);
+            let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+            state.borrow_mut().window.settings_file = Some(file.clone());
+            app.set_panel_tab("Crop".into());
+            choose_start(&app, "Last used");
+            open_frame(&app, &state, 0, (6000, 4000));
+            press_crop(&app);
+            pick(&app, "4:3");
+        }
+        let kept = crate::settings::Settings::load_from(&file);
+        assert_eq!(
+            (kept.crop_start.as_str(), kept.crop_last.as_str()),
+            ("Last used", "4:3")
+        );
+
+        // The next run, as its launch reads the file.
+        let app = window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        super::take_settings(&mut state.borrow_mut(), &kept);
+        app.set_panel_tab("Crop".into());
+        open_frame(&app, &state, 1, (6000, 4000));
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "4:3");
+        assert!(!app.get_portrait());
+        // The sheet shows the choice kept.
+        app.invoke_settings_asked();
+        assert_eq!(app.get_crop_start(), "Last used");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The sidecars' rest, past the save's wait.
+    fn rest() {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+            crate::panel::edit::SAVE_MS + 100,
+        ));
+    }
+
+    /// The bottom right handle dragged up and in, as a hand on it.
+    fn drag_corner(app: &App) {
+        app.invoke_crop_pressed(4);
+        app.invoke_crop_dragged(4, -40.0, -20.0);
+        app.invoke_crop_released();
+    }
+
+    /// Original over no crop is the whole frame, so opening the crop
+    /// under it stores nothing: no edit, no step, no sidecar, until a
+    /// drag takes the aspect into the edit.
+    #[test]
+    fn opening_the_crop_under_original_stores_nothing() {
+        let dir = crate::testing::scratch_dir("crop-original-nothing");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, vec![raw.clone()]);
+        state.borrow_mut().window.write_sidecars = true;
+        app.set_panel_tab("Crop".into());
+        open_frame(&app, &state, 0, (6000, 4000));
+        state.borrow_mut().develop.zoom = 1.0;
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "Original", "on the panel");
+        rest();
+        press_done(&app);
+        rest();
+        {
+            let st = state.borrow();
+            let stored = super::super::edit::read_edit(&app, &st.develop.edit, None);
+            assert_eq!(stored, greycard_edit::Edit::default(), "the edit untouched");
+            assert_eq!(st.develop.edit, greycard_edit::Edit::default());
+            assert!(st.sidecars[0].history.is_empty(), "no step");
+        }
+        assert!(
+            !greycard_edit::Sidecar::path_for(&raw).exists(),
+            "no sidecar written"
+        );
+        // The first drag is the user's: the aspect goes in with it.
+        press_crop(&app);
+        drag_corner(&app);
+        rest();
+        let st = state.borrow();
+        // As saved: the drag's step on the frame's line.
+        let geometry = &st.sidecars[0].current.geometry;
+        assert_eq!(geometry.aspect, crate::Aspect::Original);
+        let c = geometry.crop.expect("the drag made a crop");
+        assert!(
+            ((c.w * 6000.0) / (c.h * 4000.0) - 1.5).abs() < 1e-3,
+            "held to the frame's shape: {c:?}"
+        );
+        assert_eq!(st.sidecars[0].history.len(), 1);
+        drop(st);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Moving on to another frame with the crop open under Last used
+    /// at 1:1: the next frame shows 1:1 on the panel and is not
+    /// cropped until a drag there takes it.
+    #[test]
+    fn a_frame_arrived_at_while_cropping_is_not_cropped_until_touched() {
+        let app = window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.set_panel_tab("Crop".into());
+        choose_start(&app, "Last used");
+        open_frame(&app, &state, 0, (6000, 4000));
+        state.borrow_mut().develop.zoom = 1.0;
+        press_crop(&app);
+        pick(&app, "1:1");
+        rest();
+        open_frame(&app, &state, 1, (6000, 4000));
+        state.borrow_mut().develop.zoom = 1.0;
+        assert!(app.get_crop_mode());
+        assert_eq!(app.get_aspect_name(), "1:1", "held on the panel");
+        rest();
+        {
+            let st = state.borrow();
+            let stored = super::super::edit::read_edit(&app, &st.develop.edit, None);
+            assert_eq!(stored.geometry, crate::Geometry::default(), "not cropped");
+            assert!(st.sidecars[1].history.is_empty());
+        }
+        // The box drawn is the held aspect's, as the list says: the
+        // viewport draws the panel's geometry while it is held.
+        assert!(app.get_aspect_held());
+        let shown = super::read_geometry(&app).effective_crop(6000.0, 4000.0);
+        assert!(
+            ((shown.w * 6000.0) / (shown.h * 4000.0) - 1.0).abs() < 1e-3,
+            "the box on show is a square: {shown:?}"
+        );
+        drag_corner(&app);
+        rest();
+        let st = state.borrow();
+        let geometry = &st.sidecars[1].current.geometry;
+        assert_eq!(geometry.aspect, crate::Aspect::Ratio { w: 1.0, h: 1.0 });
+        let c = geometry.crop.expect("the drag made a crop");
+        assert!(
+            ((c.w * 6000.0) / (c.h * 4000.0) - 1.0).abs() < 1e-3,
+            "a square: {c:?}"
+        );
+        assert_eq!(st.sidecars[1].history.len(), 1);
     }
 }

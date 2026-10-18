@@ -51,7 +51,28 @@ pub(crate) struct Sheet {
     /// The folder the browser showed when the import began: the
     /// import opens its own at the end only if the user is still there.
     pub(crate) folder_at_start: Option<PathBuf>,
+    /// Add in place's folder, and what it holds once read: its frames
+    /// and the folders under it. The reading the window last asked
+    /// for, as `generation` is the source's.
+    pub(crate) place: Option<PathBuf>,
+    pub(crate) place_read: Option<Held>,
+    pub(crate) place_generation: u64,
 }
+
+/// What a folder Add in place would add holds: its frames, those in
+/// the folders under it too, and how many folders are under it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Held {
+    pub(crate) frames: usize,
+    pub(crate) subfolders: usize,
+    /// Folders under it that could not be read, passed over.
+    pub(crate) unreadable: usize,
+}
+
+/// The sheet's two choices, as its row spells them. Copy is the one it
+/// opens on.
+pub(crate) const COPY: &str = "Copy";
+pub(crate) const ADD_IN_PLACE: &str = "Add in place";
 
 /// How long a closing window waits for the frame in hand before it
 /// gives up and says so in the log. A 100 MB raw off a slow card
@@ -84,7 +105,34 @@ pub(crate) fn note_text(scan: &Scan) -> String {
             scan.left.len()
         ));
     }
+    s.push_str(&unreadable_words(scan.unreadable));
     s
+}
+
+/// What the note under Add in place's folder says of what it holds.
+pub(crate) fn place_note(held: &Held) -> String {
+    let folders = match held.subfolders {
+        0 => "no subfolders".to_string(),
+        1 => "1 subfolder".to_string(),
+        n => format!("{n} subfolders"),
+    };
+    let mut s = if held.frames == 0 {
+        format!("no frames here the editor opens; {folders}")
+    } else {
+        format!("{}, {folders}", import::frames(held.frames))
+    };
+    s.push_str(&unreadable_words(held.unreadable));
+    s
+}
+
+/// The note's tail for folders that could not be read; nothing for
+/// none.
+fn unreadable_words(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => "; 1 folder could not be read".into(),
+        n => format!("; {n} folders could not be read"),
+    }
 }
 
 /// The options the sheet makes, when it makes any.
@@ -183,6 +231,14 @@ pub(crate) fn show(st: &State, app: &App) {
         ""
     };
     app.set_import_folders_note(note.into());
+    app.set_import_place(path_text(&st.import.place));
+    // Add in place: a folder chosen and read, with frames in it.
+    if app.get_import_mode() == ADD_IN_PLACE {
+        let frames = st.import.place_read.map_or(0, |h| h.frames);
+        app.set_import_count(frames as i32);
+        app.set_import_ready(st.import.place.is_some() && frames > 0 && st.import.job.is_none());
+        return;
+    }
     let count = st.import.scan.as_ref().map_or(0, |s| s.items.len());
     app.set_import_count(count as i32);
     let (text, ready) = preview(
@@ -264,10 +320,10 @@ fn read_source(st: &mut State, app: &App, source: PathBuf) {
     std::thread::spawn(move || {
         let started = std::time::Instant::now();
         let read = import::scan(&source).map(|scan| {
-            let first = scan
-                .items
-                .first()
-                .map(|item| import::fields_of(&item.file, 1));
+            let first = scan.items.first().map(|item| Fields {
+                folder: import::folder_under(&source, &item.file),
+                ..import::fields_of(&item.file, 1)
+            });
             (scan, first)
         });
         let seconds = started.elapsed().as_secs_f64();
@@ -277,6 +333,64 @@ fn read_source(st: &mut State, app: &App, source: PathBuf) {
             }
         });
     });
+}
+
+/// Read what Add in place's `folder` holds, on a thread; the answer
+/// is heard by [`place_read`] unless another was asked for since.
+pub(crate) fn read_place(st: &mut State, app: &App, folder: PathBuf) {
+    st.import.place_generation += 1;
+    let generation = st.import.place_generation;
+    st.import.place = Some(folder.clone());
+    st.import.place_read = None;
+    app.set_import_place_note(format!("reading {}...", folder.display()).into());
+    show(st, app);
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let read = import::scan(&folder).map(|scan| Held {
+            frames: scan.items.len(),
+            subfolders: import::subfolders(&folder),
+            unreadable: scan.unreadable,
+        });
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                place_read(&mut state.borrow_mut(), &app, generation, read);
+            }
+        });
+    });
+}
+
+/// What Add in place's reading found, on the window's thread.
+pub(crate) fn place_read(st: &mut State, app: &App, generation: u64, read: Result<Held>) {
+    if generation != st.import.place_generation {
+        return;
+    }
+    match read {
+        Ok(held) => {
+            app.set_import_place_note(place_note(&held).into());
+            st.import.place_read = Some(held);
+        }
+        Err(e) => {
+            app.set_import_place_note(format!("{e:#}").into());
+            st.import.place_read = None;
+        }
+    }
+    show(st, app);
+}
+
+/// Add in place: the folder added to the library as Add a root adds
+/// one, and opened; nothing copied, nothing written beside its
+/// frames. The sheet goes.
+pub(crate) fn add_in_place(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+    let folder = {
+        let st = state.borrow();
+        let ready = st.import.place_read.is_some_and(|h| h.frames > 0);
+        match st.import.place.clone() {
+            Some(folder) if ready && st.import.job.is_none() => folder,
+            _ => return,
+        }
+    };
+    app.set_import_open(false);
+    crate::roots::add_and_open(state, app, worker, &folder);
 }
 
 /// What the source reading found, on the window's thread.
@@ -332,6 +446,8 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         return;
     }
     st.import.asked_at = Some(std::time::Instant::now());
+    // Copy is where the sheet opens, whatever it was left on.
+    app.set_import_mode(COPY.into());
     if !st.import.filled {
         st.import.filled = true;
         // From the file this run writes to, so a snapshot or a test
@@ -655,7 +771,7 @@ fn say(app: &App, line: String) {
     app.set_import_status(line.into());
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
     {
         let state = state.clone();
         let weak = app.as_weak();
@@ -697,11 +813,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
         });
     }
     {
-        let state = state.clone();
+        let (state, worker) = (state.clone(), worker.clone());
         let weak = app.as_weak();
         app.on_import_started(move || {
             let app = weak.unwrap();
-            start(&mut state.borrow_mut(), &app);
+            if app.get_import_mode() == ADD_IN_PLACE {
+                add_in_place(&state, &app, &worker);
+            } else {
+                start(&mut state.borrow_mut(), &app);
+            }
         });
     }
     {
@@ -728,6 +848,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let (title, now) = match which.as_str() {
                 "source" => ("Import from", &st.import.source),
                 "destination" => ("Import to", &st.import.destination),
+                "place" => ("Add to the library in place", &st.import.place),
                 _ => ("Back up to", &st.import.backup),
             };
             let start = now
@@ -746,6 +867,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                     match chosen {
                         Ok(Some(folder)) => match which.as_str() {
                             "source" => read_source(&mut st, &app, folder),
+                            "place" => read_place(&mut st, &app, folder),
                             "destination" => {
                                 st.import.destination = Some(folder);
                                 look_at_folders(&mut st, &app);
@@ -812,11 +934,21 @@ pub(crate) fn headless(opts: Options, preset: Option<&str>) -> Result<std::proce
     import::log_report(&opts, &scan, &report);
     // The status line's words, for whoever ran it: the log is a file.
     eprintln!("{}", report.line(&opts.destination));
-    Ok(if report.error.is_some() {
+    Ok(exit_code(&report))
+}
+
+/// `--import`'s exit: 1 when it stopped on an error; 2 when it went
+/// through but did not reach every frame (a folder that could not be
+/// read), as `--export` says a run that left frames out; 0 when it
+/// imported everything there was.
+pub(crate) fn exit_code(report: &Report) -> std::process::ExitCode {
+    if report.error.is_some() {
         std::process::ExitCode::FAILURE
+    } else if report.unreadable > 0 {
+        std::process::ExitCode::from(2)
     } else {
         std::process::ExitCode::SUCCESS
-    })
+    }
 }
 
 #[cfg(test)]
@@ -834,6 +966,7 @@ mod tests {
             name: "IMG_0001".into(),
             camera: "Canon EOS R6".into(),
             seq: 1,
+            folder: String::new(),
         }
     }
 
@@ -863,6 +996,7 @@ mod tests {
                 })
                 .collect(),
             left: Vec::new(),
+            unreadable: 0,
         }
     }
 
@@ -1024,6 +1158,223 @@ mod tests {
         crate::testing::press(&app, slint::platform::Key::Escape);
         assert!(!app.get_import_open());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The sheet opens on Copy every time, a card found filling From
+    /// as before, whatever it was left on; Add in place is a choice
+    /// made on it.
+    #[test]
+    fn the_sheet_opens_on_copy_with_the_card_found() {
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.invoke_import_asked();
+        assert!(app.get_import_open());
+        assert_eq!(app.get_import_mode(), COPY);
+        let dir = crate::testing::scratch_dir("import-opens-on-copy");
+        let card = dir.join("EOS_DIGITAL/DCIM");
+        std::fs::create_dir_all(card.join("100CANON")).unwrap();
+        found(&mut state.borrow_mut(), &app, Some(card.clone()), 3, 0.001);
+        assert_eq!(
+            state.borrow().import.source.as_deref(),
+            Some(card.as_path())
+        );
+        // Left on Add in place, closed, and asked for again.
+        app.set_import_mode(ADD_IN_PLACE.into());
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_import_open());
+        app.invoke_import_asked();
+        assert_eq!(app.get_import_mode(), COPY, "it opens on Copy");
+        assert_eq!(
+            state.borrow().import.source.as_deref(),
+            Some(card.as_path())
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Add in place: any folder, its frames and its subfolders
+    /// counted; Import adds it to the library as Add a root does and
+    /// opens it, and nothing is copied or written beside its frames.
+    #[test]
+    fn add_in_place_adds_the_folder_as_a_root_and_opens_it() {
+        use crate::roots::View;
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let dir = crate::testing::scratch_dir("import-in-place");
+        let job = dir.join("job");
+        for f in ["ceremony/A001.CR3", "reception/late/B001.CR3", "C001.CR3"] {
+            let p = job.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"raw").unwrap();
+        }
+        let listed = |d: &Path| {
+            let mut out = Vec::new();
+            let mut stack = vec![d.to_path_buf()];
+            while let Some(d) = stack.pop() {
+                for e in std::fs::read_dir(&d).unwrap().flatten() {
+                    if e.file_type().unwrap().is_dir() {
+                        stack.push(e.path());
+                    }
+                    out.push(e.path());
+                }
+            }
+            out.sort();
+            out
+        };
+        let before = listed(&dir);
+
+        app.invoke_import_asked();
+        app.set_import_mode(ADD_IN_PLACE.into());
+        assert!(!app.get_import_ready(), "no folder chosen yet");
+        // The folder chosen and read, as its thread would post it.
+        let generation = {
+            let mut st = state.borrow_mut();
+            st.import.place = Some(job.clone());
+            st.import.place_generation += 1;
+            st.import.place_generation
+        };
+        let read = import::scan(&job).map(|scan| Held {
+            frames: scan.items.len(),
+            subfolders: import::subfolders(&job),
+            unreadable: scan.unreadable,
+        });
+        place_read(&mut state.borrow_mut(), &app, generation, read);
+        assert_eq!(app.get_import_place_note(), "3 frames, 3 subfolders");
+        assert_eq!(app.get_import_count(), 3);
+        assert!(app.get_import_ready());
+
+        app.invoke_import_started();
+        assert!(!app.get_import_open());
+        let st = state.borrow();
+        assert_eq!(st.views.library.roots.list(), std::slice::from_ref(&job));
+        assert_eq!(
+            st.views.library.wanted,
+            Some(View::Roots(Some(job.clone()))),
+            "its view is what opens, once the index is there"
+        );
+        assert!(st.import.job.is_none(), "no copy started");
+        drop(st);
+        assert_eq!(listed(&dir), before, "nothing copied or written");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A folder with one subfolder that cannot be read is still
+    /// offered, as Add a root takes it: the rest counted, and the one
+    /// passed over said.
+    #[cfg(unix)]
+    #[test]
+    fn a_subfolder_that_cannot_be_read_is_passed_over_and_said() {
+        use std::os::unix::fs::PermissionsExt;
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let dir = crate::testing::scratch_dir("import-unreadable");
+        let job = dir.join("job");
+        for f in ["open/A001.CR3", "shut/B001.CR3", "C001.CR3"] {
+            let p = job.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"raw").unwrap();
+        }
+        let shut = job.join("shut");
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let read = import::scan(&job);
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let scan = read.expect("the folder reads, but for the one");
+        assert_eq!(scan.items.len(), 2);
+        assert_eq!(scan.unreadable, 1);
+        assert!(note_text(&scan).ends_with("; 1 folder could not be read"));
+
+        app.invoke_import_asked();
+        app.set_import_mode(ADD_IN_PLACE.into());
+        let generation = {
+            let mut st = state.borrow_mut();
+            st.import.place = Some(job.clone());
+            st.import.place_generation += 1;
+            st.import.place_generation
+        };
+        let held = Held {
+            frames: scan.items.len(),
+            subfolders: import::subfolders(&job),
+            unreadable: scan.unreadable,
+        };
+        place_read(&mut state.borrow_mut(), &app, generation, Ok(held));
+        assert_eq!(
+            app.get_import_place_note(),
+            "2 frames, 2 subfolders; 1 folder could not be read"
+        );
+        assert!(app.get_import_ready());
+        assert_eq!(app.get_import_count(), 2);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A copy that could not reach every frame never says it is done:
+    /// one folder under the source unreadable, the command line copies
+    /// the rest and exits 2, its line saying what was not imported, and
+    /// the sheet's finished words say the same; the sheet's button
+    /// counted only the frames it could reach.
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_short_of_an_unreadable_folder_says_so_and_exits_2() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::testing::scratch_dir("import-unreadable-copy");
+        let card = dir.join("card");
+        for f in ["open/A001.CR3", "shut/B001.CR3", "C001.CR3"] {
+            let p = card.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, f.as_bytes()).unwrap();
+        }
+        let shut = card.join("shut");
+        let lock =
+            |mode| std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(mode)).unwrap();
+        lock(0o000);
+        let mut o = flags(&card, &dir.join("photos"), None);
+        o.subfolder = "{folder}".into();
+        let code = headless(o.clone(), None);
+        // The sheet's side: the count it offers, and its words at the end.
+        let scan = import::scan(&card);
+        let report = scan
+            .as_ref()
+            .ok()
+            .map(|scan| import::run(&o, scan, &Job::default(), |_, _, _| {}));
+        lock(0o755);
+        assert_eq!(code.unwrap(), std::process::ExitCode::from(2));
+        assert!(dir.join("photos/open/A001.CR3").is_file());
+        assert!(dir.join("photos/C001.CR3").is_file());
+        assert!(!dir.join("photos/shut").exists());
+        let scan = scan.unwrap();
+        let report = report.unwrap();
+        assert_eq!(report.unreadable, 1);
+        assert!(!report.whole());
+        let line = report.line(&dir.join("photos"));
+        assert!(
+            line.ends_with("; 1 folder could not be read, its frames not imported"),
+            "{line}"
+        );
+
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.invoke_import_asked();
+        let generation = state.borrow().import.generation;
+        state.borrow_mut().import.source = Some(card.clone());
+        state.borrow_mut().import.destination = Some(dir.join("photos"));
+        scanned(
+            &mut state.borrow_mut(),
+            &app,
+            generation,
+            Ok((scan, Some(fields()))),
+            0.01,
+        );
+        assert_eq!(app.get_import_count(), 2, "only the frames it reached");
+        assert!(
+            app.get_import_note()
+                .ends_with("; 1 folder could not be read")
+        );
+        finished(&state, &app, &o, report);
+        assert!(
+            app.get_status()
+                .contains("1 folder could not be read, its frames not imported"),
+            "{}",
+            app.get_status()
+        );
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// `--import SRC --to DEST` as the command line parses it, run

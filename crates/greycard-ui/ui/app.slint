@@ -1028,6 +1028,12 @@ export component App inherits Window {
     callback pick-released();
     // The white balance read off the whole picture.
     callback wb-auto();
+    // As shot switched on the panel (`panel::color`): on, the
+    // sliders go back to the camera's white.
+    callback as-shot-toggled();
+    // A double-click on the global Temperature or Tint (`panel::color`):
+    // that slider back to the camera's value.
+    callback wb-slider-reset(string);
     // The chosen adjustment's name, after the sections it colors.
     in-out property <string> target-name: "";
     callback target-changed(int);
@@ -1113,6 +1119,11 @@ export component App inherits Window {
     // squared, a change of the crop's shape was asked to keep, until
     // the crop moves (0 for none).
     in-out property <string> aspect-fitted: "Free";
+    // The crop's starting aspect shown on the panel and not yet the
+    // edit's (`panel::crop::open_under_start`): the edit keeps its own
+    // until a drag, a draw or a pick, so a crop only opened stores
+    // nothing.
+    in-out property <bool> aspect-held: false;
     in-out property <float> crop-kept-area: 0;
     // Whether the picture the crop is measured on stands taller than
     // wide (`viewport::show_source_shape`), and so whether the plane,
@@ -1720,6 +1731,13 @@ export component App inherits Window {
     callback import-pattern-changed();
     changed import-subfolder => { root.import-pattern-changed(); }
     changed import-name => { root.import-pattern-changed(); }
+    // Copy (off a card, the sheet's opening choice) or Add in place
+    // (a folder added to the library where it is, nothing copied),
+    // and Add in place's folder and what it holds.
+    in-out property <string> import-mode: "Copy";
+    in property <string> import-place: "";
+    in property <string> import-place-note: "";
+    changed import-mode => { root.import-pattern-changed(); }
     // The Lightroom catalog import: a catalog chosen, its roots and
     // its set asked, the dry run's report shown, then written on a
     // thread of its own, its progress under the button and on the
@@ -1792,6 +1810,10 @@ export component App inherits Window {
     in-out property <bool> xmp-sidecars: false;
     in-out property <bool> jpegs-apart: false;
     callback jpegs-apart-changed();
+    // The Settings sheet's crop row: the aspect an uncropped frame's
+    // crop opens at (`panel::crop::Start`).
+    in-out property <string> crop-start: "Original";
+    callback crop-start-changed();
     in property <int> sidecars-elsewhere: 0;
     /// How many frames are open, which the count and the move run
     /// over; and whether this run writes sidecars at all.
@@ -2707,6 +2729,8 @@ export component App inherits Window {
                             tint <=> root.tint;
                             raw-input: root.raw-input;
                             develop-changed => { root.develop-changed(); }
+                            as-shot-toggled => { root.as-shot-toggled(); }
+                            wb-slider-reset(w) => { root.wb-slider-reset(w); }
                         }
                         // The chosen mask's own white balance: the light
                         // under it, where that is not the light under the
@@ -3975,6 +3999,9 @@ export component App inherits Window {
         import-count: root.import-count;
         import-ready: root.import-ready;
         import-verify <=> root.import-verify;
+        import-mode <=> root.import-mode;
+        import-place: root.import-place;
+        import-place-note: root.import-place-note;
         import-choose(w) => { root.import-choose(w); }
         import-backup-cleared => { root.import-backup-cleared(); }
         import-started => { root.import-started(); }
@@ -3987,6 +4014,8 @@ export component App inherits Window {
         xmp-sidecars <=> root.xmp-sidecars;
         jpegs-apart <=> root.jpegs-apart;
         jpegs-apart-changed => { root.jpegs-apart-changed(); }
+        crop-start <=> root.crop-start;
+        crop-start-changed => { root.crop-start-changed(); }
         open-frames: root.open-frames;
         sidecars-written: root.sidecars-written;
         sidecars-elsewhere: root.sidecars-elsewhere;

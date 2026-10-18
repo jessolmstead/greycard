@@ -580,6 +580,12 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
         defringe_green_amount: app.get_lens_defringe_green_amount(),
     };
     edit.geometry = read_geometry(app);
+    // A starting aspect held on the panel is not the edit's yet: until
+    // the user acts on the crop, the edit keeps its own.
+    if app.get_aspect_held() {
+        edit.geometry.aspect = base.geometry.aspect;
+        edit.geometry.portrait = base.geometry.portrait;
+    }
     edit.vignette = Vignette {
         enabled: app.get_vignette_enabled(),
         amount: app.get_vignette_amount(),
@@ -669,7 +675,15 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
         app.set_has_feather(false);
     }
     match edit.white_balance {
-        WhiteBalance::AsShot => app.set_as_shot(true),
+        // The sliders show the camera's white under As shot, once the
+        // decode has read it; until then they wait for it.
+        WhiteBalance::AsShot => {
+            app.set_as_shot(true);
+            if let Some((temperature, tint)) = st.develop.as_shot_white {
+                app.set_temperature(temperature);
+                app.set_tint(tint);
+            }
+        }
         WhiteBalance::Custom { temperature, tint } => {
             app.set_as_shot(false);
             app.set_temperature(temperature as f32);
