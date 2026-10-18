@@ -194,7 +194,7 @@ impl DetailPlanes {
     }
 
     /// [`Self::to_image`] box-averaged by `factor` each way, as
-    /// `edited::reduce` averages the picture, without the full-size
+    /// `reduce::reduce` averages the picture, without the full-size
     /// copy in between.
     pub fn to_image_reduced(&self, factor: usize) -> WorkingImage {
         let factor = factor.max(1);
@@ -720,7 +720,7 @@ mod tests {
         .unwrap();
         for k in [1, 2, 3, 5] {
             let a = planes.to_image_reduced(k);
-            let b = crate::edited::reduce(&planes.to_image(), k);
+            let b = crate::reduce::reduce(&planes.to_image(), k);
             assert_eq!((a.width, a.height), (b.width, b.height));
             assert_eq!(a.data, b.data, "by {k}");
         }

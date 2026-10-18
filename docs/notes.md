@@ -373,3 +373,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§358. Microsoft's ONNX Runtime where ours cannot run](notes/358-microsofts-onnx-runtime-where-ours-cannot-run.md) (2026-10-18)
 - [§359. Two views and two modes](notes/359-two-views-and-two-modes.md) (2026-10-18)
 - [§360. A wider Sky raster for the large frames](notes/360-a-wider-sky-raster-for-the-large-frames.md) (2026-10-18)
+- [§361. The render crate](notes/361-the-render-crate.md) (2026-10-18)

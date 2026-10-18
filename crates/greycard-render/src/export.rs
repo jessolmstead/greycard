@@ -67,8 +67,8 @@ impl Format {
     }
 
     /// The file chooser's filter for the format.
-    #[cfg(test)]
-    pub(crate) fn globs(self) -> &'static [&'static str] {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn globs(self) -> &'static [&'static str] {
         match self {
             Format::Jpeg => &["*.jpg", "*.jpeg"],
             Format::Png => &["*.png"],
@@ -452,7 +452,7 @@ pub fn render(
 /// brought into the frame as `image` was, the same size as it: they
 /// are resized here with the picture, by the same filter.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn render_framed(
+pub fn render_framed(
     image: &WorkingImage,
     framed: f32,
     edit: &greycard_edit::Edit,
@@ -606,21 +606,21 @@ pub(crate) fn render_framed(
 /// emulates the finish on a block's means rather than finishing the
 /// whole picture again for every setting tried
 /// (`--fit-lightroom`).
-pub(crate) struct Scene {
-    pub(crate) image: WorkingImage,
+pub struct Scene {
+    pub image: WorkingImage,
     /// The guide at each pixel, none when no shift reads it or the
     /// frame has no plane; the plane's range beside it.
-    pub(crate) guide: Option<Vec<f32>>,
-    pub(crate) range: [f32; 2],
+    pub guide: Option<Vec<f32>>,
+    pub range: [f32; 2],
     /// The vignette's stops at each pixel, zero where it is off.
-    pub(crate) stops: Vec<f32>,
+    pub stops: Vec<f32>,
 }
 
 /// [`render`]'s picture, guide and vignette before the finish, as
 /// [`Scene`] has them: the same resize, the same mapping of a pixel to
 /// the source and the same reading of the plane, so a block's mean of
 /// these is what the finish would have read over that block.
-pub(crate) fn scene_framed(
+pub fn scene_framed(
     image: &WorkingImage,
     edit: &greycard_edit::Edit,
     source: (u32, u32),
@@ -730,7 +730,7 @@ pub fn mark(rendered: &mut Rendered, settings: &Settings) -> Result<()> {
 /// things that read the guide plane. The shifts read its regions;
 /// whites, a white point on the pixel's own luminance, reads only the
 /// frame's range from it, where its pivot sits.
-pub(crate) fn reads_guide(edit: &greycard_edit::Edit) -> bool {
+pub fn reads_guide(edit: &greycard_edit::Edit) -> bool {
     let set = |t: &greycard_edit::Tone| t.highlights != 0.0 || t.shadows != 0.0 || t.whites != 0.0;
     set(&edit.look().light.effective().tone)
         || edit
@@ -755,7 +755,7 @@ pub(crate) fn fit(image: &WorkingImage, long_edge: Option<u32>) -> Option<Workin
 
 /// `image` resampled to `w` by `h` as [`fit`] resamples it, up or down;
 /// `None` when it is that size already.
-pub(crate) fn fit_exact(image: &WorkingImage, w: u32, h: u32) -> Option<WorkingImage> {
+pub fn fit_exact(image: &WorkingImage, w: u32, h: u32) -> Option<WorkingImage> {
     if (image.width as u32, image.height as u32) == (w, h) {
         return None;
     }

@@ -968,7 +968,7 @@ mod tests {
                 agx.curve.shoulder_scale
             ]
         );
-        let shader = include_str!("viewport.wgsl");
+        let shader = include_str!("../../greycard-ui/src/viewport.wgsl");
         let wanted = [("AGX_WHITE_PAST", WHITE_PAST)];
         let literals: Vec<f32> = wanted
             .iter()

@@ -591,22 +591,7 @@ fn set_text(text: &str, target: u32) -> Result<(u32, u32, Vec<f32>)> {
 pub(crate) mod tests {
     use super::*;
 
-    /// A picture `size` high and twice as wide, clear but for a white
-    /// bar across its middle half, written as a PNG under `dir`.
-    pub(crate) fn bar_png(dir: &std::path::Path, size: u32) -> PathBuf {
-        let mut img = image::RgbaImage::new(size * 2, size);
-        for (_, y, p) in img.enumerate_pixels_mut() {
-            let inside = y >= size / 4 && y < size * 3 / 4;
-            p.0 = if inside {
-                [255, 255, 255, 255]
-            } else {
-                [0, 0, 0, 0]
-            };
-        }
-        let path = dir.join("mark.png");
-        img.save(&path).unwrap();
-        path
-    }
+    pub(crate) use crate::testing::bar_png;
 
     /// Whether this machine has no font for a text mark, said out loud
     /// so a skip is never a silent pass.

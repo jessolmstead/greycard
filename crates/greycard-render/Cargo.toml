@@ -1,0 +1,38 @@
+[package]
+name = "greycard-render"
+version.workspace = true
+description = "A developed frame made into a picture or a file: the finish, AgX, the detail bands, the geometry, the border, the watermark and the export"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+
+[dependencies]
+greycard-core = { path = "../greycard-core" }
+greycard-edit = { path = "../greycard-edit" }
+rayon.workspace = true
+image.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+# The detail bands are half floats, and the export's ICC profiles and
+# conversions are lcms2's. Both are greycard-ui's, feature for feature;
+# keep the lists the same, so a build of this crate alone resolves them
+# as the editor's build does.
+half = { version = "2", features = ["bytemuck"] }
+lcms2 = "6"
+# The watermark's text: the system's sans-serif found the way Slint
+# finds its own, and rasterized. Both already in the tree.
+fontique = "0.11"
+ab_glyph = "0.2"
+# A character's script, for the font fallback. Already in the tree.
+unicode-script = "0.5"
+
+[features]
+# The test helpers the editor's own tests share with these (a camera
+# profile, a scratch folder's removal, a watermark picture), and the
+# references they hold the viewport to. Turned on by greycard-ui's
+# dev-dependency only.
+testing = []

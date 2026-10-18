@@ -39,7 +39,7 @@ import PyOpenColorIO as o
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 cfg = o.Config.CreateFromFile(f"{root}/target/blender-agx/config.ocio")
-out_path = f"{root}/crates/greycard-ui/tests/fixtures/agx-oracle.txt"
+out_path = f"{root}/crates/greycard-render/tests/fixtures/agx-oracle.txt"
 MID = 0.18
 
 # The generator's matrices (its "id65" set) from the LUT's E-Gamut log

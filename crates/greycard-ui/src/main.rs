@@ -12,10 +12,8 @@
 // it passes down, but does not wait for it.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-mod agx;
 mod ai;
 mod archive;
-mod border;
 mod camera_match;
 mod carry;
 mod cells;
@@ -24,18 +22,14 @@ mod clipboard;
 mod collections;
 mod cull;
 mod delete;
-mod detail;
 mod display;
 mod edited;
 mod entry;
-mod export;
 mod export_queue;
 mod files;
 mod filter;
 mod finder;
-mod finish;
 mod fit_lightroom;
-mod geometry;
 mod grid;
 mod headless;
 mod import;
@@ -74,11 +68,14 @@ mod thumbpool;
 mod tree;
 mod update;
 mod versions;
-mod watermark;
 mod wheel;
 mod window_fit;
 mod worker;
 mod zoom;
+
+// What renders a developed frame into a picture or a file, in a crate
+// of its own below the window; named here as the modules were.
+pub(crate) use greycard_render::{agx, border, detail, export, finish, geometry, watermark};
 
 pub(crate) use std::cell::RefCell;
 pub(crate) use std::collections::HashMap;

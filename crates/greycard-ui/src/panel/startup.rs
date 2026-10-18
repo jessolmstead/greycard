@@ -2204,7 +2204,7 @@ mod tests {
     use greycard_core::image::WorkingImage;
 
     fn remembered_with_presets(dir: &Path) -> settings::Settings {
-        let png = crate::watermark::tests::bar_png(dir, 40);
+        let png = crate::testing::bar_png(dir, 40);
         settings::Settings {
             export: Sheet {
                 size: "Full".into(),

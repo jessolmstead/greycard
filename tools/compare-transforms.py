@@ -84,7 +84,7 @@ def through(cfg, src, display, view, img, look=None):
 # before its curve, with the sliders at rest; and the gain greycard's AgX
 # mode applies inside itself so that mid grey lands where the curve per
 # channel puts it, in stops, given to OCIO too. The gain and the white
-# are found at construction in `Agx::blender_punchy` (crates/greycard-ui/
+# are found at construction in `Agx::blender_punchy` (crates/greycard-render/
 # src/agx.rs) and cannot be imported here; these are what the test
 # `mid_grey_through_agx_is_per_channels` printed at the commit that set
 # the white at the sensor clip (white relative exposure 3.8721 stops).

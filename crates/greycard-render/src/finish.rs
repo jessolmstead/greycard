@@ -497,7 +497,7 @@ pub fn plane_range(data: &[f32]) -> [f32; 2] {
 /// and shifts add, contrast adds its excess over one, the mixer's
 /// bands add, a point curve adds its departure from the line before
 /// the global curve, and the color shifts add.
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 pub fn finish_pixel(
     px: [f32; 3],
     global: &Baked,
@@ -3236,7 +3236,7 @@ mod tests {
                 assert!((after[k] - c[k]).abs() < 1e-3 * v, "{c:?} {after:?}");
             }
         }
-        let shader = include_str!("viewport.wgsl");
+        let shader = include_str!("../../greycard-ui/src/viewport.wgsl");
         for (name, value) in [("SHADE_BLACK", SHADE_BLACK), ("SHADE_LIGHT", SHADE_LIGHT)] {
             let prefix = format!("const {name}: f32 = ");
             let line = shader.lines().find(|l| l.starts_with(&prefix)).expect(name);

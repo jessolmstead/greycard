@@ -2097,6 +2097,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "greycard-render"
+version = "0.7.0"
+dependencies = [
+ "ab_glyph",
+ "anyhow",
+ "fontique",
+ "greycard-core",
+ "greycard-edit",
+ "half",
+ "image",
+ "lcms2",
+ "rayon",
+ "tracing",
+ "unicode-script",
+]
+
+[[package]]
 name = "greycard-slint"
 version = "0.7.0"
 dependencies = [
@@ -2108,7 +2125,6 @@ dependencies = [
 name = "greycard-ui"
 version = "0.7.0"
 dependencies = [
- "ab_glyph",
  "anyhow",
  "blake3",
  "bytemuck",
@@ -2116,7 +2132,6 @@ dependencies = [
  "clap",
  "dirs",
  "dunce",
- "fontique",
  "greycard-ai",
  "greycard-core",
  "greycard-edit",
@@ -2124,6 +2139,7 @@ dependencies = [
  "greycard-lens",
  "greycard-library",
  "greycard-match",
+ "greycard-render",
  "greycard-slint",
  "half",
  "i-slint-backend-testing",
@@ -2145,7 +2161,6 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "trash",
- "unicode-script",
  "ureq",
  "webbrowser",
  "windows-sys 0.59.0",

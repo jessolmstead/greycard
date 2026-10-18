@@ -39,8 +39,6 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] The window's structure: a render crate holding the finish and
-      the export (Pool)
 - [ ] The window no longer dies when its surface is reconfigured
       while the worker is on the GPU (issue #27)
 - [ ] The curve's end points slide along their edges, for the input
@@ -527,12 +525,11 @@ clears or a tester asks for it.
       `chooser.rs` (landed, §356); a render crate
       between edit and the window holding the finish, agx, detail,
       export, border, watermark and geometry with their test helpers
-      (10,100 lines, 103 tests, nothing of `State` or `App` in them,
-      the window re-exporting the module names so call sites stand;
-      the CLI and a headless worker then render without the window,
-      which is what an outside review asked for, and keeping the
-      edit schema and the tone choice out of core stays deliberate);
-      a thin views crate with only the shared types
+      (landed, §361: 104 tests moved, the window's build within
+      noise of before, so the gain is the boundary and not the
+      build; the CLI and the headless export still reach it through
+      the window and could depend on it directly); a thin views
+      crate with only the shared types
       (`versions::{Key, Cell}`, `rows::FromRow`, `file_name`, called
       from 51 places outside), depending on the Slint and render
       crates and never the window; the model modules with no outward
