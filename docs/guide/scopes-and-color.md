@@ -81,10 +81,16 @@ switch on **SOFT PROOF** at the end of the **Develop** tab.
   brought in. For sRGB, Display P3, Rec.2020 and Adobe RGB the two look the same;
   the choice matters for a printer profile.
 - **Gamut warning** paints grey where a color falls outside the
-  profile.
+  profile. It is off until you switch it on.
 
 The profile and the intent are remembered; whether the proof is on is
 not.
+
+While the proof is on, a small badge in the top left corner of the
+picture names it, as in "Proof: sRGB", with "· gamut" added when the
+gamut warning is on. Click the badge, or press **S** again, to turn the
+proof off. Culling never shows the badge: the camera's JPEG is not
+proofed.
 
 ## Your monitor's profile
 

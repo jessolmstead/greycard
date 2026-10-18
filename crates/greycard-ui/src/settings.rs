@@ -260,7 +260,7 @@ impl Default for Settings {
             warn_highlights: false,
             proof_profile: crate::export::Space::Srgb.name().into(),
             proof_intent: crate::display::ProofIntent::default().name().into(),
-            gamut_warning: true,
+            gamut_warning: false,
             display_profile: "System".into(),
             display_monitor: String::new(),
             canvas_color: crate::render::CANVAS_NAMES[0].into(),
@@ -440,7 +440,7 @@ mod tests {
             warn_highlights: false,
             proof_profile: "/tmp/paper.icc".into(),
             proof_intent: "Relative".into(),
-            gamut_warning: false,
+            gamut_warning: true,
             display_profile: "Adobe RGB".into(),
             display_monitor: "PA279CRV".into(),
             canvas_color: "Mid grey".into(),
@@ -623,6 +623,11 @@ mod tests {
         // A file that is not there is the defaults, not an error.
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(Settings::load_from(&path), Settings::default());
+    }
+
+    #[test]
+    fn the_gamut_warning_is_off_by_default() {
+        assert!(!Settings::default().gamut_warning);
     }
 
     #[test]

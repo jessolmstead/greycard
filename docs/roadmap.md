@@ -43,14 +43,6 @@ ours, so a tester brings a library over in one go.
       then a render crate holding the finish and the export (the Slint
       UI in a crate of its own landed as §351, the window's own build
       from 115 s and 9 GB to 24 s and 2.3 GB; Pool)
-- [ ] A badge on the viewport while the soft proof is on, beside the
-      clipping lamps, naming the profile, and the gamut warning off by
-      default as Lightroom has it: the proof is one S away with the
-      pointer on the picture and is not remembered, and with the
-      warning on a stray S paints flat grey patches that move with
-      the exposure and look like a broken render (it cost an hour on
-      2026-10-18; the scopes bin the painted picture too, so the
-      histogram grew a spike at mid grey)
 - [ ] The capture time shifted on a selection, for a second body
       whose clock was off (two testers, wedding work): a shift kept
       in the sidecar's meta beside the rating, never a rewrite of the

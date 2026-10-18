@@ -1577,10 +1577,23 @@ export component App inherits Window {
     // The soft proof: on or off (S), its profile (a space's name, or
     // "File" with the path), the intent, and the gamut warning.
     in-out property <bool> proofing;
+    /// The file's name without its folder or extension, for the badge
+    /// while the proof's profile is a file; Rust keeps it with
+    /// `proof-file`.
+    in-out property <string> proof-file-stem;
+    /// What the badge on the picture says while the proof is on: the
+    /// profile by name, and that the gamut warning is painting. Empty
+    /// for none, and in culling, where the camera's JPEG is shown
+    /// as it is.
+    out property <string> proof-badge: (root.proofing && !root.culling)
+        ? "Proof: " + (root.proof-profile == "File"
+            ? (root.proof-file-stem == "" ? "File" : root.proof-file-stem) : root.proof-profile)
+            + (root.gamut-warning ? " · gamut" : "")
+        : "";
     in-out property <string> proof-profile: "sRGB";
     in-out property <string> proof-file;
     in-out property <string> proof-intent: "Perceptual";
-    in-out property <bool> gamut-warning: true;
+    in-out property <bool> gamut-warning: false;
     callback proof-changed();
     callback choose-proof-file();
     // The monitor's profile: "System" for colord's, of the monitor
@@ -2460,6 +2473,8 @@ export component App inherits Window {
                 placeholder: root.placeholder;
                 compare-tiles: root.compare-tiles;
                 culling: root.culling;
+                proof-badge: root.proof-badge;
+                proof-off => { root.proofing = false; root.proof-changed(); }
                 frame-rating: root.frame-rating;
                 frame-flag: root.frame-flag;
                 frame-label: root.frame-label;

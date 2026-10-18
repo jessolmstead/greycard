@@ -1486,6 +1486,17 @@ pub(crate) fn display_key(app: &App) -> String {
     }
 }
 
+/// The proof's profile file, and with it the file's stem, which the
+/// badge on the picture names it by.
+pub(crate) fn set_proof_file(app: &App, file: &str) {
+    app.set_proof_file(file.into());
+    let stem = std::path::Path::new(file)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    app.set_proof_file_stem(stem.into());
+}
+
 /// The soft proof as the panel has it, or none while its profile is
 /// a file not yet chosen.
 pub(crate) fn proof_settings(app: &App) -> Option<display::Proof> {
@@ -1606,7 +1617,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let current = PathBuf::from(app.get_proof_file().as_str());
             choose_icc(&app, "Proof profile", current, |app, path| {
-                app.set_proof_file(path.to_string_lossy().as_ref().into());
+                set_proof_file(app, &path.to_string_lossy());
                 app.set_proof_profile(FILE.into());
                 app.set_proofing(true);
             });
@@ -2108,6 +2119,91 @@ mod tests {
     use std::rc::Rc;
 
     use crate::testing::{click, window};
+
+    fn press_key(app: &App, text: &str) {
+        use slint::platform::WindowEvent;
+        app.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: text.into() });
+        app.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: text.into() });
+    }
+
+    /// The pointer on the picture, so the keys reach the editor.
+    fn over_picture(app: &App) {
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(600.0, 400.0),
+            });
+    }
+
+    #[test]
+    fn the_proof_badge_is_hidden_with_the_proof_off() {
+        let app = window(1);
+        assert_eq!(app.get_proof_badge(), "");
+    }
+
+    #[test]
+    fn s_over_the_picture_shows_the_badge_with_the_profiles_name() {
+        let app = window(1);
+        over_picture(&app);
+        app.set_proof_profile("Display P3".into());
+        press_key(&app, "s");
+        assert!(app.get_proofing());
+        assert_eq!(app.get_proof_badge(), "Proof: Display P3");
+        press_key(&app, "s");
+        assert_eq!(app.get_proof_badge(), "");
+    }
+
+    #[test]
+    fn a_profile_file_is_named_by_its_stem() {
+        let app = window(1);
+        assert_eq!(app.get_proof_badge(), "");
+        set_proof_file(&app, "/somewhere/Fogra39 coated.icc");
+        app.set_proof_profile("File".into());
+        app.set_proofing(true);
+        assert_eq!(app.get_proof_badge(), "Proof: Fogra39 coated");
+    }
+
+    #[test]
+    fn the_badge_says_gamut_only_with_the_warning_on() {
+        let app = window(1);
+        app.set_proof_profile("sRGB".into());
+        app.set_proofing(true);
+        assert!(!app.get_gamut_warning(), "off until switched on");
+        assert_eq!(app.get_proof_badge(), "Proof: sRGB");
+        app.set_gamut_warning(true);
+        assert_eq!(app.get_proof_badge(), "Proof: sRGB \u{b7} gamut");
+    }
+
+    #[test]
+    fn a_click_on_the_badge_turns_the_proof_off() {
+        let app = window(1);
+        app.set_proof_profile("sRGB".into());
+        app.set_proofing(true);
+        let changed = Rc::new(Cell::new(0));
+        {
+            let changed = changed.clone();
+            app.on_proof_changed(move || changed.set(changed.get() + 1));
+        }
+        let base =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Viewport")
+                .next()
+                .expect("the viewport is on screen")
+                .absolute_position();
+        click(&app, base.x + 20.0, base.y + 20.0);
+        assert!(!app.get_proofing());
+        assert_eq!(app.get_proof_badge(), "");
+        assert_eq!(changed.get(), 1, "the engine is told");
+    }
+
+    #[test]
+    fn the_badge_is_hidden_in_culling_with_the_proof_on() {
+        let app = window(1);
+        app.set_proofing(true);
+        assert_ne!(app.get_proof_badge(), "");
+        app.set_culling(true);
+        assert_eq!(app.get_proof_badge(), "");
+    }
 
     /// A pick with a single-shot dropper (White, Range, Defringe) does
     /// not zoom: the press puts the dropper down and, for these three,

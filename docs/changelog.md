@@ -87,6 +87,10 @@ design note behind it.
 - Rest the pointer on a look in the list to see it on the picture;
   move off and the kept look returns. A click keeps it
   ([§327](https://github.com/jessolmstead/greycard/blob/master/docs/notes/327-a-look-previewed-under-the-pointer.md))
+- A "Proof: sRGB" pill on the picture while the soft proof is on; a
+  click on it, or S, turns the proof off. The gamut warning is off
+  until you switch it on in SOFT PROOF
+  ([§352](https://github.com/jessolmstead/greycard/blob/master/docs/notes/352-the-soft-proof-named-on-the-picture.md))
 
 ### Export
 

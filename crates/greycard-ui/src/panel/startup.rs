@@ -211,7 +211,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             None => (export::Space::Srgb.name().to_string(), String::new()),
         };
         app.set_proof_profile(choice.as_str().into());
-        app.set_proof_file(file.as_str().into());
+        crate::panel::viewport::set_proof_file(&app, &file);
         let intent = cli
             .proof_intent
             .as_deref()

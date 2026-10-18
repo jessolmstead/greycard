@@ -4,7 +4,7 @@
 
 import { Theme } from "../theme.slint";
 import { Pt, MaskBox, MaskPick, PersonBox, CompareTile } from "../structs.slint";
-import { CropHandle, ThumbBadges, PanelButton } from "../controls.slint";
+import { CropHandle, ThumbBadges, PanelButton, TipArea } from "../controls.slint";
 
 export component Viewport inherits Rectangle {
     /// A name is being typed in a panel's text box: the pointer
@@ -27,6 +27,10 @@ export component Viewport inherits Rectangle {
     /// Culling: the frame on screen's badge in the corner, or one on
     /// each compared tile, and a word for the last key pressed.
     in property <bool> culling;
+    /// While the soft proof is on: its name for a pill in the corner,
+    /// and a click on the pill turns it off. Empty for none.
+    in property <string> proof-badge;
+    callback proof-off();
     in property <int> frame-rating;
     in property <int> frame-flag;
     in property <int> frame-label;
@@ -474,6 +478,30 @@ export component Viewport inherits Rectangle {
         flag: root.frame-flag;
         label: root.frame-label;
         stars: root.meta-stars;
+    }
+    // The soft proof, named, in the top left corner: a stray S looks
+    // like a broken render without it. The pill is the only part of
+    // it that takes the pointer, and a click on it is the way out.
+    if root.proof-badge != "": Rectangle {
+        x: Theme.space-3;
+        y: Theme.space-3;
+        width: proof-word.preferred-width + 2 * Theme.space-2;
+        height: 20px;
+        border-radius: Theme.radius-sm;
+        background: #00000099;
+        accessible-role: button;
+        accessible-label: root.proof-badge;
+        proof-word := Text {
+            text: root.proof-badge;
+            color: Theme.text;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+        TipArea {
+            words: "Soft proof on (S turns it off)";
+            clicked => { root.proof-off(); }
+        }
     }
     // The compare view's frames: a rule round the one the
     // selection is on, each one's name at its top, and its
