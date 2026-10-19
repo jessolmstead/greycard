@@ -139,6 +139,16 @@ Look section's job.
       0.9.0 item, after the modes have settled; the full version, the
       reference redeveloped at the viewport's size and following a
       proof, waits for someone to ask
+- [ ] A menu bar: File, Edit, View, Frame and Help through Slint's
+      MenuBar, which the winit backend hands to the native bar on
+      macOS and Windows (muda, already in the build; SLINT_NO_MUDA
+      turns it off for a snapshot) and draws in the window on Linux;
+      each entry a callback the window already has, its chord shown
+      from the keys table so the menus and the help sheet never
+      drift; the app menu with Quit comes with the backend. Open:
+      whether the drawn bar is kept on Linux and Windows or the
+      MenuBar made conditional on a property, which Slint may not
+      allow. The user's, for the laptop, 0.9.0
 
 ### Speed
 
