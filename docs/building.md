@@ -226,6 +226,17 @@ the desktop entry and icon under `~/.local/share` on Linux, or
 `greycard.app` in `~/Applications` on a Mac. `sh uninstall.sh` takes
 it back out.
 
+On x86_64 Linux, `scripts/appimage.sh` then turns that staging
+directory into `target/dist/greycard-<version>-linux-x86_64.AppImage`,
+the release's fourth file. It fetches appimagetool and the AppImage
+runtime, pinned and checked, into `target/appimagetool/`, and needs
+`curl` and `readelf`. Build with `LCMS2_STATIC=1` as the release does,
+or it stops on the `liblcms2.so.2` the binaries would ask the host for;
+lcms2-sys does not rebuild when that changes, so on a target that has
+built it already, run `cargo clean --release -p lcms2-sys` first. The
+AppImage runs the editor, and `--cli` as its first argument runs the
+command line instead.
+
 ## Before you send a change
 
 The same three the CI runs, all clean:

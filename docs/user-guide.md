@@ -11,6 +11,8 @@ expect, please [report it](#reporting-a-problem).
 ## Before you start
 
 - **A GPU.** Vulkan on Linux and Windows, Metal on a Mac.
+- **On Linux, glibc 2.39 or newer**: Ubuntu 24.04, Fedora 40, Debian
+  13, or later. The tarball and the AppImage both need it.
 - **A Mac with an Apple chip**, if you're on a Mac. There is no build
   for Intel Macs or Windows on ARM.
 - **Raw files.** Tested with Canon, Fujifilm GFX and X-Trans, Sony,
@@ -37,6 +39,16 @@ unpack it.
 
 - **Linux:** run `sh install.sh` in the unpacked folder. `sh
   uninstall.sh` removes it.
+- **Linux, without installing:** `greycard-<version>-linux-x86_64.AppImage`
+  is the editor in one file, nothing to unpack. Make it executable
+  (`chmod +x`) and run it, with a folder or a raw after it if you like;
+  `--cli` first runs the command line, `greycard`, instead. It needs
+  FUSE, which most desktops have; where it is missing, as in many
+  containers, add `--appimage-extract-and-run`. It puts nothing in your
+  menus or Open with unless your launcher takes in AppImages itself.
+  Its settings, cache, and downloaded models are the same ones an
+  installed copy uses, so the two can be swapped. It needs the same
+  glibc as the tarball ([Before you start](#before-you-start)).
 - **macOS:** follow [testing-on-a-mac.md](testing-on-a-mac.md), which
   gets you past the security warning for an app not yet signed by Apple.
 - **Windows:** double-click `install.cmd`. Run `register.cmd` too if you

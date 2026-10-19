@@ -1,0 +1,29 @@
+#!/bin/sh
+# The AppImage's entry point. The runtime mounts the image, puts the
+# mount in APPDIR, and runs this from the directory the AppImage was
+# started in, so nothing here changes directory: a file or folder
+# named on the command line means what it would mean to the binary
+# itself. Run straight out of an unpacked AppDir, with no runtime
+# around it, the directory this script sits in is the AppDir.
+#
+#     greycard-<version>-linux-x86_64.AppImage [folder or file]
+#         the editor, greycard-ui
+#     greycard-<version>-linux-x86_64.AppImage --cli [arguments]
+#         the command line, greycard
+#
+# Only --cli picks the command line, never the name the AppImage was
+# started by: renaming the file to greycard-ui, or to greycard, is the
+# usual way to put it on PATH, and either name has to open the editor.
+#
+# Both binaries sit in usr/bin beside ONNX Runtime and Dawn, and look
+# for the runtime beside themselves, which is why they are run from
+# there rather than copied or linked anywhere else.
+set -eu
+
+here=${APPDIR:-$(dirname "$(readlink -f "$0")")}
+
+if [ "${1:-}" = --cli ]; then
+    shift
+    exec "$here/usr/bin/greycard" "$@"
+fi
+exec "$here/usr/bin/greycard-ui" "$@"

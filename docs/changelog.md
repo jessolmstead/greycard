@@ -196,6 +196,15 @@ design note behind it.
   ([§333](https://github.com/jessolmstead/greycard/blob/master/docs/notes/333-measuring-the-lightroom-mapper-against-its-exports.md),
   [§342](https://github.com/jessolmstead/greycard/blob/master/docs/notes/342-fitting-the-lightroom-mapper-to-its-exports-the-bodys-stop-and-what-the-sliders-would-not-give.md))
 
+### Install
+
+- A Linux AppImage beside the tarball: make it executable and run it.
+  It needs the kernel's FUSE, or `--appimage-extract-and-run`;
+  `--cli` as the first argument runs the command line. The glibc
+  floor is the tarball's. The Linux tarball no longer needs liblcms2
+  on the system, since lcms2 is now built in, as on macOS and Windows
+  ([§369](https://github.com/jessolmstead/greycard/blob/master/docs/notes/369-a-linux-appimage-beside-the-tarball.md))
+
 ### Fixes
 
 - Moving between frames no longer flashes the last picture far too

@@ -381,3 +381,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§366. The catalog import's dry run says how far it is, and can be stopped](notes/366-the-catalog-imports-dry-run-says-how-far-it-is-and-can-be-stopped.md) (2026-10-18)
 - [§367. Ctrl+A selects every frame shown](notes/367-ctrl-a-selects-every-frame-shown.md) (2026-10-18)
 - [§368. Cull on the camera's JPEG shows the camera's picture](notes/368-cull-on-the-cameras-jpeg-shows-the-cameras-picture.md) (2026-10-18)
+- [§369. A Linux AppImage beside the tarball](notes/369-a-linux-appimage-beside-the-tarball.md) (2026-10-18)

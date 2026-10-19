@@ -103,16 +103,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Native libraries
-        # The same set CI installs: lcms2 for the profiles, fontconfig
-        # and wayland for Slint's backend, xkbcommon for its keyboard.
-        # A Mac and Windows build lcms2 from lcms2-sys's own source
-        # instead; see the next step.
+        # The set CI installs bar lcms2: fontconfig and wayland for
+        # Slint's backend, xkbcommon for its keyboard. lcms2 is built
+        # from lcms2-sys's own source instead; see the next step.
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            liblcms2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev \
-            pkg-config
+            libfontconfig1-dev libwayland-dev libxkbcommon-dev pkg-config
 
       - name: Static lcms2
         # lcms2-sys asks pkg-config first and only builds its vendored
@@ -122,7 +120,9 @@ jobs:
         # at launch on every Mac without it. LCMS2_STATIC skips the
         # probe; it is read as set-or-not, so it goes into the
         # environment only here rather than as an empty value elsewhere.
-        if: runner.os != 'Linux'
+        # Linux takes it too, so neither the tarball nor the AppImage
+        # asks the host for liblcms2.so.2, which a bare desktop may
+        # not have; scripts/appimage.sh fails if it creeps back.
         run: echo "LCMS2_STATIC=1" >> "$GITHUB_ENV"
 
       - name: MSVC toolsets on this runner
@@ -247,6 +247,40 @@ jobs:
           # has to outlive the workflow run.
           retention-days: 7
 
+      # The AppImage, beside the tarball rather than instead of it: one
+      # file to download, make executable and run, for a tester who
+      # would rather not install anything. Built from the tarball's own
+      # staging directory, so the two carry the same files.
+      - name: AppImage
+        if: matrix.os == 'ubuntu-24.04'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: scripts/appimage.sh "$VERSION"
+
+      # The AppDir as it went in, and both binaries started through the
+      # image's AppRun as a user would start them. --version needs no
+      # display or GPU, so this proves the image mounts (here extracts),
+      # that AppRun finds the editor, and that --cli finds the command
+      # line.
+      - name: What is in the AppImage
+        if: matrix.os == 'ubuntu-24.04'
+        env:
+          APPIMAGE: target/dist/greycard-${{ needs.version.outputs.version }}-linux-x86_64.AppImage
+          APPDIR: target/dist/greycard-${{ needs.version.outputs.version }}-linux-x86_64.AppDir
+        run: |
+          (cd "$APPDIR" && find . | LC_ALL=C sort)
+          ls -l "$APPIMAGE"
+          "./$APPIMAGE" --appimage-extract-and-run --version
+          "./$APPIMAGE" --appimage-extract-and-run --cli --version
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.os == 'ubuntu-24.04'
+        with:
+          name: package-x86_64-linux-appimage
+          path: target/dist/greycard-${{ needs.version.outputs.version }}-linux-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: GitHub release
     needs: [version, build]
@@ -297,6 +331,7 @@ jobs:
           files: |
             target/dist/greycard-${{ needs.version.outputs.version }}-*.tar.gz
             target/dist/greycard-${{ needs.version.outputs.version }}-*.zip
+            target/dist/greycard-${{ needs.version.outputs.version }}-*.AppImage
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           fail_on_unmatched_files: true
           body_path: target/dist/release-notes.md

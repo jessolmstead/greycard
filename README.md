@@ -69,7 +69,8 @@ Download your system's file from the
 [releases page](https://github.com/jessolmstead/greycard/releases/latest)
 and unpack it.
 
-- **Linux:** `sh install.sh`
+- **Linux:** `sh install.sh`, or take the `.AppImage` instead, make it
+  executable and run it (it needs FUSE, or `--appimage-extract-and-run`).
 - **macOS:** `sh install.sh` (Apple silicon, macOS 13.4 or newer).
   [Step by step](docs/testing-on-a-mac.md).
 - **Windows:** double-click `install.cmd`. `register.cmd` adds
