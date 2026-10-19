@@ -93,8 +93,9 @@ pub(crate) struct Previews {
     /// [`FROM_PICTURES_AT_ONCE`].
     from_pictures: AtomicUsize,
     /// Which frames show their edit, for the loupe, which reads the
-    /// previews through this: an edited frame is culled on the picture
-    /// of its edit (`edited`).
+    /// previews through this: an edited frame stands in for its develop,
+    /// and is compared with its versions, on the picture of its edit
+    /// (`edited`); Cull on the camera's JPEG asks for the camera's alone.
     edited: Option<Arc<crate::edited::Edited>>,
 }
 

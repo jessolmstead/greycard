@@ -119,6 +119,16 @@ impl Cull {
         }
     }
 
+    /// Whether cell `c` is shown from the picture of its edit, where one
+    /// is kept, rather than the camera's JPEG: a versions compare's tile,
+    /// since versions of one file differ only in their edits. Everywhere
+    /// else the mode shows the camera's JPEG, as its switch says. A cell
+    /// that changes kind keeps its copy up until one of its new kind
+    /// lands (`cull::Preview::fits`).
+    pub(crate) fn shows_edit(&self, cell: usize) -> bool {
+        self.versions_of.is_some() && self.set.as_ref().is_some_and(|s| s.contains(&cell))
+    }
+
     /// Whether `file`'s own picture is still worth asking its file for.
     fn wants_file(&self, cell: usize) -> bool {
         !self.failed.contains_key(&cell) && !self.file_failed.contains(&cell)
@@ -249,6 +259,13 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     // one frame's is needed for that.
     cull.compare = 1;
     cull.textures.retain(|f, _| *f == c);
+    // The develop view stands an edited frame in with the picture of its
+    // edit: the camera's of the frames about this one, which the mode
+    // asked for alone, go, and are asked for again as a stand-in when
+    // chosen. This frame's stays up until its develop lands, or until
+    // the edit's picture takes its place under Developed (`to_cull`).
+    cull.cache
+        .retain(|f, p| f == c || !p.camera_only || !crate::edited::held_edited(st, f));
     st.culling.hold = Some(cull);
     // The word for the last key goes with the mode, or coming back
     // within its second would show it over another frame.
@@ -448,11 +465,35 @@ pub(crate) fn to_cull(st: &mut State, app: &App, worker: &Worker) {
     if st.culling.show_developed {
         if st.culling.cull.is_some() {
             leave_cull(st, app, worker, None);
+            stand_in_edit(st);
         }
         enter_developed(st, app);
     } else if st.culling.cull.is_none() {
         enter_cull(st, app, 1);
     }
+}
+
+/// Out of Cull on the camera's JPEG into Developed: an edited frame's
+/// camera picture, held up as the stand-in for its develop, gives way
+/// to the picture of its edit as soon as that is read, as the develop
+/// view stands an edited frame in. The camera's stays up meanwhile.
+fn stand_in_edit(st: &mut State) {
+    let Some(c) = st.current else {
+        return;
+    };
+    let Some(hold) = st.culling.hold.as_ref() else {
+        return;
+    };
+    if !hold.cache.get(c).is_some_and(|p| p.camera_only) || !crate::edited::held_edited(st, c) {
+        return;
+    }
+    let size = hold.size;
+    let path = st.path_of(c).clone();
+    st.culling.prefetch.want(vec![
+        cull::Want::of_file(c, path.clone(), size)
+            .of_version(st.cells[c].version.clone())
+            .with_picture(companion_picture(&st.views.companions, &path)),
+    ]);
 }
 
 /// The Loupe in Develop: out of either Cull, the frame developed and
@@ -660,36 +701,52 @@ pub(crate) fn cull_refresh(st: &mut State) {
     // them ahead of any file: under an offline root they are all there
     // is, and on a network mount they are up in milliseconds while a
     // file's read may take seconds, or hang. A frame out of reach with
-    // no key to find a preview by is said so, and not asked for.
+    // no key to find a preview by is said so, and not asked for. A copy
+    // of the other kind than the frame wants (`Cull::shows_edit`) stays
+    // up and is asked for again of the right one.
     for &f in &frames {
-        if cull.cache.get(f).is_some() || cull.failed.contains_key(&f) || cull.no_local.contains(&f)
+        let camera = !cull.shows_edit(f);
+        let held = cull.cache.get(f);
+        if held.is_some_and(|p| p.fits(camera))
+            || cull.failed.contains_key(&f)
+            || cull.no_local.contains(&f)
         {
             continue;
         }
         match plan(f) {
             cull::Plan {
                 preview: Some(key), ..
-            } => wants.push(cull::Want::local(f, path_of(f), size, key).of_version(version_of(f))),
+            } => wants.push(
+                cull::Want::local(f, path_of(f), size, key)
+                    .of_version(version_of(f))
+                    .camera_only(camera),
+            ),
             cull::Plan {
                 preview: None,
                 file: false,
-            } => {
+            } if held.is_none() => {
                 cull.failed.insert(f, cull::NO_LOCAL_PREVIEW.to_string());
             }
             _ => {}
         }
     }
     // Then the files, for the frames whose view-size copy is not the
-    // camera's yet, and whose file has not already failed them.
+    // camera's yet, or not of the kind wanted, and whose file has not
+    // already failed them.
     for &f in &frames {
-        let had = cull.cache.get(f).is_some_and(|p| !p.local);
+        let camera = !cull.shows_edit(f);
+        let had = cull
+            .cache
+            .get(f)
+            .is_some_and(|p| !p.local && p.fits(camera));
         if had || !cull.wants_file(f) || !plan(f).file {
             continue;
         }
         wants.push(
             cull::Want::for_loupe(f, path_of(f), size)
                 .of_version(version_of(f))
-                .with_picture(picture_of(f)),
+                .with_picture(picture_of(f))
+                .camera_only(camera),
         );
     }
     st.culling.prefetch.want(wants);
@@ -776,13 +833,19 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
         drop_placeholder(st, app);
         return;
     }
+    // An edited frame stands in with its edit's picture: a camera
+    // picture Cull asked for alone is not that, and is asked again.
+    let edited = crate::edited::held_edited(st, cell);
     // The hold is the mode's own state without the mode: its tab is
     // never put back from here, since nothing took it away.
     let hold = st
         .culling
         .hold
         .get_or_insert_with(|| Cull::new(slint::SharedString::new(), size));
-    let held = hold.cache.get(cell).is_some();
+    let held = hold
+        .cache
+        .get(cell)
+        .is_some_and(|p| !p.camera_only || !edited);
     // A frame whose decode came back with nothing is not asked for
     // again: there is no camera JPEG in that cell, and every select
     // would pay a decode to be told so. The record goes when the
@@ -1014,6 +1077,17 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
             if preview.full && current != Some(file) {
                 return;
             }
+            // The kind the cell wants: the camera's in Cull on the
+            // camera's JPEG but for a versions compare's tiles, and the
+            // edit's where one is kept for the develop view's stand-in.
+            // One of the other kind was asked before the view changed
+            // (a stand-in's before the mode, the mode's before it was
+            // left, a tile's before Compare versions) and the right one
+            // is on its way: it is not taken in, and asked for nothing.
+            let camera = culling && !cull.shows_edit(file);
+            if !preview.full && !preview.fits(camera) {
+                return;
+            }
             if preview.local {
                 // The preview and the file are fetched on two threads,
                 // and a preview that lands after the camera's JPEG does
@@ -1023,7 +1097,7 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
                 } else {
                     cull.cache.get(file)
                 };
-                if slot.is_some_and(|p| !p.local) {
+                if slot.is_some_and(|p| !p.local && p.fits(camera)) {
                     return;
                 }
                 // The file failed before the preview landed: the
@@ -3410,6 +3484,54 @@ mod tests {
         assert_eq!(standing_in(&state.borrow()), None);
         assert!(!app.get_placeholder());
         assert_eq!(app.get_placeholder_status(), "");
+    }
+
+    /// A camera picture Cull on the camera's JPEG asked for alone, kept
+    /// for a frame with an edit, does not stand in for that frame's
+    /// develop: the picture of its edit is asked for, as on a first
+    /// visit. One kept for a frame with no edit stands in at once, as
+    /// any kept camera picture does.
+    #[test]
+    fn a_kept_camera_only_picture_stands_in_only_for_a_frame_with_no_edit() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        {
+            let mut st = state.borrow_mut();
+            let mut edit = Edit::default();
+            edit.bw.enabled = true;
+            st.sidecars[1].record(edit);
+            assert!(crate::edited::held_edited(&st, 1));
+            assert!(!crate::edited::held_edited(&st, 2));
+        }
+        app.invoke_select(0);
+        {
+            let mut st = state.borrow_mut();
+            for f in [1, 2] {
+                let cull::Loaded::Ok { preview, .. } = camera_picture(&st, f, (6000, 4000)) else {
+                    unreachable!()
+                };
+                let preview = Arc::new(cull::Preview {
+                    camera_only: true,
+                    ..Arc::into_inner(preview).unwrap()
+                });
+                st.culling.hold.as_mut().unwrap().cache.insert(f, preview);
+            }
+        }
+        // No edit: up at once.
+        app.invoke_select(2);
+        assert_eq!(standing_in(&state.borrow()), Some(2));
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
+        draw(&app, &state);
+        assert_eq!(standing_in(&state.borrow()), None);
+        // An edit: its stand-in asked for, the camera's not put up.
+        app.invoke_select(1);
+        assert_eq!(standing_in(&state.borrow()), None);
+        let asked = state.borrow().culling.prefetch.asked();
+        assert!(asked.iter().any(|w| w.file == 1 && !w.camera), "{asked:?}");
+        let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
+        deliver_preview(&app, loaded);
+        assert_eq!(standing_in(&state.borrow()), Some(1));
     }
 
     /// A frame whose camera picture is kept, chosen while another
@@ -6216,5 +6338,186 @@ mod tests {
         // The switch is still on for the next Cull.
         click_labeled(&app, "Cull mode");
         assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+    }
+
+    /// Two frames whose edits are black and white, with the pictures of
+    /// those edits kept (as once a develop has landed and been saved),
+    /// over camera pictures in color: Cull on the camera's JPEG shows the
+    /// camera's picture, entered from Develop and switched to from
+    /// Developed Cull alike, and the develop view's stand-in, which is
+    /// the edit's, never goes up in its place. The other way, Developed
+    /// stands each frame in with its edit's picture until its develop
+    /// lands, not with the camera picture the mode had decoded.
+    #[test]
+    fn cull_on_the_camera_jpeg_shows_the_camera_s_picture_of_an_edited_frame() {
+        use crate::versions::Key as Frame;
+        let dir = crate::testing::scratch_dir("ui-cull-camera-of-edited");
+        let files = vec![dir.join("a.png"), dir.join("b.png")];
+        // Each of its own content, a in red.
+        for (i, f) in files.iter().enumerate() {
+            image::RgbImage::from_pixel(600, 400, image::Rgb([200, 40 + i as u8, 30]))
+                .save(f)
+                .unwrap();
+        }
+        let mut edit = Edit::for_picture();
+        edit.bw.enabled = true;
+        for f in &files {
+            greycard_edit::Sidecar {
+                line: greycard_edit::Line::of(edit.clone()),
+                ..greycard_edit::Sidecar::default()
+            }
+            .save(f)
+            .unwrap();
+        }
+        // The edit's pictures of both, grey, kept as a develop keeps them.
+        let cache: crate::worker::ThumbCache = Arc::new(std::sync::Mutex::new(Some(
+            greycard_library::thumbs::Thumbs::at(
+                dir.join("thumbs"),
+                greycard_library::thumbs::DEFAULT_CAP,
+            )
+            .with_previews(
+                crate::edited::BIG,
+                greycard_library::thumbs::DEFAULT_PREVIEW_CAP,
+            ),
+        )));
+        let edited = Arc::new(crate::edited::Edited::new(cache.clone()));
+        edited.note_all([
+            (Frame::file(files[0].clone()), true, None, None),
+            (Frame::file(files[1].clone()), true, None, None),
+        ]);
+        let grey = |size: u32| {
+            let (w, h) = (size, size * 2 / 3);
+            greycard_library::thumbs::Thumb {
+                width: w,
+                height: h,
+                rgb: vec![128; (w * h * 3) as usize],
+            }
+        };
+        let made = crate::edited::Made {
+            big: grey(crate::edited::BIG),
+            thumbs: crate::grid::MADE.iter().map(|&s| (s, grey(s))).collect(),
+        };
+        for f in &files {
+            let hash = greycard_library::hash_file(f).unwrap();
+            edited
+                .store_reduced(&hash, edited.key_of(&edit), &made)
+                .unwrap();
+        }
+        let previews = Arc::new(crate::previews::Previews::new(cache).with_edited(edited));
+
+        let app = window(files.len());
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = opened_with_sidecars(&app, &files);
+        {
+            let mut st = state.borrow_mut();
+            st.current = None;
+            st.culling.prefetch.set_previews(previews.clone());
+        }
+        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        let picture = || crate::worker::SourceKind::Picture {
+            space: "sRGB".into(),
+            bits: 8,
+        };
+        let develop = |app: &App| {
+            crate::panel::deliver::deliver(app, opened(generation(&state), picture()));
+            let developed = developed_as(
+                generation(&state),
+                (600, 400),
+                0,
+                crate::finish::Source::Display,
+            );
+            crate::panel::deliver::deliver(app, developed);
+            draw(app, &state);
+        };
+        // The decode threads' work, here: every picture of `file` the
+        // loupe asked for, delivered.
+        let decode_asked = |app: &App, file: usize| {
+            let asked = state.borrow().culling.prefetch.asked();
+            let wants: Vec<_> = asked.into_iter().filter(|w| w.file == file).collect();
+            assert!(!wants.is_empty(), "{file}'s picture asked for");
+            for want in wants {
+                let got = std::cell::RefCell::new(Vec::new());
+                cull::fetch(&want, Some(&previews), &|l| got.borrow_mut().push(l));
+                for loaded in got.into_inner() {
+                    deliver_preview(app, loaded);
+                }
+            }
+        };
+        // What the loupe draws of a: where it came from, and its red
+        // against its blue.
+        let shown = |state: &Rc<RefCell<State>>| {
+            let st = state.borrow();
+            let cull = st.culling.cull.as_ref().expect("Cull on the camera's JPEG");
+            let p = cull.cache.best(0).expect("a picture of a");
+            let px = p.rgba.as_chunks::<4>().0;
+            let mean = |k: usize| px.iter().map(|q| q[k] as f64).sum::<f64>() / px.len() as f64;
+            (p.origin(), mean(0) - mean(2))
+        };
+
+        // a opens in Develop and its develop lands.
+        app.invoke_select(0);
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        develop(&app);
+        // Cull, on the camera's JPEG, b decoded ahead.
+        app.invoke_cull_asked();
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        decode_asked(&app, 0);
+        decode_asked(&app, 1);
+        let (from, warmth) = shown(&state);
+        assert_eq!(from, cull::Origin::Camera, "the camera's picture");
+        assert!(warmth > 100.0, "in color: {warmth:.0}");
+
+        // Developed: until a's develop lands it stands in with the
+        // picture of its edit, the camera's up only until that is read,
+        // and b's camera picture is not kept to stand in with.
+        let stand_in = |state: &Rc<RefCell<State>>, file: usize| {
+            let st = state.borrow();
+            assert_eq!(standing_in(&st), Some(file), "a stand-in up");
+            let hold = st.culling.hold.as_ref().expect("the hold");
+            hold.cache.get(file).map(|p| p.origin())
+        };
+        app.invoke_cull_source_asked(true);
+        assert_eq!(seen(&app, &state), Seen::CullDeveloped);
+        assert_eq!(stand_in(&state, 0), Some(cull::Origin::Camera));
+        assert!(
+            state
+                .borrow()
+                .culling
+                .hold
+                .as_ref()
+                .unwrap()
+                .cache
+                .get(1)
+                .is_none(),
+            "b's camera picture let go"
+        );
+        decode_asked(&app, 0);
+        assert_eq!(stand_in(&state, 0), Some(cull::Origin::Edit));
+        develop(&app);
+
+        // Camera JPEG again.
+        app.invoke_cull_source_asked(false);
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        decode_asked(&app, 0);
+        let (from, warmth) = shown(&state);
+        assert_eq!(from, cull::Origin::Camera, "the camera's picture again");
+        assert!(warmth > 100.0, "in color: {warmth:.0}");
+
+        // The develop view's stand-in for a is the edit's picture, and
+        // one still on its way when Cull came does not go up there.
+        let stand_in = cull::Want::of_file(0, files[0].clone(), 1024);
+        let got = std::cell::RefCell::new(Vec::new());
+        cull::fetch(&stand_in, Some(&previews), &|l| got.borrow_mut().push(l));
+        let got = got.into_inner();
+        assert!(
+            matches!(&got[..], [cull::Loaded::Ok { preview, .. }] if preview.edited),
+            "the stand-in is the edit's"
+        );
+        for loaded in got {
+            deliver_preview(&app, loaded);
+        }
+        assert_eq!(shown(&state).0, cull::Origin::Camera, "still the camera's");
+        crate::testing::remove_scratch(state, &dir);
     }
 }

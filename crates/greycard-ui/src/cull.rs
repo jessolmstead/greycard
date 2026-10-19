@@ -99,7 +99,8 @@ pub struct Preview {
     /// still on its way over the network.
     pub local: bool,
     /// This is the picture made from the frame's edit, kept in the
-    /// cache (`edited`): what a frame with an edit is culled on. It
+    /// cache (`edited`): what a frame with an edit stands in with for
+    /// its develop and is compared with its versions on. It
     /// stands where the camera's JPEG would at the view's size, and is
     /// never taken for the JPEG's every pixel, so 1:1 still opens the
     /// camera's full JPEG for focus.
@@ -107,6 +108,10 @@ pub struct Preview {
     /// Decoded from the camera's JPEG beside the raw rather than the
     /// preview inside it: the camera's finished picture, full size.
     pub companion: bool,
+    /// Asked for as the camera's picture alone (`Want::camera`): never
+    /// the edit's, whether or not one is kept. A picture asked the other
+    /// way is the edit's where one is kept and the camera's where not.
+    pub camera_only: bool,
     /// How long the decode took, for the log.
     pub seconds: f64,
 }
@@ -125,6 +130,7 @@ impl Preview {
             local: false,
             edited: false,
             companion: false,
+            camera_only: false,
             seconds: 0.0,
         }
     }
@@ -135,6 +141,19 @@ impl Preview {
         preview.local = false;
         preview.edited = true;
         preview
+    }
+
+    /// Whether this is the kind of picture a cell wants: the camera's
+    /// (`camera`) is any picture not the edit's, and the other kind
+    /// any asked for the edit's, which is the camera's where no edit's
+    /// is kept. A picture of the wrong kind stays up until the right
+    /// one lands, and is not taken in in its place.
+    pub fn fits(&self, camera: bool) -> bool {
+        if camera {
+            !self.edited
+        } else {
+            !self.camera_only
+        }
     }
 
     /// Where this picture came from, for the words that name it.
@@ -290,6 +309,11 @@ impl Cache {
         self.previews.remove(&cell);
     }
 
+    /// Keep the screen-size previews `keep` says yes to, by cell.
+    pub fn retain(&mut self, mut keep: impl FnMut(usize, &Preview) -> bool) {
+        self.previews.retain(|&c, p| keep(c, p));
+    }
+
     /// What is held, in bytes.
     pub fn bytes(&self) -> usize {
         self.previews.values().map(|p| p.bytes()).sum::<usize>()
@@ -420,6 +444,11 @@ pub struct Want {
     /// A tile of the lightbox: the picture of the frame's edit when it
     /// has one, and never the camera's then (`lightbox::fetch`).
     pub lightbox: bool,
+    /// The camera's picture alone, never the picture of the frame's
+    /// edit: the loupe in Cull on the camera's JPEG, which is what its
+    /// switch says it shows. The develop view's stand-in and a versions
+    /// compare's tiles take the edit's where one is kept.
+    pub camera: bool,
     /// The file the camera's picture is read from when it is not
     /// `path`: the camera's JPEG beside the raw, full size and the
     /// camera's finished picture, where the raw's own preview may be a
@@ -438,8 +467,14 @@ impl Want {
             from: Source::File,
             make_preview: false,
             lightbox: false,
+            camera: false,
             picture: None,
         }
+    }
+
+    /// The same want, of the camera's picture alone when `camera`.
+    pub fn camera_only(self, camera: bool) -> Self {
+        Self { camera, ..self }
     }
 
     /// The same want, the camera's picture read from `picture` (the
@@ -487,6 +522,7 @@ impl Want {
             && self.version == other.version
             && self.from == other.from
             && self.lightbox == other.lightbox
+            && self.camera == other.camera
             && self.picture == other.picture
     }
 }
@@ -672,7 +708,7 @@ pub(crate) fn fetch(
     if want.lightbox {
         return crate::lightbox::fetch(want, previews, deliver);
     }
-    let edited = previews.and_then(|p| p.edited());
+    let edited = previews.and_then(|p| p.edited()).filter(|_| !want.camera);
     if let Source::Preview { hash, stamp } = &want.from {
         // An edited frame out of reach shows the last picture of its
         // edit kept for its content, ahead of the camera's.
@@ -693,7 +729,10 @@ pub(crate) fn fetch(
                 file: want.file,
                 frame: want.frame(),
                 size: want.size,
-                preview: Arc::new(Preview::local(thumb, want.size == 0)),
+                preview: Arc::new(Preview {
+                    camera_only: want.camera,
+                    ..Preview::local(thumb, want.size == 0)
+                }),
             },
             None => Loaded::NoPreview {
                 file: want.file,
@@ -702,8 +741,9 @@ pub(crate) fn fetch(
         });
         return;
     }
-    // A frame with an edit is culled on the picture of its edit at the
-    // view's size; 1:1 is the camera's JPEG all the same, for focus.
+    // A frame with an edit stands in for its develop, or is compared
+    // with its versions, on the picture of its edit at the view's size;
+    // 1:1 is the camera's JPEG all the same, for focus.
     if want.size > 0
         && let Some(edited) = edited
         && let shows @ crate::edited::Shows::Edit(_) = edited.shows(&want.frame())
@@ -725,6 +765,7 @@ pub(crate) fn fetch(
     match decoded {
         Ok(((mut preview, picture, orientation), companion)) => {
             preview.companion = companion;
+            preview.camera_only = want.camera;
             deliver(Loaded::Ok {
                 file: want.file,
                 frame: want.frame(),

@@ -1968,6 +1968,122 @@ mod tests {
         assert_eq!(Some(w.frame()), st.key_of(2), "the delivery is kept");
     }
 
+    /// Cull on the camera's JPEG shows the camera's picture of every
+    /// frame but a versions compare's tiles, which are each its own
+    /// edit's, since versions of a file differ only in their edits. A
+    /// copy of the other kind stays up until one of the right kind lands;
+    /// one of the other kind landing late (asked before the view changed)
+    /// is turned away; and a copy of the right kind is not asked for
+    /// again, so nothing is decoded twice into the same picture.
+    #[test]
+    fn a_versions_compare_shows_each_edit_and_the_camera_s_after_it() {
+        use crate::cull::{Loaded, Preview};
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        enum Kind {
+            /// Asked for the camera's alone.
+            Camera,
+            /// Asked for the edit's, with none kept: the camera's.
+            NoEdit,
+            /// The edit's.
+            Edit,
+        }
+        let app = window(4);
+        let (state, worker) = state_for(&app, folder(4));
+        version_of(&state, &app, &worker, 3, "Warm");
+        // Cells: 0, 1, 2, 3, 3 Warm.
+        let wants = |c: usize| -> Vec<crate::cull::Want> {
+            let st = state.borrow();
+            let asked = st.culling.prefetch.asked();
+            asked
+                .into_iter()
+                .filter(|w| w.file == c && w.size > 0)
+                .collect()
+        };
+        let refresh = || crate::panel::cull::cull_refresh(&mut state.borrow_mut());
+        let deliver = |c: usize, kind: Kind| {
+            let preview = match kind {
+                Kind::Edit => Preview::edited(greycard_library::thumbs::Thumb {
+                    width: 4,
+                    height: 2,
+                    rgb: vec![128; 24],
+                }),
+                _ => Preview {
+                    camera_only: kind == Kind::Camera,
+                    ..Preview::new(8, 6, vec![0; 8 * 6 * 4], (8192, 5464), false)
+                },
+            };
+            let frame = state.borrow().key_of(c).unwrap();
+            crate::panel::cull::deliver_preview(
+                &app,
+                Loaded::Ok {
+                    file: c,
+                    frame,
+                    size: 1024,
+                    preview: Arc::new(preview),
+                },
+            );
+        };
+        let held = |c: usize| {
+            let st = state.borrow();
+            let cull = st.culling.cull.as_ref().expect("culling");
+            cull.cache.get(c).map(|p| match (p.edited, p.camera_only) {
+                (true, _) => Kind::Edit,
+                (false, true) => Kind::Camera,
+                (false, false) => Kind::NoEdit,
+            })
+        };
+        app.invoke_select(3);
+        app.invoke_cull_asked();
+        assert!(!wants(3).is_empty() && wants(3).iter().all(|w| w.camera));
+        deliver(3, Kind::Camera);
+        assert_eq!(held(3), Some(Kind::Camera));
+
+        // The compare: each tile asked for its edit's, the camera's of 3
+        // up until that lands.
+        app.invoke_frame_menu_asked(4);
+        app.invoke_version_compare_asked();
+        assert_eq!(compared(&state.borrow()), [3, 4]);
+        assert_eq!(held(3), Some(Kind::Camera), "up until the edit's lands");
+        for c in [3, 4] {
+            assert!(!wants(c).is_empty() && wants(c).iter().all(|w| !w.camera));
+        }
+        assert!(wants(2).iter().all(|w| w.camera), "a frame beside the set");
+        // 4's camera picture asked before the compare lands first: turned
+        // away, and the edit's still asked.
+        deliver(4, Kind::Camera);
+        assert_eq!(held(4), None);
+        refresh();
+        assert!(!wants(4).is_empty());
+        deliver(4, Kind::Edit);
+        deliver(4, Kind::Camera);
+        assert_eq!(held(4), Some(Kind::Edit), "the edit's stays");
+        // 3 has no edit kept: the camera's, asked as the edit's.
+        deliver(3, Kind::NoEdit);
+        assert_eq!(held(3), Some(Kind::NoEdit));
+        refresh();
+        assert!(
+            wants(3).is_empty() && wants(4).is_empty(),
+            "nothing asked twice"
+        );
+
+        // Out of the compare by the field: 3's picture is the camera's
+        // and stays, not asked again; 4's edit's stays up while the
+        // camera's is asked, and an edit's landing late stays down.
+        app.invoke_compare_changed(2);
+        assert_eq!(
+            state.borrow().culling.cull.as_ref().unwrap().versions_of,
+            None
+        );
+        assert_eq!(held(3), Some(Kind::NoEdit));
+        assert!(wants(3).is_empty(), "3 is not decoded again");
+        assert_eq!(held(4), Some(Kind::Edit), "up until the camera's lands");
+        assert!(!wants(4).is_empty() && wants(4).iter().all(|w| w.camera));
+        deliver(4, Kind::Camera);
+        assert_eq!(held(4), Some(Kind::Camera));
+        deliver(4, Kind::Edit);
+        assert_eq!(held(4), Some(Kind::Camera), "an edit's landing late");
+    }
+
     /// Three up stands through every culling key and a click on a tile
     /// of the file; the field's 3 changes nothing and New version is
     /// refused. An arrow off the file leaves the compare: three up

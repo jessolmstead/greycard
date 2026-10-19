@@ -1,6 +1,8 @@
 //! Thumbnails from the edit: a frame with an edit shows its edit in the
-//! strip, the grid, the culling loupe and compare, and a frame without
-//! one keeps the camera's JPEG.
+//! strip, the grid, the lightbox, a versions compare and the develop
+//! view's stand-in for its develop, and a frame without one keeps the
+//! camera's JPEG. Cull on the camera's JPEG shows the camera's JPEG,
+//! as its switch says; Developed is the switch for culling on the edit.
 //!
 //! The pictures made from an edit are kept in the thumbnail cache
 //! beside the camera's, under the file's content hash, at each made size
@@ -1160,7 +1162,7 @@ fn iso_of(st: &crate::State, c: usize) -> Iso {
 /// file stands in from one (the index's `edited`, the version's own
 /// for a version), by its line's edit once the sidecar is read, under
 /// the rule the cell's edited mark goes by.
-fn held_edited(st: &crate::State, c: usize) -> bool {
+pub(crate) fn held_edited(st: &crate::State, c: usize) -> bool {
     crate::panel::browser::frame_marks(st, c).0
 }
 
@@ -1378,16 +1380,20 @@ pub(crate) fn kept(st: &mut crate::State, worker: &crate::worker::Worker, frame:
     }
 }
 
-/// Cell `c` asks for its picture again and the loupe drops its copy;
-/// the loupe's refresh is the caller's.
+/// Cell `c` asks for its picture again and the loupe drops its copy
+/// where it is the edit's: the develop view's stand-in, and a versions
+/// compare's tile. Cull on the camera's JPEG keeps the camera's. The
+/// loupe's refresh is the caller's.
 fn ask_again(st: &mut crate::State, worker: &crate::worker::Worker, c: usize) {
     worker.send(crate::rows::thumb_job(st, c));
     crate::lightbox::forget(st, c);
-    for cull in [st.culling.cull.as_mut(), st.culling.hold.as_mut()]
-        .into_iter()
-        .flatten()
+    if let Some(cull) = st.culling.cull.as_mut()
+        && cull.shows_edit(c)
     {
         cull.cache.forget(c);
+    }
+    if let Some(hold) = st.culling.hold.as_mut() {
+        hold.cache.forget(c);
     }
 }
 
@@ -1608,14 +1614,21 @@ mod tests {
             }
         }
 
-        /// The culling loupe's picture of the frame at a view's size:
-        /// whether it is the edit's, whether it is a local preview, and
-        /// its size.
+        /// The loupe's picture of the frame at a view's size where it
+        /// shows the edit (a versions compare's tile, the develop view's
+        /// stand-in): whether it is the edit's, whether it is a local
+        /// preview, and its size.
         fn loupe(&self) -> (bool, bool, u32, u32) {
+            self.loupe_as(false)
+        }
+
+        /// The same, or with `camera` the loupe's in Cull on the
+        /// camera's JPEG.
+        fn loupe_as(&self, camera: bool) -> (bool, bool, u32, u32) {
             let previews = self.worker.previews();
             let got = std::cell::RefCell::new(None);
             crate::cull::fetch(
-                &crate::cull::Want::for_loupe(0, self.png.clone(), 1000),
+                &crate::cull::Want::for_loupe(0, self.png.clone(), 1000).camera_only(camera),
                 Some(&previews),
                 &|loaded| {
                     if let crate::cull::Loaded::Ok { preview, .. } = loaded {
@@ -1669,6 +1682,10 @@ mod tests {
         let (edited_up, local, lw, lh) = rig.loupe();
         assert!(edited_up && !local);
         assert_eq!((lw, lh), (600, 400), "no larger than it is");
+        assert!(
+            !rig.loupe_as(true).0,
+            "Cull on the camera's JPEG: the camera's"
+        );
         let kept = rig.entries();
         assert!(kept >= 6, "the camera's and the edit's five: {kept}");
         // A save that changes nothing of the picture (a rating) makes
