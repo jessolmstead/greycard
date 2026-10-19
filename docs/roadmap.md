@@ -799,6 +799,17 @@ Slint, a runtime exposing what it knows, a rawler release. It joins a
 release when the wait clears.
 
 #### Platform
+- [ ] A SHA-256 sums file attached to every release, written by the
+      release workflow over the four packages, so a download can be
+      checked and an updater has something to verify against; a
+      signature (minisign or sigstore) after it
+- [ ] Self-update from the editor: the release check already finds
+      the newest tag; the step after is to download the platform's
+      package, verify it against the sums file, install it where the
+      install script put the running copy (rename-then-replace on
+      Windows, the app bundle and its quarantine flag on macOS, the
+      tarball's layout or the AppImage file on Linux), relaunch, and
+      roll back if the new copy does not start. Waits on the sums file
 
 - [ ] The window's own monitor for the profile, without choosing it.
       Waits on the Wayland color-management protocol reaching Slint's
