@@ -35,8 +35,9 @@ what the frames already have.
 ### On several frames
 
 The keys and the menu act on every selected frame (Ctrl+click or
-Shift+click to select more than one). A label key on a mixed selection
-sets the label on all of them; press it again to clear it from all.
+Shift+click to select more than one, Ctrl+A for every frame shown).
+A label key on a mixed selection sets the label on all of them; press
+it again to clear it from all.
 
 A rating, flag and label belong to the file, so a frame and its
 [versions](presets-and-history.md#versions-of-a-frame) share them: set

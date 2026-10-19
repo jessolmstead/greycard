@@ -16,6 +16,9 @@ design note behind it.
   Cull and Develop; D goes to Develop from anywhere. The mode is
   remembered across runs
   ([§359](https://github.com/jessolmstead/greycard/blob/master/docs/notes/359-two-views-and-two-modes.md))
+- Ctrl+A selects every frame shown, in the strip, the grid and the
+  lightbox
+  ([§367](https://github.com/jessolmstead/greycard/blob/master/docs/notes/367-ctrl-a-selects-every-frame-shown.md))
 
 ### Library
 

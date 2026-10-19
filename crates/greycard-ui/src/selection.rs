@@ -101,6 +101,13 @@ pub fn union(a: &[usize], b: &[usize]) -> Vec<usize> {
     out
 }
 
+/// Every frame shown, as Ctrl+A chooses them: the list as shown,
+/// with the current frame in it. The current frame stays
+/// current, so a Shift+click after measures from where it did.
+pub fn all(shown: &[usize], current: usize) -> Vec<usize> {
+    union(shown, &[current])
+}
+
 /// The set as it is acted on: sorted, each frame once, and the
 /// current frame in it. No current frame is no set.
 pub fn frames(set: &[usize], current: Option<usize>) -> Vec<usize> {
@@ -179,6 +186,20 @@ mod tests {
         assert_eq!(right_click(&[2, 5], Some(2), 3), Click::Open(3));
         // Nothing open: the frame clicked.
         assert_eq!(right_click(&[], None, 4), Click::Open(4));
+    }
+
+    #[test]
+    fn select_all_takes_the_shown_frames_in_order_and_keeps_the_current_one() {
+        // A sort other than the folder's: the set is sorted all the same.
+        assert_eq!(all(&[5, 2, 7], 2), vec![2, 5, 7]);
+        // A current frame the filter hid stays in the set.
+        assert_eq!(all(&[5, 7], 2), vec![2, 5, 7]);
+        // A Shift+click after measures from the current frame.
+        let shown = [5, 2, 7, 1];
+        assert_eq!(
+            click(&all(&shown, 2), &shown, Some(2), 1, false, true),
+            Click::Set(vec![1, 2, 7])
+        );
     }
 
     #[test]

@@ -1951,6 +1951,9 @@ export component App inherits Window {
     /// the grid, or the last, as an arrow lands; with Shift held the
     /// set takes the whole run from the current frame to there.
     callback step-end(bool, bool);
+    /// Ctrl+A: every frame shown chosen, the current frame left
+    /// where it is.
+    callback select-all();
     /// Ask the desktop for a folder, and open it in place of the
     /// current file list.
     callback open-folder();
@@ -2499,6 +2502,11 @@ export component App inherits Window {
                 strip.content-x = end ? min(0px, strip.width - strip.content-width) : 0px;
                 return accept;
             }
+            // Every frame shown, in the strip, the grid and the
+            // lightbox alike: their keys above leave it to this. A text
+            // field with the focus has the key first and selects its
+            // own text.
+            if (chord == "Ctrl+A") { root.select-all(); return accept; }
             if (chord == "Space" && !root.grid-open) { root.zoom-key(1); return accept; }
             if (chord == "Z" && !root.grid-open) { root.zoom-key(3); return accept; }
             if (chord == "S" && !root.grid-open) {

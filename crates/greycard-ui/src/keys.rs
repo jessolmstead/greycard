@@ -108,6 +108,7 @@ pub(crate) const TABLE: &[Group] = &[
                 "Home, End",
                 "The first or the last frame (with Shift, added)",
             ),
+            line(&["Ctrl+A"], "Select every frame shown"),
         ],
     },
     Group {

@@ -105,6 +105,7 @@ bug form.
 | Shift+← → | Previous or next frame, added to the selection |
 | ↑ ↓ | In the grid, the frame above or below (with Shift, added) |
 | Home, End | The first or the last frame (with Shift, added) |
+| Ctrl+A | Select every frame shown |
 | Ctrl+click | Add a frame to the selection, or take it out |
 | Shift+click, Ctrl+Shift+click | Select every frame from the open one to this one; with Ctrl, add them instead |
 

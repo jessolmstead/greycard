@@ -2704,6 +2704,28 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
         });
     }
+    // Ctrl+A, in the strip, the grid and the lightbox: every frame
+    // shown is chosen, and the frame on screen stays current, the
+    // anchor a Shift+click measures from. Nothing is opened. With
+    // nothing current there is no set to grow, and with nothing shown
+    // nothing to choose.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_select_all(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let Some(current) = st.current else {
+                return;
+            };
+            if st.views.shown.is_empty() {
+                return;
+            }
+            st.views.picked = selection::all(&st.views.shown, current);
+            show_set(&mut st, &app);
+        });
+    }
     // An arrow in the grid: along the row, or by a whole row, and
     // the frame it lands on is opened as a click on it would.
     {
@@ -4529,6 +4551,93 @@ mod tests {
         press_shifted(&app, Key::Home);
         assert_eq!(state.borrow().current, Some(2));
         assert_eq!(chosen_frames(&state.borrow()), (2..38).collect::<Vec<_>>());
+    }
+
+    /// Ctrl held around a key.
+    fn press_ctrl(app: &App, key: impl Into<slint::SharedString>) {
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Control.into(),
+        });
+        press(app, key);
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Control.into(),
+        });
+    }
+
+    #[test]
+    fn ctrl_a_chooses_every_frame_shown_and_leaves_the_current_one() {
+        let (app, _) = strip_with(0);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(40));
+        // Files 2 to 37 shown on rows 0 to 35, as under Home and End.
+        {
+            let mut st = state.borrow_mut();
+            for i in [0, 1, 38, 39] {
+                st.sidecars[i].meta.flag = meta::Flag::Reject;
+            }
+            st.views.filter = filter::Filter::from_name("No rejects").expect("it parses");
+            rebuild_browser(&mut st, &app);
+        }
+        app.invoke_select(10);
+        assert_eq!(state.borrow().current, Some(12));
+        let all: Vec<usize> = (2..38).collect();
+        press_ctrl(&app, "a");
+        assert_eq!(chosen_frames(&state.borrow()), all);
+        assert_eq!(app.get_set_count(), 36);
+        assert_eq!(state.borrow().current, Some(12));
+        assert_eq!(app.get_selected(), 10);
+        // Again: nothing changes.
+        press_ctrl(&app, "a");
+        assert_eq!(chosen_frames(&state.borrow()), all);
+        assert_eq!(state.borrow().current, Some(12));
+        // A Shift+click after measures from the current frame.
+        app.invoke_frame_clicked(0, false, true);
+        assert_eq!(chosen_frames(&state.borrow()), (2..13).collect::<Vec<_>>());
+        assert_eq!(state.borrow().current, Some(12));
+        // In the grid the same.
+        press(&app, "g");
+        assert!(app.get_grid_open());
+        press_ctrl(&app, "a");
+        assert_eq!(chosen_frames(&state.borrow()), all);
+        assert_eq!(state.borrow().current, Some(12));
+        assert!(app.get_grid_open(), "and the grid stays");
+        // In the lightbox the same.
+        press(&app, Key::Escape);
+        assert_eq!(app.get_set_count(), 1);
+        press(&app, "l");
+        assert!(app.get_lightbox());
+        press_ctrl(&app, "a");
+        assert_eq!(chosen_frames(&state.borrow()), all);
+        assert_eq!(state.borrow().current, Some(12));
+        assert!(app.get_lightbox(), "and the lightbox stays");
+        // And in Cull.
+        press(&app, Key::Escape);
+        assert_eq!(app.get_set_count(), 1);
+        press(&app, "l");
+        assert!(!app.get_lightbox());
+        press(&app, "c");
+        assert!(app.get_culling());
+        press_ctrl(&app, "a");
+        assert_eq!(chosen_frames(&state.borrow()), all);
+        assert_eq!(state.borrow().current, Some(12));
+        assert!(app.get_culling(), "and Cull stays");
+        // The filter field with the focus keeps Ctrl+A for its text.
+        press(&app, Key::Escape);
+        assert_eq!(app.get_set_count(), 1);
+        app.set_filter_focus(true);
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+        press(&app, "x");
+        press_ctrl(&app, "a");
+        press(&app, "y");
+        assert_eq!(app.get_filter_text(), "y");
+        assert_eq!(app.get_set_count(), 1);
+        // And the keys sheet lists it.
+        let rows = crate::keys::rows("Ctrl+A", false);
+        assert!(
+            rows.iter()
+                .any(|r| !r.heading && r.does == "Select every frame shown"),
+            "{:?}",
+            rows.iter().map(|r| r.does.to_string()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
