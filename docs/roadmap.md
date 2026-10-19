@@ -869,6 +869,15 @@ release when the wait clears.
       frame; the CPU provider is the right one there. Unverified
       either way; a run under VK_DRIVER_FILES naming lavapipe alone
       with a model fetched says which
+- [ ] A Windows install for all users: an -AllUsers switch on the
+      installer that elevates itself, puts the program under Program
+      Files, and writes the common Start Menu folder, the machine's
+      Path, the file associations under HKLM, and an entry under the
+      machine's Uninstall key, with uninstall.cmd taking the same
+      switch; today GREYCARD_PREFIX puts the files there and the rest
+      stays the one user's. An installer package (Inno Setup or WiX)
+      from the release workflow is the step after, and where signing
+      goes. Asked 2026-10-19
 - [ ] A GPU path for the models on Windows on ARM: pyke publishes an
       ARM64 Windows build of ONNX Runtime with DirectML, no WebGPU,
       and DirectML ships with Windows, so ort-dylib could make our
