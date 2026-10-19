@@ -130,6 +130,16 @@ Look section's job.
       people expect (§87). A change to the default look and to every
       mono edit written; waits on the reference frames
 
+- [ ] A reference view: a frame pinned beside the one being edited,
+      the panel live and the reference untouchable, drawn from the
+      developed preview the thumbnails keep so it costs no second
+      develop; a frame menu entry and a key to pin the current frame,
+      the compare's split, replaced by pinning another, cleared by the
+      key again, kept across frame changes and not across runs. A
+      0.9.0 item, after the modes have settled; the full version, the
+      reference redeveloped at the viewport's size and following a
+      proof, waits for someone to ask
+
 ### Speed
 
 On a fanless laptop the fit view follows a slider without a wait,
@@ -738,7 +748,6 @@ clears or a tester asks for it.
 
 - [ ] Zoom bar for grid and lightbox
 - [ ] Flexible dual monitor support
-- [ ] Reference view
 - [ ] MIDI Controller support
 - [ ] Different frameline options when cropping
 - [ ] Camera tethering
