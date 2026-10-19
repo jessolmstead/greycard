@@ -81,7 +81,9 @@ and unpack it.
   greycard to Open with for raws. The `aarch64-windows` zip is for
   Windows on ARM.
 
-You'll need a GPU with Vulkan, or Metal on a Mac.
+You'll want a GPU with Vulkan, or Metal on a Mac. Without one it
+still opens, drawing in software and developing on the CPU, but
+slowly.
 [Building from source](docs/building.md) is a `cargo build --release`
 once the libraries are in, and one script for the AI runtime.
 

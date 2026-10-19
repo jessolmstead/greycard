@@ -35,3 +35,27 @@ fn instances_made_on_two_threads_at_once_do_not_crash() {
     let made: u32 = threads.into_iter().map(|t| t.join().unwrap()).sum();
     assert!(made >= 2, "made {made} instances");
 }
+
+/// The probe the window's choice of adapter rests on finds the
+/// adapter a request on the usual instance is given: a machine with
+/// one to draw on is not taken for a machine with none.
+#[test]
+fn the_probe_finds_the_adapter_a_request_gets() {
+    let instance = greycard_gpu::instance();
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+        assert!(
+            std::env::var_os("GREYCARD_REQUIRE_GPU").is_none_or(|v| v.is_empty()),
+            "no adapter to probe for and GREYCARD_REQUIRE_GPU is set"
+        );
+        println!("SKIPPED: no adapter to probe for");
+        return;
+    };
+    let got = adapter.get_info();
+    let found = greycard_gpu::adapters(got.backend.into());
+    assert!(
+        found.iter().any(|f| f.name == got.name
+            && f.backend == got.backend
+            && f.device_type == got.device_type),
+        "{got:?} not among {found:?}"
+    );
+}

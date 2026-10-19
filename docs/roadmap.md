@@ -862,16 +862,13 @@ Slint, a runtime exposing what it knows, a rawler release. It joins a
 release when the wait clears.
 
 #### Platform
-- [ ] A no-GPU mode: when no hardware adapter is found, take the
-      software adapter for the window, put the engine's ops on their
-      CPU paths as --cpu-ops does, and say so in the status line,
-      instead of failing at "selecting Slint's wgpu backend". A
-      tester on an Ivy Bridge i5 with Mesa's incomplete Vulkan hit
-      the failure, and with SLINT_WGPU_CPU=1 ran every develop op as
-      shaders under lavapipe, minutes at 400% CPU; with --cpu-ops
-      beside it a 6000 x 4000 X-Trans frame developed in 13.7 s and
-      exported (2026-10-19). Slow is the honest outcome there; the
-      mode makes it open, and say why, without the two switches
+- [ ] The models' adapter checked for a CPU type as the window's now
+      is (§374): ONNX Runtime's WebGPU provider picks its own adapter
+      through Dawn, and on a machine whose only Vulkan adapter is
+      lavapipe it may run the models as software shaders, minutes a
+      frame; the CPU provider is the right one there. Unverified
+      either way; a run under VK_DRIVER_FILES naming lavapipe alone
+      with a model fetched says which
 - [ ] A GPU path for the models on Windows on ARM: pyke publishes an
       ARM64 Windows build of ONNX Runtime with DirectML, no WebGPU,
       and DirectML ships with Windows, so ort-dylib could make our

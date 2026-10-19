@@ -12,6 +12,7 @@
 // it passes down, but does not wait for it.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod adapter;
 mod ai;
 mod archive;
 mod camera_match;
@@ -942,6 +943,7 @@ impl State {
                 center: (0.0, 0.0),
                 renderer: None,
                 gpu: None,
+                software_tail: None,
                 bins: None,
                 scope: scope::Scope::default(),
                 curve_drag: None,

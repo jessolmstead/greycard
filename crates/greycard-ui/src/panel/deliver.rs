@@ -662,12 +662,15 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // must not be what that develop takes away.
             let picking = app.get_picking();
             if picking.is_empty() {
+                // With no GPU, why the time is what it is: the start's
+                // own line saying so is gone by now.
+                let on_cpu = st.develop.software_tail.unwrap_or_default();
                 // The set's own words first: the develop's line runs
                 // long with a note or two of its own, and the set's
                 // is the one a snapshot's width must not clip.
                 app.set_status(
                     format!(
-                        "{prefix}{}x{}, developed in {seconds:.2} s{detailed}{dehazed}{sharpened}{learned_note}{fill_note}",
+                        "{prefix}{}x{}, developed in {seconds:.2} s{on_cpu}{detailed}{dehazed}{sharpened}{learned_note}{fill_note}",
                         image.width(),
                         image.height()
                     )

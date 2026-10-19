@@ -124,7 +124,7 @@ fn spawn_reveal(path: &Path, mut cmd: std::process::Command) -> std::io::Result<
         return Ok(());
     }
     let path = path.to_path_buf();
-    let mut child = cmd.spawn()?;
+    let mut child = crate::adapter::scrub(&mut cmd).spawn()?;
     // Reaped on a thread of its own, so it is not left a zombie and
     // the window never waits on the file manager; a failure is logged.
     std::thread::spawn(move || match child.wait() {

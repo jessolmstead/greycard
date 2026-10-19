@@ -77,11 +77,28 @@ const WANTED_TEXTURE_DIMENSION: u32 = 16384;
 /// backend's adapter enumeration on a shared instance from two threads
 /// fails with EGL_BAD_ACCESS.
 pub fn instance() -> wgpu::Instance {
+    make_instance(wgpu::InstanceDescriptor::new_without_display_handle_from_env())
+}
+
+fn make_instance(descriptor: wgpu::InstanceDescriptor) -> wgpu::Instance {
     static MAKING: Mutex<()> = Mutex::new(());
     let _one_at_a_time = MAKING
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env())
+    wgpu::Instance::new(descriptor)
+}
+
+/// Every adapter wgpu finds on `backends`, on an instance of our own
+/// made for them alone, so the probe loads no other driver stack:
+/// what the window could draw on, asked when Slint took none of it.
+pub fn adapters(backends: wgpu::Backends) -> Vec<wgpu::AdapterInfo> {
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    descriptor.backends = backends;
+    let instance = make_instance(descriptor);
+    pollster::block_on(instance.enumerate_adapters(backends))
+        .iter()
+        .map(wgpu::Adapter::get_info)
+        .collect()
 }
 
 /// A device, its queue, and the ops' pipelines built for it.

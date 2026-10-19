@@ -153,13 +153,53 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         ..wgpu::Limits::default()
     };
     // No taller or wider than the monitor it opens on leaves room for,
-    // fitted before the window is created.
-    let (fit, fit_slot) = crate::window_fit::handler();
-    slint::BackendSelector::new()
-        .require_wgpu_30(WGPUConfiguration::Automatic(settings))
-        .with_winit_custom_application_handler(fit)
-        .select()
-        .context("selecting Slint's wgpu backend")?;
+    // fitted before the window is created: a handler a selector, its
+    // slot filled once the window is made.
+    let select_backend = |settings: WGPUSettings| {
+        let (fit, fit_slot) = crate::window_fit::handler();
+        slint::BackendSelector::new()
+            .require_wgpu_30(WGPUConfiguration::Automatic(settings))
+            .with_winit_custom_application_handler(fit)
+            .select()
+            .map(|()| fit_slot)
+    };
+    // A machine with no GPU greycard can draw on draws on its software
+    // adapter rather than fail here, asked only once Slint has failed:
+    // a failed select sets no platform, so a second one can. Slint
+    // still chooses the adapter, with the window's surface to choose
+    // by.
+    use crate::adapter::Drawing;
+    let asked = crate::adapter::asked();
+    let (fit_slot, drawing) = match select_backend(settings.clone()) {
+        Ok(slot) => (
+            slot,
+            if asked {
+                Drawing::AsAsked
+            } else {
+                Drawing::Gpu
+            },
+        ),
+        Err(first) => match if asked {
+            Drawing::AsAsked
+        } else {
+            crate::adapter::probe()
+        } {
+            Drawing::Software => (
+                select_backend(settings)
+                    .context("selecting Slint's wgpu backend on a software adapter")?,
+                Drawing::Software,
+            ),
+            Drawing::Nothing => {
+                // Slint's own cause names a variable that would do
+                // nothing here; it goes to the log.
+                tracing::info!("Slint's select failed: {first}");
+                anyhow::bail!(crate::adapter::nothing_error());
+            }
+            Drawing::Gpu | Drawing::AsAsked => {
+                return Err(first).context("selecting Slint's wgpu backend");
+            }
+        },
+    };
     // The event loop is built now and not yet running: the moment to
     // hear the Finder, whose launch event comes as the loop starts.
     #[cfg(target_os = "macos")]
@@ -764,13 +804,24 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // Once per rendering setup, which is once per
                         // device: the line a "black viewport" report needs.
                         // It is kept for a report's GPU field too.
-                        let gpu = report::gpu_line(&device.adapter_info());
+                        let info = device.adapter_info();
+                        let gpu = report::gpu_line(&info);
                         tracing::info!("gpu: {gpu}");
+                        // With no GPU the window draws in software, and
+                        // the ops' shaders there take minutes a frame
+                        // where their CPU paths take seconds: the ops
+                        // go to the CPU, and the status line says so
+                        // before the first develop's line takes over.
+                        let in_software = drawing.in_software(info.device_type);
                         // Before the worker has the device: from then
                         // on a resize can race its submits, which
                         // wgpu's own handler would make a panic.
                         crate::gpu_errors::install(device, app_weak.clone());
                         let mut st = state.borrow_mut();
+                        if let Some(app) = app_weak.upgrade() {
+                            let lines = drawing.lines(info.device_type, &info.name);
+                            crate::adapter::show(&app, &mut st, lines, &gpu);
+                        }
                         st.develop.gpu = Some(gpu);
                         st.develop.renderer = Some(Renderer::new(device, queue));
                         st.develop.lut_for = None;
@@ -778,14 +829,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // so what they leave is the viewport's. Handed
                         // over before the first file opens, so its
                         // develop runs there too.
-                        if cpu_ops {
-                            tracing::info!("engine ops on the CPU (--cpu-ops)");
-                        } else {
+                        if crate::adapter::lend_device(in_software, cpu_ops) {
                             WORKER.with(|w| {
                                 if let Some(w) = &*w.borrow() {
                                     w.set_gpu(device, queue);
                                 }
                             });
+                        } else if cpu_ops && !in_software {
+                            tracing::info!("engine ops on the CPU (--cpu-ops)");
                         }
                     } else {
                         tracing::error!("gpu: not wgpu 30 ({api:?}); the viewport cannot render");

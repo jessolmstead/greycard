@@ -14,6 +14,16 @@ design note behind it.
   download on first use, as on an older x86-64 processor
   ([§372](https://github.com/jessolmstead/greycard/blob/master/docs/notes/372-a-windows-on-arm-package.md))
 
+### The window
+
+- Without a GPU the editor now opens instead of failing at start: it
+  draws through a software adapter and develops on the CPU, says so
+  in the status line and after each develop's time, and is slow (a
+  24 MP frame in about 14 s on a 2012 quad-core). Before, it needed
+  `SLINT_WGPU_CPU=1` and `--cpu-ops` by hand, and without the second
+  ran every develop as software shaders for minutes
+  ([§374](https://github.com/jessolmstead/greycard/blob/master/docs/notes/374-a-no-gpu-mode.md))
+
 ### Fixes
 
 - A Lightroom import no longer writes a sidecar the editor refuses

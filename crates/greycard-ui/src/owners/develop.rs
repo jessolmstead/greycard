@@ -56,6 +56,10 @@ pub(crate) struct Develop {
     /// The viewport's adapter as the log names it, for a report; none
     /// until the rendering setup has run.
     pub(crate) gpu: Option<String>,
+    /// Where the window draws on a software adapter and the engine's
+    /// ops run on the CPU, the words every develop's line carries after
+    /// its time to say so (`adapter::Lines`).
+    pub(crate) software_tail: Option<&'static str>,
     /// The last scope bins: the histogram, the backdrop of the curve
     /// editor, and after it whatever `scope` asked for.
     pub(crate) bins: Option<Vec<u32>>,

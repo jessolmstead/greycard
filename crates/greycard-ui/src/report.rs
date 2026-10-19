@@ -263,7 +263,7 @@ fn reveal(file: &Path) -> Result<()> {
     // Explorer reads its own command line and wants the path quoted
     // after the comma, which the standard library's quoting of the
     // whole argument would not do. Its exit code means nothing.
-    std::process::Command::new("explorer")
+    crate::adapter::scrub(&mut std::process::Command::new("explorer"))
         .raw_arg(format!("/select,\"{}\"", file.display()))
         .status()
         .context("starting Explorer")?;
@@ -272,7 +272,7 @@ fn reveal(file: &Path) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn reveal(file: &Path) -> Result<()> {
-    let status = std::process::Command::new("open")
+    let status = crate::adapter::scrub(&mut std::process::Command::new("open"))
         .arg("-R")
         .arg(file)
         .status()
@@ -301,7 +301,7 @@ fn reveal(file: &Path) -> Result<()> {
     if let Err(e) = shown {
         tracing::debug!("report: no file manager on the bus ({e}); xdg-open instead");
         let dir = file.parent().unwrap_or(file);
-        let status = std::process::Command::new("xdg-open")
+        let status = crate::adapter::scrub(&mut std::process::Command::new("xdg-open"))
             .arg(dir)
             .status()
             .context("starting xdg-open")?;

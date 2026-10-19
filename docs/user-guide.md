@@ -10,7 +10,14 @@ expect, please [report it](#reporting-a-problem).
 
 ## Before you start
 
-- **A GPU.** Vulkan on Linux and Windows, Metal on a Mac.
+- **A GPU, for any speed.** Vulkan on Linux and Windows, Metal on a
+  Mac. Without one, greycard still opens: it draws the window in
+  software, develops on the CPU, and says so in the status line. That
+  is slow (a 24 MP frame takes about 14 s on a 2012 quad-core). On a
+  processor that old the AI features (the learned masks, the eraser,
+  and the learned denoiser) also need a runtime greycard offers to
+  download, and they are slower again
+  ([On an older processor](guide/masks.md#on-an-older-processor)).
 - **On Linux, glibc 2.39 or newer**: Ubuntu 24.04, Fedora 40, Debian
   13, or later. The tarball and the AppImage both need it.
 - **A Mac with an Apple chip**, if you're on a Mac. There is no build
