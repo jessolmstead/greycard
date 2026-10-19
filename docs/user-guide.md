@@ -14,8 +14,8 @@ expect, please [report it](#reporting-a-problem).
 - **A Mac with an Apple chip**, if you're on a Mac. There is no build
   for Intel Macs or Windows on ARM.
 - **Raw files.** Tested with Canon, Fujifilm GFX and X-Trans, Sony,
-  Panasonic and Nikon raws. X-Trans raws develop without noise
-  reduction for now ([Demosaic](guide/develop.md#fujifilm-x-trans)).
+  Panasonic and Nikon raws. X-Trans raws develop without the learned
+  denoiser for now ([Fujifilm X-Trans](guide/develop.md#fujifilm-x-trans)).
   Nikon's High Efficiency raws (TicoRAW) don't open yet; only a build
   from source with the `nikon-he` feature reads them
   ([building.md](building.md)).
@@ -68,8 +68,10 @@ laptop the buttons of a sheet such as Export stay in reach.
 Working with your photos:
 
 - [Folders and the library](guide/library.md): opening folders, library
-  roots, the folder tree, filtering, collections, where edits are kept
-- [Importing from a card](guide/import.md)
+  roots, the folder tree, filtering, sorting, collections, a raw's
+  camera JPEG, where edits are kept, RawTherapee profiles
+- [Importing](guide/import.md): from a card, a folder where it is, or
+  a Lightroom Classic catalog
 - [Culling and rating](guide/culling.md): ratings, flags, labels,
   the lightbox, stacks, rejects and deleting
 - [Archives and backup](guide/archives.md)
@@ -101,32 +103,38 @@ bug form.
 
 | Key | Does |
 |---|---|
-| ← → | Previous or next frame (in the grid, the mouse's back and forward buttons too) |
+| ← → | Previous or next frame |
 | Shift+← → | Previous or next frame, added to the selection |
 | ↑ ↓ | In the grid, the frame above or below (with Shift, added) |
 | Home, End | The first or the last frame (with Shift, added) |
 | Ctrl+A | Select every frame shown |
 | Ctrl+click | Add a frame to the selection, or take it out |
-| Shift+click, Ctrl+Shift+click | Select every frame from the open one to this one; with Ctrl, add them instead |
+| Shift+click | Select every frame from the open one to this one (with Ctrl, added) |
+
+In the grid, a mouse's back and forward buttons step through the
+frames as ← and → do.
 
 ### Views
 
 | Key | Does |
 |---|---|
-| G | Library (the grid), and back to the loupe as it was left |
-| E | The loupe (one frame), in the mode it was left in: Cull or Develop |
-| D | Develop: the loupe with the edit panel |
+| G | Library (the grid), and back to the Loupe as it was left |
+| E | The Loupe (one frame), in the mode it was left in: Cull or Develop |
+| D | Develop: the Loupe with the edit panel |
 | L | The lightbox, and back |
-| C | Cull; in the loupe, Cull or Develop in turn |
+| C | Cull; in the Loupe, Cull or Develop in turn |
 | V | In Cull, compare two or four frames |
 | Enter | Open the frame chosen in the grid or the lightbox; from Cull, Develop |
-| + − | Bigger or smaller tiles in the grid (Ctrl+wheel too); fewer or more across the lightbox |
-| Tab | Hide the panels, the filmstrip and the status line, and bring them back (in the grid, the left pane) |
+| + − | Bigger or smaller tiles in the grid; fewer or more across the lightbox |
+| Tab | Hide the panels and the filmstrip, and bring them back (in the grid, the left pane) |
 | F6, F7, F8 | The filmstrip, the left pane or the develop panel alone |
 | Space | Fit or 1:1 |
 | Z | Fit or 3:1 |
 | J | Shadow and highlight clipping warnings |
-| S | Soft proof (in the grid, a stack; below) |
+| S | Soft proof (in the grid, a stack: below) |
+
+**Ctrl+wheel** over the grid changes the tile size as **+** and **−**
+do.
 
 ### Rating and sorting
 
@@ -134,11 +142,12 @@ bug form.
 |---|---|
 | 1 to 5, 0 | Set a rating, or clear it |
 | P, X, U | Pick, reject, unflag |
-| 6 to 9 | Red, yellow, green or blue label (press again to clear) |
+| 6 to 9 | Red, yellow, green or blue label (again to clear) |
 | [ ] | Turn the frame a quarter left or right; not part of the edit |
 | B | Add the selected frames to a collection, or take them out |
-| Ctrl+G, Ctrl+Shift+G | Stack the selected frames; unstack them |
-| S, Shift+S (in the grid) | Open or close a stack; make the frame its top |
+| Ctrl+G | Stack the selected frames |
+| Ctrl+Shift+G | Unstack them |
+| S, Shift+S | In the grid, open or close a stack; make the frame its top |
 | Ctrl+' | New version of the frame |
 | Delete | Delete the selected frames, after a confirmation |
 
@@ -162,7 +171,10 @@ bug form.
 | Ctrl+Shift+E | Export |
 | Ctrl+, | Settings |
 | ? | The keys sheet |
-| Esc | Close a sheet, put a tool down, let go of a set, go back to one frame, or clear the filter |
+| Esc | Close a sheet, put a tool down, let go of a set, or go back to one frame |
+
+In the filter's text field, **Esc** clears the text and gives the keys
+back to the frames.
 
 On a Mac, Ctrl is ⌘, and the keys sheet says Cmd (⌘C, ⌘V, ⌘Z,
 ⌘+click). Control+click is a right-click, and delete (⌫) opens the
@@ -173,8 +185,9 @@ delete sheet.
 - The default look and the tone sliders don't match Lightroom's feel
   yet. Highlights and Whites came closer in 0.7; tell us when a frame
   looks too dark, too flat or odd in a way you can name.
-- Fujifilm X-Trans raws get no noise reduction, hot pixel repair or
-  chromatic aberration correction yet.
+- The learned denoiser doesn't run on Fujifilm X-Trans raws yet, and
+  their chromatic aberration correction takes out less of a fringe
+  than on other raws.
 - The high-quality denoisers are slow, taking tens of seconds on a
   large frame.
 - On Windows and macOS the display is treated as sRGB unless you pick

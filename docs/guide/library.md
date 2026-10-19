@@ -96,11 +96,31 @@ and the filmstrip:
 - a **pencil** on a frame whose edit is not the default;
 - a **picture with a down arrow** on a frame that has been exported;
 - a **bookmark** on a frame that is in a collection (see
-  [Collections](#collections)).
+  [Collections](#collections));
+- **+JPEG** on a raw with the camera's JPEG beside it (below).
 
 A frame shows every mark it has. The exported mark stays after you
 undo past the export, or the export's row leaves the history. A
 version wears its own pencil and exported mark, and its own bookmark.
+
+### A raw and its camera JPEG
+
+A camera set to RAW+JPEG writes two files for each press, such as
+`IMG_0001.CR3` and `IMG_0001.JPG`. greycard lists them as one frame,
+the raw, marked **+JPEG**; under the frame's name the panel says "With
+the camera's JPEG, IMG_0001.JPG". The pair has one rating, flag,
+label and set of keywords, kept in the raw's `.gcd`. Moving rejects,
+Move back and deleting take the JPEG with its raw, and the delete
+sheet counts the JPEGs. An export writes the raw's develop.
+
+Culling shows the camera's JPEG when it is at least as large as the
+preview inside the raw, and the status line says "the camera's JPEG
+beside the raw". A JPEG with no raw of its name beside it is a frame
+of its own.
+
+To list the JPEGs as frames of their own, with their own ratings, turn
+on **Treat a JPEG beside its raw as a separate frame** under
+**RAW+JPEG** in [Settings](settings.md#rawjpeg).
 
 ## Roots: your library
 
@@ -435,10 +455,11 @@ A frame's versions live in the same `.gcd` (see
 [Versions of a frame](presets-and-history.md#versions-of-a-frame)).
 
 greycard 0.7 writes its `.gcd` files in a newer form, which 0.6 and
-earlier can't read. An older version leaves such a frame's edit alone
-rather than write over it: it shows the camera's picture with the
-pencil, and its log says why. Once 0.7 has saved a frame, open it with
-0.7 or later.
+earlier can't read, and 0.8 in a newer one again, which 0.7 can't
+read. An older version leaves such a frame's edit alone rather than
+write over it: it shows the camera's picture with the pencil, and its
+log says why. Once a version has saved a frame, open it with that
+version or a later one.
 
 ### A hidden folder instead
 

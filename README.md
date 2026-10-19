@@ -40,7 +40,8 @@ complete, battle-tested editor.
   through a shoot is smooth.
 - **Fast and familiar.** Native Rust, Slint and the GPU, so sliders
   update as you drag. The layout will feel at home if you're coming
-  from Lightroom Classic, and Lightroom presets load.
+  from Lightroom Classic. Lightroom presets load, and a Lightroom
+  catalog comes across with its ratings, edits and collections.
 - **The best open source algorithms.** greycard is GPL, so parts of the
   pipeline come straight from darktable and RawTherapee, credited in
   each file.

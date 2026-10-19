@@ -68,6 +68,10 @@ fitted to your camera's JPEGs.
 
 - Click a look in the list to use it. **None**, at the top, uses no
   look.
+- Rest the pointer on a look in the list to see it on the picture, at
+  the **Strength** set. Move off and the look you chose comes back;
+  click to keep the one under the pointer. Nothing is saved until you
+  click.
 - **Strength** blends the look in, from 0 to 100% (the default).
 - **Fit this camera's look…** opens the camera match. See
   [Fitting your camera's look](camera-match.md).
@@ -162,6 +166,11 @@ the texture inside a sky or a shadow keeps its contrast.
 does, and **Whites** works from the frame's middle tones upward rather
 than from a fixed mid grey, so a face under bright light answers both.
 A frame edited with either before 0.7 opens a little differently.
+
+At **Exposure** 0, each camera body opens at a brightness of its own,
+measured against that camera's JPEGs, so a frame opens about as
+bright as the camera's own picture of it. A frame edited before 0.8 keeps the brightness it had; **Reset**
+takes it to its body's.
 
 ### Display curve
 

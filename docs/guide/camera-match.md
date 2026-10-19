@@ -89,6 +89,12 @@ out of every group too, so a frame is never taken as fixed on a guess.
    ("Fit 3 groups").
 6. Press **Fit**.
 
+The list fills in as greycard reads each frame's picture style, and
+the line under it counts the frames read ("Reading picture styles:
+120 of 800"). A folder outside your library is read from the files
+themselves, which on a network share takes a few seconds for a few
+hundred frames. macOS's `._` files beside the raws are passed over.
+
 Each group's result appears as a line when it is done. When the run
 ends, the new looks are in the LOOK section's list. **Fit** then
 stays off and **Close** is highlighted, since fitting the same groups

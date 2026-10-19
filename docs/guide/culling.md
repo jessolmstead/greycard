@@ -184,8 +184,10 @@ the frame's own edit, use **Swap with the original** on it. An arrow
 or a click past the file's cells, or **V**, ends the comparison.
 
 The status line says what you are looking at: "the camera JPEG",
-"a small camera preview" when the camera stored only a small one, or
-"the edit" for an edited frame.
+"a small camera preview" when the camera stored only a small one,
+"the camera's JPEG beside the raw" for a
+[raw and its JPEG](library.md#a-raw-and-its-camera-jpeg), or "the
+edit" for an edited frame.
 For a frame on a drive that is offline or on the network, culling
 shows "the local preview" greycard keeps of it, so you can cull frames
 that aren't reachable right now, or are slow to read.

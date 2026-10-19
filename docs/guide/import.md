@@ -7,6 +7,13 @@ you cull. It can also add a folder already on your computer to the
 library where it is, copying nothing: see
 [Adding a folder in place](#adding-a-folder-in-place).
 
+To bring your shoots over from Lightroom Classic, ratings, edits,
+collections and all, see
+[A Lightroom Classic catalog](#a-lightroom-classic-catalog) at the end
+of this chapter. RawTherapee's `.pp3` profiles are offered when you
+open a folder that holds them; see
+[Profiles from RawTherapee](library.md#profiles-from-rawtherapee).
+
 greycard never writes to the card or deletes anything from it. When
 the import is done, you format the card in the camera as usual.
 
@@ -15,10 +22,7 @@ the import is done, you format the card in the camera as usual.
 Press **Ctrl+Shift+I**, or click **Import...** at the top of the left
 pane while the grid is up and choose **From a card or folder...**. You
 don't need a folder open first. The same menu has **A Lightroom
-catalog...**.
-A capture time you corrected in Lightroom comes across as a shift on
-the frame, so it sorts and groups by the time you set there; the
-camera's own time stays in the file.
+catalog...**, described [below](#a-lightroom-classic-catalog).
 
 When the sheet opens, greycard looks for a card: the first mounted
 drive with a `DCIM` folder on it. If it finds none, the **From** line
@@ -205,3 +209,124 @@ with 0 when the import finished, 1 when it stopped on an error, and 2
 when it went through but a folder under the source could not be read:
 the line then says so, and those frames are still on the card, so
 don't format it.
+
+## A Lightroom Classic catalog
+
+greycard reads a Lightroom Classic catalog (a `.lrcat` file) and
+brings its frames into your library with what you did to them in
+Lightroom. It only reads the catalog, and it never changes a raw:
+what it brings is written to greycard's own sidecars beside the
+frames, to your collections and to your library's roots.
+
+Quit Lightroom first: a catalog Lightroom has open is refused. If you
+import a copy of a catalog, copy the `-wal` file beside it too when
+there is one, since Lightroom keeps its newest changes there until it
+quits. greycard reads catalogs from Lightroom Classic 15.2 to 15.5,
+and says so when a catalog is from another version.
+
+### What comes across
+
+- Ratings, picks and rejects, color labels, keywords (with their full
+  path, such as `Places/Scotland/Skye`), titles and captions.
+- A capture time you corrected in Lightroom, as a
+  [shift](culling.md#shift-capture-time) on the frame, so it sorts and
+  groups by the time you set there; the camera's own time stays in the
+  file.
+- The develop settings, as one step in each frame's history,
+  "Imported from Lightroom", which you can undo. They are translated
+  as a [Lightroom preset's](presets-and-history.md#importing-presets-including-lightrooms)
+  are, so they are a starting point rather than an exact match, and
+  the report names what has no place here, such as masks, healed spots
+  and color noise reduction. A camera Lightroom shows brighter than
+  greycard does, such as the Fujifilm GFX 100S II, has its exposure
+  corrected on the way in.
+- Crops, with their angle, and a frame turned in Lightroom stands
+  turned here too. A flipped frame keeps neither its flip nor its
+  crop.
+- Virtual copies, each as a
+  [version](presets-and-history.md#versions-of-a-frame) of its frame,
+  named for the copy. A version shares its frame's rating, flag and
+  label, so a copy rated apart from its master takes the master's.
+- Stacks, as greycard [stacks](culling.md#stacks), open or closed as
+  Lightroom had them.
+- Collections, in a set named for the catalog unless you change it
+  (below), with the catalog's own sets inside it. The Quick Collection
+  comes as "Quick Collection". Books, prints, slideshows and web pages
+  come as collections of their frames, unless you leave them out.
+- Smart collections, as greycard's
+  [smart collections](library.md#smart-collections), when each of
+  their rules has a filter term here (rating, flag, label, keywords,
+  capture date, camera and lens) and they match all of their rules.
+  Any other is skipped, and the report says why. Lightroom's six
+  stock smart collections are left out.
+- The catalog's folders, each added to the library as a
+  [root](library.md#roots-your-library).
+
+### Importing one
+
+1. Click **Import...** at the top of the left pane, choose **A
+   Lightroom catalog...**, and pick the `.lrcat` file.
+2. The sheet lists the catalog's folders as the catalog names them.
+   Beside each is the folder greycard found it in on this computer,
+   and how many of its files are there. greycard looks where the
+   catalog says, then beside the catalog and under your library's
+   roots, for a folder of the same name holding the same files. Where
+   it found none ("not found"), or the wrong one, click **Choose...**
+   and pick where that folder lives now; the sheet looks again at
+   once.
+3. Under the folders, **Set** names the set your collections go into:
+   the catalog's name to start with, or empty to put them at the top
+   of the list. When the catalog has books, prints, slideshows or web
+   pages, a switch below brings them in as collections or leaves them
+   out.
+4. **Check** shows what the import would do, writing nothing: how many
+   frames it found and didn't, the edits, crops, copies, stacks and
+   collections it would bring, the smart collections it would skip and
+   why, where new sidecars would go, and the frames it would leave
+   alone. **Back** goes back to the folders.
+5. **Write** writes it. It stays off until at least one of the
+   catalog's files is found. The sheet stays up while it writes, and
+   the button in the left pane reads **Importing the catalog...**.
+   When it is done, the sheet says what was written, and the grid, the
+   folders and the collections show it at once. **OK** closes the
+   sheet.
+
+On a catalog whose pictures are on a network share, finding the
+folders can take a while. The sheet says how far it has got, and
+**Cancel** stops it while it looks or checks. Once **Write** has
+started, it runs to the end.
+
+A frame's edit goes into the sidecar it has already, if any. A new
+sidecar goes into the folder's hidden `.greycard` folder when the
+folder has one, and otherwise where **Edits go** in
+[Settings](settings.md#edits-go) puts it.
+
+### Frames you already worked on
+
+A frame that already has an edit, a version, or a rating, flag, label
+or keyword set in greycard is left alone, so an import never undoes
+your work here, and the report counts those frames. When there are
+some, the sheet offers a switch to write over them too, with their
+count. With it on, Lightroom's edits, ratings and capture times
+replace yours on those frames.
+
+Importing the same catalog a second time writes nothing that is
+already here: the frames imported the first time are left alone, and
+collections, stacks and roots already there stay as they are.
+
+### The catalog from the command line
+
+`greycard library import-lightroom CATALOG` prints the report the
+sheet's **Check** shows, and `--write` writes it:
+
+```
+greycard library import-lightroom ~/Lightroom/Shoot.lrcat --root "A:/Photos=/home/me/Photos" --write
+```
+
+| Flag | What it does |
+|---|---|
+| `--root CATALOG=HERE` | Where one of the catalog's folders is now: its path as the catalog has it, a folder above it, or its name, then `=` and the folder on this computer. Give one for each folder that moved |
+| `--set NAME` | The set the collections go into; `--set ""` for none |
+| `--no-creations` | Leave out books, prints, slideshows and web pages |
+| `--write` | Write the sidecars, the collections and the roots |
+| `--force` | With `--write`, write over the frames you already worked on |

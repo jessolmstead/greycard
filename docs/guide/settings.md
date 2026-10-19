@@ -22,7 +22,7 @@ Where a frame's edit file (its `.gcd`) is written.
 
 Both travel with the shoot when you copy the folder. greycard reads an
 edit from either place, so changing this loses nothing. An edit file
-saved by greycard 0.7 can't be read by 0.6 or earlier (see
+saved by greycard 0.8 can't be read by 0.7 or earlier (see
 [Where your edits live](library.md#where-your-edits-live)).
 
 Changing it moves nothing by itself. Each frame's edit moves to the
@@ -42,6 +42,17 @@ Lightroom or darktable: greycard then also writes a standard `.xmp`
 beside each raw. An `.xmp` that is already there is read either way.
 
 Picks and rejects have no XMP field, so they stay in the `.gcd`.
+
+## RAW+JPEG
+
+### Treat a JPEG beside its raw as a separate frame
+
+Off by default: the camera's JPEG beside its raw (`IMG_0001.JPG`
+beside `IMG_0001.CR3`) goes with the raw as one frame, marked
+**+JPEG**. Turn it on and each JPEG is a frame of its own, with its
+own rating and its own sidecar, and moving or deleting the raw leaves
+it where it is. The open folder changes at once. See
+[A raw and its camera JPEG](library.md#a-raw-and-its-camera-jpeg).
 
 ## Crop
 
@@ -118,6 +129,10 @@ session to the next:
   exports go to ([Exporting](export.md))
 - how many frames go across the lightbox
   ([Culling](culling.md#the-lightbox))
+- the Loupe's mode, Cull or Develop, and Cull's **Picture** switch
+  ([Culling mode](culling.md#culling-mode))
+- the grid's sort order, for each kind of view
+  ([Sort order](library.md#sort-order))
 
 ## Where greycard keeps its files
 

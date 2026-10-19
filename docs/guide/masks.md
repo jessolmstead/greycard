@@ -125,6 +125,27 @@ or right-click what isn't sky to remove it.
 It works least well on sky seen through a window or behind dense
 blossom.
 
+On a frame wider than 6144 pixels, as from a 45 or 100 MP camera,
+the Sky mask is made at twice the size, so twigs, wires and the rims
+of leaves against the sky keep a clean edge at 1:1.
+
+### Landscape
+
+**Landscape**, beside **Sky**, looks over the picture once and offers
+what it found, largest first, in a menu under the button: **Water**,
+**Foliage**, **Mountain**, **Building** and **Sky**, each with the
+share of the frame it covers ("Foliage 33%"). Only what it found is
+offered; with nothing found there is no menu, and the status line
+says "no landscape found". Choose one to add it to the mask, joined as
+the row above the buttons says; press **Esc** to add none.
+
+Each is a shape edged from the picture: water and foliage follow the
+color line along their edge, mountains and buildings a softer one.
+**Foliage** keeps off the sky that **Sky** finds, so the open sky
+between branches stays out of it. These shapes take no clicks: to
+take something out of one, subtract a brush, or intersect it with
+another shape.
+
 ### Object
 
 Click **Object**, then click the thing you want, right-click to
@@ -299,7 +320,7 @@ can tint them if you pull exposure well down.
 
 ## Models download on first use
 
-Subject, Background, Sky, Object and People use learned models that greycard
+Subject, Background, Sky, Landscape, Object and People use learned models that greycard
 downloads the first time you need one. A sheet names the model, its
 size, where it comes from and its license before anything downloads;
 choose **Download** or **Not now**.
@@ -307,7 +328,7 @@ choose **Download** or **Not now**.
 | Shape | Download |
 |---|---|
 | Subject, Background | about 114 MB |
-| Sky | about 96 MB, plus the Object model for a finer edge |
+| Sky, Landscape | about 96 MB, plus the Object model for a finer edge on Sky |
 | Object | about 184 MB |
 | People | about 1.04 GB, plus the Subject model for Whole person's edge |
 
@@ -340,6 +361,6 @@ it by name. **Replace masks** takes each frame's own away; **Add to
 masks** keeps them and puts the copied ones after. See
 [Presets and history](presets-and-history.md).
 
-A Subject, Background, Sky or People mask copied onto another frame is
+A Subject, Background, Sky, Landscape or People mask copied onto another frame is
 made again for that frame, from that frame's own picture. A paste of
 masks onto the frame on screen shows at once.
