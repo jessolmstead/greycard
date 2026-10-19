@@ -35,19 +35,7 @@ the reasoning lives in `docs/notes.md`.
 
 ## Next: 0.9.0
 
-The editor settles into the hand: the controls a tester reached for
-and could not find are where they look, and the Mac has its menu
-bar.
-
-- [ ] A menu bar, native on macOS and Windows
-- [ ] A text size setting
-- [ ] The sort as a labeled control
-- [ ] Adding to and taking from an AI mask made obvious
-- [ ] The reference view
-- [ ] The grading wheels fitted to Lightroom's exports
-- [ ] Re-map frames untouched since their import
-
-
+TBD.
 
 ## Tracks
 
