@@ -146,10 +146,19 @@ Look section's job.
       whether the drawn bar is kept on Linux and Windows or the
       MenuBar made conditional on a property, which Slint may not
       allow. The user's, for the laptop, 0.9.0
-- [ ] A text size setting: the interface's type and controls scaled
+- [ ] A UI scale setting: the interface's type and controls scaled
       from one setting (Slint's scale factor over the window, not a
       per-font change), with the default from the system; a tester on
-      a dense screen could not work at ours. Asked 2026-10-18
+      a dense screen could not work at ours, and several people have
+      asked since. First as a Settings row applied at the next start,
+      through the factor the winit backend reads before the window
+      exists; the viewport's 1:1 and the crop and mask handles already
+      read the window's factor. Asked 2026-10-18
+- [ ] The UI scale changed live, without a restart: the scale-changed
+      event dispatched on the open window, then every cached size
+      checked (the window fit, the strip's row heights, the viewport
+      texture, the snapshot path), with the factor pinned in the
+      screenshot tests. After the setting above
 - [ ] The sort shown as a labeled control: today it is the arrows at
       the end of the filter's row, and a tester who found a shoot in
       reverse order found no way to turn it. Asked 2026-10-18
