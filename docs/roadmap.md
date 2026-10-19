@@ -524,6 +524,15 @@ clears or a tester asks for it.
 
 
 #### Editor
+- [ ] Spektrafilm: Andrea Volpato's spectral film simulation, a
+      physical model of exposure, development, printing, and scanning
+      from measured emulsion and paper data rather than a LUT, with
+      grain, halation, and diffusion as things that happen on the way;
+      darktable has a module in progress derived from it. Ours would
+      be a look of a new kind beside the LUTs, with the data pack
+      fetched like a model. Waits on a read of the code's and the
+      data's licenses, and on a port decision: GPU, and at what cost
+      per frame. Asked 2026-10-18
 - [ ] The window fit by the platform's true work area instead of a
       guessed margin: macOS `NSScreen.visibleFrame`, Windows
       `SPI_GETWORKAREA` or `rcWork`, X11 `_NET_WORKAREA` (§306). The
@@ -799,6 +808,15 @@ Slint, a runtime exposing what it knows, a rawler release. It joins a
 release when the wait clears.
 
 #### Platform
+- [ ] Windows on ARM: a fourth package, aarch64-windows, built on
+      GitHub's windows-11-arm runner. The editor is Rust and wgpu over
+      Direct3D 12 and should build as is; the AI side cannot ship our
+      runtime, since pyke publishes no ARM64 Windows build of ONNX
+      Runtime, so the models run on Microsoft's CPU-only runtime
+      fetched on first use (§358) with a win-arm64 registry entry, no
+      GPU path until a WebGPU build exists for the target. A tester
+      asked 2026-10-18 and is the only test machine; a CI artifact
+      from a branch goes to them first, the package in 0.8.1
 - [ ] A SHA-256 sums file attached to every release, written by the
       release workflow over the four packages, so a download can be
       checked and an updater has something to verify against; a
