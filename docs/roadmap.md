@@ -33,11 +33,19 @@ the reasoning lives in `docs/notes.md`.
   anchor should be the camera JPEG, and every body come down, is the
   open call (§348's table)
 
-## Next: 0.8.0
+## Next: 0.9.0
 
-A Lightroom catalog comes across whole: its folders as roots, its
-edits as sidecars, its ratings, labels, flags and collections as
-ours, so a tester brings a library over in one go.
+The editor settles into the hand: the controls a tester reached for
+and could not find are where they look, and the Mac has its menu
+bar.
+
+- [ ] A menu bar, native on macOS and Windows
+- [ ] A text size setting
+- [ ] The sort as a labeled control
+- [ ] Adding to and taking from an AI mask made obvious
+- [ ] The reference view
+- [ ] The grading wheels fitted to Lightroom's exports
+- [ ] Re-map frames untouched since their import
 
 
 
@@ -61,6 +69,8 @@ same direction and a similar size in the first third of the travel,
 within a tenth of a stop; past that it is a look, and looks are the
 Look section's job.
 
+- [ ] Tester requested a fine-control mode for sliders. Maybe holding a
+      different key and turning the mousewheel.
 - [ ] A file opened from the Finder opens in the editor: the delegate's
       `application:openURLs:` is written but has not run on a Mac;
       try a double-click, Open With and a Dock drop, at launch and
@@ -129,7 +139,6 @@ Look section's job.
       editor mixes the channels, so None starts flatter across hues than
       people expect (§87). A change to the default look and to every
       mono edit written; waits on the reference frames
-
 - [ ] A reference view: a frame pinned beside the one being edited,
       the panel live and the reference untouchable, drawn from the
       developed preview the thumbnails keep so it costs no second

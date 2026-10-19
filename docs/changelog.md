@@ -3,18 +3,23 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.8.0, unreleased
+## 0.8.0, 2026-10-18
+
+A Lightroom Classic catalog comes across whole: its folders as roots,
+its edits as sidecars, its ratings, labels, flags, and collections as
+ours, and a capture time corrected there kept. The window is two
+views, Library and Loupe, with Cull and Develop as the Loupe's modes.
+Stacks, keywords and a title typed in the window, a capture time
+shift, a sort for the grid, RawTherapee profiles read beside the
+raws, Landscape masks, a person picked once given to every picture,
+Fujifilm X-Trans finished, a Linux AppImage, and a round of fixes
+from the testers. Sidecars written by this build are refused by 0.7.x.
 
 ### Culling and the window
 
-- The window has two views, Library and Loupe, where Library and
-  Develop were, and the Loupe has two modes, Cull and Develop. Cull is
-  the first entry of the panel's tab row, before Develop, Crop, Masks
-  and Retouch; inside it a Picture switch in CULLING shows the camera
-  JPEG or the developed picture. G goes between Library and the Loupe
-  and comes back in the mode the Loupe was left in; C goes between
-  Cull and Develop; D goes to Develop from anywhere. The mode is
-  remembered across runs
+- Clarified Library vs Loupe view with a persistent toggle in the top left.
+  Cull mode is now in the right panel and allows viewing embedded previews
+  or developed frames.
   ([§359](https://github.com/jessolmstead/greycard/blob/master/docs/notes/359-two-views-and-two-modes.md))
 - Ctrl+A selects every frame shown, in the strip, the grid and the
   lightbox

@@ -140,7 +140,7 @@ planned.
 
 ## Where it stands
 
-Built, as of 0.7.0:
+Built, as of 0.8.0:
 
 - **Pipeline.** rawler decoding. Linear Rec.2020 from the camera
   matrix to the monitor profile, soft proofing, AgX as a second
