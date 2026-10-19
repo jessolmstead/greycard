@@ -251,7 +251,7 @@ and says so when a catalog is from another version.
   Lightroom had them.
 - Collections, in a set named for the catalog unless you change it
   (below), with the catalog's own sets inside it. The Quick Collection
-  comes as "Quick Collection". Books, prints, slideshows and web pages
+  comes as "Quick Collection". Books, prints, slideshows, and web pages
   come as collections of their frames, unless you leave them out.
 - Smart collections, as greycard's
   [smart collections](library.md#smart-collections), when each of
@@ -259,37 +259,57 @@ and says so when a catalog is from another version.
   capture date, camera and lens) and they match all of their rules.
   Any other is skipped, and the report says why. Lightroom's six
   stock smart collections are left out.
-- The catalog's folders, each added to the library as a
-  [root](library.md#roots-your-library).
+- Each of the catalog's folders that was found, added to the library
+  as a [root](library.md#roots-your-library).
 
 ### Importing one
 
 1. Click **Import...** at the top of the left pane, choose **A
    Lightroom catalog...**, and pick the `.lrcat` file.
-2. The sheet lists the catalog's folders as the catalog names them.
-   Beside each is the folder greycard found it in on this computer,
-   and how many of its files are there. greycard looks where the
-   catalog says, then beside the catalog and under your library's
-   roots, for a folder of the same name holding the same files. Where
-   it found none ("not found"), or the wrong one, click **Choose...**
-   and pick where that folder lives now; the sheet looks again at
-   once.
-3. Under the folders, **Set** names the set your collections go into:
-   the catalog's name to start with, or empty to put them at the top
-   of the list. When the catalog has books, prints, slideshows or web
+2. The sheet lists the catalog's folders, one line each: the folder's
+   name, whether its files were found, and **Choose...** to say where
+   it is now. Under the name is where greycard found it on this
+   computer, and the catalog's own path for it when two of the
+   catalog's folders share a name. greycard looks where the catalog
+   says, then beside the catalog and under your library's roots, for
+   a folder of the same name holding the same files.
+   - "found, 400 of 400 checked": greycard looked for the folder's 400
+     files and found them all.
+   - "found, no files in the catalog": the folder is there, and the
+     catalog lists nothing in it.
+   - "not found": choose where it is.
+   - "not found; nearest: ~/Archive/Shoots": a folder of the same name
+     that holds only some of the files, which may be another shoot's.
+   - "not found in ~/Archive/Shoots": the folder chosen, or the one
+     the catalog names, holds none of its files.
+
+   Where it found none, or the wrong one, click **Choose...** and
+   pick where that folder lives now; the sheet looks again at once.
+3. Under the folders, **Collection set** names the set your
+   collections go into, with the catalog's own sets inside it: the
+   catalog's name to start with, or empty to put them at the top of
+   the list. When the catalog has books, prints, slideshows, or web
    pages, a switch below brings them in as collections or leaves them
    out.
-4. **Check** shows what the import would do, writing nothing: how many
-   frames it found and didn't, the edits, crops, copies, stacks and
-   collections it would bring, the smart collections it would skip and
-   why, where new sidecars would go, and the frames it would leave
-   alone. **Back** goes back to the folders.
+4. **Check** shows what the import would do, writing nothing, in a
+   short summary such as "1,240 frames, 1,198 found. 312 with edits.
+   14 collections, 3 stacks, 7 virtual copies." **Details** opens the
+   rest: which Lightroom wrote the catalog, where each folder was
+   found, the frames not found, the settings that have no place here
+   and how many frames used them, edits on the old 2003 or 2010
+   process, the crops, turns, copies, stacks, and collections it would
+   bring, the smart collections it would skip and why, the frames it
+   would leave alone, and where new sidecars would go. When the
+   catalog was copied without its `-wal` file, a warning above the
+   summary says that Lightroom's newest changes may be missing, and
+   what to do. **Back** goes back to the folders.
 5. **Write** writes it. It stays off until at least one of the
    catalog's files is found. The sheet stays up while it writes, and
    the button in the left pane reads **Importing the catalog...**.
-   When it is done, the sheet says what was written, and the grid, the
-   folders and the collections show it at once. **OK** closes the
-   sheet.
+   When it is done, the sheet says what was written in one line, such
+   as "Wrote 1,198 sidecars; 42 frames not found.", with the rest
+   under **Details**, and the grid, the folders, and the collections
+   show it at once. **OK** closes the sheet.
 
 On a catalog whose pictures are on a network share, finding the
 folders can take a while. The sheet says how far it has got, and
@@ -316,8 +336,9 @@ collections, stacks and roots already there stay as they are.
 
 ### The catalog from the command line
 
-`greycard library import-lightroom CATALOG` prints the report the
-sheet's **Check** shows, and `--write` writes it:
+`greycard library import-lightroom CATALOG` prints the whole report,
+which the sheet shows as its summary and **Details**, and `--write`
+writes it:
 
 ```
 greycard library import-lightroom ~/Lightroom/Shoot.lrcat --root "A:/Photos=/home/me/Photos" --write
@@ -327,6 +348,6 @@ greycard library import-lightroom ~/Lightroom/Shoot.lrcat --root "A:/Photos=/hom
 |---|---|
 | `--root CATALOG=HERE` | Where one of the catalog's folders is now: its path as the catalog has it, a folder above it, or its name, then `=` and the folder on this computer. Give one for each folder that moved |
 | `--set NAME` | The set the collections go into; `--set ""` for none |
-| `--no-creations` | Leave out books, prints, slideshows and web pages |
+| `--no-creations` | Leave out books, prints, slideshows, and web pages |
 | `--write` | Write the sidecars, the collections and the roots |
 | `--force` | With `--write`, write over the frames you already worked on |

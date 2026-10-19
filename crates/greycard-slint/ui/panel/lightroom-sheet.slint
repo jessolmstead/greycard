@@ -1,48 +1,83 @@
-// The Lightroom catalog import: the catalog's roots and where each is
-// now, the set its collections go under, then the import's dry run as
-// the command prints it, then a write on its own thread and the report
-// again with what was written. Over everything until closed, and while
-// it writes.
+// The Lightroom catalog import: the catalog's roots and where each
+// stands, the set its collections go under, then the dry run's summary,
+// then a write on its own thread and a line of what it wrote. Whatever
+// else the report knows is under Details on both. Over everything until
+// closed, and while it writes.
 //
-// The roots and the report scroll between a head and a foot that stay:
-// a catalog of many roots, or a long report, never puts the set or the
-// buttons off the sheet.
+// The roots and the details scroll between a head and a foot that
+// stay: a catalog of many roots, or long details, never puts the set
+// or the buttons off the sheet.
 
 import { LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { PanelButton, Toggle } from "../controls.slint";
 import { LightroomRoot, ReportLine } from "../structs.slint";
 
-// A line of the report: its word in a column, then what it says.
+// A line of the details: its word in a column, then what it says.
 component Line inherits HorizontalLayout {
     in property <string> label;
     in property <string> text;
-    in property <length> size: Theme.font-xs;
     spacing: Theme.space-2;
     Text {
         text: root.label;
         width: 88px;
-        font-size: root.size;
+        font-size: Theme.font-xs;
         color: Theme.text-secondary;
     }
     // Its width said, so that its height is the wrapped text's and the
-    // scroll measures the whole report.
+    // scroll measures the whole of the details.
     Text {
         text: root.text;
         width: max(40px, root.width - 88px - Theme.space-2);
         wrap: word-wrap;
-        font-size: root.size;
+        font-size: Theme.font-xs;
         color: Theme.text;
+    }
+}
+
+// Details' header: a chevron and the word, a click folding them away
+// and back.
+component Fold inherits Rectangle {
+    in-out property <bool> open;
+    height: Theme.icon + Theme.space-1;
+    accessible-role: button;
+    accessible-label: "Details";
+    accessible-expandable: true;
+    accessible-expanded: root.open;
+    accessible-action-default => { root.open = !root.open; }
+    accessible-action-expand => { root.open = true; }
+    HorizontalLayout {
+        spacing: Theme.space-1;
+        alignment: start;
+        Image {
+            source: @image-url("../icons/chevron-down.svg");
+            colorize: head.has-hover ? Theme.text : Theme.text-secondary;
+            width: Theme.icon;
+            height: Theme.icon;
+            y: (parent.height - self.height) / 2;
+            transform-rotation: root.open ? 0deg : -90deg;
+            animate transform-rotation { duration: 120ms; easing: ease-out; }
+        }
+        Text {
+            text: "Details";
+            font-size: Theme.font-xs;
+            color: head.has-hover ? Theme.text : Theme.text-secondary;
+            vertical-alignment: center;
+        }
+    }
+    head := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.open = !root.open; }
     }
 }
 
 export component LightroomSheet inherits Rectangle {
     in-out property <bool> lr-open;
-    /// 0 the roots, 1 the dry run's report, 2 what was written.
+    /// 0 the roots, 1 the dry run's summary, 2 what was written.
     in property <int> lr-step;
     in property <string> lr-title;
     in property <string> lr-subtitle;
-    /// A word over the sheet: the catalog's log, a refusal, an error.
+    /// A word over the sheet: a refusal, an error.
     in property <string> lr-note;
     in property <[LightroomRoot]> lr-roots;
     in-out property <string> lr-set;
@@ -51,9 +86,16 @@ export component LightroomSheet inherits Rectangle {
     /// Frames whose sidecar has edits already; none hides the switch.
     in property <int> lr-already;
     in-out property <bool> lr-force: false;
-    in property <[ReportLine]> lr-lines;
-    /// What the write did: the report's lines from its "written" on.
-    in property <[ReportLine]> lr-done;
+    /// The catalog copied without its -wal: what may be missing, and
+    /// what to do. Empty when its log is whole.
+    in property <string> lr-warning;
+    in property <string> lr-remedy;
+    /// The dry run in two or three short sentences.
+    in property <string> lr-summary;
+    /// What the write did, in one line.
+    in property <string> lr-done;
+    /// The rest of the report, under Details.
+    in property <[ReportLine]> lr-details;
     /// A dry run is reading, or the write writing; the buttons wait.
     in property <bool> lr-busy;
     in property <string> lr-busy-text;
@@ -68,6 +110,12 @@ export component LightroomSheet inherits Rectangle {
     callback lr-write();
     /// The sheet closed, a dry run under way stopped.
     callback lr-cancel();
+    /// Details unfolded; folded each time the sheet opens.
+    property <bool> details-open: false;
+    /// The middle has something to scroll: the roots, or the details
+    /// unfolded.
+    property <bool> shows-list: root.lr-step == 0 ? root.lr-roots.length > 0
+        : root.details-open && root.lr-details.length > 0;
 
     background: #000000a0;
     TouchArea { clicked => { if (!root.lr-running) { root.lr-cancel(); } } }
@@ -105,58 +153,82 @@ export component LightroomSheet inherits Rectangle {
                 font-size: Theme.font-sm;
                 color: Theme.label-red;
             }
-            if root.lr-step == 0 && root.lr-roots.length > 0: Text {
-                text: "Where each of the catalog's folders is now:";
+            // The one thing that can lose work, over the summary.
+            if root.lr-step > 0 && root.lr-warning != "": VerticalLayout {
+                spacing: 2px;
+                Text {
+                    text: root.lr-warning;
+                    wrap: word-wrap;
+                    font-size: Theme.font-sm;
+                    color: Theme.label-red;
+                }
+                Text {
+                    text: root.lr-remedy;
+                    wrap: word-wrap;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-secondary;
+                }
+            }
+            // What the dry run found, or what the write did.
+            if root.lr-step > 0: Text {
+                text: root.lr-step == 1 ? root.lr-summary : root.lr-done;
+                wrap: word-wrap;
                 font-size: Theme.font-sm;
                 color: Theme.text;
             }
-            // What the write did, over the report it ends.
-            if root.lr-step == 2: VerticalLayout {
-                spacing: 2px;
-                for l in root.lr-done: Line {
-                    label: l.label;
-                    text: l.text;
-                    size: Theme.font-sm;
-                }
-            }
-
-            // The middle, which scrolls: the roots, or the report.
-            scroll := ScrollView {
+            // Details' header and the middle, which scrolls: the roots, or
+            // the details. Folded, the empty scroll takes no spacing.
+            middle := VerticalLayout {
                 vertical-stretch: 1;
-                min-height: root.lr-step == 0 && root.lr-roots.length == 0 ? 0px : 72px;
-                preferred-height: list.preferred-height;
-                content-height: list.preferred-height;
-                content-width: self.visible-width;
-                list := VerticalLayout {
-                    width: scroll.visible-width;
-                    spacing: root.lr-step == 0 ? Theme.space-2 : 2px;
-                    if root.lr-step == 0: VerticalLayout {
-                        spacing: Theme.space-2;
-                        for r[i] in root.lr-roots: VerticalLayout {
-                            spacing: 2px;
-                            Text {
-                                text: r.catalog + (r.name != "" ? "  (" + r.name + ")" : "");
-                                width: scroll.visible-width;
-                                font-size: Theme.font-sm;
-                                color: Theme.text-secondary;
-                                wrap: word-wrap;
-                            }
-                            HorizontalLayout {
+                spacing: root.shows-list ? Theme.space-2 : 0px;
+                if root.lr-step > 0 && root.lr-details.length > 0: Fold {
+                    open <=> root.details-open;
+                }
+
+                scroll := ScrollView {
+                    vertical-stretch: 1;
+                    min-height: root.shows-list ? 72px : 0px;
+                    preferred-height: root.shows-list ? list.preferred-height : 0px;
+                    content-height: list.preferred-height;
+                    content-width: self.visible-width;
+                    visible: root.shows-list;
+                    list := VerticalLayout {
+                        width: scroll.visible-width;
+                        if root.lr-step == 0: VerticalLayout {
+                            spacing: Theme.space-2;
+                            // A root a line: its folder's name, where it
+                            // stands, and Choose... to say where it is.
+                            for r[i] in root.lr-roots: HorizontalLayout {
                                 spacing: Theme.space-2;
                                 VerticalLayout {
                                     horizontal-stretch: 1;
                                     alignment: center;
-                                    // The folder by its own name, which a
-                                    // long path's end would hide, then the
-                                    // path.
-                                    Text {
-                                        text: r.local == "" ? "not found" : r.folder;
-                                        color: r.local == "" ? Theme.text-muted : Theme.text;
-                                        font-size: Theme.font-sm;
-                                        overflow: elide;
+                                    spacing: 2px;
+                                    HorizontalLayout {
+                                        spacing: Theme.space-2;
+                                        Text {
+                                            text: r.name;
+                                            color: Theme.text;
+                                            font-size: Theme.font-sm;
+                                            overflow: elide;
+                                            horizontal-stretch: 0;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: r.state;
+                                            color: r.taken ? Theme.text-secondary : Theme.label-red;
+                                            font-size: Theme.font-sm;
+                                            overflow: elide;
+                                            horizontal-stretch: 1;
+                                            vertical-alignment: center;
+                                        }
                                     }
-                                    if r.local != "": Text {
-                                        text: r.local;
+                                    // Where it was taken, so that a guess at
+                                    // the wrong folder of the name shows here,
+                                    // and the catalog's path when the name
+                                    // alone could be another root's.
+                                    if r.under != "": Text {
+                                        text: r.under;
                                         color: Theme.text-muted;
                                         font-size: Theme.font-xs;
                                         overflow: elide;
@@ -168,20 +240,13 @@ export component LightroomSheet inherits Rectangle {
                                     clicked => { root.lr-choose-root(i); }
                                 }
                             }
-                            Text {
-                                text: r.note;
-                                width: scroll.visible-width;
-                                wrap: word-wrap;
-                                font-size: Theme.font-xs;
-                                color: r.taken ? Theme.text-secondary : Theme.label-red;
-                            }
                         }
-                    }
-                    if root.lr-step > 0: VerticalLayout {
-                        spacing: 2px;
-                        for l in root.lr-lines: Line {
-                            label: l.label;
-                            text: l.text;
+                        if root.lr-step > 0 && root.details-open: VerticalLayout {
+                            spacing: 2px;
+                            for l in root.lr-details: Line {
+                                label: l.label;
+                                text: l.text;
+                            }
                         }
                     }
                 }
@@ -192,8 +257,7 @@ export component LightroomSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     Text {
-                        text: "Set";
-                        width: 76px;
+                        text: "Collection set";
                         color: Theme.text;
                         font-size: Theme.font-sm;
                         vertical-alignment: center;
@@ -204,14 +268,8 @@ export component LightroomSheet inherits Rectangle {
                         placeholder-text: "none: the collections at the top";
                     }
                 }
-                Text {
-                    text: "The catalog's collections go under this set, its own sets inside it; the catalog's name unless changed, none when empty.";
-                    wrap: word-wrap;
-                    font-size: Theme.font-xs;
-                    color: Theme.text-muted;
-                }
                 if root.lr-has-creations: Toggle {
-                    label: "Books, prints, slideshows and web pages as collections";
+                    label: "Books, prints, slideshows, and web pages as collections";
                     checked <=> root.lr-creations;
                 }
                 if root.lr-already > 0: Toggle {
@@ -260,17 +318,17 @@ export component LightroomSheet inherits Rectangle {
                 }
             }
         }
-        // A report longer than the sheet says that it goes on, laid over
-        // the foot of its scroll rather than in the layout it measures.
-        if root.lr-step > 0 && list.preferred-height > scroll.visible-height + 1px
+        // Details longer than the sheet say that they go on, laid over
+        // the foot of their scroll rather than in the layout it measures.
+        if root.shows-list && root.lr-step > 0 && list.preferred-height > scroll.visible-height + 1px
             && scroll.content-y > scroll.visible-height - list.preferred-height + 1px: Rectangle {
-            x: scroll.x;
-            y: scroll.y + scroll.height - self.height;
+            x: middle.x + scroll.x;
+            y: middle.y + scroll.y + scroll.height - self.height;
             width: scroll.width;
             height: more.preferred-height + 6px;
             background: Theme.surface;
             more := Text {
-                text: "The report goes on below: scroll for the rest.";
+                text: "Scroll for more";
                 font-size: Theme.font-xs;
                 color: Theme.text-muted;
                 horizontal-alignment: right;

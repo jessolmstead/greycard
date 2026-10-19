@@ -2,6 +2,7 @@
 //! the window's thread, and the bar while the read is out.
 
 use super::*;
+pub(crate) use greycard_library::grouped;
 
 /// The roots a view lists, as the roots file has them. Which of them
 /// are there is looked at off the window's thread, by [`Look::run`].
@@ -416,19 +417,6 @@ pub(crate) fn loading_words(read: usize, total: usize, waiting: Option<&str>) ->
         return format!("Waiting on {root}…");
     }
     format!("Reading sidecars… {} of {}", grouped(read), grouped(total))
-}
-
-/// A count with its thousands set apart by commas.
-pub(crate) fn grouped(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
 }
 
 /// The read for the browser's list as it is, from the folder or from

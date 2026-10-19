@@ -70,6 +70,9 @@ use crate::filter::{Filter, Saved};
 use crate::roots::{self, Roots};
 use crate::stacks::{self, Stack};
 
+mod sheet;
+pub use sheet::Sheet;
+
 /// The catalog schemas this import was tested against: the number
 /// the catalog's `Adobe_DBVersion` holds, and which Lightroom wrote the
 /// catalogs it was tested on.
@@ -330,6 +333,36 @@ impl NearMiss {
     }
 }
 
+/// What a write did with one of the catalog's roots found here.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Rooted {
+    Added,
+    /// Added, taking in this many roots under it.
+    Absorbed(usize),
+    Already,
+    /// Under this root of the library already.
+    Under(PathBuf),
+    NotAdded(String),
+}
+
+impl Rooted {
+    /// Whether the library has a new root for it.
+    pub fn added(&self) -> bool {
+        matches!(self, Rooted::Added | Rooted::Absorbed(_))
+    }
+
+    /// What a report says of it, its paths said through `path`.
+    pub fn said(&self, path: &dyn Fn(&Path) -> String) -> String {
+        match self {
+            Rooted::Added => "added".to_string(),
+            Rooted::Absorbed(n) => format!("added, taking in {n} roots under it"),
+            Rooted::Already => "a root already".to_string(),
+            Rooted::Under(by) => format!("under {}", path(by)),
+            Rooted::NotAdded(e) => format!("not added: {e}"),
+        }
+    }
+}
+
 /// A collection as it is to land.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollectionReport {
@@ -348,8 +381,12 @@ pub struct Written {
     /// Of them, those under their folder's `.greycard`.
     pub in_folder: usize,
     pub left_alone: usize,
+    /// Of the sidecars, those written over with `force`: their frame's
+    /// sidecar held history, versions or meta, or would not read.
+    pub written_over: usize,
     pub failed: Vec<(PathBuf, String)>,
-    pub roots: Vec<(PathBuf, String)>,
+    /// Each root found, and what became of it in the library's roots.
+    pub roots: Vec<(PathBuf, Rooted)>,
     pub collections: usize,
     /// Collections of the same name there already: frames added to
     /// them, or all there and the file left as it was.
@@ -766,7 +803,8 @@ pub fn import_until(
             .iter()
             .filter(|c| c.master == Some(image.id))
             .collect();
-        if kept.get(&image.file).copied().unwrap_or(false) && !options.force {
+        let held = kept.get(&image.file).copied().unwrap_or(false);
+        if held && !options.force {
             written.left_alone += 1;
             // A re-import's copies are the versions it made last time,
             // found by their names.
@@ -794,6 +832,9 @@ pub fn import_until(
             Ok((wrote, made)) => {
                 if let Some(placement) = wrote {
                     written.sidecars += 1;
+                    if held {
+                        written.written_over += 1;
+                    }
                     written.frames.push(raw.clone());
                     if placement == Placement::Folder {
                         written.in_folder += 1;
@@ -901,9 +942,9 @@ pub fn import_until(
             .filter_map(|d| {
                 let by = list.root_of(d)?;
                 let said = if by == d {
-                    "a root already".to_string()
+                    Rooted::Already
                 } else {
-                    format!("under {}", by.display())
+                    Rooted::Under(by.to_path_buf())
                 };
                 Some((d.clone(), said))
             })
@@ -915,13 +956,11 @@ pub fn import_until(
                 .map(|dir| {
                     let dir = dir.clone();
                     let said = match list.add(&dir) {
-                        Ok(roots::Added::New(_)) => "added".to_string(),
-                        Ok(roots::Added::Covered(by)) if by == dir => "a root already".into(),
-                        Ok(roots::Added::Covered(by)) => format!("under {}", by.display()),
-                        Ok(roots::Added::Absorbed(_, under)) => {
-                            format!("added, taking in {} roots under it", under.len())
-                        }
-                        Err(e) => format!("not added: {e}"),
+                        Ok(roots::Added::New(_)) => Rooted::Added,
+                        Ok(roots::Added::Covered(by)) if by == dir => Rooted::Already,
+                        Ok(roots::Added::Covered(by)) => Rooted::Under(by),
+                        Ok(roots::Added::Absorbed(_, under)) => Rooted::Absorbed(under.len()),
+                        Err(e) => Rooted::NotAdded(e.to_string()),
                     };
                     (dir, said)
                 })
@@ -2849,7 +2888,7 @@ fn term(
 
 /// A report's lines as the command prints them: a word in a column,
 /// then what it says, a continuation with no word. The window's sheet
-/// shows the same lines, so the two never say different things.
+/// says the same in its own shape ([`Report::sheet`]).
 #[derive(Debug, Default)]
 struct Lines(Vec<(String, String)>);
 
@@ -2865,16 +2904,16 @@ impl Lines {
 
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (label, text) in self.lines(Voice::Command) {
+        for (label, text) in self.lines() {
             writeln!(f, "{label:<13} {text}")?;
         }
         Ok(())
     }
 }
 
-/// Who a report speaks to: the command line, whose user answers with
-/// its flags, or the window's sheet, whose user answers with its
-/// buttons.
+/// Who a line speaks to where the two answer it differently: the
+/// command line, whose user answers with its flags, or the window's
+/// sheet, whose user answers with its buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Voice {
     Command,
@@ -2882,9 +2921,10 @@ pub enum Voice {
 }
 
 impl Report {
-    /// What the report says, a line at a time: a word for the line, or
-    /// none for one that goes on from the line before, and the text.
-    pub fn lines(&self, voice: Voice) -> Vec<(String, String)> {
+    /// What the report says as the command prints it, a line at a
+    /// time: a word for the line, or none for one that goes on from the
+    /// line before, and the text.
+    pub fn lines(&self) -> Vec<(String, String)> {
         let mut out = Lines::default();
         let counted = |map: &BTreeMap<String, usize>| {
             let mut v: Vec<(&String, &usize)> = map.iter().collect();
@@ -2916,16 +2956,12 @@ impl Report {
         for r in &self.roots {
             out.line("root", &format!("{} ({})", r.catalog, r.name));
             match &r.local {
-                None if r.near_miss.is_some() => out.more(match voice {
-                    Voice::Command => "not here, and not mapped; nearest of its name:",
-                    Voice::Sheet => "not here; the nearest folder of its name:",
-                }),
-                None => out.more(match voice {
-                    Voice::Command => {
-                        "not here, and not mapped: say where with --root <catalog path>=<folder>"
-                    }
-                    Voice::Sheet => "not here, and not found near the catalog: choose its folder",
-                }),
+                None if r.near_miss.is_some() => {
+                    out.more("not here, and not mapped; nearest of its name:")
+                }
+                None => out.more(
+                    "not here, and not mapped: say where with --root <catalog path>=<folder>",
+                ),
                 Some(local) => {
                     let how = match &r.how {
                         Found::Given => "as given".to_string(),
@@ -2945,7 +2981,7 @@ impl Report {
                 }
             }
             if let Some(m) = &r.near_miss {
-                out.more(&m.said(voice));
+                out.more(&m.said(Voice::Command));
             }
             out.more(&format!(
                 "{} files: {} found, {} missing",
@@ -3138,10 +3174,7 @@ impl Report {
                     } else {
                         "files have"
                     },
-                    match voice {
-                        Voice::Command => "without --force",
-                        Voice::Sheet => "unless written over",
-                    }
+                    "without --force"
                 ),
             );
         }
@@ -3152,13 +3185,7 @@ impl Report {
             );
         }
         match &self.written {
-            None => out.line(
-                "dry run",
-                match voice {
-                    Voice::Command => "nothing written; --write to import",
-                    Voice::Sheet => "nothing written yet",
-                },
-            ),
+            None => out.line("dry run", "nothing written; --write to import"),
             Some(w) => {
                 out.line(
                     "written",
@@ -3236,7 +3263,14 @@ impl Report {
                     ));
                 }
                 for (dir, said) in &w.roots {
-                    out.line("root", &format!("{}: {said}", dir.display()));
+                    out.line(
+                        "root",
+                        &format!(
+                            "{}: {}",
+                            dir.display(),
+                            said.said(&|p| p.display().to_string())
+                        ),
+                    );
                 }
             }
         }
@@ -3651,7 +3685,7 @@ pub(crate) mod tests {
             ),
             (0, 0, 2, 0, 1)
         );
-        assert_eq!(w.roots[0].1, "a root already");
+        assert_eq!(w.roots[0].1, Rooted::Already);
         assert_eq!(tree(&s.dir), files, "a second import changes nothing");
         assert_eq!(
             std::fs::metadata(&roots_file).unwrap().modified().unwrap(),
@@ -3671,7 +3705,7 @@ pub(crate) mod tests {
         let report = import(&s.catalog, &writing(&s)).unwrap();
         assert_eq!(report.already, 1);
         let w = report.written.as_ref().unwrap();
-        assert_eq!((w.sidecars, w.left_alone), (1, 1));
+        assert_eq!((w.sidecars, w.left_alone, w.written_over), (1, 1, 0));
         assert_eq!(
             std::fs::read(Sidecar::path_for(&first)).unwrap(),
             mine_bytes
@@ -3690,6 +3724,7 @@ pub(crate) mod tests {
             1,
             "the second file says what it said already"
         );
+        assert_eq!(report.written.as_ref().unwrap().written_over, 1);
         let a = Sidecar::load(&first).unwrap().unwrap();
         assert_eq!(a.meta.rating, 4);
         assert_eq!(a.current_label.as_deref(), Some("Imported from Lightroom"));
@@ -3805,14 +3840,18 @@ pub(crate) mod tests {
         assert!(!raw.contains("time_shift"), "{raw}");
         let w = report.written.as_ref().unwrap();
         assert_eq!((w.time_shifted, w.time_unread), (2, 0));
-        for voice in [Voice::Command, Voice::Sheet] {
-            let said = report.lines(voice);
-            assert!(
-                said.iter()
-                    .any(|(_, t)| t.starts_with("2 frames keep the capture time corrected")),
-                "{said:?}"
-            );
-        }
+        let said = report.lines();
+        assert!(
+            said.iter()
+                .any(|(_, t)| t.starts_with("2 frames keep the capture time corrected")),
+            "{said:?}"
+        );
+        let shown = report.sheet(&|p| p.display().to_string()).details;
+        assert!(
+            shown.iter().any(|(_, t)| t
+                .starts_with("capture times: 2 frames keep the time corrected in Lightroom")),
+            "{shown:?}"
+        );
         std::fs::remove_dir_all(&s.dir).unwrap();
     }
 
@@ -4604,11 +4643,12 @@ pub(crate) mod tests {
             said.contains("holds 1 of 3 looked for; --root it to take it"),
             "{said}"
         );
+        let shown = r.sheet(&|p| p.display().to_string()).details;
         assert!(
-            r.lines(Voice::Sheet)
+            shown
                 .iter()
                 .any(|(_, t)| t.ends_with("holds 1 of 3 looked for; choose it to take it")),
-            "{said}"
+            "{shown:?}"
         );
         std::fs::remove_dir_all(&s.dir).unwrap();
     }

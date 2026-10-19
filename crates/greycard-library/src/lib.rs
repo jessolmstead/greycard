@@ -248,6 +248,19 @@ pub fn lens_database() -> Option<String> {
     LENS_DATABASE.lock().expect("lens database name").clone()
 }
 
+/// A count with its thousands set apart by commas.
+pub fn grouped(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// The tables for a frame's sidecar on its archive copy (§233), part
 /// of [`SCHEMA`] and the step from schema 5. `archive_writes` keeps,
 /// per frame, archive and copy, the sidecar we last wrote to that copy:

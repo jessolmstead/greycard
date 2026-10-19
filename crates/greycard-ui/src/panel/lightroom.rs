@@ -1,17 +1,17 @@
 //! The Lightroom catalog import from the window: a catalog chosen, the
 //! sheet asking where each of its roots is now and the set its
-//! collections go under, the import's dry run shown as the command
-//! prints it, then the write on a thread of its own, its progress on
-//! the status line and under the pane's button, and the report again
-//! with what was written.
+//! collections go under, the import's dry run in a short summary, then
+//! the write on a thread of its own, its progress on the status line
+//! and under the pane's button, and a line of what was written. The
+//! rest of the report is under Details on both.
 //!
 //! The sheet decides nothing the command does not: every answer it
 //! takes is a field of [`lrcat::Options`], each with the command's flag
 //! (`--root`, `--set`, `--force`, `--no-creations`), and what it shows
-//! is the report's own lines ([`lrcat::Report::lines`]). The guess at a
-//! root's folder is the command's too: where the catalog says, else a
-//! folder of the root's name beside the catalog or under one of the
-//! library's roots.
+//! is the report's, in the sheet's shape ([`lrcat::Report::sheet`]).
+//! The guess at a root's folder is the command's too: where the catalog
+//! says, else a folder of the root's name beside the catalog or under
+//! one of the library's roots.
 //!
 //! The window's thread never reads the catalog or the disk: each dry
 //! run and the write run on a thread and post back, a dry run asked
@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use greycard_library::lightroom_catalog::{self as lrcat, Found, Progress, Report, Voice};
+use greycard_library::lightroom_catalog::{self as lrcat, Progress, Report};
 
 use crate::files::tilde;
 use crate::*;
@@ -114,9 +114,7 @@ pub(crate) fn open(st: &mut State, app: &App, catalog: PathBuf) {
     app.set_lr_open(true);
     if st.views.index_path.is_none() {
         app.set_lr_note(
-            "No library here to bring the collections and the roots into: this \
-             installation has no data folder."
-                .into(),
+            "There is no library to import into: this installation has no data folder.".into(),
         );
         show(st, app);
         return;
@@ -265,79 +263,51 @@ pub(crate) fn landed(
     }
 }
 
-/// What a root's line says of where it was looked for.
-fn root_note(r: &lrcat::RootReport) -> String {
-    if !r.confirmed
-        && let Some(m) = &r.near_miss
-    {
-        let mut m = m.clone();
-        m.dir = PathBuf::from(tilde(&m.dir));
-        return m.said(Voice::Sheet);
-    }
-    let Some(_) = &r.local else {
-        return "not where the catalog says, and no folder of its name near the catalog or \
-                under the library's roots: choose it"
-            .into();
-    };
-    let how = match &r.how {
-        Found::Given => "as chosen".to_string(),
-        Found::BesideCatalog => "found beside the catalog".to_string(),
-        Found::UnderRoot(root) => format!("found under the library's root {}", tilde(root)),
-        Found::AsCatalogSays | Found::Not => "where the catalog says".to_string(),
-    };
-    if r.confirmed {
-        format!("{how}: {} of its {} files found", r.found, r.files)
-    } else {
-        format!(
-            "{how}: none of the {} files looked for there; choose where it is",
-            r.checked
-        )
-    }
-}
-
 /// The sheet as the state has it.
 pub(crate) fn show(st: &State, app: &App) {
     let report = st.lightroom.report.as_ref();
     let roots: Vec<LightroomRoot> = report
         .map(|r| {
+            let names: Vec<String> = r.roots.iter().map(|root| root.short_name()).collect();
             r.roots
                 .iter()
-                .map(|root| LightroomRoot {
-                    catalog: root.catalog.as_str().into(),
-                    name: root.name.as_str().into(),
-                    local: root.local.as_deref().map(tilde).unwrap_or_default().into(),
-                    folder: root
-                        .local
-                        .as_deref()
-                        .and_then(Path::file_name)
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                        .into(),
-                    note: root_note(root).into(),
-                    taken: root.confirmed,
+                .zip(&names)
+                .map(|(root, name)| {
+                    let ambiguous = names.iter().filter(|n| *n == name).count() > 1;
+                    let taken = root.local.as_deref().filter(|_| root.confirmed).map(tilde);
+                    let under = match (ambiguous, taken) {
+                        (true, Some(at)) => format!("{} at {at}", root.catalog),
+                        (false, Some(at)) => at,
+                        (true, None) => root.catalog.clone(),
+                        (false, None) => String::new(),
+                    };
+                    LightroomRoot {
+                        name: name.as_str().into(),
+                        catalog: root.catalog.as_str().into(),
+                        under: under.into(),
+                        state: root.state(&tilde).into(),
+                        taken: root.confirmed,
+                    }
                 })
                 .collect()
         })
         .unwrap_or_default();
     app.set_lr_roots(ModelRc::new(VecModel::from(roots)));
-    let mut lines: Vec<ReportLine> = report
-        .map(|r| {
-            r.lines(Voice::Sheet)
-                .into_iter()
-                .map(|(label, text)| ReportLine {
-                    label: label.into(),
-                    text: text.into(),
-                })
-                .collect()
+    let sheet = report.map(|r| r.sheet(&tilde)).unwrap_or_default();
+    let (warning, remedy) = sheet.warning.unwrap_or_default();
+    app.set_lr_warning(warning.into());
+    app.set_lr_remedy(remedy.into());
+    app.set_lr_summary(sheet.summary.into());
+    app.set_lr_done(sheet.done.unwrap_or_default().into());
+    let details: Vec<ReportLine> = sheet
+        .details
+        .into_iter()
+        .map(|(label, text)| ReportLine {
+            label: label.into(),
+            text: text.into(),
         })
-        .unwrap_or_default();
-    // What a write did is said first, over the report it ends.
-    let done = match lines.iter().position(|l| l.label == "written") {
-        Some(at) => lines.split_off(at),
-        None => Vec::new(),
-    };
-    app.set_lr_lines(ModelRc::new(VecModel::from(lines)));
-    app.set_lr_done(ModelRc::new(VecModel::from(done)));
+        .collect();
+    app.set_lr_details(ModelRc::new(VecModel::from(details)));
     app.set_lr_has_creations(report.is_some_and(|r| {
         r.collections.iter().any(|c| c.creation.is_some()) || !r.creations_left.is_empty()
     }));
@@ -349,27 +319,6 @@ pub(crate) fn show(st: &State, app: &App) {
     );
     if !st.window.write_sidecars && app.get_lr_note().is_empty() {
         app.set_lr_note(NO_SIDECARS.into());
-    }
-    if let Some(r) = report {
-        app.set_lr_subtitle(
-            format!(
-                "{}; {}, {} images in {} {}",
-                st.lightroom
-                    .catalog
-                    .as_deref()
-                    .map(tilde)
-                    .unwrap_or_default(),
-                r.written_by,
-                r.images,
-                r.roots.len(),
-                if r.roots.len() == 1 {
-                    "folder"
-                } else {
-                    "folders"
-                }
-            )
-            .into(),
-        );
     }
 }
 
@@ -627,7 +576,7 @@ fn took_up(state: &Rc<RefCell<State>>, app: &App) {
             .map(|w| {
                 w.roots
                     .iter()
-                    .filter(|(_, said)| said.starts_with("added"))
+                    .filter(|(_, said)| said.added())
                     .map(|(dir, _)| dir.clone())
                     .collect()
             })
@@ -894,7 +843,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sheet_asks_the_roots_and_the_set_then_shows_the_command_s_report() {
+    fn the_sheet_asks_the_roots_and_the_set_then_shows_the_summary() {
         let dir = scratch("steps");
         let catalog = catalog(&dir);
         let app = crate::testing::window(0);
@@ -917,9 +866,13 @@ mod tests {
         let r = roots.row_data(0).unwrap();
         assert_eq!(r.catalog, "D:/Away/Shoots/");
         assert_eq!(r.name, "Shoots");
+        assert_eq!(
+            r.under,
+            tilde(&dir.join("Shoots")),
+            "where it was taken, and no catalog path for the only root of its name"
+        );
         assert!(r.taken);
-        assert!(r.note.contains("found beside the catalog"), "{}", r.note);
-        assert!(r.note.contains("2 of its 2 files found"), "{}", r.note);
+        assert_eq!(r.state, "found, 2 of 2 checked");
         assert!(app.get_lr_has_creations(), "the book");
         assert!(app.get_lr_ready());
 
@@ -931,20 +884,28 @@ mod tests {
         land_now(&state, &app);
         let r = app.get_lr_roots().row_data(0).unwrap();
         assert!(!r.taken);
-        assert!(r.note.contains("as chosen"), "{}", r.note);
+        assert!(r.state.starts_with("not found in "), "{}", r.state);
+        assert!(r.state.ends_with("elsewhere"), "{}", r.state);
         assert!(!app.get_lr_ready(), "nothing found, nothing to write");
         root_chosen(&mut state.borrow_mut(), &app, 0, dir.join("Shoots"));
         land_now(&state, &app);
         assert!(app.get_lr_ready());
 
         // The set emptied and the book left out, then Check: the
-        // report is the command's own lines for those options.
+        // summary, and under Details the rest of the report for those
+        // options.
         app.set_lr_set("".into());
         app.set_lr_creations(false);
         state.borrow_mut().lightroom.then = Then::Report;
         state.borrow_mut().lightroom.generation += 1;
         land_now(&state, &app);
         assert_eq!(app.get_lr_step(), 1);
+        assert_eq!(
+            app.get_lr_summary(),
+            "2 frames, all found. 1 with edits. 1 collection."
+        );
+        assert_eq!(app.get_lr_warning(), "", "the catalog has no log to miss");
+        assert_eq!(app.get_lr_done(), "", "nothing written yet");
         let opts = Options {
             roots: vec![("D:/Away/Shoots/".into(), dir.join("Shoots"))],
             set: Some(String::new()),
@@ -953,27 +914,41 @@ mod tests {
             ..Options::default()
         };
         let command = lrcat::import(&catalog, &opts).unwrap();
-        let lines: Vec<(String, String)> = app
-            .get_lr_lines()
+        let details: Vec<(String, String)> = app
+            .get_lr_details()
             .iter()
             .map(|l| (l.label.to_string(), l.text.to_string()))
             .collect();
-        assert_eq!(lines, command.lines(Voice::Sheet));
-        let text: Vec<String> = lines.iter().map(|(_, t)| t.clone()).collect();
+        assert_eq!(details, command.sheet(&tilde).details);
+        let has =
+            |label: &str, text: &str| details.iter().any(|(l, t)| l == label && t.contains(text));
+        assert!(has("catalog", "Shoot.lrcat"), "{details:?}");
+        assert!(has("written by", "schema 1504001"), "{details:?}");
         assert!(
-            text.iter().any(|t| t.starts_with("Picks: 2 frames")),
-            "{text:?}"
+            has("folder", "D:/Away/Shoots/ at ")
+                && has("folder", ", as chosen: 2 of 2 files found"),
+            "{details:?}"
         );
+        assert!(has("", "Picks: 2 frames, 2 found"), "{details:?}");
+        assert!(has("left out", "Album"), "{details:?}");
+        assert!(has("sidecars", "new ones"), "{details:?}");
+        // Only what applies: nothing missing, no copies, no stacks.
+        for absent in ["not found", "copies", "stacks", "smart", "wrote"] {
+            assert!(
+                !details.iter().any(|(l, _)| l == absent),
+                "{absent}: {details:?}"
+            );
+        }
+        // The sheet's words, never the command's flags.
         assert!(
-            text.iter().any(|t| t.contains("left out: Album")),
-            "{text:?}"
+            !details.iter().any(|(_, t)| t.contains("--")),
+            "{details:?}"
         );
-        assert!(text.iter().any(|t| t == "nothing written yet"), "{text:?}");
-        // The sheet's words where the command names its flags.
-        assert!(!text.iter().any(|t| t.contains("--")), "{text:?}");
+        assert!(!app.get_lr_summary().contains("--"));
+        // The command says what it always said.
         assert_eq!(
             command
-                .lines(Voice::Command)
+                .lines()
                 .iter()
                 .filter(|(_, t)| t.contains("--write"))
                 .count(),
@@ -985,7 +960,7 @@ mod tests {
         let stale = state.borrow().lightroom.generation - 1;
         landed(&state, &app, stale, Err("late".into()));
         assert_eq!(app.get_lr_note(), "");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// A dry run says under the buttons how far it has come, its
@@ -1292,7 +1267,7 @@ mod tests {
             assert!(greycard_edit::Sidecar::find(&dir.join("Shoots").join(n)).is_none());
         }
         assert!(!crate::collections::Store::dir_beside(&library).exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     #[test]
@@ -1311,7 +1286,7 @@ mod tests {
             opts.roots,
             vec![("D:/Away/Shoots/".to_string(), dir.join("Shoots"))]
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     #[test]
@@ -1347,37 +1322,35 @@ mod tests {
             "{}",
             app.get_status()
         );
-        let done: Vec<String> = app
-            .get_lr_done()
+        assert_eq!(app.get_lr_done(), "Wrote 2 sidecars.");
+        // Under Details, what the write did, and the root as the report
+        // found it, not "as chosen" for the mapping the write was
+        // handed.
+        let details: Vec<(String, String)> = app
+            .get_lr_details()
             .iter()
-            .map(|l| l.text.to_string())
-            .collect();
-        assert!(done[0].starts_with("2 sidecars"), "{done:?}");
-        // The root says how the report found it, not "as given" for the
-        // mapping the write was handed.
-        let lines: Vec<String> = app
-            .get_lr_lines()
-            .iter()
-            .map(|l| l.text.to_string())
+            .map(|l| (l.label.to_string(), l.text.to_string()))
             .collect();
         assert!(
-            lines.iter().any(|t| t.contains("found beside the catalog")),
-            "{lines:?}"
-        );
-        assert!(!lines.iter().any(|t| t.contains("as given")), "{lines:?}");
-        // The report itself goes on below, the command's, less those.
-        let text: Vec<String> = app
-            .get_lr_lines()
-            .iter()
-            .map(|l| l.text.to_string())
-            .collect();
-        assert!(
-            text.iter().any(|t| t.starts_with("2 files: 2 found")),
-            "{text:?}"
+            details.contains(&("wrote".into(), "collections: 2 written".into())),
+            "{details:?}"
         );
         assert!(
-            !text.iter().any(|t| t.starts_with("2 sidecars")),
-            "{text:?}"
+            details
+                .iter()
+                .any(|(l, t)| l == "root" && t.contains("Shoots")),
+            "{details:?}"
+        );
+        assert!(
+            details
+                .iter()
+                .any(|(l, t)| l == "folder"
+                    && t.contains(", beside the catalog: 2 of 2 files found")),
+            "{details:?}"
+        );
+        assert!(
+            !details.iter().any(|(_, t)| t.contains("as chosen")),
+            "{details:?}"
         );
         // The window's collections are the ones it wrote: Picks and
         // the book, under the catalog's set.
@@ -1402,6 +1375,64 @@ mod tests {
             st.views.library.roots.list()
         );
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// Two roots of one folder name: each says the catalog's path to it
+    /// under the name, and a root of a name of its own does not; a
+    /// root taken says where.
+    #[test]
+    fn roots_of_one_name_say_their_paths() {
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let root = |catalog: &str| lrcat::RootReport {
+            catalog: catalog.into(),
+            name: String::new(),
+            local: None,
+            how: lrcat::Found::Not,
+            checked: 0,
+            checked_found: 0,
+            confirmed: false,
+            files: 3,
+            found: 0,
+            near_miss: None,
+        };
+        state.borrow_mut().lightroom.report = Some(Report {
+            roots: vec![
+                root("D:/2024/Shoots/"),
+                lrcat::RootReport {
+                    local: Some("/here/Shoots".into()),
+                    confirmed: true,
+                    ..root("E:/2025/Shoots")
+                },
+                lrcat::RootReport {
+                    local: Some("/here/Family".into()),
+                    confirmed: true,
+                    ..root("E:/Family")
+                },
+                root("E:/Gone"),
+            ],
+            ..Report::default()
+        });
+        show(&state.borrow(), &app);
+        let roots: Vec<LightroomRoot> = app.get_lr_roots().iter().collect();
+        let shown: Vec<(&str, &str, &str)> = roots
+            .iter()
+            .map(|r| (r.name.as_str(), r.under.as_str(), r.state.as_str()))
+            .collect();
+        assert_eq!(
+            shown,
+            vec![
+                ("Shoots", "D:/2024/Shoots/", "not found"),
+                (
+                    "Shoots",
+                    "E:/2025/Shoots at /here/Shoots",
+                    "found, 0 of 3 checked"
+                ),
+                ("Family", "/here/Family", "found, 0 of 3 checked"),
+                ("Gone", "", "not found"),
+            ]
+        );
+        assert_eq!(roots[1].catalog, "E:/2025/Shoots");
     }
 }

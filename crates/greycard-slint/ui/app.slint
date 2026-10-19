@@ -1835,9 +1835,10 @@ export component App inherits Window {
     in property <string> import-place-note: "";
     changed import-mode => { root.import-pattern-changed(); }
     // The Lightroom catalog import: a catalog chosen, its roots and
-    // its set asked, the dry run's report shown, then written on a
-    // thread of its own, its progress under the button and on the
-    // status line, and the report again. Through Rust throughout.
+    // its set asked, the dry run's summary shown with the rest under
+    // Details, then written on a thread of its own, its progress under
+    // the button and on the status line, and a line of what it wrote.
+    // Through Rust throughout.
     in-out property <bool> lr-open: false;
     in property <int> lr-step: 0;
     in property <string> lr-title: "";
@@ -1849,8 +1850,11 @@ export component App inherits Window {
     in-out property <bool> lr-creations: true;
     in property <int> lr-already: 0;
     in-out property <bool> lr-force: false;
-    in property <[ReportLine]> lr-lines: [];
-    in property <[ReportLine]> lr-done: [];
+    in property <string> lr-warning: "";
+    in property <string> lr-remedy: "";
+    in property <string> lr-summary: "";
+    in property <string> lr-done: "";
+    in property <[ReportLine]> lr-details: [];
     in property <bool> lr-busy: false;
     in property <string> lr-busy-text: "";
     in property <bool> lr-ready: false;
@@ -4131,8 +4135,11 @@ export component App inherits Window {
         lr-creations <=> root.lr-creations;
         lr-already: root.lr-already;
         lr-force <=> root.lr-force;
-        lr-lines: root.lr-lines;
+        lr-warning: root.lr-warning;
+        lr-remedy: root.lr-remedy;
+        lr-summary: root.lr-summary;
         lr-done: root.lr-done;
+        lr-details: root.lr-details;
         lr-busy: root.lr-busy;
         lr-busy-text: root.lr-busy-text;
         lr-ready: root.lr-ready;

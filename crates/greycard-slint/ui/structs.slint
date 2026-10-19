@@ -31,16 +31,16 @@ export struct CarryRow {
     sub: int,
 }
 
-/// A root of a Lightroom catalog on the import sheet: its path as the
-/// catalog spells it, its name, the folder here it was found in or
-/// mapped to (empty when none) and that folder's own name, and what was
-/// found there.
+/// A root of a Lightroom catalog on the import sheet: its folder's
+/// name, the catalog's path to it, the line under the name (where it
+/// was taken, and the catalog's path when another root goes by the
+/// same name; empty for neither), where it stands in a few words, and
+/// whether its files were found.
 export struct LightroomRoot {
-    catalog: string,
     name: string,
-    local: string,
-    folder: string,
-    note: string,
+    catalog: string,
+    under: string,
+    state: string,
     taken: bool,
 }
 
