@@ -184,9 +184,8 @@ Built, as of 0.7.0:
   problem button that fills in the version, OS and GPU. A release
   check that can be turned off.
 
-Planned, in order: the tone controls made to feel right; a generative
-fill; HDR merge and panoramas; tethering. The learned denoiser for
-X-Trans alongside these.
+Planned, in order: a generative fill; HDR merge and panoramas;
+tethering. The learned denoiser for X-Trans alongside these.
 
 The reasoning behind every choice is in `docs/notes/`, one numbered
 section a file with `docs/notes.md` as the index, and the plan is
