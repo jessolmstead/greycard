@@ -15,7 +15,13 @@
 //!
 //! The window's thread never reads the catalog or the disk: each dry
 //! run and the write run on a thread and post back, a dry run asked
-//! for later winning over one that answers late.
+//! for later winning over one that answers late. A dry run says how far
+//! it has come under the buttons and can be canceled, which stops its
+//! thread; a write cannot.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use greycard_library::lightroom_catalog::{self as lrcat, Found, Progress, Report, Voice};
 
@@ -44,6 +50,9 @@ pub(crate) struct Sheet {
     pub(crate) thread: Option<std::thread::JoinHandle<()>>,
     /// A dry run asked for and not landed.
     pub(crate) reading: bool,
+    /// What stops that dry run's thread: set by Cancel, or by a later
+    /// dry run, whose answer wins anyway.
+    pub(crate) stop: Option<Arc<AtomicBool>>,
     /// The roots the next catalog opened starts from, as if chosen on
     /// the sheet: `--root` with `--lightroom`.
     pub(crate) seed: Vec<(String, PathBuf)>,
@@ -121,6 +130,11 @@ pub(crate) fn dry_run(st: &mut State, app: &App) {
     else {
         return;
     };
+    if let Some(last) = st.lightroom.stop.take() {
+        last.store(true, Ordering::Relaxed);
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    st.lightroom.stop = Some(stop.clone());
     st.lightroom.generation += 1;
     st.lightroom.reading = true;
     let generation = st.lightroom.generation;
@@ -128,7 +142,26 @@ pub(crate) fn dry_run(st: &mut State, app: &App) {
     app.set_lr_busy_text("reading the catalog...".into());
     let weak = app.as_weak();
     std::thread::spawn(move || {
-        let read = lrcat::import(&catalog, &opts).map_err(|e| e.to_string());
+        let told = weak.clone();
+        let mut last = Instant::now() - Duration::from_secs(1);
+        let read = caught(|| {
+            lrcat::import_until(
+                &catalog,
+                &opts,
+                &mut |p| {
+                    if !due(&mut last, p) {
+                        return;
+                    }
+                    let _ = told.upgrade_in_event_loop(move |app| {
+                        let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+                            return;
+                        };
+                        heard(&state.borrow(), &app, generation, p);
+                    });
+                },
+                &stop,
+            )
+        });
         let _ = weak.upgrade_in_event_loop(move |app| {
             let Some(state) = STATE.with(|s| s.borrow().clone()) else {
                 return;
@@ -138,8 +171,62 @@ pub(crate) fn dry_run(st: &mut State, app: &App) {
     });
 }
 
+/// The import run on its thread, a panic in it an error like any
+/// other: the sheet is never left waiting on a thread that is gone.
+pub(crate) fn caught(
+    run: impl FnOnce() -> std::result::Result<Report, lrcat::ImportError>,
+) -> std::result::Result<Report, String> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+        Ok(read) => read.map_err(|e| e.to_string()),
+        Err(payload) => Err(format!(
+            "the import failed: {}",
+            crate::worker::panic_message(&*payload)
+        )),
+    }
+}
+
+/// Whether a step of the import is said: at least a tenth of a second
+/// after the last, so the window is not asked to redraw for every file;
+/// but each of the catalog's folders, each slow to look for, and the
+/// finish always.
+fn due(last: &mut Instant, p: Progress) -> bool {
+    let now = Instant::now();
+    let always = matches!(p, Progress::Mapping { .. } | Progress::Finishing);
+    if !always && now - *last < Duration::from_millis(100) {
+        return false;
+    }
+    *last = now;
+    true
+}
+
+/// How far a dry run has come, said under the buttons, on the window's
+/// thread. One asked for before the last, or canceled, says nothing.
+pub(crate) fn heard(st: &State, app: &App, generation: u64, p: Progress) {
+    if generation != st.lightroom.generation || !st.lightroom.reading {
+        return;
+    }
+    app.set_lr_busy_text(format!("{}...", progress_words(p)).into());
+}
+
+/// Cancel, Escape or a click beside the sheet: the sheet closed, and a
+/// dry run under way stopped, its answer and what was to follow it
+/// dropped. A write is not stopped, and its sheet stays until it lands.
+pub(crate) fn cancel(st: &mut State, app: &App) {
+    if st.lightroom.thread.is_some() {
+        return;
+    }
+    if let Some(stop) = st.lightroom.stop.take() {
+        stop.store(true, Ordering::Relaxed);
+    }
+    st.lightroom.generation += 1;
+    st.lightroom.reading = false;
+    st.lightroom.then = Then::Nothing;
+    app.set_lr_busy(false);
+    app.set_lr_open(false);
+}
+
 /// A dry run's answer, on the window's thread. One asked for before
-/// the last says nothing.
+/// the last, or canceled, says nothing.
 pub(crate) fn landed(
     state: &Rc<RefCell<State>>,
     app: &App,
@@ -152,6 +239,7 @@ pub(crate) fn landed(
             return;
         }
         st.lightroom.reading = false;
+        st.lightroom.stop = None;
         app.set_lr_busy(false);
         match read {
             Ok(report) => {
@@ -285,8 +373,12 @@ pub(crate) fn show(st: &State, app: &App) {
     }
 }
 
-/// A root's folder chosen: the mapping taken, the dry run again.
+/// A root's folder chosen: the mapping taken, the dry run again. A
+/// folder chosen after the sheet was closed is let go.
 pub(crate) fn root_chosen(st: &mut State, app: &App, row: usize, folder: PathBuf) {
+    if !app.get_lr_open() {
+        return;
+    }
     let Some(catalog) = st
         .lightroom
         .report
@@ -325,25 +417,20 @@ pub(crate) fn write(state: &Rc<RefCell<State>>, app: &App) {
     let weak = app.as_weak();
     st.lightroom.thread = Some(std::thread::spawn(move || {
         let told = weak.clone();
-        let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
-        let report = lrcat::import_with(&catalog, &opts, &mut |p| {
-            // A tenth of a second apart at most: the window is not
-            // asked to redraw for every file.
-            let now = std::time::Instant::now();
-            if !matches!(p, Progress::Finishing)
-                && now - last < std::time::Duration::from_millis(100)
-            {
-                return;
-            }
-            last = now;
-            let line = progress_line(p);
-            let _ = told.upgrade_in_event_loop(move |app| {
-                if app.get_lr_running() {
-                    say(&app, line);
+        let mut last = Instant::now() - Duration::from_secs(1);
+        let report = caught(|| {
+            lrcat::import_with(&catalog, &opts, &mut |p| {
+                if !due(&mut last, p) {
+                    return;
                 }
-            });
-        })
-        .map_err(|e| e.to_string());
+                let line = progress_line(p);
+                let _ = told.upgrade_in_event_loop(move |app| {
+                    if app.get_lr_running() {
+                        say(&app, line);
+                    }
+                });
+            })
+        });
         // The written frames as the index keys them too, asked of the
         // disk here rather than on the window's thread.
         let keys = keys_of(&report);
@@ -413,16 +500,26 @@ fn resolved(report: &Report, given: &[(String, PathBuf)]) -> Vec<(String, PathBu
 
 /// The status line's words for how far the import has come.
 pub(crate) fn progress_line(p: Progress) -> String {
+    format!("importing the catalog: {}", progress_words(p))
+}
+
+/// How far the import has come, as the status line and the sheet say
+/// it.
+fn progress_words(p: Progress) -> String {
+    let n = crate::roots::grouped;
     match p {
+        Progress::Mapping { done, of } => {
+            format!(
+                "looking for the catalog's folders, {} of {}",
+                n(done),
+                n(of)
+            )
+        }
         Progress::Looking { done, of } => {
-            format!("importing the catalog: looking for its files, {done} of {of}")
+            format!("looking for the catalog's files, {} of {}", n(done), n(of))
         }
-        Progress::Writing { done, of } => {
-            format!("importing the catalog: writing {done} of {of} frames")
-        }
-        Progress::Finishing => {
-            "importing the catalog: the collections, the stacks and the roots".into()
-        }
+        Progress::Writing { done, of } => format!("writing {} of {} frames", n(done), n(of)),
+        Progress::Finishing => "the collections, the stacks and the roots".into(),
     }
 }
 
@@ -685,6 +782,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
         });
     }
     {
+        let state = state.clone();
+        let weak = app.as_weak();
+        app.on_lr_cancel(move || {
+            let app = weak.unwrap();
+            cancel(&mut state.borrow_mut(), &app);
+        });
+    }
+    {
         let weak = app.as_weak();
         app.on_lr_back(move || {
             weak.unwrap().set_lr_step(0);
@@ -881,6 +986,183 @@ mod tests {
         landed(&state, &app, stale, Err("late".into()));
         assert_eq!(app.get_lr_note(), "");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A dry run says under the buttons how far it has come, its
+    /// catalog's folders and then its files; one asked for before the
+    /// last, or one landed, says nothing more.
+    #[test]
+    fn a_dry_run_says_how_far_it_has_come() {
+        let dir = crate::testing::scratch_dir("lightroom-progress");
+        let catalog = catalog(&dir);
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        state.borrow_mut().window.write_sidecars = true;
+        state.borrow_mut().views.index_path = Some(dir.join("library").join("library.sqlite"));
+        open(&mut state.borrow_mut(), &app, catalog);
+        assert_eq!(app.get_lr_busy_text(), "reading the catalog...");
+        let generation = state.borrow().lightroom.generation;
+        heard(
+            &state.borrow(),
+            &app,
+            generation,
+            Progress::Mapping { done: 3, of: 12 },
+        );
+        assert_eq!(
+            app.get_lr_busy_text(),
+            "looking for the catalog's folders, 3 of 12..."
+        );
+        heard(
+            &state.borrow(),
+            &app,
+            generation,
+            Progress::Looking {
+                done: 1200,
+                of: 23000,
+            },
+        );
+        assert_eq!(
+            app.get_lr_busy_text(),
+            "looking for the catalog's files, 1,200 of 23,000..."
+        );
+        // The status line's words are the same, the import named.
+        assert_eq!(
+            progress_line(Progress::Mapping { done: 3, of: 12 }),
+            "importing the catalog: looking for the catalog's folders, 3 of 12"
+        );
+        // A stale run says nothing.
+        heard(
+            &state.borrow(),
+            &app,
+            generation - 1,
+            Progress::Mapping { done: 1, of: 12 },
+        );
+        assert_eq!(
+            app.get_lr_busy_text(),
+            "looking for the catalog's files, 1,200 of 23,000..."
+        );
+        // Nor one that has landed, its last word posted behind it.
+        land_now(&state, &app);
+        assert!(!app.get_lr_busy());
+        heard(
+            &state.borrow(),
+            &app,
+            generation,
+            Progress::Mapping { done: 1, of: 12 },
+        );
+        assert_eq!(
+            app.get_lr_busy_text(),
+            "looking for the catalog's files, 1,200 of 23,000..."
+        );
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// Cancel while a dry run reads: the sheet closes, its thread is
+    /// told to stop, and its answer, landing late, is dropped with the
+    /// write that was to follow it. While a write runs, Cancel does
+    /// nothing.
+    #[test]
+    fn cancel_during_a_dry_run_closes_the_sheet_and_drops_its_answer() {
+        let dir = crate::testing::scratch_dir("lightroom-cancel");
+        let catalog = catalog(&dir);
+        let library = dir.join("library").join("library.sqlite");
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        state.borrow_mut().window.write_sidecars = true;
+        state.borrow_mut().views.index_path = Some(library.clone());
+        open(&mut state.borrow_mut(), &app, catalog.clone());
+        assert!(app.get_lr_busy());
+        // As a --sheet capture's write step asks for it.
+        state.borrow_mut().lightroom.then = Then::Write;
+        let (generation, stop, opts) = {
+            let st = state.borrow();
+            (
+                st.lightroom.generation,
+                st.lightroom.stop.clone().unwrap(),
+                options(&st, &app, false).unwrap(),
+            )
+        };
+        assert!(!stop.load(Ordering::Relaxed));
+        app.invoke_lr_cancel();
+        assert!(!app.get_lr_open());
+        assert!(!app.get_lr_busy());
+        assert!(stop.load(Ordering::Relaxed), "the thread told to stop");
+        {
+            let st = state.borrow();
+            assert!(st.lightroom.generation > generation);
+            assert!(
+                !st.lightroom.busy(),
+                "nothing left for a capture to wait on"
+            );
+        }
+        // The answer lands late, whole, as if it had not heard the stop.
+        let read = caught(|| lrcat::import(&catalog, &opts));
+        assert!(read.is_ok());
+        landed(&state, &app, generation, read);
+        assert!(!app.get_lr_open());
+        assert_eq!(app.get_lr_step(), 0);
+        assert!(!app.get_lr_running());
+        {
+            let st = state.borrow();
+            assert!(st.lightroom.report.is_none(), "the answer dropped");
+            assert!(st.lightroom.thread.is_none(), "no write started");
+        }
+        for n in ["IMG_0001.CR3", "IMG_0002.CR3"] {
+            assert!(greycard_edit::Sidecar::find(&dir.join("Shoots").join(n)).is_none());
+        }
+        assert!(!crate::collections::Store::dir_beside(&library).exists());
+
+        // A folder the chooser answers with after the sheet closed
+        // starts nothing.
+        state.borrow_mut().lightroom.report = Some(lrcat::import(&catalog, &opts).unwrap());
+        let closed = state.borrow().lightroom.generation;
+        root_chosen(&mut state.borrow_mut(), &app, 0, dir.join("Shoots"));
+        assert_eq!(state.borrow().lightroom.generation, closed);
+        assert!(!state.borrow().lightroom.reading);
+        assert!(!app.get_lr_busy());
+
+        // A write running: Cancel leaves the sheet up.
+        open(&mut state.borrow_mut(), &app, catalog);
+        land_now(&state, &app);
+        state.borrow_mut().lightroom.thread = Some(std::thread::spawn(|| {}));
+        let generation = state.borrow().lightroom.generation;
+        app.invoke_lr_cancel();
+        assert!(app.get_lr_open());
+        assert_eq!(state.borrow().lightroom.generation, generation);
+        let thread = state.borrow_mut().lightroom.thread.take().unwrap();
+        thread.join().unwrap();
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A panic on the import's thread lands as the import's error: the
+    /// sheet says it, and its buttons are back.
+    #[test]
+    fn a_panic_on_the_import_s_thread_lands_as_a_note() {
+        let dir = crate::testing::scratch_dir("lightroom-panic");
+        let catalog = catalog(&dir);
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        state.borrow_mut().window.write_sidecars = true;
+        state.borrow_mut().views.index_path = Some(dir.join("library").join("library.sqlite"));
+        open(&mut state.borrow_mut(), &app, catalog);
+        assert!(app.get_lr_busy());
+        let generation = state.borrow().lightroom.generation;
+        let read = std::thread::spawn(|| caught(|| panic!("a catalog unlike any other")))
+            .join()
+            .unwrap();
+        assert_eq!(
+            read.as_ref().err().map(String::as_str),
+            Some("the import failed: a catalog unlike any other")
+        );
+        landed(&state, &app, generation, read);
+        assert!(!app.get_lr_busy());
+        assert!(app.get_lr_open());
+        assert_eq!(
+            app.get_lr_note(),
+            "the import failed: a catalog unlike any other"
+        );
+        assert!(!state.borrow().lightroom.busy());
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// The catalog's two frames as small TIFFs the window opens, the

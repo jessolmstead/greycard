@@ -57,15 +57,20 @@ export component LightroomSheet inherits Rectangle {
     /// A dry run is reading, or the write writing; the buttons wait.
     in property <bool> lr-busy;
     in property <string> lr-busy-text;
+    /// The write is writing: not even Cancel stops it. A dry run can be
+    /// canceled, which stops it.
+    in property <bool> lr-running;
     /// Something of the catalog was found: a write would carry it.
     in property <bool> lr-ready;
     callback lr-choose-root(int);
     callback lr-check();
     callback lr-back();
     callback lr-write();
+    /// The sheet closed, a dry run under way stopped.
+    callback lr-cancel();
 
     background: #000000a0;
-    TouchArea { clicked => { if (!root.lr-busy) { root.lr-open = false; } } }
+    TouchArea { clicked => { if (!root.lr-running) { root.lr-cancel(); } } }
     Rectangle {
         width: min(600px, root.width - 2 * Theme.space-5);
         height: min(body.preferred-height, root.height - 2 * Theme.space-5);
@@ -228,8 +233,8 @@ export component LightroomSheet inherits Rectangle {
                 }
                 if root.lr-step < 2: PanelButton {
                     text: "Cancel";
-                    enabled: !root.lr-busy;
-                    clicked => { root.lr-open = false; }
+                    enabled: !root.lr-running;
+                    clicked => { root.lr-cancel(); }
                 }
                 if root.lr-step == 1: PanelButton {
                     text: "Back";

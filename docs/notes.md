@@ -378,3 +378,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§363. The surface reconfigured under the worker](notes/363-the-surface-reconfigured-under-the-worker.md) (2026-10-18)
 - [§364. The picture on screen keeps its own kind and look](notes/364-the-picture-on-screen-keeps-its-own-kind-and-look.md) (2026-10-18)
 - [§365. The grading wheels at two thirds, until fitted](notes/365-the-grading-wheels-at-two-thirds-until-fitted.md) (2026-10-18)
+- [§366. The catalog import's dry run says how far it is, and can be stopped](notes/366-the-catalog-imports-dry-run-says-how-far-it-is-and-can-be-stopped.md) (2026-10-18)

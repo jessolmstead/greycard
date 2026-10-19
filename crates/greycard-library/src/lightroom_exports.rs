@@ -272,8 +272,13 @@ fn shots(
     given: &[(String, PathBuf)],
 ) -> Result<(Vec<Shot>, Vec<RootReport>, i64), ImportError> {
     let catalog = lightroom_catalog::read(path)?;
-    let (roots, local) =
-        lightroom_catalog::map_roots(&catalog, given, &lightroom_catalog::Near::beside(path))?;
+    let (roots, local) = lightroom_catalog::map_roots(
+        &catalog,
+        given,
+        &lightroom_catalog::Near::beside(path),
+        &mut |_| {},
+        &std::sync::atomic::AtomicBool::new(false),
+    )?;
     let (db, ..) = lightroom_catalog::open(path)?;
     let mut steps: HashMap<i64, Vec<Step>> = HashMap::new();
     {

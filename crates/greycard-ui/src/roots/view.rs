@@ -419,7 +419,7 @@ pub(crate) fn loading_words(read: usize, total: usize, waiting: Option<&str>) ->
 }
 
 /// A count with its thousands set apart by commas.
-pub(super) fn grouped(n: usize) -> String {
+pub(crate) fn grouped(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, c) in digits.chars().enumerate() {

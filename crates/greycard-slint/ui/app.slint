@@ -1862,6 +1862,7 @@ export component App inherits Window {
     callback lr-check();
     callback lr-back();
     callback lr-write();
+    callback lr-cancel();
     // RawTherapee's profiles beside a folder's frames: offered once
     // under the folder's name, then the import's sheet, its dry run as
     // the command prints it and the write on a thread. Through Rust
@@ -2149,7 +2150,7 @@ export component App inherits Window {
             if (chord == "Esc" && root.preset-open) { root.preset-open = false; return accept; }
             if (chord == "Esc" && root.preset-report-open) { root.preset-report-open = false; return accept; }
             if (chord == "Esc" && root.lr-open) {
-                if (!root.lr-busy) { root.lr-open = false; }
+                if (!root.lr-running) { root.lr-cancel(); }
                 return accept;
             }
             if (chord == "Esc" && root.rt-open) {
@@ -4131,6 +4132,8 @@ export component App inherits Window {
         lr-check => { root.lr-check(); }
         lr-back => { root.lr-back(); }
         lr-write => { root.lr-write(); }
+        lr-cancel => { root.lr-cancel(); }
+        lr-running: root.lr-running;
     }
 
     // The RawTherapee profiles' import over the folder open.

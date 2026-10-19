@@ -56,6 +56,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use greycard_edit::lightroom::{self, Value};
 use greycard_edit::meta::{Flag, Label, Meta, STARS};
@@ -112,6 +113,9 @@ pub enum ImportError {
     Root(String, String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// Told to stop before it wrote anything: [`import_until`].
+    #[error("stopped before it was done")]
+    Stopped,
 }
 
 /// What the import is asked to do.
@@ -141,7 +145,12 @@ pub struct Options {
 /// How far a long import has come, for a caller that shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Progress {
-    /// The catalog read; its files being looked for, and their
+    /// The catalog read; its roots' folders being looked for, the
+    /// `done`th of `of` under way. Each is looked for where the catalog
+    /// says, beside the catalog and three deep under the library's
+    /// roots, which over a network share is the slow part.
+    Mapping { done: usize, of: usize },
+    /// The roots' folders found; their files being looked for, and their
     /// sidecars read.
     Looking { done: usize, of: usize },
     /// The sidecars being written, a file at a time.
@@ -472,9 +481,32 @@ pub fn import_with(
     options: &Options,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<Report, ImportError> {
+    import_until(path, options, progress, &AtomicBool::new(false))
+}
+
+/// [`import_with`], ending in [`ImportError::Stopped`] soon after `stop`
+/// is set: between one folder or file looked at and the next. A write
+/// heeds it until its first sidecar is written and goes to its end
+/// after, so a stop never leaves it half done.
+pub fn import_until(
+    path: &Path,
+    options: &Options,
+    progress: &mut dyn FnMut(Progress),
+    stop: &AtomicBool,
+) -> Result<Report, ImportError> {
+    let stopped = || {
+        if stop.load(Ordering::Relaxed) {
+            Err(ImportError::Stopped)
+        } else {
+            Ok(())
+        }
+    };
     let catalog = read(path)?;
+    stopped()?;
     let near = Near::of(path, &options.library);
-    let (roots, local_roots) = map_roots(&catalog, &options.roots, &near)?;
+    let (roots, local_roots) = map_roots(&catalog, &options.roots, &near, progress, stop)?;
+    // A stop during the last root's search left its candidates short.
+    stopped()?;
     let mut report = Report {
         catalog: path.to_path_buf(),
         schema: catalog.schema,
@@ -493,6 +525,7 @@ pub fn import_with(
     let mut at: HashMap<i64, PathBuf> = HashMap::new();
     let mut files: HashMap<i64, bool> = HashMap::new();
     for image in &catalog.images {
+        stopped()?;
         looked += 1;
         if looked % 25 == 0 {
             progress(Progress::Looking {
@@ -609,6 +642,7 @@ pub fn import_with(
     // its file.
     let mut kept: HashMap<i64, bool> = HashMap::new();
     for image in catalog.images.iter().filter(|i| i.master.is_none()) {
+        stopped()?;
         looked += 1;
         if looked % 25 == 0 {
             progress(Progress::Looking {
@@ -706,6 +740,8 @@ pub fn import_with(
     if !options.write {
         return Ok(report);
     }
+    // The last word a stop has: from here the write goes to its end.
+    stopped()?;
     let mut written = Written::default();
 
     // The sidecars: each file once, its own image and its copies.
@@ -1419,8 +1455,9 @@ impl Near {
 
     /// Every folder that may be the root named `name`, and how each was
     /// found, nearest first: beside the catalog, then under each of the
-    /// library's roots a level at a time, three deep.
-    fn candidates(&self, name: &str) -> Vec<(PathBuf, Found)> {
+    /// library's roots a level at a time, three deep. Those found so far
+    /// once `stop` is set.
+    fn candidates(&self, name: &str, stop: &AtomicBool) -> Vec<(PathBuf, Found)> {
         let mut out: Vec<(PathBuf, Found)> = Vec::new();
         if name.trim().is_empty() {
             return out;
@@ -1452,6 +1489,9 @@ impl Near {
             for _ in 0..NEAR_DEPTH {
                 let mut next = Vec::new();
                 for dir in &level {
+                    if stop.load(Ordering::Relaxed) {
+                        return out;
+                    }
                     let Ok(entries) = std::fs::read_dir(dir) else {
                         continue;
                     };
@@ -1856,11 +1896,15 @@ fn components(path: &str) -> Vec<String> {
 }
 
 /// Each root of the catalog with where it is looked for and what of it
-/// was found there, and the roots taken, by the catalog's id.
+/// was found there, and the roots taken, by the catalog's id; each root
+/// said to `progress` as it is looked for, and [`ImportError::Stopped`]
+/// once `stop` is set.
 pub(crate) fn map_roots(
     catalog: &Catalog,
     given: &[(String, PathBuf)],
     near: &Near,
+    progress: &mut dyn FnMut(Progress),
+    stop: &AtomicBool,
 ) -> Result<(Vec<RootReport>, HashMap<i64, PathBuf>), ImportError> {
     // Every mapping must name a root.
     for (from, _) in given {
@@ -1885,7 +1929,14 @@ pub(crate) fn map_roots(
     }
     let mut reports = Vec::new();
     let mut taken = HashMap::new();
-    for root in &catalog.roots {
+    for (n, root) in catalog.roots.iter().enumerate() {
+        if stop.load(Ordering::Relaxed) {
+            return Err(ImportError::Stopped);
+        }
+        progress(Progress::Mapping {
+            done: n + 1,
+            of: catalog.roots.len(),
+        });
         let parts = components(&root.path);
         // The mapping that says most: the root by name, else the
         // longest folder above it.
@@ -1950,7 +2001,7 @@ pub(crate) fn map_roots(
                     Some(here) if holds(&here) => (Some(here), Found::AsCatalogSays),
                     as_said => {
                         let mut best: Option<(PathBuf, Found, Held)> = None;
-                        for (dir, how) in near.candidates(&root.name) {
+                        for (dir, how) in near.candidates(&root.name, stop) {
                             let held = Held::of(&dir, &guess_sample);
                             if !guess_sample.is_empty() && !held.is_the_root(guess_sample.len()) {
                                 // The nearest miss, said if nothing is
@@ -4685,11 +4736,42 @@ pub(crate) mod tests {
         let s = setup("progress");
         let mut seen = Vec::new();
         import_with(&s.catalog, &writing(&s), &mut |p| seen.push(p)).unwrap();
+        assert_eq!(seen.first(), Some(&Progress::Mapping { done: 1, of: 1 }));
         assert!(
             seen.contains(&Progress::Writing { done: 2, of: 2 }),
             "{seen:?}"
         );
         assert_eq!(seen.last(), Some(&Progress::Finishing));
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// A stop set while the roots are looked for ends a write before it
+    /// writes anything, and nothing more is said.
+    #[test]
+    fn a_stop_ends_the_import_before_it_writes() {
+        let s = setup("stopped");
+        let before = tree(&s.dir);
+        let stop = AtomicBool::new(false);
+        let mut seen = Vec::new();
+        let read = import_until(
+            &s.catalog,
+            &writing(&s),
+            &mut |p| {
+                seen.push(p);
+                if matches!(p, Progress::Mapping { .. }) {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            },
+            &stop,
+        );
+        assert!(matches!(read, Err(ImportError::Stopped)), "{read:?}");
+        assert_eq!(seen, [Progress::Mapping { done: 1, of: 1 }]);
+        assert_eq!(tree(&s.dir), before, "nothing written");
+        // Set before it starts, it reads the catalog and goes no further.
+        let mut heard = 0;
+        let read = import_until(&s.catalog, &s.options, &mut |_| heard += 1, &stop);
+        assert!(matches!(read, Err(ImportError::Stopped)), "{read:?}");
+        assert_eq!(heard, 0);
         std::fs::remove_dir_all(&s.dir).unwrap();
     }
 }
