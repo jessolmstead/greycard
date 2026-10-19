@@ -149,6 +149,18 @@ Look section's job.
       whether the drawn bar is kept on Linux and Windows or the
       MenuBar made conditional on a property, which Slint may not
       allow. The user's, for the laptop, 0.9.0
+- [ ] A text size setting: the interface's type and controls scaled
+      from one setting (Slint's scale factor over the window, not a
+      per-font change), with the default from the system; a tester on
+      a dense screen could not work at ours. Asked 2026-10-18
+- [ ] The sort shown as a labeled control: today it is the arrows at
+      the end of the filter's row, and a tester who found a shoot in
+      reverse order found no way to turn it. Asked 2026-10-18
+- [ ] Adding to and taking from an AI mask made obvious: a mask holds
+      shapes with Add and Subtract, so a brush stroke can add to a Sky
+      mask or cut from it, and an experienced tester could not find
+      the way; the Masks tab wants the next shape's entry under the
+      mask it joins, with the mode in view. Asked 2026-10-18
 
 ### Speed
 
