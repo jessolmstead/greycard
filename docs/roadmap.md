@@ -594,6 +594,32 @@ clears or a tester asks for it.
       drawing stay in the window), and the thumbnails on the worker
       handle. The crate tree otherwise stays as it is: core knows
       nothing, edit and library sit on it, the window on everything
+- [ ] A cancel token through the develop: the worker drops a stale
+      result by generation but never interrupts the develop making
+      it, so a big frame or an export batch runs to the end after
+      the user has moved on. Core's develop takes a stop flag checked
+      between stages, the worker sets it when a newer request
+      supersedes, and the export queue's cancel sets it too. An
+      outside review asked 2026-10-19
+- [ ] Fuzzing at the boundaries, with cargo-fuzz targets over the
+      sidecar and edit JSON, the Lightroom settings and catalog
+      readers, pp3, XMP, and the filter language, run in CI on a
+      schedule and locally on demand, with each found case kept as
+      a regression test. The NaN sidecar (an outside review,
+      2026-10-19) is the kind it finds
+- [ ] A size report in CI: the files and functions over a line count,
+      printed on every run and compared with master's, as a report
+      and not a gate, so growth is seen when it happens; the five
+      largest files are 4,700 to 6,500 lines (cull, index, edit's
+      lib, the catalog reader, browser) and the first to split are
+      startup and mask
+- [ ] An architecture document, docs/architecture.md: the crates and
+      what each owns, the window's State by owner, the worker and its
+      handles, the sidecar and index formats, and the rules (core
+      knows nothing, edit and library on it, the window on
+      everything), written from the code as it is with the notes as
+      the why. The one concrete item of an outside review's
+      "contributor readiness", 2026-10-19
 - [ ] Every test's scratch folder removed through the testing helpers
       (`remove_scratch` where the state holds the index open,
       `remove_dir_retry` otherwise), the 290-odd bare `remove_dir_all`
