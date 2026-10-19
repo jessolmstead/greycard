@@ -166,6 +166,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     finder::install();
 
     let app = App::new()?;
+    // A size asked for on the command line, for a capture, in place of
+    // the layout's preferred one; the screen's fit still applies.
+    if let Some((w, h)) = cli.window {
+        app.set_asked_width(w);
+        app.set_asked_height(h);
+    }
     *fit_slot.borrow_mut() = Some(app.as_weak());
     // Which curve the panel shows at the start, for a dump of its
     // picture with `GREYCARD_UI_CURVE`.

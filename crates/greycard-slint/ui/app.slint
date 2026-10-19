@@ -69,8 +69,8 @@ export component App inherits Window {
     // opening size's fit to the screen (`window_fit`), which runs
     // before the window exists and holds a size of its own; a window
     // clamped below the least would only be pushed back up.
-    out property <length> asked-width: self.preferred-width;
-    out property <length> asked-height: self.preferred-height;
+    in-out property <length> asked-width: self.preferred-width;
+    in-out property <length> asked-height: self.preferred-height;
     out property <length> least-width: self.min-width;
     out property <length> least-height: self.min-height;
     background: Theme.canvas;

@@ -201,6 +201,10 @@ struct Cli {
     /// whichever size it was left at
     #[arg(long, value_name = "PX")]
     grid_cell: Option<f32>,
+    /// Open the window at this size in logical pixels, WxH, for a
+    /// capture; the screen's fit still applies
+    #[arg(long, value_name = "WxH", value_parser = parse_window_size, hide = true)]
+    window: Option<(f32, f32)>,
     /// Say more on the terminal: once, what the log file keeps;
     /// twice, debug lines from greycard's own crates in both.
     /// RUST_LOG, when set, decides instead
@@ -1090,3 +1094,21 @@ thread_local! {
 
 // Keep the wgpu types in one place for the renderer module.
 pub(crate) use wgpu as gpu;
+
+/// `WxH` in logical pixels, each 200 to 16384.
+fn parse_window_size(s: &str) -> Result<(f32, f32), String> {
+    let (w, h) = s
+        .split_once(['x', 'X'])
+        .ok_or_else(|| "expected WxH, such as 1500x950".to_string())?;
+    let read = |p: &str| -> Result<f32, String> {
+        let v: f32 = p
+            .trim()
+            .parse()
+            .map_err(|_| format!("{p:?} is not a number"))?;
+        if !(200.0..=16384.0).contains(&v) {
+            return Err(format!("{v} is outside 200 to 16384"));
+        }
+        Ok(v)
+    };
+    Ok((read(w)?, read(h)?))
+}
