@@ -397,7 +397,12 @@ comes across with its ratings and collections.
       import (today only edited frames do, so neighbors land 0.9
       stops apart); the refitted Provia, Reala Ace and R5 Mark II
       tables proposed by the fit darken against the no-look render,
-      a question for the camera match before they are installed
+      a question for the camera match before they are installed;
+      the grading wheels' scale, shipped at two thirds by eye
+      (§365), from exports with only the highlights or the shadows
+      wheel set, and the lightness curve against Lightroom's
+      Blending and per-wheel Luminance, which the mapper does not
+      read
 - [ ] darktable's XMP history imported as RawTherapee's profiles are
       (§328, §340), if a tester asks
 - [ ] The RawTherapee sheet: a menu entry back into it for a folder

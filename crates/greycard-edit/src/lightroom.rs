@@ -71,6 +71,9 @@ pub struct Scales {
     /// The mixer's luminance and saturation bands: ±100 onto ± this.
     pub mixer_luminance: f32,
     pub mixer_saturation: f32,
+    /// The grading wheels: a saturation of 100 onto this of a wheel,
+    /// whose 1 is the full shift.
+    pub grading: f32,
     /// Tint: Lightroom's units to one of Duv.
     pub tint_per_duv: f32,
 }
@@ -88,6 +91,12 @@ impl Scales {
         curve: 1.0,
         mixer_luminance: 1.0,
         mixer_saturation: 1.0,
+        // Not fitted: a wheel at Lightroom's 100 is a shift of 0.2
+        // in a and b, and at one to one the warm highlights of a
+        // graded frame came in well past Lightroom's, the whites
+        // yellow. Two thirds by eye until the wheels get a fit of
+        // their own from exports.
+        grading: 2.0 / 3.0,
         // The DNG SDK's `dng_temperature` sets it at about 3000 a unit
         // of Duv.
         tint_per_duv: 3000.0,
@@ -96,7 +105,7 @@ impl Scales {
 
 impl Scales {
     /// The scales by name, as a tool's command line names one.
-    pub const NAMES: [&'static str; 11] = [
+    pub const NAMES: [&'static str; 12] = [
         "contrast",
         "highlights",
         "shadows",
@@ -107,6 +116,7 @@ impl Scales {
         "curve",
         "mixer_luminance",
         "mixer_saturation",
+        "grading",
         "tint_per_duv",
     ];
 
@@ -122,6 +132,7 @@ impl Scales {
             "curve" => &mut self.curve,
             "mixer_luminance" => &mut self.mixer_luminance,
             "mixer_saturation" => &mut self.mixer_saturation,
+            "grading" => &mut self.grading,
             "tint_per_duv" => &mut self.tint_per_duv,
             _ => return None,
         })
@@ -790,10 +801,11 @@ fn map(
 
     // Color grading: the split toning keys are the shadows' and the
     // highlights' wheels, the color grade's the mid-tones'.
+    let grading = s.grading;
     let wheel = |hue: &str, sat: &str| -> Option<Wheel> {
         let h = num(hue);
         let s = num(sat);
-        let saturation = (s.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
+        let saturation = (s.unwrap_or(0.0) / 100.0 * grading).clamp(0.0, 1.0);
         (h.is_some() || s.is_some()).then(|| {
             // A wheel at nothing is the default, whatever its hue.
             if saturation == 0.0 {
@@ -1129,8 +1141,9 @@ mod tests {
         assert!((e.mixer.luminance[3] + 0.5).abs() < 1e-6);
         assert!((e.color.vibrance - 0.2).abs() < 1e-6);
         assert!((e.color.saturation + 0.1).abs() < 1e-6);
-        assert!((e.grading.shadows.saturation - 0.2).abs() < 1e-6);
-        assert!((e.grading.highlights.saturation - 0.1).abs() < 1e-6);
+        let g = Scales::DEFAULT.grading;
+        assert!((e.grading.shadows.saturation - 0.2 * g).abs() < 1e-6);
+        assert!((e.grading.highlights.saturation - 0.1 * g).abs() < 1e-6);
         assert_eq!(e.grading.midtones, Wheel::default());
         assert!((e.grading.balance - 0.25).abs() < 1e-6);
         // Hue 220 is a blue; 45 an orange.
@@ -1414,6 +1427,7 @@ mod tests {
             curve: 0.5,
             mixer_luminance: 0.5,
             mixer_saturation: 2.0,
+            grading: 1.0,
             tint_per_duv: 1500.0,
         };
         let e = read_table_with(settings, "x", &scales, 0.0)
