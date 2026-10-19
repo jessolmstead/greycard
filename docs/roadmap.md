@@ -403,6 +403,12 @@ comes across with its ratings and collections.
       wheel set, and the lightness curve against Lightroom's
       Blending and per-wheel Luminance, which the mapper does not
       read
+- [ ] Re-map frames untouched since their import: an imported frame's
+      history starts at the "Imported from Lightroom" state, so a
+      later mapper (a fitted scale, a key newly carried) can be run
+      again over every frame whose history holds nothing after it,
+      with no edit of the user's moved; the mark the import leaves is
+      what makes it possible, so it stays reliable
 - [ ] darktable's XMP history imported as RawTherapee's profiles are
       (§328, §340), if a tester asks
 - [ ] The RawTherapee sheet: a menu entry back into it for a folder
