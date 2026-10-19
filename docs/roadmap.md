@@ -854,9 +854,10 @@ release when the wait clears.
       instead of failing at "selecting Slint's wgpu backend". A
       tester on an Ivy Bridge i5 with Mesa's incomplete Vulkan hit
       the failure, and with SLINT_WGPU_CPU=1 ran every develop op as
-      shaders under lavapipe, minutes at 400% CPU (2026-10-19). Slow
-      is the honest outcome there; the mode makes it open and say
-      why
+      shaders under lavapipe, minutes at 400% CPU; with --cpu-ops
+      beside it a 6000 x 4000 X-Trans frame developed in 13.7 s and
+      exported (2026-10-19). Slow is the honest outcome there; the
+      mode makes it open, and say why, without the two switches
 - [ ] A GPU path for the models on Windows on ARM: pyke publishes an
       ARM64 Windows build of ONNX Runtime with DirectML, no WebGPU,
       and DirectML ships with Windows, so ort-dylib could make our
