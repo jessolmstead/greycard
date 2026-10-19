@@ -563,6 +563,58 @@ fn the_color_under_the_pointer_is_in_the_scopes_bins() {
     assert!(read.is_some(), "the new image's analysis is read");
 }
 
+/// A read back whose map callback wgpu dropped without calling (a
+/// surface configure that raced the worker drops what it collected)
+/// is let go: the scopes stop waiting on it, unmap the buffer wgpu
+/// mapped, and analyze again, and that analysis lands.
+#[test]
+fn a_lost_scopes_read_back_is_made_again() {
+    let Some((device, queue)) = device("the lost read back's check") else {
+        return;
+    };
+    let image = field();
+    let (w, h) = (image.width, image.height);
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    let mut view = View::blank();
+    view.center = (w as f32 / 2.0, h as f32 / 2.0);
+    view.plane = (w as f32, h as f32);
+    view.frame_size = (w as f32, h as f32);
+    let first = gpu_bins(&mut renderer, &view, Scope::Rgb, None);
+    // The next analysis, for an edit of its own, goes out ...
+    view.light.exposure = 0.5;
+    let (_, in_flight) = renderer.analyze(&view, Scope::Rgb, None);
+    assert!(in_flight, "an analysis under way");
+    // ... its maps are done, as wgpu-core's poll inside the configure
+    // leaves them, and its callbacks are dropped with their senders.
+    let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+    let lost = || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        drop(tx);
+        Some(rx)
+    };
+    renderer.scopes.in_flight = lost();
+    renderer.scopes.picture_in_flight = lost();
+    // The scopes let it go and send the analysis again at once, so the
+    // window's frames do not wait on it for the rest of the session;
+    // mapping the staging buffers again would fail had they not been
+    // unmapped, costing the scopes one more cycle.
+    let (bins, in_flight) = renderer.analyze(&view, Scope::Rgb, None);
+    assert!(bins.is_none(), "nothing read from the lost one");
+    assert!(in_flight, "the analysis made again");
+    assert!(
+        renderer.scopes.in_flight.as_ref().unwrap().try_recv()
+            != Err(std::sync::mpsc::TryRecvError::Disconnected),
+        "a live read back in place of the lost one"
+    );
+    let again = gpu_bins(&mut renderer, &view, Scope::Rgb, None);
+    assert_ne!(again, first, "the bins of the brighter edit");
+    assert!(renderer.take_navigator().is_some(), "the navigator's too");
+    // And idle once it has landed.
+    let (_, in_flight) = renderer.analyze(&view, Scope::Rgb, None);
+    assert!(!in_flight);
+}
+
 /// The shader's range masks are the CPU's, on the field.
 #[test]
 fn the_shaders_range_masks_are_the_cpus() {

@@ -1,4 +1,40 @@
+use std::sync::mpsc::TryRecvError;
+
 use super::*;
+
+/// Unmap a staging buffer whose read back was lost: its map callback
+/// dropped without being called, the channel's sender with it.
+///
+/// wgpu can do that. Every poll of the device, on any thread, collects
+/// the callbacks of the maps that are done and fires them after; but a
+/// `Surface::configure` that gives up because the worker submitted
+/// during its wait (see `crate::gpu_errors`) drops what it collected
+/// instead (wgpu-core 30, `Device::configure_surface`). The scopes'
+/// read back is submitted in one frame and collected in a later one,
+/// so a configure between the two can take it, and the channel is left
+/// disconnected and empty. Read as "not yet", that would hold the
+/// analysis in flight for the rest of the session: the histogram, the
+/// navigator and the readout frozen, and a frame asked for after every
+/// frame. So a lost read back is let go and the analysis made again.
+///
+/// The window's other read backs (`sample.rs`, `draw.rs`, femtovg's
+/// snapshot) map and wait for the device in one call on the window's
+/// thread, the thread that configures, so no configure comes between;
+/// the worker's map a band at a time and wait for it, with nothing of
+/// theirs left running for a configure to fail on.
+///
+/// wgpu-core maps the buffer before it hands the callback over, so the
+/// unmap is valid, and it lets the next read back map the buffer at
+/// once: a map of a buffer wgpu still holds mapped fails, and the
+/// scopes would lose one more cycle before the error path's unmap
+/// freed it. Had the map failed, the buffer is not mapped and the
+/// unmap is a validation error, which the scope takes rather than the
+/// device's handler.
+fn unmap_lost(device: &gpu::Device, buffer: &gpu::Buffer) {
+    let scope = device.push_error_scope(gpu::ErrorFilter::Validation);
+    buffer.unmap();
+    drop(scope);
+}
 
 /// What of a view the scopes depend on.
 #[derive(Debug, Clone, PartialEq)]
@@ -165,11 +201,16 @@ impl Renderer {
         weigh_by: Option<usize>,
     ) -> (Option<(Scope, &[u32])>, bool) {
         let weigh_by = weigh_by.filter(|&k| k < v.locals.len().min(MAX_LOCALS));
-        // Collect a finished read back.
+        // Collect a finished read back, or let a lost one go and
+        // analyze again ([`unmap_lost`]).
         let _ = self.device.poll(gpu::PollType::Poll);
-        if let Some(rx) = &self.scopes.in_flight
-            && let Ok(result) = rx.try_recv()
-        {
+        let bins = self.scopes.in_flight.as_ref().map(|rx| rx.try_recv());
+        if let Some(Err(TryRecvError::Disconnected)) = bins {
+            self.scopes.in_flight = None;
+            unmap_lost(&self.device, &self.scopes.staging);
+            self.scopes.image_changed = true;
+        }
+        if let Some(Ok(result)) = bins {
             self.scopes.in_flight = None;
             if result.is_ok()
                 && let Some((_, taken, weighed)) = self.scopes.analyzed
@@ -186,9 +227,19 @@ impl Renderer {
             }
             self.scopes.staging.unmap();
         }
-        if let Some(rx) = &self.scopes.picture_in_flight
-            && let Ok(result) = rx.try_recv()
-        {
+        let picture = self
+            .scopes
+            .picture_in_flight
+            .as_ref()
+            .map(|rx| rx.try_recv());
+        if let Some(Err(TryRecvError::Disconnected)) = picture {
+            self.scopes.picture_in_flight = None;
+            if let Some(staging) = &self.scopes.picture_staging {
+                unmap_lost(&self.device, staging);
+            }
+            self.scopes.image_changed = true;
+        }
+        if let Some(Ok(result)) = picture {
             self.scopes.picture_in_flight = None;
             if let Some(staging) = &self.scopes.picture_staging {
                 if result.is_ok()

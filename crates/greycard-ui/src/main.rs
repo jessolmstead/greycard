@@ -30,6 +30,7 @@ mod files;
 mod filter;
 mod finder;
 mod fit_lightroom;
+mod gpu_errors;
 mod grid;
 mod headless;
 mod import;

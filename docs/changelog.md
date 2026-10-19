@@ -195,6 +195,14 @@ design note behind it.
 
 ### Fixes
 
+- The window no longer dies when its surface is reconfigured while
+  the develop is on the GPU. A resize or a tiling compositor's own
+  reconfigure during a white balance or demosaic change, which remake
+  the base, hit a race in wgpu's surface configure and took the window
+  down with "Failed to wait for GPU to come idle"; the error is now
+  caught, the surface configured again at once, and the scopes' read
+  back made again if the race dropped it. Issue 27
+  ([§363](https://github.com/jessolmstead/greycard/blob/master/docs/notes/363-the-surface-reconfigured-under-the-worker.md))
 - A Lightroom preset's Tint came in backwards and too small, a
   magenta cast where green was meant
   ([§325](https://github.com/jessolmstead/greycard/blob/master/docs/notes/325-lightrooms-tint-came-in-backwards.md))

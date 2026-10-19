@@ -760,6 +760,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // It is kept for a report's GPU field too.
                         let gpu = report::gpu_line(&device.adapter_info());
                         tracing::info!("gpu: {gpu}");
+                        // Before the worker has the device: from then
+                        // on a resize can race its submits, which
+                        // wgpu's own handler would make a panic.
+                        crate::gpu_errors::install(device, app_weak.clone());
                         let mut st = state.borrow_mut();
                         st.develop.gpu = Some(gpu);
                         st.develop.renderer = Some(Renderer::new(device, queue));

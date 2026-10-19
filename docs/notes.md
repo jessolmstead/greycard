@@ -375,3 +375,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§360. A wider Sky raster for the large frames](notes/360-a-wider-sky-raster-for-the-large-frames.md) (2026-10-18)
 - [§361. The render crate](notes/361-the-render-crate.md) (2026-10-18)
 - [§362. The curve's ends slide along their edges](notes/362-the-curves-ends-slide-along-their-edges.md) (2026-10-18)
+- [§363. The surface reconfigured under the worker](notes/363-the-surface-reconfigured-under-the-worker.md) (2026-10-18)

@@ -37,9 +37,11 @@ pub enum Error {
     Device(String),
     /// The device reported an error while `what` ran: a validation
     /// failure, out of memory, or an internal one. Caught in an error
-    /// scope, so it is this and not the panic wgpu's uncaptured
-    /// handler would raise, which on the editor's device is Slint's
-    /// to set and not ours.
+    /// scope, so it comes back as this rather than going to the
+    /// device's uncaptured handler: wgpu's default one panics, and the
+    /// editor's (set by greycard-ui on the device it shares with
+    /// Slint, which sets none) panics on all but a surface configure
+    /// that raced another thread's submits.
     #[error("the GPU while {what}: {error}")]
     Gpu { what: &'static str, error: String },
     #[error("{0}")]
@@ -502,8 +504,9 @@ impl Context {
 
 /// Run `f` under error scopes for validation, out-of-memory and
 /// internal errors, so that whatever the device rejects comes back as
-/// [`Error::Gpu`] rather than through wgpu's uncaptured handler, which
-/// panics by default and on the editor's device is not ours to set.
+/// [`Error::Gpu`] rather than through the device's uncaptured handler,
+/// which panics (see [`Error::Gpu`]). Scopes are the calling thread's
+/// own, so they catch the ops' errors and none of the window's.
 /// Scopes pop in the reverse of their pushes.
 fn scoped<T>(
     device: &wgpu::Device,
