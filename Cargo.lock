@@ -1953,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-ai"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dirs",
  "flate2",
@@ -1976,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-bench"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1990,7 +1990,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2011,7 +2011,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "image",
  "log",
@@ -2023,7 +2023,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-edit"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "blake3",
  "dirs",
@@ -2040,7 +2040,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-gpu"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2055,7 +2055,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-lens"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bzip2",
  "dirs",
@@ -2069,7 +2069,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-library"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "blake3",
  "dirs",
@@ -2089,7 +2089,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-match"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "greycard-core",
  "serde",
@@ -2098,7 +2098,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-render"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -2115,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-slint"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "slint",
  "slint-build",
@@ -2123,7 +2123,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-ui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -4331,7 +4331,7 @@ dependencies = [
 
 [[package]]
 name = "ort-dylib"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "find-msvc-tools",
