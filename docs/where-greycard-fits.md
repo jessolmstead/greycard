@@ -111,7 +111,7 @@ is in `roadmap.md`; nothing planned is counted as done.
 | Camera color | Adobe's | in-house, the best | DxO's | matrix | matrix, DCP | matrix, DCP, and a look fitted from the camera's own JPEG |
 | Demosaic | Adobe's | proprietary | proprietary | RCD, AMaZE | AMaZE, RCD, dual | AMaZE, RCD, dual; Markesteijn for X-Trans |
 | Denoise | AI, local | conventional | DeepPRIME | profiled | profiled | profiled, and a raw-domain network that runs locally |
-| Masks | AI people, sky, objects | layers | limited | parametric, drawn | local adjustments | gradient, radial, brush, by lightness and color; subject, object, sky and people's parts by model |
+| Masks | AI people, sky, objects | layers | limited | parametric, drawn | local adjustments | gradient, radial, brush, by lightness and color; subject, object, sky, landscape and people's parts by model |
 | Retouch | remove, generative | heal, clone | limited | retouch | spot removal | heal, clone, learned fill |
 | Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; browsable offline, archive backup; collections by content, surviving a move |
 | Culling speed | fast, embedded previews | fast | slow | slow | slow | fast, from the embedded JPEG, or a local preview for an offline or network drive |
@@ -145,7 +145,8 @@ Built, as of 0.7.0:
 - **Pipeline.** rawler decoding. Linear Rec.2020 from the camera
   matrix to the monitor profile, soft proofing, AgX as a second
   display curve. RCD, AMaZE and dual demosaic, Markesteijn for
-  X-Trans. Highlight reconstruction, chromatic aberration and
+  X-Trans with the profiled denoise, hot pixel repair and chromatic
+  aberration correction on it too. Highlight reconstruction, chromatic aberration and
   defringe, DCP profiles, a profiled denoiser and a learned one,
   deconvolution sharpening, lensfun corrections. Every operation has
   a CPU reference and a test.
@@ -157,21 +158,26 @@ Built, as of 0.7.0:
   versions of a frame in one sidecar.
 - **Masks.** Gradient, radial, brush, by lightness and by color, each
   with its own light, color, white balance and detail. Subject,
-  background, sky, object and people's parts by model, on your
-  machine.
+  background, sky, landscape (water, foliage, mountain, building),
+  object and people's parts by model, on your machine.
 - **Library.** Folders watched as roots, a tree, an index that fills
   the filter with chips and takes a filter language. Ratings, flags
   and labels in the sidecar and in XMP, so they travel to Lightroom
   and darktable. A share that stops answering never holds the window.
   Archives backed up by hash and joined edit by edit. Collections
   that follow a picture through a move. Import from a card with
-  renaming and a verified backup. A Lightroom Classic catalog brought
-  across whole. RawTherapee's profiles offered when a folder opens.
-- **Culling.** Strip, grid and lightbox, each frame shown as edited.
-  From the camera's JPEG or a local preview when the drive is
-  offline. Compare, versions side by side, stacks, a rejects folder
+  renaming and a verified backup, or a folder added where it is. A
+  Lightroom Classic catalog brought across whole. RawTherapee's
+  profiles offered when a folder opens. Keywords and a title typed in
+  the window, a capture time shifted for a second body, a sort order
+  for the grid, and a camera's JPEG beside its raw kept as one frame.
+- **Culling.** Two views, Library and Loupe, the Loupe in Cull or
+  Develop; strip, grid and lightbox, each frame shown as edited.
+  From the camera's JPEG, embedded or beside the raw, or a local
+  preview when the drive is offline. Compare, versions side by side, stacks, a rejects folder
   with a way back, delete to the trash.
-- **Export.** Embedded profiles and EXIF, presets, watermark, border,
+- **Export.** Embedded profiles and EXIF, Adobe RGB beside sRGB,
+  Display P3 and Rec.2020, presets, watermark, border,
   a queue that survives a restart, a headless `--export`. Focus
   stacking to a linear DNG from the command line.
 - **Around it.** Packages for Linux, macOS and Windows. A Report a
