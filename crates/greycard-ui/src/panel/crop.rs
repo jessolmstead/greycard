@@ -1441,6 +1441,7 @@ mod tests {
             crate::worker::Outcome::Developed {
                 generation,
                 turn: 0,
+                kind: crate::finish::Source::SCENE,
                 image: crate::worker::Developed::Halves(std::sync::Arc::new(
                     crate::worker::Halves {
                         width: size.0,
@@ -1600,6 +1601,7 @@ mod tests {
             crate::worker::Outcome::Developed {
                 generation,
                 turn: 0,
+                kind: crate::finish::Source::SCENE,
                 image: crate::worker::Developed::Halves(std::sync::Arc::new(
                     crate::worker::Halves {
                         width: 4000,

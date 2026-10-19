@@ -1090,6 +1090,7 @@ mod tests {
             Outcome::Developed {
                 generation,
                 turn: 0,
+                kind: crate::finish::Source::SCENE,
                 image: crate::worker::Developed::Halves(Arc::new(crate::worker::Halves {
                     width: 1200,
                     height: 800,

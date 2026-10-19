@@ -24,6 +24,9 @@ use std::time::{Duration, Instant};
 /// must not be taken down by this one.
 pub(crate) struct Landed {
     pub(crate) image: Developed,
+    /// What the picture is, which goes up with it as the drawn
+    /// picture's kind (`Develop::drawn_kind`).
+    pub(crate) kind: finish::Source,
     /// The tone equalizer's guide plane for it.
     pub(crate) guide: Arc<finish::Guide>,
     /// The masks' detail planes for it, when a mask asks for them.
@@ -399,9 +402,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             crate::panel::time_shift::show_shot_time(&mut st, app);
             match &kind {
                 SourceKind::Raw => {
-                    // The body's baseline, from the camera the file names.
-                    let (make, model) = &st.develop.camera;
-                    st.develop.source = finish::Source::raw(make, model);
                     app.set_raw_input(true);
                     app.set_source_note("".into());
                     // The learned denoiser has no X-Trans version yet:
@@ -433,7 +433,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     }
                 }
                 SourceKind::Picture { space, bits } => {
-                    st.develop.source = finish::Source::Display;
                     app.set_raw_input(false);
                     app.set_noise_unavailable("raw only".into());
                     app.set_learned_unavailable("".into());
@@ -477,6 +476,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             generation,
             turn,
             image,
+            kind,
             guide,
             planes,
             white,
@@ -685,6 +685,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.develop.planes_asked = Default::default();
             st.develop.pending = Some(Landed {
                 image,
+                kind,
                 guide,
                 planes,
                 white,

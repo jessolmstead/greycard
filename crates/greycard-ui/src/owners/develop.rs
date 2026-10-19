@@ -23,8 +23,13 @@ pub(crate) struct Develop {
     /// What the session has learned of files' mosaics from the worker:
     /// its read ahead of a decode, and the decoded frames.
     pub(crate) mosaics: HashMap<PathBuf, crate::panel::browser::OpenMosaic>,
-    /// A raw's scene or a picture already rendered, from the open.
-    pub(crate) source: finish::Source,
+    /// The kind of the picture on the GPU, set where its develop is
+    /// uploaded: what the viewport finishes it as. Until the open
+    /// frame's develop lands the picture there is the last frame's,
+    /// and drawn as the open frame's kind a picture already rendered
+    /// would take a raw's baseline and shoulder, or a raw's scene go
+    /// to the screen without them.
+    pub(crate) drawn_kind: finish::Source,
     /// The open raw's own white as a temperature and tint, as its
     /// decode read it: what the white balance sliders show under As
     /// shot. None until the decode lands, and for a picture.

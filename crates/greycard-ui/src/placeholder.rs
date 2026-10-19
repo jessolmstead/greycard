@@ -70,6 +70,19 @@ impl Wait {
         }
     }
 
+    /// A frame selected whose camera picture is already decoded, kept
+    /// from a visit before: up on the next frame, as a decode landing
+    /// would put it. Nothing of the wait before it is carried over,
+    /// so the picture standing in is this frame's and no other's.
+    pub fn in_hand(cell: usize, generation: u64) -> Self {
+        Self {
+            file: cell,
+            generation,
+            stage: Stage::Ready,
+            showing: Some(cell),
+        }
+    }
+
     /// A frame whose picture is already on screen — the culling mode
     /// just left, where the loupe's picture stays up until the
     /// develop it asked for lands.
@@ -281,6 +294,18 @@ mod tests {
         assert!(!second.up());
         assert!(second.arrived(5));
         assert_eq!(second.showing, Some(5));
+    }
+
+    #[test]
+    fn a_frame_kept_from_before_stands_in_at_once_as_itself() {
+        // Its own picture is in hand, and it is the one shown: nothing
+        // of a wait before it is taken in.
+        let mut wait = Wait::in_hand(5, 8);
+        assert_eq!(wait.showing, Some(5));
+        assert!(wait.up());
+        assert!(!wait.arrived(5), "already up");
+        assert!(wait.drawn());
+        assert!(wait.replaced_by(8));
     }
 
     #[test]

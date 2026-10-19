@@ -393,6 +393,11 @@ pub enum Outcome {
         /// turn pressed since has moved on from until its own lands.
         turn: u8,
         image: Developed,
+        /// What the picture is, a raw's scene or a picture already
+        /// rendered, which says how the viewport finishes it: the
+        /// panel's open frame may be another kind by the time this
+        /// is drawn, and the picture keeps its own.
+        kind: crate::finish::Source,
         /// The tone equalizer's plane for this develop, for the
         /// viewport's own texture.
         guide: Arc<crate::finish::Guide>,

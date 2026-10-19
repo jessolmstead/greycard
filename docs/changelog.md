@@ -195,6 +195,13 @@ design note behind it.
 
 ### Fixes
 
+- Moving between frames no longer flashes the last picture far too
+  contrasty, or dark and flat, until the develop lands. The picture
+  still on screen was drawn through the new frame's kind of rendering
+  and under the new frame's edit, and a frame come back to never put
+  its own camera picture up; each now keeps its own. The droppers wait
+  for the frame's own develop instead of reading the old picture
+  ([§364](https://github.com/jessolmstead/greycard/blob/master/docs/notes/364-the-picture-on-screen-keeps-its-own-kind-and-look.md))
 - The window no longer dies when its surface is reconfigured while
   the develop is on the GPU. A resize or a tiling compositor's own
   reconfigure during a white balance or demosaic change, which remake

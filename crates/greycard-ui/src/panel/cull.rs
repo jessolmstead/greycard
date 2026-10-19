@@ -281,6 +281,17 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     }
     show_history(st, app);
     st.develop.edit = edit.clone();
+    // The develop on the GPU is drawn under the edit it is a develop
+    // of until this frame's lands: this frame's own, under the panel,
+    // or the frame's open before the mode, under that frame's edit as
+    // it was saved on the way in (`enter_cull` lets go of the held
+    // edit, since the mode draws no develop).
+    if st.develop.base_white.is_some()
+        && let Some((drawn, _)) = st.develop.shown_turn
+        && drawn != c
+    {
+        st.develop.held = st.line(drawn).map(|l| l.current.clone());
+    }
     st.develop.generation += 1;
     st.develop.zoom = 0.0;
     st.develop.image_size = (0, 0);
@@ -778,6 +789,17 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
     // folder does.
     let none_in_it = hold.failed.contains_key(&cell);
     let path = st.path_of(cell).clone();
+    if held {
+        // Already decoded: up on the next frame, no thread needed, and
+        // the wait is up as a decode landing would have put it, so
+        // this frame's picture is what stands in. A wait left asked
+        // here would stand nothing in, and the last frame's develop,
+        // or the camera picture the last wait was showing, would stay
+        // on screen under this frame's line for the whole develop.
+        st.culling.placeholder = Some(placeholder::Wait::in_hand(cell, st.develop.generation));
+        placeholder_arrived(st, app, cell);
+        return;
+    }
     // Whatever camera picture is on screen stays there until this
     // frame's own is in hand.
     let showing = st.culling.placeholder.as_ref().and_then(|w| w.showing);
@@ -786,11 +808,6 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
         st.develop.generation,
         showing,
     ));
-    if held {
-        // Already decoded: up on the next frame, no thread needed.
-        placeholder_arrived(st, app, cell);
-        return;
-    }
     if none_in_it {
         drop_placeholder(st, app);
         return;
@@ -3076,9 +3093,21 @@ mod tests {
 
     /// The same, developed at `turn` quarter turns of the frame.
     fn developed_at(generation: u64, size: (u32, u32), turn: u8) -> crate::worker::Outcome {
+        developed_as(generation, size, turn, crate::finish::Source::SCENE)
+    }
+
+    /// The same, of a picture of `kind`: a raw's scene, or a picture
+    /// already rendered.
+    fn developed_as(
+        generation: u64,
+        size: (u32, u32),
+        turn: u8,
+        kind: crate::finish::Source,
+    ) -> crate::worker::Outcome {
         crate::worker::Outcome::Developed {
             generation,
             turn,
+            kind,
             image: crate::worker::Developed::Halves(Arc::new(crate::worker::Halves {
                 width: size.0,
                 height: size.1,
@@ -3095,6 +3124,327 @@ mod tests {
             learned: crate::worker::LearnedReport::Off,
             fills: crate::worker::FillReport::default(),
         }
+    }
+
+    /// The worker's open of the frame chosen last: a raw, or a
+    /// picture already rendered.
+    fn opened(generation: u64, kind: crate::worker::SourceKind) -> crate::worker::Outcome {
+        crate::worker::Outcome::Opened {
+            generation,
+            as_shot: (5500.0, 0.0),
+            frame: None,
+            profile: None,
+            lens: crate::worker::LensReport::NoDatabase,
+            kind,
+            shot: Default::default(),
+            taken: None,
+            blend: None,
+        }
+    }
+
+    /// A frame drawn, as far as a window without a GPU goes: the
+    /// render's own start, which takes up a develop that has landed,
+    /// and the kind the view is given for the picture on the GPU.
+    fn draw(app: &App, state: &Rc<RefCell<State>>) -> crate::finish::Source {
+        crate::panel::startup::land_pending(&mut state.borrow_mut(), app).kind
+    }
+
+    /// The look the view is given: of the edit it draws the picture on
+    /// the GPU under, as the render reads it.
+    fn drawn_look(app: &App, state: &Rc<RefCell<State>>) -> f32 {
+        let st = state.borrow();
+        let panel = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
+        View::with_look(&crate::panel::startup::view_edit(&st, &panel))
+            .light
+            .exposure
+    }
+
+    /// The picture on screen is finished as what it is, whatever the
+    /// open frame is: a raw's develop held up while a picture file
+    /// opens is still drawn as a raw's scene, through its baseline and
+    /// its shoulder, until the picture's own develop lands in its
+    /// place, and the other way about. Drawn as the open frame's kind,
+    /// a picture already rendered would flash over a stop too bright
+    /// and too contrasty, and a raw's scene would go dark and flat.
+    #[test]
+    fn the_picture_on_screen_is_drawn_as_its_own_kind_until_the_next_lands() {
+        use crate::finish::Source;
+        use crate::worker::SourceKind;
+        let files: Vec<std::path::PathBuf> = ["IMG_0000.CR3", "IMG_0001.JPG", "IMG_0002.CR3"]
+            .iter()
+            .map(|f| std::path::PathBuf::from("/nowhere").join(f))
+            .collect();
+        let app = window(3);
+        let (state, _worker) = state_for(&app, files);
+        let picture = || SourceKind::Picture {
+            space: "sRGB".into(),
+            bits: 8,
+        };
+        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+
+        // A raw opens and develops: its scene is what the view draws.
+        let raw = Source::raw("Canon", "EOS R5");
+        app.invoke_select(0);
+        crate::panel::deliver::deliver(&app, opened(generation(&state), SourceKind::Raw));
+        let developed = developed_as(generation(&state), (6000, 4000), 0, raw);
+        crate::panel::deliver::deliver(&app, developed);
+        assert_eq!(draw(&app, &state), raw);
+
+        // On to a picture file: its open says what it is, to the
+        // panel, and the raw's develop held on screen meanwhile is
+        // still drawn as the raw's scene.
+        app.invoke_select(1);
+        assert!(
+            state.borrow().develop.held.is_some(),
+            "the raw's develop is held"
+        );
+        crate::panel::deliver::deliver(&app, opened(generation(&state), picture()));
+        assert!(!app.get_raw_input(), "the panel's is the picture's");
+        assert_eq!(draw(&app, &state), raw, "the picture on screen's");
+        // Its develop delivered, the frame that takes it up draws it
+        // as what it is.
+        let developed = developed_as(generation(&state), (4000, 3000), 0, Source::Display);
+        crate::panel::deliver::deliver(&app, developed);
+        assert_eq!(draw(&app, &state), Source::Display);
+
+        // And the other way: a raw opened over the picture's develop.
+        app.invoke_select(2);
+        assert!(state.borrow().develop.held.is_some());
+        crate::panel::deliver::deliver(&app, opened(generation(&state), SourceKind::Raw));
+        assert!(app.get_raw_input());
+        assert_eq!(draw(&app, &state), Source::Display);
+        let developed = developed_as(generation(&state), (6000, 4000), 0, raw);
+        crate::panel::deliver::deliver(&app, developed);
+        assert_eq!(draw(&app, &state), raw);
+    }
+
+    /// A frame chosen and left before its develop lands leaves the
+    /// picture on screen what it was, under that picture's own look:
+    /// the frame it is a develop of, as the panel last had it, and not
+    /// the look of the frame passed through. Its late develop is
+    /// dropped, and the next frame's own takes the held look away.
+    #[test]
+    fn a_frame_left_before_its_develop_keeps_the_last_picture_under_its_look() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        // Z develops, and its exposure moves on the panel after.
+        app.invoke_select(0);
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
+        draw(&app, &state);
+        app.set_exposure(1.5);
+        assert_eq!(drawn_look(&app, &state), 1.5);
+
+        // On to A, whose own look is other, and on to B before A's
+        // develop lands: Z's picture is drawn under Z's look all along.
+        app.invoke_select(1);
+        app.set_exposure(-1.0);
+        assert_eq!(drawn_look(&app, &state), 1.5);
+        let late = generation(&state);
+        app.invoke_select(2);
+        draw(&app, &state);
+        assert_eq!(drawn_look(&app, &state), 1.5, "Z's look over Z's picture");
+
+        // A's develop, landing late, is not B's.
+        crate::panel::deliver::deliver(&app, developed(late, (6000, 4000)));
+        assert!(state.borrow().develop.pending.is_none());
+        assert_eq!(drawn_look(&app, &state), 1.5);
+        // B's own lands, and is drawn under B's panel.
+        app.set_exposure(0.25);
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
+        draw(&app, &state);
+        assert!(state.borrow().develop.held.is_none());
+        assert_eq!(drawn_look(&app, &state), 0.25);
+    }
+
+    /// The droppers that read the picture's pixels wait for the open
+    /// frame's develop: the last frame's held up meanwhile is another
+    /// frame's, and a camera picture standing in is not the develop
+    /// the texture holds. The status line says so, as the Neutral
+    /// dropper's does.
+    #[test]
+    fn a_dropper_waits_for_the_open_frames_develop() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        app.invoke_select(0);
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
+        draw(&app, &state);
+        app.set_picking("Curve".into());
+        let wait = "curve: wait for the develop";
+
+        // The last frame's develop held.
+        app.invoke_select(1);
+        app.set_status("".into());
+        app.invoke_pick_pressed(400.0, 300.0);
+        assert_eq!(app.get_status(), wait);
+        assert!(state.borrow().develop.picking.is_none());
+
+        // Its camera picture standing in.
+        let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
+        deliver_preview(&app, loaded);
+        app.set_status("".into());
+        app.invoke_pick_pressed(400.0, 300.0);
+        assert_eq!(app.get_status(), wait);
+
+        // Its develop delivered, and not yet up on the GPU: the
+        // texture and the size the view maps by are still the last's.
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
+        app.set_status("".into());
+        app.invoke_pick_pressed(400.0, 300.0);
+        assert_eq!(app.get_status(), wait);
+
+        // Up: the dropper reads it (here, with no GPU to sample, it
+        // finds nothing and says nothing).
+        draw(&app, &state);
+        app.set_status("".into());
+        app.invoke_pick_pressed(400.0, 300.0);
+        assert_eq!(app.get_status(), "");
+
+        // In and out of Cull on the same frame, its loupe picture
+        // standing in for the develop that asks for: nothing held, the
+        // develop on the GPU the frame's own, and still the texture is
+        // not what is on screen. The Neutral dropper waits too.
+        app.invoke_cull_toggled();
+        let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
+        deliver_preview(&app, loaded);
+        app.invoke_cull_leave();
+        {
+            let st = state.borrow();
+            assert!(st.develop.held.is_none());
+            assert_eq!(standing_in(&st), Some(1));
+        }
+        for (dropper, said) in [
+            ("Curve", wait),
+            ("White", "white balance: wait for the develop"),
+        ] {
+            app.set_picking(dropper.into());
+            app.set_status("".into());
+            app.invoke_pick_pressed(400.0, 300.0);
+            assert_eq!(app.get_status(), said, "{dropper}");
+        }
+    }
+
+    /// Cull left onto another frame than the one developed, with no
+    /// camera picture of it to stand in: the develop still on the GPU
+    /// is drawn under its own frame's look, as it was saved on the way
+    /// into the mode, until this frame's lands.
+    #[test]
+    fn leaving_cull_onto_another_frame_keeps_the_last_picture_under_its_look() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        app.invoke_select(0);
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
+        draw(&app, &state);
+        app.set_exposure(1.5);
+
+        // Into Cull, on to frame 1, whose camera picture never comes,
+        // and out.
+        app.invoke_cull_toggled();
+        app.invoke_select(1);
+        app.invoke_cull_leave();
+        assert_eq!(state.borrow().current, Some(1));
+        assert_eq!(standing_in(&state.borrow()), None);
+        assert_eq!(app.get_exposure(), 0.0, "the panel is frame 1's");
+        draw(&app, &state);
+        assert_eq!(
+            drawn_look(&app, &state),
+            1.5,
+            "frame 0's look over its picture"
+        );
+
+        // Frame 1's own develop lands, under frame 1's panel.
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
+        draw(&app, &state);
+        assert!(state.borrow().develop.held.is_none());
+        assert_eq!(drawn_look(&app, &state), 0.0);
+
+        // Back into Cull and out on the same frame: its own develop,
+        // under its own panel, with nothing held.
+        app.invoke_cull_toggled();
+        app.invoke_cull_leave();
+        assert!(state.borrow().develop.held.is_none());
+    }
+
+    /// A frame come back to whose camera picture is still kept from
+    /// the first visit stands in with it at once, as on that visit,
+    /// rather than leaving the last frame's develop on screen under
+    /// a line that says it is the camera's preview.
+    #[test]
+    fn a_frame_come_back_to_stands_in_with_its_kept_camera_picture() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        app.invoke_select(1);
+        let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
+        deliver_preview(&app, loaded);
+        assert_eq!(standing_in(&state.borrow()), Some(1));
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
+        draw(&app, &state);
+        assert_eq!(
+            standing_in(&state.borrow()),
+            None,
+            "its develop in its place"
+        );
+
+        // Frame 2 develops with no camera picture of its own in time.
+        app.invoke_select(2);
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
+        draw(&app, &state);
+        assert_eq!(standing_in(&state.borrow()), None);
+
+        // Back to 1: frame 2's develop is held, and frame 1's camera
+        // picture stands in over it, not that develop.
+        app.invoke_select(1);
+        assert!(state.borrow().develop.held.is_some());
+        assert_eq!(standing_in(&state.borrow()), Some(1));
+        assert!(app.get_placeholder());
+        assert!(
+            app.get_placeholder_status()
+                .starts_with("camera preview: the camera JPEG, 6000 \u{d7} 4000")
+        );
+        // Until its develop lands.
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
+        draw(&app, &state);
+        assert_eq!(standing_in(&state.borrow()), None);
+        assert!(!app.get_placeholder());
+        assert_eq!(app.get_placeholder_status(), "");
+    }
+
+    /// A frame whose camera picture is kept, chosen while another
+    /// frame's still stands in, stands in with its own: not with the
+    /// other frame's under its own line.
+    #[test]
+    fn a_kept_frame_chosen_while_another_stands_in_shows_its_own_picture() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        app.invoke_select(2);
+        let loaded = camera_picture(&state.borrow(), 2, (8192, 5464));
+        deliver_preview(&app, loaded);
+        crate::panel::deliver::deliver(&app, developed(generation(&state), (8192, 5464)));
+        draw(&app, &state);
+
+        // Frame 1's camera picture is up and its develop on the way.
+        app.invoke_select(1);
+        let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
+        deliver_preview(&app, loaded);
+        assert_eq!(standing_in(&state.borrow()), Some(1));
+        let first = generation(&state);
+
+        // Back to 2, kept from before: its own picture, and its line.
+        app.invoke_select(2);
+        assert_eq!(standing_in(&state.borrow()), Some(2));
+        assert!(
+            app.get_placeholder_status()
+                .starts_with("camera preview: the camera JPEG, 8192 \u{d7} 5464")
+        );
+        // Frame 1's develop, landing late, is dropped by the generation
+        // guard, and 2's camera picture stays up.
+        crate::panel::deliver::deliver(&app, developed(first, (6000, 4000)));
+        draw(&app, &state);
+        assert_eq!(standing_in(&state.borrow()), Some(2));
     }
 
     /// The picture on screen stays there until something replaces it.

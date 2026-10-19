@@ -926,7 +926,7 @@ impl State {
                 frame: None,
                 panel_mosaic: None,
                 mosaics: HashMap::new(),
-                source: finish::Source::SCENE,
+                drawn_kind: finish::Source::SCENE,
                 as_shot_white: None,
                 white_cache: None,
                 shown_white: None,

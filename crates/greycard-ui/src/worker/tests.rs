@@ -1984,6 +1984,7 @@ fn a_develop_without_its_model_says_what_was_left_out() {
     let developed = |learned, fills| Outcome::Developed {
         generation: 0,
         turn: 0,
+        kind: crate::finish::Source::SCENE,
         image: Developed::Halves(Arc::new(Halves {
             width: 1,
             height: 1,

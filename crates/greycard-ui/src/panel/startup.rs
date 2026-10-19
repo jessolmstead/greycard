@@ -11,9 +11,9 @@ use crate::panel::edit::{read_edit, read_folds, save_edit, show_folds, time_move
 use crate::panel::mask::{ask_for, bake_locals};
 use crate::panel::retouch::patch_outlines;
 use crate::panel::viewport::{
-    ViewMap, display_key, drawn_picture, effective_zoom, proof_settings, schedule_snapshot,
-    settle_source_size, show_crop_on_view, show_hover, show_source_shape, source_to_view,
-    sync_display, write_screenshot, zoom_label,
+    ViewMap, display_key, drawn_kind, drawn_picture, effective_zoom, picture_up, proof_settings,
+    schedule_snapshot, settle_source_size, show_crop_on_view, show_hover, show_source_shape,
+    source_to_view, sync_display, write_screenshot, zoom_label,
 };
 use crate::*;
 
@@ -897,53 +897,20 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             at.elapsed().as_secs_f64() * 1e3
                         );
                     }
-                    let pending = st.develop.pending.take();
-                    // The develop the camera's picture was standing in
-                    // for has landed — that one, or a later one of the
-                    // same frame — so ours takes its place, now, and
-                    // never the other way about. A develop asked for
-                    // before the frame on the panel was chosen is a
-                    // picture of another frame and leaves it standing.
-                    if let Some(landed) = &pending {
-                        develop_landed(st, &app, landed.generation);
-                    }
-                    // Culling, or a camera picture standing in for a
-                    // develop: neither draws the develop's frame below.
-                    if st.culling.cull.is_some() || standing_in(st).is_some() {
-                        if let Some(landed) = &pending
-                            && let Some(renderer) = st.develop.renderer.as_mut()
-                        {
-                            match &landed.image {
-                                Developed::Halves(halves) => renderer.upload(halves),
-                                Developed::Texture(texture) => renderer.set_source(texture.clone()),
-                            }
-                            renderer.set_guide(&landed.guide);
-                            renderer.set_detail(landed.planes.as_ref());
-                        }
+                    let Landing {
+                        pending,
+                        loupe,
+                        kind,
+                    } = land_pending(st, &app);
+                    if loupe {
                         cull_frame(st, &app, &state);
                         return;
-                    }
-                    if let Some(landed) = &pending {
-                        let (w, h) = (landed.image.width(), landed.image.height());
-                        st.develop.source_size = (w, h);
-                        // A turn pressed since its delivery stands it
-                        // on end again.
-                        settle_source_size(st);
-                        crate::panel::crop::start_landed(st, &app);
-                        app.set_shot_size(size_text(w, h).into());
-                        st.develop.base_white = Some(landed.white);
-                        st.develop.white_cache = None;
                     }
                     // The frame on show: the crop, or the turned source's
                     // bounds while cropping. A change of size re-centers.
                     // A row under the pointer shows its state instead.
                     let panel = read_edit(&app, &st.develop.edit, st.develop.target);
-                    let edit = st
-                        .develop
-                        .held
-                        .clone()
-                        .or_else(|| st.develop.peek.clone())
-                        .unwrap_or_else(|| panel.clone());
+                    let edit = view_edit(st, &panel);
                     // The chosen patch's handles: its center, and its source.
                     let selected = usize::try_from(app.get_patch())
                         .ok()
@@ -1250,14 +1217,6 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     let Some(renderer) = st.develop.renderer.as_mut() else {
                         return;
                     };
-                    if let Some(landed) = &pending {
-                        match &landed.image {
-                            Developed::Halves(halves) => renderer.upload(halves),
-                            Developed::Texture(texture) => renderer.set_source(texture.clone()),
-                        }
-                        renderer.set_guide(&landed.guide);
-                        renderer.set_detail(landed.planes.as_ref());
-                    }
                     sync_display(
                         &mut st.develop.lut_for,
                         &mut st.develop.encoded_lut_for,
@@ -1310,7 +1269,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         mask_alone: false,
                         weigh_by: None,
                         canvas: render::canvas_rgb(app.get_canvas_choice()),
-                        source: st.develop.source,
+                        source: kind,
                         display_curve,
                         source_turn: lag,
                     };
@@ -2185,6 +2144,61 @@ pub(crate) fn remember_last_file(st: &State) {
 pub(crate) const SYSTEM: &str = "System";
 
 pub(crate) const FILE: &str = "File";
+
+/// What a frame starts from: the develop that landed since the last,
+/// if one did, whether the frame is drawn by the culling loupe, and
+/// the kind the view finishes the picture on the GPU as.
+pub(crate) struct Landing {
+    pub(crate) pending: Option<crate::panel::deliver::Landed>,
+    /// Culling, or a camera picture standing in for a develop:
+    /// `cull_frame` draws the frame, not the develop view.
+    pub(crate) loupe: bool,
+    pub(crate) kind: finish::Source,
+}
+
+/// The start of every frame: a develop that has landed goes up.
+///
+/// The camera picture standing in for it comes down — for that
+/// develop, or a later one of the same frame, and never the other way
+/// about; a develop asked for before the frame on the panel was chosen
+/// is a picture of another frame and leaves it standing. The picture
+/// goes onto the GPU with its kind and, drawn as the develop view's
+/// own frame, its size, its turn, the crop it opens under and its
+/// white become the open frame's.
+pub(crate) fn land_pending(st: &mut State, app: &App) -> Landing {
+    let pending = st.develop.pending.take();
+    if let Some(landed) = &pending {
+        develop_landed(st, app, landed.generation);
+        picture_up(&mut st.develop, landed);
+    }
+    let loupe = st.culling.cull.is_some() || standing_in(st).is_some();
+    if !loupe && let Some(landed) = &pending {
+        let (w, h) = (landed.image.width(), landed.image.height());
+        st.develop.source_size = (w, h);
+        // A turn pressed since its delivery stands it on end again.
+        settle_source_size(st);
+        crate::panel::crop::start_landed(st, app);
+        app.set_shot_size(size_text(w, h).into());
+        st.develop.base_white = Some(landed.white);
+        st.develop.white_cache = None;
+    }
+    Landing {
+        pending,
+        loupe,
+        kind: drawn_kind(st),
+    }
+}
+
+/// The edit the viewport draws the picture on the GPU under: the held
+/// one while that picture is an earlier frame's, a history or snapshot
+/// row's while one is under the pointer, else the panel's.
+pub(crate) fn view_edit(st: &State, panel: &Edit) -> Edit {
+    st.develop
+        .held
+        .clone()
+        .or_else(|| st.develop.peek.clone())
+        .unwrap_or_else(|| panel.clone())
+}
 
 /// The picture's size for the panel: "6000 \u{d7} 4000 \u{b7} 24 MP".
 /// The megapixels are rounded to the nearest whole one, as a camera

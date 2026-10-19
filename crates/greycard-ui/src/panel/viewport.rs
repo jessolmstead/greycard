@@ -37,6 +37,33 @@ pub(crate) fn drawn_picture(st: &State) -> ((u32, u32), u8) {
     }
 }
 
+/// What the viewport finishes the picture on the GPU as, a raw's
+/// scene or a picture already rendered: that picture's own kind,
+/// which until the open frame's develop lands is the last frame's,
+/// whatever the open frame is. The scopes, the clipping lamps and
+/// the readout under the pointer read the same view, and the
+/// droppers sample the same picture.
+pub(crate) fn drawn_kind(st: &State) -> finish::Source {
+    st.develop.drawn_kind
+}
+
+/// A develop going up, on the frame that draws it first: its kind
+/// becomes the drawn picture's ([`drawn_kind`]), and its picture goes
+/// onto the GPU with its guide and its planes when there is a GPU.
+/// Both are done here and nowhere else.
+pub(crate) fn picture_up(develop: &mut owners::Develop, landed: &crate::panel::deliver::Landed) {
+    develop.drawn_kind = landed.kind;
+    let Some(renderer) = develop.renderer.as_mut() else {
+        return;
+    };
+    match &landed.image {
+        Developed::Halves(halves) => renderer.upload(halves),
+        Developed::Texture(texture) => renderer.set_source(texture.clone()),
+    }
+    renderer.set_guide(&landed.guide);
+    renderer.set_detail(landed.planes.as_ref());
+}
+
 /// The turn the develop on the GPU lags the open frame by, when that
 /// develop is the open frame's own; none for another frame's.
 fn own_develop(st: &State) -> Option<u8> {
@@ -297,6 +324,33 @@ pub(crate) const PICK_DRAG: f32 = 200.0;
 /// direction is noise; the frames' own mean deviation is an order
 /// above this, and a box average is shorter than a pixel's.
 pub(crate) const DEFRINGE_PICK_FLOOR: f32 = 1.0e-4;
+
+/// Whether the picture a dropper samples is the open frame's own
+/// develop, up on the GPU. Not while the last frame's develop is held
+/// up waiting for this one's, nor while a camera picture stands in
+/// over the develop, nor between a develop's delivery and the frame
+/// that takes it up: the texture is another frame's then, or not
+/// what is on screen, and the open frame's size, which the view's
+/// mapping reads, is cleared on a select until its develop is up.
+pub(crate) fn dropper_reads_develop(st: &State) -> bool {
+    own_develop(st).is_some()
+        && st.develop.pending.is_none()
+        && crate::panel::cull::standing_in(st).is_none()
+}
+
+/// What the status line says to a dropper pressed before the open
+/// frame's develop is up; the Neutral dropper's words are its
+/// [`NeutralMiss::Waiting`]'s.
+pub(crate) fn waiting_said(kind: &str) -> String {
+    let what = match kind {
+        "White" => "white balance",
+        "Curve" => "curve",
+        "Range" => "color range",
+        "Defringe" => "defringe",
+        _ => "color mixer",
+    };
+    format!("{what}: wait for the develop")
+}
 
 /// The hint the status line shows for a dropper in hand.
 pub(crate) fn picking_hint(kind: &str) -> &'static str {
@@ -666,7 +720,7 @@ pub(crate) fn pick_stages(st: &mut State, app: &App, px: [f32; 3]) -> finish::Pi
         &edit.bw,
         &edit.tint,
         &edit.curves.bake_with(&edit.grading),
-        st.develop.source,
+        drawn_kind(st),
         edit.display_curve,
     )
 }
@@ -1695,10 +1749,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
+            let picking = app.get_picking();
+            if !dropper_reads_develop(&st) {
+                app.set_status(waiting_said(picking.as_str()).into());
+                return;
+            }
             let Some(px) = sample_view(&st, &app, x, y) else {
                 return;
             };
-            match app.get_picking().as_str() {
+            match picking.as_str() {
                 "White" => {
                     if let Err(miss) = white_from_neutral(st, &app, px) {
                         app.set_status(miss.said(false).into());

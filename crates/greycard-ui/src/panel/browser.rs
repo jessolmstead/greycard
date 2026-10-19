@@ -1488,6 +1488,37 @@ pub(crate) fn open_paths(
     );
 }
 
+/// The open frame left for another: the picture on the GPU stays on
+/// screen until the next frame's develop lands, drawn under the edit
+/// it is a develop of.
+///
+/// The held edit is that edit whenever the picture on the GPU is not
+/// the open frame's own: set here on a select away and by
+/// `cull::leave_cull` on leaving Cull onto another frame than the one
+/// developed, and let go when the open frame's develop is delivered,
+/// when it fails, and on entering Cull, which draws no develop. So
+/// with none held, the picture is the frame being left's own, and the
+/// panel's edit as it stands is the one to draw it under; with one
+/// held, the frame being left was chosen and left before its own
+/// develop landed, the picture is still an earlier frame's and so is
+/// the held edit, which stays. The frame being left's edit over it
+/// would draw one frame's picture under another's look until the next
+/// develop lands.
+///
+/// The one exception is a develop that failed: nothing is held after
+/// it, though the picture is an earlier frame's, drawn under the open
+/// frame's panel, and that frame's edit is what is held when it is
+/// left.
+///
+/// No picture yet, nothing to hold: the next frame opens fitted.
+fn hold_outgoing(st: &mut State, outgoing: &Edit) {
+    if st.develop.base_white.is_none() {
+        st.develop.zoom = 0.0;
+    } else if st.develop.held.is_none() {
+        st.develop.held = Some(outgoing.clone());
+    }
+}
+
 /// A new list of files in the browser, each with its sidecar as a read
 /// off the window's thread brought it (read from disk, or standing in
 /// from its row in the index: see [`crate::rows`]), `select` opened.
@@ -1510,11 +1541,7 @@ pub(crate) fn open_loaded(
     // save; the mode stays on for the new folder.
     if st.current.is_some() && st.culling.cull.is_none() {
         let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
-        if st.develop.base_white.is_some() {
-            st.develop.held = Some(outgoing.clone());
-        } else {
-            st.develop.zoom = 0.0;
-        }
+        hold_outgoing(&mut st, &outgoing);
         save_edit(&mut st, outgoing);
     }
     if let Some(cull) = st.culling.cull.as_mut() {
@@ -1889,11 +1916,7 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
         && st.views.pick_pending.as_deref() != st.path_at(c).map(PathBuf::as_path)
     {
         let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
-        if st.develop.base_white.is_some() {
-            st.develop.held = Some(outgoing.clone());
-        } else {
-            st.develop.zoom = 0.0;
-        }
+        hold_outgoing(st, &outgoing);
         save_edit(st, outgoing);
     }
     let path = st.path_of(i).clone();
@@ -1998,11 +2021,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         && st.views.pick_pending.as_deref() != st.path_at(c).map(PathBuf::as_path)
     {
         let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
-        if st.develop.base_white.is_some() {
-            st.develop.held = Some(outgoing.clone());
-        } else {
-            st.develop.zoom = 0.0;
-        }
+        hold_outgoing(st, &outgoing);
         save_edit(st, outgoing);
     }
     crate::rows::pick_over(st, app);

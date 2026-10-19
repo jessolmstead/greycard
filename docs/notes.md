@@ -376,3 +376,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§361. The render crate](notes/361-the-render-crate.md) (2026-10-18)
 - [§362. The curve's ends slide along their edges](notes/362-the-curves-ends-slide-along-their-edges.md) (2026-10-18)
 - [§363. The surface reconfigured under the worker](notes/363-the-surface-reconfigured-under-the-worker.md) (2026-10-18)
+- [§364. The picture on screen keeps its own kind and look](notes/364-the-picture-on-screen-keeps-its-own-kind-and-look.md) (2026-10-18)

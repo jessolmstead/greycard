@@ -39,9 +39,6 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] A frame switch no longer shows the last frame's picture through
-      the new frame's rendering, nor the old develop in place of a
-      held placeholder (a tester's flash of contrast)
 
 
 ## Tracks
