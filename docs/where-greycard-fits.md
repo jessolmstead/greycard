@@ -132,9 +132,8 @@ with no interface toolkit, tone-mapping choice or edit schema in it.
 Tested with Canon, Fujifilm GFX and X-Trans, Sony, Panasonic and
 Nikon bodies.
 
-Not yet for anyone on an Intel Mac or Windows on ARM, since the ONNX
-runtime ships no WebGPU build for either, or anyone whose camera
-rawler does not decode; support goes upstream to rawler, not into a
+Not yet for anyone on an Intel Mac, since the ONNX runtime ships no
+WebGPU build for it, or anyone whose camera rawler does not decode; support goes upstream to rawler, not into a
 fork. A phone app, cloud sync and a preset marketplace are not
 planned.
 

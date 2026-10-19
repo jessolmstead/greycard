@@ -14,7 +14,13 @@ expect, please [report it](#reporting-a-problem).
 - **On Linux, glibc 2.39 or newer**: Ubuntu 24.04, Fedora 40, Debian
   13, or later. The tarball and the AppImage both need it.
 - **A Mac with an Apple chip**, if you're on a Mac. There is no build
-  for Intel Macs or Windows on ARM.
+  for Intel Macs.
+- **On Windows on ARM**, the `aarch64-windows` zip. It is a new build
+  and not yet tried on a real machine. Its AI features (the learned
+  masks, the eraser, and the learned denoiser) run on the CPU alone,
+  slower, through Microsoft's ONNX Runtime, which greycard offers to
+  download the first time you use one
+  ([On Windows on ARM](guide/masks.md#on-windows-on-arm)).
 - **Raw files.** Tested with Canon, Fujifilm GFX and X-Trans, Sony,
   Panasonic and Nikon raws. X-Trans raws develop without the learned
   denoiser for now ([Fujifilm X-Trans](guide/develop.md#fujifilm-x-trans)).
@@ -51,7 +57,9 @@ unpack it.
   glibc as the tarball ([Before you start](#before-you-start)).
 - **macOS:** follow [testing-on-a-mac.md](testing-on-a-mac.md), which
   gets you past the security warning for an app not yet signed by Apple.
-- **Windows:** double-click `install.cmd`. Run `register.cmd` too if you
+- **Windows:** take `greycard-<version>-x86_64-windows.zip`, or
+  `greycard-<version>-aarch64-windows.zip` on Windows on ARM, and
+  double-click `install.cmd`. Run `register.cmd` too if you
   want greycard in **Open with** for raws. If Windows warns about an
   unknown publisher, click **More info**, then **Run anyway**.
   `uninstall.cmd` removes it.

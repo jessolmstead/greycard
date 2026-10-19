@@ -3,6 +3,17 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.8.1, unreleased
+
+### Install
+
+- A Windows on ARM package, `aarch64-windows.zip`, built on GitHub's
+  ARM runner. Nobody has run it on a real machine yet, and a release
+  can ship without it when its build fails. The AI features there run
+  on the CPU alone, through Microsoft's runtime the editor offers to
+  download on first use, as on an older x86-64 processor
+  ([§372](https://github.com/jessolmstead/greycard/blob/master/docs/notes/372-a-windows-on-arm-package.md))
+
 ## 0.8.0, 2026-10-18
 
 A Lightroom Classic catalog comes across whole: its folders as roots,

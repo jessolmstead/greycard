@@ -353,6 +353,16 @@ From the command line, `greycard models --fetch onnxruntime` fetches
 it; an `--export` on such a machine before it is fetched writes the
 picture without the learned masks and exits 2, naming it.
 
+### On Windows on ARM
+
+No copy of ONNX Runtime comes with greycard on Windows on ARM, so
+there it is the same on every processor: the first time you ask for
+a learned mask, the eraser, or the learned denoiser, the sheet offers
+Microsoft's ARM64 build, 80 MB from github.com and 16 MB kept, under
+the MIT license. The models run on the CPU alone, and the status line
+says so. **Not now** and `greycard models --fetch onnxruntime` work
+as above.
+
 ## Masks and other frames
 
 Masks are drawn around one picture, so syncing settings onto other

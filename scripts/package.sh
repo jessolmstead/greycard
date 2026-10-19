@@ -25,6 +25,14 @@
 #            and unregister.cmd beside it rather than install.sh.
 #            The archive is a .zip: Windows 10's Explorer opens one
 #            by double-click and does not open a .tar.gz at all.
+#            On ARM64 (aarch64-windows) bin/ has no ONNX Runtime,
+#            Dawn, or DXC: pyke's only build for that target carries
+#            DirectML, which greycard does not use, and none carries
+#            WebGPU, so there is nothing to make ours from. The models
+#            run on Microsoft's CPU-only runtime, which greycard offers
+#            to fetch into the model store on first use, and the Visual
+#            C++ runtime comes from the arm64 redistributable rather
+#            than the x64 one, four DLLs rather than five.
 #
 # The libraries we ship are ONNX Runtime, Dawn and, on Windows, the
 # two DXC ones Dawn loads by name. The binaries link neither ONNX
@@ -81,6 +89,9 @@ arch=${host%%-*}
 case "$host" in
 *-linux-*) os=linux; libs="libonnxruntime.so libwebgpu_dawn.so"; exe= ;;
 *-darwin*) os=macos; libs="libonnxruntime.dylib libwebgpu_dawn.dylib"; exe= ;;
+# No runtime of ours on Windows on ARM, so nothing beside the
+# binaries; see above.
+aarch64-*-windows-*) os=windows; libs=; exe=.exe ;;
 # Dawn loads the two DXC libraries by name at runtime; see above.
 *-windows-*) os=windows; libs="onnxruntime.dll webgpu_dawn.dll dxcompiler.dll dxil.dll"; exe=.exe ;;
 *)
@@ -184,8 +195,8 @@ else
         # Studio redistributable on it answers greycard-ui.exe with a
         # "VCRUNTIME140.dll was not found" box and no other clue, and
         # the redistributable is common enough that the machine it was
-        # built on will never show that. The five are what the two
-        # binaries, ONNX Runtime and Dawn import between them (the
+        # built on will never show that. On x64 the five are what the
+        # two binaries, ONNX Runtime, and Dawn import between them (the
         # runtime is built /MD against the same DLLs, and these five
         # already covered it when the binaries linked it in), and they
         # are closed under their own imports; app-local is a deployment
@@ -194,7 +205,23 @@ else
         # System32, which is the installed copy and not ours to hand
         # on. Set VCREDIST_DIR to point somewhere else, or
         # GREYCARD_SKIP_VCREDIST=1 to roll a package without them and
-        # take the prerequisite back on.
+        # take the prerequisite back on. An ARM64 build takes four out
+        # of the arm64 directory beside the x64 one: the same less
+        # vcruntime140_1.dll, which holds the x64-only exception
+        # handler (__CxxFrameHandler4) and is in the x64
+        # redistributable alone. Microsoft's own runtime, fetched
+        # later, imports from among the four too (vcruntime140,
+        # msvcp140, and msvcp140_1).
+        case "$arch" in
+        aarch64)
+            redist_arch=arm64
+            redist_dlls="msvcp140.dll msvcp140_1.dll msvcp140_atomic_wait.dll vcruntime140.dll"
+            ;;
+        *)
+            redist_arch=x64
+            redist_dlls="msvcp140.dll msvcp140_1.dll msvcp140_atomic_wait.dll vcruntime140.dll vcruntime140_1.dll"
+            ;;
+        esac
         if [ -z "${GREYCARD_SKIP_VCREDIST:-}" ]; then
             vcredist=${VCREDIST_DIR:-}
             if [ -z "$vcredist" ]; then
@@ -207,21 +234,23 @@ else
                     # Last match wins: the versions sort as 14.NN, so
                     # that is the newest, which is the toolset rustc
                     # picked to link with.
-                    for d in "$vsroot"/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT; do
+                    for d in "$vsroot"/VC/Redist/MSVC/*/"$redist_arch"/Microsoft.VC*.CRT; do
                         [ -d "$d" ] && vcredist=$d
                     done
                 fi
             fi
             if [ -z "$vcredist" ] || [ ! -d "$vcredist" ]; then
-                echo "package.sh: no Visual C++ redistributable directory found." >&2
+                echo "package.sh: no $redist_arch Visual C++ redistributable directory found." >&2
                 echo "  Set VCREDIST_DIR to a Microsoft.VC*.CRT folder, or" >&2
                 echo "  GREYCARD_SKIP_VCREDIST=1 to ship without it." >&2
                 exit 1
             fi
-            for l in msvcp140.dll msvcp140_1.dll msvcp140_atomic_wait.dll \
-                vcruntime140.dll vcruntime140_1.dll; do
+            for l in $redist_dlls; do
                 if [ ! -f "$vcredist/$l" ]; then
-                    echo "package.sh: $vcredist has no $l" >&2
+                    echo "package.sh: $vcredist has no $l, one of the" \
+                        "$redist_arch Visual C++ runtime DLLs the package ships." >&2
+                    echo "  Point VCREDIST_DIR at a Microsoft.VC*.CRT folder that" \
+                        "has it, or set GREYCARD_SKIP_VCREDIST=1." >&2
                     exit 1
                 fi
                 cp "$vcredist/$l" "$stage/bin/"

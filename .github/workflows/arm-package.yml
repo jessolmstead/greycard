@@ -1,0 +1,129 @@
+# The Windows on ARM package from any branch, on request, for a tester
+# to try before a release carries it: Actions, "Windows on ARM
+# package", Run workflow, and the zip is the run's
+# package-aarch64-windows artifact for a week.
+#
+# Its own file rather than a job in ci.yml: ci.yml runs on every push
+# and pull request and its jobs are gated on the event already, and a
+# manual trigger there would have to be kept out of each of them. This
+# runs on workflow_dispatch alone and nothing else.
+#
+# The steps are release.yml's aarch64-windows leg, less the release:
+# the same runner, the same checks on the toolchain and on what was
+# built, and package.sh with no argument, so the version is
+# Cargo.toml's. release.yml's header has why the leg ships no ONNX
+# Runtime and how the models run there.
+
+name: Windows on ARM package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  package:
+    name: aarch64-windows package
+    runs-on: windows-11-arm
+    # package.sh is /bin/sh; Git Bash is there under this name.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # As in release.yml: lcms2 from lcms2-sys's own source.
+      - name: Static lcms2
+        run: echo "LCMS2_STATIC=1" >> "$GITHUB_ENV"
+
+      # As in release.yml: the toolsets and the arm64 redistributable
+      # package.sh takes the Visual C++ runtime from, before the build.
+      - name: MSVC toolsets on this runner
+        run: |
+          ls -d "/c/Program Files"*"/Microsoft Visual Studio"/*/*/VC/Tools/MSVC/*/ \
+            2>/dev/null || echo "no VC/Tools/MSVC directory found"
+          ls "/c/Program Files"*"/Microsoft Visual Studio"/*/*/VC/Redist/MSVC/*/arm64/Microsoft.VC*.CRT \
+            2>/dev/null || echo "no arm64 VC redistributable directory found"
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          # llvm-readobj, for the binaries' imports below.
+          components: llvm-tools
+
+      # An emulated x86-64 toolchain would build the other Windows'
+      # package; said plainly here rather than at Package.
+      - name: The toolchain's host is aarch64-pc-windows-msvc
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          echo "rustc host: $host"
+          if [ "$host" != aarch64-pc-windows-msvc ]; then
+            echo "this package wants an aarch64-pc-windows-msvc toolchain, and rustc's host is $host" >&2
+            exit 1
+          fi
+
+      # Nikon High Efficiency decoding stays out of anything handed to
+      # a tester, as out of a release; see release.yml.
+      - name: No JPEG XS decoder in the dependency tree
+        run: |
+          tree=$(cargo tree --locked -p greycard-ui -p greycard-cli -e features -i rawler)
+          if grep -q jpegxs <<<"$tree"; then
+            echo "rawler's jpegxs feature is on in the build"
+            exit 1
+          fi
+
+      - name: Build
+        run: cargo build --locked --release -p greycard-ui -p greycard-cli
+
+      # As in release.yml: neither binary names ONNX Runtime or Dawn
+      # as a library to load at exec.
+      - name: Nothing of ONNX Runtime or Dawn loaded at exec
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          sysroot=$(cygpath -u "$(rustc --print sysroot)")
+          readobj="$sysroot/lib/rustlib/$host/bin/llvm-readobj"
+          for bin in target/release/greycard target/release/greycard-ui; do
+            needed=$("$readobj.exe" --coff-imports "$bin.exe")
+            if ! grep -qi 'kernel32' <<<"$needed"; then
+              echo "llvm-readobj listed no imports for $bin.exe:"
+              echo "$needed"
+              exit 1
+            fi
+            if grep -Eqi 'onnxruntime|webgpu_dawn' <<<"$needed"; then
+              echo "$bin links ONNX Runtime or Dawn at exec:"
+              echo "$needed"
+              exit 1
+            fi
+          done
+
+      - name: No JPEG XS decoder in the binaries
+        run: |
+          for bin in target/release/greycard.exe target/release/greycard-ui.exe; do
+            test -f "$bin"
+            if grep -qa 'JPEG XS' "$bin"; then
+              echo "$bin carries the JPEG XS decoder"
+              exit 1
+            fi
+          done
+
+      # No argument: the version is the workspace's, from cargo
+      # metadata.
+      - name: Package
+        run: scripts/package.sh
+
+      - name: What is in the package
+        run: |
+          zip=$(ls target/dist/greycard-*-aarch64-windows.zip)
+          powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path '$zip')).Entries | Select-Object Length, FullName | Format-Table -AutoSize"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-aarch64-windows
+          path: target/dist/greycard-*-aarch64-windows.zip
+          if-no-files-found: error
+          retention-days: 7

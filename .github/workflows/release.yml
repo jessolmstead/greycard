@@ -20,6 +20,23 @@
 # June 2026. The step below prints what is actually installed, so a
 # link failure is read off the log rather than guessed at; if the image
 # has gone backwards, windows-2025-vs2026 is the label that pins it.
+#
+# Windows on ARM is a fourth leg, on windows-11-arm, GitHub's hosted
+# ARM64 runner (Visual Studio 2022 with the ARM64 toolset, and Git
+# Bash). It builds the same two binaries natively and ships no ONNX
+# Runtime or Dawn: pyke's one ARM64 Windows build carries DirectML,
+# which greycard does not use, and none carries WebGPU, so there is
+# nothing to make our runtime from. The leg skips that step (its
+# matrix row says runtime: none), and the models run on Microsoft's
+# CPU-only runtime, which greycard offers to fetch on first use.
+# Package.sh takes the Visual C++ runtime from the arm64
+# redistributable there. The leg is new and nobody has run its
+# package on a Windows ARM machine yet, so it may fail without
+# holding up the other three (tentative: true, read by
+# continue-on-error); the release takes whatever packages were built,
+# and its globs need only one zip to match. The workflow in
+# arm-package.yml builds the same package by hand from any branch,
+# for a tester before a release.
 
 name: Release
 
@@ -92,7 +109,17 @@ jobs:
           - os: windows-2025
             package: x86_64-windows
             ext: zip
+            host: x86_64-pc-windows-msvc
+          # No runtime of ours on this one, and allowed to fail: see
+          # the header.
+          - os: windows-11-arm
+            package: aarch64-windows
+            ext: zip
+            host: aarch64-pc-windows-msvc
+            runtime: none
+            tentative: true
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.tentative == true }}
     # package.sh is /bin/sh, and the Windows runner's default shell is
     # PowerShell; Git Bash is there under this name and brings the tar,
     # find and sort the script asks for.
@@ -130,19 +157,41 @@ jobs:
         # this guards against names a dozen __std_* symbols and not the
         # toolset, and the header above says which version is wanted.
         # package.sh takes the redistributable DLLs out of the same
-        # installation, so a missing one shows here too.
+        # installation, so a missing one shows here too: x64 on the
+        # x86-64 runner, arm64 on the ARM one, whose files are listed
+        # as well, since the four package.sh wants there have not been
+        # seen yet.
         if: runner.os == 'Windows'
         run: |
           ls -d "/c/Program Files"*"/Microsoft Visual Studio"/*/*/VC/Tools/MSVC/*/ \
             2>/dev/null || echo "no VC/Tools/MSVC directory found"
           ls -d "/c/Program Files"*"/Microsoft Visual Studio"/*/*/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT \
-            2>/dev/null || echo "no VC redistributable directory found"
+            2>/dev/null || echo "no x64 VC redistributable directory found"
+          ls "/c/Program Files"*"/Microsoft Visual Studio"/*/*/VC/Redist/MSVC/*/arm64/Microsoft.VC*.CRT \
+            2>/dev/null || echo "no arm64 VC redistributable directory found"
 
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
           # llvm-readobj, for the Windows binaries' imports below.
           components: llvm-tools
+
+      # The toolchain is the leg's own: an x86-64 one on the ARM
+      # runner would build, under emulation, a package for the other
+      # Windows, and fail only at Package with a missing ONNX Runtime
+      # that says nothing of why. The host is the triple package.sh
+      # names the zip from.
+      - name: The toolchain's host is the leg's
+        if: matrix.host
+        env:
+          WANTED: ${{ matrix.host }}
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          echo "rustc host: $host"
+          if [ "$host" != "$WANTED" ]; then
+            echo "this leg wants a $WANTED toolchain, and rustc's host is $host" >&2
+            exit 1
+          fi
 
       # Nikon High Efficiency decoding (the nikon-he feature) stays out
       # of every published build: JPEG XS is licensed per copy of a
@@ -168,7 +217,11 @@ jobs:
       # and left with Dawn in target/release for package.sh. The
       # binaries load it at first use and link none of it: linked in,
       # its x86-64-v3 initializers killed an older processor at exec.
+      # Skipped by a matrix row rather than by runner.arch, so that the
+      # row says what its package carries: on Windows on ARM pyke has
+      # no WebGPU build to make one from, and ort-dylib refuses there.
       - name: ONNX Runtime library
+        if: matrix.runtime != 'none'
         run: scripts/ort-dylib.sh release
 
       # Checked on what was built: neither binary may name ONNX Runtime

@@ -64,9 +64,8 @@ fn runtime_lines(
 ) -> [String; 2] {
     [
         format!(
-            "{:width$}  the models on a processor greycard's own ONNX Runtime cannot run on, \
-             on the CPU only",
-            runtime.id
+            "{:width$}  {}, on the CPU only",
+            runtime.id, runtime.purpose
         ),
         format!(
             "{:width$}  `--fetch {RUNTIME_WORD}`, {} MB, {}, {}",
@@ -207,9 +206,13 @@ fn runtime_for(what: &str) -> Result<&'static greycard_ai::Runtime> {
                 None => "this one has none to fetch".to_string(),
             }
         ),
-        _ => anyhow::bail!(
+        _ if greycard_ai::runtime::SHIPS => anyhow::bail!(
             "no CPU-only ONNX Runtime is offered for this platform: greycard's own runs on \
              every processor it is built for"
+        ),
+        _ => anyhow::bail!(
+            "no CPU-only ONNX Runtime is offered for this platform, and greycard ships none \
+             of its own for it; GREYCARD_ORT_DYLIB can name one"
         ),
     }
 }
@@ -223,10 +226,7 @@ fn fetch_runtime(store: &greycard_ai::Store, runtime: &'static greycard_ai::Runt
     println!();
     println!("{}", runtime.id);
     println!("  is          {}", runtime.name);
-    println!(
-        "  for         the models on a processor greycard's own ONNX Runtime cannot run on \
-         (one without AVX2), on the CPU only, slower"
-    );
+    println!("  for         {}, on the CPU only, slower", runtime.purpose);
     println!(
         "  license     {} <{}>",
         runtime.license.name, runtime.license.url

@@ -1502,6 +1502,44 @@ mod tests {
         assert_eq!(state.borrow().sheets.fetch, None);
     }
 
+    /// Where greycard ships no ONNX Runtime at all (Windows on ARM),
+    /// the same sheet offers Microsoft's, and its why is the platform,
+    /// not a processor short of anything.
+    #[test]
+    fn a_platform_with_no_runtime_of_ours_is_offered_microsofts() {
+        use greycard_ai::runtime::Unavailable;
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let runtime = &greycard_ai::registry::ONNXRUNTIME_CPU_WINDOWS_ARM64;
+        let why: &'static Unavailable = Box::leak(Box::new(Unavailable::NotShipped {
+            runtime: Some(runtime),
+        }));
+        let sky = AfterRuntime::Model(&greycard_ai::SKY, false);
+        assert!(runtime_first_for(&mut state.borrow_mut(), &app, why, sky));
+        assert!(app.get_fetch_open());
+        assert_eq!(state.borrow().sheets.fetch, Some(Fetch::Runtime(why, sky)));
+        let text = app.get_fetch_text().to_string();
+        for said in [
+            "No ONNX Runtime of greycard's own is made for this platform, so the AI features \
+             are off.",
+            "ONNX Runtime 1.28.0 by Microsoft runs them on the CPU only, slower",
+            "80 MB from github.com, 16 MB kept",
+            "License: MIT",
+        ] {
+            assert!(text.contains(said), "{said:?} not in {text:?}");
+        }
+        for wrong in ["processor", "AVX2"] {
+            assert!(!text.contains(wrong), "{wrong:?} in {text:?}");
+        }
+        // Not now: the plain line names the fetch command.
+        app.invoke_fetch_answered(false);
+        assert!(state.borrow().sheets.declined.contains(&runtime.id));
+        assert!(
+            app.get_status()
+                .contains(greycard_ai::runtime::FETCH_RUNTIME)
+        );
+    }
+
     #[test]
     fn the_first_launch_offer_opens_the_sheet_once() {
         let app = crate::testing::window(1);

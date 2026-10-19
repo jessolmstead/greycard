@@ -66,8 +66,9 @@ enum Command {
         /// model's license is printed before it is fetched, and the
         /// published hash is checked when it arrives. `onnxruntime`
         /// fetches Microsoft's ONNX Runtime for the CPU, which runs the
-        /// models on a processor greycard's own cannot run on (one
-        /// without AVX2), slower
+        /// models, slower, on a processor greycard's own cannot run on
+        /// (one without AVX2) and on Windows on ARM, which greycard
+        /// ships none for
         #[arg(long, value_name = "TIER|ID|all|onnxruntime")]
         fetch: Option<String>,
     },

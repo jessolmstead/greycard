@@ -28,6 +28,13 @@
 //! AI features are off with a line that says it can be fetched. So the
 //! order is: the library named by hand, the shipped one where the
 //! processor can run it, a fetched one, and else off.
+//!
+//! On a platform greycard ships no runtime for at all ([`SHIPS`] is
+//! false: Windows on ARM, where pyke's one build has DirectML, which
+//! greycard does not use, and none has WebGPU), there is no shipped
+//! step and no processor to ask, and the order is the library named
+//! by hand, a fetched one, and else off, with the same line that it
+//! can be fetched where the registry has one for the platform.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -62,6 +69,17 @@ pub const LIBRARY: &str = if cfg!(windows) {
     "libonnxruntime.so"
 };
 
+/// Whether greycard ships an ONNX Runtime of its own for this build's
+/// platform: true exactly where `crates/ort-dylib` has an archive of
+/// pyke's to make one from (Linux on x86-64, macOS on Apple silicon,
+/// and Windows on x86-64), so where a package carries one beside the
+/// executables.
+pub const SHIPS: bool = cfg!(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(windows, target_arch = "x86_64", target_env = "msvc"),
+));
+
 /// Why the AI features are off on this machine: one plain line, for
 /// the log, the status line and the command line's stderr alike.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -80,6 +98,10 @@ pub enum Unavailable {
         name: Option<String>,
         runtime: &'static Runtime,
     },
+    /// greycard ships no ONNX Runtime for this platform, and nothing
+    /// was named or fetched: `runtime` is Microsoft's CPU-only one,
+    /// where the registry has one for the platform to fetch.
+    NotShipped { runtime: Option<&'static Runtime> },
     /// No library beside the executable (or, for a test or an
     /// example, in the profile directory above it): every place
     /// looked, empty when where greycard runs from is not known.
@@ -100,6 +122,7 @@ impl Unavailable {
     pub fn fetchable(&self) -> Option<&'static Runtime> {
         match self {
             Unavailable::Fetchable { runtime, .. } => Some(runtime),
+            Unavailable::NotShipped { runtime } => *runtime,
             _ => None,
         }
     }
@@ -124,19 +147,27 @@ fn processor(f: &mut fmt::Formatter<'_>, missing: &[&str], name: &Option<String>
 
 impl fmt::Display for Unavailable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The fetchable line opens with its remedy; the rest, plainly.
-        if !matches!(self, Unavailable::Fetchable { .. }) {
+        // A fetchable line opens with its remedy; the rest, plainly.
+        if self.fetchable().is_some() {
+            write!(
+                f,
+                "the AI features are off until Microsoft's ONNX Runtime for the CPU is \
+                 downloaded ({FETCH_RUNTIME}): "
+            )?;
+        } else {
             f.write_str("the AI features are off: ")?;
         }
         match self {
             Unavailable::Fetchable { missing, name, .. } => {
-                write!(
-                    f,
-                    "the AI features are off until Microsoft's ONNX Runtime for the CPU is \
-                     downloaded ({FETCH_RUNTIME}): "
-                )?;
                 processor(f, missing, name)?;
                 f.write_str(", which greycard's ONNX Runtime is built for")
+            }
+            Unavailable::NotShipped { runtime } => {
+                f.write_str("no ONNX Runtime of greycard's own is made for this platform")?;
+                if runtime.is_none() {
+                    f.write_str("; GREYCARD_ORT_DYLIB can name one")?;
+                }
+                Ok(())
             }
             Unavailable::Processor { missing, name } => {
                 processor(f, missing, name)?;
@@ -198,6 +229,10 @@ pub(crate) struct Facts<'a> {
     /// The CPU-only runtime the registry has for this platform, if it
     /// has one.
     pub runtime: Option<&'static Runtime>,
+    /// Whether greycard ships a runtime for this platform at all
+    /// ([`SHIPS`]); where it does not, nothing beside the executable
+    /// is looked for.
+    pub shipped: bool,
 }
 
 /// The library to load, or why there is none to: a library named by
@@ -206,8 +241,9 @@ pub(crate) struct Facts<'a> {
 /// run it; then a CPU-only runtime fetched into the store, which
 /// `fetched` answers with (asked only when it is reached, as it hashes
 /// the file); and else off, saying whether that runtime can be had.
-/// `exists` is asked of each path, so a test can lay out a directory
-/// that is not there.
+/// Where greycard ships no runtime for the platform, the second step
+/// is not taken. `exists` is asked of each path, so a test can lay out
+/// a directory that is not there.
 pub(crate) fn decide(
     facts: &Facts<'_>,
     exists: impl Fn(&Path) -> bool,
@@ -232,7 +268,11 @@ pub(crate) fn decide(
             Err(Unavailable::NotAt { path })
         };
     }
-    let looked = facts.exe.map(candidates).unwrap_or_default();
+    let looked = if facts.shipped {
+        facts.exe.map(candidates).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     if facts.missing.is_empty()
         && let Some(path) = looked.iter().find(|p| exists(p))
     {
@@ -245,6 +285,11 @@ pub(crate) fn decide(
         return Ok(Found {
             path,
             from: Source::Fetched,
+        });
+    }
+    if !facts.shipped {
+        return Err(Unavailable::NotShipped {
+            runtime: facts.runtime,
         });
     }
     if facts.missing.is_empty() {
@@ -330,6 +375,7 @@ pub(crate) fn probe() -> Result<Found, Unavailable> {
             env: env.as_deref(),
             exe: exe.as_deref(),
             runtime,
+            shipped: SHIPS,
         },
         Path::is_file,
         || {
@@ -419,6 +465,7 @@ mod tests {
             env,
             exe: Some(exe),
             runtime: None,
+            shipped: true,
         }
     }
 
@@ -557,6 +604,98 @@ mod tests {
             decide(&with(&[], None), nothing, || None),
             Err(Unavailable::NotBeside { .. })
         ));
+    }
+
+    /// Where greycard ships no runtime for the platform (Windows on
+    /// ARM): named, then fetched, then off, and nothing beside the
+    /// executable is looked for or taken. Off is the fetchable kind,
+    /// naming the fetch command and offering Microsoft's runtime, and
+    /// it says why without a processor in it or a build script to run.
+    #[test]
+    fn where_nothing_is_shipped_the_order_is_named_then_fetched_then_off() {
+        let arm64 = &crate::registry::ONNXRUNTIME_CPU_WINDOWS_ARM64;
+        let exe = Path::new("/opt/greycard/bin/greycard-ui");
+        let beside = Path::new("/opt/greycard/bin").join(LIBRARY);
+        let named = PathBuf::from("/opt/microsoft/onnxruntime.dll");
+        let store = PathBuf::from("/home/u/.cache/greycard/models/rt").join(LIBRARY);
+        let everything = |p: &Path| p == beside || p == named;
+        let only_beside = |p: &Path| p == beside;
+        let unshipped = |env: Option<&'static OsStr>| Facts {
+            missing: Vec::new(),
+            processor: None,
+            runtime: Some(arm64),
+            shipped: false,
+            ..facts(&[], env, exe)
+        };
+        let from = |r: Result<Found, Unavailable>| r.map(|f| f.from);
+
+        // Named first, and the store not asked.
+        let env = Some(OsStr::new("/opt/microsoft/onnxruntime.dll"));
+        let asked = std::cell::Cell::new(false);
+        let fetched = || {
+            asked.set(true);
+            Some(store.clone())
+        };
+        assert_eq!(
+            decide(&unshipped(env), everything, fetched),
+            Ok(Found {
+                path: named.clone(),
+                from: Source::Named
+            })
+        );
+        assert!(!asked.get());
+        // Then the fetched one, though a library sits beside: none is
+        // shipped here, so one there is nobody's to trust.
+        assert_eq!(
+            from(decide(&unshipped(None), only_beside, || Some(
+                store.clone()
+            ))),
+            Ok(Source::Fetched)
+        );
+        // Then off, the kind that offers the fetch, whatever is beside.
+        let off = decide(&unshipped(None), only_beside, || None).unwrap_err();
+        assert_eq!(
+            off,
+            Unavailable::NotShipped {
+                runtime: Some(arm64)
+            }
+        );
+        assert_eq!(off.fetchable(), Some(arm64));
+        let line = off.to_string();
+        assert_eq!(
+            line,
+            format!(
+                "the AI features are off until Microsoft's ONNX Runtime for the CPU is \
+                 downloaded ({FETCH_RUNTIME}): no ONNX Runtime of greycard's own is made for \
+                 this platform"
+            )
+        );
+        for wrong in ["processor", "AVX2", "ort-dylib", "beside"] {
+            assert!(!line.contains(wrong), "{wrong:?} in {line}");
+        }
+        assert_eq!(
+            off.reason(),
+            "no ONNX Runtime of greycard's own is made for this platform"
+        );
+        // A platform with neither (Linux on ARM): off, nothing offered,
+        // and the variable that can name one said.
+        let bare = decide(
+            &Facts {
+                runtime: None,
+                ..unshipped(None)
+            },
+            only_beside,
+            || None,
+        )
+        .unwrap_err();
+        assert_eq!(bare.fetchable(), None);
+        let line = bare.to_string();
+        assert!(
+            line.starts_with("the AI features are off: no ONNX Runtime"),
+            "{line}"
+        );
+        assert!(line.contains("GREYCARD_ORT_DYLIB"), "{line}");
+        assert!(!line.contains(FETCH_RUNTIME), "{line}");
     }
 
     #[test]

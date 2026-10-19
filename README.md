@@ -61,7 +61,11 @@ Panasonic raws.
   means royalties. I'm working on it.
 - The Mac and Windows builds aren't signed yet, so you have to click
   past a warning the first time.
-- No build yet for Intel Macs or Windows on ARM.
+- No build yet for Intel Macs.
+- There is a Windows on ARM build, though a release can still go out
+  without it while it's new. Its AI features run on the CPU alone,
+  through a runtime it offers to download the first time you use one,
+  and I haven't run it on an ARM laptop myself yet.
 
 ## Install
 
@@ -74,7 +78,8 @@ and unpack it.
 - **macOS:** `sh install.sh` (Apple silicon, macOS 13.4 or newer).
   [Step by step](docs/testing-on-a-mac.md).
 - **Windows:** double-click `install.cmd`. `register.cmd` adds
-  greycard to Open with for raws.
+  greycard to Open with for raws. The `aarch64-windows` zip is for
+  Windows on ARM.
 
 You'll need a GPU with Vulkan, or Metal on a Mac.
 [Building from source](docs/building.md) is a `cargo build --release`

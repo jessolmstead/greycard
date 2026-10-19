@@ -31,9 +31,11 @@
 //!
 //! Where the processor is why, Linux and Windows on x86-64 have a way
 //! back: Microsoft's own CPU-only release ([`fetchable`] names it),
-//! fetched into the model store as a model is. Once it is there,
-//! [`refresh`] decides again and it is the library loaded, with the
-//! CPU the only provider ([`cpu_only`]).
+//! fetched into the model store as a model is. On Windows on ARM,
+//! where greycard ships no runtime at all, that release is the only
+//! way the models run. Once it is there, [`refresh`] decides again and
+//! it is the library loaded, with the CPU the only provider
+//! ([`cpu_only`]).
 
 use std::path::Path;
 use std::sync::{OnceLock, RwLock};
@@ -44,7 +46,7 @@ use ort::session::builder::GraphOptimizationLevel;
 mod dylib;
 mod record;
 
-pub use dylib::{FETCH_RUNTIME, LIBRARY, Unavailable};
+pub use dylib::{FETCH_RUNTIME, LIBRARY, SHIPS, Unavailable};
 
 /// An execution provider, in the order they are tried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -80,9 +82,9 @@ impl Provider {
     /// graph always has been.
     ///
     /// Microsoft's CPU-only runtime, fetched where the processor cannot
-    /// run greycard's own, offers the CPU alone: it carries no other
-    /// provider, and trying one would only fail a session build each
-    /// time a model is opened.
+    /// run greycard's own or there is none, offers the CPU alone: it
+    /// carries no other provider, and trying one would only fail a
+    /// session build each time a model is opened.
     pub fn available() -> Vec<Provider> {
         if status().is_err() {
             return Vec::new();
@@ -264,8 +266,9 @@ pub fn status() -> std::result::Result<&'static Path, &'static Unavailable> {
 }
 
 /// Whether the AI features run on Microsoft's CPU-only runtime, fetched
-/// because the processor cannot run greycard's own: the CPU is then
-/// the only provider, and the slower one.
+/// because the processor cannot run greycard's own or greycard ships
+/// none for the platform: the CPU is then the only provider, and the
+/// slower one.
 pub fn cpu_only() -> bool {
     !matches!(LOADED.get(), Some(Err(_)))
         && matches!(probed(), Ok(found) if found.from == dylib::Source::Fetched)
@@ -273,7 +276,8 @@ pub fn cpu_only() -> bool {
 
 /// The CPU-only runtime that would turn the AI features on here, where
 /// that is why they are off: the processor cannot run greycard's own
-/// library and the registry has Microsoft's for this platform.
+/// library, or greycard ships none for this platform, and the registry
+/// has Microsoft's for it.
 pub fn fetchable() -> Option<&'static crate::Runtime> {
     status().err().and_then(Unavailable::fetchable)
 }

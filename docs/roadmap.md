@@ -808,15 +808,13 @@ Slint, a runtime exposing what it knows, a rawler release. It joins a
 release when the wait clears.
 
 #### Platform
-- [ ] Windows on ARM: a fourth package, aarch64-windows, built on
-      GitHub's windows-11-arm runner. The editor is Rust and wgpu over
-      Direct3D 12 and should build as is; the AI side cannot ship our
-      runtime, since pyke publishes no ARM64 Windows build of ONNX
-      Runtime, so the models run on Microsoft's CPU-only runtime
-      fetched on first use (§358) with a win-arm64 registry entry, no
-      GPU path until a WebGPU build exists for the target. A tester
-      asked 2026-10-18 and is the only test machine; a CI artifact
-      from a branch goes to them first, the package in 0.8.1
+- [ ] A GPU path for the models on Windows on ARM: pyke publishes an
+      ARM64 Windows build of ONNX Runtime with DirectML, no WebGPU,
+      and DirectML ships with Windows, so ort-dylib could make our
+      library from that archive and the models would leave the CPU
+      there. Waits on a tester running the aarch64-windows package
+      at all (§372), then on reading what the DirectML provider
+      needs beside the library
 - [ ] A SHA-256 sums file attached to every release, written by the
       release workflow over the four packages, so a download can be
       checked and an updater has something to verify against; a

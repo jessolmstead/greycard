@@ -662,7 +662,8 @@ enum Fetch {
     /// The lens database.
     Lenses,
     /// Microsoft's CPU-only ONNX Runtime, where the processor cannot
-    /// run greycard's own: why the AI features are off (a fetchable
+    /// run greycard's own or greycard ships none for the platform: why
+    /// the AI features are off (a fetchable
     /// [`greycard_ai::runtime::Unavailable`]), and what was asked for
     /// that it holds up.
     Runtime(

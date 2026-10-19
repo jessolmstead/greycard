@@ -69,6 +69,14 @@
 // stamp holds a hash of the link's program, arguments and exports, so a
 // changed recipe, compiler or macOS floor links again; the fetch has
 // a ten-minute limit.
+//
+// Anywhere else it refuses, and the fourth package, Windows on ARM,
+// is one of those places: pyke's one ARM64 Windows archive carries
+// DirectML, which greycard does not use, and none carries WebGPU, so
+// the release skips this step there and the package ships no runtime;
+// greycard-ai offers to fetch Microsoft's CPU-only one on first use
+// instead (`greycard_ai::runtime::SHIPS` is false wherever `DIST` is
+// `None`).
 
 use std::ffi::OsString;
 use std::io::{Read, Write};

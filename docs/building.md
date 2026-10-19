@@ -162,6 +162,18 @@ Zen); on an older processor the AI features are off the same way.
 `GREYCARD_ORT_DYLIB` names another ONNX Runtime library to load in its
 place, taken without that check.
 
+On Windows on ARM the script refuses: the one prebuilt archive for
+that target carries DirectML, which greycard does not use, and none
+carries WebGPU. The editor offers to download Microsoft's CPU-only
+runtime instead, and `greycard models --fetch onnxruntime` fetches
+it. A tester's Windows on ARM package can come from any branch before
+a release carries it: run the "Windows on ARM package" workflow by
+hand from the repository's Actions tab (or `gh workflow run
+arm-package.yml --ref <branch>`; GitHub lists a workflow run by hand
+once its file is on master), and the zip is that run's
+`package-aarch64-windows` artifact for seven days, inside the zip
+GitHub wraps every artifact in.
+
 Nikon's High Efficiency raws (HE and HE*, written by newer Z bodies
 such as the Z9, Z8, Z6 III, Zf and Z50 II) are JPEG XS inside, and
 their decoder is a build feature:

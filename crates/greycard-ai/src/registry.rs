@@ -407,18 +407,22 @@ pub fn model(id: &str) -> Option<&'static Model> {
 }
 
 /// ONNX Runtime as Microsoft publishes it, for a processor the one
-/// greycard ships cannot run on: an archive fetched on first use, as a
-/// model is, from which the store keeps the library and the files
-/// that go with it. CPU only (Microsoft's releases carry no WebGPU),
-/// and built for baseline x86-64 with the faster kernels chosen at run
-/// time by CPUID, so it runs on any 64-bit Intel or AMD processor. The
-/// version is the one `ort` binds and greycard's own library is made
-/// from (pyke's `ms@1.28.0`), so either answers the same API.
+/// greycard ships cannot run on, or a platform greycard ships none
+/// for: an archive fetched on first use, as a model is, from which the
+/// store keeps the library and the files that go with it. CPU only
+/// (Microsoft's releases carry no WebGPU), with the faster kernels
+/// chosen at run time, so the x86-64 builds run on any 64-bit Intel or
+/// AMD processor. The version is the one `ort` binds and greycard's
+/// own library is made from (pyke's `ms@1.28.0`), so either answers
+/// the same API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Runtime {
     /// Stable, also the store directory: changes when the files do.
     pub id: &'static str,
     pub name: &'static str,
+    /// What it is for, for a listing and the note beside the files:
+    /// "the models on ...".
+    pub purpose: &'static str,
     /// The release the archive is from.
     pub source: &'static str,
     pub license: License,
@@ -439,7 +443,7 @@ pub struct Runtime {
 pub enum Packing {
     /// A gzipped tar, as the Linux release is.
     Tgz,
-    /// A zip of deflated members, as the Windows release is.
+    /// A zip of deflated members, as the Windows releases are.
     Zip,
 }
 
@@ -478,8 +482,9 @@ impl Runtime {
             })
             .collect();
         format!(
-            "{name}\n\nLicense: {lic} <{licurl}>\nSource: {source}\n\nFrom {archive} ({bytes} bytes, sha256 {sha})\n  {url}\n\nFiles:\n{members}\n\nDownloaded by greycard and kept as Microsoft published it, to run the models on a processor greycard's own ONNX Runtime cannot run on (one without AVX2). greycard does not redistribute these files. The license:\n\n{notice}",
+            "{name}\n\nLicense: {lic} <{licurl}>\nSource: {source}\n\nFrom {archive} ({bytes} bytes, sha256 {sha})\n  {url}\n\nFiles:\n{members}\n\nDownloaded by greycard and kept as Microsoft published it, to run {purpose}. greycard does not redistribute these files. The license:\n\n{notice}",
             name = self.name,
+            purpose = self.purpose,
             lic = self.license.name,
             licurl = self.license.url,
             source = self.source,
@@ -532,6 +537,7 @@ const ONNXRUNTIME_MIT: License = License {
 pub const ONNXRUNTIME_CPU_LINUX_X64: Runtime = Runtime {
     id: "onnxruntime-1.28.0-cpu-linux-x64",
     name: "ONNX Runtime 1.28.0 by Microsoft, for the CPU",
+    purpose: "the models on a processor greycard's own ONNX Runtime cannot run on (one without AVX2)",
     source: ONNXRUNTIME_SOURCE,
     license: ONNXRUNTIME_MIT,
     notice: ONNXRUNTIME_LICENSE,
@@ -571,6 +577,7 @@ pub const ONNXRUNTIME_CPU_LINUX_X64: Runtime = Runtime {
 pub const ONNXRUNTIME_CPU_WINDOWS_X64: Runtime = Runtime {
     id: "onnxruntime-1.28.0-cpu-windows-x64",
     name: "ONNX Runtime 1.28.0 by Microsoft, for the CPU",
+    purpose: "the models on a processor greycard's own ONNX Runtime cannot run on (one without AVX2)",
     source: ONNXRUNTIME_SOURCE,
     license: ONNXRUNTIME_MIT,
     notice: ONNXRUNTIME_LICENSE,
@@ -603,19 +610,69 @@ pub const ONNXRUNTIME_CPU_WINDOWS_X64: Runtime = Runtime {
     ],
 };
 
-/// Every CPU-only runtime the registry knows, whatever this build is.
-pub const RUNTIMES: &[Runtime] = &[ONNXRUNTIME_CPU_LINUX_X64, ONNXRUNTIME_CPU_WINDOWS_X64];
+/// The same for Windows on ARM64, where greycard ships no ONNX
+/// Runtime at all: pyke's one build for that target carries DirectML,
+/// which greycard does not use, and none carries WebGPU, so there is
+/// nothing to make greycard's own from, and this is the only one the
+/// models run on there. The zip is laid out as the x86-64 one is,
+/// debug symbols and all, and its license and notices are the same
+/// files byte for byte.
+pub const ONNXRUNTIME_CPU_WINDOWS_ARM64: Runtime = Runtime {
+    id: "onnxruntime-1.28.0-cpu-windows-arm64",
+    name: "ONNX Runtime 1.28.0 by Microsoft, for the CPU",
+    purpose: "the models on Windows on ARM, which greycard ships no ONNX Runtime of its own for",
+    source: ONNXRUNTIME_SOURCE,
+    license: ONNXRUNTIME_MIT,
+    notice: ONNXRUNTIME_LICENSE,
+    archive: File {
+        name: "onnxruntime-win-arm64-1.28.0.zip",
+        url: "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/onnxruntime-win-arm64-1.28.0.zip",
+        bytes: 79_812_663,
+        sha256: "cbe4547463ece092b505c3581376ed5896d22b5429f39d5e645e425ecdd369ad",
+    },
+    packing: Packing::Zip,
+    library: Member {
+        path: "onnxruntime-win-arm64-1.28.0/lib/onnxruntime.dll",
+        name: "onnxruntime.dll",
+        bytes: 15_895_904,
+        sha256: "102342326311ad62879b808840b4e3fd1372c41d8c871b59536d89a3c64d53f2",
+    },
+    kept: &[
+        Member {
+            path: "onnxruntime-win-arm64-1.28.0/LICENSE",
+            name: "LICENSE",
+            bytes: 1_094,
+            sha256: "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674",
+        },
+        Member {
+            path: "onnxruntime-win-arm64-1.28.0/ThirdPartyNotices.txt",
+            name: "ThirdPartyNotices.txt",
+            bytes: 331_175,
+            sha256: "fb0af774b4d7cffc5b9d046f2aaeade2f37df2f80abf8033c95dfffcc77a8866",
+        },
+    ],
+};
 
-/// The CPU-only runtime for this build's platform, where the one
-/// greycard ships may not run: Linux and Windows on x86-64. None on a
-/// Mac, whose package is for Apple silicon alone (which lacks nothing
-/// greycard's library needs; Microsoft publishes no Intel Mac build of
-/// 1.28.0 either), and none on ARM, where nothing is missing.
+/// Every CPU-only runtime the registry knows, whatever this build is.
+pub const RUNTIMES: &[Runtime] = &[
+    ONNXRUNTIME_CPU_LINUX_X64,
+    ONNXRUNTIME_CPU_WINDOWS_X64,
+    ONNXRUNTIME_CPU_WINDOWS_ARM64,
+];
+
+/// The CPU-only runtime for this build's platform: on Linux and
+/// Windows on x86-64, where the one greycard ships may not run, and on
+/// Windows on ARM64, where greycard ships none. None on a Mac, whose
+/// package is for Apple silicon alone (which lacks nothing greycard's
+/// library needs; Microsoft publishes no Intel Mac build of 1.28.0
+/// either), and none on Linux on ARM, which has no package.
 pub fn cpu_runtime() -> Option<&'static Runtime> {
     if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         Some(&ONNXRUNTIME_CPU_LINUX_X64)
     } else if cfg!(all(windows, target_arch = "x86_64")) {
         Some(&ONNXRUNTIME_CPU_WINDOWS_X64)
+    } else if cfg!(all(windows, target_arch = "aarch64")) {
+        Some(&ONNXRUNTIME_CPU_WINDOWS_ARM64)
     } else {
         None
     }
@@ -786,6 +843,24 @@ mod tests {
         }
         assert_eq!(ONNXRUNTIME_CPU_LINUX_X64.library.name, "libonnxruntime.so");
         assert_eq!(ONNXRUNTIME_CPU_WINDOWS_X64.library.name, "onnxruntime.dll");
+        assert_eq!(
+            ONNXRUNTIME_CPU_WINDOWS_ARM64.library.name,
+            "onnxruntime.dll"
+        );
+        // Each says what it is for in the note beside it, and the two
+        // reasons differ: a processor short of AVX2, or a platform
+        // greycard ships nothing for.
+        assert!(
+            ONNXRUNTIME_CPU_LINUX_X64
+                .license_note()
+                .contains("to run the models on a processor greycard's own ONNX Runtime cannot run on (one without AVX2).")
+        );
+        assert!(
+            ONNXRUNTIME_CPU_WINDOWS_ARM64
+                .license_note()
+                .contains("to run the models on Windows on ARM, which greycard ships no ONNX Runtime of its own for.")
+        );
+        assert!(!ONNXRUNTIME_CPU_WINDOWS_ARM64.purpose.contains("AVX2"));
         // Kept under the name greycard's own library has, on the
         // platform it is offered on; none offered on a Mac.
         if let Some(r) = cpu_runtime() {
@@ -793,9 +868,9 @@ mod tests {
         }
         assert_eq!(
             cpu_runtime().is_some(),
-            cfg!(all(
-                any(target_os = "linux", windows),
-                target_arch = "x86_64"
+            cfg!(any(
+                all(any(target_os = "linux", windows), target_arch = "x86_64"),
+                all(windows, target_arch = "aarch64")
             ))
         );
     }
