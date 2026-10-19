@@ -29,7 +29,6 @@ use crate::{Edit, Error, Result, WhiteBalance};
 
 /// The Camera Raw settings namespace.
 const CRS: &str = "http://ns.adobe.com/camera-raw-settings/1.0/";
-const RDF: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 
 /// A preset read from Lightroom, with what could not come across.
 #[derive(Debug, Clone, PartialEq)]
@@ -231,11 +230,11 @@ pub fn read(xml: &str, fallback: &str) -> Result<Imported> {
     let mut keys: BTreeMap<String, String> = BTreeMap::new();
     let mut curves: BTreeMap<String, Vec<Point>> = BTreeMap::new();
     let mut name = None;
-    for desc in doc
-        .descendants()
-        .filter(|n| n.is_element() && n.tag_name().namespace() == Some(RDF))
-        .filter(|n| n.tag_name().name() == "Description")
-    {
+    // The top-level descriptions only: a profile's look (`crs:Look`)
+    // carries the profile's own settings in a description of its own,
+    // its tone curve and its `CameraProfile` among them, which are not
+    // the picture's and would otherwise be read over them.
+    for desc in crate::xmp::descriptions(&doc) {
         for a in desc.attributes().filter(|a| a.namespace() == Some(CRS)) {
             keys.insert(a.name().to_string(), a.value().to_string());
         }
@@ -1236,6 +1235,53 @@ mod tests {
         } = read(xml, "x").unwrap();
         assert!(preset.sections.is_empty());
         assert_eq!(unmapped, vec!["WhiteBalance"]);
+    }
+
+    /// A profile's look, as Lightroom writes one into every sidecar for
+    /// its default profile, keeps the profile's own settings in a
+    /// description inside the look's. They are not the picture's: the
+    /// picture's curve and profile are the top level's, and the look's
+    /// later ones do not take their place. Found by the review of the
+    /// fuzzing branch.
+    #[test]
+    fn a_profiles_look_is_not_the_pictures_settings() {
+        let xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+            crs:Exposure2012="+0.5" crs:CameraProfile="Camera Faithful">
+           <crs:ToneCurvePV2012>
+            <rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>128, 160</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq>
+           </crs:ToneCurvePV2012>
+           <crs:Look>
+            <rdf:Description crs:Name="Adobe Standard" crs:Amount="1">
+             <crs:Parameters>
+              <rdf:Description crs:Version="15.0" crs:ProcessVersion="11.0"
+                crs:ConvertToGrayscale="False" crs:CameraProfile="Adobe Standard">
+               <crs:ToneCurvePV2012>
+                <rdf:Seq>
+                 <rdf:li>0, 0</rdf:li><rdf:li>22, 16</rdf:li><rdf:li>40, 35</rdf:li>
+                 <rdf:li>127, 127</rdf:li><rdf:li>224, 230</rdf:li><rdf:li>240, 246</rdf:li>
+                 <rdf:li>255, 255</rdf:li>
+                </rdf:Seq>
+               </crs:ToneCurvePV2012>
+              </rdf:Description>
+             </crs:Parameters>
+            </rdf:Description>
+           </crs:Look>
+          </rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        let Imported {
+            preset, unmapped, ..
+        } = read(xml, "x").unwrap();
+        assert_eq!(
+            preset.edit.curves.rgb,
+            vec![[0.0, 0.0], [128.0 / 255.0, 160.0 / 255.0], [1.0, 1.0]]
+        );
+        assert_eq!(preset.edit.light.exposure, 0.5);
+        assert!(
+            unmapped
+                .iter()
+                .any(|u| u == "CameraProfile Camera Faithful"),
+            "{unmapped:?}"
+        );
     }
 
     /// A preset's masks and spots are structures in its XMP, not

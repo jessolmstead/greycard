@@ -54,7 +54,10 @@ pub const MID_LIGHTNESS: f32 = 0.5646;
 /// A tint on a look: a hue to pull toward, and how far.
 ///
 /// A sidecar's values are brought into range as they are read, once
-/// and in one place, so nothing downstream has to wonder: the two
+/// and in one place, so nothing downstream has to wonder. A hue wraps
+/// round the circle and an amount is held to its ends; a number past
+/// an `f32`'s range never gets here, since the edit holding it is
+/// refused whole ([`crate::migrate`]). The two
 /// paths through a tint (`finish.rs` blends every look's as a vector
 /// and reads a tint back off the sum; `pick` takes one straight)
 /// agree only on a hue that is a hue and an amount that is an amount.
@@ -83,8 +86,8 @@ fn is_on(enabled: &bool) -> bool {
     *enabled
 }
 
-/// A hue as read from a file: round the circle, and anything that is
-/// not a number at all is no hue.
+/// A hue as read from a file: round the circle. One that is not finite
+/// is no hue, though an edit's reader refuses such a number first.
 fn wrapped_hue<'de, D: Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
     let v = f32::deserialize(d)?;
     Ok(if v.is_finite() {
@@ -94,7 +97,8 @@ fn wrapped_hue<'de, D: Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
     })
 }
 
-/// An amount as read from a file: 0 to 1, and not a number is none.
+/// An amount as read from a file: held to 0 to 1, and not a number is
+/// none.
 fn held_amount<'de, D: Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
     let v = f32::deserialize(d)?;
     Ok(if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) })
@@ -423,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sidecar_s_values_are_brought_into_range_as_they_are_read() {
+    fn a_sidecar_s_values_in_range_wrap_or_hold_and_past_it_are_refused() {
         let read = |s: &str| serde_json::from_str::<Tint>(s).expect("a tint");
         // Round the circle, either way, however many times.
         assert!((read(r#"{"hue": 400, "amount": 0.5}"#).hue - 40.0).abs() < 1e-3);
@@ -433,10 +437,12 @@ mod tests {
         // The amount held to its ends.
         assert_eq!(read(r#"{"hue": 0, "amount": 5}"#).amount, 1.0);
         assert_eq!(read(r#"{"hue": 0, "amount": -1}"#).amount, 0.0);
-        // Nothing that is not a number gets through either field.
-        let mad = read(r#"{"hue": 1e300, "amount": 1e300}"#);
-        assert_eq!(mad.hue, 0.0);
-        assert_eq!(mad.amount, 1.0);
+        // A number past an f32's range is not a value to wrap or hold:
+        // the edit holding it is refused.
+        for tint in [r#"{"hue": 1e300}"#, r#"{"amount": 1e300}"#] {
+            let edit = format!(r#"{{"version": 6, "tint": {tint}}}"#);
+            assert!(crate::Edit::from_json(&edit).is_err(), "{tint}");
+        }
         // A missing field is still the default, and a whole one is
         // untouched.
         assert_eq!(read(r#"{}"#), Tint::OFF);

@@ -127,6 +127,29 @@ jobs:
           WGPU_BACKEND: ${{ runner.os == 'Linux' && 'vulkan' || '' }}
         run: cargo test
 
+  # The fuzz targets in fuzz/ still build against the crates they
+  # read: a workspace of their own, which nothing above compiles, run
+  # by fuzz.yml only on Sundays. A check on stable, which needs no
+  # cargo-fuzz and builds libFuzzer's C++ once; Linux alone, since the
+  # readers have no per-platform code.
+  fuzz-check:
+    if: github.event_name != 'schedule'
+    name: fuzz targets build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz
+
+      - name: cargo check
+        run: cargo check --locked --manifest-path fuzz/Cargo.toml
+
   # Known advisories against Cargo.lock, from the RustSec database. It
   # runs once, on Linux, since the lock file is the same everywhere. A
   # vulnerability fails it; an "unmaintained" notice prints in the log

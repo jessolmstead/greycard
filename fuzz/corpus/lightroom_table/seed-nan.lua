@@ -1,0 +1,1 @@
+s = { Exposure2012 = NaN, Contrast2012 = 20, CropLeft = NaN, CropAngle = NaN, ToneCurvePV2012 = { 0, 0, 128, NaN, 255, 255 } }

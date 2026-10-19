@@ -491,14 +491,23 @@ fn put(packet: &mut Packet, prop: Prop, value: &str, flag_is_ours: &mut bool) {
     }
 }
 
-fn descriptions<'a, 'input: 'a>(
+/// The packet's top-level descriptions: those inside no other. A
+/// description within one is the value of some property, a struct,
+/// and what it holds is not the frame's. Taken as a top-level one, a
+/// property inside another of ours was read, then written over twice
+/// with the outer splice dropped (found by fuzzing); and in a
+/// Lightroom sidecar a profile's look keeps its own settings in one
+/// ([`crate::lightroom::read`]).
+pub(crate) fn descriptions<'a, 'input: 'a>(
     doc: &'a roxmltree::Document<'input>,
 ) -> impl Iterator<Item = roxmltree::Node<'a, 'input>> {
-    doc.descendants().filter(|n| {
+    let is_description = |n: &roxmltree::Node<'_, '_>| {
         n.is_element()
             && n.tag_name().namespace() == Some(RDF)
             && n.tag_name().name() == "Description"
-    })
+    };
+    doc.descendants()
+        .filter(move |n| is_description(n) && !n.ancestors().skip(1).any(|a| is_description(&a)))
 }
 
 /// The `rdf:li` texts under a property, whichever container it uses.
@@ -1358,6 +1367,20 @@ mod tests {
 
     fn meta_of(xml: &str) -> Meta {
         read(xml).unwrap().meta
+    }
+
+    /// Found by fuzzing: a description nested in a property's value
+    /// was taken for a top-level one, so a caption with another inside
+    /// it was read, written over twice with the outer write dropped,
+    /// and read back empty. Only the descriptions inside no other
+    /// description are read and written.
+    #[test]
+    fn fuzz_a_description_inside_a_property_is_not_the_frames() {
+        let xml = r#"<x:xmpmeta xmlns:x=""><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description t="" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:description>n<x:xmpmeta l=""><rdf:RDF m=""><rdf:Description><dc:description><rdf:Description c=""></rdf:Description></dc:description></rdf:Description></rdf:RDF></x:xmpmeta></dc:description></rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        let meta = meta_of(xml);
+        assert_eq!(meta.caption, "n");
+        let written = write(xml, &meta, None).unwrap();
+        assert_eq!(meta_of(&written), meta, "{written}");
     }
 
     #[test]

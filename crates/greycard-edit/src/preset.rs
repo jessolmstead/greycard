@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Edit, Error, Result, VERSION, migrate};
+use crate::{Edit, Error, Result, VERSION, migrate, refused};
 
 /// The parts of an edit a preset can carry. Not the geometry nor the
 /// retouch, which are one picture's own.
@@ -914,21 +914,33 @@ impl Preset {
     }
 
     /// Read a preset, the edit inside migrated to this build's schema.
+    /// A fault in its JSON is said as the preset's, not the sidecar's
+    /// that [`Error::Json`] names.
     pub fn from_json(json: &str) -> Result<Self> {
+        Self::read_json(json).map_err(|e| match e {
+            Error::Json(e) => Error::Preset(e.to_string()),
+            e => e,
+        })
+    }
+
+    fn read_json(json: &str) -> Result<Self> {
         let mut value: serde_json::Value = serde_json::from_str(json)?;
-        if let Some(obj) = value.as_object_mut() {
-            let version = obj.get("version").cloned();
-            if let Some(mut edit) = obj.remove("edit") {
-                // The edit's own version is the file's.
-                if let (Some(v), Some(e)) = (version, edit.as_object_mut())
-                    && !e.contains_key("version")
-                {
-                    e.insert("version".into(), v);
-                }
-                obj.insert("edit".into(), migrate(edit)?);
+        // A list of the fields in order would carry an edit that no
+        // migration had touched (see `migrate`).
+        let Some(obj) = value.as_object_mut() else {
+            return Err(refused("a preset is an object"));
+        };
+        let version = obj.get("version").cloned();
+        if let Some(mut edit) = obj.remove("edit") {
+            // The edit's own version is the file's.
+            if let (Some(v), Some(e)) = (version, edit.as_object_mut())
+                && !e.contains_key("version")
+            {
+                e.insert("version".into(), v);
             }
-            obj.insert("version".into(), VERSION.into());
+            obj.insert("edit".into(), migrate(edit)?);
         }
+        obj.insert("version".into(), VERSION.into());
         let mut preset: Preset = serde_json::from_value(value)?;
         preset.sections = Section::ALL
             .iter()

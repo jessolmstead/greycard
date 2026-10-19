@@ -1,0 +1,1 @@
+exposure>=1/250s iso=ISO800 stars!=0 colour:none taken>2026:09:21 kw="a b"

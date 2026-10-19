@@ -1,0 +1,85 @@
+# The fuzz targets: libFuzzer through cargo-fuzz, over the text the
+# editor reads from files it did not write. A workspace of its own, so
+# the main build, its tests, and its clippy never see it; it builds on
+# nightly, through `cargo fuzz`. README.md has how to run it.
+[package]
+name = "greycard-fuzz"
+version = "0.0.0"
+publish = false
+license = "GPL-3.0-or-later"
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+greycard-core = { path = "../crates/greycard-core" }
+greycard-edit = { path = "../crates/greycard-edit" }
+greycard-library = { path = "../crates/greycard-library" }
+
+# The same rawler the main build takes: a [patch] applies only from the
+# root of the workspace it is in, and this is its own. Kept in step
+# with the root Cargo.toml's, which has the reason.
+[patch.crates-io]
+rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "7f4526a38924ac62228ffc3559c83a0ab7822ef6" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "sidecar_json"
+path = "fuzz_targets/sidecar_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "edit_json"
+path = "fuzz_targets/edit_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "preset_json"
+path = "fuzz_targets/preset_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lightroom_xmp"
+path = "fuzz_targets/lightroom_xmp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lightroom_table"
+path = "fuzz_targets/lightroom_table.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pp3"
+path = "fuzz_targets/pp3.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xmp_meta"
+path = "fuzz_targets/xmp_meta.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filter"
+path = "fuzz_targets/filter.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,8 @@
+<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="+0.5">
+            <crs:MaskGroupBasedCorrections>
+              <rdf:Seq><rdf:li rdf:parseType="Resource"><crs:What>Correction</crs:What></rdf:li></rdf:Seq>
+            </crs:MaskGroupBasedCorrections>
+            <crs:RetouchAreas><rdf:Seq><rdf:li>x</rdf:li></rdf:Seq></crs:RetouchAreas>
+            <crs:PaintBasedCorrections><rdf:Seq/></crs:PaintBasedCorrections>
+          </rdf:Description></rdf:RDF></x:xmpmeta>

@@ -1,0 +1,1 @@
+camera:"R6"  lens:RF  iso>=3200  focal<=35  aperture:1.8  shutter<1/60

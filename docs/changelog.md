@@ -23,6 +23,17 @@ design note behind it.
   crash at the wrong moment leaves the old file rather than an empty
   one
   ([§373](https://github.com/jessolmstead/greycard/blob/master/docs/notes/373-a-number-that-is-not-finite-and-a-sync-before-the-rename.md))
+- A Lightroom preset file (`.xmp`) brought in through Import no
+  longer takes the profile's own Look block (Adobe Color's built-in
+  tone curve, say) as the preset's settings: only the file's
+  top-level settings are read, so the preset's curve is carried and
+  the uncarried profile is named, as the catalog import already did.
+  Found while fuzzing the parsers, which also fixed four
+  ways a sidecar, preset, or XMP could be misread: a number past a
+  float's range, a 17-digit value read one bit off, a JSON list taken
+  as an edit, and a description nested in a property taken as the
+  frame's
+  ([§375](https://github.com/jessolmstead/greycard/blob/master/docs/notes/375-fuzzing-at-the-boundaries.md))
 
 ## 0.8.0, 2026-10-18
 

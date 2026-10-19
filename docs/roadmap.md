@@ -610,12 +610,6 @@ clears or a tester asks for it.
       between stages, the worker sets it when a newer request
       supersedes, and the export queue's cancel sets it too. An
       outside review asked 2026-10-19
-- [ ] Fuzzing at the boundaries, with cargo-fuzz targets over the
-      sidecar and edit JSON, the Lightroom settings and catalog
-      readers, pp3, XMP, and the filter language, run in CI on a
-      schedule and locally on demand, with each found case kept as
-      a regression test. The NaN sidecar (an outside review,
-      2026-10-19) is the kind it finds
 - [ ] A size report in CI: the files and functions over a line count,
       printed on every run and compared with master's, as a report
       and not a gate, so growth is seen when it happens; the five

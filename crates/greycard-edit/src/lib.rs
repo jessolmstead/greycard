@@ -1301,8 +1301,33 @@ pub fn overlay_changes(before: &Edit, touched: &Edit, onto: &Edit) -> Result<Edi
 /// is the one it was; an edit that develops nothing is the default and
 /// takes its body's. A build from before would drop the field and
 /// brighten or darken the picture, so it refuses the sidecar instead.
+///
+/// Two shapes serde would take are refused before any step, since
+/// neither writes back as it reads (both found by fuzzing). An edit
+/// that is not an object: serde takes a list of a struct's fields in
+/// their order too, so `[0]` would read as a version 0 edit that no
+/// step here had touched, and be migrated only when read again. And a
+/// number past the range of an `f32`: it reads as infinity, which
+/// serde_json writes as `null`, and the next read refuses that.
 pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
-    let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+    if !value.is_object() {
+        return Err(refused("an edit is an object"));
+    }
+    if let Some((path, n)) = past_f32(&value) {
+        return Err(refused(&format!(
+            "{path} is {n:e}, past the range of any setting"
+        )));
+    }
+    // A missing version is 1; one that is there and is not a schema
+    // version at all is refused, rather than read as 1 (`7.0`, `-1`,
+    // `"9"`) or wrapped (`4294967297` was 1).
+    let version = match value.get("version") {
+        None => 1,
+        Some(v) => v
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or_else(|| refused(&format!("a version is a whole number, not {v}")))?,
+    };
     if version > VERSION {
         return Err(Error::Newer(version));
     }
@@ -1363,6 +1388,42 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
         obj.insert("version".into(), if waiting { 3 } else { VERSION }.into());
     }
     Ok(value)
+}
+
+/// A stored file's shape refused, in the words of a JSON error.
+pub(crate) fn refused(what: &str) -> Error {
+    Error::Json(<serde_json::Error as serde::de::Error>::custom(what))
+}
+
+/// The first number in `value` that an `f32` cannot hold, and where it
+/// is (`detail.texture`, `mixer.saturation[7]`). Every float in an
+/// edit is an `f32` or holds a value that fits one, and no integer in
+/// it comes near. The path is made on the way back out, so a walk that
+/// finds nothing makes none.
+fn past_f32(value: &serde_json::Value) -> Option<(String, f64)> {
+    // `head` before the rest of the path: `.key` unless it is empty or
+    // goes on with an index.
+    let under = |head: String, rest: String| {
+        if rest.is_empty() || rest.starts_with('[') {
+            head + &rest
+        } else {
+            format!("{head}.{rest}")
+        }
+    };
+    match value {
+        serde_json::Value::Number(n) => n
+            .as_f64()
+            .filter(|&n| n.is_finite() && (n as f32).is_infinite())
+            .map(|n| (String::new(), n)),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .find_map(|(i, v)| past_f32(v).map(|(rest, n)| (under(format!("[{i}]"), rest), n))),
+        serde_json::Value::Object(map) => map
+            .iter()
+            .find_map(|(k, v)| past_f32(v).map(|(rest, n)| (under(k.clone(), rest), n))),
+        _ => None,
+    }
 }
 
 /// Whether a stored edit, its earlier steps already brought up, is a
@@ -2077,8 +2138,22 @@ impl Sidecar {
             migrate_line(obj)?;
             if let Some(serde_json::Value::Array(versions)) = obj.get_mut("versions") {
                 for version in versions.iter_mut() {
-                    if let Some(line) = version.get_mut("line").and_then(|l| l.as_object_mut()) {
-                        migrate_line(line)?;
+                    // A line that is not an object would be read as a
+                    // list of its fields, its edits unmigrated (see
+                    // `migrate`). An entry with no id, an entry that is
+                    // not an object among them, is left out by
+                    // `versions::loose` and is passed over here too.
+                    let has_id = version
+                        .get("id")
+                        .and_then(|i| i.as_str())
+                        .is_some_and(|i| !i.trim().is_empty());
+                    if !has_id {
+                        continue;
+                    }
+                    match version.get_mut("line") {
+                        Some(serde_json::Value::Object(line)) => migrate_line(line)?,
+                        Some(_) => return Err(refused("a version's line is an object")),
+                        None => {}
                     }
                 }
             }
@@ -2100,6 +2175,11 @@ fn migrate_line(obj: &mut serde_json::Map<String, serde_json::Value>) -> Result<
     }
     if let Some(serde_json::Value::Array(mut snapshots)) = obj.remove("snapshots") {
         for snapshot in snapshots.iter_mut() {
+            // As for an edit (see `migrate`): a list in its place would
+            // carry an edit no step had touched.
+            if !snapshot.is_object() {
+                return Err(refused("a snapshot is an object"));
+            }
             if let Some(edit) = snapshot.get_mut("edit") {
                 *edit = migrate(edit.take())?;
             }
@@ -3944,6 +4024,100 @@ mod tests {
         assert!(write_synced(&nowhere, b"{}").is_err());
         assert!(!nowhere.exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Found by fuzzing: serde reads a struct from a list of its fields
+    /// too, so `[0]` was a version 0 edit no migration had touched,
+    /// which wrote back as one the next read migrated. An edit, a
+    /// snapshot, a version's line, and a preset that are not objects
+    /// are refused.
+    #[test]
+    fn fuzz_an_edit_written_as_a_list_is_refused() {
+        assert!(Edit::from_json("[0]").is_err());
+        assert!(Sidecar::from_json(r#"{"current": [0]}"#).is_err());
+        assert!(Sidecar::from_json(r#"{"history": [[0]]}"#).is_err());
+        assert!(Sidecar::from_json(r#"{"snapshots": [["s", 0, {}]]}"#).is_err());
+        assert!(Sidecar::from_json(r#"{"versions": [{"id": "a", "line": [[0]]}]}"#).is_err());
+        assert!(Preset::from_json(r#"[6, "p", ["light"], [], "replace", [0]]"#).is_err());
+        // The same as objects read.
+        assert!(Edit::from_json(r#"{"version": 0}"#).is_ok());
+        assert!(
+            Sidecar::from_json(r#"{"snapshots": [{"name": "s", "taken": 0, "edit": {}}]}"#).is_ok()
+        );
+        // A version entry with no id is left out, as the versions'
+        // reader leaves it, whatever its line is.
+        for junk in [
+            r#"[[0]]"#,
+            r#"{"line": [[0]]}"#,
+            r#"{"id": " ", "line": [[0]]}"#,
+        ] {
+            let sidecar = Sidecar::from_json(&format!(r#"{{"versions": [{junk}]}}"#))
+                .unwrap_or_else(|e| panic!("{junk}: {e}"));
+            assert!(sidecar.versions.is_empty(), "{junk}");
+        }
+    }
+
+    /// A missing schema version is version 1. One that is there and is
+    /// not a whole number a `u32` holds is refused, where it was read as
+    /// version 1, or wrapped round to it.
+    #[test]
+    fn a_version_that_is_not_a_whole_number_is_refused() {
+        for v in ["4294967297", "7.0", "-1", "\"9\"", "null", "true"] {
+            let err = Edit::from_json(&format!(r#"{{"version": {v}}}"#))
+                .expect_err(v)
+                .to_string();
+            assert!(err.contains("a version is a whole number"), "{v}: {err}");
+        }
+        let missing = Edit::from_json(r#"{"noise": {"enabled": true}}"#).unwrap();
+        assert!(missing.noise.profiled, "read as version 1 and migrated");
+    }
+
+    /// Found by fuzzing: a number past an `f32`'s range read as
+    /// infinity, which serde_json writes as `null`, so the sidecar
+    /// saved after it would not load. It is refused when read, in an
+    /// edit, a sidecar's history, and a preset, with where it is and
+    /// what was being read; the largest `f32` still reads, and writes
+    /// back as it was.
+    #[test]
+    fn fuzz_a_number_past_an_f32_is_refused() {
+        let edit = r#"{"version": 6, "detail": {"texture": 1e71}}"#;
+        assert_eq!(
+            Edit::from_json(edit).unwrap_err().to_string(),
+            "sidecar: detail.texture is 1e71, past the range of any setting"
+        );
+        assert!(Sidecar::from_json(&format!(r#"{{"history": [{{}}, {edit}]}}"#)).is_err());
+        let preset = r#"{"name": "p", "sections": ["mixer"],
+            "edit": {"mixer": {"saturation": [0, 0, 0, 0, 0, 0, 0, -2.2e53]}}}"#;
+        assert_eq!(
+            Preset::from_json(preset).unwrap_err().to_string(),
+            "preset: mixer.saturation[7] is -2.2e53, past the range of any setting"
+        );
+        let edge =
+            Edit::from_json(r#"{"version": 6, "detail": {"texture": 3.4028235e38}}"#).unwrap();
+        assert_eq!(edge.detail.texture, f32::MAX);
+        assert_eq!(Edit::from_json(&edge.to_json()).unwrap(), edge);
+    }
+
+    /// Found by fuzzing: without serde_json's `float_roundtrip`, these
+    /// white balance tints (from a Lightroom XMP, a catalog's table,
+    /// and a RawTherapee profile) read back a unit in the last place
+    /// off what was written.
+    #[test]
+    fn fuzz_a_white_balance_reads_back_to_the_last_bit() {
+        for tint in [
+            0.014999999664723873,
+            0.025333333760499954,
+            0.0013249980323305319,
+        ] {
+            let edit = Edit {
+                white_balance: WhiteBalance::Custom {
+                    temperature: 4800.0,
+                    tint,
+                },
+                ..Edit::default()
+            };
+            assert_eq!(Edit::from_json(&edit.to_json()).unwrap(), edit, "{tint}");
+        }
     }
 
     /// A fresh folder a test can write into, its own by name and pid.

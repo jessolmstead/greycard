@@ -1,0 +1,8 @@
+target/
+artifacts/
+coverage/
+# What a run adds to a corpus, named by its hash. The seeds are named
+# seed-*, and a small input kept on purpose found-*.
+/corpus/*/*
+!/corpus/*/seed-*
+!/corpus/*/found-*

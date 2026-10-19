@@ -1,0 +1,1 @@
+s = { { criteria = "rating", operation = ">=", value = 5, }, { criteria = "captureTime", operation = "in", value = "2026-09-01", value2 = "2026-09-30", }, combine = "intersect", }

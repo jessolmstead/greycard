@@ -1,0 +1,95 @@
+# The fuzz targets in fuzz/, each for a minute, weekly and on request
+# (Actions, "Fuzz", Run workflow, with 60, 300, or 600 seconds a target).
+# fuzz/README.md has what each target asserts and how to run one.
+#
+# Its own file rather than a job in ci.yml: ci.yml runs on every push
+# and pull request with its jobs gated on the event, and this wants a
+# schedule and a manual trigger and nothing else. It runs on Linux
+# alone, since the readers it fuzzes have no per-platform code.
+#
+# Every target runs even after one fails, so a run reports all it
+# found; a failure turns the job red at the end and uploads the
+# inputs libFuzzer saved, which are never committed. The corpus each
+# run grows is thrown away with the runner: the seeds in the
+# repository are the starting point every time, which keeps a run's
+# cost fixed.
+#
+# The nightly is pinned by date so a red run means the code, not the
+# compiler; move it forward on purpose, with the README's commands.
+
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '41 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      # A choice, so the longest run (eight targets at 600 s, 80
+      # minutes) fits the job's timeout below with room for the build
+      # and the upload; a free number could be cancelled before it
+      # uploaded what it found.
+      seconds:
+        description: Seconds each target runs
+        type: choice
+        options: ['60', '300', '600']
+        default: '60'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  NIGHTLY: nightly-2026-10-01
+
+jobs:
+  fuzz:
+    name: cargo fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.NIGHTLY }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version 0.13.2
+
+      - name: Build the targets
+        # No address sanitizer: the code under test is safe Rust, and
+        # the README says why. Debug assertions and overflow checks
+        # are on, as cargo-fuzz builds by default.
+        run: cargo +"$NIGHTLY" fuzz build -s none
+
+      - name: Run each target
+        env:
+          SECONDS_EACH: ${{ github.event.inputs.seconds || '60' }}
+        run: |
+          failed=""
+          for target in $(cargo +"$NIGHTLY" fuzz list); do
+            echo "::group::$target"
+            if ! cargo +"$NIGHTLY" fuzz run -s none "$target" -- \
+                -max_total_time="$SECONDS_EACH" -timeout=10; then
+              failed="$failed $target"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::failed:$failed"
+            exit 1
+          fi
+
+      - name: Upload what failed
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

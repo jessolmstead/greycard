@@ -18,7 +18,12 @@ image = { version = "0.25", default-features = false, features = ["tiff", "png",
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: every float read back as the one written. Without
+# it serde_json parses some seventeen-digit numbers a unit in the last
+# place off, so an f64 in a sidecar (a white balance's tint) could move
+# at each save and read, and two copies of one edit compare unequal.
+# Found by fuzzing; the cost is a slower parse of each float.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 roxmltree = "0.21"
 # The platform's configuration and cache directories.
 dirs = "7"
@@ -39,7 +44,8 @@ tracing-log = "0.2"
 # it below black instead of flooring it at 1050 and lowers its offset to
 # 1018. The offset was measured against the camera's own JPEG between about
 # 45 and 1000 DN above black, and it moves every value above the toe down
-# 32 DN. The patch comes out when a release has all three.
+# 32 DN. The patch comes out when a release has all three. fuzz/Cargo.toml
+# carries a copy of this line, its workspace being its own; change both.
 [patch.crates-io]
 rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "7f4526a38924ac62228ffc3559c83a0ab7822ef6" }
 # femtovg 0.27.0 plus one change: a render pipeline is kept through

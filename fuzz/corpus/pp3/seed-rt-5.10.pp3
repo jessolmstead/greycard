@@ -1,0 +1,97 @@
+[Version]
+AppVersion=5.10
+Version=351
+
+[General]
+Rank=3
+ColorLabel=1
+InTrash=false
+
+[Exposure]
+Auto=false
+Clip=0.02
+Compensation=0.5
+Brightness=0
+Contrast=12
+Saturation=-20
+Black=150
+HighlightCompr=0
+ShadowCompr=50
+HistogramMatching=false
+CurveMode=Standard
+CurveMode2=Standard
+Curve=0;
+Curve2=0;
+
+[HLRecovery]
+Enabled=false
+Method=Blend
+
+[Local Contrast]
+Enabled=true
+Radius=80
+Amount=0.2
+
+[Wavelet]
+Enabled=false
+
+[White Balance]
+Enabled=true
+Setting=Custom
+Temperature=5200
+Green=1.04
+Equal=1
+TemperatureBias=0
+
+[Crop]
+Enabled=true
+X=600
+Y=400
+W=4800
+H=3200
+FixedRatio=true
+Ratio=3:2
+Orientation=As Image
+Guide=Frame
+
+[Coarse Transformation]
+Rotate=0
+HorizontalFlip=false
+VerticalFlip=false
+
+[Common Properties for Transformations]
+Method=log
+AutoFill=true
+
+[Rotation]
+Degree=0
+
+[Distortion]
+Amount=0
+
+[LensProfile]
+LcMode=lfauto
+LCPFile=
+UseDistortion=true
+UseVignette=true
+UseCA=false
+
+[Perspective]
+Method=simple
+Horizontal=0
+Vertical=0
+
+[CACorrection]
+Red=0
+Blue=0
+
+[Vignetting Correction]
+Amount=0
+Radius=50
+Strength=1
+
+[Color Management]
+InputProfile=(cameraICC)
+
+[RAW Bayer]
+Method=amaze
