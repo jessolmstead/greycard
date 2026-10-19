@@ -1331,7 +1331,10 @@ pub fn save_dated(
         return Ok(Some(mark));
     }
     let tmp = path.with_extension("xmp.tmp");
-    std::fs::write(&tmp, &text)?;
+    // On the disk before it takes the old one's name: a crash before
+    // the filesystem flushes could keep the rename and lose the data,
+    // and Lightroom's sidecar would be left empty.
+    crate::write_synced(&tmp, text.as_bytes())?;
     std::fs::rename(&tmp, &path)?;
     Ok(Some(mark))
 }

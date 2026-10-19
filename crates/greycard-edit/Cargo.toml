@@ -26,6 +26,11 @@ gethostname = "1"
 # balance's tests. Already in the tree through greycard-core.
 rawcolor.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# The errors a sync gives on a volume that cannot sync. Already in the
+# tree through greycard-ai and greycard-ui.
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 # For the hidden attribute on the sidecar folder; a leading dot hides
 # nothing on Windows.

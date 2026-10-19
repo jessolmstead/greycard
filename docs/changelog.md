@@ -14,6 +14,16 @@ design note behind it.
   download on first use, as on an older x86-64 processor
   ([§372](https://github.com/jessolmstead/greycard/blob/master/docs/notes/372-a-windows-on-arm-package.md))
 
+### Fixes
+
+- A Lightroom import no longer writes a sidecar the editor refuses
+  when a setting in the catalog or the XMP is "NaN" or infinite; the
+  value is taken as unset. Sidecars, collections, and the roots list
+  are now synced to disk before they are renamed into place, so a
+  crash at the wrong moment leaves the old file rather than an empty
+  one
+  ([§373](https://github.com/jessolmstead/greycard/blob/master/docs/notes/373-a-number-that-is-not-finite-and-a-sync-before-the-rename.md))
+
 ## 0.8.0, 2026-10-18
 
 A Lightroom Classic catalog comes across whole: its folders as roots,

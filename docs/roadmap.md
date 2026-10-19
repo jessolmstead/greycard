@@ -620,6 +620,20 @@ clears or a tester asks for it.
       everything), written from the code as it is with the notes as
       the why. The one concrete item of an outside review's
       "contributor readiness", 2026-10-19
+- [ ] A missing camera profile said where the user looks: the
+      status line, the export's report of what the edit went without
+      (with the headless export's exit code 2 as for a missing
+      look), and a preset or a sync that would spread the missing
+      name; today only the Camera section says it, and only while
+      open (§373)
+- [ ] The rejects queue synced to disk before its rename, as the
+      sidecars and presets are since §373; the caches and the
+      downloads can be made again and stay as they are
+- [ ] The bulk sidecar save off the window's thread, or batched
+      (every temporary file written and synced, then every rename):
+      the sync of §373 costs about 5 ms a file here, so a paste onto
+      hundreds of frames holds the window for seconds. Measure on a
+      network share and on a Mac first, where a sync costs more
 - [ ] Every test's scratch folder removed through the testing helpers
       (`remove_scratch` where the state holds the index open,
       `remove_dir_retry` otherwise), the 290-odd bare `remove_dir_all`
@@ -834,6 +848,15 @@ Slint, a runtime exposing what it knows, a rawler release. It joins a
 release when the wait clears.
 
 #### Platform
+- [ ] A no-GPU mode: when no hardware adapter is found, take the
+      software adapter for the window, put the engine's ops on their
+      CPU paths as --cpu-ops does, and say so in the status line,
+      instead of failing at "selecting Slint's wgpu backend". A
+      tester on an Ivy Bridge i5 with Mesa's incomplete Vulkan hit
+      the failure, and with SLINT_WGPU_CPU=1 ran every develop op as
+      shaders under lavapipe, minutes at 400% CPU (2026-10-19). Slow
+      is the honest outcome there; the mode makes it open and say
+      why
 - [ ] A GPU path for the models on Windows on ARM: pyke publishes an
       ARM64 Windows build of ONNX Runtime with DirectML, no WebGPU,
       and DirectML ships with Windows, so ort-dylib could make our

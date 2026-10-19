@@ -49,12 +49,50 @@ pub struct Crop {
     pub angle: f64,
 }
 
+/// The keys of Lightroom's crop that hold numbers.
+pub const KEYS: [&str; 5] = [
+    "CropLeft",
+    "CropTop",
+    "CropRight",
+    "CropBottom",
+    "CropAngle",
+];
+
+/// A crop key's number, none when it is not a finite one.
+fn finite(text: &str) -> Option<f64> {
+    text.trim().parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
+/// Whether the settings say there is no crop (`HasCrop` false).
+fn says_none(words: &std::collections::BTreeMap<String, String>) -> bool {
+    words
+        .get("HasCrop")
+        .is_some_and(|v| v.eq_ignore_ascii_case("false"))
+}
+
 impl Crop {
+    /// Whether the settings hold a crop that does not read: one of its
+    /// keys there and no finite number (`NaN`, `inf`, or no number at
+    /// all), with `HasCrop` not saying there is none. That is a file
+    /// written wrong, not an edge left at the file's own, and no
+    /// rectangle can be told from it.
+    pub fn unreadable(words: &std::collections::BTreeMap<String, String>) -> bool {
+        !says_none(words)
+            && KEYS
+                .iter()
+                .any(|k| words.get(*k).is_some_and(|v| finite(v).is_none()))
+    }
+
     /// The crop the settings hold, none when they hold none: the
     /// catalog writes the edges only when the frame is cropped, an
-    /// absent edge at the file's own.
+    /// absent edge at the file's own. None too for a crop that does
+    /// not read ([`Self::unreadable`]), which a caller with a report
+    /// says.
     pub fn of(words: &std::collections::BTreeMap<String, String>) -> Option<Crop> {
-        let num = |k: &str| words.get(k).and_then(|v| v.trim().parse::<f64>().ok());
+        if Self::unreadable(words) {
+            return None;
+        }
+        let num = |k: &str| words.get(k).and_then(|v| finite(v));
         let crop = Crop {
             left: num("CropLeft").unwrap_or(0.0),
             top: num("CropTop").unwrap_or(0.0),
@@ -69,10 +107,7 @@ impl Crop {
             bottom: 1.0,
             angle: 0.0,
         };
-        let cropped = words
-            .get("HasCrop")
-            .is_none_or(|v| !v.eq_ignore_ascii_case("false"));
-        (cropped && crop != none && crop.right > crop.left && crop.bottom > crop.top)
+        (!says_none(words) && crop != none && crop.right > crop.left && crop.bottom > crop.top)
             .then_some(crop)
     }
 
@@ -135,6 +170,9 @@ pub enum NotPlaced {
     Mirrored,
     /// The frame has no size.
     NoSize,
+    /// The crop lands nowhere a number can say: an edge so far out,
+    /// on a turned frame, that the arithmetic runs past the floats.
+    Unreadable,
 }
 
 /// A crop carried: the geometry's fields it sets, and whether it had to
@@ -326,6 +364,15 @@ pub fn place(crop: &Crop, constrained: bool, frame: &Frame) -> Result<Placed, No
             ratio < 1.0,
         )
     };
+    // Every number the geometry takes, finite: one that is not writes
+    // a sidecar that does not read back.
+    let ratio_finite = match aspect {
+        Aspect::Ratio { w, h } => w.is_finite() && h.is_finite(),
+        _ => true,
+    };
+    if ![g.angle, c.x, c.y, c.w, c.h].iter().all(|v| v.is_finite()) || !ratio_finite {
+        return Err(NotPlaced::Unreadable);
+    }
     Ok(Placed {
         turns: g.turns,
         angle: g.angle,
@@ -592,6 +639,53 @@ mod tests {
         let g = p.applied(&Geometry::default());
         assert!(g.fits(&p.crop, 6000.0, 4000.0));
         assert_eq!(g.effective_crop(6000.0, 4000.0), p.crop);
+    }
+
+    /// An edge finite but far past the frame, on a turned crop, runs
+    /// the arithmetic past the floats: refused, not placed as `NaN`.
+    #[test]
+    fn a_crop_past_the_floats_is_not_placed() {
+        let crop = Crop {
+            left: 0.0,
+            top: 0.0,
+            right: 1e300,
+            bottom: 0.9,
+            angle: 5.0,
+        };
+        let f = frame((6000.0, 4000.0), Orientation::Normal);
+        for constrained in [false, true] {
+            assert_eq!(
+                place(&crop, constrained, &f),
+                Err(NotPlaced::Unreadable),
+                "{constrained}"
+            );
+        }
+    }
+
+    /// A crop key there and no finite number is a crop that does not
+    /// read, not an edge at the file's own; `HasCrop` false is still no
+    /// crop.
+    #[test]
+    fn a_crop_key_that_is_no_number_is_no_crop_and_says_so() {
+        let words = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        for v in ["nan", "NaN", "inf", "-inf", "infinity", "wide"] {
+            for key in KEYS {
+                let w = words(&[("CropLeft", "0.1"), ("CropTop", "0.1"), (key, v)]);
+                assert!(Crop::unreadable(&w), "{key} {v}");
+                assert_eq!(Crop::of(&w), None, "{key} {v}");
+            }
+            let off = words(&[("HasCrop", "False"), ("CropAngle", v)]);
+            assert!(!Crop::unreadable(&off), "{v}");
+            assert_eq!(Crop::of(&off), None, "{v}");
+        }
+        let fine = words(&[("CropLeft", "0.1"), ("CropAngle", "2")]);
+        assert!(!Crop::unreadable(&fine));
+        assert!(Crop::of(&fine).is_some());
     }
 
     #[test]

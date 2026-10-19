@@ -454,7 +454,11 @@ pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let part = path.with_extension(format!("json.{}.part", std::process::id()));
-    std::fs::write(&part, text)?;
+    // On the disk before it takes the old one's name: a crash before
+    // the filesystem flushes could otherwise keep the rename and lose
+    // the data, an empty file in place of the one there was. The part
+    // file is removed if the write fails.
+    greycard_edit::write_synced(&part, text.as_bytes())?;
     std::fs::rename(&part, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&part);
     })

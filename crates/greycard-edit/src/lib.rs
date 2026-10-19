@@ -2765,7 +2765,10 @@ impl Sidecar {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let tmp = path.with_file_name(format!(".{name}.{}-{n}.tmp", std::process::id()));
-        std::fs::write(&tmp, self.to_json())?;
+        // Synced before the rename: a crash before the filesystem
+        // flushes could otherwise keep the rename and lose the data,
+        // an empty sidecar in place of the one there was.
+        write_synced(&tmp, self.to_json().as_bytes())?;
         if let Err(e) = std::fs::rename(&tmp, path) {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.into());
@@ -2820,6 +2823,60 @@ pub enum Settled {
     /// The copy in the other place was the older of two and was
     /// removed; the one read was already in place.
     Dropped,
+}
+
+/// Write `bytes` to a new file at `path` and wait until they are on
+/// the disk: the temporary half of a write renamed into place, which
+/// must be whole before it takes the old file's name, or a crash
+/// before the filesystem flushes could keep the rename and lose the
+/// data. The contents are what must land (`sync_data`); the directory
+/// entry goes with the rename. A volume that cannot sync at all, as
+/// some network shares on macOS cannot, is written without it
+/// ([`sync_is_unsupported`]); any other failure is the write's, and the
+/// file is removed.
+pub fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    static SAID: std::sync::Once = std::sync::Once::new();
+    let mut f = std::fs::File::create(path)?;
+    let written = f.write_all(bytes).and_then(|()| match f.sync_data() {
+        Err(e) if sync_is_unsupported(&e) => {
+            SAID.call_once(|| {
+                log::debug!(
+                    "{}: no sync on this volume ({e}); written without",
+                    path.display()
+                )
+            });
+            Ok(())
+        }
+        other => other,
+    });
+    drop(f);
+    if written.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    written
+}
+
+/// Whether a sync failed because the volume or the file cannot be
+/// synced, rather than because the data did not land: `Unsupported`,
+/// or on unix `ENOTSUP`, `ENOTTY`, or `EINVAL`. On Apple's systems a
+/// sync is `F_FULLFSYNC`, with no fallback, which a volume without it
+/// (a network share, often) refuses with one of these.
+pub fn sync_is_unsupported(e: &std::io::Error) -> bool {
+    if e.kind() == std::io::ErrorKind::Unsupported {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        matches!(
+            e.raw_os_error(),
+            Some(code) if code == libc::ENOTSUP || code == libc::ENOTTY || code == libc::EINVAL
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
 }
 
 /// Mark a folder hidden where a leading dot does not do it. Windows
@@ -3850,6 +3907,43 @@ mod tests {
         assert!(tree.get("dehaze").is_none(), "{json}");
         assert_eq!(tree["detail"]["dehaze"], -0.25);
         assert_eq!(Edit::from_json(&json).unwrap(), edit);
+    }
+
+    /// A sync the volume cannot do is best effort; one that failed
+    /// for any other reason fails the write.
+    #[test]
+    fn a_sync_the_volume_cannot_do_is_not_a_failed_write() {
+        use std::io::{Error, ErrorKind};
+        assert!(sync_is_unsupported(&Error::from(ErrorKind::Unsupported)));
+        assert!(!sync_is_unsupported(&Error::from(ErrorKind::Other)));
+        assert!(!sync_is_unsupported(&Error::from(
+            ErrorKind::PermissionDenied
+        )));
+        #[cfg(unix)]
+        {
+            for code in [libc::ENOTSUP, libc::ENOTTY, libc::EINVAL] {
+                assert!(
+                    sync_is_unsupported(&Error::from_raw_os_error(code)),
+                    "{code}"
+                );
+            }
+            for code in [libc::EIO, libc::ENOSPC, libc::EDQUOT, libc::EROFS] {
+                assert!(
+                    !sync_is_unsupported(&Error::from_raw_os_error(code)),
+                    "{code}"
+                );
+            }
+        }
+        // And a write that goes through is whole.
+        let dir = scratch("synced");
+        let path = dir.join("a.json");
+        write_synced(&path, b"{}").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}");
+        // One that cannot begin leaves nothing behind.
+        let nowhere = dir.join("no such folder").join("b.json");
+        assert!(write_synced(&nowhere, b"{}").is_err());
+        assert!(!nowhere.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A fresh folder a test can write into, its own by name and pid.

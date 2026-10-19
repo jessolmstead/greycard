@@ -623,8 +623,17 @@ pub fn import_until(
             {
                 Some(Ok(imported)) => {
                     // The crop is the frame's, carried beside the
-                    // mapper's preset where the file says its size.
-                    for name in imported.unmapped.into_iter().filter(|n| n != "crop") {
+                    // mapper's preset where the file says its size; one
+                    // that does not read is not, and stays named.
+                    let unread = image
+                        .develop
+                        .as_deref()
+                        .is_some_and(|t| Crop::unreadable(&crate::lightroom_exports::words(t)));
+                    for name in imported
+                        .unmapped
+                        .into_iter()
+                        .filter(|n| n != "crop" || unread)
+                    {
                         *report.not_carried.entry(name).or_default() += 1;
                     }
                 }
@@ -1061,6 +1070,10 @@ pub enum Cropped {
 /// crop placed in the frame as the decoder reads its size and its tag,
 /// against the catalog's own size and orientation in `shape`.
 pub fn crop_onto(edit: &mut Edit, raw: &Path, settings: &str, shape: &Shape, turn: u8) -> Cropped {
+    let unread = || Cropped::Not("its crop does not read".into());
+    if Crop::unreadable(&crate::lightroom_exports::words(settings)) {
+        return unread();
+    }
     let Some((crop, constrained)) = crop_in(settings) else {
         return Cropped::None;
     };
@@ -1092,6 +1105,7 @@ pub fn crop_onto(edit: &mut Edit, raw: &Path, settings: &str, shape: &Shape, tur
             Cropped::Not("Lightroom's orientation mirrors the frame".into())
         }
         Err(lightroom::crop::NotPlaced::NoSize) => no_size(),
+        Err(lightroom::crop::NotPlaced::Unreadable) => unread(),
     }
 }
 
@@ -2285,7 +2299,9 @@ pub(crate) fn read(path: &Path) -> Result<Catalog, ImportError> {
                     Ok((
                         r.get::<_, i64>(0)?,
                         Shape {
-                            size: w.zip(h).filter(|(w, h)| *w >= 1.0 && *h >= 1.0),
+                            size: w.zip(h).filter(|(w, h)| {
+                                w.is_finite() && h.is_finite() && *w >= 1.0 && *h >= 1.0
+                            }),
                             orientation: r
                                 .get::<_, Option<String>>(3)
                                 .ok()
@@ -2781,6 +2797,12 @@ fn translate(rules: &str, known: &Known) -> Result<String, String> {
     Ok(text)
 }
 
+/// A rule's number, finite: `NaN` parses as one and casts to zero, and
+/// `inf` casts to the end of the integers.
+fn finite(value: &str) -> Option<f64> {
+    value.trim().parse::<f64>().ok().filter(|n| n.is_finite())
+}
+
 /// One rule's terms.
 fn term(
     criteria: &str,
@@ -2813,9 +2835,7 @@ fn term(
     match criteria {
         "rating" => {
             let Some(c) = cmp(op) else { return none() };
-            let n = value
-                .parse::<f64>()
-                .map_err(|_| format!("a rating of {value}"))?;
+            let n = finite(value).ok_or_else(|| format!("a rating of {value}"))?;
             Ok(vec![format!("rating{c}{}", n.round() as i64)])
         }
         "pick" => {
@@ -2824,7 +2844,7 @@ fn term(
                 "!=" => "!=",
                 _ => return none(),
             };
-            let n = value.parse::<f64>().unwrap_or(0.0);
+            let n = finite(value).ok_or_else(|| format!("a flag of {value}"))?;
             let flag = if n > 0.0 {
                 "pick"
             } else if n < 0.0 {
@@ -2840,13 +2860,13 @@ fn term(
                 "!=" => "!=",
                 _ => return none(),
             };
-            let color = match value.parse::<f64>().map(|n| n as i64) {
-                Ok(0) => "none",
-                Ok(1) => "red",
-                Ok(2) => "yellow",
-                Ok(3) => "green",
-                Ok(4) => "blue",
-                Ok(5) => "purple",
+            let color = match finite(value).map(|n| n as i64) {
+                Some(0) => "none",
+                Some(1) => "red",
+                Some(2) => "yellow",
+                Some(3) => "green",
+                Some(4) => "blue",
+                Some(5) => "purple",
                 _ => return Err(format!("a label of {value}")),
             };
             Ok(vec![format!("label{is}{color}")])
@@ -3997,6 +4017,7 @@ pub(crate) mod tests {
         assert_eq!(one("rating", "==", "0").unwrap(), "rating=0");
         assert_eq!(one("pick", "==", "1").unwrap(), "flag:pick");
         assert_eq!(one("pick", "!=", "-1").unwrap(), "flag!=reject");
+        assert_eq!(one("pick", "==", "0").unwrap(), "flag:none");
         assert_eq!(one("labelColor", "==", "4").unwrap(), "label:blue");
         assert_eq!(
             one("keywords", "all", "\"skye harbor\"").unwrap(),
@@ -4030,6 +4051,13 @@ pub(crate) mod tests {
         assert!(one("touchTime", "inLast", "2").is_err());
         assert!(one("captureTime", "inLast", "1").is_err());
         assert!(one("keywords", "all", "\"say \\\"cheese\\\"\"").is_err());
+        // A number that is not finite, or no number, is refused: no
+        // rating, label, or flag.
+        for v in ["nan", "NaN", "inf", "-inf", "infinity", "\"up\""] {
+            assert!(one("rating", ">=", v).is_err(), "{v}");
+            assert!(one("labelColor", "==", v).is_err(), "{v}");
+            assert!(one("pick", "==", v).is_err(), "{v}");
+        }
         let union = "s = { { criteria = \"rating\", operation = \"==\", value = 5, },\n\
                      { criteria = \"pick\", operation = \"==\", value = 1, },\n\
                      combine = \"union\", }";
@@ -4336,6 +4364,64 @@ pub(crate) mod tests {
             here,
             options,
         }
+    }
+
+    /// A file size past the floats is no size: SQLite keeps `1e999` as
+    /// infinity (and `NaN` as nothing), and a crop laid over it would
+    /// not be a number.
+    #[test]
+    fn a_catalog_size_that_is_not_finite_is_no_size() {
+        let s = cropped_shoot("inf-size");
+        let db = Connection::open(&s.catalog).unwrap();
+        db.execute(
+            "UPDATE Adobe_images SET fileWidth = 1e999 WHERE id_local = 100",
+            [],
+        )
+        .unwrap();
+        drop(db);
+        let catalog = read(&s.catalog).unwrap();
+        let size = |id: i64| {
+            catalog
+                .images
+                .iter()
+                .find(|i| i.id == id)
+                .unwrap()
+                .shape
+                .size
+        };
+        assert_eq!(size(100), None);
+        assert_eq!(size(101), Some((4.0, 3.0)));
+        drop(catalog);
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// A crop that does not read, by a key that is no number or by
+    /// edges so far out the placing runs past the floats, is not
+    /// carried and says so; the geometry is left as it was.
+    #[test]
+    fn a_crop_that_does_not_read_is_not_carried_and_says_so() {
+        let s = cropped_shoot("crop-unread");
+        let frame = s.here.join("frame.tif");
+        let shape = Shape {
+            size: Some((4.0, 3.0)),
+            orientation: Some("AB".into()),
+        };
+        for settings in [
+            "s = { CropLeft = 0.25, CropAngle = nan }",
+            "s = { CropLeft = 0.25, CropRight = inf }",
+            "s = { CropTop = 0.1, CropBottom = \"wide\" }",
+            "s = { CropLeft = 0, CropTop = 0, CropRight = 1e300, CropBottom = 0.9, \
+             CropAngle = 5, CropConstrainAspectRatio = true }",
+        ] {
+            let mut edit = Edit::default();
+            assert_eq!(
+                crop_onto(&mut edit, &frame, settings, &shape, 0),
+                Cropped::Not("its crop does not read".into()),
+                "{settings}"
+            );
+            assert_eq!(edit.geometry, Edit::default().geometry, "{settings}");
+        }
+        std::fs::remove_dir_all(&s.dir).unwrap();
     }
 
     #[test]

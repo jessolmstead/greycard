@@ -83,15 +83,17 @@ impl Aspect {
         }
     }
 
-    /// "65:24", "65/24", "65x24" or "2.7" as a ratio; none for text
-    /// that will not read, or a side at nothing.
+    /// "65:24", "65/24", "65x24", or "2.7" as a ratio; none for text
+    /// that will not read, a side at nothing, or one past the floats
+    /// ("inf", "1e39"), which would write a sidecar that does not read
+    /// back.
     pub fn parse_ratio(text: &str) -> Option<Self> {
         let text = text.trim();
         let (w, h) = match text.split_once([':', '/', 'x', 'X']) {
             Some((a, b)) => (a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?),
             None => (text.parse::<f32>().ok()?, 1.0),
         };
-        (w > 0.0 && h > 0.0).then_some(Aspect::Ratio { w, h })
+        (w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite()).then_some(Aspect::Ratio { w, h })
     }
 }
 
@@ -1885,7 +1887,10 @@ mod tests {
             Aspect::parse_ratio("2.7"),
             Some(Aspect::Ratio { w: 2.7, h: 1.0 })
         );
-        for text in ["", "0:1", "1:0", "-3:2", "wide", "3:"] {
+        // Nor does a side past the floats, which would write `null`.
+        for text in [
+            "", "0:1", "1:0", "-3:2", "wide", "3:", "inf:1", "1:inf", "inf", "1e39", "NaN", "nan:1",
+        ] {
             assert_eq!(Aspect::parse_ratio(text), None, "{text}");
             assert_eq!(Aspect::from_name("Custom", text), Aspect::Free, "{text}");
         }

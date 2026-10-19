@@ -161,10 +161,7 @@ impl Scales {
         let (name, value) = given
             .split_once('=')
             .ok_or_else(|| format!("{given}: not NAME=VALUE"))?;
-        let value: f32 = value
-            .trim()
-            .parse()
-            .map_err(|_| format!("{given}: not a number"))?;
+        let value = finite(value).ok_or_else(|| format!("{given}: not a number"))?;
         if self.set(name.trim(), value) {
             Ok(())
         } else {
@@ -310,11 +307,14 @@ pub fn read_table_with(text: &str, name: &str, scales: &Scales, offset: f32) -> 
                 keys.insert(key, word);
             }
             Value::Table(items) if key.starts_with("ToneCurve") && !key.ends_with("Name") => {
-                // The points flat, x then y, on 0..255.
-                let numbers: Vec<f32> = items
+                // The points flat, x then y, on 0..255. A word that is
+                // no finite number, or a table where a number belongs,
+                // keeps its place, so the pairs after it stay paired,
+                // and takes its point out.
+                let numbers: Vec<Option<f32>> = items
                     .iter()
-                    .filter_map(|(_, v)| match v {
-                        Value::Word(w) => w.parse::<f32>().ok(),
+                    .map(|(_, v)| match v {
+                        Value::Word(w) => finite(w),
                         Value::Table(_) => None,
                     })
                     .collect();
@@ -322,7 +322,7 @@ pub fn read_table_with(text: &str, name: &str, scales: &Scales, offset: f32) -> 
                     .as_chunks::<2>()
                     .0
                     .iter()
-                    .map(|[x, y]| [x / 255.0, y / 255.0])
+                    .filter_map(|[x, y]| Some([(*x)? / 255.0, (*y)? / 255.0]))
                     .collect();
                 curves.insert(key, points);
             }
@@ -604,12 +604,17 @@ fn seq_points(node: &roxmltree::Node) -> Vec<Point> {
         .filter_map(|n| n.text())
         .filter_map(|t| {
             let (x, y) = t.split_once(',')?;
-            Some([
-                x.trim().parse::<f32>().ok()? / 255.0,
-                y.trim().parse::<f32>().ok()? / 255.0,
-            ])
+            Some([finite(x)? / 255.0, finite(y)? / 255.0])
         })
         .collect()
+}
+
+/// A number, finite: `NaN` and `inf` parse as floats, and either
+/// carried into an edit would write a sidecar that does not read back
+/// (JSON has no word for them). One that is not finite is taken as
+/// absent.
+fn finite(text: &str) -> Option<f32> {
+    text.trim().parse::<f32>().ok().filter(|v| v.is_finite())
 }
 
 /// The settings, mapped.
@@ -621,7 +626,7 @@ fn map(
     offset: f32,
 ) -> Imported {
     let get = |k: &str| keys.get(k).map(String::as_str);
-    let num = |k: &str| get(k).and_then(|v| v.trim().parse::<f32>().ok());
+    let num = |k: &str| get(k).and_then(finite);
     // A key in either the current or the 2010 process's spelling.
     let either = |new: &str, old: &str| num(new).or_else(|| num(old));
     let mut edit = Edit::default();
@@ -920,8 +925,10 @@ fn map(
         }
     }
     // The crop is the frame's, not a preset's. An XMP says so with
-    // `HasCrop`; a catalog's table has the edges only when cropped.
+    // `HasCrop`; a catalog's table has the edges only when cropped. A
+    // crop whose keys do not read is named too: it is not carried.
     let cropped = get("HasCrop").is_some_and(|v| v.eq_ignore_ascii_case("true"))
+        || crop::Crop::unreadable(keys)
         || num("CropAngle").is_some_and(|a| a != 0.0)
         || num("CropLeft").is_some_and(|v| v > 0.0)
         || num("CropTop").is_some_and(|v| v > 0.0)
@@ -1481,5 +1488,191 @@ mod tests {
         assert!(near(120.0, 140.0), "{}", oklab_hue(120.0));
         assert!(near(240.0, 265.0), "{}", oklab_hue(240.0));
         assert!(near(360.0, 25.0));
+    }
+
+    /// An edit and a preset each write as JSON and read back as they
+    /// were: a float that is not finite writes as `null` and does not.
+    fn round_trips(imported: &Imported, what: &str) {
+        let preset = &imported.preset;
+        let back = Preset::from_json(&preset.to_json()).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert_eq!(&back, preset, "{what}");
+        let mut edit = Edit::default();
+        preset.apply(&mut edit);
+        let back = Edit::from_json(&edit.to_json()).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert_eq!(back, edit, "{what}");
+    }
+
+    /// `NaN` and `inf` parse as floats; each is taken as absent in an
+    /// XMP's attributes and its curve points, and in a catalog's table
+    /// and its flat curve, and what is mapped reads back. A crop key
+    /// that holds one is a crop that does not read: none carried, and
+    /// named as not carried.
+    #[test]
+    fn a_number_that_is_not_finite_is_taken_as_absent() {
+        for v in ["nan", "NaN", "inf", "-inf", "infinity"] {
+            let xmp = format!(
+                r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   crs:Exposure2012="{v}"
+   crs:Contrast2012="+20"
+   crs:CropLeft="{v}"
+   crs:CropAngle="{v}">
+   <crs:ToneCurvePV2012>
+    <rdf:Seq>
+     <rdf:li>0, 0</rdf:li>
+     <rdf:li>128, {v}</rdf:li>
+     <rdf:li>255, 255</rdf:li>
+    </rdf:Seq>
+   </crs:ToneCurvePV2012>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"#
+            );
+            let imported = read(&xmp, "x").unwrap();
+            let e = &imported.preset.edit;
+            assert_eq!(e.light.exposure, 0.0, "{v}");
+            assert!((e.light.tone.contrast - 1.1).abs() < 1e-6, "{v}");
+            assert_eq!(e.curves.rgb, vec![[0.0, 0.0], [1.0, 1.0]], "{v}");
+            assert!(imported.unmapped.iter().any(|u| u == "crop"), "{v}");
+            round_trips(&imported, v);
+
+            // A catalog's table: the bad point goes and the pairs after
+            // it stay paired.
+            let table = format!(
+                "s = {{ Exposure2012 = {v}, Contrast2012 = 20, \
+                 CropLeft = {v}, CropAngle = {v}, \
+                 ToneCurvePV2012 = {{ 0, 0, 128, {v}, 255, 255 }} }}"
+            );
+            let imported = read_table(&table, "x").unwrap();
+            let e = &imported.preset.edit;
+            assert_eq!(e.light.exposure, 0.0, "{v}");
+            assert_eq!(e.curves.rgb, vec![[0.0, 0.0], [1.0, 1.0]], "{v}");
+            assert!(imported.unmapped.iter().any(|u| u == "crop"), "{v}");
+            round_trips(&imported, v);
+
+            // The crop the catalog carries beside the preset: none,
+            // rather than one with the file's edge or no angle put in
+            // for the keys that do not read.
+            let words: BTreeMap<String, String> = [
+                ("CropLeft", v),
+                ("CropTop", "0.1"),
+                ("CropAngle", v),
+                ("CropBottom", v),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+            assert!(crop::Crop::unreadable(&words), "{v}");
+            assert_eq!(crop::Crop::of(&words), None, "{v}");
+
+            // A scale given on the command line is refused.
+            let mut scales = Scales::DEFAULT;
+            assert!(
+                scales
+                    .set_from(&format!("{}={v}", Scales::NAMES[0]))
+                    .is_err(),
+                "{v}"
+            );
+        }
+        // A table where a number belongs keeps its place as a bad word
+        // does.
+        let nested = read_table(
+            "s = { ToneCurvePV2012 = { 0, 0, 128, { 1 }, 255, 255 } }",
+            "x",
+        )
+        .unwrap();
+        assert_eq!(nested.preset.edit.curves.rgb, vec![[0.0, 0.0], [1.0, 1.0]]);
+    }
+
+    /// Every number the mapper reads at `NaN` at once: what is mapped
+    /// still writes and reads back, whichever key a later change
+    /// forgets to guard.
+    #[test]
+    fn a_settings_map_all_nan_writes_a_sidecar_that_reads_back() {
+        const NUMBERS: &[&str] = &[
+            "Exposure2012",
+            "Exposure",
+            "Contrast2012",
+            "Contrast",
+            "Highlights2012",
+            "Shadows2012",
+            "Whites2012",
+            "Blacks2012",
+            "Blacks",
+            "Temperature",
+            "Tint",
+            "ParametricHighlights",
+            "ParametricLights",
+            "ParametricDarks",
+            "ParametricShadows",
+            "ParametricShadowSplit",
+            "ParametricMidtoneSplit",
+            "ParametricHighlightSplit",
+            "Vibrance",
+            "Saturation",
+            "SplitToningShadowHue",
+            "SplitToningShadowSaturation",
+            "ColorGradeShadowHue",
+            "ColorGradeShadowSat",
+            "ColorGradeMidtoneHue",
+            "ColorGradeMidtoneSat",
+            "SplitToningHighlightHue",
+            "SplitToningHighlightSaturation",
+            "ColorGradeHighlightHue",
+            "ColorGradeHighlightSat",
+            "SplitToningBalance",
+            "Texture",
+            "Clarity2012",
+            "Clarity",
+            "Dehaze",
+            "Sharpness",
+            "LuminanceSmoothing",
+            "PostCropVignetteAmount",
+            "PostCropVignetteMidpoint",
+            "PostCropVignetteFeather",
+            "PostCropVignetteRoundness",
+            "GrainAmount",
+            "GrainSize",
+            "LensProfileEnable",
+            "LensManualDistortionAmount",
+            "CropAngle",
+            "CropLeft",
+            "CropTop",
+            "CropRight",
+            "CropBottom",
+        ];
+        let mut keys: BTreeMap<String, String> = NUMBERS
+            .iter()
+            .map(|k| (k.to_string(), "NaN".to_string()))
+            .collect();
+        for band in [
+            "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta",
+        ] {
+            for k in [
+                "HueAdjustment",
+                "SaturationAdjustment",
+                "LuminanceAdjustment",
+                "GrayMixer",
+            ] {
+                keys.insert(format!("{k}{band}"), "NaN".into());
+            }
+        }
+        // The switches that send the mapper on to the keys behind them.
+        keys.insert("WhiteBalance".into(), "Custom".into());
+        keys.insert("ConvertToGrayscale".into(), "True".into());
+        // The readers drop a bad point before the mapper sees it; a
+        // curve beside the bad keys is mapped with them.
+        let curves: BTreeMap<String, Vec<Point>> = [(
+            "ToneCurvePV2012".to_string(),
+            vec![[0.0, 0.0], [0.5, 0.6], [1.0, 1.0]],
+        )]
+        .into_iter()
+        .collect();
+        for offset in [0.0, 0.3] {
+            let imported = map("x".into(), &keys, &curves, &Scales::DEFAULT, offset);
+            round_trips(&imported, &format!("offset {offset}"));
+        }
     }
 }

@@ -959,7 +959,9 @@ impl Preset {
             std::fs::create_dir_all(dir)?;
         }
         let tmp = path.with_extension(format!("{EXTENSION}.tmp"));
-        std::fs::write(&tmp, self.to_json())?;
+        // On the disk before it takes the old one's name, so a crash
+        // before the filesystem flushes cannot leave an empty preset.
+        crate::write_synced(&tmp, self.to_json().as_bytes())?;
         std::fs::rename(&tmp, path)?;
         Ok(())
     }

@@ -334,14 +334,10 @@ impl Roots {
             );
         }
         let text = serde_json::to_string_pretty(&file).map_err(std::io::Error::other)?;
-        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-            std::fs::create_dir_all(dir)?;
-        }
-        let part = path.with_extension(format!("json.{}.part", std::process::id()));
-        std::fs::write(&part, text)?;
-        std::fs::rename(&part, path).inspect_err(|_| {
-            let _ = std::fs::remove_file(&part);
-        })
+        // The collections' writer: a part file synced to the disk, then
+        // renamed over the list, so neither a crash mid-write nor one
+        // before the filesystem flushes leaves an empty list.
+        crate::collections::write_atomic(path, &text)
     }
 
     /// Change the list kept at `path` as it is on disk now, not as

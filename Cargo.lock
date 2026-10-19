@@ -2029,6 +2029,7 @@ dependencies = [
  "dirs",
  "gethostname",
  "greycard-core",
+ "libc",
  "log",
  "rawcolor",
  "roxmltree",
