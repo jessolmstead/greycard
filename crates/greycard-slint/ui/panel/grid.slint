@@ -374,11 +374,6 @@ export component GridSheet inherits Rectangle {
                         icon: @image-url("../icons/grid-2x2.svg");
                         clicked => { root.focus-keys(); root.lightbox-asked(); }
                     }
-                    PanelButton {
-                        text: "Loupe";
-                        icon: @image-url("../icons/image.svg");
-                        clicked => { root.focus-keys(); root.loupe-asked(); }
-                    }
                 }
                 FilterBar {
                     takes-focus: true;

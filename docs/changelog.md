@@ -21,6 +21,10 @@ from the testers. Sidecars written by this build are refused by 0.7.x.
   Cull mode is now in the right panel and allows viewing embedded previews
   or developed frames.
   ([§359](https://github.com/jessolmstead/greycard/blob/master/docs/notes/359-two-views-and-two-modes.md))
+- The grid header's Loupe button is gone; the switch at the top of
+  the left pane is the one way between the views, with Enter and a
+  double-click on a frame as before
+  ([§371](https://github.com/jessolmstead/greycard/blob/master/docs/notes/371-one-way-between-the-views.md))
 - Ctrl+A selects every frame shown, in the strip, the grid and the
   lightbox
   ([§367](https://github.com/jessolmstead/greycard/blob/master/docs/notes/367-ctrl-a-selects-every-frame-shown.md))

@@ -383,3 +383,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§368. Cull on the camera's JPEG shows the camera's picture](notes/368-cull-on-the-cameras-jpeg-shows-the-cameras-picture.md) (2026-10-18)
 - [§369. A Linux AppImage beside the tarball](notes/369-a-linux-appimage-beside-the-tarball.md) (2026-10-18)
 - [§370. The Lightroom catalog sheet in a sheet's shape](notes/370-the-lightroom-catalog-sheet-in-a-sheets-shape.md) (2026-10-18)
+- [§371. One way between the views](notes/371-one-way-between-the-views.md) (2026-10-18)

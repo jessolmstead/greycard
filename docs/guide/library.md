@@ -35,8 +35,8 @@ unplugged, "isn't reachable; is its drive connected?".
 
 **Library** and **Loupe** at the top of the left pane switch
 between the grid and the loupe, and the one you are in is lit. In the
-grid, **Loupe** in the header, a double-click on a frame, **E**,
-**Enter** or **Esc** also go to the loupe. (With several frames
+grid, a double-click on a frame, **E**, **Enter**, or **Esc** also go
+to the loupe. (With several frames
 selected, the first **Esc** clears the selection.)
 
 The loupe has two modes, **Cull** and **Develop**, first in the right

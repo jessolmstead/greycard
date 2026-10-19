@@ -5679,18 +5679,6 @@ mod tests {
         click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     }
 
-    /// A click on the rightmost of the elements labeled `label`: the
-    /// grid header's Loupe, not the pane's.
-    fn click_rightmost(app: &App, label: &str) {
-        crate::testing::count_labeled(app, label);
-        let (at, size) =
-            i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, label)
-                .map(|e| (e.absolute_position(), e.size()))
-                .max_by(|a, b| a.0.x.total_cmp(&b.0.x))
-                .expect("the label is there");
-        click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
-    }
-
     /// A click on the panel's tab `label`: the element so named in the
     /// row the Cull tab is in (CULLING ends in a Develop button of its
     /// own, lower down).
@@ -5795,14 +5783,16 @@ mod tests {
             "no row of its own"
         );
         assert!(state.borrow().culling.loupe_cull);
-        for back in ["pane", "header", "double-click", "return", "g", "e"] {
+        for back in ["pane", "double-click", "return", "g", "e"] {
             click_labeled(&app, "Library view");
             assert_eq!(seen(&app, &state), Seen::Library, "{back}");
-            // The old Cull toggle is gone from the grid's header.
+            // The old Cull toggle is gone from the grid's header, and
+            // so is its Loupe button: the one "Loupe" left is the pane's
+            // switch, the one way between the views.
             assert_eq!(crate::testing::count_labeled(&app, "Culling"), 0);
+            assert_eq!(crate::testing::count_labeled(&app, "Loupe"), 1);
             match back {
                 "pane" => click_labeled(&app, "Loupe view"),
-                "header" => click_rightmost(&app, "Loupe"),
                 "double-click" => {
                     // The cell's name (the test window's names, not the
                     // files'), as wide as the grid's cell: not the
