@@ -24,6 +24,16 @@ design note behind it.
   ran every develop as software shaders for minutes
   ([§374](https://github.com/jessolmstead/greycard/blob/master/docs/notes/374-a-no-gpu-mode.md))
 
+### Export
+
+- The command line exports a whole folder: `greycard-ui FOLDER
+  --export OUT/ --all` writes every frame under its own edit, where
+  before each frame past the first had to be named by `--also`. The
+  `--exposure`, `--develop-temperature`, and `--agx` overrides then
+  apply to every frame; `--preset` is refused with `--all`, since
+  `greycard presets --apply` lays a preset over many files already
+  ([§376](https://github.com/jessolmstead/greycard/blob/master/docs/notes/376-export-a-whole-folder-with-all.md))
+
 ### Fixes
 
 - A Lightroom import no longer writes a sidecar the editor refuses

@@ -1987,9 +1987,9 @@ pub(crate) fn opening_sheet(
 
 /// Whether `--export` names a folder for the set rather than a file
 /// for one frame: a folder that is there, or a path that ends in a
-/// separator, which asks for one. With `--also` (`set`), a path that
-/// is not there and names no picture format is a folder too: a set
-/// has no one file to go to.
+/// separator, which asks for one. With `--also` or `--all` (`set`), a
+/// path that is not there and names no picture format is a folder
+/// too: a set has no one file to go to.
 pub(crate) fn export_folder(path: &Path, set: bool) -> bool {
     path.is_dir()
         || path

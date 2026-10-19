@@ -160,6 +160,7 @@ pub(crate) fn plan(
     index: Option<PathBuf>,
 ) -> Result<Plan> {
     refuse_window_flags(cli)?;
+    check_all(cli)?;
     // The files, and which of them is the one opened: as the window
     // opens them, the command line's file, or a folder's last file
     // when the settings remember one in it, else its first.
@@ -187,8 +188,13 @@ pub(crate) fn plan(
             (files, first)
         }
     };
-    let into_folder = export_folder(target, !cli.also.is_empty());
+    let into_folder = export_folder(target, !cli.also.is_empty() || cli.all);
     check_also(cli, into_folder, files.len())?;
+    anyhow::ensure!(
+        !cli.all || into_folder,
+        "--all names a set, and --export {} is one frame's file: give a folder (one that is there, or a path ending in a separator)",
+        target.display()
+    );
 
     let write_sidecars = !cli.no_sidecars;
     let placement = if cli.sidecar_folder || remembered.sidecars_in_folder {
@@ -222,14 +228,19 @@ pub(crate) fn plan(
         .filter(|p| p.sheet.same(&sheet))
         .map(|p| p.name.clone());
 
-    // The set: the frame opened and the `--also` rows, in file order.
-    let mut rows: Vec<usize> = std::iter::once(first)
-        .chain(if into_folder {
-            cli.also.clone()
-        } else {
-            Vec::new()
-        })
-        .collect();
+    // The set: the frame opened and the `--also` rows, in file order;
+    // with `--all`, every row the folder's listing has.
+    let mut rows: Vec<usize> = if cli.all {
+        (0..files.len()).collect()
+    } else {
+        std::iter::once(first)
+            .chain(if into_folder {
+                cli.also.clone()
+            } else {
+                Vec::new()
+            })
+            .collect()
+    };
     rows.sort_unstable();
     rows.dedup();
 
@@ -285,8 +296,9 @@ pub(crate) fn plan(
         let seed = raw && crate::files::line_never_developed(line);
 
         // The command line's temperature, exposure and curve, over the
-        // first frame's edit and never onto its sidecar.
-        if i == first {
+        // edit of the frame opened (every frame's, with `--all`) and
+        // never onto its sidecar.
+        if i == first || cli.all {
             overrides.apply(&mut edit);
         }
         frames.push(queue::Frame {
@@ -563,6 +575,33 @@ fn refuse_window_flags(cli: &Cli) -> Result<()> {
         asked.join(", "),
         if asked.len() == 1 { "is" } else { "are" },
         if asked.len() == 1 { "it" } else { "them" }
+    );
+    Ok(())
+}
+
+/// `--all` names a folder's every frame: an error, not a quiet export
+/// of one, when no folder is given or the path opened is one file;
+/// and an error with `--preset`, which would write a step into the
+/// history of the frame opened alone. (Without `--export` clap refuses
+/// it, and with `--also`; an export to one file is refused once the
+/// target is known.)
+fn check_all(cli: &Cli) -> Result<()> {
+    if !cli.all {
+        return Ok(());
+    }
+    let Some(path) = cli.path.as_deref() else {
+        anyhow::bail!("--all exports a folder: give its path");
+    };
+    // A path that is not there is the listing's to refuse.
+    if path.exists() && !path.is_dir() {
+        anyhow::bail!(
+            "--all exports every frame of a folder, and {} is one file: open the folder, not a file, to export a set",
+            path.display()
+        );
+    }
+    anyhow::ensure!(
+        cli.preset.is_none(),
+        "--preset with --all would write a step into one frame's history; `greycard presets --apply NAME <files>` lays it over every file, then export with --all"
     );
     Ok(())
 }
@@ -1161,6 +1200,196 @@ mod tests {
             .collect();
         assert_eq!(exposures, [0.0, 1.0, 0.0]);
         assert_eq!(planned.folder.as_deref(), Some(target.as_path()));
+    }
+
+    /// `--export DIR --all`: every frame of the folder, in its order,
+    /// the same files `--also` naming the rest of the rows writes.
+    #[test]
+    fn all_exports_every_frame_as_also_naming_each_row_does() {
+        let scratch = Scratch::new("all");
+        let shoot = scratch.0.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        for i in 0..3 {
+            dng(&shoot.join(format!("IMG_{i:04}.dng")), 48, 32);
+        }
+        let remembered = settings::Settings::default();
+        let written = |name: &str, how: &[&str]| {
+            let mut folder = scratch.0.join(name).into_os_string();
+            folder.push(std::path::MAIN_SEPARATOR_STR);
+            let target = PathBuf::from(&folder);
+            let mut args: Vec<&std::ffi::OsStr> = vec![
+                shoot.as_os_str(),
+                "--export".as_ref(),
+                target.as_os_str(),
+                "--no-sidecars".as_ref(),
+            ];
+            args.extend(how.iter().map(|a| std::ffi::OsStr::new(*a)));
+            let planned = plan(&cli(&args), &target, &remembered, None, None).unwrap();
+            let finished = run(planned);
+            assert!(finished.succeeded(), "{}", finished.line);
+            let mut names: Vec<String> = std::fs::read_dir(&target)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        let all = written("all", &["--all"]);
+        assert_eq!(all, ["IMG_0000.jpg", "IMG_0001.jpg", "IMG_0002.jpg"]);
+        assert_eq!(all, written("also", &["--also", "1,2"]));
+    }
+
+    /// `--all` is the folder's whole set: not with `--also`, which
+    /// names part of one, and not without `--export`.
+    #[test]
+    fn all_with_also_or_without_export_is_refused() {
+        let refused = |args: &[&str]| {
+            Cli::try_parse_from(args)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        };
+        let e = refused(&[
+            "greycard-ui",
+            "shoot",
+            "--export",
+            "out/",
+            "--all",
+            "--also",
+            "1",
+        ]);
+        assert!(e.contains("--all") && e.contains("--also"), "{e}");
+        let e = refused(&["greycard-ui", "shoot", "--all"]);
+        assert!(e.contains("--export"), "{e}");
+    }
+
+    /// `--all` with one file to open, one file to write, or no path at
+    /// all is refused with the reason rather than exporting a set of
+    /// one or a folder the command line did not name.
+    #[test]
+    fn all_with_one_file_is_refused_with_the_reason() {
+        let scratch = Scratch::new("all-one");
+        let files = names(&scratch.0, 2);
+        let remembered = settings::Settings::default();
+        let refused = |args: &[&std::ffi::OsStr], target: &Path| {
+            plan(&cli(args), target, &remembered, None, None)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        };
+        let mut folder = scratch.0.join("out").into_os_string();
+        folder.push(std::path::MAIN_SEPARATOR_STR);
+        let into = PathBuf::from(&folder);
+        let e = refused(
+            &[
+                files[0].as_os_str(),
+                "--export".as_ref(),
+                into.as_os_str(),
+                "--all".as_ref(),
+            ],
+            &into,
+        );
+        assert!(
+            e.starts_with("--all exports every frame of a folder") && e.contains("IMG_0000.CR3"),
+            "{e}"
+        );
+        let one = scratch.0.join("one.jpg");
+        let e = refused(
+            &[
+                scratch.0.as_os_str(),
+                "--export".as_ref(),
+                one.as_os_str(),
+                "--all".as_ref(),
+            ],
+            &one,
+        );
+        assert!(e.contains("--all names a set"), "{e}");
+        // No path: not the remembered folder, though one is remembered.
+        let last = settings::Settings {
+            last_file: files[1].to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let e = plan(
+            &cli(&["--export".as_ref(), into.as_os_str(), "--all".as_ref()]),
+            &into,
+            &last,
+            None,
+            None,
+        )
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+        assert_eq!(e, "--all exports a folder: give its path");
+    }
+
+    /// `--preset` writes a step into the history of the frame opened
+    /// alone, so with `--all` it is refused and the batch apply named;
+    /// the overrides that touch no sidecar go on every frame of the
+    /// set, not only the frame opened (the folder's last file here).
+    #[test]
+    fn all_takes_the_overrides_on_every_frame_and_refuses_a_preset() {
+        let scratch = Scratch::new("all-overrides");
+        let files = names(&scratch.0, 3);
+        let remembered = settings::Settings {
+            last_file: files[1].to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let mut folder = scratch.0.join("out").into_os_string();
+        folder.push(std::path::MAIN_SEPARATOR_STR);
+        let into = PathBuf::from(&folder);
+        let e = plan(
+            &cli(&[
+                scratch.0.as_os_str(),
+                "--export".as_ref(),
+                into.as_os_str(),
+                "--all".as_ref(),
+                "--preset".as_ref(),
+                "Warm".as_ref(),
+            ]),
+            &into,
+            &remembered,
+            None,
+            None,
+        )
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+        assert!(
+            e.starts_with("--preset with --all would write a step into one frame's history")
+                && e.contains("greycard presets --apply NAME <files>"),
+            "{e}"
+        );
+        let planned = plan(
+            &cli(&[
+                scratch.0.as_os_str(),
+                "--export".as_ref(),
+                into.as_os_str(),
+                "--all".as_ref(),
+                "--exposure".as_ref(),
+                "1".as_ref(),
+                "--agx".as_ref(),
+                "--no-sidecars".as_ref(),
+            ]),
+            &into,
+            &remembered,
+            None,
+            None,
+        )
+        .unwrap();
+        let sources: Vec<&Path> = planned.frames.iter().map(|f| f.source.as_path()).collect();
+        assert_eq!(sources, [&files[0], &files[1], &files[2]]);
+        let exposures: Vec<f32> = planned
+            .frames
+            .iter()
+            .map(|f| f.edit.light.exposure)
+            .collect();
+        assert_eq!(exposures, [1.0, 1.0, 1.0]);
+        assert!(
+            planned
+                .frames
+                .iter()
+                .all(|f| f.edit.display_curve == greycard_edit::DisplayCurve::Agx)
+        );
     }
 
     /// What the command line names and the run cannot do is refused

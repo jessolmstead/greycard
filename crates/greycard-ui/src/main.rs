@@ -155,7 +155,8 @@ struct Cli {
     /// Open with AgX as the display curve, Blender's formation with
     /// its Punchy look, in place of the curve per channel: the LIGHT
     /// section's switch, for a comparison from the command line; on
-    /// the first file only, as --exposure is
+    /// the frame opened only, as --exposure is (with --export --all,
+    /// on every frame)
     #[arg(long)]
     agx: bool,
     /// Set the panel's temperature after opening, without a develop: the
@@ -214,9 +215,10 @@ struct Cli {
     /// Export the first file under its edit to this path, with no
     /// window, then quit. A folder (one that is there, or a path
     /// ending in a separator) takes the set instead, the first file
-    /// and the --also rows, each frame under its own edit and its own
-    /// name. Exits 0 when every frame was written as its edit asks (or
-    /// left, as --on-exists skip asks); 2 when every frame was written
+    /// and the --also rows (or with --all, every frame), each frame
+    /// under its own edit and its own name. Exits 0 when every frame
+    /// was written as its edit asks (or left, as --on-exists skip
+    /// asks); 2 when every frame was written
     /// but some without something the edit names that this machine
     /// has not got (a look, a learned model) or could not run, each
     /// named on stderr; 1, with the reason, when a frame was not
@@ -225,9 +227,10 @@ struct Cli {
     export: Option<PathBuf>,
     /// With --export: export this version of each frame, by the name
     /// the user gave it, rather than the file's own edit; a name two
-    /// versions share takes the first by position and says so. A
-    /// frame with no version of that name is not written, and the run
-    /// exits 1 naming it. (--version prints the build's version, so
+    /// versions share takes the first by position and says so. When
+    /// a frame has no version of that name, the run stops before
+    /// writing anything and exits 1 naming it. (--version prints the
+    /// build's version, so
     /// this flag is --version-name)
     #[arg(long, requires = "export")]
     version_name: Option<String>,
@@ -488,8 +491,9 @@ struct Cli {
     #[arg(long)]
     tab: Option<String>,
     /// Lay this preset (by name, or a preset file's path) over the
-    /// first file's edit on opening, as a step in its history; with
-    /// --import, over every frame imported
+    /// edit of the frame opened (the file given, or in a folder the
+    /// one last open there), as a step in its history; with --import,
+    /// over every frame imported. Not with --export --all
     #[arg(long, value_name = "NAME")]
     preset: Option<String>,
     /// Run the engine's ops on the CPU even where the GPU could take
@@ -609,6 +613,12 @@ struct Cli {
     /// the set
     #[arg(long, value_name = "ROWS", value_delimiter = ',')]
     also: Vec<usize>,
+    /// With --export into a folder: export every frame of the folder
+    /// opened, in its order, rather than the first file and the --also
+    /// rows; the frames are the ones --also could name. The path must
+    /// name the folder, and --preset is refused with it
+    #[arg(long, requires = "export", conflicts_with = "also")]
+    all: bool,
     /// In culling mode, open the move-rejects sheet once the first
     /// picture shows, for a snapshot of it (implies --cull)
     #[arg(long, hide = true)]

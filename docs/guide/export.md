@@ -265,12 +265,13 @@ added to its history, as in the window.
 | `--export FILE` | Writes one frame to `FILE`. Its extension (`.jpg`, `.png`, `.tif`) sets the format. |
 | `--export FOLDER/` | Writes into a folder: one that exists, or a path ending in `/`. Each frame keeps its own name. |
 | `--also 2,5,7` | With a folder: adds more frames from the opened folder, counted from 0 in the folder's order. |
+| `--all` | With a folder: writes every frame of the opened folder, in the folder's order. Give the folder's path; not with `--also` or `--preset`. |
 | `--export-preset NAME` | Uses a saved export preset. Without it, the sheet as you last left it. |
 | `--long-edge N` | Long side in pixels. Never enlarges. |
 | `--on-exists WHAT` | `increment`, `overwrite` or `skip`. |
 | `--version-name NAME` | Exports each frame's version of that name instead of the frame's own edit, named `IMG_0001-NAME.jpg` in a folder, and recorded in the version's history. A frame with no version of that name stops the run. |
-| `--preset NAME` | Applies a develop preset first, saved as a step in the frame's history. |
-| `--exposure EV`, `--develop-temperature K`, `--agx` | Change this export only. Not saved to the frame. |
+| `--preset NAME` | Applies a develop preset first, saved as a step in the history of the frame opened: the file given, or in a folder the one you last had open. Not with `--all`; lay a preset over many files with `greycard presets --apply NAME <files>`, then export. |
+| `--exposure EV`, `--develop-temperature K`, `--agx` | Change this export only, on the frame opened (with `--all`, on every frame). Not saved to the frame. |
 | `--no-sidecars` | Reads and writes no `.gcd`: each frame exports at its defaults, and nothing is recorded. |
 | `--sidecar-folder` | Writes the `.gcd` into the hidden `.greycard` folder for this run. |
 | `--xmp-sidecars` | Also writes an XMP beside the raw for this run. |
@@ -278,7 +279,8 @@ added to its history, as in the window.
 An export preset with a border writes the border; there is no flag of
 its own for it.
 
-Give a folder as the path to open, rather than a file, to use `--also`.
+Give a folder as the path to open, rather than a file, to use `--also`
+or `--all`.
 The **Subfolder** field is not used from the command line: the path you
 give decides.
 
