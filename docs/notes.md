@@ -389,3 +389,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§374. A no-GPU mode](notes/374-a-no-gpu-mode.md) (2026-10-19)
 - [§375. Fuzzing at the boundaries](notes/375-fuzzing-at-the-boundaries.md) (2026-10-19)
 - [§376. Export a whole folder with --all](notes/376-export-a-whole-folder-with-all.md) (2026-10-19)
+- [§377. A UI scale setting, applied at the next start](notes/377-a-ui-scale-setting-applied-at-the-next-start.md) (2026-10-19)

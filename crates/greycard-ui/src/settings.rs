@@ -175,6 +175,14 @@ pub struct Settings {
     /// `panel::crop::aspect_key` spells it ("3:2", "Custom 7:5"):
     /// what "Last used" opens under. Written as it is picked.
     pub crop_last: String,
+    /// The interface's scale, percent of the system's own: 100, 125,
+    /// 150, 175, or 200 (`window_fit::scale`), held to the nearest when
+    /// read. Applied at the next start; written as it is chosen.
+    pub ui_scale: u32,
+    /// The system's own scale the window last opened under, as winit
+    /// reported it, written at the close: the next start's guess of
+    /// it, which a scale over 100 % multiplies. Zero for none seen.
+    pub ui_scale_system: f64,
 }
 
 /// The sync sheet's three relative choices: on, a frame is shifted
@@ -298,6 +306,8 @@ impl Default for Settings {
             sync_shift: SyncShift::default(),
             crop_start: "Original".into(),
             crop_last: "Free".into(),
+            ui_scale: 100,
+            ui_scale_system: 0.0,
         }
     }
 }
@@ -515,6 +525,8 @@ mod tests {
             },
             crop_start: "Last used".into(),
             crop_last: "Custom 7:5".into(),
+            ui_scale: 150,
+            ui_scale_system: 1.25,
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);
@@ -546,6 +558,32 @@ mod tests {
         // A file from before the update check has it on.
         assert!(read.update.check);
         assert_eq!(read.update.checked_at, 0);
+        // And from before the interface scale, the system's, none seen.
+        assert_eq!(read.ui_scale, 100);
+        assert_eq!(read.ui_scale_system, 0.0);
+    }
+
+    /// The interface scale is written like every other field, and read
+    /// back from a file that has it, or the defaults from one without.
+    #[test]
+    fn the_interface_scale_is_written_and_read_back() {
+        let text = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(text.contains(r#""ui_scale":100"#), "{text}");
+        assert!(text.contains(r#""ui_scale_system":0.0"#), "{text}");
+        let read: Settings =
+            serde_json::from_str(r#"{"ui_scale": 175, "ui_scale_system": 2.0}"#).unwrap();
+        assert_eq!((read.ui_scale, read.ui_scale_system), (175, 2.0));
+        let dir =
+            std::env::temp_dir().join(format!("greycard-settings-scale-{}", std::process::id()));
+        let path = dir.join("settings.json");
+        let mine = Settings {
+            ui_scale: 125,
+            ui_scale_system: 1.5,
+            ..Settings::default()
+        };
+        mine.save_to(&path);
+        assert_eq!(Settings::load_from(&path), mine);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

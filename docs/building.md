@@ -125,11 +125,12 @@ git clone https://github.com/jessolmstead/greycard.git
 cd greycard
 ```
 
-Git is needed for the build too, not just the clone: two
+Git is needed for the build too, not just the clone: three
 dependencies are pinned to git revisions until releases carry what
 they add. rawler's carries a white-level fix, the Nikon High
 Efficiency decoder below, and a fix of ours to that decoder's black
-level; femtovg's carries a rendering fix.
+level; femtovg's carries a rendering fix; Slint's carries a fix to
+the window's size under a scale of its own.
 
 ## 4. Build
 

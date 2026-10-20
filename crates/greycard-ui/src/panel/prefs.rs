@@ -589,6 +589,20 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             crate::panel::crop::start_chosen(&mut state.borrow_mut(), &app.get_crop_start());
         });
     }
+    // The interface's scale: kept as chosen, for the next start, which
+    // is when it applies; the sheet says so while it differs from the
+    // one this window started at.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_ui_scale_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let percent = crate::window_fit::scale::named(&app.get_ui_scale());
+            keep(&state.borrow(), |s| s.ui_scale = percent);
+            tracing::info!("interface scale {percent}%, from the next start");
+        });
+    }
     // The folder's sidecars put where the setting says, confirmed.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
@@ -820,6 +834,48 @@ mod tests {
         assert!(Sidecar::path_in(&files[0], Placement::Beside).exists());
         assert_eq!(app.get_sidecars_elsewhere(), 2);
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The scale row: on the sheet with the five choices at the one the
+    /// window started at; a click on another says it waits for the next
+    /// start, and the start's own again takes the line away. A factor
+    /// set by hand says it wins instead.
+    #[test]
+    fn the_scale_row_says_a_change_waits_for_the_next_start() {
+        use i_slint_backend_testing::ElementHandle;
+        const NEXT: &str = "Applies at the next start.";
+        const BY_HAND: &str = "SLINT_SCALE_FACTOR is set, and wins over this.";
+        let app = crate::testing::window(0);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_ui_scale("150%".into());
+        app.set_ui_scale_started("150%".into());
+        app.invoke_settings_asked();
+        assert!(app.get_settings_open());
+        assert_eq!(crate::testing::count_labeled(&app, "INTERFACE"), 1);
+        for choice in ["125%", "150%", "175%", "200%"] {
+            assert_eq!(crate::testing::count_labeled(&app, choice), 1, "{choice}");
+        }
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
+        let click_on = |label: &str| {
+            crate::testing::count_labeled(&app, label);
+            let segment = ElementHandle::find_by_accessible_label(&app, label)
+                .next()
+                .unwrap_or_else(|| panic!("{label:?} on the sheet"));
+            let (at, size) = (segment.absolute_position(), segment.size());
+            crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        };
+        click_on("200%");
+        assert_eq!(app.get_ui_scale(), "200%");
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), 1);
+        assert_eq!(crate::window_fit::scale::named(&app.get_ui_scale()), 200);
+        click_on("150%");
+        assert_eq!(app.get_ui_scale(), "150%");
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
+        // By hand: the variable's line, and not the next start's.
+        app.set_ui_scale_by_hand(true);
+        click_on("125%");
+        assert_eq!(crate::testing::count_labeled(&app, BY_HAND), 1);
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
     }
 
     #[test]

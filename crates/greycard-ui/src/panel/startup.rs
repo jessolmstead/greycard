@@ -144,6 +144,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         }
     };
 
+    // The interface's scale, set before anything of Slint's backend is
+    // chosen: the variable its winit backend reads as the window is
+    // made, while this thread is still the only one that reads the
+    // environment. A capture is drawn at the system's scale, whatever
+    // the user's setting, so it comes out the same on any machine; a
+    // variable set by hand still wins.
+    let capture = cli.snapshot.is_some() || cli.screenshot.is_some();
+    let ui_scale = crate::window_fit::scale::start(
+        if capture { 100 } else { remembered.ui_scale },
+        remembered.ui_scale_system,
+    );
+
     let mut settings = WGPUSettings::default();
     // Slint asks for downlevel limits, which allow no storage buffers;
     // the histogram needs one. Desktop defaults, and 45 MP frames are
@@ -154,9 +166,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     };
     // No taller or wider than the monitor it opens on leaves room for,
     // fitted before the window is created: a handler a selector, its
-    // slot filled once the window is made.
+    // slot filled once the window is made. The same handler holds the
+    // window's scale to the system's times the setting.
     let select_backend = |settings: WGPUSettings| {
-        let (fit, fit_slot) = crate::window_fit::handler();
+        let (fit, fit_slot) = crate::window_fit::handler(ui_scale);
         slint::BackendSelector::new()
             .require_wgpu_30(WGPUConfiguration::Automatic(settings))
             .with_winit_custom_application_handler(fit)
@@ -213,6 +226,17 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         app.set_asked_height(h);
     }
     *fit_slot.borrow_mut() = Some(app.as_weak());
+    // The Settings sheet's scale row: the choice, and the one this
+    // window started at, which a change is told it waits for.
+    {
+        let chosen = crate::window_fit::scale::name(remembered.ui_scale);
+        app.set_ui_scale(chosen.as_str().into());
+        app.set_ui_scale_started(chosen.as_str().into());
+        app.set_ui_scale_by_hand(matches!(
+            ui_scale,
+            crate::window_fit::scale::Scale::ByHand(_)
+        ));
+    }
     // Which curve the panel shows at the start, for a dump of its
     // picture with `GREYCARD_UI_CURVE`.
     if let Ok(name) = std::env::var("GREYCARD_UI_CURVE_CHANNEL") {
@@ -1613,6 +1637,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.match_unchecked = kept.match_unchecked;
         settings.crop_start = kept.crop_start;
         settings.crop_last = kept.crop_last;
+        settings.ui_scale = kept.ui_scale;
+        settings.ui_scale_system =
+            crate::window_fit::scale::system_seen().unwrap_or(kept.ui_scale_system);
         // A run opened with `--hide-panels` was a look at the picture
         // alone: the panes stay as the run before it left them.
         if cli.hide_panels {
@@ -2147,6 +2174,10 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // aspect is picked from the crop's list.
         crop_start: String::new(),
         crop_last: String::new(),
+        // Written as the Settings sheet's row is chosen; the system's
+        // own scale from what the window saw, by the caller.
+        ui_scale: 100,
+        ui_scale_system: 0.0,
     }
 }
 

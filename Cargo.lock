@@ -955,8 +955,7 @@ dependencies = [
 [[package]]
 name = "const-field-offset"
 version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d535c69e75b4e3c69e17205b5b37a91936c54086cecd339b70071500786acb9c"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "const-field-offset-macro",
  "field-offset",
@@ -965,8 +964,7 @@ dependencies = [
 [[package]]
 name = "const-field-offset-macro"
 version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93d5848843a221ac268cfdd6bfd14e68d5d3dfa79d52c880aafab93f9517fb74"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2293,8 +2291,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 [[package]]
 name = "i-slint-backend-android-activity"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70d538003a566d7312572ac1435be0704934e46a63d55abdabede513f72332cb"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "android-build",
  "i-slint-common",
@@ -2307,8 +2304,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-linuxkms"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f519a8611a4982921e46e391015e5e40ceac5cc63813333ef91ada77df180d8"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "bytemuck",
  "calloop 0.14.4",
@@ -2333,8 +2329,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-selector"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb974705d61ba56034f6129ff61f3e6282a2c0c07752f25e6cb417d81c0f0958"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "cfg-if",
  "cfg_aliases",
@@ -2351,8 +2346,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-testing"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01943d6c5ea5bc913d497bdaa423c309e7627afff47a6794bfd13be5c564209f"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "cfg_aliases",
  "i-slint-common",
@@ -2364,8 +2358,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-winit"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dae4fcf1b19e9cb109984d2af87d2b9485388c619265bff71dd523133888bee2"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2410,8 +2403,7 @@ dependencies = [
 [[package]]
 name = "i-slint-common"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68a578f3e4b681b2b9cbd326d3be19716e2fac51d00a8a5b00c0ef4ae923b5e6"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "derive_more",
  "fontique",
@@ -2427,8 +2419,7 @@ dependencies = [
 [[package]]
 name = "i-slint-compiler"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f55d48ebef05e2bf09ba5a1fc67bcb11033b9e12a2a50ed3105c7d25e2b539d0"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "annotate-snippets",
  "by_address",
@@ -2461,8 +2452,7 @@ dependencies = [
 [[package]]
 name = "i-slint-core"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed2ea15059d70bc31b1a8b1eb4c34f2c5df04cb7e53f36179b43c0261231d646"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "accesskit",
  "async-channel",
@@ -2516,8 +2506,7 @@ dependencies = [
 [[package]]
 name = "i-slint-core-macros"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73f5a8a076de52f53be80caa826599ed2107b54c9d4a421e66dc06cf893a984c"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "quote",
  "serde_json",
@@ -2527,8 +2516,7 @@ dependencies = [
 [[package]]
 name = "i-slint-renderer-femtovg"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb0de504d57cdadf80c2abf7bcb8b7135a3716aee1f41b6ebb90ea93e3649d7c"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "cfg-if",
  "const-field-offset",
@@ -2549,8 +2537,7 @@ dependencies = [
 [[package]]
 name = "i-slint-renderer-skia"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc9c1cf02385f1d26fc1f423544e52390a8e5c2d89420a8042aa94b4fe109d1f"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -2588,8 +2575,7 @@ dependencies = [
 [[package]]
 name = "i-slint-renderer-software"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f8c641e138a2cc96537cac4481f5c7c8bb8dcc66d09acaed269329c8738628a"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "bytemuck",
  "clru",
@@ -4357,7 +4343,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -5368,8 +5354,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "slint"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15e477d5ff6fec20909100ff8f7062432ebfbda7a62a0f37d0252aa126f38c83"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "const-field-offset",
  "i-slint-backend-android-activity",
@@ -5393,8 +5378,7 @@ dependencies = [
 [[package]]
 name = "slint-build"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ea28d4e1ad47d829b91e227f17037fac07a8001668a93fee47ac04f88718ebc"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "derive_more",
  "fontique",
@@ -5406,8 +5390,7 @@ dependencies = [
 [[package]]
 name = "slint-macros"
 version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35e74b13d20884dc480ce37d0fabbf02cb4bc0df2a595434feac96ca7c2a0f15"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "i-slint-compiler",
  "proc-macro2",
@@ -6305,8 +6288,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vtable"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "515a4b5b1399cc46fb0dc4081436cb40a3852a2d3e94fd1fa50bb68a334896eb"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "const-field-offset",
  "portable-atomic",
@@ -6317,8 +6299,7 @@ dependencies = [
 [[package]]
 name = "vtable-macro"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8191d73ececf73fc94e65809bf0e667525a0bcff9aeeb8d042a4173a508332a1"
+source = "git+https://github.com/jessolmstead/slint?rev=d8686b7ad4a74c59199b272981e1c50e4af9e98d#d8686b7ad4a74c59199b272981e1c50e4af9e98d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6755,7 +6736,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

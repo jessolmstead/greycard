@@ -16,6 +16,12 @@ design note behind it.
 
 ### The window
 
+- A **Scale** row at the top of the Settings sheet draws the interface
+  at 125%, 150%, 175%, or 200% of the system's own scale, from the next
+  start; a picture at 1:1 still shows one image pixel on one screen
+  pixel. Slint is pinned to a fork with a one-commit fix, sent
+  upstream, without which a scaled window shrank by the percentage
+  ([§377](https://github.com/jessolmstead/greycard/blob/master/docs/notes/377-a-ui-scale-setting-applied-at-the-next-start.md))
 - Without a GPU the editor now opens instead of failing at start: it
   draws through a software adapter and develops on the CPU, says so
   in the status line and after each develop's time, and is slow (a

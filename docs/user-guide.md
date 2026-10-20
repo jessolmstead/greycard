@@ -90,6 +90,10 @@ those along with the raws to move a shoot.
 The window opens no taller than your screen, so on a 13 or 14 inch
 laptop the buttons of a sheet such as Export stay in reach.
 
+Text and controls too small? **Scale** at the top of the Settings
+sheet (**Ctrl+,**) makes them up to twice the size, from the next
+start ([Scale](guide/settings.md#scale)).
+
 ## The chapters
 
 Working with your photos:

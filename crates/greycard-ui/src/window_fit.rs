@@ -13,6 +13,10 @@ use slint::ComponentHandle;
 
 use crate::App;
 
+pub(crate) mod scale;
+
+use scale::Scale;
+
 /// Logical pixels left free across: a Dock or task bar on the side.
 pub(crate) const MARGIN_WIDTH: f32 = 80.0;
 /// Logical pixels left free down: what the window's size leaves out,
@@ -66,18 +70,23 @@ pub(crate) type Slot = std::rc::Rc<std::cell::RefCell<Option<slint::Weak<App>>>>
 /// under the user's eyes. Nothing remembers a window's size between
 /// runs, so there is none here to respect; and with no window yet
 /// there is none maximized or full screen to leave alone.
+///
+/// It also holds the window's scale to the system's times the
+/// setting (`scale`), the one handler the backend takes doing both.
 pub(crate) struct Handler {
     slot: Slot,
     done: bool,
+    follow: scale::Follow,
 }
 
-/// The handler to give the backend, and the slot to put the window in
-/// once it is built.
-pub(crate) fn handler() -> (Handler, Slot) {
+/// The handler to give the backend, under this run's `scale`, and the
+/// slot to put the window in once it is built.
+pub(crate) fn handler(scale: Scale) -> (Handler, Slot) {
     let slot = Slot::default();
     let handler = Handler {
         slot: slot.clone(),
         done: false,
+        follow: scale::Follow::new(scale),
     };
     (handler, slot)
 }
@@ -92,9 +101,22 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         if !std::mem::replace(&mut self.done, true) {
             let app = self.slot.borrow().as_ref().and_then(|w| w.upgrade());
             if let Some(app) = app {
-                fit_window(&app, event_loop);
+                let size = fit_window(&app, event_loop, self.follow.scale());
+                self.follow.planned(size);
             }
         }
+        slint::winit_030::EventResult::Propagate
+    }
+
+    fn window_event(
+        &mut self,
+        _event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop,
+        _window_id: slint::winit_030::winit::window::WindowId,
+        winit_window: Option<&slint::winit_030::winit::window::Window>,
+        slint_window: Option<&slint::Window>,
+        event: &slint::winit_030::winit::event::WindowEvent,
+    ) -> slint::winit_030::EventResult {
+        self.follow.window_event(winit_window, slint_window, event);
         slint::winit_030::EventResult::Propagate
     }
 }
@@ -148,13 +170,14 @@ impl Plan {
 /// display beside it), and the smallest fits it wherever it opens. A
 /// monitor too small for the least (a little USB display) is passed
 /// over, so it does not shrink the window on the others; with none
-/// that holds it, the largest. `slint_scale` is `SLINT_SCALE_FACTOR` when set, which is what
-/// Slint's logical pixels are; else each monitor's own scale.
+/// that holds it, the largest. Slint's logical pixels on each monitor
+/// are its own scale under the run's `scale`: times the interface
+/// scale setting, or the factor `SLINT_SCALE_FACTOR` sets by hand.
 pub(crate) fn plan(
     wayland: bool,
     asked: (f32, f32),
     monitors: &[((u32, u32), f64)],
-    slint_scale: Option<f64>,
+    scale: Scale,
     least: (f32, f32),
 ) -> Plan {
     if wayland {
@@ -163,7 +186,7 @@ pub(crate) fn plan(
     let sized: Vec<_> = monitors
         .iter()
         .filter_map(|&(physical, own)| {
-            let scale = slint_scale.unwrap_or(own);
+            let scale = scale.on(own);
             logical(physical, scale).map(|size| (size, scale))
         })
         .collect();
@@ -185,14 +208,6 @@ pub(crate) fn plan(
             opened: fit(asked, monitor, (MARGIN_WIDTH, MARGIN_HEIGHT), least),
         },
     }
-}
-
-/// `SLINT_SCALE_FACTOR`, when it sets Slint's scale.
-fn slint_scale() -> Option<f64> {
-    std::env::var("SLINT_SCALE_FACTOR")
-        .ok()
-        .and_then(|s| s.parse::<f64>().ok())
-        .filter(|s| *s > 0.0)
 }
 
 /// Whether winit runs on Wayland.
@@ -218,8 +233,14 @@ fn is_wayland(event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop)
 /// The fit, with what winit reports, and its line in the log. The size
 /// asked for is the layout's preferred one: before the window exists
 /// Slint's window holds the layout's least, and applies the preferred
-/// size only as it creates the window, when no size was set.
-fn fit_window(app: &App, event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop) {
+/// size only as it creates the window, when no size was set. The
+/// size it opens at, in logical pixels: fitted, or as asked
+/// (`scale::unfitted`).
+fn fit_window(
+    app: &App,
+    event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop,
+    scale: Scale,
+) -> (f32, f32) {
     let asked = (app.get_asked_width(), app.get_asked_height());
     let monitors: Vec<_> = event_loop
         .available_monitors()
@@ -228,18 +249,44 @@ fn fit_window(app: &App, event_loop: &slint::winit_030::winit::event_loop::Activ
             ((p.width, p.height), m.scale_factor())
         })
         .collect();
-    let plan = plan(
-        is_wayland(event_loop),
-        asked,
-        &monitors,
-        slint_scale(),
-        (app.get_least_width(), app.get_least_height()),
-    );
+    let least = (app.get_least_width(), app.get_least_height());
+    let plan = plan(is_wayland(event_loop), asked, &monitors, scale, least);
     tracing::info!("{}", plan.line());
-    if let Plan::Fit { opened, .. } = plan {
-        app.window()
-            .set_size(slint::LogicalSize::new(opened.0, opened.1));
-    }
+    let opened = match plan {
+        Plan::Fit { opened, .. } => opened,
+        // Nothing fitted: the size asked for, which under the interface
+        // scale is set smaller by its percentage, so the window covers
+        // what it would at 100 % rather than that times the scale.
+        Plan::Wayland | Plan::NoMonitor(_) => {
+            let size = scale::unfitted(scale, asked, least);
+            if size == asked {
+                return asked;
+            }
+            tracing::info!(
+                "window: at {:.0}x{:.0} under the interface scale",
+                size.0,
+                size.1
+            );
+            // On Wayland the window opens at 1 times the setting
+            // (`scale::decide`), and the size goes in at that factor as
+            // pixels: Slint 1.18 sends a logical one on to winit as
+            // logical once the window exists, and winit makes pixels of
+            // it at its own scale, 1 until the compositor's comes,
+            // which leaves the window the percentage too small.
+            if plan == Plan::Wayland {
+                let factor = scale.on(1.0) as f32;
+                app.window().set_size(slint::PhysicalSize::new(
+                    (size.0 * factor).round() as u32,
+                    (size.1 * factor).round() as u32,
+                ));
+                return size;
+            }
+            size
+        }
+    };
+    app.window()
+        .set_size(slint::LogicalSize::new(opened.0, opened.1));
+    opened
 }
 
 #[cfg(test)]
@@ -313,20 +360,24 @@ mod tests {
     /// The plan from what winit reports: a 14-inch Mac alone, and with
     /// a larger main display beside it (the smallest wins, whichever is
     /// primary); a monitor with no mode skipped; none at all; Slint's
-    /// own scale over the monitor's; and Wayland left alone.
+    /// own scale over the monitor's, set by hand or by the interface
+    /// scale; and Wayland left alone.
     #[test]
     fn the_plan_from_the_monitors() {
         let mac = ((3024, 1964), 2.0);
         let main_display = ((3840, 2160), 1.5);
         let line = |p: &Plan| p.line();
-        let alone = plan(false, ASKED, &[mac], None, LEAST);
+        let alone = plan(false, ASKED, &[mac], Scale::System, LEAST);
         assert_eq!(
             line(&alone),
             "window: monitor 1512x982 at 2.00x, opening at 1432x800"
         );
-        assert_eq!(plan(false, ASKED, &[main_display, mac], None, LEAST), alone);
         assert_eq!(
-            plan(false, ASKED, &[((0, 0), 1.0), mac], None, LEAST),
+            plan(false, ASKED, &[main_display, mac], Scale::System, LEAST),
+            alone
+        );
+        assert_eq!(
+            plan(false, ASKED, &[((0, 0), 1.0), mac], Scale::System, LEAST),
             alone
         );
         // A little USB display beside a 4K one: too small for the
@@ -335,7 +386,7 @@ mod tests {
         let usb = ((1024, 600), 1.0);
         let four_k = ((3840, 2160), 1.0);
         assert_eq!(
-            line(&plan(false, ASKED, &[usb, four_k], None, LEAST)),
+            line(&plan(false, ASKED, &[usb, four_k], Scale::System, LEAST)),
             "window: monitor 3840x2160 at 1.00x, opening at 1500x800"
         );
         // A 1366 x 768 secondary holds the least, and counts.
@@ -344,29 +395,51 @@ mod tests {
                 false,
                 ASKED,
                 &[four_k, ((1366, 768), 1.0)],
-                None,
+                Scale::System,
                 LEAST
             )),
             "window: monitor 1366x768 at 1.00x, opening at 1286x628"
         );
         // A tiny monitor alone is the largest there is: the least.
         assert_eq!(
-            line(&plan(false, ASKED, &[((800, 480), 1.0)], None, LEAST)),
+            line(&plan(
+                false,
+                ASKED,
+                &[((800, 480), 1.0)],
+                Scale::System,
+                LEAST
+            )),
             "window: monitor 800x480 at 1.00x, opening at 720x509"
         );
-        let none = plan(false, ASKED, &[((0, 0), 1.0)], None, LEAST);
+        let none = plan(false, ASKED, &[((0, 0), 1.0)], Scale::System, LEAST);
         assert_eq!(
             line(&none),
             "window: no monitor reported, opening at 1500x800"
         );
         // SLINT_SCALE_FACTOR=1 on the Mac's panel: 3024 x 1964 of
         // Slint's pixels, the size asked for fits.
-        let slint = plan(false, ASKED, &[mac], Some(1.0), LEAST);
+        let slint = plan(false, ASKED, &[mac], Scale::ByHand(1.0), LEAST);
         assert_eq!(
             line(&slint),
             "window: monitor 3024x1964 at 1.00x, opening at 1500x800"
         );
-        let wayland = plan(true, ASKED, &[mac], None, LEAST);
+        // The interface scale at 150 %: each monitor's own scale times
+        // it, the Mac's 2 as 3 and a 1080p panel's 1 as 1.5.
+        assert_eq!(
+            line(&plan(false, ASKED, &[mac], Scale::Times(1.5), LEAST)),
+            "window: monitor 1008x655 at 3.00x, opening at 928x515"
+        );
+        assert_eq!(
+            line(&plan(
+                false,
+                ASKED,
+                &[((1920, 1080), 1.0)],
+                Scale::Times(1.5),
+                LEAST
+            )),
+            "window: monitor 1280x720 at 1.50x, opening at 1200x580"
+        );
+        let wayland = plan(true, ASKED, &[mac], Scale::System, LEAST);
         assert_eq!(line(&wayland), "window: Wayland, left to the compositor");
     }
 

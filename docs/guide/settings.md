@@ -9,6 +9,27 @@ Open it with **Settings...** at the bottom of the left panel, or press
 you typed is taken when you press Enter or close the sheet; anything
 but a whole number puts the field back as it was.
 
+## Interface
+
+### Scale
+
+How large greycard draws its type and controls, on top of the scaling
+your system already applies.
+
+| Choice | Type and controls |
+|---|---|
+| **System** (default) | The size your system's own display scaling gives |
+| **125%**, **150%**, **175%**, **200%** | That much larger than **System** |
+
+The change applies the next time greycard starts, and the sheet says
+so until then. The whole window scales, panels, sheets, and menus alike;
+a picture at 1:1 still shows one pixel of the image on one pixel of the
+screen. With the `SLINT_SCALE_FACTOR` environment variable set,
+greycard draws at that factor instead, and the sheet says so. A
+capture taken with `--snapshot` or `--screenshot` is drawn at the
+system's scale whatever the setting, so it looks the same on every
+machine; set `SLINT_SCALE_FACTOR` for one at another size.
+
 ## Sidecars
 
 ### Edits go

@@ -224,11 +224,12 @@ pub(crate) fn lend_device(in_software: bool, cpu_ops: bool) -> bool {
 /// it starts in turn (a file manager we opened, and a raw opened from
 /// it) would otherwise take it as asked for by hand and run its ops as
 /// shaders on the software adapter.
+/// The interface scale's variable goes the same way.
 pub(crate) fn scrub(command: &mut std::process::Command) -> &mut std::process::Command {
     if WE_SET.load(Ordering::Relaxed) {
         command.env_remove(SLINT_WGPU_CPU).env_remove(OURS);
     }
-    command
+    crate::window_fit::scale::scrub(command)
 }
 
 /// Once the window's device is made: the lines where it draws in

@@ -1,5 +1,6 @@
 // The settings sheet: what belongs to the installation rather than to
-// a picture, over everything until closed. Where the sidecars go and
+// a picture, over everything until closed. The interface's scale,
+// which applies at the next start. Where the sidecars go and
 // whether an XMP goes beside them; and, with frames open, the move
 // that puts their sidecars where the setting says now, since flipping
 // it moves nothing by itself. Whether the camera's JPEG beside a raw is
@@ -12,6 +13,14 @@ import { LineEdit, ScrollView } from "std-widgets.slint";
 
 export component SettingsSheet inherits Rectangle {
     in-out property <bool> settings-open;
+    /// The interface's scale over the system's: "System", "125%",
+    /// "150%", "175%", or "200%"; the one this window started at, which
+    /// a different choice waits for the next start to replace; and
+    /// whether SLINT_SCALE_FACTOR, set by hand, wins over both.
+    in-out property <string> ui-scale;
+    in property <string> ui-scale-started;
+    in property <bool> ui-scale-by-hand;
+    callback ui-scale-changed();
     /// "Beside the raw" or "Hidden folder", as the row spells it.
     in-out property <string> sidecar-placement;
     in-out property <bool> xmp-sidecars;
@@ -106,6 +115,40 @@ export component SettingsSheet inherits Rectangle {
                         font-size: Theme.font-lg;
                         font-weight: Theme.weight-medium;
                         color: Theme.text;
+                    }
+                    Rectangle { height: Theme.space-1; }
+                    Text {
+                        text: "INTERFACE";
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-secondary;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Scale"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Segmented {
+                            options: ["System", "125%", "150%", "175%", "200%"];
+                            current <=> root.ui-scale;
+                            selected => { root.ui-scale-changed(); }
+                        }
+                    }
+                    Text {
+                        text: "Type and controls, on top of the system's own scaling.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    if root.ui-scale-by-hand: Text {
+                        text: "SLINT_SCALE_FACTOR is set, and wins over this.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
+                    if !root.ui-scale-by-hand && root.ui-scale != root.ui-scale-started: Text {
+                        text: "Applies at the next start.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
                     }
                     Rectangle { height: Theme.space-1; }
                     Text {
