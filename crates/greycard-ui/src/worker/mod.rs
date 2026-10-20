@@ -31,6 +31,7 @@ mod export;
 mod handle;
 mod keep;
 mod masks;
+mod prefetch;
 #[cfg(test)]
 mod samples;
 mod shelf;
@@ -41,7 +42,9 @@ mod thumbs;
 #[cfg(test)]
 use self::{base::blend, decode::open};
 use self::{
-    base::{Stages, engine_base, learned_base, timed, turn_base, turns_exactly},
+    base::{
+        Stages, engine_base, engine_base_or_stop, learned_base, timed, turn_base, turns_exactly,
+    },
     decode::{correct_lens, lens_report, open_told, timed_open},
     develop::develop_job,
     engine::{left_out_of, run},
@@ -51,10 +54,13 @@ use self::{
     thumbs::{cached_thumbnail_noting, thumb_lookup},
 };
 
+#[cfg(test)]
+pub(crate) use self::prefetch::{behind_prefetch, claim};
 pub use self::thumbs::{THUMB_RECIPE, THUMB_WIDTH, count_thumb_cache};
 pub(crate) use self::{
     decode::correct_lens_of,
     handle::order_thumbnails,
+    prefetch::{Neighbor, Side},
     thumbs::{file_stat, thumb_key, thumb_tag, thumbnail},
 };
 
@@ -617,6 +623,13 @@ struct Queue {
     /// engine's GPU context is dropped on this thread rather than
     /// under a process that is already on its way out.
     stopping: bool,
+    /// The frames beside the one opened last, whose bases are made
+    /// onto the shelf when nothing else is asked for (`prefetch`).
+    neighbors: Option<prefetch::Neighbors>,
+    /// The generation and the file of the last open whose develop
+    /// landed, as the worker has it: what neighbors sent again for the
+    /// frame open (`Worker::neighbors_again`) are for.
+    landed: Option<(u64, PathBuf)>,
 }
 
 pub(crate) type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;

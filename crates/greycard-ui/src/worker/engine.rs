@@ -1,5 +1,6 @@
 //! The worker's thread: the loop that takes the queue's jobs in turn.
 
+use super::prefetch::{self, Due, Fetched};
 use super::shelf::{FileKey, Shelf};
 use super::*;
 
@@ -116,6 +117,9 @@ pub(super) fn run(
     let mut shown: Option<ShownTexture> = None;
     // A save of the open frame whose develop is still to land.
     let mut pending: Option<Keep> = None;
+    // The generation of the last open whose develop landed: the
+    // neighbors the window sent with that open are the ones prefetched.
+    let mut landed: Option<u64> = None;
     loop {
         let mut device = None;
         let job = {
@@ -178,6 +182,93 @@ pub(super) fn run(
                     // Nothing else to do: build the context now, off
                     // the lock, and wait again.
                     break Job::Gpu;
+                }
+                // Nothing asked for: a neighbor's base onto the shelf,
+                // off the lock, and the queue looked at again after.
+                let now = prefetch::Idle {
+                    landed,
+                    open: base.as_ref(),
+                    waiting: pending.is_some(),
+                    shelf: shelf.as_ref(),
+                    idle: edited.idle_for(),
+                    frame_open: edited.any_open(),
+                };
+                let due = prefetch::due(&mut q.neighbors, &now);
+                prefetch::settle_reservation(&due, &edited, || pool.wake());
+                match due {
+                    Due::Fetch(n) => {
+                        let n = *n;
+                        // The prefetch and a reduced develop are never
+                        // in hand at once: the flag holds the pool's
+                        // next one back, and one already begun has the
+                        // prefetch wait for it with the flag still up,
+                        // a reservation the pool honors, so the
+                        // prefetch is next and not behind every reduced
+                        // develop still queued.
+                        if !prefetch::claim(|| edited.set_prefetching(true), || pool.edits_busy()) {
+                            if let Some(waiting) = q.neighbors.as_mut() {
+                                waiting.waiting.push_front(n);
+                            }
+                            q = cv
+                                .wait_timeout(q, prefetch::BEHIND_REDUCED)
+                                .expect("worker queue")
+                                .0;
+                            continue;
+                        }
+                        drop(q);
+                        let generation = landed;
+                        let in_hand = opened_path.as_deref().zip(base.as_ref());
+                        let shelf = shelf.as_mut().expect("a shelf is due to have one");
+                        let ahead = || {
+                            let q = lock.lock().expect("worker queue");
+                            prefetch::ahead(&q, edited.any_open(), &n)
+                        };
+                        let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            prefetch::prefetch(
+                                &n,
+                                in_hand,
+                                shelf,
+                                gpu.as_ref(),
+                                lenses.as_deref(),
+                                &ahead,
+                            )
+                        }));
+                        edited.set_prefetching(false);
+                        pool.wake();
+                        q = lock.lock().expect("worker queue");
+                        match held {
+                            // Given way to a request on the open frame:
+                            // made again from the start once it has been
+                            // quiet for longer than before.
+                            Ok(Fetched::Abandoned(_)) => {
+                                if let Some(waiting) = q.neighbors.as_mut()
+                                    && Some(waiting.generation) == generation
+                                {
+                                    waiting.gave_way(n);
+                                }
+                            }
+                            Ok(_) => {}
+                            // Its base was not shelved, and the shelf's
+                            // were finished before; the rest are let go.
+                            Err(payload) => {
+                                let line = format!(
+                                    "the prefetch of {}: the worker panicked: {}; \
+                                     the rest of the neighbors let go",
+                                    file_label(&n.path),
+                                    panic_message(payload.as_ref())
+                                );
+                                tracing::warn!("{line}");
+                                prefetch::tap(&line);
+                                q.neighbors = None;
+                            }
+                        }
+                        continue;
+                    }
+                    Due::Wait(wait) => {
+                        q = cv.wait_timeout(q, wait).expect("worker queue").0;
+                        continue;
+                    }
+                    Due::Nothing => {}
                 }
                 q = cv.wait(q).expect("worker queue");
             }
@@ -588,12 +679,19 @@ pub(super) fn run(
                         shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
                         last = image
                             .and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
+                        landed = base.is_some().then_some(generation);
+                        lock.lock().expect("worker queue").landed =
+                            landed.map(|g| (g, opened_path.clone().unwrap_or_default()));
                         deliver(outcome);
                     }
-                    Err(e) => deliver(Outcome::Failed {
-                        generation,
-                        message: e.to_string(),
-                    }),
+                    Err(e) => {
+                        landed = None;
+                        lock.lock().expect("worker queue").landed = None;
+                        deliver(Outcome::Failed {
+                            generation,
+                            message: e.to_string(),
+                        })
+                    }
                 }
             }
             Job::Develop {
@@ -771,7 +869,7 @@ fn during_develop(threads: usize) -> usize {
 }
 
 /// A path's file name, for a status line.
-fn file_label(path: &std::path::Path) -> String {
+pub(super) fn file_label(path: &std::path::Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
@@ -840,7 +938,9 @@ pub(super) fn swap_base(
     if let Some(file) = coming
         && let Some((b, l)) = shelf.take(file, edit, turn, gpu.is_some())
     {
-        tracing::info!("the base of {} from the shelf", file_label(&file.path));
+        let line = format!("the base of {} from the shelf", file_label(&file.path));
+        tracing::info!("{line}");
+        prefetch::tap(&line);
         *base = Some(b);
         *learned = l;
     }

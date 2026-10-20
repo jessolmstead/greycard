@@ -106,12 +106,38 @@ pub(super) fn engine_base(
     ca: Option<CaCorrector<'_>>,
     stages: &mut Stages,
 ) -> anyhow::Result<Base> {
+    engine_base_or_stop(frame, edit, turn, settings, stamp, ca, stages, &|_| false)
+        .map(|made| made.expect("a base that is never stopped is made"))
+}
+
+/// [`engine_base`], asking `stop` before the demosaic and before the
+/// finish, with the name of the stage to come, whether to go on: `None`
+/// when it said to stop, and what was made so far is let go. The
+/// engine has no way to stop inside a stage, so this is as soon as the
+/// base can give way to something else (the neighbors' prefetch).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn engine_base_or_stop(
+    frame: &RawFrame,
+    edit: &Edit,
+    turn: u8,
+    settings: &DevelopSettings,
+    stamp: u64,
+    ca: Option<CaCorrector<'_>>,
+    stages: &mut Stages,
+    stop: &dyn Fn(&'static str) -> bool,
+) -> anyhow::Result<Option<Base>> {
     let prepared = timed(stages, "prepare", || {
         prepare_with(frame, settings, false, ca)
     })?;
+    if stop("demosaic") {
+        return Ok(None);
+    }
     let (rgb, dual, denoise) = timed(stages, "demosaic", || {
         demosaic_prepared(&prepared, settings)
     })?;
+    if stop("finish") {
+        return Ok(None);
+    }
     let d = timed(stages, "finish", || {
         finish(prepared, rgb, dual, denoise, settings)
     })?;
@@ -125,7 +151,7 @@ pub(super) fn engine_base(
                 ran.name()
             )
         });
-    Ok(Base {
+    Ok(Some(Base {
         edit: edit.clone(),
         turn,
         image: Arc::new(d.image),
@@ -145,7 +171,7 @@ pub(super) fn engine_base(
         gave_way,
         profile: None,
         from_shelf: false,
-    })
+    }))
 }
 
 /// The base with the learned denoiser: its answer from `learned` when

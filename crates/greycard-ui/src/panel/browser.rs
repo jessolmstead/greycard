@@ -1849,7 +1849,14 @@ pub(crate) fn time_select(
     }
     *left -= 1;
     let app_weak = app.as_weak();
-    slint::Timer::single_shot(std::time::Duration::from_millis(100), move || {
+    // `GREYCARD_TIME_SELECT_GAP_MS` waits longer between a develop and
+    // the next step, for measuring a step onto a frame whose base the
+    // worker made while it waited.
+    let gap = std::env::var("GREYCARD_TIME_SELECT_GAP_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(100);
+    slint::Timer::single_shot(std::time::Duration::from_millis(gap), move || {
         if let Some(app) = app_weak.upgrade() {
             app.invoke_step(1, false);
         }
@@ -2143,6 +2150,9 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     app.set_busy(true);
     show_history(st, app);
     worker.send(open_job(st, i, edit));
+    // The frames the arrow keys reach from here, for the worker to
+    // make their bases while it waits on the user.
+    worker.neighbors(st.develop.generation, neighbors_of(st, i));
     // The frame's own camera JPEG, to stand in for that
     // develop: after the job, so the decode that matters
     // most is under way first.
@@ -2171,6 +2181,95 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
         turn: st.sidecars[file].turn,
         stance_known: known_mosaic(st, i) != OpenMosaic::Unknown,
     }
+}
+
+/// The frames the arrow keys reach from cell `i`, as an open of each
+/// would be sent: the next, then the one before, each under the edit
+/// and the turn its sidecar gives. A frame whose sidecar still stands
+/// in from the index's row is sent under the stand-in's default edit
+/// when the row says the sidecar holds no develop and no versions,
+/// which is what the read will give (a wrong guess only misses the
+/// shelf), its turn read off the row's. Left out, and said in the log:
+/// a frame under an offline root, which has nothing to decode, and a
+/// stand-in whose row says it is edited, whose edit only a read of the
+/// sidecar would give; that read would queue ahead of the user's own
+/// requests and put the window's bar up, so it is not asked for.
+pub(crate) fn neighbors_of(st: &State, i: usize) -> Vec<crate::worker::Neighbor> {
+    beside(&st.views.shown, i)
+        .into_iter()
+        .filter_map(|(c, side)| {
+            let path = st.path_at(c)?.clone();
+            let left_out = |why: &str| {
+                tracing::info!(
+                    "the prefetch of the {} frame, {}, skipped: {why}",
+                    side.word(),
+                    file_name(&path)
+                );
+            };
+            if crate::rows::is_offline(st, c) {
+                left_out("its root is offline");
+                return None;
+            }
+            let turn = if crate::rows::is_loaded(st, c) {
+                st.sidecar_at(c)?.turn
+            } else if let Some(turn) = unedited_stand_in(st, c) {
+                turn
+            } else {
+                left_out("its sidecar is not read, and its row says it holds an edit or versions");
+                return None;
+            };
+            Some(crate::worker::Neighbor {
+                edit: st.line(c)?.current.clone(),
+                path,
+                turn,
+                seed_blend: crate::rows::wants_seed(st, c),
+                side,
+            })
+        })
+        .collect()
+}
+
+/// The quarter turns of cell `c`'s frame when it stands in from a row
+/// that says its sidecar holds no develop and no versions, read off the
+/// turns the row shows its picture at: with the geometry the default,
+/// those are the frame's own turn taken back. `None` for any other
+/// cell: a version, an edited row, or one that shows a mirror.
+fn unedited_stand_in(st: &State, c: usize) -> Option<u8> {
+    let cell = st.cell(c)?;
+    let row = st.from_row.get(cell.file)?;
+    if cell.version.is_some() || row.edited || !row.versions.is_empty() {
+        return None;
+    }
+    match row.turns {
+        (shown, false) => Some((4 - shown % 4) % 4),
+        (_, true) => None,
+    }
+}
+
+/// The cells beside cell `current` among the browser's rows `shown`,
+/// the next first: the ones the right and left keys land on from it,
+/// under the filter and the sort the rows are in. From a cell the
+/// filter hides, the keys step from the nearest row shown, as `step`
+/// does. The cell itself is never one of them.
+pub(crate) fn beside(shown: &[usize], current: usize) -> Vec<(usize, crate::worker::Side)> {
+    use crate::worker::Side;
+    let (row, on) = match shown.binary_search(&current) {
+        Ok(row) => (row, true),
+        Err(_) => match cull::nearest_row(shown, current) {
+            Some(row) => (row, false),
+            None => return Vec::new(),
+        },
+    };
+    let next = (row + 1).min(shown.len() - 1);
+    let previous = row.saturating_sub(1);
+    let mut out: Vec<(usize, Side)> = Vec::new();
+    for (at, side) in [(next, Side::Next), (previous, Side::Previous)] {
+        let c = shown[at];
+        if (at != row || !on) && c != current && !out.iter().any(|&(o, _)| o == c) {
+            out.push((c, side));
+        }
+    }
+    out
 }
 
 /// An arrow's landing on browser row `row`, which `moves` when it is
@@ -2880,6 +2979,71 @@ mod tests {
     use super::*;
     use crate::testing::{press, window};
     use slint::platform::{Key, WindowEvent};
+
+    /// The neighbors the worker is told of are the frames the right and
+    /// the left keys reach, the next first, under the filter: a frame it
+    /// hides is passed over, and the ends of the strip have one. A
+    /// hidden frame's are those of the nearest row shown, as the keys
+    /// step from there. Each comes with its own line's edit and turn.
+    #[test]
+    fn the_neighbors_are_the_frames_the_arrow_keys_reach() {
+        use crate::worker::Side::{Next, Previous};
+        let shown = [0, 2, 5, 7];
+        assert_eq!(beside(&shown, 2), vec![(5, Next), (0, Previous)]);
+        assert_eq!(beside(&shown, 0), vec![(2, Next)]);
+        assert_eq!(beside(&shown, 7), vec![(5, Previous)]);
+        assert_eq!(beside(&shown, 3), vec![(7, Next), (2, Previous)]);
+        assert_eq!(beside(&shown, 9), vec![(7, Next), (5, Previous)]);
+        assert_eq!(beside(&[4], 4), vec![]);
+        assert_eq!(beside(&[], 4), vec![]);
+
+        let app = window(5);
+        let files = crate::testing::folder(5);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        let mut st = state.borrow_mut();
+        st.views.shown = vec![0, 1, 3, 4];
+        st.sidecars[3].turn = 1;
+        st.line_mut(3).expect("a line").current.light.exposure = 0.5;
+        let near = neighbors_of(&st, 1);
+        let got: Vec<_> = near
+            .iter()
+            .map(|n| (n.path.clone(), n.side, n.turn, n.edit.light.exposure))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (files[3].clone(), Next, 1, 0.5),
+                (files[0].clone(), Previous, 0, 0.0)
+            ]
+        );
+        assert_eq!(near[0].seed_blend, crate::rows::wants_seed(&st, 3));
+
+        // Listed from the index, the sidecars standing in from their
+        // rows: one whose row says it holds no develop goes under the
+        // stand-in's default edit at the turn its row shows taken back;
+        // one whose row says it is edited is left out, not read.
+        let stand_in = |edited: bool, turns: (u8, bool)| crate::rows::FromRow {
+            read: false,
+            turns,
+            edited,
+            ..crate::rows::FromRow::read()
+        };
+        st.from_row = (0..5).map(|_| crate::rows::FromRow::read()).collect();
+        st.from_row[3] = stand_in(false, (3, false));
+        st.from_row[0] = stand_in(true, (0, false));
+        st.line_mut(3).expect("a line").current = Edit::default();
+        let near = neighbors_of(&st, 1);
+        assert_eq!(near.len(), 1, "the edited stand-in left out");
+        assert_eq!(
+            (near[0].path.clone(), near[0].side, near[0].turn),
+            (files[3].clone(), Next, 1)
+        );
+        assert_eq!(near[0].edit, Edit::default());
+        assert!(near[0].seed_blend, "a raw never developed, by its row");
+        // A mirror the row shows is no default geometry: left out.
+        st.from_row[3] = stand_in(false, (1, true));
+        assert!(neighbors_of(&st, 1).is_empty());
+    }
 
     /// A row of the browser and a file of the folder are two
     /// different numbers whenever a filter is on. The badges wrote

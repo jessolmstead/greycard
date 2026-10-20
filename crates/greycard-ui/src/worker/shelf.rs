@@ -243,17 +243,22 @@ impl Shelf {
     /// own is not put at all, so it cannot push out the bases that fit.
     /// A base already there for the same file, edit, and turn is the
     /// older of two and goes, as does one of the same path made from
-    /// what the file was before.
-    pub(super) fn put(&mut self, file: FileKey, mut base: Base, learned: Option<LearnedBase>) {
+    /// what the file was before. Whether the base was put.
+    pub(super) fn put(
+        &mut self,
+        file: FileKey,
+        mut base: Base,
+        learned: Option<LearnedBase>,
+    ) -> bool {
         if !Self::takes(&base) {
-            return;
+            return false;
         }
         let learned = learned.filter(|l| {
             base.edit.noise.tier().is_some() && pair_serves(l, base.turn, &base.edit, true)
         });
         let bytes = bytes_of(&base, learned.as_ref());
         if !self.budget.holds(1, bytes) {
-            return;
+            return false;
         }
         base.pre = None;
         base.uploaded = None;
@@ -271,6 +276,7 @@ impl Shelf {
             learned,
             bytes,
         });
+        true
     }
 
     /// The base of `file` made under `edit`'s base at `turn`, taken off
@@ -298,6 +304,46 @@ impl Shelf {
         } = self.held.remove(at)?;
         base.from_shelf = true;
         Some((base, learned))
+    }
+
+    /// Whether a base of the file at `path`, as the file system now
+    /// says it is (`stat`), made under `edit`'s base at `turn`, is on
+    /// the shelf for an open to take: [`Shelf::take`]'s test without
+    /// the decode's word on the frame, which a prefetch asks before it
+    /// decodes. With `seeded`, the edit's learned blend is still to be
+    /// seeded from the frame's ISO, so the strength of the base found is
+    /// taken for the edit's: the edits are otherwise the same, and a
+    /// base made without a learned tier does not depend on it.
+    pub(super) fn holds(
+        &self,
+        path: &Path,
+        stat: &Stat,
+        edit: &Edit,
+        seeded: bool,
+        turn: u8,
+        has_gpu: bool,
+    ) -> bool {
+        self.held.iter().any(|s| {
+            let edit_as_made = seeded.then(|| {
+                let mut e = edit.clone();
+                e.noise.learned_strength = s.base.edit.noise.learned_strength;
+                e
+            });
+            s.file.path == path
+                && s.file.stat == *stat
+                && s.base.turn == turn
+                && s.base.edit.same_base(edit_as_made.as_ref().unwrap_or(edit))
+                && (has_gpu || !s.base.ca_on_gpu)
+        })
+    }
+
+    /// How many bases of `bytes` each the budget holds: at least one
+    /// when the machine's memory is not known ([`Budget::One`]).
+    pub(super) fn room_for(&self, bytes: u64) -> u64 {
+        match self.budget {
+            Budget::Bytes(most) => most.checked_div(bytes).unwrap_or(0),
+            Budget::One => 1,
+        }
     }
 
     /// Let the least recently left go until the shelf is within its
@@ -581,8 +627,11 @@ mod tests {
     fn a_base_over_the_whole_budget_leaves_the_others_where_they_are() {
         let edit = Edit::default();
         let mut shelf = Shelf::new(Budget::Bytes(2 * size(10, 10)));
-        shelf.put(file("small"), base(&edit, 0, 10, 10), None);
-        shelf.put(file("big"), base(&edit, 0, 20, 20), None);
+        assert!(shelf.put(file("small"), base(&edit, 0, 10, 10), None));
+        assert!(
+            !shelf.put(file("big"), base(&edit, 0, 20, 20), None),
+            "said not put"
+        );
         assert_eq!(shelf.fit(), 0);
         assert_eq!(shelf.len(), 1);
         assert!(shelf.take(&file("big"), &edit, 0, true).is_none());
@@ -590,8 +639,56 @@ mod tests {
 
         // A shelf turned off keeps nothing.
         let mut off = Shelf::new(Budget::Bytes(0));
-        off.put(file("a"), base(&edit, 0, 1, 1), None);
+        assert!(!off.put(file("a"), base(&edit, 0, 1, 1), None));
         assert_eq!(off.len(), 0);
+    }
+
+    /// `holds` answers as `take` would before the decode has said what
+    /// the frame is: the path and the stat, the edit's base, the turn,
+    /// and a GPU-CA base only with a GPU. With the seed still to come,
+    /// the strength of the base found stands for the edit's.
+    #[test]
+    fn the_shelf_says_what_it_holds_before_a_decode() {
+        let edit = Edit::default();
+        let mut shelf = Shelf::new(Budget::Bytes(1 << 20));
+        let a = file("a");
+        let mut seeded = edit.clone();
+        seeded.noise.learned_strength = 0.4;
+        assert!(shelf.put(a.clone(), base(&seeded, 1, 10, 10), None));
+        let holds = |edit: &Edit, seed: bool, turn: u8, has_gpu: bool| {
+            shelf.holds(&a.path, &a.stat, edit, seed, turn, has_gpu)
+        };
+        assert!(holds(&seeded, false, 1, true));
+        assert!(holds(&seeded, false, 1, false), "a CPU-CA base either way");
+        assert!(!holds(&edit, false, 1, true), "another strength, as made");
+        assert!(holds(&edit, true, 1, true), "the strength still to seed");
+        assert!(!holds(&seeded, false, 0, true), "another turn");
+        assert!(!holds(&warmer(), true, 1, true), "another base");
+        let other = Stat {
+            modified: 8,
+            ..a.stat.clone()
+        };
+        assert!(!shelf.holds(&a.path, &other, &seeded, false, 1, true));
+        assert!(!shelf.holds(Path::new("b"), &a.stat, &seeded, false, 1, true));
+
+        let mut gpu = base(&edit, 0, 10, 10);
+        gpu.ca_on_gpu = true;
+        assert!(shelf.put(file("g"), gpu, None));
+        let g = file("g");
+        assert!(shelf.holds(&g.path, &g.stat, &edit, false, 0, true));
+        assert!(!shelf.holds(&g.path, &g.stat, &edit, false, 0, false));
+    }
+
+    /// How many bases of a size the budget holds: none for a shelf
+    /// turned off, one when the memory is not known.
+    #[test]
+    fn the_shelf_says_how_many_bases_of_a_size_it_has_room_for() {
+        let one = size(10, 10);
+        assert_eq!(Shelf::new(Budget::Bytes(5 * one)).room_for(one), 5);
+        assert_eq!(Shelf::new(Budget::Bytes(5 * one - 1)).room_for(one), 4);
+        assert_eq!(Shelf::new(Budget::Bytes(0)).room_for(one), 0);
+        assert_eq!(Shelf::new(Budget::Bytes(one)).room_for(0), 0);
+        assert_eq!(Shelf::new(Budget::One).room_for(one), 1);
     }
 
     /// The base taken back on an open is the open frame's and never the

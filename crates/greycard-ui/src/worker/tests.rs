@@ -2341,3 +2341,545 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
     assert!(fresh.expect("a fresh base").image.data == made.data);
     assert!(back.data == fresh_picture.data);
 }
+
+/// A scratch folder with linear DNGs of our own named `names`, each
+/// `width` by `height`: raws the worker decodes from the disk.
+fn dngs(what: &str, names: &[&str], width: usize, height: usize) -> (PathBuf, Vec<PathBuf>) {
+    let dir = crate::testing::scratch_dir(what);
+    let paths = names
+        .iter()
+        .map(|n| {
+            let path = dir.join(n);
+            crate::testing::linear_dng(&path, width, height, "Test", "Cam");
+            super::prefetch::watch(n);
+            path
+        })
+        .collect();
+    (dir, paths)
+}
+
+fn neighbor_at(path: &std::path::Path, edit: Edit, side: Side) -> Neighbor {
+    Neighbor {
+        path: path.to_path_buf(),
+        edit,
+        turn: 0,
+        seed_blend: false,
+        side,
+    }
+}
+
+/// A neighbor prefetched onto the shelf is the base its open takes
+/// back, said to be from the shelf, and develops to the picture a
+/// fresh open of the same file makes, to the bit. Asked again while it
+/// is there, it is not made twice.
+#[test]
+fn a_neighbor_prefetched_is_taken_back_by_its_open() {
+    use super::engine::swap_base;
+    use super::prefetch::{Ahead, Fetched, prefetch, said};
+    use super::shelf::{Budget, FileKey, Shelf};
+    let (dir, paths) = dngs("prefetch-took", &["pf-took-B.dng"], 96, 64);
+    let b = &paths[0];
+    let edit = Edit::default();
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    let n = neighbor_at(b, edit.clone(), Side::Next);
+    assert_eq!(
+        prefetch(&n, None, &mut shelf, None, None, &|| Ahead::Nothing),
+        Fetched::Landed
+    );
+    assert_eq!(shelf.len(), 1);
+    let lines = said("pf-took-B.dng");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "prefetching the next frame, pf-took-B.dng"),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(
+            |l| l.starts_with("prefetched pf-took-B.dng, the next frame: decode ")
+                && l.contains(", prepare ")
+                && l.contains(", demosaic ")
+                && l.contains(", finish ")
+                && l.contains(", guide ")
+                && l.contains("; the shelf: 1 base(s)")
+        ),
+        "{lines:?}"
+    );
+    assert!(matches!(
+        prefetch(&n, None, &mut shelf, None, None, &|| Ahead::Nothing),
+        Fetched::Skipped(why) if why == "its base is on the shelf"
+    ));
+    assert_eq!(shelf.len(), 1);
+
+    // The open of it, as the worker's: the key from the file and its
+    // decode, the base taken back, and the develop from it.
+    let (input, _) = open(b).expect("our DNG decodes");
+    let key = FileKey::of(b).expect("on the disk").decoded(&input);
+    let (mut base, mut learned) = (None, None);
+    swap_base(
+        &mut base,
+        &mut learned,
+        &mut shelf,
+        None,
+        Some(&key),
+        &edit,
+        0,
+        None,
+    );
+    assert!(base.as_ref().is_some_and(|b| b.from_shelf), "taken back");
+    assert!(
+        said("pf-took-B.dng")
+            .iter()
+            .any(|l| l == "the base of pf-took-B.dng from the shelf")
+    );
+    let taken = base.as_ref().unwrap().image.clone();
+    let deliver: Deliver = Arc::new(|_| {});
+    let develop = |base: &mut Option<Base>| {
+        develop_job(
+            &input,
+            &edit,
+            0,
+            1,
+            base,
+            &mut None,
+            &mut Ai::new(),
+            None,
+            None,
+            &mut None,
+            &deliver,
+        )
+        .1
+        .expect("a picture on the CPU")
+    };
+    let back = develop(&mut base);
+    assert!(
+        Arc::ptr_eq(&base.as_ref().unwrap().image, &taken),
+        "not made again"
+    );
+    let mut fresh = None;
+    let made = develop(&mut fresh);
+    assert!(fresh.unwrap().image.data == taken.data);
+    assert!(made.data == back.data);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// Anything asked for while a prefetch is in hand stops it at the next
+/// stage, and nothing of it is kept: before the prepare (after the
+/// decode), the demosaic, the finish, and the lens step. The open of
+/// the very frame it is making does not; that is said once, and the
+/// base lands.
+#[test]
+fn a_request_stops_a_prefetch_between_its_stages() {
+    use super::prefetch::{Ahead, Fetched, prefetch, said};
+    use super::shelf::{Budget, Shelf};
+    let (dir, paths) = dngs("prefetch-stop", &["pf-stop-B.dng"], 96, 64);
+    let n = neighbor_at(&paths[0], Edit::default(), Side::Previous);
+    for (asked, stage) in [(1, "prepare"), (2, "demosaic"), (3, "finish"), (4, "lens")] {
+        let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+        let calls = std::cell::Cell::new(0);
+        let ahead = || {
+            calls.set(calls.get() + 1);
+            if calls.get() >= asked {
+                Ahead::Work
+            } else {
+                Ahead::Nothing
+            }
+        };
+        assert_eq!(
+            prefetch(&n, None, &mut shelf, None, None, &ahead),
+            Fetched::Abandoned(stage)
+        );
+        assert_eq!(shelf.len(), 0, "nothing kept when stopped before {stage}");
+        assert_eq!(calls.get(), asked, "asked once a stage");
+    }
+    assert!(said("pf-stop-B.dng").iter().any(|l| l
+        == "the prefetch of the previous frame, pf-stop-B.dng, abandoned before its demosaic: \
+            the worker was asked for something"));
+
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    assert_eq!(
+        prefetch(&n, None, &mut shelf, None, None, &|| Ahead::ItsOpen),
+        Fetched::Landed
+    );
+    assert_eq!(shelf.len(), 1);
+    let goes_on = said("pf-stop-B.dng")
+        .into_iter()
+        .filter(|l| l.contains("goes on"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        goes_on,
+        vec![
+            "the prefetch of pf-stop-B.dng goes on before its prepare: \
+             it is the frame being opened"
+        ]
+    );
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A frame whose edit asks for the learned denoiser is skipped before
+/// anything is read: its model would run for seconds with no stage to
+/// stop between, and its pair would hold a gigabyte on the shelf. So
+/// is the frame whose base is the one in hand, another version of the
+/// open file under the same base.
+#[test]
+fn a_learned_frame_and_the_open_one_are_not_prefetched() {
+    use super::prefetch::{Ahead, Fetched, prefetch, said, watch};
+    use super::shelf::{Budget, Shelf};
+    watch("pf-learned-B.CR3");
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    let learned = Edit {
+        noise: Noise {
+            learned: greycard_edit::Learned::Fast,
+            ..Noise::default()
+        },
+        ..Edit::default()
+    };
+    // No such file: a decode would say so.
+    let nowhere = PathBuf::from("/nowhere/pf-learned-B.CR3");
+    assert_eq!(
+        prefetch(
+            &neighbor_at(&nowhere, learned, Side::Next),
+            None,
+            &mut shelf,
+            None,
+            None,
+            &|| Ahead::Nothing
+        ),
+        Fetched::Skipped("its edit asks for the learned denoiser".into())
+    );
+    assert_eq!(
+        said("pf-learned-B.CR3"),
+        vec![
+            "the prefetch of the next frame, pf-learned-B.CR3, skipped: \
+             its edit asks for the learned denoiser"
+        ]
+    );
+
+    let (dir, paths) = dngs("prefetch-open", &["pf-open-A.dng"], 64, 48);
+    let mut base = None;
+    let frame = match open(&paths[0]).expect("our DNG decodes").0 {
+        Input::Raw(f) => f,
+        Input::Picture { .. } => panic!("a raw"),
+    };
+    develop_turned(&frame, &Edit::default(), 0, &mut base);
+    let open_one = base.as_ref().expect("a base");
+    assert!(matches!(
+        prefetch(
+            &neighbor_at(&paths[0], Edit::default(), Side::Next),
+            Some((paths[0].as_path(), open_one)),
+            &mut shelf,
+            None,
+            None,
+            &|| Ahead::Nothing
+        ),
+        Fetched::Skipped(why) if why == "its base is the open frame's"
+    ));
+    assert_eq!(shelf.len(), 0);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The worker on its thread: an open, and once its develop has landed
+/// and nothing else is asked for, the next frame's base and then the
+/// previous one's made onto the shelf; the open of the next takes its
+/// base from there.
+#[test]
+fn the_worker_prefetches_the_neighbors_once_idle_and_their_open_takes_the_base() {
+    use super::prefetch::said;
+    let (dir, paths) = dngs(
+        "prefetch-run",
+        &["pf-run-A.dng", "pf-run-B.dng", "pf-run-C.dng"],
+        96,
+        64,
+    );
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::Developed { generation, .. } | Outcome::Failed { generation, .. } = o {
+            tx.lock().unwrap().send(generation).unwrap();
+        }
+    });
+    let open = |path: &PathBuf, generation: u64| Job::Open {
+        path: path.clone(),
+        version: None,
+        edit: Edit::default(),
+        generation,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+    };
+    let wait = std::time::Duration::from_secs(60);
+    worker.send(open(&paths[0], 1));
+    worker.neighbors(
+        1,
+        vec![
+            neighbor_at(&paths[1], Edit::default(), Side::Next),
+            neighbor_at(&paths[2], Edit::default(), Side::Previous),
+        ],
+    );
+    assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 1);
+    let asked = Instant::now();
+    let landed = |name: &str| {
+        said(name)
+            .iter()
+            .any(|l| l.starts_with(&format!("prefetched {name}")))
+    };
+    while !(landed("pf-run-B.dng") && landed("pf-run-C.dng")) {
+        assert!(asked.elapsed() < wait, "both prefetched");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let order: Vec<String> = said("pf-run-")
+        .into_iter()
+        .filter(|l| l.starts_with("prefetching"))
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            "prefetching the next frame, pf-run-B.dng",
+            "prefetching the previous frame, pf-run-C.dng"
+        ]
+    );
+    assert!(said("pf-run-A.dng").is_empty(), "the open one is not");
+    worker.send(open(&paths[1], 2));
+    assert_eq!(rx.recv_timeout(wait).expect("the next lands"), 2);
+    assert!(
+        said("pf-run-B.dng")
+            .iter()
+            .any(|l| l == "the base of pf-run-B.dng from the shelf")
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A worker that opens no frame (an export's from the command line)
+/// prefetches nothing, even when handed neighbors.
+#[test]
+fn a_worker_that_opens_nothing_prefetches_nothing() {
+    use super::prefetch::{QUIET, said};
+    let (dir, paths) = dngs("prefetch-none", &["pf-none-B.dng"], 64, 48);
+    let worker = Worker::new(|_| {});
+    worker.neighbors(1, vec![neighbor_at(&paths[0], Edit::default(), Side::Next)]);
+    std::thread::sleep(QUIET * 10);
+    assert!(said("pf-none-").is_empty());
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The worker's prefetch against the real queue, held at a check
+/// between two stages while a request is sent: the open of the very
+/// frame being made has it go on, and that open lands from the shelf;
+/// a newer open, with its own neighbors, has the one in hand give way,
+/// and the older list is not taken up again; a panic in a prefetch
+/// lets the rest of its list go, and the worker goes on.
+#[test]
+fn the_worker_s_prefetch_meets_the_requests_of_the_real_queue() {
+    use super::prefetch::{AtCheck, QUIET, at_next_check, said};
+    let names = [
+        "pf-q-A.dng",
+        "pf-q-B.dng",
+        "pf-q-C.dng",
+        "pf-q-D.dng",
+        "pf-q-E.dng",
+        "pf-q-F.dng",
+        "pf-q-G.dng",
+        "pf-q-H.dng",
+    ];
+    let (dir, p) = dngs("prefetch-queue", &names, 96, 64);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::Developed { generation, .. } | Outcome::Failed { generation, .. } = o {
+            tx.lock().unwrap().send(generation).unwrap();
+        }
+    });
+    let wait = std::time::Duration::from_secs(60);
+    let open = |path: &PathBuf, generation: u64| {
+        worker.send(Job::Open {
+            path: path.clone(),
+            version: None,
+            edit: Edit::default(),
+            generation,
+            seed_blend: false,
+            turn: 0,
+            stance_known: false,
+        });
+    };
+    let landed = |generation: u64| {
+        assert_eq!(rx.recv_timeout(wait).expect("a develop lands"), generation);
+    };
+    let until = |what: &str, seen: &dyn Fn() -> bool| {
+        let asked = Instant::now();
+        while !seen() {
+            assert!(asked.elapsed() < wait, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    let said_one = |name: &str, line: &str| said(name).iter().any(|l| l.contains(line));
+    let hold = |path: &PathBuf| {
+        let (at_tx, at_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel();
+        at_next_check(path, AtCheck::Hold(at_tx, go_rx));
+        (at_rx, go_tx)
+    };
+
+    // B's open sent while B's prefetch is held before its prepare.
+    let (at, go) = hold(&p[1]);
+    open(&p[0], 1);
+    worker.neighbors(1, vec![neighbor_at(&p[1], Edit::default(), Side::Next)]);
+    landed(1);
+    assert_eq!(at.recv_timeout(wait).expect("held"), "prepare");
+    open(&p[1], 2);
+    go.send(()).unwrap();
+    landed(2);
+    assert!(said_one(
+        "pf-q-B.dng",
+        "the prefetch of pf-q-B.dng goes on before its prepare: it is the frame being opened"
+    ));
+    assert!(said_one(
+        "pf-q-B.dng",
+        "prefetched pf-q-B.dng, the next frame"
+    ));
+    assert!(said_one(
+        "pf-q-B.dng",
+        "the base of pf-q-B.dng from the shelf"
+    ));
+
+    // C's prefetch, for B's open, held; E opened with neighbors of its
+    // own: C gives way, D is made as E's next and never as B's previous.
+    let (at, go) = hold(&p[2]);
+    worker.neighbors(
+        2,
+        vec![
+            neighbor_at(&p[2], Edit::default(), Side::Next),
+            neighbor_at(&p[3], Edit::default(), Side::Previous),
+        ],
+    );
+    assert_eq!(at.recv_timeout(wait).expect("held"), "prepare");
+    open(&p[4], 3);
+    worker.neighbors(3, vec![neighbor_at(&p[3], Edit::default(), Side::Next)]);
+    go.send(()).unwrap();
+    landed(3);
+    until("D made for E", &|| {
+        said_one("pf-q-D.dng", "prefetched pf-q-D.dng, the next frame")
+    });
+    assert!(said_one(
+        "pf-q-C.dng",
+        "the prefetch of the next frame, pf-q-C.dng, abandoned before its prepare"
+    ));
+    assert!(!said_one("pf-q-C.dng", "prefetched"), "C never made");
+    assert!(
+        !said_one("pf-q-D.dng", "the previous frame"),
+        "B's list let go"
+    );
+
+    // G's prefetch panics: H, after it in the list, is let go.
+    at_next_check(&p[6], AtCheck::Panic);
+    open(&p[5], 4);
+    worker.neighbors(
+        4,
+        vec![
+            neighbor_at(&p[6], Edit::default(), Side::Next),
+            neighbor_at(&p[7], Edit::default(), Side::Previous),
+        ],
+    );
+    landed(4);
+    until("G panicked", &|| {
+        said_one("pf-q-G.dng", "the worker panicked")
+    });
+    std::thread::sleep(QUIET * 20);
+    assert!(said("pf-q-H.dng").is_empty(), "H let go");
+    open(&p[7], 5);
+    landed(5);
+    assert!(!said_one("pf-q-H.dng", "from the shelf"));
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The editor left for culling or the grid (no frame open): the
+/// neighbors waiting are let go, and a prefetch is not begun for them.
+#[test]
+fn leaving_the_editor_lets_the_neighbors_go() {
+    let worker = Worker::new(|_| {});
+    // A frame open whose develop never lands: the list waits for it.
+    worker.set_open_frame(Some(Frame::file("/nowhere/pf-left-A.CR3")));
+    worker.neighbors(
+        1,
+        vec![neighbor_at(
+            std::path::Path::new("/nowhere/pf-left-B.CR3"),
+            Edit::default(),
+            Side::Next,
+        )],
+    );
+    assert!(worker.queue.0.lock().unwrap().neighbors.is_some());
+    worker.set_open_frame(None);
+    assert!(worker.queue.0.lock().unwrap().neighbors.is_none());
+    worker.stop();
+}
+
+/// The frame still open when the editor comes back from culling or the
+/// grid has its neighbors sent again: taken for the open whose develop
+/// landed last, on that file, and only when no list is waiting; the
+/// worker says which open that is once its develop lands.
+#[test]
+fn the_neighbors_come_back_with_the_open_frame() {
+    let (dir, paths) = dngs("prefetch-back", &["pf-back-A.dng"], 64, 48);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::Developed { generation, .. } | Outcome::Failed { generation, .. } = o {
+            tx.lock().unwrap().send(generation).unwrap();
+        }
+    });
+    let b = || {
+        vec![neighbor_at(
+            std::path::Path::new("/nowhere/pf-back-B.CR3"),
+            Edit::default(),
+            Side::Next,
+        )]
+    };
+    // Nothing landed yet: nothing taken.
+    worker.neighbors_again(&paths[0], b());
+    assert!(worker.queue.0.lock().unwrap().neighbors.is_none());
+    worker.send(Job::Open {
+        path: paths[0].clone(),
+        version: None,
+        edit: Edit::default(),
+        generation: 7,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+    });
+    let wait = std::time::Duration::from_secs(60);
+    assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 7);
+    assert_eq!(
+        worker.queue.0.lock().unwrap().landed,
+        Some((7, paths[0].clone()))
+    );
+    // Away to the grid: let go. Back on another file: not taken.
+    worker.set_open_frame(None);
+    worker.neighbors_again(std::path::Path::new("/nowhere/other.CR3"), b());
+    assert!(worker.queue.0.lock().unwrap().neighbors.is_none());
+    // Back on A: taken under A's open.
+    worker.set_open_frame(Some(Frame::file(paths[0].clone())));
+    worker.neighbors_again(&paths[0], b());
+    {
+        let q = worker.queue.0.lock().unwrap();
+        let n = q.neighbors.as_ref().expect("sent again");
+        assert_eq!(n.generation, 7);
+    }
+    // A list waiting already is not replaced.
+    worker.neighbors(9, b());
+    worker.neighbors_again(&paths[0], b());
+    assert_eq!(
+        worker
+            .queue
+            .0
+            .lock()
+            .unwrap()
+            .neighbors
+            .as_ref()
+            .map(|n| n.generation),
+        Some(9)
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}

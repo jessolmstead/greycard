@@ -79,57 +79,16 @@ pub(super) fn develop_job(
     };
     let mut stages = Stages::new();
     if fresh_base {
-        let settings = DevelopSettings {
-            sharpen: None,
-            dehaze: None,
-            // The frame's quarter turns, composed onto the camera's
-            // tag: the engine's one orientation step does both, so
-            // nothing after it can disagree about which way up the
-            // picture is. A file that is not a raw was turned at
-            // decode, so its turn is applied to the picture below.
-            orientation: match input {
-                Input::Raw(f) => Some(f.orientation.turned(i32::from(turn))),
-                Input::Picture { .. } => None,
-            },
-            ..edit.settings()
-        };
+        let settings = base_settings(edit, input, turn);
         let tier = edit
             .noise
             .tier()
             .map(|t| greycard_ai::denoiser(t).expect("the edit's tiers are the registry's"));
-        // The CA correction on the GPU when there is one, the
-        // reference's otherwise and on any error. A picture the device
-        // cannot hold is this op's to decline, on the CPU for this
-        // develop and with the context kept; a device error is
-        // remembered for after the develop. What ran and how long is
-        // noted for the log.
-        let ca_ran = std::cell::Cell::new(None::<(CaRan, f64)>);
-        let ca_failed = std::cell::Cell::new(None::<greycard_gpu::Error>);
-        let ctx = gpu.as_ref();
-        let run_ca = |samples: &[f32],
-                      w: usize,
-                      h: usize,
-                      pattern: &CfaPattern,
-                      options: &CaOptions|
-         -> greycard_core::Result<(Vec<f32>, CaStats)> {
-            if let Some(ctx) = ctx {
-                let started = Instant::now();
-                match ctx.correct_ca(samples, w, h, pattern, options) {
-                    Ok(out) => {
-                        ca_ran.set(Some((CaRan::Gpu, started.elapsed().as_secs_f64())));
-                        return Ok(out);
-                    }
-                    Err(greycard_gpu::Error::Unsupported(why)) => {
-                        tracing::info!("the CA correction on the CPU: {why}");
-                    }
-                    Err(e) => ca_failed.set(Some(e)),
-                }
-            }
-            let started = Instant::now();
-            let out = correct_ca(samples, w, h, pattern, options);
-            ca_ran.set(Some((CaRan::Cpu, started.elapsed().as_secs_f64())));
-            out
-        };
+        let ca_run = CaRun::new(gpu.as_ref());
+        let run_ca =
+            |samples: &[f32], w: usize, h: usize, pattern: &CfaPattern, options: &CaOptions| {
+                ca_run.correct(samples, w, h, pattern, options)
+            };
         let ca: Option<CaCorrector<'_>> = Some(&run_ca);
         let made = match (input, tier) {
             (Input::Picture { image, meta }, _) => Ok(Base {
@@ -198,7 +157,8 @@ pub(super) fn develop_job(
                 engine_base(frame, edit, turn, &settings, stamp, ca, &mut stages)
             }
         };
-        if let Some(e) = ca_failed.take() {
+        let (ran, failed) = ca_run.into_parts();
+        if let Some(e) = failed {
             // Once is enough: the device is not trusted again this
             // session, and every op from here is the CPU's.
             tracing::warn!("the GPU CA correction: {e}; the CPU's from now on");
@@ -206,14 +166,8 @@ pub(super) fn develop_job(
                 ctx.release();
             }
         }
-        ca_note = ca_ran.take();
-        // The CA runs inside the prepare and has a part of its own on
-        // the line: the prepare's is the rest of it.
-        if let Some((_, ca)) = ca_note
-            && let Some((_, s)) = stages.iter_mut().find(|(name, _)| *name == "prepare")
-        {
-            *s = (*s - ca).max(0.0);
-        }
+        ca_note = ran;
+        ca_out_of_prepare(&mut stages, ca_note);
         let ca_on_gpu = matches!(ca_note, Some((CaRan::Gpu, _)));
         // A learned pair made in this develop carries this develop's
         // CA; a pair kept from an earlier one already says where its
@@ -234,12 +188,7 @@ pub(super) fn develop_job(
                 // chosen as `white_balance_for` in the engine chooses
                 // it: the edit's DCP, else the file's own.
                 if let Input::Raw(frame) = input {
-                    b.profile = settings
-                        .profile
-                        .as_ref()
-                        .map(|p| p.camera.clone())
-                        .or_else(|| profile_from_frame(frame).ok())
-                        .map(Arc::new);
+                    b.profile = resolved_profile(&settings, frame);
                 }
                 b.stand_in = matches!(
                     report,
@@ -248,33 +197,8 @@ pub(super) fn develop_job(
                         | LearnedReport::Unavailable(_)
                 )
                 .then(|| report.clone());
-                let corrects = !edit.lens.is_identity(lenses.is_some());
-                let defringe = edit.lens.defringe();
-                if corrects || defringe.is_some() {
-                    let started = Instant::now();
-                    let mut image = Arc::try_unwrap(b.image).unwrap_or_else(|a| (*a).clone());
-                    if corrects {
-                        image = correct_lens(image, input, edit, lenses);
-                    }
-                    // After the geometry, so the resample does not
-                    // smear a chroma just neutralized, and before the
-                    // retouch and the sharpen.
-                    if let Some(options) = defringe {
-                        greycard_core::develop::defringe::defringe(&mut image, &options);
-                    }
-                    b.image = Arc::new(image);
-                    stages.push(("lens", started.elapsed().as_secs_f64()));
-                }
-                // After the lens and the defringe, before the retouch
-                // and the sharpen: the geometry has not moved a pixel
-                // yet, so the plane is in the developed picture's own
-                // coordinates, which is where the viewport and the
-                // export both read it. Neither the retouch's patches
-                // nor the sharpen moves a region's mean luminance by
-                // anything the guide's scale can see.
-                b.guide = Arc::new(timed(&mut stages, "guide", || {
-                    crate::finish::guide_plane(&b.image)
-                }));
+                lens_step(&mut b, input, edit, lenses, &mut stages);
+                guide_step(&mut b, &mut stages);
                 *base = Some(b)
             }
             Err(e) => {
@@ -600,6 +524,150 @@ pub(super) fn develop_job(
     )
 }
 
+/// The engine's settings a fresh base is made under for `edit` at the
+/// frame's `turn`: the edit's own, less the sharpen and the dehaze,
+/// which come after the base.
+pub(super) fn base_settings(edit: &Edit, input: &Input, turn: u8) -> DevelopSettings {
+    DevelopSettings {
+        sharpen: None,
+        dehaze: None,
+        // The frame's quarter turns, composed onto the camera's tag:
+        // the engine's one orientation step does both, so nothing
+        // after it can disagree about which way up the picture is. A
+        // file that is not a raw was turned at decode, so its turn is
+        // applied to the picture by the caller.
+        orientation: match input {
+            Input::Raw(f) => Some(f.orientation.turned(i32::from(turn))),
+            Input::Picture { .. } => None,
+        },
+        ..edit.settings()
+    }
+}
+
+/// The CA correction of a fresh base: on the GPU when there is one,
+/// the reference's otherwise and on any error. A picture the device
+/// cannot hold is this op's to decline, on the CPU for this base and
+/// with the context kept; a device error is remembered for the caller
+/// to act on after the base. What ran and how long is noted for the
+/// log.
+pub(super) struct CaRun<'a> {
+    ctx: Option<&'a greycard_gpu::Context>,
+    ran: std::cell::Cell<Option<(CaRan, f64)>>,
+    failed: std::cell::Cell<Option<greycard_gpu::Error>>,
+}
+
+impl<'a> CaRun<'a> {
+    pub(super) fn new(ctx: Option<&'a greycard_gpu::Context>) -> Self {
+        Self {
+            ctx,
+            ran: std::cell::Cell::new(None),
+            failed: std::cell::Cell::new(None),
+        }
+    }
+
+    /// The correction of one mosaic, as the engine's `CaCorrector`.
+    pub(super) fn correct(
+        &self,
+        samples: &[f32],
+        w: usize,
+        h: usize,
+        pattern: &CfaPattern,
+        options: &CaOptions,
+    ) -> greycard_core::Result<(Vec<f32>, CaStats)> {
+        if let Some(ctx) = self.ctx {
+            let started = Instant::now();
+            match ctx.correct_ca(samples, w, h, pattern, options) {
+                Ok(out) => {
+                    self.ran
+                        .set(Some((CaRan::Gpu, started.elapsed().as_secs_f64())));
+                    return Ok(out);
+                }
+                Err(greycard_gpu::Error::Unsupported(why)) => {
+                    tracing::info!("the CA correction on the CPU: {why}");
+                }
+                Err(e) => self.failed.set(Some(e)),
+            }
+        }
+        let started = Instant::now();
+        let out = correct_ca(samples, w, h, pattern, options);
+        self.ran
+            .set(Some((CaRan::Cpu, started.elapsed().as_secs_f64())));
+        out
+    }
+
+    /// Where the CA ran and its seconds, when it ran, and the device's
+    /// error, when it had one.
+    pub(super) fn into_parts(self) -> (Option<(CaRan, f64)>, Option<greycard_gpu::Error>) {
+        (self.ran.take(), self.failed.take())
+    }
+}
+
+/// The CA runs inside the prepare and has a part of its own on the
+/// line: the prepare's is the rest of it.
+pub(super) fn ca_out_of_prepare(stages: &mut Stages, ca: Option<(CaRan, f64)>) {
+    if let Some((_, ca)) = ca
+        && let Some((_, s)) = stages.iter_mut().find(|(name, _)| *name == "prepare")
+    {
+        *s = (*s - ca).max(0.0);
+    }
+}
+
+/// The profile a raw's develop resolved its white through, chosen as
+/// `white_balance_for` in the engine chooses it: the edit's DCP, else
+/// the file's own.
+pub(super) fn resolved_profile(
+    settings: &DevelopSettings,
+    frame: &RawFrame,
+) -> Option<Arc<CameraProfile>> {
+    settings
+        .profile
+        .as_ref()
+        .map(|p| p.camera.clone())
+        .or_else(|| profile_from_frame(frame).ok())
+        .map(Arc::new)
+}
+
+/// A fresh base's lens step: the edit's lens corrections, then its
+/// defringe, timed as "lens" when either runs.
+pub(super) fn lens_step(
+    b: &mut Base,
+    input: &Input,
+    edit: &Edit,
+    lenses: Option<&greycard_lens::Database>,
+    stages: &mut Stages,
+) {
+    let corrects = !edit.lens.is_identity(lenses.is_some());
+    let defringe = edit.lens.defringe();
+    if !corrects && defringe.is_none() {
+        return;
+    }
+    let started = Instant::now();
+    let held = std::mem::replace(&mut b.image, Arc::new(WorkingImage::new(0, 0)));
+    let mut image = Arc::try_unwrap(held).unwrap_or_else(|a| (*a).clone());
+    if corrects {
+        image = correct_lens(image, input, edit, lenses);
+    }
+    // After the geometry, so the resample does not smear a chroma just
+    // neutralized, and before the retouch and the sharpen.
+    if let Some(options) = defringe {
+        greycard_core::develop::defringe::defringe(&mut image, &options);
+    }
+    b.image = Arc::new(image);
+    stages.push(("lens", started.elapsed().as_secs_f64()));
+}
+
+/// A fresh base's guide plane, after the lens and the defringe and
+/// before the retouch and the sharpen: the geometry has not moved a
+/// pixel yet, so the plane is in the developed picture's own
+/// coordinates, which is where the viewport and the export both read
+/// it. Neither the retouch's patches nor the sharpen moves a region's
+/// mean luminance by anything the guide's scale can see.
+pub(super) fn guide_step(b: &mut Base, stages: &mut Stages) {
+    b.guide = Arc::new(timed(stages, "guide", || {
+        crate::finish::guide_plane(&b.image)
+    }));
+}
+
 /// What the CPU's steps before the sharpen report: the local
 /// contrast's stats and seconds, and the dehaze's stats, each when it
 /// ran.
@@ -832,7 +900,7 @@ enum Sharpened {
 
 /// Where a base develop's CA correction ran.
 #[derive(Clone, Copy)]
-enum CaRan {
+pub(super) enum CaRan {
     Cpu,
     Gpu,
 }

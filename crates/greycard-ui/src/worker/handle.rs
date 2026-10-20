@@ -95,7 +95,11 @@ impl Worker {
                     .filter(|&n| n > 0);
                 Arc::new(move || match fixed {
                     Some(n) => (n, None),
-                    None => crate::reduced::begin(threads, edited.any_open(), edited.idle_for()),
+                    // Behind the worker's prefetch of a neighbor's base,
+                    // which wakes the pool when it ends.
+                    None => super::prefetch::behind_prefetch(edited.prefetching(), || {
+                        crate::reduced::begin(threads, edited.any_open(), edited.idle_for())
+                    }),
                 })
             },
             alone: {
@@ -147,6 +151,11 @@ impl Worker {
     /// time and the learned masks for them wait (`Job::MasksFor`); the
     /// pool and the worker look again when it changes.
     pub(crate) fn set_open_frame(&self, frame: Option<Frame>) {
+        // No frame open: the neighbors of the last one are not wanted.
+        if frame.is_none() {
+            self.queue.0.lock().expect("worker queue").neighbors = None;
+            self.queue.1.notify_one();
+        }
         if self.edited.set_open(frame) {
             self.pool.wake();
             let (_, cv) = &*self.queue;
@@ -497,6 +506,36 @@ impl Worker {
                 q.develop = Some(job);
             }
         }
+        cv.notify_one();
+    }
+
+    /// The frames the arrow keys reach from the one just opened at
+    /// `generation`, the next first: their bases are made onto the
+    /// shelf while the worker has nothing else to do, once that open's
+    /// develop has landed (`prefetch`). Those of an earlier open still
+    /// waiting are let go.
+    pub(crate) fn neighbors(&self, generation: u64, neighbors: Vec<Neighbor>) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().expect("worker queue").neighbors =
+            Some(super::prefetch::Neighbors::new(generation, neighbors));
+        cv.notify_one();
+    }
+
+    /// The frames the arrow keys reach from `open`, the frame the
+    /// editor has open, sent again when it comes back from culling or
+    /// the grid without being opened again, which let the last ones go:
+    /// taken for that frame's open when its develop is the last to have
+    /// landed and nothing has been sent since, and let go otherwise.
+    pub(crate) fn neighbors_again(&self, open: &std::path::Path, neighbors: Vec<Neighbor>) {
+        let (lock, cv) = &*self.queue;
+        let mut q = lock.lock().expect("worker queue");
+        if q.neighbors.is_some() {
+            return;
+        }
+        let Some((generation, _)) = q.landed.as_ref().filter(|(_, path)| path == open) else {
+            return;
+        };
+        q.neighbors = Some(super::prefetch::Neighbors::new(*generation, neighbors));
         cv.notify_one();
     }
 

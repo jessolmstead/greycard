@@ -199,6 +199,10 @@ pub(crate) struct Edited {
     /// reduced develops wait for the editor to be quiet
     /// (`reduced::begin`).
     touched: Mutex<Instant>,
+    /// The worker is making a neighbor's base onto its shelf: the
+    /// reduced develops wait for it, so the two decoded frames beside
+    /// the open one are never in hand at once.
+    prefetching: std::sync::atomic::AtomicBool,
     /// The look and profile directories the keys read: the user's
     /// (`None`), or a test's.
     dirs: Mutex<Option<(PathBuf, PathBuf)>>,
@@ -252,6 +256,7 @@ impl Edited {
             lenses: Mutex::new(lens_database()),
             open: Mutex::new(None),
             touched: Mutex::new(Instant::now()),
+            prefetching: std::sync::atomic::AtomicBool::new(false),
             dirs: Mutex::new(None),
             made_under: Mutex::new(String::new()),
         };
@@ -284,6 +289,18 @@ impl Edited {
     /// How long since a develop was last asked for or ended.
     pub(crate) fn idle_for(&self) -> std::time::Duration {
         self.touched.lock().expect("touched").elapsed()
+    }
+
+    /// The worker's prefetch of a neighbor's base begins (`true`) or
+    /// ends.
+    pub(crate) fn set_prefetching(&self, on: bool) {
+        self.prefetching
+            .store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Whether the worker is making a neighbor's base.
+    pub(crate) fn prefetching(&self) -> bool {
+        self.prefetching.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Whether any frame is open in the editor.
@@ -1225,7 +1242,13 @@ pub(crate) fn note_editing(st: &crate::State, worker: &crate::worker::Worker, gr
         .current
         .filter(|_| st.culling.cull.is_none() && !grid)
         .and_then(|c| st.key_of(c));
+    let back = open.is_some() && !worker.edited().any_open();
     worker.set_open_frame(open);
+    // Back from culling or the grid on the frame still open: its
+    // neighbors, let go on the way out, are sent again.
+    if back && let Some(c) = st.current {
+        worker.neighbors_again(st.path_of(c), crate::panel::browser::neighbors_of(st, c));
+    }
 }
 
 /// A new list in the window: the worker is told which of its frames

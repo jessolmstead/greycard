@@ -204,7 +204,36 @@ fn time_move(st: &mut State, app: &App, which: Timed) {
     }
     *left -= 1;
     let low = left.is_multiple_of(2);
-    *sent = Some(std::time::Instant::now());
+    // `GREYCARD_TIME_MOVE_GAP_MS` rests the slider this long before each
+    // move, for measuring a move after a pause.
+    let gap = std::env::var("GREYCARD_TIME_MOVE_GAP_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    if gap == 0 {
+        send_move(st, app, which, low);
+        return;
+    }
+    let app_weak = app.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(gap), move || {
+        if let (Some(app), Some(state)) = (app_weak.upgrade(), STATE.with(|s| s.borrow().clone())) {
+            send_move(&mut state.borrow_mut(), &app, which, low);
+        }
+    });
+}
+
+/// A timed run's next move of `which`, to its `low` value or its high,
+/// sent straight to the worker and its moment noted.
+fn send_move(st: &mut State, app: &App, which: Timed, low: bool) {
+    let timing = match which {
+        Timed::Sharpen => &mut st.launch.time_sharpen,
+        Timed::Clarity => &mut st.launch.time_clarity,
+        Timed::Dehaze => &mut st.launch.time_dehaze,
+        Timed::Texture => &mut st.launch.time_texture,
+    };
+    if let Some((_, sent, _)) = timing.as_mut() {
+        *sent = Some(std::time::Instant::now());
+    }
     match which {
         Timed::Sharpen => {
             st.develop.edit.sharpen.enabled = true;

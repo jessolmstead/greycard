@@ -533,6 +533,11 @@ impl Pool {
         self.threads
     }
 
+    /// How many of the edit's pictures (reduced develops) are in hand.
+    pub(crate) fn edits_busy(&self) -> usize {
+        self.lock().edits_busy
+    }
+
     /// Something a thread waits on outside the pool changed (how many
     /// edits may be in hand): each looks again.
     pub(crate) fn wake(&self) {
@@ -1232,6 +1237,60 @@ mod tests {
         }
         kept.sort();
         assert_eq!(kept, [0, 1, 2, 4, 5]);
+    }
+
+    /// The worker's prefetch and the reduced develops are never in hand
+    /// at once, both ways: a prefetch that finds one in hand waits for
+    /// it with its reservation up, the pool begins no other while the
+    /// reservation stands (the prefetch is next, not behind the whole
+    /// queue), and the pool goes on once it is let go.
+    #[test]
+    fn a_prefetch_s_reservation_holds_the_edits_back_and_waits_for_the_one_in_hand() {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (gate_tx, gate) = mpsc::channel::<()>();
+        let flag = Arc::new(AtomicBool::new(false));
+        let reserved = flag.clone();
+        let hooks = gated_hooks(
+            log.clone(),
+            gate,
+            Arc::new(move || crate::worker::behind_prefetch(reserved.load(SeqCst), || (1, None))),
+            Arc::new(|_| false),
+        );
+        let (deliver, rx) = collector();
+        let pool = Pool::new(4, instant(), deliver).with_edits(hooks);
+        for i in 0..3 {
+            pool.push(i, file(i));
+        }
+        receive(&rx, 3);
+        until_logged(&log, 1);
+        assert_eq!(pool.edits_busy(), 1);
+        // The prefetch finds one in hand: it waits, its reservation up.
+        assert!(!crate::worker::claim(
+            || flag.store(true, SeqCst),
+            || pool.edits_busy()
+        ));
+        assert!(flag.load(SeqCst), "the reservation stands");
+        gate_tx.send(()).unwrap();
+        let started = Instant::now();
+        while pool.edits_busy() > 0 {
+            assert!(started.elapsed() < WAIT, "the one in hand ends");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        settled(&pool);
+        assert_eq!(log.lock().unwrap().len(), 1, "none begun while reserved");
+        assert!(
+            crate::worker::claim(|| flag.store(true, SeqCst), || pool.edits_busy()),
+            "the prefetch is next"
+        );
+        // The prefetch done, the reservation let go: the pool goes on.
+        flag.store(false, SeqCst);
+        pool.wake();
+        until_logged(&log, 2);
+        for _ in 0..3 {
+            gate_tx.send(()).unwrap();
+        }
+        until_logged(&log, 3);
     }
 
     /// Edits are made at most two at once on four threads, one on two,

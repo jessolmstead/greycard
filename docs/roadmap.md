@@ -37,6 +37,11 @@ the reasoning lives in `docs/notes.md`.
 
 TBD.
 
+- [ ] The Slint fix sent upstream: the §377 patch re-made on Slint's
+      master (its `resize_window` has moved on since 1.18.1), built
+      against Slint's own checks, pushed to the fork as a branch, and
+      the PR opened from the text already drafted. Not now
+
 ## Tracks
 
 A track is done when its sentence is true. None is ordered before
