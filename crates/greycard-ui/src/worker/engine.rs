@@ -1,5 +1,6 @@
 //! The worker's thread: the loop that takes the queue's jobs in turn.
 
+use super::shelf::{FileKey, Shelf};
 use super::*;
 
 /// What a develop left out of what its edit asked for, in words for a
@@ -76,6 +77,10 @@ pub(super) fn run(
     let mut input: Option<Input> = None;
     // The open file's path, for the export's account of its source.
     let mut opened_path: Option<PathBuf> = None;
+    // The open file with what the file system and its decode said of
+    // it as it was opened: what its base is shelved under when another
+    // is opened.
+    let mut opened_file: Option<FileKey> = None;
     // What the file said about itself, for the export's EXIF.
     let mut metadata: Option<Arc<greycard_core::decode::RawMetadata>> = None;
     // The open file's quarter turns, from the job that opened it and
@@ -90,6 +95,11 @@ pub(super) fn run(
     // The learned denoiser's answer, kept beside the base so its
     // strength is a blend and not another run of the network.
     let mut learned: Option<LearnedBase> = None;
+    // The bases of the frames left behind, for a return to one to
+    // skip its base (`shelf`). Made by the first open, so a worker that
+    // never opens a frame (an export's from the command line) has none,
+    // reads nothing for it, and says nothing of it.
+    let mut shelf: Option<Shelf> = None;
     // The engine's GPU ops, once the window has a device to give.
     let mut gpu: Option<greycard_gpu::Context> = None;
     // The learned models for a set's frames other than the open one,
@@ -121,8 +131,7 @@ pub(super) fn run(
                     lenses = Some(db);
                     reducer.set_lenses(lenses.clone());
                     edited.set_lenses(crate::edited::lens_database());
-                    discard_base(&mut base, gpu.as_ref());
-                    learned = None;
+                    forget_bases(&mut base, &mut learned, &mut shelf, gpu.as_ref());
                 }
                 if let Some(d) = q.gpu.take() {
                     device = Some(d);
@@ -415,6 +424,9 @@ pub(super) fn run(
                     })
                 });
             if panicked {
+                // The base in hand may be half made; the shelf's were
+                // finished before they were put there and no job
+                // touches them, so they stay.
                 discard_base(&mut base, gpu.as_ref());
                 learned = None;
                 last = None;
@@ -472,93 +484,118 @@ pub(super) fn run(
                 seed_blend,
                 turn: wanted,
                 stance_known,
-            } => match open_told(&path, stance_known, &deliver) {
-                Ok((opened, m)) => {
-                    let taken = m
-                        .exif
-                        .date_time_original
-                        .as_deref()
-                        .or(m.exif.create_date.as_deref())
-                        .and_then(greycard_library::normalize_taken);
-                    metadata = Some(Arc::new(m));
-                    let blend = match &opened {
-                        Input::Raw(f) if seed_blend => Some(Noise::blend_for_iso(f.shot.iso)),
-                        _ => None,
-                    };
-                    let edit = {
-                        let mut edit = edit;
-                        if let Some(b) = blend {
-                            edit.noise.learned_strength = b;
-                        }
-                        edit
-                    };
-                    let (as_shot, frame, profile, kind) = match &opened {
-                        Input::Raw(f) => {
-                            let profile = profile_from_frame(f).ok().map(Box::new);
-                            let as_shot = profile
-                                .as_ref()
-                                .and_then(|p| as_shot_temp_tint(f, p).ok())
-                                .map(|tt| (tt.cct, tt.duv))
-                                .unwrap_or((5500.0, 0.0));
-                            (as_shot, Some(f.clone()), profile, SourceKind::Raw)
-                        }
-                        Input::Picture { meta, .. } => (
-                            (5500.0, 0.0),
-                            None,
-                            None,
-                            SourceKind::Picture {
-                                space: meta.space.clone(),
-                                bits: meta.bits,
+            } => {
+                // What the file system says of the file before it is
+                // read, so a write that lands during the decode is a
+                // file the shelf has not seen; what the decode says of
+                // the frame is added once it has said it.
+                let coming = FileKey::of(&path);
+                match open_told(&path, stance_known, &deliver) {
+                    Ok((opened, m)) => {
+                        let taken = m
+                            .exif
+                            .date_time_original
+                            .as_deref()
+                            .or(m.exif.create_date.as_deref())
+                            .and_then(greycard_library::normalize_taken);
+                        metadata = Some(Arc::new(m));
+                        let blend = match &opened {
+                            Input::Raw(f) if seed_blend => Some(Noise::blend_for_iso(f.shot.iso)),
+                            _ => None,
+                        };
+                        let edit = {
+                            let mut edit = edit;
+                            if let Some(b) = blend {
+                                edit.noise.learned_strength = b;
+                            }
+                            edit
+                        };
+                        let (as_shot, frame, profile, kind) = match &opened {
+                            Input::Raw(f) => {
+                                let profile = profile_from_frame(f).ok().map(Box::new);
+                                let as_shot = profile
+                                    .as_ref()
+                                    .and_then(|p| as_shot_temp_tint(f, p).ok())
+                                    .map(|tt| (tt.cct, tt.duv))
+                                    .unwrap_or((5500.0, 0.0));
+                                (as_shot, Some(f.clone()), profile, SourceKind::Raw)
+                            }
+                            Input::Picture { meta, .. } => (
+                                (5500.0, 0.0),
+                                None,
+                                None,
+                                SourceKind::Picture {
+                                    space: meta.space.clone(),
+                                    bits: meta.bits,
+                                },
+                            ),
+                        };
+                        deliver(Outcome::Opened {
+                            generation,
+                            as_shot,
+                            frame,
+                            profile,
+                            lens: lens_report(lenses.as_deref(), &opened),
+                            kind,
+                            shot: {
+                                let (make, model, shot) = opened.identity();
+                                shot.summary(make, model)
                             },
-                        ),
-                    };
-                    deliver(Outcome::Opened {
+                            taken,
+                            blend,
+                        });
+                        // The base in hand is shelved for a return to its
+                        // file, and this file's taken back if it is there:
+                        // a raw's base on the shelf was made from the same
+                        // bytes under the same edit's base, so the develop
+                        // below keeps it, as it keeps one between two
+                        // slider moves. The masks' models start again
+                        // either way (`ai.forget`), keyed by the base's
+                        // stamp on this file.
+                        turn = wanted % 4;
+                        let coming = coming.map(|k| k.decoded(&opened));
+                        swap_base(
+                            &mut base,
+                            &mut learned,
+                            shelf.get_or_insert_with(Shelf::user),
+                            opened_file.take(),
+                            coming.as_ref(),
+                            &edit,
+                            turn,
+                            gpu.as_ref(),
+                        );
+                        ai.forget(Some(path.clone()));
+                        // The file is the worker's before the develop, so
+                        // a panic in the develop leaves the worker and the
+                        // UI, which has its Opened, on the same file.
+                        input = Some(opened);
+                        opened_path = Some(path);
+                        opened_file = coming;
+                        let opened = input.as_ref().expect("just set");
+                        let (outcome, image) = develop_job(
+                            opened,
+                            &edit,
+                            turn,
+                            generation,
+                            &mut base,
+                            &mut learned,
+                            &mut ai,
+                            cache.as_ref(),
+                            lenses.as_deref(),
+                            &mut gpu,
+                            &deliver,
+                        );
+                        shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
+                        last = image
+                            .and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
+                        deliver(outcome);
+                    }
+                    Err(e) => deliver(Outcome::Failed {
                         generation,
-                        as_shot,
-                        frame,
-                        profile,
-                        lens: lens_report(lenses.as_deref(), &opened),
-                        kind,
-                        shot: {
-                            let (make, model, shot) = opened.identity();
-                            shot.summary(make, model)
-                        },
-                        taken,
-                        blend,
-                    });
-                    discard_base(&mut base, gpu.as_ref());
-                    learned = None;
-                    ai.forget(Some(path.clone()));
-                    // The file is the worker's before the develop, so
-                    // a panic in the develop leaves the worker and the
-                    // UI, which has its Opened, on the same file.
-                    input = Some(opened);
-                    opened_path = Some(path);
-                    let opened = input.as_ref().expect("just set");
-                    turn = wanted % 4;
-                    let (outcome, image) = develop_job(
-                        opened,
-                        &edit,
-                        turn,
-                        generation,
-                        &mut base,
-                        &mut learned,
-                        &mut ai,
-                        cache.as_ref(),
-                        lenses.as_deref(),
-                        &mut gpu,
-                        &deliver,
-                    );
-                    shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
-                    last =
-                        image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
-                    deliver(outcome);
+                        message: e.to_string(),
+                    }),
                 }
-                Err(e) => deliver(Outcome::Failed {
-                    generation,
-                    message: e.to_string(),
-                }),
-            },
+            }
             Job::Develop {
                 edit,
                 generation,
@@ -683,6 +720,8 @@ pub(super) fn run(
             }
         }));
         if let Err(payload) = held {
+            // The base in hand is not trusted; the shelf's stay, as
+            // after a panic in a set's frame.
             discard_base(&mut base, gpu.as_ref());
             learned = None;
             last = None;
@@ -739,13 +778,82 @@ fn file_label(path: &std::path::Path) -> String {
 }
 
 /// Forget the base, and with it the ops' working textures on the GPU:
-/// a new file or a new lens database develops afresh.
+/// a develop that panicked is not trusted, and develops afresh.
 fn discard_base(base: &mut Option<Base>, gpu: Option<&greycard_gpu::Context>) {
     if base.take().is_some()
         && let Some(gpu) = gpu
     {
         gpu.release();
     }
+}
+
+/// A new lens database: the base in hand and every base on the shelf
+/// were made under the old one, and the lens is in the base, so all of
+/// them go, the learned pair with them, as the base alone went before
+/// there was a shelf. A shelf not made yet stays unmade.
+pub(super) fn forget_bases(
+    base: &mut Option<Base>,
+    learned: &mut Option<LearnedBase>,
+    shelf: &mut Option<Shelf>,
+    gpu: Option<&greycard_gpu::Context>,
+) {
+    discard_base(base, gpu);
+    *learned = None;
+    if let Some(shelf) = shelf {
+        shelf.clear();
+    }
+}
+
+/// The open frame's base set aside for the frame `coming` to be
+/// opened under `edit` at `turn`: the base in hand put on the shelf as
+/// the frame `leaving`'s, with the learned pair it was blended from,
+/// and the coming frame's base taken back from the shelf when it is
+/// there for the same file, the same edit's base, and the same turn.
+/// Whatever the GPU held for the base in hand goes, as when the base
+/// was discarded; a base taken back is uploaded again by its develop.
+///
+/// The base in hand is shelved before the coming one is looked for, so
+/// a frame opened again (another version of the same file) finds its
+/// own; the shelf is brought under its budget only after, so the base
+/// taken back is never one it lets go. A file the file system would
+/// not answer for (`None`) is not shelved or taken.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn swap_base(
+    base: &mut Option<Base>,
+    learned: &mut Option<LearnedBase>,
+    shelf: &mut Shelf,
+    leaving: Option<FileKey>,
+    coming: Option<&FileKey>,
+    edit: &Edit,
+    turn: u8,
+    gpu: Option<&greycard_gpu::Context>,
+) {
+    let pair = learned.take();
+    if let Some(b) = base.take() {
+        if let Some(gpu) = gpu {
+            gpu.release();
+        }
+        if let Some(file) = leaving {
+            shelf.put(file, b, pair);
+        }
+    }
+    if let Some(file) = coming
+        && let Some((b, l)) = shelf.take(file, edit, turn, gpu.is_some())
+    {
+        tracing::info!("the base of {} from the shelf", file_label(&file.path));
+        *base = Some(b);
+        *learned = l;
+    }
+    let gone = shelf.fit();
+    tracing::info!(
+        "the shelf of frames left: {}{}",
+        shelf.said(),
+        if gone > 0 {
+            format!(", {gone} let go")
+        } else {
+            String::new()
+        }
+    );
 }
 
 /// Whether a live Part is in `edit`'s masks.

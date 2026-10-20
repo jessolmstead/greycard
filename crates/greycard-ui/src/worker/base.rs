@@ -78,8 +78,25 @@ pub(super) fn turn_base(
     }
 }
 
+/// The seconds each stage of a develop took, in the order they ran,
+/// for its log line ([`super::develop`]'s `note_developed`).
+pub(super) type Stages = Vec<(&'static str, f64)>;
+
+/// `run`, its seconds noted in `stages` as `name`.
+pub(super) fn timed<T>(stages: &mut Stages, name: &'static str, run: impl FnOnce() -> T) -> T {
+    let started = Instant::now();
+    let out = run();
+    stages.push((name, started.elapsed().as_secs_f64()));
+    out
+}
+
 /// The engine's own develop of `edit`, before its sharpen, its CA
-/// correction by `ca` when one is given (the GPU's).
+/// correction by `ca` when one is given (the GPU's). The engine's
+/// `develop_with` a stage at a time, each timed into `stages`: the
+/// prepare (the levels, the hot pixels, the highlights, the radius,
+/// and the CA), the demosaic (with the engine's denoise when it is
+/// on), and the finish (the matrix, the profile's map, and the
+/// orientation).
 pub(super) fn engine_base(
     frame: &RawFrame,
     edit: &Edit,
@@ -87,8 +104,17 @@ pub(super) fn engine_base(
     settings: &DevelopSettings,
     stamp: u64,
     ca: Option<CaCorrector<'_>>,
+    stages: &mut Stages,
 ) -> anyhow::Result<Base> {
-    let d = develop_with(frame, settings, ca)?;
+    let prepared = timed(stages, "prepare", || {
+        prepare_with(frame, settings, false, ca)
+    })?;
+    let (rgb, dual, denoise) = timed(stages, "demosaic", || {
+        demosaic_prepared(&prepared, settings)
+    })?;
+    let d = timed(stages, "finish", || {
+        finish(prepared, rgb, dual, denoise, settings)
+    })?;
     let gave_way = d
         .demosaic
         .filter(|ran| *ran != settings.demosaic && settings.demosaic != DemosaicMethod::default())
@@ -118,6 +144,7 @@ pub(super) fn engine_base(
         stand_in: None,
         gave_way,
         profile: None,
+        from_shelf: false,
     })
 }
 
@@ -138,6 +165,7 @@ pub(super) fn learned_base(
     stamp: u64,
     ca: Option<CaCorrector<'_>>,
     has_gpu: bool,
+    stages: &mut Stages,
 ) -> Result<(Base, LearnedReport), LearnedReport> {
     let report = if learned
         .as_ref()
@@ -154,19 +182,28 @@ pub(super) fn learned_base(
             denoise: None,
             ..settings.clone()
         };
-        let (made, report) = run_learned(frame, edit, turn, &settings, model, denoiser, cache, ca)
-            .map_err(|e| LearnedReport::Failed(e.to_string()))?;
+        let (made, report) = run_learned(
+            frame, edit, turn, &settings, model, denoiser, cache, ca, stages,
+        )
+        .map_err(|e| LearnedReport::Failed(e.to_string()))?;
         *learned = Some(made);
         report
     };
     let l = learned
         .as_ref()
         .expect("a learned base was just made or kept");
+    // Timed only when it makes a picture of its own: at either end of
+    // the strength it is one of the pair.
+    let started = Instant::now();
+    let image = blend(&l.model, &l.plain, edit.noise.learned_strength);
+    if !Arc::ptr_eq(&image, &l.model) && !Arc::ptr_eq(&image, &l.plain) {
+        stages.push(("blend", started.elapsed().as_secs_f64()));
+    }
     Ok((
         Base {
             edit: edit.clone(),
             turn,
-            image: blend(&l.model, &l.plain, edit.noise.learned_strength),
+            image,
             guide: Arc::new(crate::finish::Guide::NONE),
             white: l.white,
             radius: l.radius,
@@ -182,6 +219,7 @@ pub(super) fn learned_base(
             stand_in: None,
             gave_way: None,
             profile: None,
+            from_shelf: false,
         },
         report,
     ))
@@ -201,6 +239,7 @@ fn run_learned(
     denoiser: &mut greycard_ai::Denoiser,
     cache: Option<&greycard_ai::DenoiseCache>,
     ca: Option<CaCorrector<'_>>,
+    stages: &mut Stages,
 ) -> anyhow::Result<(LearnedBase, LearnedReport)> {
     use anyhow::Context;
     if let greycard_core::raw::SensorLayout::Cfa(p) = &frame.layout
@@ -208,7 +247,9 @@ fn run_learned(
     {
         anyhow::bail!("the learned denoiser needs a 2x2 Bayer mosaic, not a {p} one");
     }
-    let prepared = prepare_with(frame, settings, true, ca)?;
+    let prepared = timed(stages, "prepare", || {
+        prepare_with(frame, settings, true, ca)
+    })?;
     let pattern = prepared
         .pattern
         .clone()
@@ -248,9 +289,15 @@ fn run_learned(
             (rgb, report)
         }
     };
-    let (plain_rgb, dual, _) = demosaic_prepared(&prepared, settings)?;
-    let plain = finish(prepared.clone(), plain_rgb, dual, None, settings)?;
-    let model = finish(prepared, rgb, None, None, settings)?;
+    let (plain_rgb, dual, _) = timed(stages, "demosaic", || {
+        demosaic_prepared(&prepared, settings)
+    })?;
+    // The two finishes, the plain and the network's, as one stage.
+    let (plain, model) = timed(stages, "finish", || {
+        let plain = finish(prepared.clone(), plain_rgb, dual, None, settings)?;
+        let model = finish(prepared, rgb, None, None, settings)?;
+        anyhow::Ok((plain, model))
+    })?;
     Ok((
         LearnedBase {
             edit: edit.clone(),

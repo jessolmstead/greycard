@@ -16,6 +16,12 @@ design note behind it.
 
 ### The window
 
+- Going back to a frame you just left no longer develops it again.
+  The bases of recent frames are kept in memory under a budget set by
+  the machine's RAM, so a return costs a fraction of a second where a
+  45 MP frame took about three; the log's develop line now names
+  each stage's time, and says when a base came from the shelf
+  ([§378](https://github.com/jessolmstead/greycard/blob/master/docs/notes/378-a-shelf-of-recent-bases.md))
 - A **Scale** row at the top of the Settings sheet draws the interface
   at 125%, 150%, 175%, or 200% of the system's own scale, from the next
   start; a picture at 1:1 still shows one image pixel on one screen

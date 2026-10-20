@@ -51,6 +51,7 @@ mod panel;
 mod placeholder;
 mod previews;
 mod queue;
+mod ram;
 mod reduced;
 mod render;
 mod report;

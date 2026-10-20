@@ -341,7 +341,7 @@ fn a_panic_in_a_job_is_the_failure_that_job_was_waited_on_for() {
 
 /// A Bayer frame of a textured scene with lateral CA in it, large
 /// enough for the correction to run, in sensor units.
-fn aberrated_frame(width: usize, height: usize) -> RawFrame {
+pub(super) fn aberrated_frame(width: usize, height: usize) -> RawFrame {
     use greycard_core::raw::{
         Calibration, CfaColor, CfaPattern, LevelPattern, Levels, Samples, SensorLayout,
     };
@@ -556,6 +556,7 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
             stand_in: None,
             gave_way: None,
             profile: None,
+            from_shelf: false,
         };
         turn_base(&mut b, &mut learned, 1, 2, None);
         let l = learned.as_ref().unwrap();
@@ -600,6 +601,7 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
         stand_in: None,
         gave_way: None,
         profile: None,
+        from_shelf: false,
     };
     turn_base(&mut b, &mut learned, 1, 2, None);
     let l = learned.as_ref().unwrap();
@@ -702,6 +704,7 @@ fn a_planes_thread_that_declines_or_dies_lands_the_develop_without_them() {
         stand_in: None,
         gave_way: None,
         profile: None,
+        from_shelf: false,
     };
     let wants = greycard_edit::DetailWants {
         texture: true,
@@ -2175,4 +2178,166 @@ fn a_raw_s_develop_carries_its_body_s_baseline() {
     let mut base = None;
     develop_once(&Arc::new(frame), &mut base, &mut None);
     assert_eq!(base.expect("a base").source, crate::finish::Source::SCENE);
+}
+
+/// The shelf's key for `frame`, as an open of a file at `path` makes it.
+fn shelf_key(path: &str, frame: &Arc<RawFrame>) -> super::shelf::FileKey {
+    super::shelf::FileKey {
+        path: path.into(),
+        stat: super::shelf::Stat::default(),
+        frame: None,
+    }
+    .decoded(&Input::Raw(frame.clone()))
+}
+
+/// A frame left and opened again develops from the base it left on
+/// the shelf: the base not made again, and said to be from the shelf
+/// only on its first develop, and the base and the picture both the
+/// ones a fresh develop of the same file under the same edit makes, to
+/// the bit. Under an edit with another base it is made afresh.
+#[test]
+fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
+    use super::engine::swap_base;
+    use super::shelf::{Budget, Shelf};
+    let frame = Arc::new(aberrated_frame(120, 80));
+    let edit = Edit::default();
+    let key = shelf_key("a.CR3", &frame);
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    let (mut base, mut learned) = (None, None);
+    let first = develop_turned(&frame, &edit, 0, &mut base);
+    let made = base.as_ref().expect("a base").image.clone();
+
+    // Away to another file, whose base is made, and back.
+    swap_base(
+        &mut base,
+        &mut learned,
+        &mut shelf,
+        Some(key.clone()),
+        None,
+        &edit,
+        0,
+        None,
+    );
+    assert!(base.is_none());
+    develop_turned(&Arc::new(aberrated_frame(64, 48)), &edit, 0, &mut base);
+    swap_base(
+        &mut base,
+        &mut learned,
+        &mut shelf,
+        None,
+        Some(&key),
+        &edit,
+        0,
+        None,
+    );
+    assert!(base.as_ref().is_some_and(|b| b.from_shelf));
+    let again = develop_turned(&frame, &edit, 0, &mut base);
+    let b = base.as_ref().expect("the base");
+    assert!(Arc::ptr_eq(&b.image, &made), "kept, not made again");
+    assert!(!b.from_shelf, "said once");
+    assert!(again.data == first.data);
+    // A fresh develop of the same file under the same edit, from
+    // nothing: the same base and the same picture.
+    let mut fresh = None;
+    let made_fresh = develop_turned(&frame, &edit, 0, &mut fresh);
+    let fresh = fresh.expect("a fresh base");
+    assert!(!Arc::ptr_eq(&fresh.image, &made));
+    assert!(fresh.image.data == base.as_ref().unwrap().image.data);
+    assert!(again.data == made_fresh.data);
+
+    // Under another white balance the base is the edit's own.
+    let warmer = Edit {
+        white_balance: greycard_edit::WhiteBalance::Custom {
+            temperature: 6500.0,
+            tint: 0.0,
+        },
+        ..edit.clone()
+    };
+    swap_base(
+        &mut base,
+        &mut learned,
+        &mut shelf,
+        Some(key.clone()),
+        Some(&key),
+        &warmer,
+        0,
+        None,
+    );
+    assert!(base.is_none());
+    develop_turned(&frame, &warmer, 0, &mut base);
+    assert!(!Arc::ptr_eq(&base.as_ref().unwrap().image, &made));
+}
+
+/// On the GPU, a base shelved lets go of what it held on the device
+/// (the picture before the sharpen, the patched upload, and the
+/// dehaze's reduced copy), and its first develop back uploads the
+/// picture again and sharpens it there: the viewport's texture is the
+/// one a fresh develop of the same file under the same edit leaves, to
+/// the bit, and so is the base.
+#[test]
+fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() {
+    use super::engine::swap_base;
+    use super::shelf::{Budget, Shelf};
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("the shelf's GPU take-back");
+        return;
+    };
+    let mut gpu = Some(ctx);
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let key = shelf_key("a.CR3", &frame);
+    let edit = Edit::default();
+    assert!(edit.sharpen.options().is_some(), "the sharpen on the GPU");
+    let texture = |outcome: Outcome| match outcome {
+        Outcome::Developed {
+            image: Developed::Texture(t),
+            ..
+        } => t,
+        _ => panic!("a texture on the device"),
+    };
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    let (mut base, mut learned) = (None, None);
+    let first = texture(develop_once(&frame, &mut base, &mut gpu).0);
+    let b = base.as_ref().expect("a base");
+    assert!(b.ca_on_gpu && b.pre.is_some() && b.uploaded.is_some());
+    let made = b.image.clone();
+    drop(first);
+
+    swap_base(
+        &mut base,
+        &mut learned,
+        &mut shelf,
+        Some(key.clone()),
+        None,
+        &edit,
+        0,
+        gpu.as_ref(),
+    );
+    develop_once(&Arc::new(aberrated_frame(200, 160)), &mut base, &mut gpu);
+    swap_base(
+        &mut base,
+        &mut learned,
+        &mut shelf,
+        None,
+        Some(&key),
+        &edit,
+        0,
+        gpu.as_ref(),
+    );
+    let b = base.as_ref().expect("taken back");
+    assert!(Arc::ptr_eq(&b.image, &made) && b.from_shelf);
+    assert!(b.pre.is_none() && b.uploaded.is_none() && b.haze.is_none());
+
+    let back = texture(develop_once(&frame, &mut base, &mut gpu).0);
+    let b = base.as_ref().expect("the base");
+    assert!(Arc::ptr_eq(&b.image, &made), "kept, not made again");
+    assert!(b.pre.is_some() && b.uploaded.is_some(), "uploaded again");
+    let ctx = gpu.as_ref().expect("the device kept");
+    let back = read_viewport(ctx, &back);
+
+    let mut fresh = None;
+    let fresh_texture = texture(develop_once(&frame, &mut fresh, &mut gpu).0);
+    let ctx = gpu.as_ref().expect("the device kept");
+    let fresh_picture = read_viewport(ctx, &fresh_texture);
+    assert!(fresh.expect("a fresh base").image.data == made.data);
+    assert!(back.data == fresh_picture.data);
 }

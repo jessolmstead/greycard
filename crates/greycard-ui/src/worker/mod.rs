@@ -15,8 +15,7 @@ use greycard_core::develop::local_contrast::{
 };
 use greycard_core::develop::sharpen::{SharpenStats, sharpen_with_mask};
 use greycard_core::develop::{
-    CaCorrector, DemosaicMethod, DevelopSettings, demosaic_prepared, develop, develop_with, finish,
-    prepare_with,
+    CaCorrector, DemosaicMethod, DevelopSettings, demosaic_prepared, develop, finish, prepare_with,
 };
 use greycard_core::image::WorkingImage;
 use greycard_core::picture::{Picture, decode_picture_path, is_picture_path};
@@ -34,6 +33,7 @@ mod keep;
 mod masks;
 #[cfg(test)]
 mod samples;
+mod shelf;
 #[cfg(test)]
 mod tests;
 mod thumbs;
@@ -41,7 +41,7 @@ mod thumbs;
 #[cfg(test)]
 use self::{base::blend, decode::open};
 use self::{
-    base::{engine_base, learned_base, turn_base, turns_exactly},
+    base::{Stages, engine_base, learned_base, timed, turn_base, turns_exactly},
     decode::{correct_lens, lens_report, open_told, timed_open},
     develop::develop_job,
     engine::{left_out_of, run},
@@ -995,6 +995,11 @@ struct Base {
     /// develop, and a move elsewhere that leaves these alone should
     /// not make them again.
     planes: Option<KeptPlanes>,
+    /// Taken back from the shelf of frames left behind
+    /// ([`shelf::Shelf::take`]) and not developed from since: the next
+    /// develop's log line says where its base came from, and clears
+    /// this.
+    from_shelf: bool,
 }
 
 /// The masks' bands ([`crate::detail::DetailPlanes`]) with what they

@@ -124,9 +124,11 @@ rfd = { version = "0.17", default-features = false }
 libc = "0.2"
 
 # The same rename on Windows: MoveFileExW without REPLACE_EXISTING. The
-# version and feature greycard-edit already asks for.
+# version and feature greycard-edit already asks for. And the machine's
+# memory (GlobalMemoryStatusEx), for what the worker keeps of the frames
+# left behind: a module of the same crate, nothing new in the tree.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_System_SystemInformation"] }
 
 # The Finder's open: a method added to winit's application delegate,
 # and the URLs it is handed. winit carries both already on the Mac.

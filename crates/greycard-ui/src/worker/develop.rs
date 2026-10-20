@@ -65,6 +65,19 @@ pub(super) fn develop_job(
     let fresh_base = !base.as_ref().is_some_and(|b| {
         b.edit.same_base(edit) && b.turn == turn && (gpu.is_some() || !b.ca_on_gpu)
     });
+    // Where the base came from, for the log line: one taken back from
+    // the shelf says so on its first develop, and is kept after.
+    let from = if fresh_base {
+        BaseFrom::Made
+    } else if base
+        .as_mut()
+        .is_some_and(|b| std::mem::take(&mut b.from_shelf))
+    {
+        BaseFrom::Shelf
+    } else {
+        BaseFrom::Kept
+    };
+    let mut stages = Stages::new();
     if fresh_base {
         let settings = DevelopSettings {
             sharpen: None,
@@ -144,6 +157,7 @@ pub(super) fn develop_job(
                 stand_in: None,
                 gave_way: None,
                 profile: None,
+                from_shelf: false,
             }),
             (Input::Raw(frame), tier)
                 if let Some(why) = denoise_unavailable(frame, tier.is_some()) =>
@@ -151,7 +165,7 @@ pub(super) fn develop_job(
                 // Nothing to try: the engine's develop, as a learned
                 // tier that is not downloaded falls back to it, said so.
                 report = LearnedReport::Unavailable(why);
-                engine_base(frame, edit, turn, &settings, stamp, ca)
+                engine_base(frame, edit, turn, &settings, stamp, ca, &mut stages)
             }
             (Input::Raw(frame), Some(model)) => {
                 match learned_base(
@@ -166,18 +180,23 @@ pub(super) fn develop_job(
                     stamp,
                     ca,
                     gpu.is_some(),
+                    &mut stages,
                 ) {
                     Ok((b, r)) => {
                         report = r;
                         Ok(b)
                     }
                     Err(r) => {
+                        // The line times the base that stands in.
                         report = r;
-                        engine_base(frame, edit, turn, &settings, stamp, ca)
+                        stages.clear();
+                        engine_base(frame, edit, turn, &settings, stamp, ca, &mut stages)
                     }
                 }
             }
-            (Input::Raw(frame), None) => engine_base(frame, edit, turn, &settings, stamp, ca),
+            (Input::Raw(frame), None) => {
+                engine_base(frame, edit, turn, &settings, stamp, ca, &mut stages)
+            }
         };
         if let Some(e) = ca_failed.take() {
             // Once is enough: the device is not trusted again this
@@ -188,6 +207,13 @@ pub(super) fn develop_job(
             }
         }
         ca_note = ca_ran.take();
+        // The CA runs inside the prepare and has a part of its own on
+        // the line: the prepare's is the rest of it.
+        if let Some((_, ca)) = ca_note
+            && let Some((_, s)) = stages.iter_mut().find(|(name, _)| *name == "prepare")
+        {
+            *s = (*s - ca).max(0.0);
+        }
         let ca_on_gpu = matches!(ca_note, Some((CaRan::Gpu, _)));
         // A learned pair made in this develop carries this develop's
         // CA; a pair kept from an earlier one already says where its
@@ -225,6 +251,7 @@ pub(super) fn develop_job(
                 let corrects = !edit.lens.is_identity(lenses.is_some());
                 let defringe = edit.lens.defringe();
                 if corrects || defringe.is_some() {
+                    let started = Instant::now();
                     let mut image = Arc::try_unwrap(b.image).unwrap_or_else(|a| (*a).clone());
                     if corrects {
                         image = correct_lens(image, input, edit, lenses);
@@ -236,6 +263,7 @@ pub(super) fn develop_job(
                         greycard_core::develop::defringe::defringe(&mut image, &options);
                     }
                     b.image = Arc::new(image);
+                    stages.push(("lens", started.elapsed().as_secs_f64()));
                 }
                 // After the lens and the defringe, before the retouch
                 // and the sharpen: the geometry has not moved a pixel
@@ -244,7 +272,9 @@ pub(super) fn develop_job(
                 // export both read it. Neither the retouch's patches
                 // nor the sharpen moves a region's mean luminance by
                 // anything the guide's scale can see.
-                b.guide = Arc::new(crate::finish::guide_plane(&b.image));
+                b.guide = Arc::new(timed(&mut stages, "guide", || {
+                    crate::finish::guide_plane(&b.image)
+                }));
                 *base = Some(b)
             }
             Err(e) => {
@@ -277,6 +307,8 @@ pub(super) fn develop_job(
     {
         image.clone()
     } else {
+        // Timed with its fills, which have a part of their own too.
+        let started = Instant::now();
         let mut image = (*b.image).clone();
         retouch.apply_with(&mut image, |patch, region, picture| {
             // A fill the model has to make is said so before it
@@ -310,6 +342,7 @@ pub(super) fn develop_job(
         let image = Arc::new(image);
         let whole = fills.missing.is_empty() && fills.failed.is_empty();
         b.patched = Some((retouch, image.clone(), whole));
+        stages.push(("retouch", started.elapsed().as_secs_f64()));
         image
     };
     // The masks' bands, when a mask asks for one: kept from the last
@@ -384,13 +417,15 @@ pub(super) fn develop_job(
                     let planes = planes.land(b);
                     let pre = b.pre.as_ref().expect("made, or kept");
                     let seconds = start.elapsed().as_secs_f64();
+                    stages.extend(ran.upload.map(|s| ("upload", s)));
                     note_developed(
                         pre.image.width(),
                         pre.image.height(),
-                        fresh_base,
+                        from,
                         ca_note,
                         &report,
                         &fills,
+                        &stages,
                         ran.detail,
                         pre.dehaze_stats
                             .map(|_| ran.dehaze.unwrap_or(DehazeRan::Kept)),
@@ -454,13 +489,15 @@ pub(super) fn develop_job(
                         let planes = planes.land(b);
                         let texture = made.texture.expect("a viewport texture was asked for");
                         let seconds = start.elapsed().as_secs_f64();
+                        stages.extend(ran.upload.map(|s| ("upload", s)));
                         note_developed(
                             texture.width(),
                             texture.height(),
-                            fresh_base,
+                            from,
                             ca_note,
                             &report,
                             &fills,
+                            &stages,
                             ran.detail,
                             ran.dehaze,
                             None,
@@ -525,15 +562,18 @@ pub(super) fn develop_job(
         Some(image) => Arc::new(image),
         None => patched,
     };
-    let halves = Arc::new(Halves::from_image(&image, mask.as_deref()));
+    let halves = Arc::new(timed(&mut stages, "halves", || {
+        Halves::from_image(&image, mask.as_deref())
+    }));
     let seconds = start.elapsed().as_secs_f64();
     note_developed(
         image.width as u32,
         image.height as u32,
-        fresh_base,
+        from,
         ca_note,
         &report,
         &fills,
+        &stages,
         detail.as_ref().map(|(_, s)| DetailRan::Cpu(*s)),
         dehaze_stats.map(|_| DehazeRan::Cpu),
         stats.map(|_| Sharpened::Cpu),
@@ -571,6 +611,7 @@ fn uploaded_patched(
     ctx: &greycard_gpu::Context,
     b: &mut Base,
     patched: &Arc<WorkingImage>,
+    ran: &mut Ran,
 ) -> greycard_gpu::Result<Arc<greycard_gpu::Image>> {
     if let Some((p, image)) = b.uploaded.as_ref()
         && Arc::ptr_eq(p, patched)
@@ -578,17 +619,32 @@ fn uploaded_patched(
         return Ok(image.clone());
     }
     b.uploaded = None;
-    let image = Arc::new(ctx.upload(patched)?);
+    let image = Arc::new(ran.upload(|| ctx.upload(patched))?);
     b.uploaded = Some((patched.clone(), image.clone()));
     Ok(image)
 }
 
 /// Where this develop's local contrast and dehaze ran, for the log;
-/// none for an op that did not run in it.
+/// none for an op that did not run in it. And the seconds its uploads
+/// of a picture to the device took, none when nothing went up.
 #[derive(Default)]
 struct Ran {
     detail: Option<DetailRan>,
     dehaze: Option<DehazeRan>,
+    upload: Option<f64>,
+}
+
+impl Ran {
+    /// `send`, an upload, timed into `upload`: the worker's side of
+    /// it, the interleave to four channels and the copies into the
+    /// queue's staging a band at a time, which is what the develop
+    /// waits on.
+    fn upload<T>(&mut self, send: impl FnOnce() -> T) -> T {
+        let started = Instant::now();
+        let out = send();
+        *self.upload.get_or_insert(0.0) += started.elapsed().as_secs_f64();
+        out
+    }
 }
 
 /// The picture before the sharpen, on the GPU, for `edit`'s Detail
@@ -627,7 +683,7 @@ fn make_pre_sharpen(
     ran.detail = detail.map(|(_, s)| DetailRan::Cpu(s));
     ran.dehaze = dehaze_stats.map(|_| DehazeRan::Cpu);
     let image: &WorkingImage = copy.as_ref().unwrap_or(patched);
-    let image = Arc::new(ctx.upload(image)?);
+    let image = Arc::new(ran.upload(|| ctx.upload(image))?);
     b.pre = Some(PreSharpen {
         patched: patched.clone(),
         detail: edit.detail,
@@ -673,7 +729,7 @@ fn detail_on_gpu(
         tracing::info!("the {op} on the CPU: {why}");
         Ok(None)
     };
-    let uploaded = match uploaded_patched(ctx, b, patched) {
+    let uploaded = match uploaded_patched(ctx, b, patched, ran) {
         Ok(uploaded) => uploaded,
         Err(greycard_gpu::Error::Unsupported(why)) => return declined("Detail section", why),
         Err(e) => return Err(e),
@@ -781,6 +837,17 @@ enum CaRan {
     Gpu,
 }
 
+/// Where a develop's base came from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BaseFrom {
+    /// Made in this develop.
+    Made,
+    /// The last develop's, kept.
+    Kept,
+    /// Taken back from the shelf of frames left behind.
+    Shelf,
+}
+
 /// One line for a develop: what was made anew and what was kept,
 /// and the seconds, the same the outcome carries. A model that is
 /// missing is a state, named here and offered by the UI, not warned
@@ -790,21 +857,55 @@ enum CaRan {
 fn note_developed(
     width: u32,
     height: u32,
-    fresh_base: bool,
+    from: BaseFrom,
     ca: Option<(CaRan, f64)>,
     learned: &LearnedReport,
     fills: &FillReport,
+    stages: &Stages,
     detail: Option<DetailRan>,
     dehazed: Option<DehazeRan>,
     sharpened: Option<Sharpened>,
     total: f64,
 ) {
+    for (name, why) in &fills.failed {
+        tracing::warn!("fill {name}: {why}");
+    }
+    tracing::info!(
+        "{}",
+        developed_line(
+            width, height, from, ca, learned, fills, stages, detail, dehazed, sharpened, total
+        )
+    );
+}
+
+/// [`note_developed`]'s line: where the base came from, then the CA
+/// and the denoiser, then each stage this develop ran and its seconds
+/// (a fresh base's own, the retouch, and the picture's way to the
+/// viewport: its upload to the device or its half floats), then the
+/// fills and the ops after the base, and the total.
+#[allow(clippy::too_many_arguments)]
+fn developed_line(
+    width: u32,
+    height: u32,
+    from: BaseFrom,
+    ca: Option<(CaRan, f64)>,
+    learned: &LearnedReport,
+    fills: &FillReport,
+    stages: &Stages,
+    detail: Option<DetailRan>,
+    dehazed: Option<DehazeRan>,
+    sharpened: Option<Sharpened>,
+    total: f64,
+) -> String {
     let mut parts: Vec<String> = Vec::new();
-    parts.push(if fresh_base {
-        "base made".into()
-    } else {
-        "base kept".into()
-    });
+    parts.push(
+        match from {
+            BaseFrom::Made => "base made",
+            BaseFrom::Kept => "base kept",
+            BaseFrom::Shelf => "base from the shelf",
+        }
+        .into(),
+    );
     match ca {
         Some((CaRan::Gpu, s)) => parts.push(format!("CA on the GPU {s:.2} s")),
         Some((CaRan::Cpu, s)) => parts.push(format!("CA {s:.2} s")),
@@ -823,6 +924,9 @@ fn note_developed(
         LearnedReport::Failed(_) => parts.push("denoiser failed".into()),
         LearnedReport::Unavailable(_) => parts.push("no learned denoiser for this mosaic".into()),
     }
+    for (name, s) in stages {
+        parts.push(format!("{name} {s:.2} s"));
+    }
     if !fills.made.is_empty() {
         parts.push(format!(
             "{} fill(s) {:.2} s",
@@ -832,9 +936,6 @@ fn note_developed(
     }
     if !fills.missing.is_empty() {
         parts.push(format!("{} fill(s) missing", fills.missing.len()));
-    }
-    for (name, why) in &fills.failed {
-        tracing::warn!("fill {name}: {why}");
     }
     match detail {
         Some(DetailRan::Gpu) => parts.push("local contrast on the GPU".into()),
@@ -851,8 +952,84 @@ fn note_developed(
         Some(Sharpened::Gpu) => parts.push("sharpen on the GPU".into()),
         None => {}
     }
-    tracing::info!(
+    format!(
         "developed {width}x{height}: {}, total {total:.2} s",
         parts.join(", ")
-    );
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh base's line names each of its stages with its seconds,
+    /// the prepare after the CA, between the parts it had before; a
+    /// base from the shelf says so, with its upload; a kept one is the
+    /// line it was.
+    #[test]
+    fn the_develop_s_line_times_its_stages() {
+        let stages: Stages = vec![
+            ("prepare", 0.31),
+            ("demosaic", 0.92),
+            ("finish", 0.204),
+            ("guide", 0.02),
+            ("upload", 0.12),
+        ];
+        let line = developed_line(
+            8192,
+            5464,
+            BaseFrom::Made,
+            Some((CaRan::Gpu, 0.25)),
+            &LearnedReport::Off,
+            &FillReport::default(),
+            &stages,
+            None,
+            None,
+            Some(Sharpened::Gpu),
+            2.5,
+        );
+        assert_eq!(
+            line,
+            "developed 8192x5464: base made, CA on the GPU 0.25 s, prepare 0.31 s, \
+             demosaic 0.92 s, finish 0.20 s, guide 0.02 s, upload 0.12 s, \
+             sharpen on the GPU, total 2.50 s"
+        );
+
+        let line = developed_line(
+            8192,
+            5464,
+            BaseFrom::Shelf,
+            None,
+            &LearnedReport::Kept,
+            &FillReport::default(),
+            &vec![("upload", 0.118)],
+            None,
+            None,
+            Some(Sharpened::Gpu),
+            0.4,
+        );
+        assert_eq!(
+            line,
+            "developed 8192x5464: base from the shelf, denoiser kept, upload 0.12 s, \
+             sharpen on the GPU, total 0.40 s"
+        );
+
+        let line = developed_line(
+            300,
+            200,
+            BaseFrom::Kept,
+            None,
+            &LearnedReport::Off,
+            &FillReport::default(),
+            &Stages::new(),
+            Some(DetailRan::Cpu(0.5)),
+            Some(DehazeRan::Cpu),
+            Some(Sharpened::Cpu),
+            0.75,
+        );
+        assert_eq!(
+            line,
+            "developed 300x200: base kept, local contrast 0.50 s, dehaze, sharpen, total 0.75 s"
+        );
+    }
 }

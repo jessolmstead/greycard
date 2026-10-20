@@ -162,6 +162,9 @@ Look section's job.
       mask or cut from it, and an experienced tester could not find
       the way; the Masks tab wants the next shape's entry under the
       mask it joins, with the mode in view. Asked 2026-10-18
+- [ ] Scroll bars that can be seen: a tester missed that a panel held
+      more controls below because the bar is too faint to notice.
+      Asked 2026-10-19 (issue 30)
 
 ### Speed
 
@@ -177,6 +180,15 @@ seconds.
       only worth showing if the Mac timing says the first develop
       itself is the wait; waits on that timing. §270 builds the
       reduced develop itself, for the edited thumbnails
+- [ ] The neighbors' bases prefetched onto the shelf (§378) while the
+      worker is idle, one at a time, dropped the moment anything else
+      is asked for, so a walk through a shoot lands each frame ready.
+      Next
+- [ ] The first open of a 45 MP frame: the demosaic (1.2 s) and the
+      lens correction (0.7 s) are most of a fresh base's 2.5 s on
+      eight threads, now that the develop line times each stage
+      (§378); the lens correction on the GPU is the larger
+      untouched piece
 - [ ] The CoreML provider, so the learned denoiser runs on the Neural
       Engine and the M5's GPU neural accelerators: ort's `coreml`
       feature, a `Provider::CoreMl` with the ML Program format and a
@@ -256,6 +268,12 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       models are mostly non-commercial) and on whether a sidecar may
       hold a face embedding, which is biometric data (§253)
 - [ ] Generative fill behind the patch layer
+- [ ] The fill at the frame's resolution: the eraser works in a fixed
+      512x512 square, so a large patch on a 45 MP frame is filled at a
+      fraction of its pixels and upscaled, and a tester calls it barely
+      usable there. Tile the square over the patch at full resolution,
+      or run the model at a larger input where it allows. Asked
+      2026-10-19 (issue 30)
 
 ### Color
 
@@ -452,7 +470,9 @@ comes across with its ratings and collections.
       rule passing some cameras carried once the filter has a union of
       terms; a root guessed from a folder holding part of a shoot
 - [ ] A map: the frames' EXIF GPS on tiles, a click to select them, a
-      position given to a frame by hand. Low priority
+      position given to a frame by hand, and a position copied from a
+      frame that has one to frames that do not. Low priority; asked
+      again 2026-10-19 (issue 30)
 
 ### Culling and search
 
@@ -835,7 +855,7 @@ clears or a tester asks for it.
 #### Nice-to-have
 
 - [ ] Zoom bar for grid and lightbox
-- [ ] Flexible dual monitor support
+- [ ] Flexible dual monitor support; color management per display.
 - [ ] MIDI Controller support
 - [ ] Different frameline options when cropping
 - [ ] Camera tethering
