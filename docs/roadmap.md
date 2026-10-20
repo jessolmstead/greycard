@@ -180,10 +180,11 @@ seconds.
       only worth showing if the Mac timing says the first develop
       itself is the wait; waits on that timing. §270 builds the
       reduced develop itself, for the edited thumbnails
-- [ ] The neighbors' bases prefetched onto the shelf (§378) while the
-      worker is idle, one at a time, dropped the moment anything else
-      is asked for, so a walk through a shoot lands each frame ready.
-      Next
+- [ ] The neighbors resent to the worker when the filter or the sort
+      changes while a frame is open, and a neighbor's shelved base
+      dropped when its edit changes under it (a sync, a paste): today
+      the prefetch (§380) uses the list sent with the open, and a
+      stale base just misses until the budget evicts it
 - [ ] The first open of a 45 MP frame: the demosaic (1.2 s) and the
       lens correction (0.7 s) are most of a fresh base's 2.5 s on
       eight threads, now that the develop line times each stage
@@ -195,7 +196,7 @@ seconds.
       model cache dir, the free dimensions fixed at 608x608 (every tile
       is that size already), and the compute plan printed from the
       probe before believing any timing, since a node the provider
-      declines runs on the CPU with a copy each way (§90)
+      declines runs on the CPU with a copy each way (§90; §380 wants it too)
 - [ ] The non-local means' symmetric-offset halving, §128's leftover:
       the means are the larger half of the hybrid denoise again (about
       4.4 s of the 45 MP denoise at six threads against the chain's
@@ -267,13 +268,13 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       days. Waits on a license search (the strong face-embedding
       models are mostly non-commercial) and on whether a sidecar may
       hold a face embedding, which is biometric data (§253)
-- [ ] Generative fill behind the patch layer
-- [ ] The fill at the frame's resolution: the eraser works in a fixed
-      512x512 square, so a large patch on a 45 MP frame is filled at a
-      fraction of its pixels and upscaled, and a tester calls it barely
-      usable there. Tile the square over the patch at full resolution,
-      or run the model at a larger input where it allows. Asked
-      2026-10-19 (issue 30)
+- [ ] The fill at the frame's resolution: a dynamic-shape LaMa export,
+      a window up to 2048, overlapped tiles above (§380; issue 30)
+- [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
+      Remove and through us, blind pairs, scored (§380)
+- [ ] Generative remove: RORem through ort on the GPU providers, three
+      variations, a grain pass; LaMa stays the CPU path (§380). After
+      the harness
 
 ### Color
 

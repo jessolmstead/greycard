@@ -22,6 +22,12 @@ design note behind it.
   45 MP frame took about three; the log's develop line now names
   each stage's time, and says when a base came from the shelf
   ([§378](https://github.com/jessolmstead/greycard/blob/master/docs/notes/378-a-shelf-of-recent-bases.md))
+- While you look at a frame, the next and the previous are developed
+  in the background onto that shelf, so stepping through a shoot
+  lands each frame in about half a second instead of the full develop.
+  The prefetch gives way to anything you ask for, and stays off on a
+  machine whose memory holds fewer than two frames beside the open one
+  ([§379](https://github.com/jessolmstead/greycard/blob/master/docs/notes/379-the-neighbors-prefetched-onto-the-shelf.md))
 - A **Scale** row at the top of the Settings sheet draws the interface
   at 125%, 150%, 175%, or 200% of the system's own scale, from the next
   start; a picture at 1:1 still shows one image pixel on one screen

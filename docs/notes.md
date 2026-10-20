@@ -391,3 +391,5 @@ in its section; the roadmap and the changelog only point at it.
 - [§376. Export a whole folder with --all](notes/376-export-a-whole-folder-with-all.md) (2026-10-19)
 - [§377. A UI scale setting, applied at the next start](notes/377-a-ui-scale-setting-applied-at-the-next-start.md) (2026-10-19)
 - [§378. A shelf of recent bases](notes/378-a-shelf-of-recent-bases.md) (2026-10-19)
+- [§380. Generative remove on the device](notes/380-generative-remove-on-the-device.md) (2026-10-19)
+- [§379. The neighbors prefetched onto the shelf](notes/379-the-neighbors-prefetched-onto-the-shelf.md) (2026-10-19)
