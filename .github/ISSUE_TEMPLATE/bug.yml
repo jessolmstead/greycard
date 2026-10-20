@@ -24,7 +24,7 @@ body:
     id: camera-lens
     attributes:
       label: Camera and lens
-      placeholder: "Canon EOS R6 Mark II, RF 24-105mm f/4L"
+      placeholder: "e.g. Canon EOS R6 Mark II, RF 24-105mm f/4L (nothing is filled in for you)"
     validations:
       required: false
   - type: textarea
