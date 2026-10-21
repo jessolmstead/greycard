@@ -77,7 +77,8 @@ and unpack it.
   executable and run it (it needs FUSE, or `--appimage-extract-and-run`).
 - **macOS:** `sh install.sh` (Apple silicon, macOS 13.4 or newer).
   [Step by step](docs/testing-on-a-mac.md).
-- **Windows:** double-click `install.cmd`. `register.cmd` adds
+- **Windows:** double-click `install.cmd`, or just run
+  `bin\greycard-ui.exe` from the unpacked folder. `register.cmd` adds
   greycard to Open with for raws. The `aarch64-windows` zip is for
   Windows on ARM.
 

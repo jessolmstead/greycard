@@ -70,6 +70,9 @@ unpack it.
   want greycard in **Open with** for raws. If Windows warns about an
   unknown publisher, click **More info**, then **Run anyway**.
   `uninstall.cmd` removes it.
+- **Windows, without installing:** unpack the zip anywhere and run
+  `bin\greycard-ui.exe`. `install.cmd` only adds the Start Menu entry,
+  the Path, and the Open with association; nothing needs it.
 
 ## The basics
 

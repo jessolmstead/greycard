@@ -85,7 +85,12 @@ Look section's job.
       (`GREYCARD_AGX_SOFT`, no user control), and the user could not
       pick between them on 33 frames. Decide whether contrast, white
       and the inset's rotation (the reds' warmth, the lanterns) are
-      sliders, a preset's, or fixed, by the track's rule
+      sliders, a preset's, or fixed, by the track's rule. A Mac tester
+      (2026-10-20) asks for the slope, the toe, the shoulder, the
+      contrast, and the width exposed by hand
+- [ ] OpenDRT (jedypod's open display transform) evaluated beside AgX
+      as a second display transform, with its parameters, on the
+      reference set; asked by the same tester
 - [ ] Blender's sRGB and P3 guard rail lerps the luminance toward the
       opponent-compensated one by its 0.08 power; that step is Eary
       Chow's and his generator carries no license, so the port ships
@@ -740,6 +745,13 @@ clears or a tester asks for it.
       Export the queue and Clear; the queued frames marked in the strip
       and the grid. Covers the destination half of the naming-patterns
       line (§157) and the last-location line above
+- [ ] The keys testers asked for (issue 31, a Mac tester by mail,
+      2026-10-20): a focused slider nudged by the arrows or + and -,
+      Shift for the big step, a step of its own per slider, comma and
+      period to the previous and next slider, Tab between numeric
+      fields; keys for crop, white balance, a new gradient, and a new
+      radial mask; the lightbox's badges (rating, flag, label) shown on
+      a key or a button, since §307 took them off
 - [ ] Rebindable keys: a sheet in Settings to change any shortcut,
       saved in settings.json, with a conflict warning and a reset to
       defaults
@@ -898,7 +910,9 @@ release when the wait clears.
       switch; today GREYCARD_PREFIX puts the files there and the rest
       stays the one user's. An installer package (Inno Setup or WiX)
       from the release workflow is the step after, and where signing
-      goes. Asked 2026-10-19
+      goes. Asked 2026-10-19. Two testers would rather unzip anywhere,
+      as RawTherapee ships, than install: the zip runs in place today
+      from bin\, and the guide says so; keep it beside the installer
 - [ ] A GPU path for the models on Windows on ARM: pyke publishes an
       ARM64 Windows build of ONNX Runtime with DirectML, no WebGPU,
       and DirectML ships with Windows, so ort-dylib could make our
