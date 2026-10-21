@@ -491,7 +491,9 @@ impl RawStems {
                     .map(|entries| {
                         entries
                             .filter_map(|e| e.ok().map(|e| e.path()))
-                            .filter(|p| greycard_core::decode::is_raw_path(p))
+                            .filter(|p| {
+                                crate::is_indexed_path(p) && greycard_core::decode::is_raw_path(p)
+                            })
                             .filter_map(|p| p.file_stem().map(|s| s.to_os_string()))
                             .collect()
                     })
@@ -536,7 +538,7 @@ pub fn frames_named(paths: &[PathBuf]) -> Result<(Vec<PathBuf>, Vec<PathBuf>), I
                     source,
                 })?
                 .filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.is_file() && is_frame(p))
+                .filter(|p| p.is_file() && crate::is_indexed_path(p))
                 .collect();
             found.sort();
             frames.extend(found);

@@ -114,7 +114,8 @@ pub fn list(path: &Path, apart: bool) -> Result<greycard_library::pairs::Paired>
         greycard_core::decode::is_raw_path(p) || greycard_core::picture::is_picture_path(p)
     };
     if path.is_dir() {
-        // In a directory, just filter for actual raw and picture files.
+        // In a directory, the files the index holds: raws and pictures,
+        // not hidden ones (macOS's `._` resource forks on a share).
         // .gcd sidecars are naturally excluded since .gcd is not a raw or
         // picture extension; they stay beside the raws they edit.
         // Only regular files, or links to them: a folder, a named
@@ -122,7 +123,7 @@ pub fn list(path: &Path, apart: bool) -> Result<greycard_library::pairs::Paired>
         // thread, and the indexer, on a read that never returns.
         let mut files: Vec<PathBuf> = std::fs::read_dir(path)?
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| opens(p) && p.is_file())
+            .filter(|p| greycard_library::is_indexed_path(p) && p.is_file())
             .collect();
         files.sort();
         Ok(pairs::pair(files, apart))
@@ -369,6 +370,38 @@ mod tests {
             list_files(&hidden.join("a.CR3.gcd"), false).unwrap(),
             vec![dir.join("a.CR3")]
         );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// macOS's `._` resource forks and `.DS_Store` beside a raw on a
+    /// share are no frames, and give the raw no companion.
+    #[test]
+    fn a_folder_listing_skips_hidden_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-list-dotfiles-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in [
+            "IMG.CR3",
+            "._IMG.CR3",
+            "._IMG.xmp",
+            "._IMG.JPG",
+            ".DS_Store",
+        ] {
+            std::fs::write(dir.join(name), b"mac").unwrap();
+        }
+        let listed = list(&dir, false).unwrap();
+        assert_eq!(listed.frames, vec![dir.join("IMG.CR3")]);
+        assert!(listed.companions.is_empty());
+        assert_eq!(list_files(&dir, true).unwrap(), vec![dir.join("IMG.CR3")]);
+        // Named by hand, a hidden file still opens as what it says.
+        let named = dir.join("._IMG.CR3");
+        assert_eq!(list_files(&named, false).unwrap(), vec![named]);
         crate::testing::remove_dir_retry(&dir);
     }
 

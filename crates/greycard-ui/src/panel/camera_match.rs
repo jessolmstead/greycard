@@ -290,7 +290,9 @@ fn from_index(path: &Path, folder: &Path) -> Option<Survey> {
         .ok()?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| {
-            p.is_file() && greycard_core::decode::is_raw_path(p) && !fit::is_apple_double(p)
+            p.is_file()
+                && greycard_core::decode::is_raw_path(p)
+                && !greycard_core::decode::is_hidden(p)
         })
         .collect();
     if !indexed_whole(&lib.ids_of(&raws).ok()?) {

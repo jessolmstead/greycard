@@ -165,7 +165,7 @@ fn survey_index(
         .filter(|e| {
             !e.missing
                 && greycard_core::decode::is_raw_path(&e.path)
-                && !cm::is_apple_double(&e.path)
+                && !greycard_core::decode::is_hidden(&e.path)
                 && under(&e.path)
                 && !e.exif.camera.is_empty()
         })
@@ -188,7 +188,7 @@ fn survey_folder(dir: &Path) -> Result<Vec<Candidate>> {
         .with_context(|| format!("reading {}", dir.display()))?
         .flatten()
         .map(|e| e.path())
-        .filter(|p| greycard_core::decode::is_raw_path(p) && !cm::is_apple_double(p))
+        .filter(|p| greycard_core::decode::is_raw_path(p) && !greycard_core::decode::is_hidden(p))
         .collect();
     paths.sort();
     for path in paths {

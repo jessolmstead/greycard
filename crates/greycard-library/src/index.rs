@@ -254,9 +254,13 @@ struct Row {
 }
 
 /// Whether a path is one the index holds: a raw or a picture, as
-/// the browser lists a folder.
+/// the browser lists a folder, and not a hidden file
+/// ([`greycard_core::decode::is_hidden`]), such as macOS's `._NAME`
+/// resource fork beside a raw on a share.
 pub fn is_indexed_path(path: &Path) -> bool {
-    greycard_core::decode::is_raw_path(path) || greycard_core::picture::is_picture_path(path)
+    !greycard_core::decode::is_hidden(path)
+        && (greycard_core::decode::is_raw_path(path)
+            || greycard_core::picture::is_picture_path(path))
 }
 
 /// The files of one folder, sorted, not descending.
@@ -588,7 +592,8 @@ impl Library {
         if let Some(row) = row_at(self.conn_mut(), &path_bytes(&path))? {
             existing.insert(path_bytes(&path), row);
         }
-        let files: Vec<PathBuf> = if path.is_file() {
+        // A hidden file is no row, as its folder's listing has it.
+        let files: Vec<PathBuf> = if path.is_file() && !greycard_core::decode::is_hidden(&path) {
             vec![path]
         } else {
             Vec::new()
@@ -1014,11 +1019,24 @@ fn index_paths(
         &mut report,
     )?;
     // What was not on disk. By id and path both: another writer may
-    // have moved the row on since the folder's rows were read.
-    if existing.values().any(|r| !r.missing) {
+    // have moved the row on since the folder's rows were read. A hidden
+    // file's row, from before the listing passed over them, was never
+    // a frame: it goes rather than waits under missing.
+    let hidden = |key: &[u8]| greycard_core::decode::is_hidden(&path_from_bytes(key));
+    if existing.iter().any(|(k, r)| !r.missing || hidden(k)) {
         let tx = begin(conn)?;
         let now = now_secs();
-        for (key, row) in existing.iter().filter(|(_, r)| !r.missing) {
+        for (key, row) in &existing {
+            if hidden(key) {
+                tx.prepare_cached("DELETE FROM files WHERE id = ? AND path = ?")?
+                    .execute(params![row.id, key])?;
+                tx.prepare_cached("DELETE FROM pending WHERE frame = ?")?
+                    .execute(params![key])?;
+                continue;
+            }
+            if row.missing {
+                continue;
+            }
             report.missing += tx
                 .prepare_cached(
                     "UPDATE files SET missing_since = ? WHERE id = ? AND path = ? \
@@ -3381,6 +3399,79 @@ pub(crate) mod tests {
             lib.index_folder(&dir.join("nowhere").join("deep"), &mut quiet())
                 .is_err()
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// macOS's `._` resource forks and `.DS_Store` beside a raw on a
+    /// share are no rows, and give the raw no companion.
+    #[test]
+    fn hidden_files_beside_a_raw_are_not_rows_or_companions() {
+        let dir = scratch("hidden");
+        let raw = dir.join("IMG.CR3");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        for name in ["._IMG.CR3", "._IMG.xmp", "._IMG.JPG", ".DS_Store"] {
+            std::fs::write(dir.join(name), b"mac").unwrap();
+        }
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!((report.seen(), report.added), (1, 1), "{report:?}");
+        let rows: Vec<String> = lib
+            .query(&Filter::default())
+            .unwrap()
+            .iter()
+            .map(Entry::name)
+            .collect();
+        assert_eq!(rows, ["IMG.CR3"]);
+        let paired = crate::pairs::pair(list_folder(&dir).unwrap(), false);
+        assert_eq!(paired.frames, std::slice::from_ref(&raw));
+        assert!(paired.companions.is_empty());
+        assert!(crate::pairs::companions_of(&[raw]).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Rows an index made of hidden files before the listing passed
+    /// over them go on the next pass, there or not, missing or not,
+    /// rather than wait under missing for Forget missing.
+    #[test]
+    fn old_rows_of_hidden_files_go_on_the_next_pass() {
+        let dir = scratch("hidden-rows");
+        for name in ["IMG.CR3", "A.CR3", "B.CR3"] {
+            std::fs::write(dir.join(name), b"not a raw").unwrap();
+        }
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        // As an older build left them: `._A.CR3` there, `._B.CR3` gone
+        // and already marked missing.
+        let folder = canonical(&dir).unwrap();
+        for (from, to, missing) in [("A.CR3", "._A.CR3", None), ("B.CR3", "._B.CR3", Some(1))] {
+            std::fs::rename(dir.join(from), dir.join(to)).unwrap();
+            lib.conn_mut()
+                .execute(
+                    "UPDATE files SET path = ?, name = ?, missing_since = ? WHERE path = ?",
+                    params![
+                        path_bytes(&folder.join(to)),
+                        to,
+                        missing,
+                        path_bytes(&folder.join(from))
+                    ],
+                )
+                .unwrap();
+        }
+        std::fs::remove_file(dir.join("._B.CR3")).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.missing, 0, "{report:?}");
+        let names: Vec<String> = lib
+            .conn_mut()
+            .prepare("SELECT name FROM files ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(names, ["IMG.CR3"]);
+        // Nor does one named on its own come back.
+        lib.index_file(&dir.join("._A.CR3")).unwrap();
+        assert_eq!(lib.len().unwrap(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

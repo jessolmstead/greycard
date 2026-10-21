@@ -189,14 +189,6 @@ pub(crate) fn survey_library(
 /// of each read, not the bandwidth, is what a survey waits on.
 pub(crate) const SURVEY_THREADS: usize = 4;
 
-/// Whether a file is macOS's `._` companion of another, which an exFAT
-/// or SMB volume shows beside it under the same extension: the
-/// resource fork and the Finder's tags, not a raw.
-pub(crate) fn is_apple_double(path: &Path) -> bool {
-    path.file_name()
-        .is_some_and(|n| n.to_string_lossy().starts_with("._"))
-}
-
 /// What one raw's read gave the survey.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Surveyed {
@@ -266,7 +258,7 @@ pub(crate) fn survey_with(
     use std::sync::atomic::AtomicUsize;
     let raws: Vec<&PathBuf> = files
         .iter()
-        .filter(|p| greycard_core::decode::is_raw_path(p) && !is_apple_double(p))
+        .filter(|p| greycard_core::decode::is_raw_path(p) && !greycard_core::decode::is_hidden(p))
         .collect();
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
@@ -1788,16 +1780,12 @@ mod tests {
     /// extension and is not read, nor counted.
     #[test]
     fn the_survey_skips_macos_companion_files() {
-        assert!(is_apple_double(Path::new("/nas/shoot/._3U2A3625.CR3")));
-        assert!(!is_apple_double(Path::new("/nas/shoot/3U2A3625.CR3")));
-        assert!(!is_apple_double(Path::new("/nas/shoot/a._3.CR3")));
-        assert!(!is_apple_double(Path::new("/nas/._shoot/003.CR3")));
         let files: Vec<PathBuf> = ["._000.CR3", "000.CR3", "._001.CR3", "001.CR3", "notes.txt"]
             .iter()
             .map(|n| PathBuf::from("/nas/shoot").join(n))
             .collect();
         let read = |p: &Path| {
-            assert!(!is_apple_double(p), "{} read", p.display());
+            assert!(!greycard_core::decode::is_hidden(p), "{} read", p.display());
             surveyed(p)
         };
         let heard = std::sync::Mutex::new(Vec::new());

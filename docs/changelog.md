@@ -54,6 +54,11 @@ design note behind it.
 
 ### Fixes
 
+- The `._` files macOS leaves beside raws on a share or a USB drive,
+  and every other dot-named file, are no longer listed as unreadable
+  pictures; an index that held rows for them drops them on its next
+  pass
+  ([§381](https://github.com/jessolmstead/greycard/blob/master/docs/notes/381-hidden-files-are-no-frames.md))
 - A Lightroom import no longer writes a sidecar the editor refuses
   when a setting in the catalog or the XMP is "NaN" or infinite; the
   value is taken as unset. Sidecars, collections, and the roots list

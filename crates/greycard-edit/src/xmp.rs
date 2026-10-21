@@ -1987,6 +1987,22 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// macOS's `._` files beside a raw are not its XMP, and do not
+    /// make it one of a pair that loses the short name.
+    #[test]
+    fn a_resource_fork_is_not_a_frames_xmp() {
+        let dir = tempdir("fork");
+        let frame = dir.join("IMG.CR3");
+        std::fs::write(&frame, b"raw").unwrap();
+        for name in ["._IMG.CR3", "._IMG.xmp", "._IMG.CR3.xmp", ".DS_Store"] {
+            std::fs::write(dir.join(name), b"mac").unwrap();
+        }
+        assert_eq!(paths_of(&frame), Vec::<PathBuf>::new());
+        assert_eq!(path_of(&frame), None);
+        assert_eq!(write_path(&frame, true), Some(short_path(&frame)));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn an_xmp_is_taken_once_and_not_again_until_it_changes() {
         let dir = tempdir("mark");

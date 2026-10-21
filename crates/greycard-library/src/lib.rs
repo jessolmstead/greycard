@@ -2649,15 +2649,16 @@ fn under_roots_as(roots: &[PathBuf], canonicalize: bool) -> (String, Vec<rusqlit
     (clauses.join(" OR "), params)
 }
 
-/// "The file's name has a raw's extension", as
-/// `greycard_core::decode::is_raw_path` has it, over the name column.
-/// `LIKE` folds ASCII case, which is all an extension has.
+/// "The file's name has a raw's extension and is not hidden", as
+/// `greycard_core::decode::is_raw_path` and [`is_indexed_path`] have
+/// it, over the name column. `LIKE` folds ASCII case, which is all an
+/// extension has.
 fn raw_name_clause() -> String {
     let each: Vec<String> = greycard_core::decode::RAW_EXTENSIONS
         .iter()
         .map(|e| format!("files.name LIKE '%.{e}'"))
         .collect();
-    format!("({})", each.join(" OR "))
+    format!("(({}) AND files.name NOT LIKE '.%')", each.join(" OR "))
 }
 
 /// " AND under these roots" for a query that may be over the whole

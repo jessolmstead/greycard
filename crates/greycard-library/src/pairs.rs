@@ -203,6 +203,7 @@ fn near(dir: &Path, stems: &HashSet<String>) -> Vec<PathBuf> {
         .flatten()
         .filter(|e| e.file_type().is_ok_and(|t| !t.is_dir()))
         .map(|e| dir.join(e.file_name()))
+        .filter(|p| crate::is_indexed_path(p))
         .filter(|p| stem_key(p).is_some_and(|s| stems.contains(&s)) && !p.is_dir())
         .collect();
     near.sort();

@@ -428,9 +428,6 @@ comes across with its ratings and collections.
       (`rows_in_canonical`, `count_in_canonical`) still gather the
       raws' keys from the whole table, 22 ms on a 100,000-row library
       (§332), where a subquery limited to the folder would not
-- [ ] macOS's `._` resource forks beside the raws on a share are not
-      skipped: the browser lists them and the indexer reads them
-      (found by the §324 survey)
 - [ ] `greycard develop --tint -4` is refused as an unexpected argument
       (`--tint=-4` works): `tint` lacks `allow_hyphen_values`, unlike
       texture, clarity and the lens flags (found by the §341 review)

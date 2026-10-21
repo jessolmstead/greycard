@@ -99,6 +99,16 @@ pub fn mosaic_path(path: impl AsRef<Path>) -> Result<Option<crate::raw::Mosaic>>
 /// The extensions taken for a raw the decoder opens.
 pub const RAW_EXTENSIONS: [&str; 8] = ["cr3", "cr2", "dng", "nef", "arw", "raf", "orf", "rw2"];
 
+/// Whether a file's name begins with a dot, as a hidden file's does:
+/// macOS's `._NAME` resource forks beside the raws on a share or a
+/// card, and `.DS_Store`. A folder's listing passes over them, on any
+/// platform, since such files travel with the folder; a file named by
+/// hand still opens.
+pub fn is_hidden(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|n| n.as_encoded_bytes().starts_with(b"."))
+}
+
 /// Whether a path's extension is one of a raw's.
 pub fn is_raw_path(path: &Path) -> bool {
     path.extension()
@@ -176,6 +186,33 @@ pub fn orientation_path(path: impl AsRef<Path>) -> Result<Orientation> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    /// A dot at the head of a file's name hides it; a dot inside a
+    /// name, or a hidden folder above it, does not. Hidden or not, the
+    /// extension still says which decoder opens it.
+    #[test]
+    fn a_hidden_file_is_one_whose_name_begins_with_a_dot() {
+        for name in ["._IMG.CR3", ".IMG.CR3", "._IMG.xmp", ".DS_Store"] {
+            assert!(
+                super::is_hidden(&Path::new("/share/day").join(name)),
+                "{name}"
+            );
+        }
+        for p in [
+            "/share/day/IMG.CR3",
+            "/share/day/a._b.cr3",
+            "/share/.day/IMG.CR3",
+            "/share/day/IMG.CR3.gcd",
+        ] {
+            assert!(!super::is_hidden(Path::new(p)), "{p}");
+        }
+        assert!(super::is_raw_path(Path::new("/share/day/._IMG.CR3")));
+        assert!(crate::picture::is_picture_path(Path::new(
+            "/share/day/.x.jpg"
+        )));
+    }
+
     /// With `GREYCARD_SAMPLES` a directory of raws: each file's preview,
     /// its size, orientation and the time to read it, printed.
     #[test]

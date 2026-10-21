@@ -393,3 +393,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§378. A shelf of recent bases](notes/378-a-shelf-of-recent-bases.md) (2026-10-19)
 - [§380. Generative remove on the device](notes/380-generative-remove-on-the-device.md) (2026-10-19)
 - [§379. The neighbors prefetched onto the shelf](notes/379-the-neighbors-prefetched-onto-the-shelf.md) (2026-10-19)
+- [§381. Hidden files are no frames](notes/381-hidden-files-are-no-frames.md) (2026-10-20)
