@@ -237,7 +237,7 @@ pub(super) fn develop_job(
         retouch.apply_with(&mut image, |patch, region, picture| {
             // A fill the model has to make is said so before it
             // starts, since it takes a while.
-            let kept = ai.fill_kept(patch);
+            let kept = ai.fill_kept(patch, region, picture);
             if !kept && ai.fill_available() {
                 deliver(Outcome::Filling {
                     generation,

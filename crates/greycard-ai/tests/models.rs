@@ -452,10 +452,10 @@ fn the_fill_does_not_show_its_input_through() {
     let dir = std::path::PathBuf::from(dir);
     let input = image::open(dir.join("fill_in.png")).unwrap().into_rgb8();
     let hole = image::open(dir.join("fill_hole.png")).unwrap().into_luma8();
-    let n = 512usize;
+    let (w, h) = (input.width() as usize, input.height() as usize);
     let rgb = Rgbf::new(
-        n,
-        n,
+        w,
+        h,
         input.as_raw().iter().map(|&v| v as f32 / 255.0).collect(),
     );
     let mask: Vec<f32> = hole
@@ -464,10 +464,13 @@ fn the_fill_does_not_show_its_input_through() {
         .map(|&v| if v > 0 { 1.0 } else { 0.0 })
         .collect();
     let mut fill = Fill::load(&store, &Provider::available()).expect("load");
-    let out = fill.fill(&rgb, &mask).expect("fill");
+    let out = fill
+        .fill_window(&rgb, &mask, greycard_ai::fill::depth(&mask, w, h))
+        .expect("fill")
+        .image;
     // Correlation between input and output inside the hole, after
     // taking each one's mean out.
-    let idx: Vec<usize> = (0..n * n).filter(|&i| mask[i] > 0.0).collect();
+    let idx: Vec<usize> = (0..w * h).filter(|&i| mask[i] > 0.0).collect();
     let mean = |v: &dyn Fn(usize) -> f32| idx.iter().map(|&i| v(i)).sum::<f32>() / idx.len() as f32;
     let (mi, mo) = (mean(&|i| rgb.data[i * 3]), mean(&|i| out.data[i * 3]));
     let (mut num, mut di, mut dout) = (0.0f32, 0.0f32, 0.0f32);
@@ -490,10 +493,167 @@ fn the_fill_does_not_show_its_input_through() {
     image::save_buffer(
         dir.join("fill_test_out.png"),
         &data,
-        n as u32,
-        n as u32,
+        w as u32,
+        h as u32,
         image::ExtendedColorType::Rgb8,
     )
     .unwrap();
     assert!(corr < 0.95, "the input came back: {corr}");
+}
+
+/// A field of `w`×`h`: a gentle color gradient under grain, as a
+/// picture's sky or wall is, from a fixed seed.
+fn grain_field(w: usize, h: usize) -> Rgbf {
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut noise = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 40) as f32 / (1u64 << 24) as f32 - 0.5
+    };
+    let mut data = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            let (u, v) = (x as f32 / w as f32, y as f32 / h as f32);
+            let base = [0.35 + 0.2 * u, 0.45 + 0.1 * v, 0.6 - 0.15 * u];
+            let g = 0.08 * noise();
+            data.extend(base.map(|b| b + g));
+        }
+    }
+    Rgbf::new(w, h, data)
+}
+
+/// Each channel's mean, and the mean absolute difference between
+/// horizontal neighbors (the grain), over the pixels `inside` picks.
+fn stats(img: &Rgbf, inside: impl Fn(usize, usize) -> bool) -> ([f32; 3], f32) {
+    let (mut mean, mut grain, mut n) = ([0.0f32; 3], 0.0f32, 0usize);
+    for y in 0..img.height {
+        for x in 0..img.width - 1 {
+            if inside(x, y) && inside(x + 1, y) {
+                let (a, b) = (img.at(x, y), img.at(x + 1, y));
+                for c in 0..3 {
+                    mean[c] += a[c];
+                }
+                grain += (a[1] - b[1]).abs();
+                n += 1;
+            }
+        }
+    }
+    (mean.map(|m| m / n as f32), grain / n as f32)
+}
+
+/// At 1024, a hole 96 wide and 704 tall in a grained gradient, shallow
+/// enough to be filled at the window's own pixels: what fills it keeps
+/// the surround's color, where it is in the gradient, and some of its
+/// grain, rather than a smear.
+#[test]
+#[ignore]
+fn the_fill_at_1024_matches_the_holes_surround() {
+    let Some(store) = store() else { return };
+    let n = 1024usize;
+    let image = grain_field(n, n);
+    let (a, b) = (464usize, 560usize);
+    let (top, bottom) = (160usize, 864usize);
+    let in_hole = |x: usize, y: usize| (a..b).contains(&x) && (top..bottom).contains(&y);
+    let hole: Vec<f32> = (0..n * n)
+        .map(|i| if in_hole(i % n, i / n) { 1.0 } else { 0.0 })
+        .collect();
+    let mut fill = Fill::load(&store, &Provider::available()).expect("load");
+    let t = std::time::Instant::now();
+    let made = fill
+        .fill_window(&image, &hole, greycard_ai::fill::depth(&hole, n, n))
+        .expect("fill");
+    println!(
+        "filled {n}x{n} on {} at {} in {} tile(s), {:.3}s",
+        fill.provider().name(),
+        made.scale,
+        made.tiles,
+        t.elapsed().as_secs_f64()
+    );
+    assert_eq!(made.size, (n, n), "at the window's own pixels");
+    let out = made.image;
+    let ring = |x: usize, y: usize| {
+        let d = |p: usize, lo: usize, hi: usize| {
+            if p < lo {
+                lo - p
+            } else {
+                p.saturating_sub(hi - 1)
+            }
+        };
+        !in_hole(x, y) && d(x, a, b).max(d(y, top, bottom)) <= 48
+    };
+    let (want, want_grain) = stats(&image, ring);
+    let (got, got_grain) = stats(&out, in_hole);
+    println!("surround {want:.3?} grain {want_grain:.4}; fill {got:.3?} grain {got_grain:.4}");
+    for c in 0..3 {
+        assert!(
+            (got[c] - want[c]).abs() < 0.03,
+            "channel {c}: {} against {}",
+            got[c],
+            want[c]
+        );
+    }
+    assert!(
+        got_grain > 0.2 * want_grain,
+        "a smear: grain {got_grain} against {want_grain}"
+    );
+    // Outside the hole, the picture.
+    assert!((out.at(10, 10)[0] - image.at(10, 10)[0]).abs() < 1e-3);
+}
+
+/// A window wider than one tile: a band of a hole across 2600 pixels
+/// of the same field is filled in tiles, and no column of the answer
+/// steps away from its neighbors where the tiles meet.
+#[test]
+#[ignore]
+fn the_fill_tiles_a_wide_window_without_a_seam() {
+    let Some(store) = store() else { return };
+    let (w, h) = (2600usize, 512usize);
+    let image = grain_field(w, h);
+    let (a, b) = (200usize, 312usize);
+    let hole: Vec<f32> = (0..w * h)
+        .map(|i| if (a..b).contains(&(i / w)) { 1.0 } else { 0.0 })
+        .collect();
+    let mut fill = Fill::load(&store, &Provider::available()).expect("load");
+    let t = std::time::Instant::now();
+    let made = fill
+        .fill_window(&image, &hole, greycard_ai::fill::depth(&hole, w, h))
+        .expect("fill");
+    println!(
+        "filled {w}x{h} on {} at {} in {} tile(s) of up to {}, {:.3}s",
+        fill.provider().name(),
+        made.scale,
+        made.tiles,
+        greycard_ai::fill::MAX,
+        t.elapsed().as_secs_f64()
+    );
+    assert_eq!(made.size, (w, h), "at the window's own pixels");
+    assert!(made.tiles >= 2);
+    let out = made.image;
+    // Each column's mean over the band, against the field's own: the
+    // largest step between neighboring columns stays within what
+    // neighbors differ by anyway.
+    let column =
+        |img: &Rgbf, x: usize| (a..b).map(|y| img.at(x, y)[1]).sum::<f32>() / (b - a) as f32;
+    let steps = |img: &Rgbf| {
+        (1..w)
+            .map(|x| (column(img, x) - column(img, x - 1)).abs())
+            .fold(0.0f32, f32::max)
+    };
+    let (field, filled) = (steps(&image), steps(&out));
+    println!("largest column step: field {field:.4}, fill {filled:.4}");
+    assert!(
+        filled < 3.0 * field.max(0.01),
+        "a seam: {filled} against {field}"
+    );
+    let (want, _) = stats(&image, |_, y| (a..b).contains(&y));
+    let (got, _) = stats(&out, |_, y| (a..b).contains(&y));
+    for c in 0..3 {
+        assert!(
+            (got[c] - want[c]).abs() < 0.03,
+            "channel {c}: {} against {}",
+            got[c],
+            want[c]
+        );
+    }
 }

@@ -79,3 +79,7 @@ required-features = ["webgpu"]
 [[example]]
 name = "sam3_bench"
 required-features = ["webgpu"]
+
+[[example]]
+name = "fill_bench"
+required-features = ["webgpu"]

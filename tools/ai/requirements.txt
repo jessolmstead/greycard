@@ -13,3 +13,7 @@ pillow
 torch==2.14.0+cpu
 transformers==5.17.0
 scipy
+# lama_export.py: the fill model's export, with torch above; kornia
+# only because LaMa's modules import it.
+onnxscript==0.7.2
+kornia==0.8.3

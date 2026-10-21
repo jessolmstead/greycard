@@ -42,6 +42,16 @@ design note behind it.
   ran every develop as software shaders for minutes
   ([§374](https://github.com/jessolmstead/greycard/blob/master/docs/notes/374-a-no-gpu-mode.md))
 
+### Retouch
+
+- The fill works at the frame's own pixels. A patch's window is cut
+  at native size, up to 1024 on a side with overlapped tiles beyond,
+  where every fill used to be squeezed into a 512 square and
+  stretched back; a deep hole is scaled down only as far as the model
+  needs. The model is a new export of the same LaMa, fetched on first
+  use like the old one, which stays in your store unused
+  ([§382](https://github.com/jessolmstead/greycard/blob/master/docs/notes/382-lama-at-the-frames-resolution.md))
+
 ### Export
 
 - The command line exports a whole folder: `greycard-ui FOLDER

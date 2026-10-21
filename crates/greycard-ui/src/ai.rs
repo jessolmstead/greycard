@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use greycard_ai::fill::Window;
 use greycard_ai::landscape::{self, Offer, Scene};
 use greycard_ai::sam::Embedding;
 use greycard_ai::sam3::{self, Choice, Encodings, Picture, Presets, Sam3};
@@ -183,8 +184,14 @@ pub struct Ai {
     /// The learned denoiser loaded, by its model's id: one at a time,
     /// since each holds the GPU's memory.
     denoiser: Option<(&'static str, Denoiser)>,
-    /// Fills made, by patch id, with the patch each was made for.
-    fills: HashMap<u64, (Patch, Vec<f32>)>,
+    /// Fills made, by patch id, with the patch and the window each was
+    /// made for.
+    fills: HashMap<u64, (Patch, Window, Vec<f32>)>,
+    /// Each Fill patch's window and depth ([`window_for`]), by patch
+    /// id, with the patch and the picture's size they were found for:
+    /// finding them reads the whole region, which a stroke across the
+    /// frame makes about the frame.
+    windows: HashMap<u64, (Patch, (usize, usize), Window, f32)>,
     /// The preview of base develop `stamp`, and its luma.
     preview: Option<(u64, Rgb8, Vec<f32>)>,
     embedding: Option<(u64, Embedding)>,
@@ -618,6 +625,46 @@ fn same_fill(a: &Patch, b: &Patch) -> bool {
     a.points == b.points && a.radius == b.radius && a.feather == b.feather && a.method == b.method
 }
 
+/// The window a region's fill is made in, in a picture of `width` ×
+/// `height`, and how deep the hole is: round the box of what the
+/// region covers, at the picture's own pixels
+/// ([`greycard_ai::fill::window`]).
+fn window_for(region: &Region, width: usize, height: usize) -> (Window, f32) {
+    let hole: Vec<f32> = region
+        .cover
+        .iter()
+        .map(|&c| if c > 0.0 { 1.0 } else { 0.0 })
+        .collect();
+    let depth = greycard_ai::fill::depth(&hole, region.width, region.height);
+    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
+    for y in 0..region.height {
+        for x in 0..region.width {
+            if region.cover[y * region.width + x] > 0.0 {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    let hole = if x0 < x1 {
+        Window {
+            x: region.x + x0,
+            y: region.y + y0,
+            width: x1 - x0,
+            height: y1 - y0,
+        }
+    } else {
+        Window {
+            x: region.x,
+            y: region.y,
+            width: region.width,
+            height: region.height,
+        }
+    };
+    (greycard_ai::fill::window(hole, depth, width, height), depth)
+}
+
 impl Ai {
     pub fn new() -> Self {
         Self {
@@ -633,6 +680,7 @@ impl Ai {
             fill: None,
             denoiser: None,
             fills: HashMap::new(),
+            windows: HashMap::new(),
             preview: None,
             embedding: None,
             sam3: None,
@@ -699,6 +747,7 @@ impl Ai {
         self.file = file;
         self.cache.clear();
         self.fills.clear();
+        self.windows.clear();
         self.preview = None;
         self.embedding = None;
         self.scene = None;
@@ -770,23 +819,43 @@ impl Ai {
 
     /// Whether the patch's fill is made already and kept, so asking
     /// for it costs nothing.
-    pub fn fill_kept(&self, patch: &Patch) -> bool {
+    pub fn fill_kept(&mut self, patch: &Patch, region: &Region, image: &WorkingImage) -> bool {
+        let (window, _) = self.window_of(patch, region, image);
         self.fills
             .get(&patch.id)
-            .is_some_and(|(p, _)| same_fill(p, patch))
+            .is_some_and(|(p, w, _)| same_fill(p, patch) && *w == window)
+    }
+
+    /// The patch's window and depth in `image`, found once for the
+    /// patch as it is and the picture's size.
+    fn window_of(&mut self, patch: &Patch, region: &Region, image: &WorkingImage) -> (Window, f32) {
+        let size = (image.width, image.height);
+        if let Some((p, s, w, d)) = self.windows.get(&patch.id)
+            && same_fill(p, patch)
+            && *s == size
+        {
+            return (*w, *d);
+        }
+        let (window, depth) = window_for(region, image.width, image.height);
+        self.windows
+            .insert(patch.id, (patch.clone(), size, window, depth));
+        (window, depth)
     }
 
     /// The region's window made up by the fill model from what is
     /// around it, in the picture's own values; or why not. Kept by
-    /// patch, so a slider elsewhere does not run the model again.
+    /// patch and window, so a slider elsewhere does not run the model
+    /// again.
     pub fn fill(
         &mut self,
         patch: &Patch,
         region: &Region,
         image: &WorkingImage,
     ) -> Result<Vec<f32>, NoFill> {
-        if let Some((p, data)) = self.fills.get(&patch.id)
+        let (window, depth) = self.window_of(patch, region, image);
+        if let Some((p, w, data)) = self.fills.get(&patch.id)
             && same_fill(p, patch)
+            && *w == window
         {
             return Ok(data.clone());
         }
@@ -809,35 +878,32 @@ impl Ai {
                 }
             },
         };
-        // A square window round the region, twice its size for context,
-        // within the picture.
-        let side = (region.width.max(region.height) * 2)
-            .max(64)
-            .min(image.width.min(image.height));
-        let cx = region.x + region.width / 2;
-        let cy = region.y + region.height / 2;
-        let wx = cx.saturating_sub(side / 2).min(image.width - side);
-        let wy = cy.saturating_sub(side / 2).min(image.height - side);
+        let Window {
+            x: wx,
+            y: wy,
+            width: ww,
+            height: wh,
+        } = window;
         let to_srgb = crate::export::Space::Srgb.matrix();
         let from_srgb = invert(&to_srgb);
         // Coverage over the window, and the picture's values there.
-        let mut hole = vec![0.0f32; side * side];
-        let mut window = Vec::with_capacity(side * side * 3);
+        let mut hole = vec![0.0f32; ww * wh];
+        let mut values = Vec::with_capacity(ww * wh * 3);
         let (mut luma_sum, mut luma_n) = (0.0f32, 0usize);
-        for y in 0..side {
-            for x in 0..side {
+        for y in 0..wh {
+            for x in 0..ww {
                 let (px, py) = (wx + x, wy + y);
                 let i = (py * image.width + px) * 3;
                 let p = [image.data[i], image.data[i + 1], image.data[i + 2]];
                 let s = mul(&to_srgb, p).map(|v| v.max(0.0));
-                window.extend(s);
+                values.extend(s);
                 let covered = px >= region.x
                     && px < region.x + region.width
                     && py >= region.y
                     && py < region.y + region.height
                     && region.cover[(py - region.y) * region.width + (px - region.x)] > 0.0;
                 if covered {
-                    hole[y * side + x] = 1.0;
+                    hole[y * ww + x] = 1.0;
                 } else {
                     luma_sum += 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2];
                     luma_n += 1;
@@ -851,19 +917,28 @@ impl Ai {
             0.18
         };
         let gain = (0.18 / mean.max(1e-4)).clamp(0.25, 16.0);
-        let encoded: Vec<f32> = window.iter().map(|v| encode(v * gain)).collect();
-        let square = Rgbf::new(side, side, encoded)
-            .resampled(greycard_ai::fill::SIZE, greycard_ai::fill::SIZE);
-        let hole_square = greycard_ai::Mask::new(side, side, hole)
-            .resampled(greycard_ai::fill::SIZE, greycard_ai::fill::SIZE)
-            .data;
-        let filled = match fill.fill(&square, &hole_square) {
+        let encoded: Vec<f32> = values.iter().map(|v| encode(v * gain)).collect();
+        let input = Rgbf::new(ww, wh, encoded);
+        let started = Instant::now();
+        let made = match fill.fill_window(&input, &hole, depth) {
             Ok(f) => f,
             Err(e) => {
                 tracing::debug!("fill: {e}");
                 return Err(NoFill::Failed(e.to_string()));
             }
         };
+        tracing::info!(
+            "fill {}: a window of {ww}x{wh} at {:.2} ({}x{}), {} tile(s) of up to {} on {}, {:.2}s",
+            patch.name(),
+            made.scale,
+            made.size.0,
+            made.size.1,
+            made.tiles,
+            greycard_ai::fill::MAX,
+            fill.provider().name(),
+            started.elapsed().as_secs_f64()
+        );
+        let filled = made.image;
         if let Some(dir) = std::env::var_os("GREYCARD_AI_DUMP") {
             let dir = std::path::PathBuf::from(dir);
             let png = |name: &str, img: &Rgbf| {
@@ -882,34 +957,37 @@ impl Ai {
                     tracing::warn!("dump {name}: {e}");
                 }
             };
-            png("fill_in.png", &square);
+            png("fill_in.png", &input);
             png("fill_out.png", &filled);
-            let hole8: Vec<u8> = hole_square.iter().map(|v| (v * 255.0) as u8).collect();
+            let hole8: Vec<u8> = hole.iter().map(|v| (v * 255.0) as u8).collect();
             if let Err(e) = image::save_buffer(
                 dir.join("fill_hole.png"),
                 &hole8,
-                greycard_ai::fill::SIZE as u32,
-                greycard_ai::fill::SIZE as u32,
+                ww as u32,
+                wh as u32,
                 image::ExtendedColorType::L8,
             ) {
                 tracing::warn!("dump fill_hole.png: {e}");
             }
         }
-        let back = filled.resampled(side, side);
-        // The region's window, decoded to the picture's values.
+        // The region's window, decoded to the picture's values; where
+        // the region reaches past the window (its ring, at the frame's
+        // edge) the picture as it is, under no coverage.
         let mut out = Vec::with_capacity(region.width * region.height * 3);
         for y in 0..region.height {
             for x in 0..region.width {
                 let (px, py) = (region.x + x, region.y + y);
-                let (bx, by) = (
-                    px.saturating_sub(wx).min(side - 1),
-                    py.saturating_sub(wy).min(side - 1),
-                );
-                let s = back.at(bx, by).map(|v| decode(v) / gain);
-                out.extend(mul(&from_srgb, s));
+                if (wx..wx + ww).contains(&px) && (wy..wy + wh).contains(&py) {
+                    let s = filled.at(px - wx, py - wy).map(|v| decode(v) / gain);
+                    out.extend(mul(&from_srgb, s));
+                } else {
+                    let i = (py * image.width + px) * 3;
+                    out.extend_from_slice(&image.data[i..i + 3]);
+                }
             }
         }
-        self.fills.insert(patch.id, (patch.clone(), out.clone()));
+        self.fills
+            .insert(patch.id, (patch.clone(), window, out.clone()));
         Ok(out)
     }
 

@@ -302,23 +302,35 @@ pub const SKY: Model = Model {
     }],
 };
 
+/// LaMa's license, as its repository gives it
+/// (https://github.com/advimman/lama/blob/main/LICENSE), which
+/// Apache-2.0 wants with every copy of what is made from it.
+const LAMA_LICENSE: &str = include_str!("lama_license.txt");
+
 /// LaMa (big-lama): fills a hole from what is around it, for the
-/// eraser. A fixed 512×512 square in and out.
+/// eraser. greycard's export of the published checkpoint at any height
+/// and width that are multiples of 8, its Fourier transforms written
+/// as matrix products so it runs whole on WebGPU. It replaced Carve's
+/// fixed 512 export (`big-lama-carve-fp32`), whose file a store that
+/// has it keeps in its own directory, unused.
 pub const FILL: Model = Model {
-    id: "big-lama-carve-fp32",
-    name: "LaMa (Suvorov et al.), big-lama, ONNX export by Carve",
+    id: "big-lama-dynamic-fp32",
+    name: "LaMa (Suvorov et al.), big-lama, ONNX export by greycard",
     purpose: "the eraser: what was behind what it removes",
-    source: "https://github.com/advimman/lama and https://huggingface.co/Carve/LaMa-ONNX",
+    source: "https://github.com/advimman/lama (big-lama), exported by https://github.com/jessolmstead/greycard (tools/ai/lama_export.py) and published at https://huggingface.co/jessolmstead/greycard-lama",
     license: License {
         name: "Apache-2.0",
         url: "https://github.com/advimman/lama/blob/main/LICENSE",
     },
-    modified: None,
+    modified: Some(Modified {
+        what: "an ONNX export (opset 21, fp32) of the generator in big-lama's checkpoint with a dynamic height and width, its rfftn and irfftn written as the same transforms by matrix products, and LaMa's own masking and compositing around it; the weights are untouched.",
+        notice: LAMA_LICENSE,
+    }),
     files: &[File {
-        name: "lama_fp32.onnx",
-        url: "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx",
-        bytes: 208_044_816,
-        sha256: "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6",
+        name: "big-lama-dynamic-fp32.onnx",
+        url: "https://huggingface.co/jessolmstead/greycard-lama/resolve/main/big-lama-dynamic-fp32.onnx",
+        bytes: 209_024_270,
+        sha256: "5f39f5e80b91596fd50f3227858c97912dabc0ffbd4796f21ca688529abb8771",
     }],
 };
 
@@ -773,6 +785,14 @@ mod tests {
         assert!(note.contains("Copyright (c) 2024 ZhengPeng"));
         assert!(note.contains("The above copyright notice and this permission notice"));
         assert!(!note.contains("does not redistribute"));
+
+        // Apache-2.0 wants the license with every copy.
+        let note = FILL.license_note();
+        assert!(note.contains("advimman/lama"));
+        assert!(note.contains("Copyright [2021] Samsung Research"));
+        assert!(note.contains("TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION"));
+        assert!(note.contains("matrix products"));
+        assert!(note.contains("jessolmstead/greycard-lama"));
 
         let note = SKY.license_note();
         assert!(note.contains("tue-mps/eomt"));

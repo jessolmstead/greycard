@@ -394,3 +394,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§380. Generative remove on the device](notes/380-generative-remove-on-the-device.md) (2026-10-19)
 - [§379. The neighbors prefetched onto the shelf](notes/379-the-neighbors-prefetched-onto-the-shelf.md) (2026-10-19)
 - [§381. Hidden files are no frames](notes/381-hidden-files-are-no-frames.md) (2026-10-20)
+- [§382. LaMa at the frame's resolution](notes/382-lama-at-the-frames-resolution.md) (2026-10-20)
