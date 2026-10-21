@@ -140,6 +140,9 @@ pub(super) fn run(
                 if let Some(d) = q.gpu.take() {
                     device = Some(d);
                 }
+                for (path, now) in std::mem::take(&mut q.edits_changed) {
+                    drop_changed(shelf.as_mut(), &path, now.as_ref());
+                }
                 if q.forget_subject {
                     q.forget_subject = false;
                     ai.forget_subject();
@@ -240,8 +243,22 @@ pub(super) fn run(
                             // Given way to a request on the open frame:
                             // made again from the start once it has been
                             // quiet for longer than before.
+                            //
+                            // Not when it gave way to a change of its own
+                            // edit: the window sends it again under the
+                            // new one, and made under the old it would sit
+                            // on the shelf past the drop, taking the room
+                            // of the frame just left.
                             Ok(Fetched::Abandoned(_)) => {
-                                if let Some(waiting) = q.neighbors.as_mut()
+                                let moved = prefetch::moved_under(&q, &n);
+                                if moved {
+                                    prefetch::note(format!(
+                                        "the prefetch of {} let go: its edit changed",
+                                        file_label(&n.path)
+                                    ));
+                                }
+                                if !moved
+                                    && let Some(waiting) = q.neighbors.as_mut()
                                     && Some(waiting.generation) == generation
                                 {
                                     waiting.gave_way(n);
@@ -899,6 +916,33 @@ pub(super) fn forget_bases(
     *learned = None;
     if let Some(shelf) = shelf {
         shelf.clear();
+    }
+}
+
+/// The edit of the file at `path` changed without an open of it, to
+/// what it holds `now` when the window had that: its bases on the
+/// shelf that no open would take now are let go and said, rather than
+/// sit until the budget pushes them out. A shelf not made yet stays
+/// unmade.
+pub(super) fn drop_changed(
+    shelf: Option<&mut Shelf>,
+    path: &std::path::Path,
+    now: Option<&FileNow>,
+) {
+    let Some(shelf) = shelf else {
+        return;
+    };
+    let gone = shelf.drop_changed(path, now);
+    if gone > 0 {
+        prefetch::note(format!(
+            "shelved base of {} dropped: edit changed{}",
+            file_label(path),
+            if gone > 1 {
+                format!(" ({gone} bases)")
+            } else {
+                String::new()
+            }
+        ));
     }
 }
 

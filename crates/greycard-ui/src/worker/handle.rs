@@ -522,20 +522,75 @@ impl Worker {
     }
 
     /// The frames the arrow keys reach from `open`, the frame the
-    /// editor has open, sent again when it comes back from culling or
-    /// the grid without being opened again, which let the last ones go:
-    /// taken for that frame's open when its develop is the last to have
-    /// landed and nothing has been sent since, and let go otherwise.
-    pub(crate) fn neighbors_again(&self, open: &std::path::Path, neighbors: Vec<Neighbor>) {
+    /// editor has open under the open the window sent at `generation`,
+    /// sent again because what they are has moved since (`why`, for the
+    /// log): the editor came back from culling or the grid, which let
+    /// the last ones go, or the strip's filter, its order, or a
+    /// neighbor's edit changed. Taken in place of the list that open
+    /// sent, or of none once that open's develop has landed on that
+    /// file; let go when another open has been sent since, or the open
+    /// never landed and its list is gone. Whether it was taken.
+    pub(crate) fn neighbors_again(
+        &self,
+        generation: u64,
+        open: &std::path::Path,
+        neighbors: Vec<Neighbor>,
+        why: &str,
+    ) -> bool {
         let (lock, cv) = &*self.queue;
         let mut q = lock.lock().expect("worker queue");
-        if q.neighbors.is_some() {
-            return;
-        }
-        let Some((generation, _)) = q.landed.as_ref().filter(|(_, path)| path == open) else {
-            return;
+        let ours = match &q.neighbors {
+            Some(waiting) => waiting.generation == generation,
+            None => q
+                .landed
+                .as_ref()
+                .is_some_and(|(g, path)| *g == generation && path == open),
         };
-        q.neighbors = Some(super::prefetch::Neighbors::new(*generation, neighbors));
+        if !ours {
+            return false;
+        }
+        let named: Vec<String> = neighbors
+            .iter()
+            .map(|n| format!("{} {}", n.side.word(), super::engine::file_label(&n.path)))
+            .collect();
+        tracing::info!(
+            "neighbors resent after {why}: {}",
+            if named.is_empty() {
+                "none".to_string()
+            } else {
+                named.join(", ")
+            }
+        );
+        q.neighbors = Some(super::prefetch::Neighbors::new(generation, neighbors));
+        cv.notify_one();
+        true
+    }
+
+    /// The neighbors waiting to be made, with the open they are for:
+    /// what the window's tests read of what it sent.
+    #[cfg(test)]
+    pub(crate) fn neighbors_waiting(&self) -> Option<(u64, Vec<(std::path::PathBuf, Side)>)> {
+        let q = self.queue.0.lock().expect("worker queue");
+        q.neighbors.as_ref().map(|n| {
+            (
+                n.generation,
+                n.waiting.iter().map(|n| (n.path.clone(), n.side)).collect(),
+            )
+        })
+    }
+
+    /// The edit of the file at `path` changed without an open of it (a
+    /// sync, a paste, a sidecar written by another hand): its bases on
+    /// the shelf that what it holds `now` no longer serves
+    /// ([`FileNow::serves`]) are let go, every one of the file's when
+    /// the window does not have that at hand. A neighbor sent again
+    /// under the new edit is then made afresh.
+    pub(crate) fn edit_changed(&self, path: std::path::PathBuf, now: Option<FileNow>) {
+        let (lock, cv) = &*self.queue;
+        lock.lock()
+            .expect("worker queue")
+            .edits_changed
+            .push((path, now));
         cv.notify_one();
     }
 

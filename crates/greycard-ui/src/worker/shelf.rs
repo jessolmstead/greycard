@@ -193,6 +193,37 @@ pub(super) struct Shelved {
     bytes: u64,
 }
 
+/// What a file holds now, as the window has it after its edit changed
+/// without an open of it: every edit its sidecar holds, its versions'
+/// among them, and its quarter turns.
+#[derive(Clone, Debug)]
+pub(crate) struct FileNow {
+    pub edits: Vec<Edit>,
+    pub turn: u8,
+}
+
+impl FileNow {
+    /// Whether a base made under `edit` at `turn` is still one an open
+    /// of the file would take: the same turn, and one of its edits with
+    /// the same base. A base made under no learned tier does not depend
+    /// on the learned strength, which a frame never developed seeds at
+    /// its open and not in its sidecar, so a strength alone keeps it
+    /// there; a base made under a tier is kept only at the strength the
+    /// sidecar says, so one shelved from a seeded frame never saved goes
+    /// on the next save of the file (a base made again, never a wrong
+    /// one).
+    pub(crate) fn serves(&self, edit: &Edit, turn: u8) -> bool {
+        self.turn % 4 == turn % 4
+            && self.edits.iter().any(|now| {
+                let mut as_made = now.clone();
+                if now.noise.tier().is_none() && edit.noise.tier().is_none() {
+                    as_made.noise.learned_strength = edit.noise.learned_strength;
+                }
+                edit.same_base(&as_made)
+            })
+    }
+}
+
 /// The bases left behind, the most recently left first.
 pub(super) struct Shelf {
     budget: Budget,
@@ -335,6 +366,19 @@ impl Shelf {
                 && s.base.edit.same_base(edit_as_made.as_ref().unwrap_or(edit))
                 && (has_gpu || !s.base.ca_on_gpu)
         })
+    }
+
+    /// The bases of the file at `path` that no open will take any more,
+    /// let go: its edit changed under them without an open of it (a
+    /// sync, a paste, a sidecar written by another hand), and what it
+    /// holds `now` serves none of them ([`FileNow::serves`]). With
+    /// nothing at hand, every base of the file goes. How many went.
+    pub(super) fn drop_changed(&mut self, path: &Path, now: Option<&FileNow>) -> usize {
+        let before = self.held.len();
+        self.held.retain(|s| {
+            s.file.path != path || now.is_some_and(|n| n.serves(&s.base.edit, s.base.turn))
+        });
+        before - self.held.len()
     }
 
     /// How many bases of `bytes` each the budget holds: at least one
@@ -768,6 +812,47 @@ mod tests {
         let mut none = None;
         forget_bases(&mut held, &mut learned, &mut none, None);
         assert!(none.is_none(), "not made by the change");
+    }
+
+    /// A file whose edit changed without an open: its bases that none
+    /// of its edits now would take go, and only its; one whose base is
+    /// still one of them stays, whatever changed after the base or in a
+    /// learned strength no tier uses; a base kept for a version stays
+    /// beside it; a turn changed drops it; with nothing at hand, all of
+    /// the file's go.
+    #[test]
+    fn a_base_whose_edit_changed_under_it_is_dropped() {
+        let edit = Edit::default();
+        let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+        shelf.put(file("a"), base(&edit, 0, 8, 8), None);
+        shelf.put(file("a"), base(&warmer(), 0, 8, 8), None);
+        shelf.put(file("b"), base(&edit, 0, 8, 8), None);
+        assert_eq!(shelf.len(), 3);
+
+        let mut after = edit.clone();
+        after.light.exposure += 1.0;
+        after.noise.learned_strength += 0.25;
+        let now = |edits: Vec<Edit>, turn: u8| FileNow { edits, turn };
+        assert_eq!(
+            shelf.drop_changed(Path::new("a"), Some(&now(vec![after.clone(), warmer()], 4))),
+            0,
+            "the main line's base and the version's both still taken"
+        );
+        assert_eq!(
+            shelf.drop_changed(Path::new("a"), Some(&now(vec![after.clone()], 0))),
+            1
+        );
+        assert!(shelf.take(&file("a"), &warmer(), 0, true).is_none());
+        assert!(shelf.holds(Path::new("a"), &file("a").stat, &edit, false, 0, true));
+        // Turned by a paste: no open takes the unturned base.
+        assert_eq!(
+            shelf.drop_changed(Path::new("a"), Some(&now(vec![after], 1))),
+            1
+        );
+        shelf.put(file("a"), base(&edit, 0, 8, 8), None);
+        assert_eq!(shelf.drop_changed(Path::new("a"), None), 1);
+        assert_eq!(shelf.len(), 1);
+        assert!(shelf.take(&file("b"), &edit, 0, true).is_some(), "b's own");
     }
 
     /// The learned pair goes on the shelf with a base blended from it,

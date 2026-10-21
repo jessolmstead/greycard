@@ -190,11 +190,6 @@ seconds.
       only worth showing if the Mac timing says the first develop
       itself is the wait; waits on that timing. §270 builds the
       reduced develop itself, for the edited thumbnails
-- [ ] The neighbors resent to the worker when the filter or the sort
-      changes while a frame is open, and a neighbor's shelved base
-      dropped when its edit changes under it (a sync, a paste): today
-      the prefetch (§380) uses the list sent with the open, and a
-      stale base just misses until the budget evicts it
 - [ ] The first open of a 45 MP frame: the demosaic (1.2 s) and the
       lens correction (0.7 s) are most of a fresh base's 2.5 s on
       eight threads, now that the develop line times each stage

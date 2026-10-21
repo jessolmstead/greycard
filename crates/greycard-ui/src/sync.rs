@@ -1703,7 +1703,7 @@ fn settle_held(
             // and its pictures from its lines as they are now.
             crate::panel::browser::show_badges_of_file(&st, app, c);
             for cell in st.cells_of_file(c) {
-                crate::edited::saved(&st, cell);
+                crate::edited::saved(&mut st, cell);
             }
             if let Some(indexer) = &st.views.index {
                 indexer.file(st.files[c].clone());

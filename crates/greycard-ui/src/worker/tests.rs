@@ -2817,8 +2817,9 @@ fn leaving_the_editor_lets_the_neighbors_go() {
 
 /// The frame still open when the editor comes back from culling or the
 /// grid has its neighbors sent again: taken for the open whose develop
-/// landed last, on that file, and only when no list is waiting; the
-/// worker says which open that is once its develop lands.
+/// landed last, on that file, or in place of that open's own list, and
+/// never over another open's; the worker says which open that is once
+/// its develop lands.
 #[test]
 fn the_neighbors_come_back_with_the_open_frame() {
     let (dir, paths) = dngs("prefetch-back", &["pf-back-A.dng"], 64, 48);
@@ -2837,7 +2838,7 @@ fn the_neighbors_come_back_with_the_open_frame() {
         )]
     };
     // Nothing landed yet: nothing taken.
-    worker.neighbors_again(&paths[0], b());
+    assert!(!worker.neighbors_again(7, &paths[0], b(), "a test"));
     assert!(worker.queue.0.lock().unwrap().neighbors.is_none());
     worker.send(Job::Open {
         path: paths[0].clone(),
@@ -2856,19 +2857,22 @@ fn the_neighbors_come_back_with_the_open_frame() {
     );
     // Away to the grid: let go. Back on another file: not taken.
     worker.set_open_frame(None);
-    worker.neighbors_again(std::path::Path::new("/nowhere/other.CR3"), b());
+    assert!(!worker.neighbors_again(7, std::path::Path::new("/nowhere/other.CR3"), b(), "a test"));
     assert!(worker.queue.0.lock().unwrap().neighbors.is_none());
     // Back on A: taken under A's open.
     worker.set_open_frame(Some(Frame::file(paths[0].clone())));
-    worker.neighbors_again(&paths[0], b());
+    assert!(worker.neighbors_again(7, &paths[0], b(), "a test"));
     {
         let q = worker.queue.0.lock().unwrap();
         let n = q.neighbors.as_ref().expect("sent again");
         assert_eq!(n.generation, 7);
     }
-    // A list waiting already is not replaced.
+    // Sent again for the same open (the filter or the order moved):
+    // its list, waiting or done, is replaced.
+    assert!(worker.neighbors_again(7, &paths[0], Vec::new(), "a test"));
+    // A list for another open waiting already is not replaced.
     worker.neighbors(9, b());
-    worker.neighbors_again(&paths[0], b());
+    assert!(!worker.neighbors_again(7, &paths[0], b(), "a test"));
     assert_eq!(
         worker
             .queue
@@ -2880,6 +2884,223 @@ fn the_neighbors_come_back_with_the_open_frame() {
             .map(|n| n.generation),
         Some(9)
     );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A neighbor's edit changed after its base was prefetched (a sync, a
+/// paste): a change after the base keeps the base on the shelf, and the
+/// neighbor sent again under it is not made twice; a change to the base
+/// drops it, said, and the neighbor sent again under the new edit is
+/// made afresh at the next idle, which its open then takes.
+#[test]
+fn a_neighbor_whose_edit_changed_is_dropped_and_made_again() {
+    use super::prefetch::said;
+    let (dir, paths) = dngs("prefetch-edit", &["pf-ed-A.dng", "pf-ed-B.dng"], 96, 64);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::Developed { generation, .. } | Outcome::Failed { generation, .. } = o {
+            tx.lock().unwrap().send(generation).unwrap();
+        }
+    });
+    let wait = std::time::Duration::from_secs(60);
+    let until = |what: &str, done: &dyn Fn() -> bool| {
+        let asked = Instant::now();
+        while !done() {
+            assert!(asked.elapsed() < wait, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    let count = |starts: &str| {
+        said("pf-ed-B.dng")
+            .iter()
+            .filter(|l| l.starts_with(starts))
+            .count()
+    };
+    let open = |path: &PathBuf, edit: Edit, generation: u64| Job::Open {
+        path: path.clone(),
+        version: None,
+        edit,
+        generation,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+    };
+    worker.set_open_frame(Some(Frame::file(paths[0].clone())));
+    worker.send(open(&paths[0], Edit::default(), 1));
+    worker.neighbors(1, vec![neighbor_at(&paths[1], Edit::default(), Side::Next)]);
+    assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 1);
+    until("B prefetched", &|| count("prefetched pf-ed-B.dng") == 1);
+
+    // After the base: kept, and not made again.
+    let mut brighter = Edit::default();
+    brighter.light.exposure = 1.0;
+    worker.edit_changed(paths[1].clone(), Some(holds(&brighter)));
+    assert!(worker.neighbors_again(
+        1,
+        &paths[0],
+        vec![neighbor_at(&paths[1], brighter, Side::Next)],
+        "a neighbor's edit changed"
+    ));
+    until("the resent B skipped", &|| {
+        said("pf-ed-B.dng")
+            .iter()
+            .any(|l| l.ends_with("skipped: its base is on the shelf"))
+    });
+    assert_eq!(count("shelved base of pf-ed-B.dng dropped"), 0);
+
+    // The base itself: dropped, and made again under the new edit.
+    let warmer = Edit {
+        white_balance: greycard_edit::WhiteBalance::Custom {
+            temperature: 6500.0,
+            tint: 0.0,
+        },
+        ..Edit::default()
+    };
+    worker.edit_changed(paths[1].clone(), Some(holds(&warmer)));
+    until("B's base dropped", &|| {
+        said("pf-ed-B.dng")
+            .iter()
+            .any(|l| l == "shelved base of pf-ed-B.dng dropped: edit changed")
+    });
+    assert!(worker.neighbors_again(
+        1,
+        &paths[0],
+        vec![neighbor_at(&paths[1], warmer.clone(), Side::Next)],
+        "a neighbor's edit changed"
+    ));
+    until("B prefetched again", &|| {
+        count("prefetched pf-ed-B.dng") == 2
+    });
+    worker.set_open_frame(Some(Frame::file(paths[1].clone())));
+    worker.send(open(&paths[1], warmer, 2));
+    assert_eq!(rx.recv_timeout(wait).expect("B's open lands"), 2);
+    assert_eq!(count("the base of pf-ed-B.dng from the shelf"), 1);
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// What a file holds now, as the window says it after a change: `edit`
+/// alone, unturned.
+fn holds(edit: &Edit) -> FileNow {
+    FileNow {
+        edits: vec![edit.clone()],
+        turn: 0,
+    }
+}
+
+/// A neighbor's edit changed while its prefetch is in hand: a change
+/// after the base does not stop it; a change to the base has it give
+/// way, and it is let go rather than put back on the list the window
+/// sent again under the new edit, so only the new base is made, and
+/// its open takes it.
+#[test]
+fn a_prefetch_whose_edit_changes_under_it_gives_way_and_is_let_go() {
+    use super::prefetch::{AtCheck, at_next_check, said};
+    let (dir, paths) = dngs("prefetch-moved", &["pf-mv-A.dng", "pf-mv-B.dng"], 96, 64);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::Developed { generation, .. } | Outcome::Failed { generation, .. } = o {
+            tx.lock().unwrap().send(generation).unwrap();
+        }
+    });
+    let wait = std::time::Duration::from_secs(60);
+    let until = |what: &str, done: &dyn Fn() -> bool| {
+        let asked = Instant::now();
+        while !done() {
+            assert!(asked.elapsed() < wait, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    let count = |starts: &str| {
+        said("pf-mv-B.dng")
+            .iter()
+            .filter(|l| l.starts_with(starts))
+            .count()
+    };
+    let hold = |path: &PathBuf| {
+        let (at_tx, at_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel();
+        at_next_check(path, AtCheck::Hold(at_tx, go_rx));
+        (at_rx, go_tx)
+    };
+    let open = |path: &PathBuf, edit: Edit, generation: u64| Job::Open {
+        path: path.clone(),
+        version: None,
+        edit,
+        generation,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+    };
+    let warmer = Edit {
+        white_balance: greycard_edit::WhiteBalance::Custom {
+            temperature: 6500.0,
+            tint: 0.0,
+        },
+        ..Edit::default()
+    };
+    let mut brighter = Edit::default();
+    brighter.light.exposure = 1.0;
+
+    // Held before its prepare, an exposure synced onto it: it goes on.
+    let (at, go) = hold(&paths[1]);
+    worker.set_open_frame(Some(Frame::file(paths[0].clone())));
+    worker.send(open(&paths[0], Edit::default(), 1));
+    worker.neighbors(1, vec![neighbor_at(&paths[1], Edit::default(), Side::Next)]);
+    assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 1);
+    assert_eq!(at.recv_timeout(wait).expect("held"), "prepare");
+    worker.edit_changed(paths[1].clone(), Some(holds(&brighter)));
+    go.send(()).unwrap();
+    until("B prefetched", &|| count("prefetched pf-mv-B.dng") == 1);
+    assert_eq!(
+        count("the prefetch of the next frame, pf-mv-B.dng, abandoned"),
+        0
+    );
+
+    // Its base dropped by a white balance pasted onto it, and B sent
+    // again under it; the new prefetch held, and a second paste, back
+    // to the default, comes meanwhile: it gives way and is let go.
+    worker.edit_changed(paths[1].clone(), Some(holds(&warmer)));
+    until("B's base dropped", &|| {
+        count("shelved base of pf-mv-B.dng dropped") == 1
+    });
+    let (at, go) = hold(&paths[1]);
+    assert!(worker.neighbors_again(
+        1,
+        &paths[0],
+        vec![neighbor_at(&paths[1], warmer.clone(), Side::Next)],
+        "a neighbor's edit changed"
+    ));
+    assert_eq!(at.recv_timeout(wait).expect("held"), "prepare");
+    worker.edit_changed(paths[1].clone(), Some(holds(&Edit::default())));
+    assert!(worker.neighbors_again(
+        1,
+        &paths[0],
+        vec![neighbor_at(&paths[1], Edit::default(), Side::Next)],
+        "a neighbor's edit changed"
+    ));
+    go.send(()).unwrap();
+    until("B made again under the default", &|| {
+        count("prefetched pf-mv-B.dng") == 2
+    });
+    assert_eq!(
+        count("the prefetch of the next frame, pf-mv-B.dng, abandoned before its prepare"),
+        1
+    );
+    assert_eq!(
+        count("the prefetch of pf-mv-B.dng let go: its edit changed"),
+        1
+    );
+    // Not made a third time under the warmer edit it gave way under.
+    std::thread::sleep(super::prefetch::QUIET * 20);
+    assert_eq!(count("prefetched pf-mv-B.dng"), 2);
+    worker.set_open_frame(Some(Frame::file(paths[1].clone())));
+    worker.send(open(&paths[1], Edit::default(), 2));
+    assert_eq!(rx.recv_timeout(wait).expect("B's open lands"), 2);
+    assert_eq!(count("the base of pf-mv-B.dng from the shelf"), 1);
     worker.stop();
     crate::testing::remove_dir_retry(&dir);
 }

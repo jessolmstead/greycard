@@ -1237,7 +1237,7 @@ pub(crate) fn looks_moved(st: &mut crate::State) {
 /// open in the editor, or none while culling, in the grid (`grid`), or
 /// with no frame. Said on every report of the strip's or the grid's
 /// range, and on the way into culling.
-pub(crate) fn note_editing(st: &crate::State, worker: &crate::worker::Worker, grid: bool) {
+pub(crate) fn note_editing(st: &mut crate::State, worker: &crate::worker::Worker, grid: bool) {
     let open = st
         .current
         .filter(|_| st.culling.cull.is_none() && !grid)
@@ -1245,9 +1245,10 @@ pub(crate) fn note_editing(st: &crate::State, worker: &crate::worker::Worker, gr
     let back = open.is_some() && !worker.edited().any_open();
     worker.set_open_frame(open);
     // Back from culling or the grid on the frame still open: its
-    // neighbors, let go on the way out, are sent again.
+    // neighbors, let go on the way out, are sent again, in the order
+    // the strip has now.
     if back && let Some(c) = st.current {
-        worker.neighbors_again(st.path_of(c), crate::panel::browser::neighbors_of(st, c));
+        crate::panel::browser::neighbors_back(st, worker, c);
     }
 }
 
@@ -1277,7 +1278,7 @@ pub(crate) fn note_list(st: &crate::State, worker: &crate::worker::Worker) {
 /// picture. A file's cells are each their own here: a save of the file
 /// is said for every cell of it whose line moved
 /// ([`crate::library::sidecar_written`]).
-pub(crate) fn saved(st: &crate::State, c: usize) {
+pub(crate) fn saved(st: &mut crate::State, c: usize) {
     let (Some(frame), Some(line), Some(sidecar)) = (st.key_of(c), st.line(c), st.sidecar_at(c))
     else {
         return;
@@ -1295,6 +1296,9 @@ pub(crate) fn saved(st: &crate::State, c: usize) {
         });
         return;
     }
+    // A base of it the worker shelved under the edit before is no base
+    // an open of it would take now.
+    worker.edit_changed(frame.path.clone(), file_edits(st, c));
     // The line's key under the edit just written is its hint until the
     // thumbnail reads it: what the cell shows now, not before the save.
     let edited = is_edited(&frame.path, &line.current, iso);
@@ -1302,6 +1306,8 @@ pub(crate) fn saved(st: &crate::State, c: usize) {
     if worker.edited().note(&frame, edited, iso, key) {
         worker.send(crate::rows::thumb_job(st, c));
     }
+    // A neighbor of the open frame is made again under its new edit.
+    crate::panel::browser::neighbors_moved(st);
 }
 
 /// The window's develop of the open frame landed at `turn`: when what it
@@ -1377,6 +1383,10 @@ pub(crate) fn changed(st: &mut crate::State, c: usize) {
     let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) else {
         return;
     };
+    // Its bases on the worker's shelf: kept only under an edit the
+    // window has read; a sidecar still standing in from its row says
+    // nothing of what changed, and they all go.
+    worker.edit_changed(frame.path.clone(), file_edits(st, c));
     let (edited, iso) = (held_edited(st, c), iso_of(st, c));
     let moved = match key_of(st, c) {
         Some(key) => {
@@ -1388,6 +1398,26 @@ pub(crate) fn changed(st: &mut crate::State, c: usize) {
     if moved {
         kept(st, &worker, &frame);
     }
+    crate::panel::browser::neighbors_moved(st);
+}
+
+/// Every edit cell `c`'s file holds, its own and its versions', and its
+/// quarter turns, as the window has read them from its sidecar: what an
+/// open of any of them would make a base under. None while the sidecar
+/// stands in from the file's row, which does not say.
+fn file_edits(st: &crate::State, c: usize) -> Option<crate::worker::FileNow> {
+    let file = st.file_at(c)?;
+    if !crate::rows::file_is_loaded(st, file) {
+        return None;
+    }
+    let sidecar = st.sidecars.get(file)?;
+    Some(crate::worker::FileNow {
+        edits: std::iter::once(&sidecar.line)
+            .chain(sidecar.versions.iter().map(|v| &v.line))
+            .map(|l| l.current.clone())
+            .collect(),
+        turn: sidecar.turn,
+    })
 }
 
 /// The pictures `frame` shows may have changed (`Outcome::EditedKept`):

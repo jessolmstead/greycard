@@ -22,6 +22,11 @@ design note behind it.
   slider; in a typed value, Tab and Shift+Tab move between values.
   Escape gives the keys back
   ([§383](https://github.com/jessolmstead/greycard/blob/master/docs/notes/383-keys-for-the-sliders.md))
+- The frames beside the open one are prefetched under the strip's
+  current filter and sort, resent when either changes, and a kept
+  base is dropped when a sync or a paste changes the frame's edit
+  under it
+  ([§384](https://github.com/jessolmstead/greycard/blob/master/docs/notes/384-the-neighbors-kept-current.md))
 - Going back to a frame you just left no longer develops it again.
   The bases of recent frames are kept in memory under a budget set by
   the machine's RAM, so a return costs a fraction of a second where a

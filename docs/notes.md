@@ -396,3 +396,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§381. Hidden files are no frames](notes/381-hidden-files-are-no-frames.md) (2026-10-20)
 - [§382. LaMa at the frame's resolution](notes/382-lama-at-the-frames-resolution.md) (2026-10-20)
 - [§383. Keys for the sliders](notes/383-keys-for-the-sliders.md) (2026-10-21)
+- [§384. The neighbors kept current](notes/384-the-neighbors-kept-current.md) (2026-10-21)

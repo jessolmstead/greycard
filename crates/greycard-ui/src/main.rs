@@ -1026,6 +1026,7 @@ impl State {
                 planes_wants: Default::default(),
                 planes_asked: Default::default(),
                 generation: 0,
+                neighbors_sent: None,
             },
         }
     }

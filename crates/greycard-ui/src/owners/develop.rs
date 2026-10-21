@@ -278,4 +278,8 @@ pub(crate) struct Develop {
     /// way. Cleared when a develop lands.
     pub(crate) planes_asked: greycard_edit::DetailWants,
     pub(crate) generation: u64,
+    /// What the worker was last told of the open frame's neighbors, for
+    /// them to be sent again once when what they are moves
+    /// (`browser::neighbors_moved`).
+    pub(crate) neighbors_sent: Option<crate::panel::browser::NeighborsSent>,
 }

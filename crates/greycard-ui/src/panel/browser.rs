@@ -1261,6 +1261,9 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     match row_of(st, c) {
         Some(row) => {
             app.set_selected(row as i32);
+            // The filter or the order may have put other frames beside
+            // the open one: the worker's neighbors follow.
+            neighbors_moved(st);
             None
         }
         None => {
@@ -1856,10 +1859,33 @@ pub(crate) fn time_select(
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .unwrap_or(100);
-    slint::Timer::single_shot(std::time::Duration::from_millis(gap), move || {
-        if let Some(app) = app_weak.upgrade() {
+    let gap = std::time::Duration::from_millis(gap);
+    // `GREYCARD_TIME_SELECT_SORT_AT=N:E` picks the Sort menu's entry E
+    // once the Nth develop has landed and waits the gap again before
+    // the step, for measuring a step after a sort change.
+    let sort = std::env::var("GREYCARD_TIME_SELECT_SORT_AT")
+        .ok()
+        .and_then(|v| {
+            let (at, entry) = v.trim().split_once(':')?;
+            Some((at.parse::<usize>().ok()?, entry.parse::<i32>().ok()?))
+        })
+        .filter(|&(at, _)| at == to_develop.len());
+    slint::Timer::single_shot(gap, move || {
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        let Some((_, entry)) = sort else {
             app.invoke_step(1, false);
-        }
+            return;
+        };
+        tracing::info!("time select: the Sort menu's entry {entry} picked");
+        app.invoke_sort_picked(entry);
+        let app_weak = app.as_weak();
+        slint::Timer::single_shot(gap, move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.invoke_step(1, false);
+            }
+        });
     });
 }
 
@@ -2153,6 +2179,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // The frames the arrow keys reach from here, for the worker to
     // make their bases while it waits on the user.
     worker.neighbors(st.develop.generation, neighbors_of(st, i));
+    st.develop.neighbors_sent = Some(NeighborsSent::of(st, i, st.develop.generation));
     // The frame's own camera JPEG, to stand in for that
     // develop: after the job, so the decode that matters
     // most is under way first.
@@ -2195,16 +2222,23 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
 /// sidecar would give; that read would queue ahead of the user's own
 /// requests and put the window's bar up, so it is not asked for.
 pub(crate) fn neighbors_of(st: &State, i: usize) -> Vec<crate::worker::Neighbor> {
+    neighbors_said(st, i, true)
+}
+
+/// [`neighbors_of`], with the ones left out said in the log when `say`.
+fn neighbors_said(st: &State, i: usize, say: bool) -> Vec<crate::worker::Neighbor> {
     beside(&st.views.shown, i)
         .into_iter()
         .filter_map(|(c, side)| {
             let path = st.path_at(c)?.clone();
             let left_out = |why: &str| {
-                tracing::info!(
-                    "the prefetch of the {} frame, {}, skipped: {why}",
-                    side.word(),
-                    file_name(&path)
-                );
+                if say {
+                    tracing::info!(
+                        "the prefetch of the {} frame, {}, skipped: {why}",
+                        side.word(),
+                        file_name(&path)
+                    );
+                }
             };
             if crate::rows::is_offline(st, c) {
                 left_out("its root is offline");
@@ -2227,6 +2261,123 @@ pub(crate) fn neighbors_of(st: &State, i: usize) -> Vec<crate::worker::Neighbor>
             })
         })
         .collect()
+}
+
+/// What the worker was last told of the open frame's neighbors: the
+/// open they went with, the neighbors as sent, and the filter and the
+/// order the strip had then, which say in the log what moved them.
+pub(crate) struct NeighborsSent {
+    generation: u64,
+    open: PathBuf,
+    neighbors: Vec<crate::worker::Neighbor>,
+    filter: String,
+    sort: crate::sort::Choice,
+}
+
+impl NeighborsSent {
+    /// The neighbors of cell `c` as they are now, sent with the open at
+    /// `generation`.
+    pub(crate) fn of(st: &State, c: usize, generation: u64) -> Self {
+        Self {
+            generation,
+            open: st.path_at(c).cloned().unwrap_or_default(),
+            neighbors: neighbors_said(st, c, false),
+            filter: st.views.filter.describe(),
+            sort: st.views.sort.choice(&st.views.view),
+        }
+    }
+
+    /// Whether the worker would make the same bases from `now` as from
+    /// these: the same frames on the same sides, at the same turns and
+    /// seeds, under edits with the same base. A move after the base on a
+    /// neighbor (its exposure, a rating) is not worth sending again.
+    fn serves(&self, now: &[crate::worker::Neighbor]) -> bool {
+        self.neighbors.len() == now.len()
+            && self.neighbors.iter().zip(now).all(|(a, b)| {
+                a.path == b.path
+                    && a.side == b.side
+                    && a.turn % 4 == b.turn % 4
+                    && a.seed_blend == b.seed_blend
+                    && a.edit.same_base(&b.edit)
+            })
+    }
+
+    /// Whether `now` names the same frames on the same sides.
+    fn same_frames(&self, now: &[crate::worker::Neighbor]) -> bool {
+        self.neighbors.len() == now.len()
+            && self
+                .neighbors
+                .iter()
+                .zip(now)
+                .all(|(a, b)| a.path == b.path && a.side == b.side)
+    }
+}
+
+/// The open frame's neighbors sent to the worker again when they are no
+/// longer what it was told: the filter or the order moved the strip
+/// under the frame, or a neighbor's edit changed its base. Once per
+/// change, since what was sent is kept and compared; only while the
+/// frame is open in the editor and still in the strip (a frame the
+/// filter hid is left for the nearest, whose open sends its own), and
+/// only for the open they went with, which the worker checks against
+/// the open whose develop landed.
+pub(crate) fn neighbors_moved(st: &mut State) {
+    let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) else {
+        return;
+    };
+    let Some(c) = st.current.filter(|_| st.culling.cull.is_none()) else {
+        return;
+    };
+    if !worker.edited().any_open() || row_of(st, c).is_none() {
+        return;
+    }
+    let Some(sent) = st.develop.neighbors_sent.as_ref() else {
+        return;
+    };
+    if st.path_at(c) != Some(&sent.open) {
+        return;
+    }
+    let now = neighbors_said(st, c, false);
+    if sent.serves(&now) {
+        return;
+    }
+    let fresh = NeighborsSent::of(st, c, sent.generation);
+    let why = if fresh.filter != sent.filter {
+        "a filter change"
+    } else if fresh.sort != sent.sort {
+        "a sort change"
+    } else if sent.same_frames(&now) {
+        "a neighbor's edit changed"
+    } else {
+        "a change to the list"
+    };
+    // Kept as sent only when the worker took them: one refused (the
+    // open's list let go before its develop landed) is offered again at
+    // the next change rather than taken for the worker's.
+    let (generation, open) = (fresh.generation, fresh.open.clone());
+    if worker.neighbors_again(generation, &open, neighbors_of(st, c), why) {
+        st.develop.neighbors_sent = Some(fresh);
+    }
+}
+
+/// The editor back on cell `c` from culling or the grid without an
+/// open, which let its neighbors go: sent again as the strip has them
+/// now, whatever moved meanwhile.
+pub(crate) fn neighbors_back(st: &mut State, worker: &crate::worker::Worker, c: usize) {
+    let Some(generation) = st.develop.neighbors_sent.as_ref().map(|s| s.generation) else {
+        return;
+    };
+    let Some(open) = st.path_at(c).cloned() else {
+        return;
+    };
+    if worker.neighbors_again(
+        generation,
+        &open,
+        neighbors_of(st, c),
+        "the return to the editor",
+    ) {
+        st.develop.neighbors_sent = Some(NeighborsSent::of(st, c, generation));
+    }
 }
 
 /// The quarter turns of cell `c`'s frame when it stands in from a row
@@ -2755,7 +2906,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             st.views.strip_shown = Some((first, last));
             worker.want_thumbnails(f, l);
-            crate::edited::note_editing(&st, &worker, false);
+            crate::edited::note_editing(&mut st, &worker, false);
         });
     }
     // The grid's layout, asked of the pure arithmetic in `grid` so
@@ -2914,7 +3065,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // After the pushes, which clear the queue's order.
             worker.want_thumbnails(st.views.shown[first], st.views.shown[last]);
             // In the grid, no frame is being edited.
-            crate::edited::note_editing(&st, &worker, true);
+            crate::edited::note_editing(&mut st, &worker, true);
             // The lightbox's tiles follow the cells.
             if st.culling.lightbox.is_some() {
                 crate::lightbox::refresh(&mut st, &app);
@@ -3043,6 +3194,61 @@ mod tests {
         // A mirror the row shows is no default geometry: left out.
         st.from_row[3] = stand_in(false, (1, true));
         assert!(neighbors_of(&st, 1).is_empty());
+    }
+
+    /// A filter change while a frame is open in the editor sends the
+    /// worker the neighbors the keys reach now, in place of those its
+    /// open sent, once: the same filter again, or a move that leaves
+    /// them be, sends nothing.
+    #[test]
+    fn a_filter_change_sends_the_neighbors_again() {
+        use crate::worker::Side::{Next, Previous};
+        let app = window(5);
+        let files = crate::testing::folder(5);
+        let (state, worker) = crate::testing::state_for(&app, files.clone());
+        let generation = 4;
+        // The frame is open before its neighbors arrive, as an open
+        // job makes it: a list that finds no frame open is dropped at
+        // once, and the worker's thread can run between the two.
+        worker.set_open_frame(Some(crate::versions::Key::file(files[2].clone())));
+        {
+            let mut st = state.borrow_mut();
+            rebuild_browser(&mut st, &app);
+            st.current = Some(2);
+            // What the open of frame 2 sent, as `open_frame` sends it.
+            worker.neighbors(generation, neighbors_of(&st, 2));
+            st.develop.neighbors_sent = Some(NeighborsSent::of(&st, 2, generation));
+        }
+        assert_eq!(
+            worker.neighbors_waiting(),
+            Some((
+                generation,
+                vec![(files[3].clone(), Next), (files[1].clone(), Previous)]
+            ))
+        );
+
+        // Frames 1 and 3 rejected, and the filter to No rejects.
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars[1].meta.flag = meta::Flag::Reject;
+            st.sidecars[3].meta.flag = meta::Flag::Reject;
+            st.views.filter = filter::Filter::from_name("No rejects").expect("it parses");
+        }
+        crate::panel::cull::apply_filter(&state, &app);
+        assert_eq!(state.borrow().views.shown, vec![0, 2, 4]);
+        assert_eq!(
+            worker.neighbors_waiting(),
+            Some((
+                generation,
+                vec![(files[4].clone(), Next), (files[0].clone(), Previous)]
+            ))
+        );
+
+        // Once per change: a list put in its place stays through the
+        // same filter applied again.
+        worker.neighbors(generation, Vec::new());
+        crate::panel::cull::apply_filter(&state, &app);
+        assert_eq!(worker.neighbors_waiting(), Some((generation, Vec::new())));
     }
 
     /// A row of the browser and a file of the folder are two

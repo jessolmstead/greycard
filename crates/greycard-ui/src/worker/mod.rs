@@ -61,6 +61,7 @@ pub(crate) use self::{
     decode::correct_lens_of,
     handle::order_thumbnails,
     prefetch::{Neighbor, Side},
+    shelf::FileNow,
     thumbs::{file_stat, thumb_key, thumb_tag, thumbnail},
 };
 
@@ -630,6 +631,10 @@ struct Queue {
     /// landed, as the worker has it: what neighbors sent again for the
     /// frame open (`Worker::neighbors_again`) are for.
     landed: Option<(u64, PathBuf)>,
+    /// Files whose edit changed without an open of them, with the edit
+    /// now when the window has it: their shelved bases that no open
+    /// would take are let go (`Worker::edit_changed`).
+    edits_changed: Vec<(PathBuf, Option<FileNow>)>,
 }
 
 pub(crate) type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;

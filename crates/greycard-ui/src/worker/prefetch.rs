@@ -257,7 +257,8 @@ pub(super) fn ahead(q: &Queue, frame_open: bool, n: &Neighbor) -> Ahead {
         || q.landscape
         || !q.masks.is_empty()
         || !q.exports.is_empty()
-        || !q.people_on.is_empty();
+        || !q.people_on.is_empty()
+        || moved_under(q, n);
     if others {
         return Ahead::Work;
     }
@@ -279,6 +280,18 @@ pub(super) fn ahead(q: &Queue, frame_open: bool, n: &Neighbor) -> Ahead {
         }
         Some(_) => Ahead::Work,
     }
+}
+
+/// Whether the edit of neighbor `n`'s file changed since it was sent,
+/// as the queue's latest word on the file says, so that the base made
+/// for it is not one an open of it would take. A change after the base
+/// (an exposure synced onto it) is no such change.
+pub(super) fn moved_under(q: &Queue, n: &Neighbor) -> bool {
+    q.edits_changed
+        .iter()
+        .rev()
+        .find(|(path, _)| *path == n.path)
+        .is_some_and(|(_, now)| !now.as_ref().is_some_and(|now| now.serves(&n.edit, n.turn)))
 }
 
 /// How a prefetch ended.
