@@ -779,6 +779,41 @@ mod tests {
         assert_eq!(counts(&app).0, 0);
     }
 
+    /// J puts the grid's badges on the lightbox's tiles, and only the
+    /// badges; again, off. The choice outlives a way out and back in.
+    #[test]
+    fn j_puts_the_badges_on_the_lightbox_and_takes_them_off() {
+        let (app, _state) = lightbox_window(6);
+        let model = app.get_thumbs();
+        for r in 0..6 {
+            let mut t = model.row_data(r).unwrap();
+            t.rating = 3;
+            t.flag = 1;
+            t.label = 2;
+            t.edited = true;
+            model.set_row_data(r, t);
+        }
+        let badges = |app: &App| crate::testing::count_labeled(app, "3 stars, pick, yellow");
+        press(&app, "l");
+        assert!(!app.get_lightbox_badges(), "off by default");
+        assert_eq!(badges(&app), 0);
+        press(&app, "j");
+        assert!(app.get_lightbox_badges());
+        assert_eq!(badges(&app), 6, "one a tile");
+        assert_eq!(
+            crate::testing::count_labeled(&app, "Edited"),
+            0,
+            "the badges alone"
+        );
+        // Kept across a way out and back.
+        press(&app, "l");
+        press(&app, "l");
+        assert_eq!(badges(&app), 6);
+        press(&app, "j");
+        assert!(!app.get_lightbox_badges());
+        assert_eq!(badges(&app), 0);
+    }
+
     /// Return is the loupe on the frame chosen, the lightbox kept under
     /// it; an arrow there steps the frame; Return, Escape or L come back
     /// to the lightbox on that frame, scrolled where it was.

@@ -62,6 +62,9 @@ export component GridSheet inherits Rectangle {
     /// frame and the set keep their ring, which is how the arrows are
     /// followed.
     in property <bool> lightbox;
+    /// The badges (rating, flag, label) on the lightbox's tiles too,
+    /// asked for by a key.
+    in property <bool> lightbox-badges;
     /// The header's Lightbox button.
     callback lightbox-asked();
     /// The rows are a collection's own order, which a drag changes.
@@ -644,6 +647,31 @@ export component GridSheet inherits Rectangle {
                         // uses, and the largest does not turn a
                         // quiet mark into a label across the
                         // picture.
+                        glyph: clamp(root.grid-cell / 16, 9px, 18px);
+                    }
+                    // In the lightbox when asked, the same badges on its
+                    // tile's picture, which fills the cell.
+                    if root.lightbox && root.lightbox-badges: ThumbBadges {
+                        property <length> bw: parent.width - 2 * Theme.space-1;
+                        property <length> bh: parent.height - 2 * Theme.space-1;
+                        property <length> pw: t.big.width > 0 && t.big.height > 0
+                            ? min(self.bw, self.bh * t.big.width / t.big.height)
+                            : self.bw;
+                        property <length> ph: t.big.width > 0 && t.big.height > 0
+                            ? min(self.bh, self.bw * t.big.height / t.big.width)
+                            : self.bh;
+                        x: clamp(
+                            Theme.space-1 + (self.bw - self.pw) / 2 + Theme.space-1,
+                            Theme.space-1,
+                            max(Theme.space-1, Theme.space-1 + self.bw - self.width));
+                        y: clamp(
+                            Theme.space-1 + (self.bh + self.ph) / 2 - self.height - Theme.space-1,
+                            Theme.space-1,
+                            max(Theme.space-1, Theme.space-1 + self.bh - self.height));
+                        rating: t.rating;
+                        flag: t.flag;
+                        label: t.label;
+                        stars: root.meta-stars;
                         glyph: clamp(root.grid-cell / 16, 9px, 18px);
                     }
                     if !root.lightbox: ThumbMarks {

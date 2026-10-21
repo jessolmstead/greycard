@@ -22,11 +22,11 @@ design note behind it.
   slider; in a typed value, Tab and Shift+Tab move between values.
   Escape gives the keys back
   ([§383](https://github.com/jessolmstead/greycard/blob/master/docs/notes/383-keys-for-the-sliders.md))
-- The frames beside the open one are prefetched under the strip's
-  current filter and sort, resent when either changes, and a kept
-  base is dropped when a sync or a paste changes the frame's edit
-  under it
-  ([§384](https://github.com/jessolmstead/greycard/blob/master/docs/notes/384-the-neighbors-kept-current.md))
+- Keys for the tools in Develop: R crops, W picks up the white
+  balance pipette, M and Shift+M start a mask with a Linear or a
+  Radial for the next drag. In the lightbox, J shows the rating, flag,
+  and label on each tile, off at each start
+  ([§385](https://github.com/jessolmstead/greycard/blob/master/docs/notes/385-keys-for-the-tools-and-the-lightboxs-badges.md))
 - Going back to a frame you just left no longer develops it again.
   The bases of recent frames are kept in memory under a budget set by
   the machine's RAM, so a return costs a fraction of a second where a
@@ -38,7 +38,10 @@ design note behind it.
   lands each frame in about half a second instead of the full develop.
   The prefetch gives way to anything you ask for, and stays off on a
   machine whose memory holds fewer than two frames beside the open one
-  ([§379](https://github.com/jessolmstead/greycard/blob/master/docs/notes/379-the-neighbors-prefetched-onto-the-shelf.md))
+  ([§379](https://github.com/jessolmstead/greycard/blob/master/docs/notes/379-the-neighbors-prefetched-onto-the-shelf.md)).
+  It follows the strip's filter and sort, and a kept frame whose edit
+  a sync or a paste changed is developed again
+  ([§384](https://github.com/jessolmstead/greycard/blob/master/docs/notes/384-the-neighbors-kept-current.md))
 - A **Scale** row at the top of the Settings sheet draws the interface
   at 125%, 150%, 175%, or 200% of the system's own scale, from the next
   start; a picture at 1:1 still shows one image pixel on one screen

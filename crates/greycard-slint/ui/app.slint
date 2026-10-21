@@ -393,6 +393,10 @@ export component App inherits Window {
     in-out property <bool> lightbox-loupe: false;
     /// How many tiles across. Rust owns the steps.
     in-out property <int> lightbox-across: 4;
+    /// The rating, flag, and label on the lightbox's tiles, as the grid
+    /// draws them: J, off at each start and never saved, since the
+    /// lightbox is the pictures alone unless asked.
+    in-out property <bool> lightbox-badges: false;
     /// The panes as they were before the lightbox put them away.
     in-out property <bool> lightbox-left-was;
     in-out property <bool> lightbox-right-was;
@@ -934,6 +938,35 @@ export component App inherits Window {
     in-out property <int> target: 0;
     // Which tab the panel shows: Develop, Crop, Masks or Retouch.
     in-out property <string> panel-tab: "Develop";
+    // A tab chosen, by the bar or by a tool's key.
+    function tab-chosen(t: string) {
+        root.panel-tab = t;
+        // Away from Crop the frame is shown whole again.
+        if (t != "Crop" && root.crop-mode) {
+            root.crop-mode = false;
+            root.level-mode = false;
+            root.guide-mode = "";
+            root.guide-dropped();
+            root.crop-toggled();
+        }
+        root.tab-changed(t);
+    }
+    // The Crop button, and R: crop mode in or out, the level, a guide,
+    // and the draw put down.
+    function crop-in-or-out() {
+        root.crop-mode = !root.crop-mode;
+        root.level-mode = false;
+        root.guide-mode = "";
+        root.crop-draw-armed = false;
+        root.guide-dropped();
+        root.crop-toggled();
+    }
+    // New mask, by its button or by M: its name and shapes are in the
+    // first section, so the sections go back to their top for it.
+    function mask-new() {
+        root.panel-scroll = 0px;
+        root.new-mask();
+    }
     // Each tab starts at its top, however it was reached: the scroll is
     // one for all four, and Develop scrolled to its foot left a shorter
     // tab showing only the empty space below its sections.
@@ -2538,6 +2571,55 @@ export component App inherits Window {
                 root.proof-changed();
                 return accept;
             }
+            // The Develop view's tools, each by the way its button
+            // takes: R the crop in and out, W the white balance's
+            // pipette, M a new mask with a Linear in hand, and Shift+M
+            // with a Radial, the next drag placing it. Each brings its
+            // tab, and puts down whatever else was in hand. Held, one
+            // press; with no frame open, nothing.
+            if (!root.grid-open && !root.cull-mode
+                && (chord == "R" || chord == "W" || chord == "M" || chord == "Shift+M")) {
+                if (e.repeat || root.selected < 0) { return accept; }
+                if (chord == "R") {
+                    root.stop-placing();
+                    if (root.panel-tab != "Crop") { root.tab-chosen("Crop"); }
+                    root.crop-in-or-out();
+                }
+                // The pipette is in the Develop tab, and in a mask's
+                // look on the Masks tab, where it works under the mask.
+                if (chord == "W" && root.raw-input) {
+                    if (root.panel-tab != "Develop" && !(root.panel-tab == "Masks" && root.target > 0)) {
+                        root.tab-chosen("Develop");
+                    }
+                    root.pick-started("White");
+                }
+                if (chord == "M" || chord == "Shift+M") {
+                    let kind = chord == "M" ? "Linear" : "Radial";
+                    // A dropper, not a shape: a shape in hand is the
+                    // test below.
+                    if (root.picking != "") { root.stop-placing(); }
+                    if (root.panel-tab != "Masks") { root.tab-chosen("Masks"); }
+                    // A mask the key made and nothing placed in it yet
+                    // takes the other shape in hand, or puts this one
+                    // down, as its buttons do, rather than leave it
+                    // empty behind another.
+                    if (root.target > 0 && root.placing-into && root.component-names.length == 0
+                        && (root.placing == "Linear" || root.placing == "Radial")) {
+                        root.add-shape(kind, "Add");
+                    } else {
+                        let before = root.adjustment-names.length;
+                        root.mask-new();
+                        // At the most masks there is no new one to put
+                        // the shape in, and the status line says so.
+                        if (root.adjustment-names.length > before) { root.add-shape(kind, "Add"); }
+                    }
+                }
+                return accept;
+            }
+            if (chord == "J" && root.lightbox && root.grid-open) {
+                if (!e.repeat) { root.lightbox-badges = !root.lightbox-badges; }
+                return accept;
+            }
             if (chord == "J" && !root.grid-open) {
                 // Both on, unless either is: then both off.
                 let on = !(root.warn-shadows || root.warn-highlights);
@@ -2735,17 +2817,7 @@ export component App inherits Window {
                     Segmented {
                         options: ["Develop", "Crop", "Masks", "Retouch"];
                         current <=> root.panel-tab;
-                        selected(t) => {
-                            // Away from Crop the frame is shown whole again.
-                            if (t != "Crop" && root.crop-mode) {
-                                root.crop-mode = false;
-                                root.level-mode = false;
-                                root.guide-mode = "";
-                                root.guide-dropped();
-                                root.crop-toggled();
-                            }
-                            root.tab-changed(t);
-                        }
+                        selected(t) => { root.tab-chosen(t); }
                     }
                 }
                 // The Masks tab's list of what the panel edits, pinned
@@ -2769,10 +2841,7 @@ export component App inherits Window {
                         collapsed-adjustments <=> root.collapsed-adjustments;
                         target-changed(a) => { root.target-changed(a); }
                         adjustment-toggled(a) => { root.adjustment-toggled(a); }
-                        // A new mask's name and shapes are in the
-                        // first section, so the sections go back to
-                        // their top for it.
-                        new-mask => { root.panel-scroll = 0px; root.new-mask(); }
+                        new-mask => { root.mask-new(); }
                         delete-adjustment => { root.delete-adjustment(); }
                     }
                 }
@@ -3254,6 +3323,7 @@ export component App inherits Window {
                             portrait-shown: root.portrait-shown;
                             portrait-live: root.portrait-live;
                             crop-draw-armed <=> root.crop-draw-armed;
+                            crop-clicked => { root.crop-in-or-out(); }
                             crop-toggled => { root.crop-toggled(); }
                             geometry-changed => { root.geometry-changed(); }
                             guide-dropped => { root.guide-dropped(); }
@@ -3463,6 +3533,7 @@ export component App inherits Window {
         grid-open <=> root.grid-open;
         grid-cell: root.tile-cell;
         lightbox: root.lightbox;
+        lightbox-badges: root.lightbox-badges;
         lightbox-asked => { root.lightbox-enter(); }
         grid-pad: root.grid-pad;
         grid-label: root.grid-label;

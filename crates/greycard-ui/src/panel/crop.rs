@@ -337,8 +337,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let mut st = state.borrow_mut();
             st.develop.zoom = 0.0;
             st.develop.image_size = (0, 0); // re-centered on the next frame
-            st.develop.crop_drag = None;
-            st.develop.crop_draw = None;
+            // Left in the middle of a drag (by R, whose press is not a
+            // pointer's): the crop as dragged so far is the edit, as
+            // the release would have made it, which now finds nothing.
+            let mid_drag =
+                st.develop.crop_drag.take().is_some() | st.develop.crop_draw.take().is_some();
             // The crop opens under the starting aspect, on a frame
             // with none of its own; a ratio taken crops it, an aspect
             // held changes nothing stored.
@@ -349,7 +352,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             };
             st.develop.crop_start_due = false;
             drop(st);
-            if laid == Laid::Taken {
+            if laid == Laid::Taken || mid_drag {
                 app.invoke_view_changed();
             }
             app.window().request_redraw();

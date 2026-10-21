@@ -164,7 +164,7 @@ frames as ← and → do.
 | F6, F7, F8 | The filmstrip, the left pane or the develop panel alone |
 | Space | Fit or 1:1 |
 | Z | Fit or 3:1 |
-| J | Shadow and highlight clipping warnings |
+| J | In the Loupe, shadow and highlight clipping warnings; in the lightbox, the badges |
 | S | Soft proof (in the grid, a stack: below) |
 
 **Ctrl+wheel** over the grid changes the tile size as **+** and **−**
@@ -194,6 +194,10 @@ do.
 | Ctrl+C | Copy the open frame's settings |
 | Ctrl+V | Paste them onto the selected frames |
 | Ctrl+Shift+S | Sync the selected frames to the open one |
+| R | Crop, and Done |
+| W | White balance from a neutral patch: the pipette |
+| M | New mask with a Linear, placed by the next drag |
+| Shift+M | New mask with a Radial, placed by the next drag |
 | ↑ ↓ ← →, + − | Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more |
 | , . | The previous or the next slider |
 | Tab, Shift+Tab | In a slider's typed value, the next or the previous one |

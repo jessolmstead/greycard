@@ -19,6 +19,8 @@ export component CropSection inherits Section {
     // too, draws a fresh one (`Viewport.crop-draw-armed`).
     in-out property <bool> crop-draw-armed;
     callback crop-toggled();
+    // The Crop button: the window's, which R shares.
+    callback crop-clicked();
     callback geometry-changed();
     callback guide-dropped();
 
@@ -31,14 +33,7 @@ export component CropSection inherits Section {
             text: root.crop-mode ? "Done" : "Crop";
             icon: @image-url("../icons/crop.svg");
             primary: root.crop-mode;
-            clicked => {
-                root.crop-mode = !root.crop-mode;
-                root.level-mode = false;
-                root.guide-mode = "";
-                root.crop-draw-armed = false;
-                root.guide-dropped();
-                root.crop-toggled();
-            }
+            clicked => { root.crop-clicked(); }
         }
         // A crop at the whole frame leaves nowhere outside it to
         // start a drag, and a drag inside moves it: this one shot

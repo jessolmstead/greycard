@@ -124,6 +124,10 @@ pub(crate) const TABLE: &[Group] = &[
             ),
             line(&["D"], "Develop: the Loupe with the edit panel"),
             line(&["L"], "The lightbox, and back"),
+            line(
+                &["J"],
+                "In the lightbox, the rating, flag, and label on the tiles, or not",
+            ),
             line(&["C"], "Cull; in the Loupe, Cull or Develop in turn"),
             line(&["V"], "In Cull, compare two or four frames"),
             shown(
@@ -148,7 +152,10 @@ pub(crate) const TABLE: &[Group] = &[
             ),
             line(&["Space"], "Fit or 1:1"),
             line(&["Z"], "Fit or 3:1"),
-            line(&["J"], "Shadow and highlight clipping warnings"),
+            line(
+                &["J"],
+                "In the Loupe, shadow and highlight clipping warnings",
+            ),
             line(&["S"], "Soft proof (in the grid, a stack: below)"),
         ],
     },
@@ -209,6 +216,13 @@ pub(crate) const TABLE: &[Group] = &[
             line(
                 &["Ctrl+Shift+S"],
                 "Sync the selected frames to the open one",
+            ),
+            line(&["R"], "Crop, and Done"),
+            line(&["W"], "White balance from a neutral patch: the pipette"),
+            line(&["M"], "New mask with a Linear, placed by the next drag"),
+            line(
+                &["Shift+M"],
+                "New mask with a Radial, placed by the next drag",
             ),
         ],
     },
@@ -812,6 +826,228 @@ mod tests {
         slint::platform::update_timers_and_animations();
         press(&app, "g");
         assert!(app.get_grid_open());
+    }
+
+    /// `key` pressed with Shift held.
+    fn shifted(app: &App, key: &str) {
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Shift.into(),
+        });
+        press(app, key);
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Shift.into(),
+        });
+    }
+
+    /// A window with a frame open in Develop, as the tools' keys want.
+    fn develop_window() -> (
+        App,
+        std::rc::Rc<std::cell::RefCell<crate::State>>,
+        std::rc::Rc<crate::worker::Worker>,
+    ) {
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(0);
+        (app, state, worker)
+    }
+
+    /// R is the Crop button: its tab, crop mode in, and out again with
+    /// the level put down, as the button's Done leaves it.
+    #[test]
+    fn r_takes_the_crop_in_and_out_as_its_button_does() {
+        let (app, _state, _worker) = develop_window();
+        assert_eq!(app.get_panel_tab(), "Develop");
+        press(&app, "r");
+        assert_eq!(app.get_panel_tab(), "Crop");
+        assert!(app.get_crop_mode());
+        app.set_level_mode(true);
+        press(&app, "r");
+        assert!(!app.get_crop_mode());
+        assert!(!app.get_level_mode(), "put down as the button does");
+        assert_eq!(app.get_panel_tab(), "Crop");
+        // The button and the key are one: in by the key, out by the
+        // button, which reads Done.
+        press(&app, "r");
+        assert!(app.get_crop_mode());
+        let (at, size) = crate::testing::labeled(&app, "Done");
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert!(!app.get_crop_mode());
+    }
+
+    /// W is the white balance's pipette, from any tab; again, put
+    /// down. From the crop, it leaves the crop for the Develop tab.
+    #[test]
+    fn w_arms_the_white_balance_pipette() {
+        let (app, _state, _worker) = develop_window();
+        press(&app, "w");
+        assert_eq!(app.get_picking(), "White");
+        press(&app, "w");
+        assert_eq!(app.get_picking(), "", "again, put down");
+        press(&app, "r");
+        assert!(app.get_crop_mode());
+        press(&app, "w");
+        assert_eq!(app.get_panel_tab(), "Develop");
+        assert!(!app.get_crop_mode(), "the frame shown whole again");
+        assert_eq!(app.get_picking(), "White");
+    }
+
+    /// M starts a mask with a Linear in hand, Shift+M one with a
+    /// Radial, and the next drag places it; M or Shift+M before the
+    /// drag changes the shape in hand rather than leave an empty mask
+    /// behind, and the same key again puts it down.
+    #[test]
+    fn m_and_shift_m_start_a_mask_placed_by_the_next_drag() {
+        let (app, state, _worker) = develop_window();
+        let masks = |state: &std::rc::Rc<std::cell::RefCell<crate::State>>| {
+            state.borrow().develop.edit.adjustments.len()
+        };
+        press(&app, "m");
+        assert_eq!(app.get_panel_tab(), "Masks");
+        assert_eq!(app.get_placing(), "Linear");
+        assert!(app.get_placing_into());
+        assert_eq!(masks(&state), 1);
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_dragged(600.0, 500.0);
+        app.invoke_place_released();
+        assert_eq!(app.get_component_kind(), "Linear");
+        assert_eq!(
+            state.borrow().develop.edit.adjustments[0]
+                .mask
+                .components
+                .len(),
+            1
+        );
+
+        shifted(&app, "M");
+        assert_eq!(app.get_placing(), "Radial");
+        assert_eq!(masks(&state), 2);
+        press(&app, "m");
+        assert_eq!(app.get_placing(), "Linear", "the shape in hand changed");
+        assert_eq!(masks(&state), 2, "in the same mask");
+        shifted(&app, "M");
+        assert_eq!(app.get_placing(), "Radial");
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_dragged(600.0, 500.0);
+        app.invoke_place_released();
+        assert_eq!(app.get_component_kind(), "Radial");
+        assert_eq!(masks(&state), 2);
+
+        // Again before a drag: down, as the button again.
+        press(&app, "m");
+        assert_eq!(app.get_placing(), "Linear");
+        assert_eq!(masks(&state), 3);
+        press(&app, "m");
+        assert_eq!(app.get_placing(), "");
+    }
+
+    /// R in the middle of a crop's drag: the crop as dragged so far is
+    /// the edit, saved as the release would have, and the release
+    /// after it adds nothing.
+    #[test]
+    fn r_in_the_middle_of_a_crop_drag_keeps_the_drag() {
+        let (app, _state, _worker) = develop_window();
+        let changes = std::rc::Rc::new(std::cell::Cell::new(0));
+        {
+            let changes = changes.clone();
+            app.on_view_changed(move || changes.set(changes.get() + 1));
+        }
+        press(&app, "r");
+        assert!(app.get_crop_mode());
+        let entered = changes.get();
+        app.invoke_crop_pressed(0);
+        press(&app, "r");
+        assert!(!app.get_crop_mode());
+        assert_eq!(changes.get(), entered + 1, "the drag made the edit");
+        app.invoke_crop_released();
+        assert_eq!(changes.get(), entered + 1, "and the release nothing more");
+        // Without a drag, leaving makes no edit.
+        press(&app, "r");
+        let entered = changes.get();
+        press(&app, "r");
+        assert_eq!(changes.get(), entered);
+    }
+
+    /// The pipette in hand, then M or R: the pipette is put down, so
+    /// the next drag is the shape's or the crop's alone.
+    #[test]
+    fn a_tool_key_puts_the_pipette_down() {
+        let (app, state, _worker) = develop_window();
+        press(&app, "w");
+        assert_eq!(app.get_picking(), "White");
+        press(&app, "m");
+        assert_eq!(app.get_picking(), "");
+        assert_eq!(app.get_placing(), "Linear");
+        // Placed by the drag, and only placed.
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_dragged(600.0, 500.0);
+        app.invoke_place_released();
+        assert_eq!(app.get_component_kind(), "Linear");
+        assert_eq!(app.get_picking(), "");
+
+        press(&app, "w");
+        assert_eq!(app.get_picking(), "White");
+        press(&app, "r");
+        assert_eq!(app.get_picking(), "", "put down for the crop");
+        assert!(app.get_crop_mode());
+        press(&app, "r");
+        press(&app, "m");
+        assert_eq!(app.get_picking(), "");
+        assert_eq!(app.get_placing(), "Linear");
+        assert_eq!(state.borrow().develop.edit.adjustments.len(), 2);
+    }
+
+    /// With no frame open, the tools' keys do nothing.
+    #[test]
+    fn the_tool_keys_do_nothing_with_no_frame_open() {
+        let app = window(0);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        assert_eq!(app.get_selected(), -1);
+        press(&app, "r");
+        press(&app, "w");
+        press(&app, "m");
+        shifted(&app, "M");
+        assert!(!app.get_crop_mode());
+        assert_eq!(app.get_picking(), "");
+        assert_eq!(app.get_placing(), "");
+        assert_eq!(app.get_panel_tab(), "Develop");
+        assert!(state.borrow().develop.edit.adjustments.is_empty());
+    }
+
+    /// In the grid, the lightbox, and culling the tools' keys are
+    /// nobody's.
+    #[test]
+    fn the_tool_keys_do_nothing_in_the_grid_or_culling() {
+        let (app, state, _worker) = develop_window();
+        // The tools pressed: nothing in hand, no mask, the tab as it
+        // was (culling's own panel is its own tab).
+        let tools_do_nothing = |app: &App| {
+            let tab = app.get_panel_tab();
+            for k in ["r", "w", "m"] {
+                press(app, k);
+            }
+            shifted(app, "M");
+            assert!(!app.get_crop_mode());
+            assert_eq!(app.get_picking(), "");
+            assert_eq!(app.get_placing(), "");
+            assert_eq!(app.get_panel_tab(), tab);
+            assert!(state.borrow().develop.edit.adjustments.is_empty());
+        };
+        press(&app, "g");
+        assert!(app.get_grid_open());
+        tools_do_nothing(&app);
+        press(&app, "l");
+        assert!(app.get_lightbox());
+        tools_do_nothing(&app);
+        press(&app, "l");
+        press(&app, "g");
+        assert!(!app.get_grid_open());
+        press(&app, "c");
+        assert!(app.get_cull_mode());
+        tools_do_nothing(&app);
     }
 
     #[test]

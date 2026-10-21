@@ -740,6 +740,22 @@ mod tests {
         assert!(!app.get_lightbox(), "L out again");
     }
 
+    /// W with a slider focused: the pipette is in hand, and the slider
+    /// keeps the arrows, as it does after a rating key.
+    #[test]
+    fn a_focused_slider_keeps_the_arrows_after_a_tool_key() {
+        use crate::testing::press;
+        use slint::platform::Key;
+        let (app, state, _worker) = exposure_focused();
+        press(&app, "w");
+        assert_eq!(app.get_picking(), "White");
+        press(&app, Key::UpArrow);
+        assert!(near(app.get_exposure(), 0.1), "{}", app.get_exposure());
+        press(&app, Key::RightArrow);
+        assert!(near(app.get_exposure(), 0.2), "{}", app.get_exposure());
+        assert_eq!(state.borrow().current, Some(0), "the slider took the arrow");
+    }
+
     /// F8 with a slider focused: the panel goes, and the window's keys
     /// work at once.
     #[test]
