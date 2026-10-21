@@ -4,7 +4,7 @@
 
 import { Theme } from "../theme.slint";
 import { LookRow } from "../structs.slint";
-import { Section, EditSlider, PanelButton } from "../controls.slint";
+import { Section, EditSlider, Steps, PanelButton } from "../controls.slint";
 
 export component CameraSection inherits Section {
     in-out property <bool> collapsed-camera;
@@ -234,6 +234,7 @@ export component LookSection inherits Section {
         maximum: 1;
         default: 1;
         step: 0.01;
+        steps: Steps.percent;
         value <=> root.look-strength;
         scale: 100;
         text: round(root.look-strength * 100) + "%";

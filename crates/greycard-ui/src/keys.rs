@@ -212,6 +212,25 @@ pub(crate) const TABLE: &[Group] = &[
             ),
         ],
     },
+    // A focused slider's own (`EditSlider` in greycard-slint's
+    // `ui/controls.slint`), not the handler's: no chords, and the
+    // window has these keys back once no slider has the focus.
+    Group {
+        title: "Sliders",
+        lines: &[
+            shown(
+                &[],
+                "↑ ↓ ← →, + −",
+                "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more",
+            ),
+            shown(&[], ", .", "The previous or the next slider"),
+            shown(
+                &[],
+                "Tab, Shift+Tab",
+                "In a slider's typed value, the next or the previous one",
+            ),
+        ],
+    },
     Group {
         title: "Files, sheets and help",
         lines: &[

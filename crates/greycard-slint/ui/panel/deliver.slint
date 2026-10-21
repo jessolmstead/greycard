@@ -5,7 +5,7 @@
 
 import { ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { EditSlider, Toggle, PanelButton, Segmented } from "../controls.slint";
+import { EditSlider, Steps, Toggle, PanelButton, Segmented } from "../controls.slint";
 
 // Nine places for a watermark, three by three, one chosen.
 component PositionGrid inherits Rectangle {
@@ -255,6 +255,7 @@ export component ExportSheet inherits Rectangle {
                         maximum: 100;
                         default: 92;
                         step: 1;
+                        steps: Steps.whole;
                         value <=> root.export-quality;
                         text: round(root.export-quality);
                     }
@@ -388,6 +389,7 @@ export component ExportSheet inherits Rectangle {
                                 maximum: 50;
                                 default: 15;
                                 step: 0.5;
+                                steps: Steps.halves;
                                 value <=> root.export-mark-size;
                                 text: round(root.export-mark-size * 10) / 10 + " %";
                             }
@@ -397,6 +399,7 @@ export component ExportSheet inherits Rectangle {
                                 maximum: 10;
                                 default: 2;
                                 step: 0.1;
+                                steps: Steps.tenths;
                                 value <=> root.export-mark-margin;
                                 text: round(root.export-mark-margin * 10) / 10 + " %";
                             }
@@ -406,6 +409,7 @@ export component ExportSheet inherits Rectangle {
                                 maximum: 100;
                                 default: 60;
                                 step: 1;
+                                steps: Steps.whole;
                                 value <=> root.export-mark-opacity;
                                 text: round(root.export-mark-opacity) + " %";
                             }
@@ -467,6 +471,7 @@ export component ExportSheet inherits Rectangle {
                         maximum: 25;
                         default: 5;
                         step: 0.5;
+                        steps: Steps.halves;
                         value <=> root.export-border-width;
                         text: round(root.export-border-width * 10) / 10 + " %";
                     }

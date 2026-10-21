@@ -3,7 +3,7 @@
 
 import { ComboBox, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Section, EditSlider, Toggle, PanelButton } from "../controls.slint";
+import { Section, EditSlider, Steps, Toggle, PanelButton } from "../controls.slint";
 
 export component CropSection inherits Section {
     in-out property <bool> crop-mode;
@@ -164,6 +164,7 @@ export component RotateSection inherits Section {
         maximum: 45;
         default: 0;
         step: 0.1;
+        steps: Steps.tenths;
         value <=> root.geo-angle;
         text: (root.geo-angle >= 0 ? "+" : "") + round(root.geo-angle * 10) / 10 + "°";
         changed(v) => { root.geometry-changed(); }
@@ -245,6 +246,7 @@ export component PerspectiveSection inherits Section {
         maximum: 40;
         default: 0;
         step: 0.1;
+        steps: Steps.tenths;
         value <=> root.geo-vertical;
         text: (root.geo-vertical >= 0 ? "+" : "") + round(root.geo-vertical * 10) / 10 + "°";
         changed(v) => { root.geometry-changed(); }
@@ -255,6 +257,7 @@ export component PerspectiveSection inherits Section {
         maximum: 40;
         default: 0;
         step: 0.1;
+        steps: Steps.tenths;
         value <=> root.geo-horizontal;
         text: (root.geo-horizontal >= 0 ? "+" : "") + round(root.geo-horizontal * 10) / 10 + "°";
         changed(v) => { root.geometry-changed(); }

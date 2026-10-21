@@ -7,7 +7,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Tips, EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
+import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
 import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, KeywordChip } from "structs.slint";
@@ -343,6 +343,9 @@ export component App inherits Window {
     /// the same queue ordering the strip's range drives.
     callback grid-range(length, length, int, length);
     changed grid-open => {
+        // A field or a slider in the panel lets go of the keys: the
+        // grid takes the window.
+        Typing.close-all();
         // A name under the pointer that goes with the grid or the pane
         // hears nothing of the pointer leaving: its hover text goes
         // here instead of staying over the window for good.
@@ -382,6 +385,9 @@ export component App inherits Window {
     // frame chosen, and Return or Escape comes back to the same scroll;
     // Escape leaves to the grid.
     in-out property <bool> lightbox: false;
+    // The lightbox puts the panel away: a field or a slider in it lets
+    // go of the keys.
+    changed lightbox => { Typing.close-all(); }
     /// In the loupe from the lightbox: the grid closed under it, to
     /// come back to.
     in-out property <bool> lightbox-loupe: false;
@@ -783,6 +789,9 @@ export component App inherits Window {
     changed left-hidden => { root.tip-text = ""; }
     changed right-hidden => {
         root.tip-text = "";
+        // The panel put away: a field or a slider in it lets go of
+        // the keys, which Slint would drop at the next press.
+        Typing.close-all();
         root.look-list-gone();
     }
     changed strip-hidden => { root.tip-text = ""; }
@@ -2101,6 +2110,10 @@ export component App inherits Window {
     // window's again, as when a sheet closes.
     property <int> entries-done: Typing.done;
     changed entries-done => { keys.focus(); }
+    // A focused slider's keys that are not its own: the window's, as
+    // if the keys had them.
+    property <int> slider-passed: SliderKeys.passed;
+    changed slider-passed => { keys.key-pressed(SliderKeys.passed-key); }
 
     // A sheet closed from the Rust side (an answer invoked, not
     // clicked) takes its focus with it: the keys are the window's
@@ -2552,7 +2565,7 @@ export component App inherits Window {
             // viewport clips, or that work is drawn over the left bar
             // and the filmstrip and takes their clicks besides.
             view := Viewport {
-                typing: root.snapshot-editing >= 0;
+                typing: root.snapshot-editing >= 0 || SliderKeys.holder != 0 || Typing.editing;
                 zoom(a, b, c) => { root.zoom(a, b, c); }
                 pan(a, b) => { root.pan(a, b); }
                 wheel-pan(a, b) => { root.wheel-pan(a, b); }
@@ -2766,6 +2779,20 @@ export component App inherits Window {
                 // Named so the tests find the view's own edges.
                 panel-view := ScrollView {
                     content-y <=> root.panel-scroll;
+                    // A slider reached by a key, scrolled into view.
+                    property <int> reveal: SliderKeys.reveal;
+                    changed reveal => {
+                        let left = self.absolute-position.x;
+                        if (SliderKeys.reveal-x < left || SliderKeys.reveal-x > left + self.width) { return; }
+                        let top = SliderKeys.reveal-y - self.absolute-position.y;
+                        let bottom = top + SliderKeys.reveal-height;
+                        if (top < Theme.space-2) {
+                            root.panel-scroll = min(0px, root.panel-scroll + Theme.space-2 - top);
+                        } else if (bottom > self.visible-height - Theme.space-2) {
+                            root.panel-scroll = max(min(0px, self.visible-height - self.content-height),
+                                root.panel-scroll - (bottom - self.visible-height + Theme.space-2));
+                        }
+                    }
                     // Under a tall scope in a short window the pinned
                     // list, down to its one row, can still want more
                     // than the panel has: there the sections' view

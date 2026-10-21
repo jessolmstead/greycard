@@ -2,7 +2,7 @@
 // feather and opacity, and the repairs by name.
 
 import { Theme } from "../theme.slint";
-import { TipArea, Section, EditSlider, PanelButton } from "../controls.slint";
+import { TipArea, Section, EditSlider, Steps, PanelButton } from "../controls.slint";
 
 export component RetouchSection inherits Section {
     in-out property <bool> retouch-enabled;
@@ -54,6 +54,7 @@ export component RetouchSection inherits Section {
             maximum: 0.3;
             default: 0.02;
             step: 0.001;
+            steps: Steps.thousandths;
             value <=> root.patch-size;
             scale: 100;
             text: round(root.patch-size * 1000) / 10 + "%";
@@ -65,6 +66,7 @@ export component RetouchSection inherits Section {
             maximum: 1;
             default: 0.3;
             step: 0.01;
+            steps: Steps.percent;
             value <=> root.patch-feather;
             scale: 100;
             text: round(root.patch-feather * 100) + "%";
@@ -76,6 +78,7 @@ export component RetouchSection inherits Section {
             maximum: 1;
             default: 1;
             step: 0.01;
+            steps: Steps.percent;
             value <=> root.patch-opacity;
             scale: 100;
             text: round(root.patch-opacity * 100) + "%";

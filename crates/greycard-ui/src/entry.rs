@@ -414,6 +414,346 @@ mod tests {
         assert_eq!(app.get_exposure(), 0.0);
     }
 
+    /// Every slider names its line of the one table of steps, and
+    /// the table has every line some slider names.
+    #[test]
+    fn every_slider_takes_its_steps_from_the_table() {
+        let dir = std::path::Path::new(greycard_slint::PANEL_DIR);
+        let controls = std::fs::read_to_string(dir.parent().unwrap().join("controls.slint"))
+            .expect("the controls' source")
+            .replace("\r\n", "\n");
+        let at = controls.find("export global Steps {").expect("the table");
+        let table = block(&controls[at + "export global Steps {".len()..]);
+        let lines: Vec<&str> = table
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("out property <Nudge> "))
+            .map(|l| l.split(':').next().unwrap())
+            .collect();
+        let mut named = std::collections::BTreeSet::new();
+        let mut checked = 0;
+        for file in std::fs::read_dir(dir).expect("the panel's sources") {
+            let path = file.expect("a panel source").path();
+            if path.extension().is_none_or(|e| e != "slint") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path)
+                .expect("a panel source reads")
+                .replace("\r\n", "\n");
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            for (at, _) in source.match_indices("EditSlider {") {
+                let body = block(&source[at + "EditSlider {".len()..]);
+                let steps = field(body, "steps: Steps.")
+                    .unwrap_or_else(|| panic!("{name}: a slider without its steps"));
+                assert!(lines.contains(&steps), "{name}: no line {steps}");
+                named.insert(steps.to_string());
+                checked += 1;
+            }
+        }
+        assert!(checked > 60, "only {checked} sliders found");
+        let idle: Vec<_> = lines.iter().filter(|l| !named.contains(**l)).collect();
+        assert!(idle.is_empty(), "no slider takes {idle:?}");
+    }
+
+    /// The window, a frame open on the Develop tab, and the exposure
+    /// slider focused by a press on its label, which moves nothing.
+    fn exposure_focused() -> (
+        App,
+        std::rc::Rc<std::cell::RefCell<crate::State>>,
+        std::rc::Rc<crate::worker::Worker>,
+    ) {
+        use crate::testing;
+        let app = testing::window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, worker) = testing::state_for(&app, testing::folder(3));
+        app.invoke_select(0);
+        focus_slider(&app, "Exposure");
+        assert_eq!(app.get_exposure(), 0.0, "the press moved nothing");
+        (app, state, worker)
+    }
+
+    /// A press on a slider's label: focus, no jump.
+    fn focus_slider(app: &App, label: &str) {
+        let (at, size) = crate::testing::labeled(app, label);
+        crate::testing::click(app, at.x + 8.0, at.y + size.height / 2.0);
+    }
+
+    fn shifted(app: &App, key: impl Into<slint::SharedString>) {
+        use slint::platform::{Key, WindowEvent};
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Shift.into(),
+        });
+        crate::testing::press(app, key);
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Shift.into(),
+        });
+    }
+
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    /// Up and plus nudge the exposure by a tenth of a stop, Shift by a
+    /// third; Down, minus and the other arrows the same ways. Each is
+    /// one change of the slider, as a step of a drag is.
+    #[test]
+    fn a_focused_slider_is_nudged_by_its_steps() {
+        use crate::testing::press;
+        use slint::platform::Key;
+        let (app, _state, _worker) = exposure_focused();
+        let changes = std::rc::Rc::new(std::cell::Cell::new(0));
+        {
+            let changes = changes.clone();
+            app.on_view_changed(move || changes.set(changes.get() + 1));
+        }
+        press(&app, Key::UpArrow);
+        assert!(near(app.get_exposure(), 0.1), "{}", app.get_exposure());
+        press(&app, "+");
+        assert!(near(app.get_exposure(), 0.2), "{}", app.get_exposure());
+        shifted(&app, Key::UpArrow);
+        assert!(
+            near(app.get_exposure(), 0.2 + 1.0 / 3.0),
+            "{}",
+            app.get_exposure()
+        );
+        assert_eq!(changes.get(), 3);
+        // Shift is the arrows' alone: with plus and minus, the small
+        // step, since on some boards Shift makes them other keys.
+        shifted(&app, "+");
+        assert!(
+            near(app.get_exposure(), 0.3 + 1.0 / 3.0),
+            "{}",
+            app.get_exposure()
+        );
+        shifted(&app, "_");
+        assert!(
+            near(app.get_exposure(), 0.2 + 1.0 / 3.0),
+            "{}",
+            app.get_exposure()
+        );
+        assert_eq!(changes.get(), 5);
+        shifted(&app, Key::DownArrow);
+        press(&app, "-");
+        press(&app, "=");
+        press(&app, Key::LeftArrow);
+        assert!(near(app.get_exposure(), 0.1), "{}", app.get_exposure());
+        press(&app, Key::RightArrow);
+        assert!(near(app.get_exposure(), 0.2), "{}", app.get_exposure());
+        assert_eq!(changes.get(), 10);
+        // Held at its end, it stays there.
+        app.set_exposure(4.95);
+        shifted(&app, Key::UpArrow);
+        assert_eq!(app.get_exposure(), 5.0);
+    }
+
+    /// Period focuses the next slider down, comma the one above; the
+    /// arrows then move the one focused and no other.
+    #[test]
+    fn comma_and_period_move_the_focus_between_sliders() {
+        use crate::testing::press;
+        use slint::platform::Key;
+        let (app, _state, _worker) = exposure_focused();
+        press(&app, ".");
+        press(&app, Key::UpArrow);
+        assert_eq!(app.get_exposure(), 0.0, "the exposure let go");
+        assert!(
+            near(app.get_contrast(), 2f32.powf(0.02)),
+            "the contrast took the keys: {}",
+            app.get_contrast()
+        );
+        press(&app, ".");
+        press(&app, Key::UpArrow);
+        assert!(near(app.get_highlights(), 0.05), "{}", app.get_highlights());
+        press(&app, ",");
+        press(&app, ",");
+        press(&app, Key::UpArrow);
+        assert!(near(app.get_exposure(), 0.1), "back on the exposure");
+        assert!(near(app.get_highlights(), 0.05));
+        assert!(near(app.get_contrast(), 2f32.powf(0.02)));
+    }
+
+    /// In a slider's typed value, Up and Down nudge it and Tab sets
+    /// what was typed and opens the next slider's, Shift+Tab the one
+    /// above. The last Enter hands the keys back.
+    #[test]
+    fn tab_goes_from_one_typed_value_to_the_next() {
+        use crate::testing;
+        use slint::platform::Key;
+        let (app, _state, _worker) = exposure_focused();
+        let (at, size) = testing::labeled(&app, "Exposure value");
+        testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        testing::type_text(&app, "1");
+        testing::press(&app, Key::Tab);
+        assert_eq!(app.get_exposure(), 1.0, "Tab set the typed value");
+        assert!(!app.get_left_hidden(), "Tab never reached the window");
+        // The contrast's value is open now, all selected.
+        testing::type_text(&app, "1.5");
+        testing::press(&app, Key::UpArrow);
+        assert!(
+            near(app.get_contrast(), 1.5 * 2f32.powf(0.02)),
+            "typed, then nudged: {}",
+            app.get_contrast()
+        );
+        shifted(&app, Key::Tab);
+        // Back on the exposure's value.
+        testing::press(&app, Key::DownArrow);
+        assert!(near(app.get_exposure(), 0.9), "{}", app.get_exposure());
+        testing::type_text(&app, "0.3");
+        testing::press(&app, Key::Return);
+        assert!(near(app.get_exposure(), 0.3));
+        assert!(near(app.get_contrast(), 1.5 * 2f32.powf(0.02)));
+        // The window's keys again.
+        testing::press(&app, Key::Tab);
+        assert!(app.get_left_hidden(), "Tab reached the window");
+    }
+
+    /// A nudge is saved as a drag is: once the panel has rested, one
+    /// history step. A run of nudges inside the rest is one step too,
+    /// as a drag's many changes are.
+    #[test]
+    fn a_nudge_is_one_history_step() {
+        use crate::testing;
+        use slint::platform::Key;
+        let app = testing::window(1);
+        let (state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        {
+            let (state, app_weak) = (state.clone(), app.as_weak());
+            app.on_view_changed(move || {
+                crate::panel::edit::schedule_save(&mut state.borrow_mut(), app_weak.clone());
+            });
+        }
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ));
+            slint::platform::update_timers_and_animations();
+        };
+        settle();
+        let states = || state.borrow().sidecars[0].states();
+        let before = states();
+        focus_slider(&app, "Exposure");
+        testing::press(&app, Key::UpArrow);
+        settle();
+        assert_eq!(states(), before + 1, "one step");
+        assert!(near(
+            state.borrow().sidecars[0].current.look().light.exposure,
+            0.1
+        ));
+        testing::press(&app, Key::UpArrow);
+        testing::press(&app, Key::UpArrow);
+        testing::press(&app, Key::UpArrow);
+        settle();
+        assert_eq!(states(), before + 2, "three in a run, one step");
+        assert!(near(
+            state.borrow().sidecars[0].current.look().light.exposure,
+            0.4
+        ));
+    }
+
+    /// The window's keys with no slider focused: a rating, the arrow
+    /// to the next frame. A focused slider takes the arrow and leaves
+    /// the rating to the window; Escape gives the arrow back.
+    #[test]
+    fn a_focused_slider_takes_only_its_own_keys() {
+        use crate::testing::press;
+        use slint::platform::Key;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let app = crate::testing::window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(0);
+        let rated = Rc::new(RefCell::new(Vec::<String>::new()));
+        {
+            let rated = rated.clone();
+            app.on_meta_key(move |k| {
+                rated.borrow_mut().push(k.to_string());
+                true
+            });
+        }
+        // Nothing focused: the window's.
+        press(&app, "3");
+        assert_eq!(*rated.borrow(), ["3"]);
+        press(&app, Key::RightArrow);
+        assert_eq!(
+            state.borrow().current,
+            Some(1),
+            "the arrow reached the strip"
+        );
+
+        focus_slider(&app, "Exposure");
+        press(&app, Key::RightArrow);
+        assert_eq!(state.borrow().current, Some(1), "the slider took the arrow");
+        assert!(near(app.get_exposure(), 0.1));
+        press(&app, "4");
+        assert_eq!(*rated.borrow(), ["3", "4"], "the rating reached the window");
+        assert!(near(app.get_exposure(), 0.1));
+        // The pointer crossing the picture leaves the keys with it.
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(700.0, 400.0),
+            });
+        press(&app, Key::UpArrow);
+        assert!(near(app.get_exposure(), 0.2), "the slider kept the keys");
+        assert_eq!(state.borrow().current, Some(1));
+
+        press(&app, Key::Escape);
+        press(&app, Key::RightArrow);
+        assert_eq!(state.borrow().current, Some(2), "the window's arrow again");
+    }
+
+    /// G with a slider focused: the grid takes the keys, so its arrow
+    /// moves the selection and plus zooms the tiles; the exposure
+    /// stays where it was.
+    #[test]
+    fn the_grid_takes_the_keys_from_a_focused_slider() {
+        use crate::testing::press;
+        use slint::platform::Key;
+        let (app, state, _worker) = exposure_focused();
+        press(&app, "g");
+        assert!(app.get_grid_open());
+        press(&app, Key::RightArrow);
+        assert_eq!(app.get_selected(), 1, "the grid's arrow");
+        assert_eq!(state.borrow().current, Some(1));
+        press(&app, "+");
+        press(&app, "-");
+        assert_eq!(app.get_exposure(), 0.0, "the slider let go");
+    }
+
+    /// L with a slider focused: the lightbox puts the panel away, and
+    /// its keys are the window's at once.
+    #[test]
+    fn the_lightbox_takes_the_keys_from_a_focused_slider() {
+        use crate::testing::press;
+        use slint::platform::Key;
+        let (app, _state, _worker) = exposure_focused();
+        press(&app, "l");
+        assert!(app.get_lightbox());
+        let across = app.get_lightbox_across();
+        press(&app, Key::UpArrow);
+        press(&app, "-");
+        assert_eq!(app.get_exposure(), 0.0, "the slider let go");
+        assert_ne!(app.get_lightbox_across(), across, "the lightbox's minus");
+        press(&app, "l");
+        assert!(!app.get_lightbox(), "L out again");
+    }
+
+    /// F8 with a slider focused: the panel goes, and the window's keys
+    /// work at once.
+    #[test]
+    fn hiding_the_panel_takes_the_keys_from_a_focused_slider() {
+        use crate::testing::press;
+        use slint::platform::Key;
+        let (app, state, _worker) = exposure_focused();
+        press(&app, Key::F8);
+        assert!(app.get_right_hidden());
+        press(&app, Key::RightArrow);
+        assert_eq!(state.borrow().current, Some(1), "the window's arrow");
+        assert_eq!(app.get_exposure(), 0.0);
+    }
+
     /// The text of a block that starts just inside its brace, to the
     /// brace that closes it.
     fn block(from: &str) -> &str {

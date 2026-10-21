@@ -207,11 +207,16 @@ export component Section inherits VerticalLayout {
         clip: true;
         property <length> full: root.collapsed ? 0px : body.preferred-height;
         animate full { duration: 120ms; easing: ease-out; }
+        // For the sliders' focus walk alone: closed all the way, the
+        // body is put far to the left, out of every column, so comma
+        // and period pass a folded section's sliders over.
+        property <float> shut: root.collapsed ? 1 : 0;
+        animate shut { duration: 120ms; }
         preferred-height: self.full;
         max-height: self.full;
         min-height: self.full;
         body := VerticalLayout {
-            x: 0;
+            x: parent.shut >= 1 ? -100000px : 0;
             y: 0;
             width: 100%;
             height: self.preferred-height;
@@ -228,6 +233,44 @@ export component Section inherits VerticalLayout {
 export struct TypedNumber {
     ok: bool,
     value: float,
+}
+
+// The sliders' keys, one place for all of them: which slider holds
+// the keys, and the question a slider asks the others for the next or
+// the previous one, with comma and period or with Tab in its field.
+// The answer takes two of Slint's rounds of change handlers, both
+// within the press: in the first, every slider past the asker in its
+// column puts itself forward if it is nearer than the best so far; in
+// the second, the one left takes the focus or opens its field.
+export global SliderKeys {
+    // The slider with the keys, by its number, or 0. The picture does
+    // not take the keys at the pointer's crossing while one has them.
+    in-out property <int> holder: 0;
+    // The numbers handed out, one a slider.
+    in-out property <int> count: 0;
+    // The question, counted up at each asking.
+    in-out property <int> asked: 0;
+    in-out property <int> asker: 0;
+    in-out property <int> way: 1;
+    in-out property <bool> field: false;
+    in-out property <length> from-x;
+    in-out property <length> from-y;
+    in-out property <length> from-width;
+    // The nearest so far, by its number and its top.
+    in-out property <int> best: 0;
+    in-out property <length> best-y;
+    // Counted up once every slider has answered.
+    in-out property <int> settled: 0;
+    // A slider reached by a key, for the panel to scroll into view:
+    // counted up, and where it is in the window.
+    in-out property <int> reveal: 0;
+    in-out property <length> reveal-x;
+    in-out property <length> reveal-y;
+    in-out property <length> reveal-height;
+    // A key a focused slider does not take, for the window's own:
+    // counted up, and the key.
+    in-out property <int> passed: 0;
+    in-out property <KeyEvent> passed-key;
 }
 
 // The reading of typed numbers, one place for every field: the Rust
@@ -258,10 +301,14 @@ export global Typing {
     // click on a control that takes no focus (a tab, a swatch, the
     // curve, a section's header), and for a tab or a mask target
     // changed under the field.
+    // A focused slider lets go of the keys the same way.
     public function close-all() {
         if (self.editing) {
             self.editing = false;
             self.cancel += 1;
+            self.done += 1;
+        } else if (SliderKeys.holder != 0) {
+            SliderKeys.holder = 0;
             self.done += 1;
         }
     }
@@ -287,6 +334,13 @@ export component ValueField inherits Rectangle {
     accessible-value: root.shown;
     accessible-enabled: root.enabled;
     callback committed(string);
+    // A slider's field: Up and Down nudge the value, with Shift by
+    // the bigger step, and Tab and Shift+Tab go on to the next and the
+    // previous slider's field; what was typed is set first, as Enter
+    // sets it.
+    in property <bool> nudges: false;
+    callback nudged(int, bool);
+    callback tabbed(int);
     // Which opening this is, against `Typing.opened`.
     property <int> ticket: 0;
     property <int> cancels: Typing.cancel;
@@ -307,6 +361,14 @@ export component ValueField inherits Rectangle {
             Typing.editing = false;
             Typing.done += 1;
         }
+    }
+    // Closed from outside: a Tab with no field past this one.
+    public function finish() {
+        if (root.editing) { root.close(); }
+    }
+    // The typed text set, unless it is the reading's own.
+    function take(typed: string) {
+        if (typed != Typing.editable(root.shown)) { root.committed(typed); }
     }
     border-radius: Theme.radius-sm;
     border-width: root.editing || root.boxed ? 1px : 0;
@@ -352,6 +414,22 @@ export component ValueField inherits Rectangle {
                 root.close();
                 return accept;
             }
+            if (root.nudges && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta) {
+                if (e.text == Key.UpArrow || e.text == Key.DownArrow) {
+                    root.take(self.text);
+                    root.nudged(e.text == Key.UpArrow ? 1 : -1, e.modifiers.shift);
+                    self.text = Typing.editable(root.shown);
+                    self.select-all();
+                    return accept;
+                }
+                if (e.text == Key.Tab || e.text == Key.Backtab) {
+                    root.take(self.text);
+                    self.text = Typing.editable(root.shown);
+                    self.select-all();
+                    root.tabbed(e.text == Key.Backtab || e.modifiers.shift ? -1 : 1);
+                    return accept;
+                }
+            }
             return reject;
         }
         // Clicked away: nothing typed counts, and the keys go back.
@@ -361,19 +439,84 @@ export component ValueField inherits Rectangle {
     }
 }
 
+// A slider's two steps for the keys, in its value (in stops on a
+// logarithmic one): an arrow, plus or minus, and an arrow with Shift.
+export struct Nudge {
+    small: float,
+    big: float,
+}
+
+// Every slider's steps, one table: each slider names its line. The
+// steps are the ones Lightroom's hand expects, read in what the slider
+// shows: a tenth and a third of a stop on exposure, 1 and 10 on a
+// slider shown 0 to 100 or -100 to +100.
+export global Steps {
+    // Exposure, and the vignette's amount, in EV over ±5.
+    out property <Nudge> exposure: { small: 0.1, big: 1 / 3 };
+    // Highlights, shadows and whites, in EV over ±2.
+    out property <Nudge> tone: { small: 0.05, big: 0.25 };
+    // Blacks, ±30 % shown: 1 and 5.
+    out property <Nudge> blacks: { small: 0.01, big: 0.05 };
+    // Contrast's multiplier, in stops over two.
+    out property <Nudge> contrast: { small: 0.02, big: 0.2 };
+    // Shown as a percent, 0 to 100 or ±100 (a 0 to 1 or ±1 value):
+    // 1 and 10.
+    out property <Nudge> percent: { small: 0.01, big: 0.1 };
+    // Shown to two places: a radius, a grain's size.
+    out property <Nudge> hundredths: { small: 0.01, big: 0.1 };
+    // Shown to two places over a range of a few: the black and white
+    // weight and strength, the denoise's strength.
+    out property <Nudge> twentieths: { small: 0.05, big: 0.25 };
+    // Shown to one place: an angle, a keystone, a radius in pixels, a
+    // margin.
+    out property <Nudge> tenths: { small: 0.1, big: 1 };
+    // Shown to one place in halves: the mark's size, the border.
+    out property <Nudge> halves: { small: 0.5, big: 5 };
+    // A whole number to 100: a quality, an opacity, a count, a
+    // threshold.
+    out property <Nudge> whole: { small: 1, big: 10 };
+    // An angle on the hue circle.
+    out property <Nudge> degrees: { small: 1, big: 10 };
+    // The tint's hue, whose wheel step is a tenth of a degree.
+    out property <Nudge> tenth-degrees: { small: 0.1, big: 1 };
+    // A hue's shift, ±30°.
+    out property <Nudge> hue-shift: { small: 1, big: 5 };
+    // White balance in kelvin, 2000 to 12000.
+    out property <Nudge> kelvin: { small: 50, big: 500 };
+    // Shown to three places, or a tenth of a percent: the tint, a
+    // chroma, a brush's or a repair's size.
+    out property <Nudge> thousandths: { small: 0.001, big: 0.01 };
+    // The lens's manual distortion, shown to a tenth over ±50.
+    out property <Nudge> distortion: { small: 0.005, big: 0.05 };
+    // The lens's red and blue scale, shown to a tenth over ±10.
+    out property <Nudge> fringe: { small: 0.0001, big: 0.001 };
+}
+
 // A slider: label, track with fill, handle, value. A click on the
 // track jumps the value there; a press on the handle grabs it without
 // moving it, then drags it once the pointer clears a small dead zone.
-// Double-click restores the default; the arrow keys nudge. A click on
-// the value types one: Enter sets it as a drag would, clamped to the
-// range, and Escape leaves the value alone.
+// Double-click restores the default. A click on the value types one:
+// Enter sets it as a drag would, clamped to the range, and Escape
+// leaves the value alone.
+//
+// Focused, by a click or a key, it holds the keys until a click, Tab,
+// comma, period or Escape moves them on: the four arrows, and plus
+// and minus (= and _ with them), nudge by its small step, an arrow
+// with Shift by its big one, as a drag moves it; comma and period focus the
+// previous and the next slider in the panel; Escape gives the keys
+// back to the window. Tab is Slint's own, to the next control. Every
+// other key is the window's, as if nothing had the focus: a rating, a
+// flag, an undo.
 export component EditSlider inherits Rectangle {
     in property <string> label;
     in property <string> text;
     in property <float> minimum: 0;
     in property <float> maximum: 1;
     in property <float> default: 0;
+    // A wheel's click, and the step a screen reader is told of.
     in property <float> step: 0.01;
+    // Its line of `Steps`, for the keys.
+    in property <Nudge> steps;
     in-out property <float> value: 0;
     in property <bool> enabled: true;
     // A track painted with the colors the slider moves between, as
@@ -448,6 +591,74 @@ export component EditSlider inherits Rectangle {
             : clamp(value + by, minimum, maximum);
         changed(value);
     }
+    function bump(way: int, big: bool) {
+        root.nudge(way * (big ? root.steps.big : root.steps.small));
+    }
+
+    // Its number among the sliders, for `SliderKeys`: handed out when
+    // first wanted, not at its making, so that building the panel
+    // writes nothing.
+    property <int> number: 0;
+    function me() -> int {
+        if (root.number == 0) {
+            SliderKeys.count += 1;
+            root.number = SliderKeys.count;
+        }
+        return root.number;
+    }
+    // Ask for the next slider down (1) or up (-1), to focus it or to
+    // open its field.
+    function ask(way: int, field: bool) {
+        SliderKeys.asker = root.me();
+        SliderKeys.way = way;
+        SliderKeys.field = field;
+        SliderKeys.from-x = root.absolute-position.x;
+        SliderKeys.from-y = root.absolute-position.y;
+        SliderKeys.from-width = root.width;
+        SliderKeys.best = 0;
+        SliderKeys.asked += 1;
+    }
+    function reveal() {
+        SliderKeys.reveal-x = root.absolute-position.x + root.width / 2;
+        SliderKeys.reveal-y = root.absolute-position.y;
+        SliderKeys.reveal-height = root.height;
+        SliderKeys.reveal += 1;
+    }
+    // The first round: put itself forward if it is past the asker in
+    // its column and nearer than the best so far. Not a disabled
+    // slider; one in a folded section is out of every column.
+    property <int> asked: SliderKeys.asked;
+    changed asked => {
+        if (SliderKeys.asker == root.number) {
+            SliderKeys.settled += 1;
+            return;
+        }
+        if (!root.enabled) { return; }
+        let mid = root.absolute-position.x + root.width / 2;
+        if (abs(mid - (SliderKeys.from-x + SliderKeys.from-width / 2)) > SliderKeys.from-width / 2) { return; }
+        let y = root.absolute-position.y;
+        if (SliderKeys.way > 0 && y > SliderKeys.from-y + 1px
+            && (SliderKeys.best == 0 || y < SliderKeys.best-y)) {
+            SliderKeys.best = root.me();
+            SliderKeys.best-y = y;
+        }
+        if (SliderKeys.way < 0 && y < SliderKeys.from-y - 1px
+            && (SliderKeys.best == 0 || y > SliderKeys.best-y)) {
+            SliderKeys.best = root.me();
+            SliderKeys.best-y = y;
+        }
+    }
+    // The second: the nearest takes the focus or opens its field. A
+    // field with none past it closes, as Enter would close it.
+    property <int> settled: SliderKeys.settled;
+    changed settled => {
+        if (SliderKeys.best != 0 && SliderKeys.best == root.number) {
+            if (SliderKeys.field) { field.edit(); } else { fs.focus(); }
+            root.reveal();
+        } else if (SliderKeys.best == 0 && SliderKeys.asker == root.number && SliderKeys.field) {
+            field.finish();
+        }
+    }
 
     Text {
         x: 0;
@@ -496,9 +707,43 @@ export component EditSlider inherits Rectangle {
     fs := FocusScope {
         enabled: root.enabled;
         key-pressed(e) => {
-            if (e.text == Key.LeftArrow) { root.nudge(-root.step); return accept; }
-            if (e.text == Key.RightArrow) { root.nudge(root.step); return accept; }
-            return reject;
+            if (e.text == Key.Escape) {
+                // The window takes the keys back, as from a field.
+                Typing.done += 1;
+                return accept;
+            }
+            if (!e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta) {
+                // Shift is the big step on an arrow only: on some
+                // boards Shift with plus or minus is another key.
+                if (e.text == Key.UpArrow || e.text == Key.RightArrow) {
+                    root.bump(1, e.modifiers.shift);
+                    return accept;
+                }
+                if (e.text == Key.DownArrow || e.text == Key.LeftArrow) {
+                    root.bump(-1, e.modifiers.shift);
+                    return accept;
+                }
+                if (e.text == "+" || e.text == "=") { root.bump(1, false); return accept; }
+                if (e.text == "-" || e.text == "_") { root.bump(-1, false); return accept; }
+                if (e.text == ",") { root.ask(-1, false); return accept; }
+                if (e.text == ".") { root.ask(1, false); return accept; }
+            }
+            // Slint's own move to the next control.
+            if (e.text == Key.Tab || e.text == Key.Backtab) { return reject; }
+            SliderKeys.passed-key = e;
+            SliderKeys.passed += 1;
+            return accept;
+        }
+        changed has-focus => {
+            if (self.has-focus) {
+                SliderKeys.holder = root.me();
+            } else if (SliderKeys.holder == root.number) {
+                SliderKeys.holder = 0;
+            }
+        }
+        // Reached by Tab from above or below the panel's view.
+        focus-gained(reason) => {
+            if (reason == FocusReason.tab-navigation) { root.reveal(); }
         }
     }
     ta := TouchArea {
@@ -570,7 +815,7 @@ export component EditSlider inherits Rectangle {
     }
     // Over the track's touch area, so a click on the value types
     // one instead of focusing the slider.
-    ValueField {
+    field := ValueField {
         x: track-right + Theme.space-2;
         width: value-width - Theme.space-2;
         y: (root.height - self.height) / 2;
@@ -578,6 +823,9 @@ export component EditSlider inherits Rectangle {
         shown: root.text;
         label: root.label + " value";
         enabled: root.enabled;
+        nudges: true;
+        nudged(way, big) => { root.bump(way, big); }
+        tabbed(way) => { root.ask(way, true); }
         committed(typed) => {
             let entered = Typing.parse(typed, root.scale, root.minimum, root.maximum);
             if (entered.ok) {

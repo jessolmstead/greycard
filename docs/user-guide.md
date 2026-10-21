@@ -194,6 +194,9 @@ do.
 | Ctrl+C | Copy the open frame's settings |
 | Ctrl+V | Paste them onto the selected frames |
 | Ctrl+Shift+S | Sync the selected frames to the open one |
+| ↑ ↓ ← →, + − | Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more |
+| , . | The previous or the next slider |
+| Tab, Shift+Tab | In a slider's typed value, the next or the previous one |
 
 ### Files, sheets and help
 

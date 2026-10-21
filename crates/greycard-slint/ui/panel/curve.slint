@@ -1,7 +1,7 @@
 // The CURVES section: the parametric curve and the point curves.
 
 import { Theme } from "../theme.slint";
-import { Section, EditSlider, PanelButton, Segmented, CurveEditor, ValueField } from "../controls.slint";
+import { Section, EditSlider, Steps, PanelButton, Segmented, CurveEditor, ValueField } from "../controls.slint";
 
 export component CurvesSection inherits Section {
     in-out property <bool> curves-enabled;
@@ -101,6 +101,7 @@ export component CurvesSection inherits Section {
         maximum: 1;
         default: 0;
         step: 0.01;
+        steps: Steps.percent;
         value <=> root.para-highlights;
         scale: 100;
         text: (root.para-highlights >= 0 ? "+" : "") + round(root.para-highlights * 100);
@@ -113,6 +114,7 @@ export component CurvesSection inherits Section {
         maximum: 1;
         default: 0;
         step: 0.01;
+        steps: Steps.percent;
         value <=> root.para-lights;
         scale: 100;
         text: (root.para-lights >= 0 ? "+" : "") + round(root.para-lights * 100);
@@ -125,6 +127,7 @@ export component CurvesSection inherits Section {
         maximum: 1;
         default: 0;
         step: 0.01;
+        steps: Steps.percent;
         value <=> root.para-darks;
         scale: 100;
         text: (root.para-darks >= 0 ? "+" : "") + round(root.para-darks * 100);
@@ -137,6 +140,7 @@ export component CurvesSection inherits Section {
         maximum: 1;
         default: 0;
         step: 0.01;
+        steps: Steps.percent;
         value <=> root.para-shadows;
         scale: 100;
         text: (root.para-shadows >= 0 ? "+" : "") + round(root.para-shadows * 100);

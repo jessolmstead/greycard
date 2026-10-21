@@ -16,6 +16,12 @@ design note behind it.
 
 ### The window
 
+- A slider takes the keys once it is clicked or reached: the arrows
+  or + and - nudge it, Shift on an arrow by more, each slider with a
+  step of its own; comma and period move to the previous and next
+  slider; in a typed value, Tab and Shift+Tab move between values.
+  Escape gives the keys back
+  ([§383](https://github.com/jessolmstead/greycard/blob/master/docs/notes/383-keys-for-the-sliders.md))
 - Going back to a frame you just left no longer develops it again.
   The bases of recent frames are kept in memory under a budget set by
   the machine's RAM, so a return costs a fraction of a second where a

@@ -5,7 +5,7 @@
 
 import { LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Tips, TipArea, Section, EditSlider, Toggle, PanelButton, Segmented } from "../controls.slint";
+import { Tips, TipArea, Section, EditSlider, Steps, Toggle, PanelButton, Segmented } from "../controls.slint";
 
 // The list: Global, then each mask with its switch, the chosen one
 // with its bin; then New mask. It never scrolls with the sections
@@ -475,6 +475,7 @@ export component AdjustmentsSection inherits Section {
                         maximum: 1;
                         default: 0.5;
                         step: 0.01;
+                        steps: Steps.percent;
                         value <=> root.mask-feather;
                         scale: 100;
                         text: round(root.mask-feather * 100) + "%";
@@ -490,6 +491,7 @@ export component AdjustmentsSection inherits Section {
                             maximum: 1;
                             default: 0.7;
                             step: 0.01;
+                            steps: Steps.percent;
                             value <=> root.lum-low;
                             scale: 100;
                             text: round(root.lum-low * 100);
@@ -505,6 +507,7 @@ export component AdjustmentsSection inherits Section {
                             maximum: 0.5;
                             default: 0.1;
                             step: 0.01;
+                            steps: Steps.percent;
                             value <=> root.lum-low-feather;
                             scale: 100;
                             text: round(root.lum-low-feather * 100);
@@ -516,6 +519,7 @@ export component AdjustmentsSection inherits Section {
                             maximum: 1;
                             default: 1;
                             step: 0.01;
+                            steps: Steps.percent;
                             value <=> root.lum-high;
                             scale: 100;
                             text: round(root.lum-high * 100);
@@ -530,6 +534,7 @@ export component AdjustmentsSection inherits Section {
                             maximum: 0.5;
                             default: 0;
                             step: 0.01;
+                            steps: Steps.percent;
                             value <=> root.lum-high-feather;
                             scale: 100;
                             text: round(root.lum-high-feather * 100);
@@ -559,6 +564,7 @@ export component AdjustmentsSection inherits Section {
                             maximum: 360;
                             default: 55;
                             step: 0.5;
+                            steps: Steps.degrees;
                             value <=> root.range-hue;
                             text: round(root.range-hue) + "\u{00b0}";
                             changed(v) => { root.view-changed(); }
@@ -570,6 +576,7 @@ export component AdjustmentsSection inherits Section {
                             maximum: 180;
                             default: 60;
                             step: 0.5;
+                            steps: Steps.degrees;
                             value <=> root.range-width;
                             text: round(root.range-width) + "\u{00b0}";
                             changed(v) => { root.view-changed(); }
@@ -581,6 +588,7 @@ export component AdjustmentsSection inherits Section {
                             maximum: 90;
                             default: 25;
                             step: 0.5;
+                            steps: Steps.degrees;
                             value <=> root.range-hue-feather;
                             text: round(root.range-hue-feather) + "\u{00b0}";
                             changed(v) => { root.view-changed(); }
@@ -592,6 +600,7 @@ export component AdjustmentsSection inherits Section {
                             maximum: 0.2;
                             default: 0.02;
                             step: 0.001;
+                            steps: Steps.thousandths;
                             value <=> root.range-chroma;
                             scale: 100;
                             text: round(root.range-chroma * 1000) / 10;
@@ -608,6 +617,7 @@ export component AdjustmentsSection inherits Section {
                             maximum: 0.1;
                             default: 0.01;
                             step: 0.001;
+                            steps: Steps.thousandths;
                             value <=> root.range-chroma-feather;
                             scale: 100;
                             text: round(root.range-chroma-feather * 1000) / 10;
@@ -631,6 +641,7 @@ export component AdjustmentsSection inherits Section {
                     maximum: 0.5;
                     default: 0.05;
                     step: 0.001;
+                    steps: Steps.thousandths;
                     value <=> root.brush-size;
                     scale: 100;
                     text: round(root.brush-size * 1000) / 10 + "%";
@@ -642,6 +653,7 @@ export component AdjustmentsSection inherits Section {
                     maximum: 1;
                     default: 0.5;
                     step: 0.01;
+                    steps: Steps.percent;
                     value <=> root.brush-feather;
                     scale: 100;
                     text: round(root.brush-feather * 100) + "%";
@@ -653,6 +665,7 @@ export component AdjustmentsSection inherits Section {
                     maximum: 1;
                     default: 1;
                     step: 0.01;
+                    steps: Steps.percent;
                     value <=> root.brush-flow;
                     scale: 100;
                     text: round(root.brush-flow * 100) + "%";

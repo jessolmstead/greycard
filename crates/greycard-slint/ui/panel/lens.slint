@@ -2,7 +2,7 @@
 // corrections and the defringe.
 
 import { Theme } from "../theme.slint";
-import { Section, EditSlider, Toggle, PanelButton } from "../controls.slint";
+import { Section, EditSlider, Steps, Toggle, PanelButton } from "../controls.slint";
 
 export component LensSection inherits Section {
     in-out property <bool> lens-enabled;
@@ -81,6 +81,7 @@ export component LensSection inherits Section {
         maximum: 0.5;
         default: 0;
         step: 0.005;
+        steps: Steps.distortion;
         value <=> root.lens-manual;
         scale: 100;
         text: (root.lens-manual >= 0 ? "+" : "") + round(root.lens-manual * 1000) / 10;
@@ -95,6 +96,7 @@ export component LensSection inherits Section {
         maximum: 0.01;
         default: 0;
         step: 0.0001;
+        steps: Steps.fringe;
         value <=> root.lens-ca-red;
         scale: 1000;
         text: (root.lens-ca-red >= 0 ? "+" : "") + round(root.lens-ca-red * 10000) / 10 + "\u{2030}";
@@ -106,6 +108,7 @@ export component LensSection inherits Section {
         maximum: 0.01;
         default: 0;
         step: 0.0001;
+        steps: Steps.fringe;
         value <=> root.lens-ca-blue;
         scale: 1000;
         text: (root.lens-ca-blue >= 0 ? "+" : "") + round(root.lens-ca-blue * 10000) / 10 + "\u{2030}";
@@ -123,6 +126,7 @@ export component LensSection inherits Section {
         maximum: 2;
         default: 1;
         step: 0.01;
+        steps: Steps.percent;
         value <=> root.lens-scale;
         scale: 100;
         text: round(root.lens-scale * 100) + "%";
@@ -143,6 +147,7 @@ export component LensSection inherits Section {
         maximum: 5;
         default: 2;
         step: 0.1;
+        steps: Steps.tenths;
         value <=> root.lens-defringe-radius;
         text: round(root.lens-defringe-radius * 10) / 10 + " px";
         changed(v) => { root.develop-changed(); }
@@ -154,6 +159,7 @@ export component LensSection inherits Section {
         maximum: 100;
         default: 13;
         step: 1;
+        steps: Steps.whole;
         value <=> root.lens-defringe-threshold;
         text: round(root.lens-defringe-threshold);
         changed(v) => { root.develop-changed(); }
@@ -183,6 +189,7 @@ export component LensSection inherits Section {
         maximum: 360;
         default: 310;
         step: 1;
+        steps: Steps.degrees;
         value <=> root.lens-defringe-purple-center;
         text: round(root.lens-defringe-purple-center) + "\u{00b0}";
         changed(v) => { root.develop-changed(); }
@@ -194,6 +201,7 @@ export component LensSection inherits Section {
         maximum: 360;
         default: 120;
         step: 5;
+        steps: Steps.degrees;
         value <=> root.lens-defringe-purple-width;
         text: round(root.lens-defringe-purple-width) + "\u{00b0}";
         changed(v) => { root.develop-changed(); }
@@ -205,6 +213,7 @@ export component LensSection inherits Section {
         maximum: 1;
         default: 1;
         step: 0.05;
+        steps: Steps.percent;
         value <=> root.lens-defringe-purple-amount;
         scale: 100;
         text: round(root.lens-defringe-purple-amount * 100) + "%";
@@ -227,6 +236,7 @@ export component LensSection inherits Section {
         maximum: 360;
         default: 130;
         step: 1;
+        steps: Steps.degrees;
         value <=> root.lens-defringe-green-center;
         text: round(root.lens-defringe-green-center) + "\u{00b0}";
         changed(v) => { root.develop-changed(); }
@@ -238,6 +248,7 @@ export component LensSection inherits Section {
         maximum: 360;
         default: 120;
         step: 5;
+        steps: Steps.degrees;
         value <=> root.lens-defringe-green-width;
         text: round(root.lens-defringe-green-width) + "\u{00b0}";
         changed(v) => { root.develop-changed(); }
@@ -249,6 +260,7 @@ export component LensSection inherits Section {
         maximum: 1;
         default: 1;
         step: 0.05;
+        steps: Steps.percent;
         value <=> root.lens-defringe-green-amount;
         scale: 100;
         text: round(root.lens-defringe-green-amount * 100) + "%";
