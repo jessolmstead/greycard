@@ -60,10 +60,10 @@ pub(crate) struct DevelopArgs {
     #[arg(long)]
     temp: Option<f64>,
     /// Tint as Duv, positive toward green; only used with --temp
-    #[arg(long, default_value_t = 0.0)]
+    #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
     tint: f64,
     /// Exposure adjustment in stops, preview only
-    #[arg(long, default_value_t = 0.0)]
+    #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
     exposure: f64,
     /// Demosaic algorithm: amaze-vng4, rcd-vng4, amaze, rcd, vng4 or
     /// bilinear for a Bayer raw; markesteijn-3, markesteijn-1 or bilinear
@@ -1317,6 +1317,31 @@ impl std::str::FromStr for AutoF32 {
 
 #[cfg(test)]
 mod tests {
+    /// A negative value after a space parses for every signed flag,
+    /// as `--tint=-4` always did.
+    #[test]
+    fn a_signed_flag_takes_a_negative_value_after_a_space() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: DevelopArgs,
+        }
+        let cli = Cli::try_parse_from([
+            "greycard",
+            "a.CR3",
+            "--temp",
+            "5000",
+            "--tint",
+            "-4",
+            "--exposure",
+            "-0.5",
+        ])
+        .unwrap();
+        assert_eq!(cli.args.tint, -4.0);
+        assert_eq!(cli.args.exposure, -0.5);
+    }
+
     /// Left out, the demosaic is the mosaic's default; asked, it is
     /// taken where the mosaic takes it and refused where it does not.
     #[test]

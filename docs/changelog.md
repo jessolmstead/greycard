@@ -54,6 +54,9 @@ design note behind it.
 
 ### Fixes
 
+- `greycard develop --tint -4` and `--exposure -0.5` parse; before,
+  a negative value after a space was refused as an unexpected argument
+  and only `--tint=-4` worked
 - The `._` files macOS leaves beside raws on a share or a USB drive,
   and every other dot-named file, are no longer listed as unreadable
   pictures; an index that held rows for them drops them on its next

@@ -428,9 +428,6 @@ comes across with its ratings and collections.
       (`rows_in_canonical`, `count_in_canonical`) still gather the
       raws' keys from the whole table, 22 ms on a 100,000-row library
       (§332), where a subquery limited to the folder would not
-- [ ] `greycard develop --tint -4` is refused as an unexpected argument
-      (`--tint=-4` works): `tint` lacks `allow_hyphen_values`, unlike
-      texture, clarity and the lens flags (found by the §341 review)
 - [ ] The Lightroom mapper, after §342: the scales the fit proposes and
       did not ship (highlights, blacks, the curve, the mixer's bands)
       wait on a second shoot with export history; six exports from
