@@ -440,7 +440,7 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "greycard-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "image",
  "log",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-edit"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "blake3",
  "dirs",
@@ -481,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-library"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "blake3",
  "dirs",
