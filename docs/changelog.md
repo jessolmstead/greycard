@@ -3,6 +3,16 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.8.2, unreleased
+
+### Fixes
+
+- The histogram, the scopes, the clipping lamps, and the readout under
+  the pointer read the export's values again when a monitor profile is
+  in use; they were going through the monitor's table, and the shadow
+  lamp could stay dark
+  ([§388](https://github.com/jessolmstead/greycard/blob/master/docs/notes/388-the-scopes-read-the-export-not-the-monitors-table.md))
+
 ## 0.8.1, 2026-10-21
 
 Fixed the 0.8.0 Linux package's AI library, which would not load on

@@ -165,6 +165,7 @@ impl Scopes {
             staging,
             mode,
             analysis: None,
+            navigator: None,
             in_flight: None,
             latest: None,
             fresh: false,
@@ -246,26 +247,24 @@ impl Renderer {
                     && let Some(t) = &self.scopes.analysis
                     && let Ok(data) = staging.slice(..).get_mapped_range()
                 {
+                    // The analysis picture, then the navigator's.
                     let (w, h) = (t.width(), t.height());
-                    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-                    buf.make_mut_bytes()
-                        .copy_from_slice(&data[..(w * h * 4) as usize]);
+                    let bytes = (w * h * 4) as usize;
+                    let mut analysis = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                    analysis.make_mut_bytes().copy_from_slice(&data[..bytes]);
+                    let mut navigator = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                    navigator
+                        .make_mut_bytes()
+                        .copy_from_slice(&data[bytes..2 * bytes]);
                     drop(data);
                     // Kept with the mask's coverage in the alpha, which
                     // the readout weighs by as the bins were weighed;
                     // not when a new source came in after it was taken,
                     // which is the last image's picture at its shape.
                     if !self.scopes.source_changed {
-                        self.scopes.pixels = Some(buf.clone());
+                        self.scopes.pixels = Some(analysis);
                     }
-                    // A weighed analysis holds the mask in its alpha;
-                    // the navigator shows the picture whole.
-                    if matches!(self.scopes.analyzed, Some((_, _, Some(_)))) {
-                        for p in buf.make_mut_slice() {
-                            p.a = 0xff;
-                        }
-                    }
-                    self.scopes.picture = Some(slint::Image::from_rgba8(buf));
+                    self.scopes.picture = Some(slint::Image::from_rgba8(navigator));
                 }
                 staging.unmap();
             }
@@ -291,6 +290,14 @@ impl Renderer {
                 _ => {
                     let t = self.make_target("analysis", ANALYSIS_WIDTH, height);
                     self.scopes.analysis = Some(t.clone());
+                    t
+                }
+            };
+            let navigator = match &self.scopes.navigator {
+                Some(t) if t.height() == height => t.clone(),
+                _ => {
+                    let t = self.make_target("navigator", ANALYSIS_WIDTH, height);
+                    self.scopes.navigator = Some(t.clone());
                     t
                 }
             };
@@ -326,7 +333,20 @@ impl Renderer {
                 .create_command_encoder(&gpu::CommandEncoderDescriptor {
                     label: Some("scope"),
                 });
-            self.draw(&mut encoder, &analysis, &whole);
+            // The scopes and the readout read the export space's own
+            // values, what the file will hold; the navigator is what
+            // the viewport shows, through the monitor's table and the
+            // proof, and the picture whole, unweighed.
+            self.draw(&mut encoder, &analysis, &whole, false);
+            self.draw(
+                &mut encoder,
+                &navigator,
+                &View {
+                    weigh_by: None,
+                    ..whole.clone()
+                },
+                true,
+            );
             encoder.clear_buffer(&self.scopes.bins, 0, Some(bytes));
             {
                 let view = analysis.create_view(&Default::default());
@@ -357,16 +377,17 @@ impl Renderer {
                 pass.dispatch_workgroups(ANALYSIS_WIDTH.div_ceil(16), height.div_ceil(16), 1);
             }
             encoder.copy_buffer_to_buffer(&self.scopes.bins, 0, &self.scopes.staging, 0, bytes);
-            // The picture too, for the navigator. Its rows are 2048
-            // bytes, a multiple of the 256 a copy wants, so it lands
+            // The pictures too, the analysis for the readout and the
+            // navigator's, one after the other. Their rows are 2048
+            // bytes, a multiple of the 256 a copy wants, so they land
             // packed.
             let picture_bytes = (ANALYSIS_WIDTH * 4 * height) as u64;
             let picture_staging = match &self.scopes.picture_staging {
-                Some(b) if b.size() == picture_bytes => b.clone(),
+                Some(b) if b.size() == 2 * picture_bytes => b.clone(),
                 _ => {
                     let b = self.device.create_buffer(&gpu::BufferDescriptor {
-                        label: Some("navigator staging"),
-                        size: picture_bytes,
+                        label: Some("analysis and navigator staging"),
+                        size: 2 * picture_bytes,
                         usage: gpu::BufferUsages::COPY_DST | gpu::BufferUsages::MAP_READ,
                         mapped_at_creation: false,
                     });
@@ -374,27 +395,29 @@ impl Renderer {
                     b
                 }
             };
-            encoder.copy_texture_to_buffer(
-                gpu::TexelCopyTextureInfo {
-                    texture: &analysis,
-                    mip_level: 0,
-                    origin: gpu::Origin3d::ZERO,
-                    aspect: gpu::TextureAspect::All,
-                },
-                gpu::TexelCopyBufferInfo {
-                    buffer: &picture_staging,
-                    layout: gpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(ANALYSIS_WIDTH * 4),
-                        rows_per_image: Some(height),
+            for (k, texture) in [&analysis, &navigator].into_iter().enumerate() {
+                encoder.copy_texture_to_buffer(
+                    gpu::TexelCopyTextureInfo {
+                        texture,
+                        mip_level: 0,
+                        origin: gpu::Origin3d::ZERO,
+                        aspect: gpu::TextureAspect::All,
                     },
-                },
-                gpu::Extent3d {
-                    width: ANALYSIS_WIDTH,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
+                    gpu::TexelCopyBufferInfo {
+                        buffer: &picture_staging,
+                        layout: gpu::TexelCopyBufferLayout {
+                            offset: k as u64 * picture_bytes,
+                            bytes_per_row: Some(ANALYSIS_WIDTH * 4),
+                            rows_per_image: Some(height),
+                        },
+                    },
+                    gpu::Extent3d {
+                        width: ANALYSIS_WIDTH,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
             self.queue.submit(Some(encoder.finish()));
             let (tx, rx) = std::sync::mpsc::channel();
             self.scopes
@@ -422,9 +445,9 @@ impl Renderer {
         )
     }
 
-    /// The analysis picture read back since the last take: the whole
-    /// frame under the edit as the screen shows it, 512 wide, for
-    /// the navigator.
+    /// The navigator's picture read back since the last take: the
+    /// whole frame under the edit as the screen shows it, through the
+    /// monitor's table, 512 wide.
     pub fn take_navigator(&mut self) -> Option<slint::Image> {
         self.scopes.picture.take()
     }

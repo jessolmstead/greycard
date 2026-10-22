@@ -18,7 +18,8 @@ struct Params {
     /// Its x; y paints the sharpen's mask, from the source's alpha;
     /// z says the source is encoded sRGB already (the camera's JPEG
     /// in the culling loupe) and goes to the monitor's table and
-    /// nowhere else; w keeps the vec4s that follow aligned.
+    /// nowhere else; w says the picture goes through no table at all
+    /// (`Through::Nothing`).
     cubic: [f32; 4],
     /// Its x: which clipping warnings to paint, 1 the shadows, 2 the
     /// highlights, 3 both (`Warn::bits`).
@@ -122,6 +123,20 @@ struct Params {
     agx: [f32; 4],
 }
 
+/// Which table a draw ends in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Through {
+    /// The developed picture, to the monitor through the display
+    /// table: the viewport and the navigator.
+    Monitor,
+    /// The developed picture's encoded values in the export space,
+    /// what the file will hold, through no table: what the scopes bin
+    /// and the readout under the pointer reads.
+    Nothing,
+    /// An encoded sRGB picture through its own table.
+    Encoded,
+}
+
 impl Renderer {
     pub(super) fn make_target(&self, label: &str, width: u32, height: u32) -> gpu::Texture {
         self.device.create_texture(&gpu::TextureDescriptor {
@@ -142,23 +157,37 @@ impl Renderer {
         })
     }
 
-    /// Draw the view into `target` through the viewport shader.
-    pub(super) fn draw(&self, encoder: &mut gpu::CommandEncoder, target: &gpu::Texture, v: &View) {
-        self.draw_source(encoder, target, v, self.source.as_ref(), self.encoded, None);
+    /// Draw the view into `target` through the viewport shader: to
+    /// the monitor with `table`, or as the export space's encoded
+    /// values without it.
+    pub(super) fn draw(
+        &self,
+        encoder: &mut gpu::CommandEncoder,
+        target: &gpu::Texture,
+        v: &View,
+        table: bool,
+    ) {
+        let through = match (self.encoded, table) {
+            (true, _) => Through::Encoded,
+            (false, true) => Through::Monitor,
+            (false, false) => Through::Nothing,
+        };
+        self.draw_source(encoder, target, v, self.source.as_ref(), through, None);
     }
 
     /// Draw the view of `source` into `target`, or into `rect` of it
     /// (x, y, width, height) with the rest left as it is. An
-    /// `encoded` source is sRGB bytes already and skips the look.
+    /// encoded source is sRGB bytes already and skips the look.
     fn draw_source(
         &self,
         encoder: &mut gpu::CommandEncoder,
         target: &gpu::Texture,
         v: &View,
         source: Option<&gpu::Texture>,
-        encoded: bool,
+        through: Through,
         rect: Option<(u32, u32, u32, u32)>,
     ) {
+        let encoded = through == Through::Encoded;
         // The source the view is in: the texture's, stood on end by
         // an odd turn the texture has not caught up with.
         let image = source
@@ -191,7 +220,11 @@ impl Renderer {
                 if v.cubic { 1.0 } else { 0.0 },
                 if v.show_sharpen { 1.0 } else { 0.0 },
                 if encoded { 1.0 } else { 0.0 },
-                0.0,
+                if through == Through::Nothing {
+                    1.0
+                } else {
+                    0.0
+                },
             ],
             clip: [v.warn.bits() as f32, 0.0, 0.0, 0.0],
             zoom: v.zoom,
@@ -530,14 +563,14 @@ impl Renderer {
             canvas,
             ..View::blank()
         };
-        self.draw_source(&mut encoder, &target, &blank, None, true, None);
+        self.draw_source(&mut encoder, &target, &blank, None, Through::Encoded, None);
         for tile in tiles {
             self.draw_source(
                 &mut encoder,
                 &target,
                 &tile.view,
                 Some(tile.texture),
-                true,
+                Through::Encoded,
                 Some(tile.rect),
             );
         }
@@ -670,7 +703,7 @@ impl Renderer {
             .create_command_encoder(&gpu::CommandEncoderDescriptor {
                 label: Some("viewport"),
             });
-        self.draw(&mut encoder, &target, v);
+        self.draw(&mut encoder, &target, v, true);
         self.queue.submit(Some(encoder.finish()));
         (target, true)
     }

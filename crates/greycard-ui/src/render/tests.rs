@@ -268,6 +268,22 @@ fn gpu_bins(
     panic!("the scope's read back never landed");
 }
 
+/// `v` drawn `w` by `h` as the scopes' analysis draws it: to the
+/// export space's encoded values, through no table.
+fn analysis_shot(renderer: &mut Renderer, w: u32, h: u32, v: &View) -> image::RgbaImage {
+    // The masks' rasters are put on the GPU by a render.
+    let _ = renderer.render(w, h, v);
+    let target = renderer.make_target("analysis shot", w, h);
+    let mut encoder = renderer
+        .device
+        .create_command_encoder(&gpu::CommandEncoderDescriptor {
+            label: Some("analysis shot"),
+        });
+    renderer.draw(&mut encoder, &target, v, false);
+    renderer.queue.submit(Some(encoder.finish()));
+    renderer.read_back(&target).expect("read back")
+}
+
 /// The scopes weighed by a mask, on the GPU, against the CPU's
 /// reference (`scope::weighted_bins`) over the same analysis
 /// picture and coverage: the picture drawn through the view as
@@ -323,10 +339,7 @@ fn the_weighted_scopes_are_the_cpus() {
         mask_alone: show.is_some(),
         ..view.clone()
     };
-    let mut shot = |v: &View| {
-        let t = renderer.render(aw, ah, v).0;
-        renderer.read_back(&t).expect("read back")
-    };
+    let mut shot = |v: &View| analysis_shot(&mut renderer, aw, ah, v);
     let plain = shot(&whole(None, None));
     let (aw, ah) = (aw as usize, ah as usize);
     let rgb = |img: &image::RgbaImage| -> Vec<[f32; 3]> {
@@ -437,8 +450,7 @@ fn the_color_under_the_pointer_is_in_the_scopes_bins() {
         center: (w as f32 / 2.0, h as f32 / 2.0),
         ..view.clone()
     };
-    let t = renderer.render(aw, ah, &whole).0;
-    let picture = renderer.read_back(&t).expect("read back");
+    let picture = analysis_shot(&mut renderer, aw, ah, &whole);
     let color = |x: u32, y: u32| {
         let p = picture.get_pixel(x, y);
         [0, 1, 2].map(|i| f32::from(p[i]) / 255.0)
@@ -613,6 +625,105 @@ fn a_lost_scopes_read_back_is_made_again() {
     // And idle once it has landed.
     let (_, in_flight) = renderer.analyze(&view, Scope::Rgb, None);
     assert!(!in_flight);
+}
+
+/// The scopes, the clipping lamps on the histogram's ends, and the
+/// readout under the pointer are of the export space's encoded values
+/// whatever the monitor: a monitor's table, and a soft proof's gamut
+/// marks over it, move none of the bins and no reading, though they
+/// move the picture's every level. The navigator is what the viewport
+/// shows, through the table, and so its bins are another picture's.
+#[test]
+fn the_scopes_read_the_export_not_the_monitors_table() {
+    let Some((device, queue)) = device("the scopes' display table check") else {
+        return;
+    };
+    let image = field();
+    let (w, h) = (image.width, image.height);
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    let mut view = View::blank();
+    view.center = (w as f32 / 2.0, h as f32 / 2.0);
+    view.plane = (w as f32, h as f32);
+    view.frame_size = (w as f32, h as f32);
+    let _ = renderer.render(w as u32, h as u32, &view).0;
+    let points = [(0.05, 0.05), (0.13, 0.71), (0.5, 0.5), (0.95, 0.95)];
+    let take = |renderer: &mut Renderer| {
+        let bins: Vec<_> = Scope::ALL
+            .map(|scope| gpu_bins(renderer, &view, scope, None))
+            .to_vec();
+        let navigator = renderer.take_navigator().expect("the navigator's picture");
+        let read = points.map(|(u, v)| renderer.analyzed_at(u, v, 0.0).expect("a reading"));
+        (bins, navigator.to_rgba8().expect("rgba"), read)
+    };
+    let (plain, plain_nav, plain_read) = take(&mut renderer);
+    use crate::display;
+    use crate::export::Space;
+    let tables = [
+        (
+            "an Adobe RGB monitor",
+            display::Lut3d::build(Space::Srgb, &display::MonitorProfile::AdobeRgb, None),
+        ),
+        (
+            "an sRGB proof with its gamut marks on that monitor",
+            display::Lut3d::build(
+                Space::Srgb,
+                &display::MonitorProfile::AdobeRgb,
+                Some(&display::Proof {
+                    profile: display::ProofProfile::Space(Space::Srgb),
+                    intent: display::ProofIntent::Relative,
+                    warn: true,
+                }),
+            ),
+        ),
+    ];
+    let rgb = |px: &[slint::Rgba8Pixel]| -> Vec<[f32; 3]> {
+        px.iter()
+            .map(|p| [p.r, p.g, p.b].map(|c| f32::from(c) / 255.0))
+            .collect()
+    };
+    let (nw, nh) = (plain_nav.width() as usize, plain_nav.height() as usize);
+    for (what, table) in tables {
+        let table = table.expect("the table");
+        if what.contains("proof") {
+            assert!(table.warn.iter().any(|&m| m), "{what}: marks nothing");
+        }
+        renderer.set_display_lut(&table);
+        let (bins, nav, read) = take(&mut renderer);
+        for ((scope, a), b) in Scope::ALL.iter().zip(&bins).zip(&plain) {
+            assert_eq!(a, b, "{what}: the {scope:?} bins moved");
+        }
+        assert_eq!(read, plain_read, "{what}: the readout moved");
+        // The navigator went through the table, and the viewport with
+        // it: the same picture drawn at the navigator's size.
+        let moved = nav
+            .as_slice()
+            .iter()
+            .zip(plain_nav.as_slice())
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(
+            moved > nav.as_slice().len() / 2,
+            "{what}: the navigator moved {moved}"
+        );
+        let shown = View {
+            zoom: ANALYSIS_WIDTH as f32 / w as f32,
+            ..view.clone()
+        };
+        let t = renderer.render(nw as u32, nh as u32, &shown).0;
+        let viewport = renderer.read_back(&t).expect("read back");
+        assert!(
+            viewport
+                .pixels()
+                .zip(nav.as_slice())
+                .all(|(a, b)| [a[0], a[1], a[2]] == [b.r, b.g, b.b]),
+            "{what}: the navigator is not the viewport"
+        );
+        // Binned as the scopes would have binned it before, the
+        // table's picture is another histogram.
+        let tabled = scope::bins(Scope::Rgb, &rgb(nav.as_slice()), nw, nh);
+        assert_ne!(tabled, plain[0], "{what}: the table changed no level");
+    }
 }
 
 /// The shader's range masks are the CPU's, on the field.

@@ -62,8 +62,9 @@ impl Renderer {
     }
 
     /// Use a display table from now on.
-    /// The table is the last step of what the scopes bin, so a new
-    /// one is a new picture to them.
+    /// The scopes bin the picture before it, but the navigator they
+    /// read back beside the bins is drawn through it, so a new one is
+    /// a new picture to them.
     pub fn set_display_lut(&mut self, lut: &Lut3d) {
         self.lut = Self::lut_texture(&self.device, &self.queue, lut);
         self.scopes.image_changed = true;

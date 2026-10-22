@@ -294,7 +294,11 @@ struct Scopes {
     bins: gpu::Buffer,
     staging: gpu::Buffer,
     mode: gpu::Buffer,
+    /// The whole frame drawn small to the export space's encoded
+    /// values, which the bins and the readout read.
     analysis: Option<gpu::Texture>,
+    /// The same through the monitor's table, for the navigator.
+    navigator: Option<gpu::Texture>,
     /// A read back on its way, if one is.
     in_flight: Option<std::sync::mpsc::Receiver<Result<(), gpu::BufferAsyncError>>>,
     /// The last bins read, and which scope asked for them.
@@ -303,10 +307,10 @@ struct Scopes {
     /// go to the window once, or every frame would repaint the scope
     /// and the curve and ask for the next frame, without end.
     fresh: bool,
-    /// The analysis picture itself, read back beside the bins for
-    /// the navigator: its staging buffer, sized for the picture's
-    /// height, the read on its way, and the last picture read, not
-    /// yet taken.
+    /// The analysis picture and the navigator's, read back beside the
+    /// bins: their staging buffer, the two one after the other at the
+    /// pictures' height, the read on its way, and the last navigator
+    /// picture read, not yet taken.
     picture_staging: Option<gpu::Buffer>,
     picture_in_flight: Option<std::sync::mpsc::Receiver<Result<(), gpu::BufferAsyncError>>>,
     picture: Option<slint::Image>,

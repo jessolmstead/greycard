@@ -38,7 +38,9 @@ struct Params {
     // Its x: which clipping warnings to paint over the picture, 1 the
     // shadows, 2 the highlights, 3 both. (cubic.z: the source is
     // encoded sRGB already, the camera's JPEG, and takes the second
-    // path below, to the display table and nowhere else.)
+    // path below, to the display table and nowhere else. cubic.w: the
+    // scopes' analysis draw, which stops at the export space's encoded
+    // values and goes through no table.)
     clip: vec4<f32>,
     zoom: f32,
     // Stops.
@@ -586,17 +588,22 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (p.grain0.x > 0.0) {
         e = grain_apply(grain_at(q / p.frame_size, p.frame_size.x / p.frame_size.y), e);
     }
-    // Sample the table at its grid: the first and last points sit half
-    // a texel in from the edges.
-    let n = f32(textureDimensions(lut).x);
-    let shown = textureSampleLevel(lut, lut_samp, e * (n - 1.0) / n + 0.5 / n, 0.0);
-    var d = shown.rgb;
-    // The soft proof's gamut warning, from the table's alpha at the
-    // working-space color: grey where the proof's profile cannot
-    // hold it.
-    let mark = textureSampleLevel(lut, lut_samp, wide * (n - 1.0) / n + 0.5 / n, 0.0);
-    if (mark.a > 0.5) {
-        d = vec3<f32>(0.5, 0.5, 0.5);
+    // The scopes' analysis draw stops here, at the export space's
+    // encoded values: what the file will hold, whatever the monitor.
+    var d = e;
+    if (p.cubic.w < 0.5) {
+        // Sample the table at its grid: the first and last points sit
+        // half a texel in from the edges.
+        let n = f32(textureDimensions(lut).x);
+        let shown = textureSampleLevel(lut, lut_samp, e * (n - 1.0) / n + 0.5 / n, 0.0);
+        d = shown.rgb;
+        // The soft proof's gamut warning, from the table's alpha at the
+        // working-space color: grey where the proof's profile cannot
+        // hold it.
+        let mark = textureSampleLevel(lut, lut_samp, wide * (n - 1.0) / n + 0.5 / n, 0.0);
+        if (mark.a > 0.5) {
+            d = vec3<f32>(0.5, 0.5, 0.5);
+        }
     }
     // A mask on show: red over the picture where it acts.
     if (p.show_mask > 0.5) {

@@ -15,9 +15,7 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] The scopes, the clipping lamps and the readout under the pointer
-      read the picture through the monitor's display table, not in the
-      export space §42 and the guide promise (§349)
+None open.
 
 ## Open Questions
 
