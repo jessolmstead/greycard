@@ -1899,6 +1899,7 @@ export component App inherits Window {
     in property <[ReportLine]> lr-details: [];
     in property <bool> lr-busy: false;
     in property <string> lr-busy-text: "";
+    in property <float> lr-fraction: -1;
     in property <bool> lr-ready: false;
     /// A write running, and what it has done, for the left pane.
     in property <bool> lr-running: false;
@@ -4265,6 +4266,7 @@ export component App inherits Window {
         lr-details: root.lr-details;
         lr-busy: root.lr-busy;
         lr-busy-text: root.lr-busy-text;
+        lr-fraction: root.lr-fraction;
         lr-ready: root.lr-ready;
         lr-choose-root(i) => { root.lr-choose-root(i); }
         lr-check => { root.lr-check(); }

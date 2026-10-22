@@ -17,8 +17,8 @@ design note behind it.
 
 - A Lightroom catalog import reads about one fiftieth of what it did
   from each raw (1.6 MB of a 45 MB CR3), writes four sidecars at a
-  time, says how far it is on the command line, and logs its progress.
-  It no longer memory-maps the raws, so a share that drops while the
+  time, shows a bar in its sheet, says how far it is on the command
+  line, and logs its progress. It no longer memory-maps the raws, so a share that drops while the
   Mac sleeps fails the frame instead of crashing the editor
   ([§389](https://github.com/jessolmstead/greycard/blob/master/docs/notes/389-the-catalog-import-over-a-share.md))
 

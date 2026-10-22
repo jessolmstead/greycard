@@ -138,6 +138,7 @@ pub(crate) fn dry_run(st: &mut State, app: &App) {
     let generation = st.lightroom.generation;
     app.set_lr_busy(true);
     app.set_lr_busy_text("reading the catalog...".into());
+    app.set_lr_fraction(-1.0);
     let weak = app.as_weak();
     std::thread::spawn(move || {
         let told = weak.clone();
@@ -204,6 +205,23 @@ pub(crate) fn heard(st: &State, app: &App, generation: u64, p: Progress) {
         return;
     }
     app.set_lr_busy_text(format!("{}...", progress_words(p)).into());
+    app.set_lr_fraction(fraction_of(p));
+}
+
+/// How far a step has come, 0 to 1, for the bar; below nothing for a
+/// step that counts nothing, which keeps the bar's place.
+fn fraction_of(p: Progress) -> f32 {
+    match p {
+        Progress::Mapping { done, of }
+        | Progress::Looking { done, of }
+        | Progress::Writing { done, of }
+            if of > 0 =>
+        {
+            (done as f32 / of as f32).clamp(0.0, 1.0)
+        }
+        Progress::Finishing => 1.0,
+        _ => -1.0,
+    }
 }
 
 /// Cancel, Escape or a click beside the sheet: the sheet closed, and a
@@ -361,6 +379,7 @@ pub(crate) fn write(state: &Rc<RefCell<State>>, app: &App) {
     // it; its progress is on the status line and under the button.
     app.set_lr_busy(true);
     app.set_lr_busy_text("writing...".into());
+    app.set_lr_fraction(0.0);
     app.set_lr_running(true);
     say(app, "importing the catalog: reading it...".into());
     let weak = app.as_weak();
@@ -376,6 +395,8 @@ pub(crate) fn write(state: &Rc<RefCell<State>>, app: &App) {
                 let _ = told.upgrade_in_event_loop(move |app| {
                     if app.get_lr_running() {
                         say(&app, line);
+                        app.set_lr_busy_text(format!("{}...", progress_words(p)).into());
+                        app.set_lr_fraction(fraction_of(p));
                     }
                 });
             })
@@ -962,6 +983,7 @@ mod tests {
         state.borrow_mut().views.index_path = Some(dir.join("library").join("library.sqlite"));
         open(&mut state.borrow_mut(), &app, catalog);
         assert_eq!(app.get_lr_busy_text(), "reading the catalog...");
+        assert_eq!(app.get_lr_fraction(), -1.0, "the read counts nothing");
         let generation = state.borrow().lightroom.generation;
         heard(
             &state.borrow(),
@@ -969,6 +991,7 @@ mod tests {
             generation,
             Progress::Mapping { done: 3, of: 12 },
         );
+        assert_eq!(app.get_lr_fraction(), 0.25, "the bar follows the step");
         assert_eq!(
             app.get_lr_busy_text(),
             "looking for the catalog's folders, 3 of 12..."

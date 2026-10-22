@@ -53,6 +53,12 @@ A thousand synthetic frames on tmpfs: 1.5 s before, 0.54 s after.
 Sidecar writes on a share are unmeasured, since we write nowhere on
 ours.
 
+**In the sheet.** The write's sheet said "writing..." to its end;
+the progress went only to the status line behind it. The sheet now
+shows the `LoadingCard` the camera match's does, a bar with the
+words under it, fed the step's fraction, through the read and the
+write.
+
 **On the command line and in the log.** `greycard library
 import-lightroom` says its progress on stderr in the sheet's words,
 now the library's (`Progress`'s `Display`), at most a line a second
