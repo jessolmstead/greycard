@@ -3,113 +3,78 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.8.1, unreleased
+## 0.8.1, 2026-10-21
+
+Fixed the 0.8.0 Linux package's AI library, which would not load on
+a current glibc (Arch, CachyOS, Fedora), so the masks, the denoiser,
+and the fill did nothing. Switching frames is faster, the fill works
+at full resolution, and the sliders and tools have keys. Also an
+interface scale setting, and the model downloads no longer trust the
+emSign intermediates the browsers dropped.
 
 ### Install
 
-- A Windows on ARM package, `aarch64-windows.zip`, built on GitHub's
-  ARM runner. Nobody has run it on a real machine yet, and a release
-  can ship without it when its build fails. The AI features there run
-  on the CPU alone, through Microsoft's runtime the editor offers to
-  download on first use, as on an older x86-64 processor
+- A Windows on ARM package, `aarch64-windows.zip`. Nobody has run it
+  on a real machine yet; its AI features run on the CPU
   ([§372](https://github.com/jessolmstead/greycard/blob/master/docs/notes/372-a-windows-on-arm-package.md))
 
 ### The window
 
-- A slider takes the keys once it is clicked or reached: the arrows
-  or + and - nudge it, Shift on an arrow by more, each slider with a
-  step of its own; comma and period move to the previous and next
-  slider; in a typed value, Tab and Shift+Tab move between values.
-  Escape gives the keys back
+- After clicking a slider: arrows or + and - nudge it, Shift
+  for more, comma and period move to the next slider, Tab between
+  typed values, Escape lets go
   ([§383](https://github.com/jessolmstead/greycard/blob/master/docs/notes/383-keys-for-the-sliders.md))
-- Keys for the tools in Develop: R crops, W picks up the white
-  balance pipette, M and Shift+M start a mask with a Linear or a
-  Radial for the next drag. In the lightbox, J shows the rating, flag,
-  and label on each tile, off at each start
+- Hotkeys: R crops, W picks the white balance, M and Shift+M start a Linear or
+  Radial mask. In the lightbox, J shows the badges
   ([§385](https://github.com/jessolmstead/greycard/blob/master/docs/notes/385-keys-for-the-tools-and-the-lightboxs-badges.md))
-- A frame's first open is about 0.7 s quicker on a machine with eight
-  cores or fewer: the lens correction runs on the GPU
+- A first open is 0.7 s quicker on eight cores or fewer: the lens
+  correction runs on the GPU
   ([§386](https://github.com/jessolmstead/greycard/blob/master/docs/notes/386-the-lens-correction-on-the-gpu.md))
-- Going back to a frame you just left no longer develops it again.
-  The bases of recent frames are kept in memory under a budget set by
-  the machine's RAM, so a return costs a fraction of a second where a
-  45 MP frame took about three; the log's develop line now names
-  each stage's time, and says when a base came from the shelf
+- Going back to a frame costs a fraction of a second: recent bases
+  stay in memory, under a budget set by the machine's RAM
   ([§378](https://github.com/jessolmstead/greycard/blob/master/docs/notes/378-a-shelf-of-recent-bases.md))
-- While you look at a frame, the next and the previous are developed
-  in the background onto that shelf, so stepping through a shoot
-  lands each frame in about half a second instead of the full develop.
-  The prefetch gives way to anything you ask for, and stays off on a
-  machine whose memory holds fewer than two frames beside the open one
-  ([§379](https://github.com/jessolmstead/greycard/blob/master/docs/notes/379-the-neighbors-prefetched-onto-the-shelf.md)).
-  It follows the strip's filter and sort, and a kept frame whose edit
-  a sync or a paste changed is developed again
-  ([§384](https://github.com/jessolmstead/greycard/blob/master/docs/notes/384-the-neighbors-kept-current.md))
-- A **Scale** row at the top of the Settings sheet draws the interface
-  at 125%, 150%, 175%, or 200% of the system's own scale, from the next
-  start; a picture at 1:1 still shows one image pixel on one screen
-  pixel. Slint is pinned to a fork with a one-commit fix, sent
-  upstream, without which a scaled window shrank by the percentage
+- The next and previous frames are developed while you look, so a
+  shoot steps in about half a second a frame. The prefetch follows
+  the filter and sort, and gives way to anything you ask for
+  ([§379](https://github.com/jessolmstead/greycard/blob/master/docs/notes/379-the-neighbors-prefetched-onto-the-shelf.md))
+- **Scale** in Settings draws the interface at 125% to 200%, from the
+  next start
   ([§377](https://github.com/jessolmstead/greycard/blob/master/docs/notes/377-a-ui-scale-setting-applied-at-the-next-start.md))
-- Without a GPU the editor now opens instead of failing at start: it
-  draws through a software adapter and develops on the CPU, says so
-  in the status line and after each develop's time, and is slow (a
-  24 MP frame in about 14 s on a 2012 quad-core). Before, it needed
-  `SLINT_WGPU_CPU=1` and `--cpu-ops` by hand, and without the second
-  ran every develop as software shaders for minutes
+- Without a GPU the editor opens and develops on the CPU, slowly,
+  instead of failing at start
   ([§374](https://github.com/jessolmstead/greycard/blob/master/docs/notes/374-a-no-gpu-mode.md))
 
 ### Retouch
 
-- The fill works at the frame's own pixels. A patch's window is cut
-  at native size, up to 1024 on a side with overlapped tiles beyond,
-  where every fill used to be squeezed into a 512 square and
-  stretched back; a deep hole is scaled down only as far as the model
-  needs. The model is a new export of the same LaMa, fetched on first
-  use like the old one, which stays in your store unused
+- The fill works at the frame's own pixels, in a window up to 1024 a
+  side, instead of a 512 square stretched back. A new export of the
+  same LaMa, fetched on first use
   ([§382](https://github.com/jessolmstead/greycard/blob/master/docs/notes/382-lama-at-the-frames-resolution.md))
 
 ### Export
 
-- The command line exports a whole folder: `greycard-ui FOLDER
-  --export OUT/ --all` writes every frame under its own edit, where
-  before each frame past the first had to be named by `--also`. The
-  `--exposure`, `--develop-temperature`, and `--agx` overrides then
-  apply to every frame; `--preset` is refused with `--all`, since
-  `greycard presets --apply` lays a preset over many files already
+- `greycard-ui FOLDER --export OUT/ --all` exports every frame under
+  its own edit; `--exposure`, `--develop-temperature`, and `--agx`
+  apply to all
   ([§376](https://github.com/jessolmstead/greycard/blob/master/docs/notes/376-export-a-whole-folder-with-all.md))
 
 ### Fixes
 
-- The AI features load on Linux with glibc 2.41 or later (current
-  Arch, CachyOS, and Fedora); the packaged ONNX Runtime asked for an
-  executable stack, which those refuse
+- The packaged ONNX Runtime loads on Linux with glibc 2.41 or later;
+  it was linked asking for an executable stack, which glibc refuses
   ([§387](https://github.com/jessolmstead/greycard/blob/master/docs/notes/387-no-executable-stack-in-onnx-runtime.md))
-- `greycard develop --tint -4` and `--exposure -0.5` parse; before,
-  a negative value after a space was refused as an unexpected argument
-  and only `--tint=-4` worked
-- The `._` files macOS leaves beside raws on a share or a USB drive,
-  and every other dot-named file, are no longer listed as unreadable
-  pictures; an index that held rows for them drops them on its next
-  pass
+- `greycard develop --tint -4` parses; only `--tint=-4` did
+- The `._` files macOS leaves beside raws, and every dot-named file,
+  are no longer listed as unreadable pictures
   ([§381](https://github.com/jessolmstead/greycard/blob/master/docs/notes/381-hidden-files-are-no-frames.md))
-- A Lightroom import no longer writes a sidecar the editor refuses
-  when a setting in the catalog or the XMP is "NaN" or infinite; the
-  value is taken as unset. Sidecars, collections, and the roots list
-  are now synced to disk before they are renamed into place, so a
-  crash at the wrong moment leaves the old file rather than an empty
-  one
+- A Lightroom import with a "NaN" setting no longer writes a sidecar
+  the editor refuses. Sidecars, collections, and the roots list are
+  synced before the rename, so a crash leaves the old file, not an
+  empty one
   ([§373](https://github.com/jessolmstead/greycard/blob/master/docs/notes/373-a-number-that-is-not-finite-and-a-sync-before-the-rename.md))
-- A Lightroom preset file (`.xmp`) brought in through Import no
-  longer takes the profile's own Look block (Adobe Color's built-in
-  tone curve, say) as the preset's settings: only the file's
-  top-level settings are read, so the preset's curve is carried and
-  the uncarried profile is named, as the catalog import already did.
-  Found while fuzzing the parsers, which also fixed four
-  ways a sidecar, preset, or XMP could be misread: a number past a
-  float's range, a 17-digit value read one bit off, a JSON list taken
-  as an edit, and a description nested in a property taken as the
-  frame's
+- An imported Lightroom preset no longer takes its profile's Look
+  block as settings. Fuzzing the parsers also fixed four ways a
+  sidecar, preset, or XMP could be misread
   ([§375](https://github.com/jessolmstead/greycard/blob/master/docs/notes/375-fuzzing-at-the-boundaries.md))
 
 ## 0.8.0, 2026-10-18
