@@ -28,13 +28,16 @@ pub const FILE: &str = "greycard-ui.log";
 
 /// The crates whose lines are ours: the file keeps them from info,
 /// and `-v` raises them. Everything else, the libraries, from warn.
-const OURS: [&str; 6] = [
+/// Of the library crate, the catalog import, whose night-long write
+/// says how far it is.
+const OURS: [&str; 7] = [
     "greycard_ui",
     "greycard_core",
     "greycard_edit",
     "greycard_ai",
     "greycard_lens",
     "greycard_gpu",
+    "greycard_library::lightroom_catalog",
 ];
 
 /// `$XDG_STATE_HOME/greycard` when that is set, else the platform's
@@ -279,6 +282,10 @@ mod tests {
         let spec = filter("info").to_string();
         assert!(spec.split(',').any(|d| d == "warn"), "{spec}");
         assert!(spec.contains("greycard_core=info"), "{spec}");
+        assert!(
+            spec.contains("greycard_library::lightroom_catalog=info"),
+            "{spec}"
+        );
         assert!(!spec.contains("wgpu"), "{spec}");
         assert!(spec.contains("arboard=error"), "{spec}");
         assert!(spec.contains("rawler::lens=error"), "{spec}");

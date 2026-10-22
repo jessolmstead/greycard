@@ -740,6 +740,9 @@ clears or a tester asks for it.
 
 
 #### Library
+- [ ] The indexer reads raws without memory-mapping them, as the
+      catalog import does (§389): it walks shares too, and a mapped
+      file whose volume drops during sleep is a SIGBUS (issue #33)
 
 - [ ] Folders opened outside every root looked at again as a root's
       folders are: opening a folder indexes it, but nothing passes over

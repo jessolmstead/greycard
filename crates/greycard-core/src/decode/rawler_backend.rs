@@ -218,10 +218,7 @@ impl Decoder for RawlerDecoder {
     }
 
     fn decode_path(&self, path: &Path) -> Result<RawFrame> {
-        guarded(
-            || tail_of(path),
-            || Ok(decode_source(&RawSource::new(path)?)?.0),
-        )
+        guarded(|| tail_of(path), || Ok(decode_source(&mapped(path)?)?.0))
     }
 }
 
@@ -229,7 +226,7 @@ impl RawlerDecoder {
     /// Decode a file and also return the metadata rawler reads from it, for
     /// passing on to an output that carries EXIF (see [`crate::dng`]).
     pub fn decode_path_with_metadata(&self, path: &Path) -> Result<(RawFrame, RawMetadata)> {
-        guarded(|| tail_of(path), || decode_source(&RawSource::new(path)?))
+        guarded(|| tail_of(path), || decode_source(&mapped(path)?))
     }
 }
 
@@ -242,7 +239,7 @@ pub fn preview_path(path: &Path) -> Result<Option<(image::RgbImage, Orientation)
 }
 
 fn preview_unguarded(path: &Path) -> Result<Option<(image::RgbImage, Orientation)>> {
-    let source = RawSource::new(path)?;
+    let source = mapped(path)?;
     let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
     let image = match decoder.preview_image(&source, &params) {
@@ -952,7 +949,11 @@ mod tests {
 
         // Eight bytes of head: the TIFF header and nothing it points to.
         let (probe, read) = probe_ends_with(&path, |_, _, _| Ok(Some((8, 0)))).unwrap();
-        assert_eq!((probe, read), (whole.clone(), len));
+        assert_eq!(
+            (probe, read),
+            (whole.clone(), len + 8),
+            "the ends, then the whole"
+        );
         // The DNG writes its directory last, so its samples' first byte
         // is not wanted for the probe.
         let (probe, read) = probe_ends_with(&path, |_, _, len| Ok(Some((8, len - 9)))).unwrap();
@@ -971,6 +972,116 @@ mod tests {
             probe_path(&junk).unwrap_err().to_string()
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The probe and the stance read together give what the two calls
+    /// apart give, from the whole file for a format read whole and when
+    /// the ends will not parse.
+    #[test]
+    fn the_probe_and_the_stance_together_are_the_two_apart() {
+        let dng = a_dng();
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-both-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        watch_maps_under(&dir);
+        let len = dng.len() as u64;
+        let mut maps = 0;
+        for name in ["frame.dng", "frame.CR3", "frame.RAF"] {
+            let path = dir.join(name);
+            std::fs::write(&path, &dng).unwrap();
+            let apart = (probe_path(&path).unwrap(), stance_path(&path).unwrap(), len);
+            // The calls apart map; together, from the ends or whole,
+            // never.
+            assert!(maps_under(&dir) > maps, "{name}");
+            maps = maps_under(&dir);
+            assert_eq!(probe_and_stance_counted(&path).unwrap(), apart, "{name}");
+            // Ends that cut the directory off: the whole file's answer,
+            // the ends counted with it.
+            let short = probe_and_stance_with(&path, |_, _, _| Ok(Some((8, 0)))).unwrap();
+            assert_eq!(short, (apart.0.clone(), apart.1, len + 8), "{name}");
+            assert_eq!(probe_ends_counted(&path).unwrap(), (apart.0.clone(), len));
+            assert_eq!(maps_under(&dir), maps, "{name} mapped");
+        }
+        // Not a raw by its name: nothing read, none of it probed.
+        let clip = dir.join("clip.mov");
+        std::fs::write(&clip, &dng).unwrap();
+        assert!(probe_and_stance_counted(&clip).is_err());
+        assert!(probe_ends_counted(&clip).is_err());
+        assert_eq!(maps_under(&dir), maps);
+        let junk = dir.join("junk.CR3");
+        std::fs::write(&junk, b"not a raw").unwrap();
+        assert_eq!(
+            probe_and_stance_counted(&junk).unwrap_err().to_string(),
+            probe_path(&junk).unwrap_err().to_string()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// With `GREYCARD_TEST_RAWS` a folder of raws: each raw's probe and
+    /// stance read together against the two read apart, required to
+    /// agree, and the bytes printed by format. Ignored, since it wants
+    /// the samples.
+    #[test]
+    #[ignore]
+    fn the_probe_and_the_stance_together_agree_on_the_samples() {
+        let Some(dir) = std::env::var_os("GREYCARD_TEST_RAWS") else {
+            eprintln!("GREYCARD_TEST_RAWS names no folder; nothing measured");
+            return;
+        };
+        let mut raws = Vec::new();
+        let mut folders = vec![std::path::PathBuf::from(dir)];
+        while let Some(folder) = folders.pop() {
+            for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+                let path = entry.path();
+                if entry.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                if path.is_dir() {
+                    folders.push(path);
+                } else if crate::decode::is_raw_path(&path) {
+                    raws.push(path);
+                }
+            }
+        }
+        raws.sort();
+        assert!(!raws.is_empty(), "no raws under GREYCARD_TEST_RAWS");
+        let mut totals: std::collections::BTreeMap<String, (usize, u64, u64)> = Default::default();
+        for path in &raws {
+            let len = std::fs::metadata(path).unwrap().len();
+            let format = path
+                .extension()
+                .unwrap()
+                .to_string_lossy()
+                .to_ascii_uppercase();
+            match (probe_path(path), probe_and_stance_counted(path)) {
+                (Ok(probe), Ok((together, stance, read))) => {
+                    assert_eq!(together, probe, "{}", path.display());
+                    assert_eq!(stance, stance_path(path).unwrap(), "{}", path.display());
+                    let t = totals.entry(format).or_default();
+                    *t = (t.0 + 1, t.1 + read, t.2 + len);
+                }
+                (Err(a), Err(b)) => {
+                    assert_eq!(a.to_string(), b.to_string(), "{}", path.display());
+                }
+                (whole, together) => {
+                    panic!("{}: {whole:?} apart, {together:?} together", path.display())
+                }
+            }
+        }
+        for (format, (n, r, l)) in &totals {
+            println!(
+                "{format}: {n} files, {:.1} MB read of {:.1} MB ({:.2}%)",
+                *r as f64 / 1e6,
+                *l as f64 / 1e6,
+                100.0 * *r as f64 / *l as f64
+            );
+        }
     }
 
     /// With `GREYCARD_TEST_RAWS` a folder of raws: every raw in it and
@@ -1139,7 +1250,7 @@ pub fn stance_path(path: &Path) -> Result<RawStance> {
 }
 
 fn stance_unguarded(path: &Path) -> Result<RawStance> {
-    let source = RawSource::new(path)?;
+    let source = mapped(path)?;
     let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
     let metadata = decoder
@@ -1153,13 +1264,7 @@ fn stance_unguarded(path: &Path) -> Result<RawStance> {
     // A frame whose size cannot be had this cheaply is not worth
     // decoding for: the caller has other pictures of it to measure by.
     let image = decoder.raw_image(&source, &params, true).ok();
-    let size = image
-        .as_ref()
-        .map(|image| match image.crop_area.or(image.active_area) {
-            Some(r) => (r.d.w as u32, r.d.h as u32),
-            None => (image.width as u32, image.height as u32),
-        })
-        .filter(|(w, h)| *w > 0 && *h > 0);
+    let size = image.as_ref().and_then(size_of);
     let mosaic = image.as_ref().and_then(mosaic_of);
     Ok((orientation, size, mosaic))
 }
@@ -1182,7 +1287,7 @@ pub fn white_path(path: &Path) -> Result<CameraWhite> {
 }
 
 fn white_unguarded(path: &Path) -> Result<CameraWhite> {
-    let source = RawSource::new(path)?;
+    let source = mapped(path)?;
     let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
     let image = decoder
         .raw_image(&source, &RawDecodeParams::default(), true)
@@ -1248,7 +1353,7 @@ fn mosaic_read(path: &Path, read: impl FnOnce() -> Result<Option<Mosaic>>) -> Mo
 }
 
 fn probe_and_mosaic_unguarded(path: &Path) -> Result<(Probe, MosaicRead)> {
-    let source = RawSource::new(path)?;
+    let source = mapped(path)?;
     let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
     let metadata = decoder
@@ -1282,7 +1387,7 @@ fn is_dng(path: &Path) -> bool {
 fn dng_mosaic(path: &Path) -> Result<Option<Mosaic>> {
     use ::rawler::formats::tiff::reader::{GenericTiffReader, TiffReader};
     use ::rawler::tags::TiffCommonTag;
-    let source = RawSource::new(path)?;
+    let source = mapped(path)?;
     let tiff = GenericTiffReader::new(&mut source.reader(), 0, 0, None, &[])
         .map_err(|e| Error::Decode(e.to_string()))?;
     let raw = tiff
@@ -1387,7 +1492,7 @@ pub fn mosaic_path(path: &Path) -> Result<Option<Mosaic>> {
             if is_dng(path) {
                 return dng_mosaic(path);
             }
-            let source = RawSource::new(path)?;
+            let source = mapped(path)?;
             let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
             let image = decoder
                 .raw_image(&source, &RawDecodeParams::default(), true)
@@ -1397,12 +1502,64 @@ pub fn mosaic_path(path: &Path) -> Result<Option<Mosaic>> {
     )
 }
 
+/// The file at `path` as rawler's source, memory-mapped: what a decode
+/// and the probes that read a whole file take, for the speed of a
+/// mapping. A mapped file whose volume goes away (a share that drops,
+/// a disk asleep) faults on its next page as a SIGBUS no Rust code
+/// catches, so a read that walks many files on such a volume, as the
+/// catalog import does, takes [`read_whole`] or the ends instead.
+fn mapped(path: &Path) -> Result<RawSource> {
+    let mut watched = WATCHED.lock().unwrap_or_else(|e| e.into_inner());
+    for (dir, n) in watched.iter_mut() {
+        if path.starts_with(dir) {
+            *n += 1;
+        }
+    }
+    drop(watched);
+    Ok(RawSource::new(path)?)
+}
+
+/// The folders whose files' mappings are counted, and the counts: on
+/// every thread, and apart from the files of a test running beside.
+static WATCHED: std::sync::Mutex<Vec<(std::path::PathBuf, u64)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Count from now every raw under `dir` memory-mapped for rawler, on
+/// any thread: for a test that a path never maps one.
+pub fn watch_maps_under(dir: &Path) {
+    let mut watched = WATCHED.lock().unwrap_or_else(|e| e.into_inner());
+    if !watched.iter().any(|(d, _)| d == dir) {
+        watched.push((dir.to_path_buf(), 0));
+    }
+}
+
+/// How many raws under `dir` were mapped since [`watch_maps_under`].
+pub fn maps_under(dir: &Path) -> u64 {
+    let watched = WATCHED.lock().unwrap_or_else(|e| e.into_inner());
+    watched
+        .iter()
+        .find(|(d, _)| d == dir)
+        .map_or(0, |(_, n)| *n)
+}
+
+/// The whole file at `path` read into memory, not mapped, as rawler's
+/// source, and its length: a volume that goes away under it is an
+/// error from `read`, not a SIGBUS.
+fn read_whole(path: &Path) -> Result<(RawSource, u64)> {
+    let buf = std::fs::read(path)?;
+    let len = buf.len() as u64;
+    Ok((
+        RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path),
+        len,
+    ))
+}
+
 pub fn probe_path(path: &Path) -> Result<Probe> {
     guarded(|| tail_of(path), || probe_unguarded(path))
 }
 
 fn probe_unguarded(path: &Path) -> Result<Probe> {
-    probe_source(&RawSource::new(path)?)
+    probe_source(&mapped(path)?)
 }
 
 fn probe_source(source: &RawSource) -> Result<Probe> {
@@ -1459,6 +1616,8 @@ fn probe_ends_counted(path: &Path) -> Result<(Probe, u64)> {
 
 /// [`probe_ends_counted`] with the ends of the file to read given.
 fn probe_ends_with(path: &Path, ends: Ends) -> Result<(Probe, u64)> {
+    not_raw(path)?;
+    let mut tried = 0;
     match read_ends(path, ends) {
         Ok(Some((buf, read))) => {
             let source = RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path);
@@ -1466,12 +1625,32 @@ fn probe_ends_with(path: &Path, ends: Ends) -> Result<(Probe, u64)> {
                 Ok(probe) => return Ok((probe, read)),
                 Err(e) => log::debug!("{}: from its ends: {e}; read whole", path.display()),
             }
+            tried = read;
         }
         Ok(None) => {}
         Err(e) => log::debug!("{}: its ends: {e}; read whole", path.display()),
     }
-    let whole = std::fs::metadata(path).map_or(0, |m| m.len());
-    probe_path(path).map(|probe| (probe, whole))
+    guarded(
+        || tail_of(path),
+        || {
+            let (source, whole) = read_whole(path)?;
+            probe_source(&source).map(|probe| (probe, tried + whole))
+        },
+    )
+}
+
+/// An error for a file whose name is not a raw's, before a byte of it
+/// is read: a catalog's clips and layered files are no raws, and one
+/// of some gigabytes read whole to find so would be a long way round.
+fn not_raw(path: &Path) -> Result<()> {
+    if super::is_raw_path(path) {
+        Ok(())
+    } else {
+        Err(Error::Decode(format!(
+            "{}: not a raw by its name",
+            path.display()
+        )))
+    }
 }
 
 /// A CR3's tail: the CTMD record rawler reads sits near the end of the
@@ -1492,6 +1671,111 @@ fn read_ends(path: &Path, ends: Ends) -> std::io::Result<Option<(Vec<u8>, u64)>>
         return Ok(None);
     };
     read_ends_of(&mut file, len, head, tail)
+}
+
+/// [`probe_path`] and [`stance_path`] in one read of the file, from its
+/// two ends where the format allows, and the bytes read.
+///
+/// A CR3's stance is its `moov` box (the image's size in `CMP1`, its
+/// crop in `IAD1`) and the CTMD record the probe reads already, so its
+/// ends give the stance as they give the probe. A RAF's size is in its
+/// own directory past the JPEG, which its head stops short of, and the
+/// TIFF formats are read whole for the probe anyway: those are read
+/// whole, once, for both. A DNG's dummy image decodes its samples (see
+/// [`dng_mosaic`]), as [`stance_path`]'s does; that costs time, not
+/// bytes.
+///
+/// An image that will not describe itself leaves the stance's size and
+/// mosaic `None` and the probe standing, as the two calls apart would
+/// answer. Any error, panic, or stance without a size from the ends
+/// falls back to the whole file.
+pub fn probe_and_stance_counted(path: &Path) -> Result<(Probe, RawStance, u64)> {
+    probe_and_stance_with(path, cr3_ends)
+}
+
+/// [`probe_and_stance_counted`] with the ends of the file to read given.
+fn probe_and_stance_with(path: &Path, ends: Ends) -> Result<(Probe, RawStance, u64)> {
+    not_raw(path)?;
+    let mut tried = 0;
+    match read_ends(path, ends) {
+        Ok(Some((buf, read))) => {
+            let source = RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path);
+            match guarded(|| None, || probe_and_stance_source(&source, path)) {
+                Ok((probe, stance)) if stance.1.is_some() => return Ok((probe, stance, read)),
+                Ok(_) => log::debug!("{}: no size from its ends; read whole", path.display()),
+                Err(e) => log::debug!("{}: from its ends: {e}; read whole", path.display()),
+            }
+            tried = read;
+        }
+        Ok(None) => {}
+        Err(e) => log::debug!("{}: its ends: {e}; read whole", path.display()),
+    }
+    guarded(
+        || tail_of(path),
+        || {
+            let (source, whole) = read_whole(path)?;
+            probe_and_stance_source(&source, path)
+                .map(|(probe, stance)| (probe, stance, tried + whole))
+        },
+    )
+}
+
+/// A CR3's ends as [`probe_ends_path`] reads them; every other format
+/// whole. See [`probe_and_stance_counted`].
+fn cr3_ends(
+    path: &Path,
+    file: &mut std::fs::File,
+    len: u64,
+) -> std::io::Result<Option<(u64, u64)>> {
+    let cr3 = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cr3"));
+    Ok(if cr3 {
+        cr3_head(file, len)?.map(|head| (head, CR3_TAIL))
+    } else {
+        None
+    })
+}
+
+/// The probe and the stance from one decoder on `source`: the metadata
+/// read, then the image's description without a sample. A description
+/// that fails or panics costs the stance's size and mosaic alone.
+fn probe_and_stance_source(source: &RawSource, path: &Path) -> Result<(Probe, RawStance)> {
+    let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
+    let params = RawDecodeParams::default();
+    let metadata = decoder
+        .raw_metadata(source, &params)
+        .map_err(decoder_error)?;
+    let probe = Probe::from_metadata(&metadata);
+    let described = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decoder.raw_image(source, &params, true)
+    }));
+    let image = match described {
+        Ok(Ok(image)) => Some(image),
+        Ok(Err(e)) => {
+            log::debug!("{}: its stance: {e}", path.display());
+            None
+        }
+        Err(_) => {
+            log::debug!("{}: its stance: the decoder panicked", path.display());
+            None
+        }
+    };
+    let size = image.as_ref().and_then(size_of);
+    let mosaic = image.as_ref().and_then(mosaic_of);
+    let orientation = probe.orientation;
+    Ok((probe, (orientation, size, mosaic)))
+}
+
+/// The size a develop of `image` comes out at before its tag turns it:
+/// its crop, else its active area, else the whole.
+fn size_of(image: &RawImage) -> Option<(u32, u32)> {
+    Some(match image.crop_area.or(image.active_area) {
+        Some(r) => (r.d.w as u32, r.d.h as u32),
+        None => (image.width as u32, image.height as u32),
+    })
+    .filter(|(w, h)| *w > 0 && *h > 0)
 }
 
 /// The ends of each format, by the path's extension: see

@@ -449,27 +449,13 @@ fn resolved(report: &Report, given: &[(String, PathBuf)]) -> Vec<(String, PathBu
 
 /// The status line's words for how far the import has come.
 pub(crate) fn progress_line(p: Progress) -> String {
-    format!("importing the catalog: {}", progress_words(p))
+    p.line()
 }
 
 /// How far the import has come, as the status line and the sheet say
-/// it.
+/// it: the library's words, which the command says too.
 fn progress_words(p: Progress) -> String {
-    let n = crate::roots::grouped;
-    match p {
-        Progress::Mapping { done, of } => {
-            format!(
-                "looking for the catalog's folders, {} of {}",
-                n(done),
-                n(of)
-            )
-        }
-        Progress::Looking { done, of } => {
-            format!("looking for the catalog's files, {} of {}", n(done), n(of))
-        }
-        Progress::Writing { done, of } => format!("writing {} of {} frames", n(done), n(of)),
-        Progress::Finishing => "the collections, the stacks and the roots".into(),
-    }
+    p.to_string()
 }
 
 /// The write done, however it went: the line said, the window's

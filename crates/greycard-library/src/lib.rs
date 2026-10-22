@@ -248,6 +248,18 @@ pub fn lens_database() -> Option<String> {
     LENS_DATABASE.lock().expect("lens database name").clone()
 }
 
+/// A path as a sheet, a list, or the log shows it: the home folder as
+/// `~`, so the end of a long path, which is the part that differs, has
+/// the room.
+pub fn tilde(p: &Path) -> String {
+    match dirs::home_dir().and_then(|h| p.strip_prefix(&h).ok().map(Path::to_path_buf)) {
+        Some(rest) if !rest.as_os_str().is_empty() => {
+            format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display())
+        }
+        _ => p.display().to_string(),
+    }
+}
+
 /// A count with its thousands set apart by commas.
 pub fn grouped(n: usize) -> String {
     let digits = n.to_string();

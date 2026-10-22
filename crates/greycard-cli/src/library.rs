@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
+use greycard_library::lightroom_catalog::Pace;
 
 #[derive(Subcommand)]
 pub(crate) enum LibraryAction {
@@ -163,7 +164,18 @@ pub(crate) fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> 
             sidecars_in_folder: editor_setting("sidecars_in_folder"),
             no_creations,
         };
-        let report = greycard_library::lightroom_catalog::import(&catalog, &options)
+        let mut said = Pace::default();
+        // With `-v` the import's own log lines say the same on stderr.
+        let logged = tracing::enabled!(
+            target: "greycard_library::lightroom_catalog",
+            tracing::Level::INFO
+        );
+        let report =
+            greycard_library::lightroom_catalog::import_with(&catalog, &options, &mut |p| {
+                if !logged && said.due(p, std::time::Instant::now()) {
+                    eprintln!("{}", p.line());
+                }
+            })
             .with_context(|| format!("importing {}", catalog.display()))?;
         print!("{report}");
         return Ok(());
@@ -421,6 +433,50 @@ fn print_path(path: &std::path::Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The import's steps on stderr: every folder, a step's first count
+    /// and its last, the finish, and between them a line a second.
+    #[test]
+    fn the_import_says_a_line_a_second() {
+        use greycard_library::lightroom_catalog::Progress;
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let mut said = Pace::default();
+        let mut lines = Vec::new();
+        let steps = [
+            (0, Progress::Mapping { done: 1, of: 2 }),
+            (10, Progress::Mapping { done: 2, of: 2 }),
+            (20, Progress::Looking { done: 25, of: 100 }),
+            (30, Progress::Looking { done: 50, of: 100 }),
+            (40, Progress::Looking { done: 100, of: 100 }),
+            (50, Progress::Writing { done: 0, of: 400 }),
+            (60, Progress::Writing { done: 1, of: 400 }),
+            (1_049, Progress::Writing { done: 120, of: 400 }),
+            (1_050, Progress::Writing { done: 121, of: 400 }),
+            (1_500, Progress::Writing { done: 200, of: 400 }),
+            (1_600, Progress::Writing { done: 400, of: 400 }),
+            (1_610, Progress::Finishing),
+        ];
+        for (ms, p) in steps {
+            if said.due(p, at(ms)) {
+                lines.push(p.line());
+            }
+        }
+        assert_eq!(
+            lines,
+            [
+                "importing the catalog: looking for the catalog's folders, 1 of 2",
+                "importing the catalog: looking for the catalog's folders, 2 of 2",
+                "importing the catalog: looking for the catalog's files, 25 of 100",
+                "importing the catalog: looking for the catalog's files, 100 of 100",
+                "importing the catalog: writing 0 of 400 frames",
+                "importing the catalog: writing 121 of 400 frames",
+                "importing the catalog: writing 400 of 400 frames",
+                "importing the catalog: the collections, the stacks and the roots",
+            ]
+        );
+    }
 
     /// `library list` shows a closed stack's top alone, saying how many
     /// it holds, and every frame with `--stacks expanded`; a member the

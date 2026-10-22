@@ -162,6 +162,73 @@ pub enum Progress {
     Finishing,
 }
 
+/// How far the import has come, as the sheet, the status line and the
+/// command say it.
+impl fmt::Display for Progress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let n = crate::grouped;
+        match *self {
+            Progress::Mapping { done, of } => {
+                write!(
+                    f,
+                    "looking for the catalog's folders, {} of {}",
+                    n(done),
+                    n(of)
+                )
+            }
+            Progress::Looking { done, of } => {
+                write!(
+                    f,
+                    "looking for the catalog's files, {} of {}",
+                    n(done),
+                    n(of)
+                )
+            }
+            Progress::Writing { done, of } => write!(f, "writing {} of {} frames", n(done), n(of)),
+            Progress::Finishing => f.write_str("the collections, the stacks and the roots"),
+        }
+    }
+}
+
+impl Progress {
+    /// The status line's and the command's line for how far the import
+    /// has come.
+    pub fn line(&self) -> String {
+        format!("importing the catalog: {self}")
+    }
+}
+
+/// Which of the import's steps a terminal or a log says: a line a
+/// second at most through a step's counts, but each of the catalog's
+/// folders (each slow to look for over a share), a step's first count
+/// and its last, and the finish always. The sheet's throttle, at a
+/// pace a person reads rather than a window redraws.
+#[derive(Debug, Default)]
+pub struct Pace {
+    last: Option<(std::time::Instant, std::mem::Discriminant<Progress>)>,
+}
+
+impl Pace {
+    /// Whether `p`, heard at `now`, is said.
+    pub fn due(&mut self, p: Progress, now: std::time::Instant) -> bool {
+        let kind = std::mem::discriminant(&p);
+        let ends = match p {
+            Progress::Mapping { .. } | Progress::Finishing => true,
+            Progress::Looking { done, of } | Progress::Writing { done, of } => done >= of,
+        };
+        let due = match self.last {
+            None => true,
+            Some((at, was)) => {
+                ends || was != kind || now.duration_since(at) >= std::time::Duration::from_secs(1)
+            }
+        };
+        if due {
+            self.last = Some((now, kind));
+        }
+        due
+    }
+}
+
 /// What the catalog keeps of a file's frame, which its crop is laid
 /// over: its size before any turn and Lightroom's orientation code.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -418,6 +485,28 @@ pub struct Written {
     /// could not be read to compare it with.
     pub time_shifted: usize,
     pub time_unread: usize,
+    /// Bytes of the raws read for their probes and stances, for the log.
+    pub read: u64,
+}
+
+impl Written {
+    /// What one frame's write counted, added to these: the counts the
+    /// frame's sidecar and its crops and turns make.
+    fn absorb(&mut self, frame: Written) {
+        self.crops += frame.crops;
+        self.crops_drawn_in += frame.crops_drawn_in;
+        for (why, n) in frame.crops_not_carried {
+            *self.crops_not_carried.entry(why).or_default() += n;
+        }
+        self.turned += frame.turned;
+        self.flips += frame.flips;
+        for (code, n) in frame.orientations_unread {
+            *self.orientations_unread.entry(code).or_default() += n;
+        }
+        self.time_shifted += frame.time_shifted;
+        self.time_unread += frame.time_unread;
+        self.read += frame.read;
+    }
 }
 
 /// What an import found, and what it would do or did.
@@ -531,6 +620,17 @@ pub fn import_until(
     progress: &mut dyn FnMut(Progress),
     stop: &AtomicBool,
 ) -> Result<Report, ImportError> {
+    import_on(path, options, progress, stop, write_threads())
+}
+
+/// [`import_until`] writing `threads` frames at once.
+fn import_on(
+    path: &Path,
+    options: &Options,
+    told: &mut dyn FnMut(Progress),
+    stop: &AtomicBool,
+    threads: usize,
+) -> Result<Report, ImportError> {
     let stopped = || {
         if stop.load(Ordering::Relaxed) {
             Err(ImportError::Stopped)
@@ -538,7 +638,30 @@ pub fn import_until(
             Ok(())
         }
     };
+    // The log hears what the sheet and the command say, at a line a
+    // second: a night's write over a share is otherwise silent in it.
+    let mut pace = Pace::default();
+    let progress: &mut dyn FnMut(Progress) = &mut |p| {
+        if pace.due(p, std::time::Instant::now()) {
+            log::info!("{}", p.line());
+        }
+        told(p);
+    };
     let catalog = read(path)?;
+    log::info!(
+        "importing the catalog {} ({}, schema {}), {}: {} roots, {} images, {} files",
+        crate::tilde(path),
+        catalog.written_by,
+        catalog.schema,
+        match (options.write, options.force) {
+            (false, _) => "a dry run",
+            (true, false) => "a write",
+            (true, true) => "a forced write",
+        },
+        catalog.roots.len(),
+        catalog.images.len(),
+        catalog.images.iter().filter(|i| i.master.is_none()).count(),
+    );
     stopped()?;
     let near = Near::of(path, &options.library);
     let (roots, local_roots) = map_roots(&catalog, &options.roots, &near, progress, stop)?;
@@ -555,7 +678,8 @@ pub fn import_until(
         ..Report::default()
     };
     // Looking for each file, then reading each one's sidecar.
-    let looking = 2 * catalog.images.len();
+    let looking =
+        catalog.images.len() + catalog.images.iter().filter(|i| i.master.is_none()).count();
     let mut looked = 0;
     // Where each image's file is, when its root is mapped and it is
     // there.
@@ -713,6 +837,10 @@ pub fn import_until(
             }
         }
     }
+    progress(Progress::Looking {
+        done: looked,
+        of: looking,
+    });
 
     // The collections, under the set named for the catalog.
     let top = match &options.set {
@@ -783,6 +911,18 @@ pub fn import_until(
         .filter(|st| st.images.iter().filter(|i| at.contains_key(i)).count() >= 2)
         .count();
 
+    log::info!(
+        "the catalog read: {} of {} images found, {} roots found, {} with edits, \
+         {} collections, {} smart, {} stacks, {} sidecars there already",
+        report.found,
+        report.images,
+        report.roots.iter().filter(|r| r.confirmed).count(),
+        report.with_edits_found,
+        report.collections.len(),
+        report.smart.len(),
+        report.stacks_found,
+        report.already,
+    );
     if !options.write {
         return Ok(report);
     }
@@ -791,60 +931,43 @@ pub fn import_until(
     let mut written = Written::default();
 
     // The sidecars: each file once, its own image and its copies.
-    let mut versions: HashMap<i64, Option<String>> = HashMap::new();
-    let writing = catalog
+    let mut copies_of: HashMap<i64, Vec<&Image>> = HashMap::new();
+    for c in &catalog.images {
+        if let Some(master) = c.master {
+            copies_of.entry(master).or_default().push(c);
+        }
+    }
+    let frames: Vec<Frame<'_>> = catalog
         .images
         .iter()
-        .filter(|i| i.master.is_none() && at.contains_key(&i.id))
-        .count();
-    let mut wrote = 0;
-    for image in catalog.images.iter().filter(|i| i.master.is_none()) {
-        let Some(raw) = at.get(&image.id) else {
-            continue;
-        };
-        wrote += 1;
-        progress(Progress::Writing {
-            done: wrote,
-            of: writing,
-        });
-        let copies: Vec<&Image> = catalog
-            .images
-            .iter()
-            .filter(|c| c.master == Some(image.id))
-            .collect();
-        let held = kept.get(&image.file).copied().unwrap_or(false);
-        if held && !options.force {
-            written.left_alone += 1;
-            // A re-import's copies are the versions it made last time,
-            // found by their names.
-            if let Ok(Some(s)) = Sidecar::load(raw) {
-                for c in &copies {
-                    let name = copy_name(c);
-                    versions.insert(
-                        c.id,
-                        s.versions
-                            .iter()
-                            .find(|v| v.name == name)
-                            .map(|v| v.id.clone()),
-                    );
-                }
+        .filter(|i| i.master.is_none())
+        .filter_map(|image| {
+            Some(Frame {
+                raw: at.get(&image.id)?,
+                image,
+                copies: copies_of.get(&image.id).map_or(&[], Vec::as_slice),
+                held: kept.get(&image.file).copied().unwrap_or(false),
+            })
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let done = write_frames(&frames, options, threads, progress);
+    // In the catalog's order, as one frame after another would have.
+    let mut versions: HashMap<i64, Option<String>> = HashMap::new();
+    for (frame, done) in frames.iter().zip(done) {
+        match done {
+            Wrote::LeftAlone(found) => {
+                written.left_alone += 1;
+                versions.extend(found);
             }
-            continue;
-        }
-        match write_frame(
-            raw,
-            image,
-            &copies,
-            options.sidecars_in_folder,
-            &mut written,
-        ) {
-            Ok((wrote, made)) => {
+            Wrote::Frame(Ok((wrote, made)), counted) => {
+                written.absorb(*counted);
                 if let Some(placement) = wrote {
                     written.sidecars += 1;
-                    if held {
+                    if frame.held {
                         written.written_over += 1;
                     }
-                    written.frames.push(raw.clone());
+                    written.frames.push(frame.raw.clone());
                     if placement == Placement::Folder {
                         written.in_folder += 1;
                     }
@@ -853,9 +976,24 @@ pub fn import_until(
                     versions.insert(id, Some(version));
                 }
             }
-            Err(e) => written.failed.push((raw.clone(), e)),
+            Wrote::Frame(Err(e), counted) => {
+                written.absorb(*counted);
+                // The error alone: a tester pastes the log, and the
+                // report names the frames.
+                log::warn!(
+                    "a frame not written ({} so far): {e}",
+                    written.failed.len() + 1
+                );
+                written.failed.push((frame.raw.clone(), e));
+            }
         }
     }
+    log::info!(
+        "the catalog's sidecars: {} frames in {:.1} s, {:.1} MB of raws read",
+        frames.len(),
+        started.elapsed().as_secs_f64(),
+        written.read as f64 / 1e6
+    );
 
     progress(Progress::Finishing);
     // The collections, joined to one of the same name already there.
@@ -977,6 +1115,18 @@ pub fn import_until(
         })?;
         written.roots = added;
     }
+    log::info!(
+        "the catalog written: {} sidecars ({} written over), {} left alone, {} failed; \
+         {} collections, {} joined, {} smart, {} stacks",
+        written.sidecars,
+        written.written_over,
+        written.left_alone,
+        written.failed.len(),
+        written.collections,
+        written.joined,
+        written.smart,
+        written.stacks,
+    );
     report.written = Some(written);
     Ok(report)
 }
@@ -1000,28 +1150,74 @@ fn copy_name(image: &Image) -> String {
 /// The edit a frame nobody has developed starts from, and the body
 /// that shot it as the library names one (none for a picture, or a
 /// file that will not probe), which the Lightroom mapper's offset is
-/// for; another importer takes the edit alone.
+/// for; another importer takes the edit alone. From the file's ends
+/// where its format allows.
 pub(crate) fn starting_edit(raw: &Path) -> (Edit, Option<String>) {
-    let (edit, camera, _) = starting_probed(raw);
+    if greycard_core::picture::is_picture_path(raw) {
+        return (Edit::for_picture(), None);
+    }
+    starting_of(greycard_core::decode::probe_ends_path(raw).ok().as_ref())
+}
+
+/// A raw's starting edit and its body from its probe.
+fn starting_of(probe: Option<&greycard_core::decode::Probe>) -> (Edit, Option<String>) {
+    let mut edit = Edit::default();
+    edit.noise.learned_strength = greycard_edit::Noise::blend_for_iso(probe.and_then(|p| p.iso));
+    let camera = probe.map(|p| greycard_core::raw::camera_name(&p.make, &p.model));
     (edit, camera)
 }
 
-/// [`starting_edit`], and the file's own capture time as the one probe
-/// read it (EXIF's form), so a frame is opened once for both.
-fn starting_probed(raw: &Path) -> (Edit, Option<String>, Option<String>) {
-    if greycard_core::picture::is_picture_path(raw) {
-        let taken = greycard_core::picture::probe_path(raw)
-            .ok()
-            .and_then(|p| p.taken);
-        return (Edit::for_picture(), None, taken);
+/// What an import wants of a frame's file, from one read of it: the
+/// edit it starts from and its body ([`starting_edit`]), its own
+/// capture time (EXIF's form), and how it stands, which its turn and
+/// its crop are laid over. A raw's probe and stance come from one
+/// decoder on its two ends where its format allows
+/// ([`greycard_core::decode::probe_and_stance_counted`]), not the whole
+/// file once for the probe and again for every stance asked.
+struct FrameRead {
+    starting: Edit,
+    camera: Option<String>,
+    taken: Option<String>,
+    stance: Option<greycard_core::decode::Stance>,
+    /// Bytes of a raw read for it; none counted for a picture.
+    bytes: u64,
+}
+
+impl FrameRead {
+    fn of(raw: &Path) -> FrameRead {
+        if greycard_core::picture::is_picture_path(raw) {
+            // A picture's probe is its head; its stance, the whole of it.
+            return FrameRead {
+                starting: Edit::for_picture(),
+                camera: None,
+                taken: greycard_core::picture::probe_path(raw)
+                    .ok()
+                    .and_then(|p| p.taken),
+                stance: greycard_core::decode::stance_path(raw).ok(),
+                bytes: 0,
+            };
+        }
+        // A clip or a layered file in the catalog is no raw: nothing of
+        // it read, as the probes' errors left it before.
+        let read = greycard_core::decode::is_raw_path(raw)
+            .then(|| greycard_core::decode::probe_and_stance_counted(raw));
+        let (probe, stance, bytes) = match read {
+            Some(Ok((probe, stance, bytes))) => (Some(probe), Some(stance), bytes),
+            Some(Err(e)) => {
+                log::debug!("{}: {e}", raw.display());
+                (None, None, 0)
+            }
+            None => (None, None, 0),
+        };
+        let (starting, camera) = starting_of(probe.as_ref());
+        FrameRead {
+            starting,
+            camera,
+            taken: probe.and_then(|p| p.taken),
+            stance,
+            bytes,
+        }
     }
-    let probe = greycard_core::decode::probe_path(raw).ok();
-    let iso = probe.as_ref().and_then(|p| p.iso);
-    let taken = probe.as_ref().and_then(|p| p.taken.clone());
-    let camera = probe.map(|p| greycard_core::raw::camera_name(&p.make, &p.model));
-    let mut edit = Edit::default();
-    edit.noise.learned_strength = greycard_edit::Noise::blend_for_iso(iso);
-    (edit, camera, taken)
 }
 
 /// The shift in seconds that takes a file's own capture time to the one
@@ -1065,11 +1261,18 @@ pub enum Cropped {
     Not(String),
 }
 
-/// The catalog's crop laid onto `edit`'s geometry, for the raw at `raw`
-/// whose frame is turned `turn` quarters over its tag: the settings'
-/// crop placed in the frame as the decoder reads its size and its tag,
-/// against the catalog's own size and orientation in `shape`.
-pub fn crop_onto(edit: &mut Edit, raw: &Path, settings: &str, shape: &Shape, turn: u8) -> Cropped {
+/// The catalog's crop laid onto `edit`'s geometry, for the file that
+/// stands as `stance` says (none when it would not say), its frame
+/// turned `turn` quarters over its tag: the settings' crop placed in
+/// the frame as the decoder reads its size and its tag, against the
+/// catalog's own size and orientation in `shape`.
+pub fn crop_onto(
+    edit: &mut Edit,
+    stance: Option<&greycard_core::decode::Stance>,
+    settings: &str,
+    shape: &Shape,
+    turn: u8,
+) -> Cropped {
     let unread = || Cropped::Not("its crop does not read".into());
     if Crop::unreadable(&crate::lightroom_exports::words(settings)) {
         return unread();
@@ -1078,7 +1281,7 @@ pub fn crop_onto(edit: &mut Edit, raw: &Path, settings: &str, shape: &Shape, tur
         return Cropped::None;
     };
     let no_size = || Cropped::Not("its file says no size".into());
-    let Ok(stance) = greycard_core::decode::stance_path(raw) else {
+    let Some(stance) = stance else {
         return no_size();
     };
     let Some((w, h)) = stance.size else {
@@ -1124,16 +1327,22 @@ pub enum Turned {
 }
 
 /// Lightroom's orientation of the image laid onto `edit`'s quarter
-/// turns, for the raw at `raw` turned `turn` quarters over its tag:
-/// every frame written takes its turn in Lightroom, cropped or not.
-pub fn turn_onto(edit: &mut Edit, raw: &Path, shape: &Shape, turn: u8) -> Turned {
+/// turns, for the file that stands as `stance` says (none when it would
+/// not say) turned `turn` quarters over its tag: every frame written
+/// takes its turn in Lightroom, cropped or not.
+pub fn turn_onto(
+    edit: &mut Edit,
+    stance: Option<&greycard_core::decode::Stance>,
+    shape: &Shape,
+    turn: u8,
+) -> Turned {
     let Some(code) = shape.orientation.as_deref().map(str::trim) else {
         return Turned::Same;
     };
     let Some(lightroom) = lightroom::crop::orientation_of(code) else {
         return Turned::Unread(code.to_string());
     };
-    let Ok(stance) = greycard_core::decode::stance_path(raw) else {
+    let Some(stance) = stance else {
         return Turned::Same;
     };
     let shown = stance.orientation.turned(i32::from(turn % 4));
@@ -1151,20 +1360,21 @@ pub fn turn_onto(edit: &mut Edit, raw: &Path, shape: &Shape, turn: u8) -> Turned
 }
 
 /// The catalog's develop settings for `image` laid over `base`, its crop
-/// and its turn in Lightroom with them, for the raw at `raw` turned
-/// `turn` over its tag; and what became of the crop and the turn. An
-/// image never developed takes only its turn, when it has one; there is
-/// no edit when it has neither or the settings will not read.
+/// and its turn in Lightroom with them, for the file standing as
+/// `stance` says turned `turn` over its tag; and what became of the
+/// crop and the turn. An image never developed takes only its turn,
+/// when it has one; there is no edit when it has neither or the
+/// settings will not read.
 fn developed(
     image: &Image,
     base: &Edit,
-    raw: &Path,
+    stance: Option<&greycard_core::decode::Stance>,
     camera: Option<&str>,
     turn: u8,
 ) -> (Option<Edit>, Cropped, Turned) {
     let mut edit = base.clone();
     if !image.edited {
-        let turned = turn_onto(&mut edit, raw, &image.shape, turn);
+        let turned = turn_onto(&mut edit, stance, &image.shape, turn);
         let carried = (turned == Turned::Turned).then_some(edit);
         return (carried, Cropped::None, turned);
     }
@@ -1177,8 +1387,8 @@ fn developed(
     };
     let settings = image.develop.as_deref().unwrap_or_default();
     let mut edit = imported.preset.applied(base);
-    let turned = turn_onto(&mut edit, raw, &image.shape, turn);
-    let cropped = crop_onto(&mut edit, raw, settings, &image.shape, turn);
+    let turned = turn_onto(&mut edit, stance, &image.shape, turn);
+    let cropped = crop_onto(&mut edit, stance, settings, &image.shape, turn);
     (Some(edit), cropped, turned)
 }
 
@@ -1222,14 +1432,19 @@ pub fn imported_edit_with(
     shape: Option<&Shape>,
     scales: &lightroom::Scales,
 ) -> greycard_edit::Result<FrameEdit> {
-    let (starting, camera) = starting_edit(raw);
+    let FrameRead {
+        starting,
+        camera,
+        stance,
+        ..
+    } = FrameRead::of(raw);
     let offset = lightroom::body_offset(camera.as_deref());
     let imported = lightroom::read_table_with(settings, "", scales, offset)?;
     let mut edit = imported.preset.applied(&starting);
     let mut unmapped = imported.unmapped;
     if let Some(shape) = shape {
-        turn_onto(&mut edit, raw, shape, 0);
-        if let Cropped::Carried { .. } = crop_onto(&mut edit, raw, settings, shape, 0) {
+        turn_onto(&mut edit, stance.as_ref(), shape, 0);
+        if let Cropped::Carried { .. } = crop_onto(&mut edit, stance.as_ref(), settings, shape, 0) {
             unmapped.retain(|n| n != "crop");
         }
     }
@@ -1260,6 +1475,142 @@ pub(crate) fn placement_for(raw: &Path, in_folder: bool) -> Placement {
 /// virtual copy's version id by the copy's image.
 type FrameWritten = (Option<Placement>, Vec<(i64, String)>);
 
+/// How many frames a write works on at once: [`WRITE_THREADS`], or
+/// `GREYCARD_IMPORT_THREADS` when that is set, for measuring.
+fn write_threads() -> usize {
+    std::env::var("GREYCARD_IMPORT_THREADS")
+        .ok()
+        .and_then(|n| n.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(WRITE_THREADS)
+}
+
+/// Frames written at once. Each frame's reads and its sidecar's write
+/// are a run of round trips, and on a share it is their latency that
+/// counts, so a few frames are in flight at a time; a share on one
+/// spinning disk gains nothing from more, since the reads then wait on
+/// its seeks.
+const WRITE_THREADS: usize = 4;
+
+/// The one permit to read a raw during a write: see [`write_frame`].
+static READING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// A file the write takes: its own image, its copies, and whether its
+/// sidecar holds something already.
+struct Frame<'a> {
+    raw: &'a PathBuf,
+    image: &'a Image,
+    copies: &'a [&'a Image],
+    held: bool,
+}
+
+/// What became of a frame.
+enum Wrote {
+    /// Left alone, its sidecar holding something already: the version
+    /// each copy found by its name there, as a re-import made it.
+    LeftAlone(Vec<(i64, Option<String>)>),
+    /// Written, or failed, and what the frame counted.
+    Frame(Result<FrameWritten, String>, Box<Written>),
+}
+
+/// Each frame written on `threads` scoped threads, and what became of
+/// each in `frames`' order. `progress` hears a count of the frames done
+/// as they finish, on the calling thread, one more each time.
+///
+/// Frames whose files are one file here (two roots on one folder, or
+/// names apart only in case on a volume that does not tell case) are
+/// one job, written one after another in the catalog's order, as the
+/// write one frame at a time had them: side by side, both would load no
+/// sidecar and the last rename would win, its copies' versions lost to
+/// the collections that name them. Names are told apart without case,
+/// which costs a volume that does tell case nothing but the overlap.
+fn write_frames(
+    frames: &[Frame<'_>],
+    options: &Options,
+    threads: usize,
+    progress: &mut dyn FnMut(Progress),
+) -> Vec<Wrote> {
+    use std::sync::atomic::AtomicUsize;
+    let of = frames.len();
+    if of == 0 {
+        return Vec::new();
+    }
+    let mut jobs: Vec<Vec<usize>> = Vec::new();
+    let mut job_of: HashMap<String, usize> = HashMap::new();
+    for (i, frame) in frames.iter().enumerate() {
+        let key = frame.raw.to_string_lossy().to_lowercase();
+        let at = *job_of.entry(key).or_insert_with(|| {
+            jobs.push(Vec::new());
+            jobs.len() - 1
+        });
+        jobs[at].push(i);
+    }
+    progress(Progress::Writing { done: 0, of });
+    let next = AtomicUsize::new(0);
+    let (tx, rx) = std::sync::mpsc::channel::<(usize, Wrote)>();
+    let mut out: Vec<Option<Wrote>> = std::iter::repeat_with(|| None).take(of).collect();
+    std::thread::scope(|s| {
+        for _ in 0..threads.clamp(1, jobs.len()) {
+            let tx = tx.clone();
+            let (next, jobs) = (&next, &jobs);
+            s.spawn(move || {
+                loop {
+                    let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                        return;
+                    };
+                    for &i in job {
+                        if tx.send((i, write_one(&frames[i], options))).is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+        drop(tx);
+        // Ends when every worker has: done, or gone in a panic, which
+        // the scope's end carries on.
+        for (done, (i, wrote)) in rx.iter().enumerate() {
+            out[i] = Some(wrote);
+            progress(Progress::Writing { done: done + 1, of });
+        }
+    });
+    out.into_iter()
+        .map(|w| w.expect("every frame written"))
+        .collect()
+}
+
+/// One frame: left alone when its sidecar holds something and the
+/// write is not forced, else written.
+fn write_one(frame: &Frame<'_>, options: &Options) -> Wrote {
+    if frame.held && !options.force {
+        // A re-import's copies are the versions it made last time,
+        // found by their names.
+        let mut found = Vec::new();
+        if let Ok(Some(s)) = Sidecar::load(frame.raw) {
+            for c in frame.copies {
+                let name = copy_name(c);
+                found.push((
+                    c.id,
+                    s.versions
+                        .iter()
+                        .find(|v| v.name == name)
+                        .map(|v| v.id.clone()),
+                ));
+            }
+        }
+        return Wrote::LeftAlone(found);
+    }
+    let mut counted = Written::default();
+    let wrote = write_frame(
+        frame.raw,
+        frame.image,
+        frame.copies,
+        options.sidecars_in_folder,
+        &mut counted,
+    );
+    Wrote::Frame(wrote, Box::new(counted))
+}
+
 /// One file's sidecar written: the meta, the develop as a named state,
 /// each copy as a version. Where it was written when it was, and each
 /// copy's version id.
@@ -1271,7 +1622,21 @@ fn write_frame(
     written: &mut Written,
 ) -> Result<FrameWritten, String> {
     let found = Sidecar::load(raw).map_err(|e| e.to_string())?;
-    let (starting, camera, taken) = starting_probed(raw);
+    let FrameRead {
+        starting,
+        camera,
+        taken,
+        stance,
+        bytes,
+    } = {
+        // One frame's raw read at a time: on a share that waits on its
+        // disk's seeks, readers side by side are slower than one; the
+        // threads win on the sidecars' writes, a run of round trips.
+        let _one = READING.lock().unwrap_or_else(|e| e.into_inner());
+        FrameRead::of(raw)
+    };
+    written.read += bytes;
+    let stance = stance.as_ref();
     let mut sidecar = found.unwrap_or_else(|| Sidecar {
         line: greycard_edit::Line::of(starting.clone()),
         ..Sidecar::default()
@@ -1279,9 +1644,7 @@ fn write_frame(
     // A sidecar from before schema 4 does not know which way up an
     // `Original` crop goes until the frame says, as `presets` asks.
     if sidecar.needs_frame()
-        && let Some((w, h)) = greycard_core::decode::stance_path(raw)
-            .ok()
-            .and_then(|s| s.shown_size(sidecar.turn))
+        && let Some((w, h)) = stance.and_then(|s| s.shown_size(sidecar.turn))
     {
         sidecar.migrate_with_frame(h > w);
     }
@@ -1330,7 +1693,8 @@ fn write_frame(
             Turned::Unread(code) => *written.orientations_unread.entry(code).or_default() += 1,
         }
     };
-    let (edit, cropped, turned) = developed(image, &sidecar.current, raw, camera.as_deref(), turn);
+    let (edit, cropped, turned) =
+        developed(image, &sidecar.current, stance, camera.as_deref(), turn);
     tally(cropped, turned);
     if let Some(edit) = edit {
         changed |= sidecar.record_as(edit, Some(label.clone()));
@@ -1356,7 +1720,7 @@ fn write_frame(
         };
         if let Some(line) = sidecar.line_mut(Some(&id)) {
             let (edit, cropped, turned) =
-                developed(copy, &line.current, raw, camera.as_deref(), turn);
+                developed(copy, &line.current, stance, camera.as_deref(), turn);
             tally(cropped, turned);
             if let Some(edit) = edit {
                 changed |= line.record_as(edit, Some(label.clone()));
@@ -2542,12 +2906,13 @@ pub(crate) fn read(path: &Path) -> Result<Catalog, ImportError> {
 }
 
 /// A file's camera and lens as the index names them: read as an index
-/// pass reads it, through the decoder for a raw.
+/// pass reads it, through the decoder for a raw: from its ends, never
+/// mapped.
 fn named_as_indexed(path: &Path) -> Option<(String, Option<String>)> {
     let probe = if greycard_core::picture::is_picture_path(path) {
         greycard_core::picture::probe_path(path).ok()?
     } else {
-        greycard_core::decode::probe_path(path).ok()?
+        greycard_core::decode::probe_ends_path(path).ok()?
     };
     let exif = crate::Exif::from_probe(&probe);
     Some((exif.camera, exif.lens))
@@ -4401,7 +4766,7 @@ pub(crate) mod tests {
     #[test]
     fn a_crop_that_does_not_read_is_not_carried_and_says_so() {
         let s = cropped_shoot("crop-unread");
-        let frame = s.here.join("frame.tif");
+        let frame = greycard_core::decode::stance_path(s.here.join("frame.tif")).ok();
         let shape = Shape {
             size: Some((4.0, 3.0)),
             orientation: Some("AB".into()),
@@ -4415,7 +4780,7 @@ pub(crate) mod tests {
         ] {
             let mut edit = Edit::default();
             assert_eq!(
-                crop_onto(&mut edit, &frame, settings, &shape, 0),
+                crop_onto(&mut edit, frame.as_ref(), settings, &shape, 0),
                 Cropped::Not("its crop does not read".into()),
                 "{settings}"
             );
@@ -4898,6 +5263,331 @@ pub(crate) mod tests {
         let read = import_until(&s.catalog, &s.options, &mut |_| heard += 1, &stop);
         assert!(matches!(read, Err(ImportError::Stopped)), "{read:?}");
         assert_eq!(heard, 0);
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// A catalog of `n` synthetic raws in one folder: every other frame
+    /// developed with a crop, every third turned in Lightroom, every
+    /// fourth with a virtual copy developed apart, every seventh not on
+    /// the disk, and the fifth with a sidecar of its own already. One
+    /// collection holds every image, the copies with them, and one stack
+    /// the first two frames and the first copy.
+    fn many_shoot(what: &str, n: i64) -> Setup {
+        let dir = scratch(&format!("lrcat-{what}"));
+        let catalog = dir.join("Many.lrcat");
+        let here = dir.join("photos");
+        std::fs::create_dir_all(&here).unwrap();
+        let db = empty_catalog(&catalog, "1504001");
+        db.execute_batch(
+            "ALTER TABLE Adobe_images ADD COLUMN fileWidth;
+             ALTER TABLE Adobe_images ADD COLUMN fileHeight;
+             ALTER TABLE Adobe_images ADD COLUMN orientation;
+             ALTER TABLE AgLibraryFolderStack ADD COLUMN collapsed;
+             CREATE TABLE AgLibraryFolderStackImage (id_local INTEGER PRIMARY KEY,
+                 collapsed, image, position, stack);
+             INSERT INTO AgLibraryRootFolder VALUES (1, 'r', 'D:/Many/', 'Many', NULL);
+             INSERT INTO AgLibraryFolder VALUES (2, 'f', NULL, '', 1);
+             INSERT INTO AgLibraryCollection VALUES (1, 'com.adobe.ag.library.collection',
+                 'All', NULL, 0.0);
+             INSERT INTO AgLibraryFolderStack VALUES (1, 's', 0);",
+        )
+        .unwrap();
+        let insert_settings = "INSERT INTO Adobe_imageDevelopSettings (image, text, \
+                               processVersion, hasDevelopAdjustmentsEx) VALUES (?1, ?2, '15.4', 1.0)";
+        let image = "INSERT INTO Adobe_images (id_local, id_global, rootFile, masterImage, \
+                     copyName, rating, pick, fileWidth, fileHeight, orientation) \
+                     VALUES (?1, 'i', ?2, ?3, ?4, ?5, 0.0, 24.0, 18.0, ?6)";
+        let mut member = 0;
+        let mut collect = |db: &Connection, id: i64| {
+            member += 1;
+            db.execute(
+                "INSERT INTO AgLibraryCollectionImage VALUES (?1, 1, ?2, ?3)",
+                rusqlite::params![member, id, format!("{member:06}")],
+            )
+            .unwrap();
+        };
+        for i in 1..=n {
+            let name = format!("f{i:04}");
+            if i % 7 != 0 {
+                let raw = here.join(format!("{name}.dng"));
+                crate::fixture::write_mosaic_dng_for(&raw, "RGGB", "Canon", "Canon EOS R5");
+                // A length of its own, so each frame hashes apart.
+                let mut file = std::fs::OpenOptions::new().append(true).open(&raw).unwrap();
+                file.write_all(&vec![0; i as usize]).unwrap();
+            }
+            db.execute(
+                "INSERT INTO AgLibraryFile VALUES (?1, 'a', ?2, 'dng', 2)",
+                rusqlite::params![i, name],
+            )
+            .unwrap();
+            let turned = if i % 3 == 0 { "BC" } else { "AB" };
+            let id = 1000 + i;
+            db.execute(
+                image,
+                rusqlite::params![id, i, None::<i64>, None::<String>, (i % 6) as f64, turned],
+            )
+            .unwrap();
+            collect(&db, id);
+            if i % 2 == 0 {
+                db.execute(insert_settings, rusqlite::params![id, DEVELOP])
+                    .unwrap();
+            }
+            if i % 4 == 0 {
+                let copy = 100_000 + i;
+                db.execute(image, rusqlite::params![copy, i, id, "Warm", 1.0, turned])
+                    .unwrap();
+                db.execute(insert_settings, rusqlite::params![copy, develop_at(-0.5)])
+                    .unwrap();
+                collect(&db, copy);
+            }
+        }
+        db.execute_batch(
+            "INSERT INTO AgLibraryFolderStackImage VALUES (1, 0, 1001, '1.0', 1);
+             INSERT INTO AgLibraryFolderStackImage VALUES (2, 0, 1002, '2.0', 1);
+             INSERT INTO AgLibraryFolderStackImage VALUES (3, 0, 100004, '3.0', 1);",
+        )
+        .unwrap();
+        drop(db);
+        let mut mine = Sidecar::default();
+        mine.meta.rating = 2;
+        mine.save(&here.join("f0005.dng")).unwrap();
+        let options = Options {
+            roots: vec![("D:/Many".into(), here.clone())],
+            library: dir.join("library").join("library.sqlite"),
+            ..Options::default()
+        };
+        Setup {
+            dir,
+            catalog,
+            here,
+            options,
+        }
+    }
+
+    /// With `GREYCARD_LRCAT_FRAMES` a count: a write of that many
+    /// synthetic frames timed, on the temporary folder. Ignored, since
+    /// it is a measurement.
+    #[test]
+    #[ignore]
+    fn a_write_of_many_frames_timed() {
+        let n = std::env::var("GREYCARD_LRCAT_FRAMES")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(400);
+        let s = many_shoot("timed", n);
+        let start = std::time::Instant::now();
+        let report = import(&s.catalog, &writing(&s)).unwrap();
+        let took = start.elapsed();
+        let w = report.written.as_ref().unwrap();
+        println!(
+            "{n} frames: {} sidecars in {:.3} s, {} bytes of raws read",
+            w.sidecars,
+            took.as_secs_f64(),
+            w.read
+        );
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// The folder put back as `before` had it: every file it did not
+    /// hold removed, every one it did written back.
+    fn put_back(dir: &Path, before: &BTreeMap<PathBuf, Vec<u8>>) {
+        for (path, bytes) in tree(dir) {
+            match before.get(&path) {
+                None => std::fs::remove_file(&path).unwrap(),
+                Some(was) if *was != bytes => std::fs::write(&path, was).unwrap(),
+                Some(_) => {}
+            }
+        }
+    }
+
+    /// Each sidecar under `dir` as a write leaves it, but for what
+    /// differs from one write to the next (ids and times): the meta,
+    /// the turn, the edit, and each version's name and edit.
+    #[allow(clippy::type_complexity)]
+    fn sidecars_under(s: &Setup) -> BTreeMap<String, (Meta, u8, Edit, Vec<(String, Edit)>)> {
+        let mut out = BTreeMap::new();
+        for e in std::fs::read_dir(&s.here).unwrap().flatten() {
+            let raw = e.path();
+            if raw.extension().is_none_or(|x| x != "dng") {
+                continue;
+            }
+            if let Some(c) = Sidecar::load(&raw).unwrap() {
+                let versions = c
+                    .versions
+                    .iter()
+                    .map(|v| (v.name.clone(), v.line.current.clone()))
+                    .collect();
+                let name = raw.file_name().unwrap().to_string_lossy().into_owned();
+                out.insert(name, (c.meta.clone(), c.turn, c.current.clone(), versions));
+            }
+        }
+        out
+    }
+
+    /// A write on a few threads writes what one frame after another
+    /// did: the same report, frame for frame in the catalog's order,
+    /// the same sidecars, collections, and stacks, a forced write too;
+    /// and the write is said as frames finish, from none of them to all.
+    #[test]
+    fn a_write_on_a_few_threads_is_the_write_one_at_a_time() {
+        let s = many_shoot("threads", 60);
+        let before = tree(&s.dir);
+        let never = AtomicBool::new(false);
+        for force in [false, true] {
+            let options = Options {
+                force,
+                ..writing(&s)
+            };
+            let mut runs = Vec::new();
+            for threads in [1, WRITE_THREADS] {
+                let mut said = Vec::new();
+                let report = import_on(
+                    &s.catalog,
+                    &options,
+                    &mut |p| {
+                        if let Progress::Writing { done, of } = p {
+                            said.push((done, of));
+                        }
+                    },
+                    &never,
+                    threads,
+                )
+                .unwrap();
+                let of = said[0].1;
+                assert_eq!(
+                    said,
+                    (0..=of).map(|d| (d, of)).collect::<Vec<_>>(),
+                    "{threads} threads"
+                );
+                let stacks = stacks::read_folder(
+                    &stacks::dir_in(&collections::dir_beside(&s.options.library)),
+                    stacks::VERSION,
+                );
+                let collections = collections::read_folder(
+                    &collections::dir_beside(&s.options.library),
+                    collections::VERSION,
+                );
+                let frames = |c: &Collection| c.refs.len();
+                runs.push((
+                    report,
+                    sidecars_under(&s),
+                    collections.list.iter().map(frames).collect::<Vec<_>>(),
+                    stacks.list.len(),
+                ));
+                put_back(&s.dir, &before);
+            }
+            let (one, few) = (&runs[0], &runs[1]);
+            let w = one.0.written.as_ref().unwrap();
+            assert_eq!(w.sidecars, if force { 52 } else { 51 }, "{}", one.0);
+            assert_eq!(w.left_alone, usize::from(!force));
+            assert!(w.crops > 0 && w.turned > 0, "{}", one.0);
+            assert_eq!(one.2, [60 + 15 - 8 - 2], "the collection's frames found");
+            assert_eq!(one.3, 1, "the stack");
+            assert_eq!(one, few, "force {force}");
+        }
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// Two of the catalog's files that are one file here, by two roots
+    /// on one folder, are written one after the other on the pool, as
+    /// one frame after another wrote them: the sidecar holds both
+    /// files' copies, and every version the collection names is in it.
+    #[test]
+    fn two_catalog_files_on_one_file_here_are_written_in_turn() {
+        let dir = scratch("lrcat-one-file");
+        let catalog = dir.join("Twice.lrcat");
+        let here = dir.join("photos");
+        std::fs::create_dir_all(&here).unwrap();
+        crate::fixture::write_mosaic_dng_for(&here.join("frame.dng"), "RGGB", "Canon", "R5");
+        let db = empty_catalog(&catalog, "1504001");
+        db.execute_batch(
+            "INSERT INTO AgLibraryRootFolder VALUES (1, 'r', 'D:/A/', 'A', NULL);
+             INSERT INTO AgLibraryRootFolder VALUES (2, 's', 'E:/B/', 'B', NULL);
+             INSERT INTO AgLibraryFolder VALUES (3, 'f', NULL, '', 1);
+             INSERT INTO AgLibraryFolder VALUES (4, 'g', NULL, '', 2);
+             INSERT INTO AgLibraryFile VALUES (10, 'a', 'frame', 'dng', 3);
+             INSERT INTO AgLibraryFile VALUES (20, 'b', 'frame', 'dng', 4);
+             INSERT INTO Adobe_images VALUES (100, 'i', 10, NULL, NULL, 4.0, 0.0, '');
+             INSERT INTO Adobe_images VALUES (101, 'j', 10, 100, 'Warm', 0.0, 0.0, '');
+             INSERT INTO Adobe_images VALUES (200, 'k', 20, NULL, NULL, 2.0, 0.0, '');
+             INSERT INTO Adobe_images VALUES (201, 'l', 20, 200, 'Cool', 0.0, 0.0, '');
+             INSERT INTO AgLibraryCollection VALUES (1, 'com.adobe.ag.library.collection',
+                 'Both', NULL, 0.0);
+             INSERT INTO AgLibraryCollectionImage VALUES (1, 1, 101, 'a');
+             INSERT INTO AgLibraryCollectionImage VALUES (2, 1, 201, 'b');",
+        )
+        .unwrap();
+        drop(db);
+        let options = Options {
+            roots: vec![("D:/A".into(), here.clone()), ("E:/B".into(), here.clone())],
+            library: dir.join("library").join("library.sqlite"),
+            write: true,
+            ..Options::default()
+        };
+        let never = AtomicBool::new(false);
+        let report = import_on(&catalog, &options, &mut |_| {}, &never, WRITE_THREADS).unwrap();
+        let w = report.written.as_ref().unwrap();
+        assert_eq!((w.sidecars, w.copies_as_own), (2, 0), "{report}");
+        let sidecar = Sidecar::load(&here.join("frame.dng")).unwrap().unwrap();
+        let names: Vec<&str> = sidecar.versions.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, ["Warm", "Cool"]);
+        let folder = collections::read_folder(
+            &collections::dir_beside(&options.library),
+            collections::VERSION,
+        );
+        let both = folder.list.iter().find(|c| c.name == "Both").unwrap();
+        assert_eq!(both.refs.len(), 2);
+        for r in &both.refs {
+            let v = r.version.as_deref().unwrap();
+            assert!(sidecar.versions.iter().any(|s| s.id == v), "{v} dangles");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The write reads each raw once for its probe and its stance,
+    /// however many of its images turn or crop it: a synthetic DNG is
+    /// read whole, so the bytes are each written frame's length. A clip
+    /// in the catalog is not read at all. And nothing the import does,
+    /// on any thread, the cameras' names among it, memory-maps a raw:
+    /// a volume that goes away under a mapped raw is a SIGBUS nothing
+    /// catches.
+    #[test]
+    fn a_write_reads_each_raw_once_and_maps_none() {
+        let s = many_shoot("read-once", 24);
+        let db = Connection::open(&s.catalog).unwrap();
+        db.execute_batch(
+            "CREATE TABLE AgHarvestedExifMetadata (id_local INTEGER PRIMARY KEY, image,
+                 cameraModelRef, lensRef);
+             CREATE TABLE AgInternedExifCameraModel (id_local INTEGER PRIMARY KEY, value);
+             CREATE TABLE AgInternedExifLens (id_local INTEGER PRIMARY KEY, value);
+             INSERT INTO AgInternedExifCameraModel VALUES (1, 'Canon EOS R5');
+             INSERT INTO AgInternedExifLens VALUES (1, 'RF35mm F1.4L VCM');
+             INSERT INTO AgHarvestedExifMetadata VALUES (1, 1001, 1, 1);
+             INSERT INTO AgLibraryFile VALUES (900, 'm', 'clip', 'mov', 2);
+             INSERT INTO Adobe_images (id_local, id_global, rootFile, rating, pick)
+                 VALUES (9000, 'm', 900, 3.0, 0.0);",
+        )
+        .unwrap();
+        drop(db);
+        std::fs::write(s.here.join("clip.mov"), vec![7u8; 1 << 16]).unwrap();
+        greycard_core::decode::watch_maps_under(&s.dir);
+        let report = import(&s.catalog, &writing(&s)).unwrap();
+        let w = report.written.as_ref().unwrap();
+        let mut lengths = 0;
+        for e in std::fs::read_dir(&s.here).unwrap().flatten() {
+            let raw = e.path();
+            // The fifth frame's sidecar holds a rating: left alone.
+            if raw.extension().is_some_and(|x| x == "dng") && !raw.ends_with("f0005.dng") {
+                lengths += std::fs::metadata(&raw).unwrap().len();
+            }
+        }
+        assert!(w.crops > 0 && w.turned > 0, "{report}");
+        assert!(w.frames.contains(&s.here.join("clip.mov")), "its rating");
+        assert_eq!(w.read, lengths, "{report}");
+        let _ = starting_edit(&s.here.join("f0001.dng"));
+        assert_eq!(greycard_core::decode::maps_under(&s.dir), 0, "raws mapped");
+        let clip = FrameRead::of(&s.here.join("clip.mov"));
+        assert!(clip.stance.is_none() && clip.camera.is_none() && clip.bytes == 0);
         std::fs::remove_dir_all(&s.dir).unwrap();
     }
 }

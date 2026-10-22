@@ -178,6 +178,41 @@ pub fn stance_path(path: impl AsRef<Path>) -> Result<Stance> {
     })
 }
 
+/// A raw's [`probe_path`] and its [`stance_path`] in one read of the
+/// file, from its ends where its format allows (a CR3's), and how many
+/// bytes that read; never through a memory map, so a volume that goes
+/// away under it is an error and not a SIGBUS. An error when the
+/// metadata will not read; a size
+/// or mosaic the image will not give is `None` in the stance. A raw's
+/// alone: a picture's two readers are its own. See
+/// `rawler_backend::probe_and_stance_counted`.
+pub fn probe_and_stance_counted(path: impl AsRef<Path>) -> Result<(Probe, Stance, u64)> {
+    let (probe, (orientation, size, mosaic), read) =
+        rawler_backend::probe_and_stance_counted(path.as_ref())?;
+    Ok((
+        probe,
+        Stance {
+            orientation,
+            size,
+            mosaic,
+        },
+        read,
+    ))
+}
+
+/// Count from now, on every thread, the raws under `dir` memory-mapped:
+/// for a test that a read meant for a volume that can go away
+/// ([`probe_and_stance_counted`], [`probe_ends_path`]) never maps one.
+pub fn watch_maps_under(dir: &Path) {
+    rawler_backend::watch_maps_under(dir)
+}
+
+/// How many raws under `dir` were memory-mapped since
+/// [`watch_maps_under`].
+pub fn maps_under(dir: &Path) -> u64 {
+    rawler_backend::maps_under(dir)
+}
+
 /// The orientation tag a file carries, raw or picture, without
 /// decoding a pixel of it.
 pub fn orientation_path(path: impl AsRef<Path>) -> Result<Orientation> {

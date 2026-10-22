@@ -5,6 +5,15 @@ design note behind it.
 
 ## 0.8.2, unreleased
 
+### Library
+
+- A Lightroom catalog import reads about one fiftieth of what it did
+  from each raw (1.6 MB of a 45 MB CR3), writes four sidecars at a
+  time, says how far it is on the command line, and logs its progress.
+  It no longer memory-maps the raws, so a share that drops while the
+  Mac sleeps fails the frame instead of crashing the editor
+  ([§389](https://github.com/jessolmstead/greycard/blob/master/docs/notes/389-the-catalog-import-over-a-share.md))
+
 ### Fixes
 
 - The histogram, the scopes, the clipping lamps, and the readout under
