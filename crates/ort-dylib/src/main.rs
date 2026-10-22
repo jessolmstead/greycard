@@ -547,6 +547,10 @@ fn linux_args(archive: &Path, src: &Path, library: &Path, exports: &Path) -> Vec
         "-lwebgpu_dawn",
         "-Wl,-rpath,$ORIGIN",
         "-Wl,-z,defs",
+        // An object in pyke's archive carries no stack note, and an older
+        // ld then marks the library's stack executable, which glibc 2.41
+        // and later refuse to dlopen.
+        "-Wl,-z,noexecstack",
         "-Wl,--gc-sections",
         "-Wl,--as-needed",
         "-s",
@@ -767,6 +771,7 @@ mod tests {
         assert!(linux.contains(&"-Wl,-u,OrtGetApiBase".into()));
         assert!(linux.contains(&"-Wl,--version-script=/w/x".into()));
         assert!(linux.contains(&"-Wl,-rpath,$ORIGIN".into()));
+        assert!(linux.contains(&"-Wl,-z,noexecstack".into()));
         assert!(linux.contains(&"-lstdc++".into()));
         assert!(
             LINUX_EXPORTS.contains("global: OrtGetApiBase;") && LINUX_EXPORTS.contains("local: *;")

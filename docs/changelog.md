@@ -81,6 +81,10 @@ design note behind it.
 
 ### Fixes
 
+- The AI features load on Linux with glibc 2.41 or later (current
+  Arch, CachyOS, and Fedora); the packaged ONNX Runtime asked for an
+  executable stack, which those refuse
+  ([§387](https://github.com/jessolmstead/greycard/blob/master/docs/notes/387-no-executable-stack-in-onnx-runtime.md))
 - `greycard develop --tint -4` and `--exposure -0.5` parse; before,
   a negative value after a space was refused as an unexpected argument
   and only `--tint=-4` worked

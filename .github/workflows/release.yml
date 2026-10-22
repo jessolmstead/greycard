@@ -258,6 +258,17 @@ jobs:
               exit 1
             fi
           done
+          # glibc 2.41 and later refuse to dlopen a library that asks for
+          # an executable stack, and the AI features go off with it.
+          if [ "$RUNNER_OS" = Linux ]; then
+            for lib in target/release/*.so; do
+              [ -f "$lib" ] || continue
+              if readelf -lW "$lib" | grep -E 'GNU_STACK' | grep -q 'RWE'; then
+                echo "$lib asks for an executable stack"
+                exit 1
+              fi
+            done
+          fi
 
       # The JPEG XS check again, on what was built: every error rawler's
       # JPEG XS decoder can return names the format, so a binary with the
