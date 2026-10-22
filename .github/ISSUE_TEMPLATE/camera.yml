@@ -1,0 +1,33 @@
+name: Camera or lens support
+description: A raw that does not open, or a lens with no correction.
+title: "[camera] "
+labels: ["camera"]
+body:
+  - type: input
+    id: camera-lens
+    attributes:
+      label: Camera and lens
+      placeholder: "e.g. Nikon Z8, NIKKOR Z 24-120mm f/4 S"
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: Does the file open at all, open wrong (colors, size, orientation), or open with no lens correction?
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: A sample raw
+      description: A link to one file shot with that camera (raw.pixls.us accepts donations under CC0, or any file host). Nothing is filled in for you.
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: greycard version
+      placeholder: "e.g. 0.8.1"
+    validations:
+      required: false

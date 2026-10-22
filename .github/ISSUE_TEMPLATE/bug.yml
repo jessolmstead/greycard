@@ -55,6 +55,14 @@ body:
     validations:
       required: true
   - type: input
+    id: cpu
+    attributes:
+      label: CPU
+      description: The processor, as the system names it.
+      placeholder: "AMD Ryzen 7 7800X3D"
+    validations:
+      required: false
+  - type: input
     id: version
     attributes:
       label: greycard version

@@ -879,6 +879,10 @@ Slint, a runtime exposing what it knows, a rawler release. It joins a
 release when the wait clears.
 
 #### Platform
+- [ ] Report a problem fills in the CPU as it fills the OS and the GPU
+      (report.rs): `/proc/cpuinfo`'s model name, `sysctl
+      machdep.cpu.brand_string`, the registry on Windows. The bug form
+      has the field since 0.8.1; two of ten issues turned on it
 - [ ] The models' adapter checked for a CPU type as the window's now
       is (§374): ONNX Runtime's WebGPU provider picks its own adapter
       through Dawn, and on a machine whose only Vulkan adapter is

@@ -1,0 +1,26 @@
+name: Feature request
+description: Something greycard should do, or do differently.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: What you want
+      description: What you are trying to do, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: elsewhere
+    attributes:
+      label: How another editor does it
+      description: Lightroom, Capture One, darktable, RawTherapee, or any other, if it has this. A screenshot helps.
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: greycard version
+      placeholder: "e.g. 0.8.1"
+    validations:
+      required: false
