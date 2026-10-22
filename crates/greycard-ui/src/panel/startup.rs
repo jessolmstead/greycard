@@ -806,6 +806,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_patch_handles(ModelRc::from(state.borrow().develop.patch_handles.clone()));
     app.set_guide_kept(ModelRc::from(state.borrow().develop.guide_kept.clone()));
     install_callbacks(&app, state.clone(), worker.clone());
+    // The keys as the user bound them, once the handler and the sheet
+    // are wired.
+    crate::keys::load(&app, &remembered.keys);
     // The way round the window, once: where the library is and where
     // the keys are, which two testers looked for.
     if first_run && !state.borrow().window.batch {
@@ -1638,6 +1641,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.crop_start = kept.crop_start;
         settings.crop_last = kept.crop_last;
         settings.ui_scale = kept.ui_scale;
+        settings.keys = kept.keys;
         settings.ui_scale_system =
             crate::window_fit::scale::system_seen().unwrap_or(kept.ui_scale_system);
         // A run opened with `--hide-panels` was a look at the picture
@@ -2178,6 +2182,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // own scale from what the window saw, by the caller.
         ui_scale: 100,
         ui_scale_system: 0.0,
+        // Written as a key is bound in the Settings sheet.
+        keys: Default::default(),
     }
 }
 

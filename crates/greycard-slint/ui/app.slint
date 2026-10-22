@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, KeywordChip } from "structs.slint";
+import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, BindRow, KeywordChip } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -1948,6 +1948,8 @@ export component App inherits Window {
             root.preview-cache-cap-changed();
             root.network-poll-changed();
         }
+        // A row listening for a chord had the keys: the window's again.
+        if (!root.settings-open && !root.sheet-open()) { keys.focus(); }
     }
     in-out property <string> sidecar-placement: "Beside the raw";
     in-out property <bool> xmp-sidecars: false;
@@ -2021,6 +2023,16 @@ export component App inherits Window {
     /// The name the key table gives a press, empty when it binds
     /// none: the one way the window's key handler reads a key.
     callback key-chord(string, bool, bool, bool, bool) -> string;
+    /// The Settings sheet's Keys section: each action and its chord,
+    /// from the same table; a press taken as an action's new chord,
+    /// true once the listening is over (false for a modifier alone);
+    /// and every action back to its default.
+    in property <[BindRow]> key-bindings: [];
+    callback key-rebound(string, string, bool, bool, bool, bool) -> bool;
+    callback keys-reset();
+    /// A chord just bound or a listening just ended, its key maybe
+    /// still held: the window's handler lets its repeats go by.
+    property <bool> binding-held: false;
     /// Help > User guide: the guide in the browser.
     callback guide-asked();
     /// Set to open the Help menu, for a capture of it.
@@ -2193,6 +2205,12 @@ export component App inherits Window {
             // A key takes the hover text down, as it does a tooltip: a
             // row or a panel the key removes never hears the pointer go.
             root.tip-text = "";
+            // The key just bound in the Settings sheet, still held: its
+            // repeats are nobody's, until a fresh press.
+            if (root.binding-held) {
+                if (e.repeat) { return accept; }
+                root.binding-held = false;
+            }
             // The press by the name the key table gives it
             // (`keys.rs`), empty for a key the table does not bind.
             // Nothing below compares the event's text, so the keys sheet,
@@ -4434,6 +4452,15 @@ export component App inherits Window {
         update-checking: root.update-checking;
         update-check-changed => { root.update-check-changed(); }
         update-check-now => { root.update-check-now(); }
+        key-bindings: root.key-bindings;
+        key-rebound(id, text, ctrl, shift, alt, meta) => {
+            return root.key-rebound(id, text, ctrl, shift, alt, meta);
+        }
+        keys-reset => { root.keys-reset(); }
+        listening-done => {
+            root.binding-held = true;
+            keys.focus();
+        }
     }
 
     // The keys sheet, over everything, until closed.

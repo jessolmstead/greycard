@@ -1055,6 +1055,7 @@ fn on_exists_named(name: &str) -> Result<export::OnExists, String> {
 pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc<Worker>) {
     entry::install(app);
     keys::install(app);
+    keys::install_sheet(app, &state);
     panel::cull::install(app, &state, &worker);
     panel::delete::install(app, &state, &worker);
     panel::look_remove::install(app, &state);

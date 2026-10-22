@@ -133,6 +133,18 @@ is made from the table the editor reads its keys from, so it always
 matches the build you have. **Help** also opens this guide and the
 bug form.
 
+To change a key, open **Settings** (Ctrl+,) and scroll to **Keys**:
+click an action's key, then press the new one, modifiers and all;
+**Esc** keeps the old. The grid's stack key follows the soft proof's
+(S). The lines with more than one key (the arrows, the ratings, flags,
+and labels, + −, F6 to F8, Redo, and the filter's), **Enter**,
+**Tab**, and **Delete** cannot be moved, but an action can take one;
+a focused slider keeps its own keys. **Esc** cannot be taken. A key
+that does two things says so in red; of two actions, the higher in
+the list gets the press. **Reset to defaults** puts every
+key back. The tables below are the defaults; the **?** sheet shows
+your own.
+
 ### Moving around
 
 | Key | Does |

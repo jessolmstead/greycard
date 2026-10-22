@@ -17,12 +17,15 @@
 //! Mac, where Slint calls the Command key `control`, and the Mac's
 //! Backspace (marked delete) opens the delete sheet there alone.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::LazyLock;
 
 use slint::platform::Key;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
-use crate::{App, KeyRow};
+use crate::{App, BindRow, KeyRow, State};
 
 /// A line of the sheet: the chords that do it, by [`chord`]'s names,
 /// how the sheet writes them when the names alone would read badly,
@@ -33,6 +36,9 @@ pub(crate) struct Binding {
     /// to turn into "Cmd"; `None` writes each chord, comma between.
     pub(crate) shown: Option<&'static str>,
     pub(crate) does: &'static str,
+    /// The name settings.json keeps a rebinding under, for a line the
+    /// user may bind to another chord; `None` for one whose keys stay.
+    pub(crate) action: Option<&'static str>,
 }
 
 /// A heading of the sheet and its lines, in the order the guide's
@@ -47,6 +53,23 @@ const fn line(chords: &'static [&'static str], does: &'static str) -> Binding {
         chords,
         shown: None,
         does,
+        action: None,
+    }
+}
+
+/// A line the user may rebind: one chord, its default, under the name
+/// `action` in settings.json. Two lines of one action (J's, one a
+/// view) move together.
+const fn act(
+    action: &'static str,
+    chord: &'static [&'static str; 1],
+    does: &'static str,
+) -> Binding {
+    Binding {
+        chords: chord,
+        shown: None,
+        does,
+        action: Some(action),
     }
 }
 
@@ -59,6 +82,7 @@ const fn shown(
         chords,
         shown: Some(shown),
         does,
+        action: None,
     }
 }
 
@@ -108,28 +132,35 @@ pub(crate) const TABLE: &[Group] = &[
                 "Home, End",
                 "The first or the last frame (with Shift, added)",
             ),
-            line(&["Ctrl+A"], "Select every frame shown"),
+            act("select-all", &["Ctrl+A"], "Select every frame shown"),
         ],
     },
     Group {
         title: "Views",
         lines: &[
-            line(
+            act(
+                "library",
                 &["G"],
                 "Library (the grid), and back to the Loupe as it was left",
             ),
-            line(
+            act(
+                "loupe",
                 &["E"],
                 "The Loupe (one frame), in the mode it was left in: Cull or Develop",
             ),
-            line(&["D"], "Develop: the Loupe with the edit panel"),
-            line(&["L"], "The lightbox, and back"),
-            line(
+            act("develop", &["D"], "Develop: the Loupe with the edit panel"),
+            act("lightbox", &["L"], "The lightbox, and back"),
+            act(
+                "overlays",
                 &["J"],
                 "In the lightbox, the rating, flag, and label on the tiles, or not",
             ),
-            line(&["C"], "Cull; in the Loupe, Cull or Develop in turn"),
-            line(&["V"], "In Cull, compare two or four frames"),
+            act(
+                "cull",
+                &["C"],
+                "Cull; in the Loupe, Cull or Develop in turn",
+            ),
+            act("compare", &["V"], "In Cull, compare two or four frames"),
             shown(
                 &["Return"],
                 "Enter",
@@ -150,13 +181,14 @@ pub(crate) const TABLE: &[Group] = &[
                 "F6, F7, F8",
                 "The filmstrip, the left pane or the develop panel alone",
             ),
-            line(&["Space"], "Fit or 1:1"),
-            line(&["Z"], "Fit or 3:1"),
-            line(
+            act("zoom-1to1", &["Space"], "Fit or 1:1"),
+            act("zoom-3to1", &["Z"], "Fit or 3:1"),
+            act(
+                "overlays",
                 &["J"],
                 "In the Loupe, shadow and highlight clipping warnings",
             ),
-            line(&["S"], "Soft proof (in the grid, a stack: below)"),
+            act("proof", &["S"], "Soft proof (in the grid, a stack: below)"),
         ],
     },
     Group {
@@ -184,18 +216,19 @@ pub(crate) const TABLE: &[Group] = &[
                 "[ ]",
                 "Turn the frame a quarter left or right; not part of the edit",
             ),
-            line(
+            act(
+                "collection",
                 &["B"],
                 "Add the selected frames to a collection, or take them out",
             ),
-            line(&["Ctrl+G"], "Stack the selected frames"),
-            line(&["Ctrl+Shift+G"], "Unstack them"),
+            act("stack", &["Ctrl+G"], "Stack the selected frames"),
+            act("unstack", &["Ctrl+Shift+G"], "Unstack them"),
             shown(
                 &["S", "Shift+S"],
                 "S, Shift+S",
                 "In the grid, open or close a stack; make the frame its top",
             ),
-            line(&["Ctrl+'"], "New version of the frame"),
+            act("version", &["Ctrl+'"], "New version of the frame"),
             line(
                 &["Delete", "Backspace"],
                 "Delete the selected frames, after a confirmation",
@@ -205,22 +238,32 @@ pub(crate) const TABLE: &[Group] = &[
     Group {
         title: "Editing",
         lines: &[
-            line(&["Ctrl+Z"], "Undo"),
+            act("undo", &["Ctrl+Z"], "Undo"),
             shown(
                 &["Ctrl+Shift+Z", "Ctrl+Y"],
                 "Ctrl+Shift+Z or Ctrl+Y",
                 "Redo",
             ),
-            line(&["Ctrl+C"], "Copy the open frame's settings"),
-            line(&["Ctrl+V"], "Paste them onto the selected frames"),
-            line(
+            act("copy", &["Ctrl+C"], "Copy the open frame's settings"),
+            act("paste", &["Ctrl+V"], "Paste them onto the selected frames"),
+            act(
+                "sync",
                 &["Ctrl+Shift+S"],
                 "Sync the selected frames to the open one",
             ),
-            line(&["R"], "Crop, and Done"),
-            line(&["W"], "White balance from a neutral patch: the pipette"),
-            line(&["M"], "New mask with a Linear, placed by the next drag"),
-            line(
+            act("crop", &["R"], "Crop, and Done"),
+            act(
+                "white-balance",
+                &["W"],
+                "White balance from a neutral patch: the pipette",
+            ),
+            act(
+                "linear-mask",
+                &["M"],
+                "New mask with a Linear, placed by the next drag",
+            ),
+            act(
+                "radial-mask",
                 &["Shift+M"],
                 "New mask with a Radial, placed by the next drag",
             ),
@@ -253,11 +296,11 @@ pub(crate) const TABLE: &[Group] = &[
                 "Ctrl+F or /",
                 "Filter the folder by rating, flag, label or words",
             ),
-            line(&["Ctrl+O"], "Open a folder"),
-            line(&["Ctrl+Shift+I"], "Import from a card"),
-            line(&["Ctrl+Shift+E"], "Export"),
-            line(&["Ctrl+,"], "Settings"),
-            line(&["?"], "This sheet"),
+            act("open", &["Ctrl+O"], "Open a folder"),
+            act("import", &["Ctrl+Shift+I"], "Import from a card"),
+            act("export", &["Ctrl+Shift+E"], "Export"),
+            act("settings", &["Ctrl+,"], "Settings"),
+            act("keys", &["?"], "The keys sheet"),
             line(
                 &["Esc"],
                 "Close a sheet, put a tool down, let go of a set, or go back to one frame",
@@ -270,7 +313,8 @@ pub(crate) const TABLE: &[Group] = &[
 /// Backspace, and elsewhere Backspace is nobody's.
 const MAC_ONLY: &[&str] = &["Backspace"];
 
-/// Whether `name` is a chord the window binds on this platform.
+/// Whether `name` is a chord the table holds on this platform, by
+/// the defaults.
 fn bound(name: &str, mac: bool) -> bool {
     (mac || !MAC_ONLY.contains(&name))
         && TABLE
@@ -279,9 +323,194 @@ fn bound(name: &str, mac: bool) -> bool {
             .any(|b| b.chords.contains(&name))
 }
 
+/// A line the user may rebind, once however many lines it has: its
+/// name in settings.json, its default chord, which is also the name
+/// the window's key handler compares it by, what its lines do, and
+/// the group of its first line.
+pub(crate) struct Action {
+    pub(crate) id: &'static str,
+    pub(crate) default: &'static str,
+    pub(crate) does: Vec<&'static str>,
+    pub(crate) group: usize,
+}
+
+static ACTIONS: LazyLock<Vec<Action>> = LazyLock::new(|| {
+    let mut out: Vec<Action> = Vec::new();
+    for (group, g) in TABLE.iter().enumerate() {
+        for b in g.lines {
+            let Some(id) = b.action else { continue };
+            match out.iter_mut().find(|a| a.id == id) {
+                Some(a) => a.does.push(b.does),
+                None => out.push(Action {
+                    id,
+                    default: b.chords[0],
+                    does: vec![b.does],
+                    group,
+                }),
+            }
+        }
+    }
+    out
+});
+
+/// The rebindable actions, in the table's order.
+pub(crate) fn actions() -> &'static [Action] {
+    &ACTIONS
+}
+
+/// Whether `chord` is an action's default: it then reaches the
+/// handler only by that action, wherever the action is bound now.
+fn is_default(chord: &str) -> bool {
+    actions().iter().any(|a| a.default == chord)
+}
+
+/// What an action's lines say it does, in one.
+fn does_of(a: &Action) -> String {
+    let mut out = String::new();
+    for (i, d) in a.does.iter().enumerate() {
+        if i == 0 {
+            out.push_str(d);
+            continue;
+        }
+        out.push_str("; ");
+        let mut chars = d.chars();
+        if let Some(c) = chars.next() {
+            out.extend(c.to_lowercase());
+            out.push_str(chars.as_str());
+        }
+    }
+    out
+}
+
+/// The bindings in force: the actions moved off their defaults, each
+/// with its chord. Empty is the table as shipped.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Keymap {
+    moved: BTreeMap<&'static str, String>,
+}
+
+impl Keymap {
+    /// The chord `a` is bound to.
+    pub(crate) fn chord_of(&self, a: &Action) -> &str {
+        self.moved.get(a.id).map_or(a.default, String::as_str)
+    }
+
+    /// Bind action `id` to `chord`, a chord's name as [`parse`] gives
+    /// it; false, and nothing changed, for an unknown action or a
+    /// chord nothing can press. Bound to its default, it is unmoved.
+    pub(crate) fn set(&mut self, id: &str, chord: &str) -> bool {
+        let Some(a) = actions().iter().find(|a| a.id == id) else {
+            return false;
+        };
+        if !bindable(chord) {
+            return false;
+        }
+        if chord == a.default {
+            self.moved.remove(a.id);
+        } else {
+            self.moved.insert(a.id, chord.to_string());
+        }
+        true
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.moved.clear();
+    }
+
+    /// From settings.json's `keys`: each action to its chord, parsed;
+    /// a name that is no action or a chord that does not parse is
+    /// logged and left at its default.
+    pub(crate) fn from_saved(saved: &BTreeMap<String, String>) -> Self {
+        let mut map = Self::default();
+        for (id, text) in saved {
+            let taken = parse(text).is_some_and(|c| map.set(id, &c));
+            if !taken {
+                tracing::warn!(
+                    "keys: settings.json binds {id:?} to {text:?}, not an action and a chord; left as it was"
+                );
+            }
+        }
+        map
+    }
+
+    /// What settings.json keeps: the moved bindings alone.
+    pub(crate) fn saved(&self) -> BTreeMap<String, String> {
+        self.moved
+            .iter()
+            .map(|(id, c)| (id.to_string(), c.clone()))
+            .collect()
+    }
+
+    /// What the handler reads for a press named `name`: the default
+    /// of the action bound to it, the first in the table when two
+    /// are; the name itself when it is one of the table's fixed
+    /// chords; empty when nothing has it.
+    fn resolve(&self, name: &str, mac: bool) -> String {
+        if name.is_empty() {
+            return String::new();
+        }
+        if let Some(a) = actions().iter().find(|a| self.chord_of(a) == name) {
+            return a.default.to_string();
+        }
+        if !is_default(name) && bound(name, mac) {
+            name.to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    /// A chord of the table as bound now: an action's default as
+    /// its action is, any other as itself.
+    fn now(&self, chord: &'static str) -> &str {
+        match actions().iter().find(|a| a.default == chord) {
+            Some(a) => self.chord_of(a),
+            None => chord,
+        }
+    }
+
+    /// Each action whose chord something else has too, with what the
+    /// others do: another action's first line, or a fixed line the
+    /// action takes the chord from.
+    pub(crate) fn conflicts(&self, mac: bool) -> Vec<(&'static Action, Vec<&'static str>)> {
+        let mut out = Vec::new();
+        for a in actions() {
+            let c = self.chord_of(a);
+            let mut others: Vec<&'static str> = actions()
+                .iter()
+                .filter(|b| b.id != a.id && self.chord_of(b) == c)
+                .map(|b| b.does[0])
+                .collect();
+            if !is_default(c) && bound(c, mac) {
+                others.extend(
+                    TABLE
+                        .iter()
+                        .flat_map(|g| g.lines)
+                        .filter(|b| b.action.is_none() && b.chords.contains(&c))
+                        .map(|b| b.does),
+                );
+            }
+            if !others.is_empty() {
+                out.push((a, others));
+            }
+        }
+        out
+    }
+}
+
+thread_local! {
+    /// The bindings the window's keys go by: the one place a press
+    /// is looked up. The defaults at each window's install, then
+    /// settings.json's as the start reads them.
+    static KEYMAP: RefCell<Keymap> = RefCell::new(Keymap::default());
+}
+
+fn with_map<R>(f: impl FnOnce(&Keymap) -> R) -> R {
+    KEYMAP.with(|m| f(&m.borrow()))
+}
+
 /// The keys Slint names by a private character, by the name a chord
 /// gives them.
-fn named_keys() -> [(Key, &'static str); 14] {
+fn named_keys() -> [(Key, &'static str); 26] {
     [
         (Key::Escape, "Esc"),
         (Key::Return, "Return"),
@@ -294,37 +523,58 @@ fn named_keys() -> [(Key, &'static str); 14] {
         (Key::DownArrow, "Down"),
         (Key::Home, "Home"),
         (Key::End, "End"),
+        (Key::PageUp, "PageUp"),
+        (Key::PageDown, "PageDown"),
+        (Key::Insert, "Insert"),
+        (Key::F1, "F1"),
+        (Key::F2, "F2"),
+        (Key::F3, "F3"),
+        (Key::F4, "F4"),
+        (Key::F5, "F5"),
         (Key::F6, "F6"),
         (Key::F7, "F7"),
         (Key::F8, "F8"),
+        (Key::F9, "F9"),
+        (Key::F10, "F10"),
+        (Key::F11, "F11"),
+        (Key::F12, "F12"),
     ]
 }
 
-/// The name of a press: the key, after whichever of Ctrl, Alt, Meta
-/// and Shift are held, in that order. A letter is upper case and says
-/// its Shift, so Caps Lock is no Shift; any other character carries
-/// its Shift already (a "?" is Shift and "/", a "+" Shift and "=" on
-/// most boards) and does not say it again. Escape is "Esc" whatever is
-/// held: it closes a sheet or puts a tool down with a hand still on a
-/// modifier. Pure: the name whether or not anything binds it.
-pub(crate) fn name(text: &str, ctrl: bool, shift: bool, alt: bool, meta: bool) -> String {
-    let named = named_keys()
+/// Slint's private characters for its named keys, which a chord
+/// names only through [`named_keys`].
+fn private(c: char) -> bool {
+    ('\u{E000}'..='\u{F8FF}').contains(&c)
+}
+
+/// A key's name, and whether a chord says Shift on it: a named key, a
+/// space, or a letter does; any other character carries its Shift
+/// already.
+fn key_of(text: &str) -> Option<(String, bool)> {
+    if let Some((_, n)) = named_keys()
         .into_iter()
         .find(|(k, _)| SharedString::from(*k).as_str() == text)
-        .map(|(_, n)| n);
-    if named == Some("Esc") {
-        return "Esc".to_string();
+    {
+        return Some((n.to_string(), true));
     }
     let mut chars = text.chars();
-    let (key, says_shift) = match (named, chars.next(), chars.next()) {
-        (Some(n), _, _) => (n.to_string(), true),
-        (None, Some(' '), None) => ("Space".to_string(), true),
-        (None, Some(c), None) if c.is_ascii_alphabetic() => {
-            (c.to_ascii_uppercase().to_string(), true)
+    match (chars.next(), chars.next()) {
+        (Some(' '), None) => Some(("Space".to_string(), true)),
+        (Some(c), None) if c.is_ascii_alphabetic() => {
+            Some((c.to_ascii_uppercase().to_string(), true))
         }
-        (None, Some(c), None) if !c.is_control() => (c.to_string(), false),
-        _ => return String::new(),
-    };
+        (Some(c), None) if !c.is_control() && !private(c) => Some((c.to_string(), false)),
+        _ => None,
+    }
+}
+
+/// A chord's name from its parts: the key after whichever of Ctrl,
+/// Alt, Meta and Shift are held, in that order, Shift only where the
+/// key says it. Escape is "Esc" whatever is held.
+fn compose(key: &str, says_shift: bool, ctrl: bool, shift: bool, alt: bool, meta: bool) -> String {
+    if key == "Esc" {
+        return "Esc".to_string();
+    }
     let mut out = String::new();
     for (held, word) in [
         (ctrl, "Ctrl+"),
@@ -336,24 +586,98 @@ pub(crate) fn name(text: &str, ctrl: bool, shift: bool, alt: bool, meta: bool) -
             out.push_str(word);
         }
     }
-    out.push_str(&key);
+    out.push_str(key);
     out
 }
 
-/// What the window's key handler reads: the press's name when the
-/// table binds it on this platform, empty when nothing does.
+/// The name of a press: the key, after whichever of Ctrl, Alt, Meta
+/// and Shift are held, in that order. A letter is upper case and says
+/// its Shift, so Caps Lock is no Shift; any other character carries
+/// its Shift already (a "?" is Shift and "/", a "+" Shift and "=" on
+/// most boards) and does not say it again. Escape is "Esc" whatever is
+/// held: it closes a sheet or puts a tool down with a hand still on a
+/// modifier. Pure: the name whether or not anything binds it, empty
+/// for a modifier alone or a key no chord names.
+pub(crate) fn name(text: &str, ctrl: bool, shift: bool, alt: bool, meta: bool) -> String {
+    match key_of(text) {
+        Some((key, says_shift)) => compose(&key, says_shift, ctrl, shift, alt, meta),
+        None => String::new(),
+    }
+}
+
+/// A chord's name from text as settings.json or the sheet writes it:
+/// the modifiers in any order and case, Cmd for Ctrl, the key by its
+/// name or by the sheet's arrow; `None` for text no press is named by.
+pub(crate) fn parse(text: &str) -> Option<String> {
+    let (mut ctrl, mut shift, mut alt, mut meta) = (false, false, false, false);
+    let mut rest = text.trim();
+    while let Some((word, after)) = rest.split_once('+') {
+        // "+" alone, or as the key after a modifier ("Ctrl++").
+        if word.is_empty() || after.is_empty() {
+            break;
+        }
+        match word.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" | "cmd" | "command" => ctrl = true,
+            "alt" | "option" => alt = true,
+            "meta" | "super" => meta = true,
+            "shift" => shift = true,
+            _ => return None,
+        }
+        rest = after;
+    }
+    let (key, says_shift) = match rest.to_ascii_lowercase().as_str() {
+        "escape" => ("Esc".to_string(), true),
+        "enter" => ("Return".to_string(), true),
+        "space" => ("Space".to_string(), true),
+        "←" => ("Left".to_string(), true),
+        "→" => ("Right".to_string(), true),
+        "↑" => ("Up".to_string(), true),
+        "↓" => ("Down".to_string(), true),
+        "⌫" => ("Backspace".to_string(), true),
+        _ => match named_keys()
+            .into_iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(rest))
+        {
+            Some((_, n)) => (n.to_string(), true),
+            None => key_of(rest)?,
+        },
+    };
+    // Shift on a key that carries it: no press is named so.
+    if shift && !says_shift {
+        return None;
+    }
+    Some(compose(&key, says_shift, ctrl, shift, alt, meta))
+}
+
+/// Whether an action can be bound to `chord`: a name a press has,
+/// and not Escape, which closes and cancels whatever else is bound.
+fn bindable(chord: &str) -> bool {
+    chord != "Esc" && parse(chord).as_deref() == Some(chord)
+}
+
+/// What the window's key handler reads: the press by the name the
+/// handler compares, by the bindings in force, empty when nothing
+/// has it. A rebound action's press reads as the action's default.
 pub(crate) fn chord(text: &str, ctrl: bool, shift: bool, alt: bool, meta: bool) -> String {
     chord_on(text, ctrl, shift, alt, meta, cfg!(target_os = "macos"))
 }
 
 fn chord_on(text: &str, ctrl: bool, shift: bool, alt: bool, meta: bool, mac: bool) -> String {
     let n = name(text, ctrl, shift, alt, meta);
-    if bound(&n, mac) { n } else { String::new() }
+    with_map(|m| m.resolve(&n, mac))
 }
 
 /// A chord as the sheet writes it on this platform.
 fn said(chord: &str, mac: bool) -> String {
-    let key = match chord {
+    // The key is after the last "+", unless "+" is the key.
+    let (mods, key) = match chord.strip_suffix("++") {
+        Some(m) => (&chord[..m.len() + 1], "+"),
+        None => match chord.rsplit_once('+') {
+            Some((m, k)) if !k.is_empty() => (&chord[..m.len() + 1], k),
+            _ => ("", chord),
+        },
+    };
+    let key = match key {
         "Left" => "←",
         "Right" => "→",
         "Up" => "↑",
@@ -362,7 +686,7 @@ fn said(chord: &str, mac: bool) -> String {
         "Backspace" => "⌫",
         other => other,
     };
-    platform(key, mac)
+    platform(&format!("{mods}{key}"), mac)
 }
 
 /// Ctrl as the platform names it.
@@ -374,10 +698,12 @@ fn platform(text: &str, mac: bool) -> String {
     }
 }
 
-/// A line's keys as the sheet writes them.
-fn keys_of(b: &Binding, mac: bool) -> String {
+/// A line's keys as the sheet writes them, as bound now: a line with
+/// a chord moved is written chord by chord.
+fn keys_of(b: &Binding, map: &Keymap, mac: bool) -> String {
+    let moved = b.chords.iter().any(|c| map.now(c) != *c);
     match b.shown {
-        Some(s) => {
+        Some(s) if !moved => {
             let s = platform(s, mac);
             // The Mac's own delete beside Delete.
             if mac && b.chords.contains(&"Backspace") {
@@ -386,14 +712,19 @@ fn keys_of(b: &Binding, mac: bool) -> String {
                 s
             }
         }
-        None => b
+        _ => b
             .chords
             .iter()
             .filter(|c| mac || !MAC_ONLY.contains(c))
-            .map(|c| said(c, mac))
+            .map(|c| said(map.now(c), mac))
             .collect::<Vec<_>>()
             .join(", "),
     }
+}
+
+/// The sheet's rows for a search, by the bindings in force.
+pub(crate) fn rows(query: &str, mac: bool) -> Vec<KeyRow> {
+    with_map(|m| rows_in(m, query, mac))
 }
 
 /// The sheet's rows for a search: each group's heading over its
@@ -401,7 +732,7 @@ fn keys_of(b: &Binding, mac: bool) -> String {
 /// aside), a group kept when a line of it is or its title holds it.
 /// The pointer's two go under the first group. An empty query keeps
 /// everything.
-pub(crate) fn rows(query: &str, mac: bool) -> Vec<KeyRow> {
+fn rows_in(map: &Keymap, query: &str, mac: bool) -> Vec<KeyRow> {
     let q = query.trim().to_lowercase();
     let holds = |s: &str| q.is_empty() || s.to_lowercase().contains(&q);
     let mut out = Vec::new();
@@ -411,7 +742,7 @@ pub(crate) fn rows(query: &str, mac: bool) -> Vec<KeyRow> {
         let lines: Vec<KeyRow> = g
             .lines
             .iter()
-            .map(|b| (keys_of(b, mac), platform(b.does, mac)))
+            .map(|b| (keys_of(b, map, mac), platform(b.does, mac)))
             .chain(pointer.iter().map(|b| {
                 let (keys, does) = b
                     .does
@@ -439,6 +770,40 @@ pub(crate) fn rows(query: &str, mac: bool) -> Vec<KeyRow> {
     out
 }
 
+/// The Settings sheet's Keys rows: each group's heading over its
+/// actions, each with its chord as bound, what it does, and what else
+/// has its chord ("Also: ..."), empty when nothing does.
+pub(crate) fn binding_rows(map: &Keymap, mac: bool) -> Vec<BindRow> {
+    let conflicts = map.conflicts(mac);
+    let mut out = Vec::new();
+    for (group, g) in TABLE.iter().enumerate() {
+        let mut mine = actions().iter().filter(|a| a.group == group).peekable();
+        if mine.peek().is_none() {
+            continue;
+        }
+        out.push(BindRow {
+            heading: true,
+            does: g.title.into(),
+            ..Default::default()
+        });
+        for a in mine {
+            let also = conflicts
+                .iter()
+                .find(|(c, _)| c.id == a.id)
+                .map(|(_, others)| platform(&format!("Also: {}", others.join("; ")), mac))
+                .unwrap_or_default();
+            out.push(BindRow {
+                heading: false,
+                id: a.id.into(),
+                keys: said(map.chord_of(a), mac).into(),
+                does: platform(&does_of(a), mac).into(),
+                also: also.into(),
+            });
+        }
+    }
+    out
+}
+
 /// The guide, at the version this build is: the Keys chapter and the
 /// rest, as the release it came from has them.
 pub(crate) fn guide_url() -> String {
@@ -455,12 +820,92 @@ fn show(app: &App, query: &str) {
     app.set_keys_rows(ModelRc::from(Rc::new(VecModel::from(rows))));
 }
 
+/// Put the Settings sheet's Keys rows up, as bound now.
+fn show_bindings(app: &App) {
+    let rows = with_map(|m| binding_rows(m, cfg!(target_os = "macos")));
+    app.set_key_bindings(ModelRc::from(Rc::new(VecModel::from(rows))));
+}
+
+/// Each conflict, to the log.
+fn log_conflicts(map: &Keymap) {
+    for (a, others) in map.conflicts(cfg!(target_os = "macos")) {
+        tracing::warn!(
+            "keys: {} is {} and also {}",
+            map.chord_of(a),
+            a.id,
+            others.join("; ")
+        );
+    }
+}
+
+/// The bindings settings.json keeps, put in force and on both sheets.
+pub(crate) fn load(app: &App, saved: &BTreeMap<String, String>) {
+    let map = Keymap::from_saved(saved);
+    if !map.moved.is_empty() {
+        tracing::info!("keys: {:?} rebound in settings.json", map.saved());
+    }
+    log_conflicts(&map);
+    KEYMAP.with(|m| *m.borrow_mut() = map);
+    show(app, "");
+    show_bindings(app);
+}
+
+/// The bindings changed from the Settings sheet: logged, written to
+/// settings.json at once, and both sheets made again.
+fn changed(app: &App, state: &Rc<RefCell<State>>) {
+    let saved = with_map(|m| {
+        log_conflicts(m);
+        m.saved()
+    });
+    crate::panel::prefs::keep(&state.borrow(), |s| s.keys = saved);
+    show(app, "");
+    show_bindings(app);
+}
+
+/// The Settings sheet's Keys section: a press taken as an action's
+/// new chord, and Reset to defaults.
+pub(crate) fn install_sheet(app: &App, state: &Rc<RefCell<State>>) {
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        // True when the press ends the listening: a chord, taken or
+        // not; false for a modifier alone, which waits on.
+        app.on_key_rebound(move |id, text, ctrl, shift, alt, meta| {
+            let n = name(&text, ctrl, shift, alt, meta);
+            if n.is_empty() {
+                return false;
+            }
+            let Some(app) = app_weak.upgrade() else {
+                return true;
+            };
+            if KEYMAP.with(|m| m.borrow_mut().set(&id, &n)) {
+                tracing::info!("keys: {id} bound to {n}");
+                changed(&app, &state);
+            }
+            true
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_keys_reset(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            KEYMAP.with(|m| m.borrow_mut().reset());
+            tracing::info!("keys: every binding back to its default");
+            changed(&app, &state);
+        });
+    }
+}
+
 /// The handler's question, the sheet's search and the Help menu's
 /// guide. Wanted by every window, a test's bare one too: without
-/// [`chord`] no key does anything.
+/// [`chord`] no key does anything. The bindings start at the
+/// defaults; [`load`] puts settings.json's in.
 pub(crate) fn install(app: &App) {
+    KEYMAP.with(|m| m.borrow_mut().reset());
     app.on_key_chord(|text, ctrl, shift, alt, meta| chord(&text, ctrl, shift, alt, meta).into());
     show(app, "");
+    show_bindings(app);
     {
         let app_weak = app.as_weak();
         app.on_keys_searched(move |query| {
@@ -664,7 +1109,7 @@ mod tests {
         for mac in [false, true] {
             let sheet = rows("", mac);
             for b in TABLE.iter().flat_map(|g| g.lines) {
-                let keys = keys_of(b, mac);
+                let keys = keys_of(b, &Keymap::default(), mac);
                 assert!(
                     sheet.iter().any(
                         |r| r.keys == keys.as_str() && r.does == platform(b.does, mac).as_str()
@@ -1048,6 +1493,323 @@ mod tests {
         press(&app, "c");
         assert!(app.get_cull_mode());
         tools_do_nothing(&app);
+    }
+
+    /// Every chord the table holds, and a few of the user's, read back
+    /// from what they print as and from how a sheet says them.
+    #[test]
+    fn a_chord_parses_and_prints_both_ways() {
+        for c in table_chords() {
+            assert_eq!(parse(c).as_deref(), Some(c), "{c}");
+            for mac in [false, true] {
+                assert_eq!(
+                    parse(&said(c, mac)).as_deref(),
+                    Some(c),
+                    "{c} on a Mac: {mac}"
+                );
+            }
+        }
+        let cases = [
+            ("ctrl+r", "Ctrl+R"),
+            ("Cmd+Shift+s", "Ctrl+Shift+S"),
+            ("shift+ctrl+alt+K", "Ctrl+Alt+Shift+K"),
+            ("Meta+F2", "Meta+F2"),
+            ("Shift+←", "Shift+Left"),
+            ("Enter", "Return"),
+            ("Ctrl++", "Ctrl++"),
+            ("+", "+"),
+            ("Ctrl+'", "Ctrl+'"),
+            ("space", "Space"),
+            ("Ctrl+Escape", "Esc"),
+        ];
+        for (text, chord) in cases {
+            assert_eq!(parse(text).as_deref(), Some(chord), "{text}");
+        }
+        for text in [
+            "", "Ctrl+", "Hyper+R", "Shift+?", "Shift+1", "RR", "Ctrl+Fly",
+        ] {
+            assert_eq!(parse(text), None, "{text}");
+        }
+        assert_eq!(said("Ctrl+Shift+R", true), "Cmd+Shift+R");
+        assert_eq!(said("Shift+Left", false), "Shift+←");
+        assert_eq!(said("Ctrl++", true), "Cmd++");
+        // A press names what parses: an F key, and nothing for a
+        // modifier alone.
+        let f2 = SharedString::from(Key::F2);
+        assert_eq!(name(&f2, true, false, false, false), "Ctrl+F2");
+        let shift = SharedString::from(Key::Shift);
+        assert_eq!(name(&shift, false, true, false, false), "");
+        assert!(!bindable("Esc"), "Escape cancels, and is nobody's to bind");
+    }
+
+    /// The actions are the table's: one chord a line, one default an
+    /// action, none shared, and none in conflict as shipped.
+    #[test]
+    fn the_actions_are_the_tables_lines() {
+        let lines: Vec<&Binding> = TABLE
+            .iter()
+            .flat_map(|g| g.lines)
+            .filter(|b| b.action.is_some())
+            .collect();
+        for b in &lines {
+            assert_eq!(b.chords.len(), 1, "{}", b.does);
+            let a = actions()
+                .iter()
+                .find(|a| Some(a.id) == b.action)
+                .expect("each line's action");
+            assert_eq!(a.default, b.chords[0], "{}: one default", a.id);
+            assert!(bindable(a.default) && !MAC_ONLY.contains(&a.default));
+        }
+        let defaults: BTreeSet<&str> = actions().iter().map(|a| a.default).collect();
+        assert_eq!(defaults.len(), actions().len(), "two actions, one default");
+        // J's two lines are one action.
+        let j = actions().iter().find(|a| a.default == "J").unwrap();
+        assert_eq!(j.does.len(), 2);
+        assert!(does_of(j).contains("; in the Loupe"), "{}", does_of(j));
+        assert!(Keymap::default().conflicts(false).is_empty());
+        assert!(Keymap::default().conflicts(true).is_empty());
+        // The sheet's rows: each action once, under the headings.
+        let rows = binding_rows(&Keymap::default(), false);
+        assert_eq!(rows.iter().filter(|r| !r.heading).count(), actions().len());
+        assert!(rows[0].heading);
+    }
+
+    /// A rebinding moves the action's every line, on both sheets, and
+    /// what the window reads; its old chord is nobody's.
+    #[test]
+    fn a_rebinding_moves_the_action_and_frees_its_old_chord() {
+        let mut map = Keymap::default();
+        assert!(map.set("proof", "Q"));
+        assert!(!map.set("fly", "Q"), "no such action");
+        assert!(!map.set("crop", "Shift+?"), "no such chord");
+        assert_eq!(map.resolve("Q", false), "S", "the handler's name for it");
+        assert_eq!(map.resolve("S", false), "", "S is free");
+        assert_eq!(map.resolve("Shift+S", false), "Shift+S", "fixed");
+        let sheet = rows_in(&map, "", false);
+        let keys = |does: &str| {
+            sheet
+                .iter()
+                .find(|r| r.does == does)
+                .map(|r| r.keys.to_string())
+        };
+        assert_eq!(
+            keys("Soft proof (in the grid, a stack: below)").as_deref(),
+            Some("Q")
+        );
+        assert_eq!(
+            keys("In the grid, open or close a stack; make the frame its top").as_deref(),
+            Some("Q, Shift+S"),
+            "S's other line goes with it"
+        );
+        assert!(map.set("undo", "Ctrl+U"));
+        let row = binding_rows(&map, true)
+            .into_iter()
+            .find(|r| r.id == "undo")
+            .unwrap();
+        assert_eq!(row.keys, "Cmd+U", "the Mac's own name");
+        // Back to the default is not moved.
+        assert!(map.set("proof", "S"));
+        assert!(map.set("undo", "Ctrl+Z"));
+        assert_eq!(map, Keymap::default());
+    }
+
+    /// Two actions on one chord, or an action on a fixed key: each says
+    /// what else has it, and the first in the table takes the press.
+    #[test]
+    fn a_shared_chord_is_reported() {
+        let mut map = Keymap::default();
+        assert!(map.set("crop", "Ctrl+Z"));
+        let found = map.conflicts(false);
+        let of = |id: &str| {
+            found
+                .iter()
+                .find(|(a, _)| a.id == id)
+                .map(|(_, o)| o.clone())
+        };
+        assert_eq!(of("crop"), Some(vec!["Undo"]));
+        assert_eq!(of("undo"), Some(vec!["Crop, and Done"]));
+        assert_eq!(found.len(), 2);
+        assert_eq!(map.resolve("Ctrl+Z", false), "Ctrl+Z", "undo is first");
+        let rows = binding_rows(&map, false);
+        let also = |id: &str| rows.iter().find(|r| r.id == id).unwrap().also.to_string();
+        assert_eq!(also("crop"), "Also: Undo");
+        assert_eq!(also("undo"), "Also: Crop, and Done");
+        assert_eq!(also("library"), "");
+        // On a fixed key the action has it, and says so.
+        assert!(map.set("crop", "1"));
+        assert_eq!(map.resolve("1", false), "R");
+        let found = map.conflicts(false);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1, vec!["Set a rating, or clear it"]);
+        // Reset to defaults: no conflict, every press as shipped.
+        map.reset();
+        assert!(map.conflicts(false).is_empty());
+        assert_eq!(map.resolve("R", false), "R");
+        assert_eq!(map.resolve("1", false), "1");
+    }
+
+    /// Through the window: the Settings sheet's row listens for the
+    /// next press, which the window's keys then go by; Escape keeps
+    /// the old chord; Reset to defaults puts R back.
+    /// A frame open in Develop and the Settings sheet over it, the
+    /// window tall enough for the whole sheet: a row scrolled out of
+    /// the view is out of the accessible tree too.
+    fn settings_window() -> (
+        App,
+        std::rc::Rc<std::cell::RefCell<crate::State>>,
+        std::rc::Rc<crate::worker::Worker>,
+    ) {
+        let (app, state, worker) = develop_window();
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 4000.0));
+        app.set_settings_open(true);
+        (app, state, worker)
+    }
+
+    /// An action's chord button, not the words beside it, found
+    /// afresh: a binding makes the rows again.
+    fn row_of(app: &App, does: &'static str) -> i_slint_backend_testing::ElementHandle {
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(0.0, 0.0),
+        });
+        i_slint_backend_testing::ElementQuery::from_root(app)
+            .match_descendants()
+            .match_accessible_role(i_slint_backend_testing::AccessibleRole::Button)
+            .match_predicate(move |e| e.accessible_label().as_deref() == Some(does))
+            .find_first()
+            .expect("the action's row")
+    }
+
+    fn row(app: &App) -> i_slint_backend_testing::ElementHandle {
+        row_of(app, "Crop, and Done")
+    }
+
+    fn shown(app: &App) -> String {
+        row(app).accessible_value().unwrap_or_default().to_string()
+    }
+
+    fn repeated(app: &App, key: &str) {
+        app.window()
+            .dispatch_event(WindowEvent::KeyPressRepeated { text: key.into() });
+    }
+
+    #[test]
+    fn a_key_bound_in_the_settings_sheet_is_what_the_window_goes_by() {
+        let (app, _state, _worker) = settings_window();
+        assert_eq!(shown(&app), "R");
+        row(&app).invoke_accessible_default_action();
+        assert_eq!(shown(&app), "Press a key");
+        // A modifier alone waits; the chord with it is taken.
+        shifted(&app, "k");
+        assert_eq!(shown(&app), "Shift+K");
+        assert!(app.get_settings_open());
+        row(&app).invoke_accessible_default_action();
+        press(&app, "k");
+        assert_eq!(shown(&app), "K");
+        // Escape while listening keeps K and the sheet; the next one
+        // is the window's again, and closes it.
+        row(&app).invoke_accessible_default_action();
+        press(&app, Key::Escape);
+        assert_eq!(shown(&app), "K");
+        assert!(app.get_settings_open());
+        press(&app, Key::Escape);
+        assert!(!app.get_settings_open());
+        slint::platform::update_timers_and_animations();
+
+        press(&app, "r");
+        assert!(!app.get_crop_mode(), "R is nobody's now");
+        press(&app, "k");
+        assert!(app.get_crop_mode(), "K is the crop");
+        press(&app, "k");
+        assert!(!app.get_crop_mode());
+        assert!(
+            rows("", false)
+                .iter()
+                .any(|r| r.keys == "K" && r.does == "Crop, and Done"),
+            "the keys sheet shows the binding"
+        );
+        // A modifier alone does not end the listening.
+        let shift = SharedString::from(Key::Shift);
+        assert!(!app.invoke_key_rebound("crop".into(), shift, false, true, false, false));
+
+        app.invoke_keys_reset();
+        press(&app, "k");
+        assert!(!app.get_crop_mode());
+        press(&app, "r");
+        assert!(app.get_crop_mode());
+    }
+
+    /// The sheet closed while a row listens (Done, a click beside it,
+    /// or from Rust): the keys are the window's again.
+    #[test]
+    fn closing_the_sheet_while_a_row_listens_gives_the_keys_back() {
+        let (app, _state, _worker) = settings_window();
+        row(&app).invoke_accessible_default_action();
+        assert_eq!(shown(&app), "Press a key");
+        app.set_settings_open(false);
+        slint::platform::update_timers_and_animations();
+        press(&app, "g");
+        assert!(app.get_grid_open(), "G is the window's");
+    }
+
+    /// Reset to defaults clicked while a row listens: the keys go back
+    /// to the window, and Escape closes the sheet.
+    #[test]
+    fn reset_while_a_row_listens_gives_the_keys_back() {
+        let (app, _state, _worker) = settings_window();
+        row(&app).invoke_accessible_default_action();
+        press(&app, "k");
+        assert_eq!(shown(&app), "K");
+        row(&app).invoke_accessible_default_action();
+        // The sheet's last button above Done: below the last row.
+        let last = row_of(&app, "The keys sheet").absolute_position().y;
+        let reset =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "PanelButton")
+                .filter(|b| b.absolute_position().y > last)
+                .min_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y))
+                .expect("the reset");
+        let (at, size) = (reset.absolute_position(), reset.size());
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(shown(&app), "R");
+        press(&app, Key::Escape);
+        assert!(!app.get_settings_open(), "Escape is the window's");
+        slint::platform::update_timers_and_animations();
+        press(&app, "g");
+        assert!(app.get_grid_open());
+    }
+
+    /// The key being bound, held: its repeats are neither a second
+    /// chord nor the window's, until a fresh press.
+    #[test]
+    fn a_held_key_binds_once_and_does_nothing_more() {
+        let (app, _state, _worker) = settings_window();
+        // Open a folder is one of the keys the window answers under a
+        // sheet.
+        let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+        {
+            let asked = asked.clone();
+            app.on_open_folder(move || asked.set(asked.get() + 1));
+        }
+        let open_folder = |app: &App| {
+            row_of(app, "Open a folder")
+                .accessible_value()
+                .unwrap_or_default()
+                .to_string()
+        };
+        row_of(&app, "Open a folder").invoke_accessible_default_action();
+        repeated(&app, "j");
+        assert_eq!(open_folder(&app), "Press a key", "a repeat is no chord");
+        app.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: "k".into() });
+        assert_eq!(open_folder(&app), "K");
+        for _ in 0..3 {
+            repeated(&app, "k");
+        }
+        assert_eq!(asked.get(), 0, "the repeats are nobody's");
+        app.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: "k".into() });
+        press(&app, "k");
+        assert_eq!(asked.get(), 1, "a fresh press opens one");
     }
 
     #[test]

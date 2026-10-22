@@ -10,6 +10,18 @@ export struct KeyRow {
     does: string,
 }
 
+/// A row of the Settings sheet's Keys section (`keys.rs`): a group's
+/// heading in `does`, or an action by its settings name, its chord as
+/// the platform names it, what it does, and what else has the chord,
+/// empty when nothing does.
+export struct BindRow {
+    heading: bool,
+    id: string,
+    keys: string,
+    does: string,
+    also: string,
+}
+
 /// A row of the list of what a sheet carries (`carry.rs`): a
 /// section's heading, a part or a mask under it, or the line that
 /// says whether the masks replace the frames' or join them. Rust lays

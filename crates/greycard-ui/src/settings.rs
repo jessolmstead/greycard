@@ -183,6 +183,42 @@ pub struct Settings {
     /// reported it, written at the close: the next start's guess of
     /// it, which a scale over 100 % multiplies. Zero for none seen.
     pub ui_scale_system: f64,
+    /// The keys rebound from the Settings sheet, each action's name
+    /// (`keys::TABLE`) to its chord ("crop": "Ctrl+R"); an action at
+    /// its default is not here. Written as a key is bound.
+    #[serde(
+        skip_serializing_if = "std::collections::BTreeMap::is_empty",
+        deserialize_with = "keys_leniently"
+    )]
+    pub keys: std::collections::BTreeMap<String, String>,
+}
+
+/// The `keys` of a file edited by hand: each string kept, anything
+/// else logged and left out, so one bad value never costs the rest of
+/// the file its settings.
+fn keys_leniently<'de, D>(d: D) -> Result<std::collections::BTreeMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(d)?;
+    let mut out = std::collections::BTreeMap::new();
+    match value {
+        serde_json::Value::Object(map) => {
+            for (id, v) in map {
+                match v {
+                    serde_json::Value::String(chord) => {
+                        out.insert(id, chord);
+                    }
+                    other => {
+                        tracing::warn!("settings: keys: {id:?} is {other}, not a chord; left out")
+                    }
+                }
+            }
+        }
+        serde_json::Value::Null => {}
+        other => tracing::warn!("settings: keys is {other}, not a map of chords; left out"),
+    }
+    Ok(out)
 }
 
 /// The sync sheet's three relative choices: on, a frame is shifted
@@ -308,6 +344,7 @@ impl Default for Settings {
             crop_last: "Free".into(),
             ui_scale: 100,
             ui_scale_system: 0.0,
+            keys: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -527,6 +564,9 @@ mod tests {
             crop_last: "Custom 7:5".into(),
             ui_scale: 150,
             ui_scale_system: 1.25,
+            keys: [("crop".to_string(), "Ctrl+R".to_string())]
+                .into_iter()
+                .collect(),
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);
@@ -584,6 +624,43 @@ mod tests {
         mine.save_to(&path);
         assert_eq!(Settings::load_from(&path), mine);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The keys rebound are under `keys`, only the ones moved: a file
+    /// with none moved has no `keys` at all.
+    #[test]
+    fn the_rebound_keys_are_written_alone_under_one_key() {
+        let text = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(!text.contains(r#""keys""#), "{text}");
+        let mut map = crate::keys::Keymap::default();
+        assert!(map.set("crop", "Ctrl+R"));
+        assert!(map.set("undo", "Ctrl+Z"), "its default: not moved");
+        let mine = Settings {
+            keys: map.saved(),
+            ..Settings::default()
+        };
+        let text = serde_json::to_string(&mine).unwrap();
+        assert!(text.contains(r#""keys":{"crop":"Ctrl+R"}"#), "{text}");
+        let read: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(crate::keys::Keymap::from_saved(&read.keys), map);
+        // A name that is no action and a chord that is none are left
+        // out as the file is read, and the rest kept.
+        let read: Settings =
+            serde_json::from_str(r#"{"keys": {"crop": "Cmd+R", "fly": "F", "undo": "Shift+?"}}"#)
+                .unwrap();
+        assert_eq!(crate::keys::Keymap::from_saved(&read.keys), map);
+        // A value that is no string, or a `keys` that is no map, loses
+        // itself and nothing else.
+        for text in [
+            r#"{"ui_scale": 150, "keys": {"crop": 5, "undo": "Ctrl+U"}}"#,
+            r#"{"ui_scale": 150, "keys": {"crop": null}}"#,
+            r#"{"ui_scale": 150, "keys": null}"#,
+            r#"{"ui_scale": 150, "keys": ["crop"]}"#,
+        ] {
+            let read: Settings = serde_json::from_str(text).expect(text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert!(read.keys.values().all(|c| c == "Ctrl+U"), "{text}");
+        }
     }
 
     #[test]

@@ -5,6 +5,14 @@ design note behind it.
 
 ## 0.8.2, unreleased
 
+### The window
+
+- Any shortcut can be changed: Settings ends with a Keys section;
+  click a key, press the new one, Esc keeps the old. A key given two
+  jobs says so in red; Reset to defaults puts them all back. Kept in
+  settings.json
+  ([§390](https://github.com/jessolmstead/greycard/blob/master/docs/notes/390-rebindable-keys.md))
+
 ### Library
 
 - A Lightroom catalog import reads about one fiftieth of what it did

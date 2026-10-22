@@ -402,3 +402,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§387. No executable stack in ONNX Runtime](notes/387-no-executable-stack-in-onnx-runtime.md) (2026-10-21)
 - [§388. The scopes read the export, not the monitor's table](notes/388-the-scopes-read-the-export-not-the-monitors-table.md) (2026-10-21)
 - [§389. The catalog import over a share](notes/389-the-catalog-import-over-a-share.md) (2026-10-21)
+- [§390. Rebindable keys](notes/390-rebindable-keys.md) (2026-10-21)

@@ -5,9 +5,12 @@
 // that puts their sidecars where the setting says now, since flipping
 // it moves nothing by itself. Whether the camera's JPEG beside a raw is
 // a frame of its own. The aspect an uncropped frame's crop opens at.
-// And the check for a newer release.
+// The check for a newer release. And the keys: each rebindable action
+// of the key table (`keys.rs`), a click on its chord to press a new
+// one, Escape to keep the old.
 
 import { Theme } from "../theme.slint";
+import { BindRow } from "../structs.slint";
 import { Toggle, PanelButton, Segmented } from "../controls.slint";
 import { LineEdit, ScrollView } from "std-widgets.slint";
 
@@ -77,6 +80,20 @@ export component SettingsSheet inherits Rectangle {
     in property <bool> update-checking;
     callback update-check-changed();
     callback update-check-now();
+    /// The keys: each action and its chord, under its group's heading;
+    /// a press taken as the listening action's chord, true once the
+    /// listening is over; every action back to its default; and the
+    /// keys handed back to the window as the listening ends.
+    in property <[BindRow]> key-bindings;
+    callback key-rebound(string, string, bool, bool, bool, bool) -> bool;
+    callback keys-reset();
+    callback listening-done();
+    /// The action the next press binds, empty for none.
+    property <string> listening: "";
+    function listen(id: string) {
+        root.listening = id;
+        catcher.focus();
+    }
     /// The move asked for and not yet confirmed.
     property <bool> confirming: false;
     property <string> elsewhere-words: root.sidecars-elsewhere == 1
@@ -101,6 +118,29 @@ export component SettingsSheet inherits Rectangle {
         drop-shadow-color: #00000099;
         clip: true;
         TouchArea { }
+        // The press a chord is listened for by: every key while an
+        // action listens, Escape keeping its old chord.
+        catcher := FocusScope {
+            width: 0;
+            height: 0;
+            key-pressed(e) => {
+                if (root.listening == "") { return reject; }
+                // A key held from before the click: not a new chord.
+                if (e.repeat) { return accept; }
+                if (e.text == Key.Escape) {
+                    root.listening = "";
+                    root.listening-done();
+                    return accept;
+                }
+                if (root.key-rebound(root.listening, e.text, e.modifiers.control,
+                    e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) {
+                    root.listening = "";
+                    root.listening-done();
+                }
+                return accept;
+            }
+            focus-lost(reason) => { root.listening = ""; }
+        }
         VerticalLayout {
             ScrollView {
                 min-height: 80px;
@@ -423,6 +463,83 @@ export component SettingsSheet inherits Rectangle {
                             width: 96px;
                             enabled: !root.update-checking;
                             clicked => { root.update-check-now(); }
+                        }
+                    }
+                    Rectangle { height: Theme.space-1; }
+                    Text {
+                        text: "KEYS";
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-secondary;
+                    }
+                    for row in root.key-bindings: VerticalLayout {
+                        spacing: 2px;
+                        padding-top: row.heading ? Theme.space-2 : 0;
+                        if row.heading: Text {
+                            text: row.does;
+                            font-size: Theme.font-xs;
+                            color: Theme.text-muted;
+                        }
+                        if !row.heading: HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text {
+                                text: row.does;
+                                font-size: Theme.font-sm;
+                                color: Theme.text;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                                // Its own width, so a wrapped line counts in the
+                                // sheet's height and Reset to defaults stays in reach.
+                                width: 440px - 2 * Theme.space-5 - Theme.scrollbar-band - 112px - Theme.space-2;
+                            }
+                            Rectangle {
+                                property <bool> on: root.listening == row.id;
+                                property <string> shown: self.on ? "Press a key" : row.keys;
+                                width: 112px;
+                                height: Theme.control-height;
+                                border-radius: Theme.radius-md;
+                                border-width: 1px;
+                                border-color: self.on ? Theme.focus-ring
+                                    : row.also != "" ? Theme.label-red : Theme.border-strong;
+                                background: chip.pressed ? Theme.pressed : chip.has-hover ? Theme.hover : Theme.raised;
+                                accessible-role: button;
+                                accessible-label: row.does;
+                                accessible-value: self.shown;
+                                accessible-action-default => { root.listen(row.id); }
+                                Text {
+                                    text: parent.shown;
+                                    font-size: Theme.font-sm;
+                                    font-weight: Theme.weight-medium;
+                                    color: parent.on ? Theme.text-secondary : Theme.text;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                chip := TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.listen(row.id); }
+                                }
+                            }
+                        }
+                        if !row.heading && row.also != "": Text {
+                            text: row.also;
+                            font-size: Theme.font-xs;
+                            color: Theme.label-red;
+                            wrap: word-wrap;
+                        }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        PanelButton {
+                            text: "Reset to defaults";
+                            // The button's click takes the focus from a
+                            // row listening; the keys go back to the
+                            // window either way.
+                            clicked => {
+                                root.listening = "";
+                                root.keys-reset();
+                                root.listening-done();
+                            }
                         }
                     }
                 }

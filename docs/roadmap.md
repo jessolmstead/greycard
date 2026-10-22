@@ -734,9 +734,6 @@ clears or a tester asks for it.
       as the panel moves; the filter's, a custom aspect's, and a mask
       name's text boxes losing the keys when the pointer crosses the
       picture; Escape leaving the crop
-- [ ] Rebindable keys: a sheet in Settings to change any shortcut,
-      saved in settings.json, with a conflict warning and a reset to
-      defaults
 
 
 #### Library
