@@ -624,6 +624,14 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
             labels.push(e.label().into());
         } else {
             hidden += 1;
+            // The name each side goes by, so a profile hidden by a
+            // spelling the maker and the decoder disagree on can be
+            // told from one made for another camera.
+            tracing::info!(
+                "camera profile {}: made for {:?}, not listed for {make} {model}",
+                e.name,
+                e.unique_camera_model.as_deref().unwrap_or("no camera")
+            );
         }
     }
     // A profile the edit names and the directory does not have is
