@@ -37,10 +37,8 @@ the reasoning lives in `docs/notes.md`.
 
 TBD.
 
-- [ ] The Slint fix sent upstream: the §377 patch re-made on Slint's
-      master (its `resize_window` has moved on since 1.18.1), built
-      against Slint's own checks, pushed to the fork as a branch, and
-      the PR opened from the text already drafted. Not now
+- [ ] The Slint pin dropped once a release carries
+      slint-ui/slint#14324 (§377)
 
 ## Tracks
 

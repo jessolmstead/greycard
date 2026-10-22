@@ -64,7 +64,8 @@ femtovg = { git = "https://github.com/jessolmstead/femtovg", rev = "befdd4dc512d
 # X11, as the layout's least grew). Every Slint crate comes from the
 # fork at the same commit: a git crate takes its path dependencies from
 # its own checkout, which beside the crates.io copies would be two
-# i-slint-core. Pinned until a Slint release carries the fix.
+# i-slint-core. Pinned until a Slint release carries the fix, sent
+# upstream as slint-ui/slint#14324.
 slint = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
 slint-build = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
 slint-macros = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
