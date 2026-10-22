@@ -5,7 +5,8 @@ use super::*;
 /// The open file's picture under `edit` at `turn`: the last develop's
 /// when it was of the same develop and turn, else developed afresh.
 /// The export's picture is the reference's, on the CPU, whatever the
-/// viewport ran on. If the last develop had CA on the GPU, redevelop.
+/// viewport ran on. If the last develop had its CA or its lens on the
+/// GPU, redevelop.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn open_picture(
     edit: &Edit,
@@ -22,7 +23,7 @@ pub(super) fn open_picture(
     if let Some(l) = &*last
         && l.turn == turn
         && l.edit.same_develop(edit)
-        && !l.ca_on_gpu
+        && !l.on_gpu
     {
         return Ok((l.image.clone(), l.left_out.clone()));
     }

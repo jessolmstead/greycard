@@ -328,7 +328,7 @@ impl Shelf {
             s.file == *file
                 && s.base.turn == turn
                 && s.base.edit.same_base(edit)
-                && (has_gpu || !s.base.ca_on_gpu)
+                && (has_gpu || !s.base.on_gpu)
         })?;
         let Shelved {
             mut base, learned, ..
@@ -364,7 +364,7 @@ impl Shelf {
                 && s.file.stat == *stat
                 && s.base.turn == turn
                 && s.base.edit.same_base(edit_as_made.as_ref().unwrap_or(edit))
-                && (has_gpu || !s.base.ca_on_gpu)
+                && (has_gpu || !s.base.on_gpu)
         })
     }
 
@@ -473,7 +473,7 @@ mod tests {
             uploaded: None,
             haze: None,
             planes: None,
-            ca_on_gpu: false,
+            on_gpu: false,
             stand_in: None,
             gave_way: None,
             profile: None,
@@ -562,7 +562,7 @@ mod tests {
         assert_eq!(shelf.len(), 1, "still there for its own edit and turn");
 
         let mut gpu_ca = base(&edit, 0, 8, 8);
-        gpu_ca.ca_on_gpu = true;
+        gpu_ca.on_gpu = true;
         shelf.put(file("c.CR3"), gpu_ca, None);
         assert!(shelf.take(&file("c.CR3"), &edit, 0, false).is_none());
         assert!(shelf.take(&file("c.CR3"), &edit, 0, true).is_some());
@@ -716,7 +716,7 @@ mod tests {
         assert!(!shelf.holds(Path::new("b"), &a.stat, &seeded, false, 1, true));
 
         let mut gpu = base(&edit, 0, 10, 10);
-        gpu.ca_on_gpu = true;
+        gpu.on_gpu = true;
         assert!(shelf.put(file("g"), gpu, None));
         let g = file("g");
         assert!(shelf.holds(&g.path, &g.stat, &edit, false, 0, true));

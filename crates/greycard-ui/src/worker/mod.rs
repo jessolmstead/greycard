@@ -10,6 +10,7 @@ use greycard_core::CameraProfile;
 use greycard_core::color::{as_shot_temp_tint, profile_from_frame};
 use greycard_core::develop::ca::{CaOptions, CaStats, correct_ca};
 use greycard_core::develop::dehaze::{self, DehazeStats, Reduced};
+use greycard_core::develop::lens::LensCorrection;
 use greycard_core::develop::local_contrast::{
     LocalContrastOptions, LocalContrastStats, local_contrast,
 };
@@ -45,7 +46,7 @@ use self::{
     base::{
         Stages, engine_base, engine_base_or_stop, learned_base, timed, turn_base, turns_exactly,
     },
-    decode::{correct_lens, lens_report, open_told, timed_open},
+    decode::{lens_corrections, lens_report, open_told, timed_open},
     develop::develop_job,
     engine::{left_out_of, run},
     export::{export_other, finish_export, open_picture, scene_export, seeded, write_export},
@@ -685,9 +686,9 @@ struct Last {
     edit: Edit,
     turn: u8,
     image: Arc<WorkingImage>,
-    /// Whether the base this picture came from had its CA corrected on the GPU.
-    /// The export's picture must be from the CPU, not the GPU.
-    ca_on_gpu: bool,
+    /// Whether the base this picture came from had its CA or its lens
+    /// corrected on the GPU. The export's picture must be from the CPU.
+    on_gpu: bool,
     /// What the develop left out of what the edit asked for
     /// ([`left_out_of`]), for an export that takes this picture.
     left_out: Vec<String>,
@@ -701,7 +702,7 @@ impl Last {
             edit,
             turn: base.turn,
             image,
-            ca_on_gpu: base.ca_on_gpu,
+            on_gpu: base.on_gpu,
             left_out: left_out_of(outcome, Some(base)),
         }
     }
@@ -988,11 +989,11 @@ struct Base {
     /// for a Dehaze move to fit again from without summing the blocks
     /// and reading them back again.
     haze: Option<KeptHaze>,
-    /// Whether the CA correction in this base ran on the GPU. The
-    /// export's picture is the reference's, and the CA is in the base
+    /// Whether the CA or the lens correction in this base ran on the GPU.
+    /// The export's picture is the reference's, and both are in the base
     /// (unlike the sharpen, which the export re-runs), so an export
     /// makes a fresh base on the CPU when this is set.
-    ca_on_gpu: bool,
+    on_gpu: bool,
     /// The learned denoiser's report when this base is the engine's
     /// stand-in for it (its model missing, or failing): a develop that
     /// keeps the base reports `Kept`, and an export of it must still

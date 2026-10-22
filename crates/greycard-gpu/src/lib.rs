@@ -13,9 +13,10 @@
 //!
 //! The ops so far: the capture sharpening ([`Context::sharpen`]), the
 //! lateral chromatic aberration correction ([`Context::correct_ca`]),
-//! the local contrast ([`Context::local_contrast`]) and the dehaze's
-//! block sums and apply ([`Context::dehaze_reduced`],
-//! [`Context::dehaze`]), its fit staying the reference's on the CPU.
+//! the lens correction ([`Context::correct_lens`]), the local contrast
+//! ([`Context::local_contrast`]), and the dehaze's block sums and
+//! apply ([`Context::dehaze_reduced`], [`Context::dehaze`]), its fit
+//! staying the reference's on the CPU.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -25,6 +26,7 @@ pub use wgpu;
 
 mod ca;
 mod dehaze;
+mod lens;
 mod local_contrast;
 mod plumbing;
 mod sharpen;
@@ -111,6 +113,7 @@ pub struct Context {
     max_dimension: u32,
     sharpen: sharpen::Pipelines,
     ca: ca::Pipelines,
+    lens: lens::Pipelines,
     local_contrast: local_contrast::Pipelines,
     dehaze: dehaze::Pipelines,
 }
@@ -156,6 +159,9 @@ impl Context {
         let ca = scoped(&device, "building the CA correction's pipelines", || {
             Ok(ca::Pipelines::new(&device))
         })?;
+        let lens = scoped(&device, "building the lens correction's pipeline", || {
+            Ok(lens::Pipelines::new(&device))
+        })?;
         // A discrete GPU's memory is its own, so the local contrast's
         // planes are kept there between runs; an integrated or
         // unified-memory GPU (Apple's), a virtual one or the CPU
@@ -175,6 +181,7 @@ impl Context {
             max_dimension,
             sharpen,
             ca,
+            lens,
             local_contrast,
             dehaze,
         })
@@ -185,9 +192,9 @@ impl Context {
     /// the local contrast's, up to five planes and its grid, about 950
     /// MB, kept on a discrete GPU only; the CA correction keeps
     /// nothing, its 812 MiB at 45 MP being made and dropped within a
-    /// run, and neither does the dehaze). For when the ops are
-    /// switched off or the picture is closed; the next run makes them
-    /// again.
+    /// run, and neither do the lens correction and the dehaze). For
+    /// when the ops are switched off or the picture is closed; the
+    /// next run makes them again.
     pub fn release(&self) {
         self.release_sharpen();
         self.release_local_contrast();

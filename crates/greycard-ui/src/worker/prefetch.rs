@@ -314,10 +314,10 @@ pub(super) enum Fetched {
 /// its base), or one already on the shelf. `ahead` is asked between
 /// the stages what has been asked of the worker since; on anything but
 /// the open of this frame the prefetch stops there and nothing is
-/// kept. The CA runs on `gpu` when there is one, which holds nothing of
-/// the base after; a device error there leaves the context to the next
-/// develop, which finds out whether the device is lost, and this base
-/// takes the CPU's correction.
+/// kept. The CA and the lens correction run on `gpu` when there is
+/// one, which holds nothing of the base after; a device error in
+/// either leaves the context to the next develop, which finds out
+/// whether the device is lost, and this base takes the CPU's.
 pub(super) fn prefetch(
     n: &Neighbor,
     in_hand: Option<(&Path, &Base)>,
@@ -431,12 +431,16 @@ pub(super) fn prefetch(
         Ok(None) => return abandoned(stopped.get().unwrap_or("demosaic")),
         Err(e) => return skipped(format!("its base failed: {e:#}")),
     };
-    b.ca_on_gpu = matches!(ca, Some((CaRan::Gpu, _)));
+    b.on_gpu = matches!(ca, Some((CaRan::Gpu, _)));
     b.profile = resolved_profile(&settings, frame);
     if stop("lens") {
         return abandoned("lens");
     }
-    lens_step(&mut b, &input, &edit, lenses, &mut stages);
+    if let Some(e) = lens_step(&mut b, &input, &edit, lenses, gpu, &mut stages) {
+        tracing::warn!(
+            "the GPU lens correction, prefetching {name}: {e}; the CPU's for this frame"
+        );
+    }
     guide_step(&mut b, &mut stages);
     let key = key.decoded(&input);
     drop(input);
@@ -612,7 +616,7 @@ mod tests {
             uploaded: None,
             haze: None,
             planes: None,
-            ca_on_gpu: false,
+            on_gpu: false,
             stand_in: None,
             gave_way: None,
             profile: None,

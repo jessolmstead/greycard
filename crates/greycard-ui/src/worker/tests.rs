@@ -552,7 +552,7 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
             uploaded: None,
             haze: None,
             planes: None,
-            ca_on_gpu: false,
+            on_gpu: false,
             stand_in: None,
             gave_way: None,
             profile: None,
@@ -597,7 +597,7 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
         uploaded: None,
         haze: None,
         planes: None,
-        ca_on_gpu: false,
+        on_gpu: false,
         stand_in: None,
         gave_way: None,
         profile: None,
@@ -656,16 +656,13 @@ fn an_export_after_a_gpu_base_develops_the_reference_s() {
     let mut base = None;
     let (outcome, _) = develop_once(&frame, &mut base, &mut gpu);
     assert!(matches!(outcome, Outcome::Developed { .. }));
-    assert!(base.as_ref().is_some_and(|b| b.ca_on_gpu));
+    assert!(base.as_ref().is_some_and(|b| b.on_gpu));
     let stamp = base.as_ref().unwrap().stamp;
     // The export: no GPU, the same edit.
     let (outcome, exported) = develop_once(&frame, &mut base, &mut None);
     assert!(matches!(outcome, Outcome::Developed { .. }));
     let b = base.as_ref().unwrap();
-    assert!(
-        !b.ca_on_gpu && b.stamp == stamp + 1,
-        "a fresh base on the CPU"
-    );
+    assert!(!b.on_gpu && b.stamp == stamp + 1, "a fresh base on the CPU");
     // And once made on the CPU the base is kept.
     let (_, again) = develop_once(&frame, &mut base, &mut None);
     assert_eq!(base.as_ref().unwrap().stamp, stamp + 1);
@@ -700,7 +697,7 @@ fn a_planes_thread_that_declines_or_dies_lands_the_develop_without_them() {
         uploaded: None,
         haze: None,
         planes: None,
-        ca_on_gpu: false,
+        on_gpu: false,
         stand_in: None,
         gave_way: None,
         profile: None,
@@ -874,7 +871,7 @@ fn an_export_does_not_reuse_a_gpu_ca_develop() {
     let mut base = None;
     let (_, image) = develop_once(&frame, &mut base, &mut None);
     let image = image.unwrap();
-    base.as_mut().unwrap().ca_on_gpu = true;
+    base.as_mut().unwrap().on_gpu = true;
     let wrong = Arc::new(
         WorkingImage::from_data(image.width, image.height, vec![0.5; image.data.len()]).unwrap(),
     );
@@ -914,10 +911,10 @@ fn an_export_does_not_reuse_a_gpu_ca_develop() {
         "the export's picture is the reference's"
     );
     assert!(
-        last.as_ref().is_some_and(|l| !l.ca_on_gpu),
+        last.as_ref().is_some_and(|l| !l.on_gpu),
         "the last develop is the CPU's now"
     );
-    assert!(base.as_ref().is_some_and(|b| !b.ca_on_gpu));
+    assert!(base.as_ref().is_some_and(|b| !b.on_gpu));
     // Now that it is the CPU's, it is reused.
     let again = export(&mut last, &mut base, &mut ai);
     assert!(Arc::ptr_eq(&got, &again), "the CPU develop is kept");
@@ -945,7 +942,7 @@ fn a_gpu_error_in_the_ca_falls_back_and_an_unsupported_size_keeps_the_context() 
     let (outcome, image) = develop_once(&frame, &mut base, &mut gpu);
     assert!(matches!(outcome, Outcome::Developed { .. }));
     assert!(gpu.is_none(), "the context is dropped after a device error");
-    assert!(base.as_ref().is_some_and(|b| !b.ca_on_gpu));
+    assert!(base.as_ref().is_some_and(|b| !b.on_gpu));
     let (_, reference) = develop_once(&frame, &mut None, &mut None);
     assert_eq!(image.unwrap().data, reference.unwrap().data);
 
@@ -965,7 +962,208 @@ fn a_gpu_error_in_the_ca_falls_back_and_an_unsupported_size_keeps_the_context() 
         gpu.is_some(),
         "the context is kept for a picture it cannot hold"
     );
-    assert!(base.as_ref().is_some_and(|b| !b.ca_on_gpu));
+    assert!(base.as_ref().is_some_and(|b| !b.on_gpu));
+}
+
+/// An edit whose lens section moves the picture without a database:
+/// the manual distortion and the manual aberration.
+fn lens_edit() -> Edit {
+    let mut edit = Edit::default();
+    edit.lens.enabled = true;
+    edit.lens.manual = -0.05;
+    edit.lens.ca_red = 0.003;
+    edit.lens.ca_blue = -0.002;
+    assert!(!edit.lens.is_identity(false));
+    edit
+}
+
+/// A fresh base as the CPU makes it before its lens step, `frame`
+/// under `edit`, for the step to be run on by each side.
+fn base_before_lens(frame: &Arc<RawFrame>, edit: &Edit) -> Base {
+    let mut before = edit.clone();
+    before.lens.enabled = false;
+    let mut base = None;
+    develop_turned(frame, &before, 0, &mut base);
+    let mut b = base.expect("a base");
+    b.edit = edit.clone();
+    b
+}
+
+/// The lens step of a fresh base on `gpu`: the base after it, the
+/// stage it timed, and the device's error when it had one.
+fn lens_stepped(
+    frame: &Arc<RawFrame>,
+    edit: &Edit,
+    gpu: Option<&greycard_gpu::Context>,
+) -> (Base, Stages, Option<greycard_gpu::Error>) {
+    let mut b = base_before_lens(frame, edit);
+    let mut stages = Stages::new();
+    let failed = super::develop::lens_step(
+        &mut b,
+        &Input::Raw(frame.clone()),
+        edit,
+        None,
+        gpu,
+        &mut stages,
+    );
+    (b, stages, failed)
+}
+
+/// `image` as a picture that is not a raw: no CA correction runs on
+/// it, so only the lens can put a base of it on the GPU.
+fn picture_input(image: &Arc<WorkingImage>) -> Input {
+    Input::Picture {
+        image: image.clone(),
+        meta: Arc::new(greycard_core::picture::Picture {
+            image: WorkingImage::new(0, 0),
+            make: String::new(),
+            model: String::new(),
+            shot: Default::default(),
+            metadata: Default::default(),
+            space: "sRGB".into(),
+            bits: 16,
+        }),
+    }
+}
+
+/// `develop_job` on `input` under `edit`: the picture, when it came
+/// back on the CPU.
+fn develop_picture(
+    input: &Input,
+    edit: &Edit,
+    base: &mut Option<Base>,
+    gpu: &mut Option<greycard_gpu::Context>,
+) -> Option<Arc<WorkingImage>> {
+    let deliver: Deliver = Arc::new(|_| {});
+    let (outcome, image) = develop_job(
+        input,
+        edit,
+        0,
+        1,
+        base,
+        &mut None,
+        &mut Ai::new(),
+        None,
+        None,
+        gpu,
+        &deliver,
+    );
+    assert!(matches!(outcome, Outcome::Developed { .. }));
+    image
+}
+
+/// The base's lens step on the GPU is the reference's within the GPU
+/// op's own tolerance (greycard-gpu's lens tests say why 1e-4 of a
+/// value in 0 to 1), the stage is timed as "lens" either way, and a
+/// base it ran in says so, so the export makes its own.
+#[test]
+fn a_base_with_the_gpu_lens_is_the_cpu_s() {
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("the GPU lens step");
+        return;
+    };
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let edit = lens_edit();
+    let (gpu, gpu_stages, failed) = lens_stepped(&frame, &edit, Some(&ctx));
+    assert!(failed.is_none());
+    let (cpu, cpu_stages, _) = lens_stepped(&frame, &edit, None);
+    assert!(gpu.on_gpu && !cpu.on_gpu);
+    for stages in [&gpu_stages, &cpu_stages] {
+        assert_eq!(stages.iter().filter(|(n, _)| *n == "lens").count(), 1);
+    }
+    let before = base_before_lens(&frame, &edit);
+    assert_ne!(
+        cpu.image.data, before.image.data,
+        "the lens moved something"
+    );
+    let scale = cpu.image.data.iter().fold(1f32, |m, v| m.max(v.abs()));
+    let worst = cpu
+        .image
+        .data
+        .iter()
+        .zip(&gpu.image.data)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0f32, f32::max);
+    assert!(worst <= 1e-4 * scale, "{worst} apart, values up to {scale}");
+
+    // A whole develop with the GPU marks its base, and the export's
+    // develop, which has none, makes the reference's afresh. On a
+    // picture that is not a raw, which has no CA correction, so only
+    // the lens can have marked it.
+    let input = picture_input(&before.image);
+    let develop = |base: &mut Option<Base>, gpu: &mut Option<greycard_gpu::Context>| {
+        develop_picture(&input, &edit, base, gpu)
+    };
+    let mut gpu = Some(ctx);
+    let mut base = None;
+    develop(&mut base, &mut gpu);
+    assert!(base.as_ref().is_some_and(|b| b.on_gpu));
+    let exported = develop(&mut base, &mut None).expect("a picture on the CPU");
+    assert!(base.as_ref().is_some_and(|b| !b.on_gpu));
+    let reference = develop(&mut None, &mut None).expect("a picture on the CPU");
+    assert_eq!(exported.data, reference.data);
+}
+
+/// A device error in the lens step falls back to the reference for
+/// that base, the base the CPU's to the bit and not marked, and is
+/// returned; a develop then drops the context for the session, as it
+/// does after the CA's. A picture the device cannot hold falls back
+/// the same way and is not an error: the context stays. A device
+/// allowed 20 workgroups a dimension cannot run the 400x320's 25
+/// across; one whose textures stop at 256 a side cannot hold it.
+#[test]
+fn a_gpu_error_in_the_lens_falls_back_and_an_unsupported_size_keeps_the_context() {
+    use greycard_gpu::wgpu::Limits;
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let edit = lens_edit();
+    let (cpu, _, _) = lens_stepped(&frame, &edit, None);
+    let small = WorkingImage::new(8, 8);
+    let identity = greycard_core::develop::lens::LensCorrection::default();
+    for (limits, device_error) in [
+        (
+            Limits {
+                max_compute_workgroups_per_dimension: 20,
+                ..Limits::default()
+            },
+            true,
+        ),
+        (
+            Limits {
+                max_texture_dimension_2d: 256,
+                ..Limits::default()
+            },
+            false,
+        ),
+    ] {
+        let Some(ctx) = context_with(limits.clone()) else {
+            skipped("the lens fallback check");
+            return;
+        };
+        let (b, stages, failed) = lens_stepped(&frame, &edit, Some(&ctx));
+        assert!(!b.on_gpu);
+        assert_eq!(b.image.data, cpu.image.data);
+        assert!(stages.iter().any(|(n, _)| *n == "lens"));
+        assert_eq!(failed.is_some(), device_error, "{failed:?} on {limits:?}");
+        // The step leaves the context for its caller to decide on.
+        assert!(ctx.correct_lens(&small, &identity).is_ok());
+        // A whole develop of a picture that is not a raw, where only
+        // the lens would run on the device, drops it after a device
+        // error and keeps it after a size it declines.
+        // The sharpen off, so that no op but the lens asks the device
+        // for anything; without the lens the same develop keeps it.
+        let input = picture_input(&base_before_lens(&frame, &edit).image);
+        let mut quiet = Edit::default();
+        quiet.sharpen.enabled = false;
+        let mut gpu = Some(ctx);
+        develop_picture(&input, &quiet, &mut None, &mut gpu);
+        assert!(gpu.is_some(), "{limits:?}");
+        let mut lensed = edit.clone();
+        lensed.sharpen.enabled = false;
+        let mut base = None;
+        develop_picture(&input, &lensed, &mut base, &mut gpu);
+        assert!(base.as_ref().is_some_and(|b| !b.on_gpu));
+        assert_eq!(gpu.is_none(), device_error, "{limits:?}");
+    }
 }
 
 /// The Detail section on the GPU: a move runs the local contrast
@@ -2298,7 +2496,7 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
     let (mut base, mut learned) = (None, None);
     let first = texture(develop_once(&frame, &mut base, &mut gpu).0);
     let b = base.as_ref().expect("a base");
-    assert!(b.ca_on_gpu && b.pre.is_some() && b.uploaded.is_some());
+    assert!(b.on_gpu && b.pre.is_some() && b.uploaded.is_some());
     let made = b.image.clone();
     drop(first);
 

@@ -398,3 +398,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§383. Keys for the sliders](notes/383-keys-for-the-sliders.md) (2026-10-21)
 - [§384. The neighbors kept current](notes/384-the-neighbors-kept-current.md) (2026-10-21)
 - [§385. Keys for the tools, and the lightbox's badges](notes/385-keys-for-the-tools-and-the-lightboxs-badges.md) (2026-10-21)
+- [§386. The lens correction on the GPU](notes/386-the-lens-correction-on-the-gpu.md) (2026-10-21)

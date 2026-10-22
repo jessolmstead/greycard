@@ -122,21 +122,40 @@ pub(super) fn lens_report(db: Option<&greycard_lens::Database>, input: &Input) -
     }
 }
 
-/// The developed picture with the edit's lens corrections: the
+/// The edit's lens corrections for a picture `width` by `height`: the
 /// profile's from the database, the manual one, in the order the edit
-/// gives them. The picture itself when there is nothing to do.
-pub(super) fn correct_lens(
-    image: WorkingImage,
+/// gives them. None when there is nothing to do.
+pub(super) fn lens_corrections(
+    width: usize,
+    height: usize,
     input: &Input,
     edit: &Edit,
     db: Option<&greycard_lens::Database>,
-) -> WorkingImage {
+) -> Vec<LensCorrection> {
     let (make, model, shot) = input.identity();
-    correct_lens_of(image, make, model, shot, edit, db)
+    lens_corrections_of(width, height, make, model, shot, edit, db)
 }
 
-/// [`correct_lens`] for a frame named by its body and its shot: the
-/// reduced develop's, which has no `Input`.
+/// [`lens_corrections`] for a frame named by its body and its shot.
+fn lens_corrections_of(
+    width: usize,
+    height: usize,
+    make: &str,
+    model: &str,
+    shot: &Shot,
+    edit: &Edit,
+    db: Option<&greycard_lens::Database>,
+) -> Vec<LensCorrection> {
+    let profile = db
+        .and_then(|db| db.profile_for(make, model, shot))
+        .map(|p| p.correction(width, height, shot, greycard_lens::Wanted::ALL));
+    edit.lens.corrections(profile)
+}
+
+/// The developed picture with the edit's lens corrections, on the
+/// CPU, for a frame named by its body and its shot: the reduced
+/// develop's, which has no `Input`. The picture itself when there is
+/// nothing to do.
 pub(crate) fn correct_lens_of(
     image: WorkingImage,
     make: &str,
@@ -145,11 +164,8 @@ pub(crate) fn correct_lens_of(
     edit: &Edit,
     db: Option<&greycard_lens::Database>,
 ) -> WorkingImage {
-    let profile = db
-        .and_then(|db| db.profile_for(make, model, shot))
-        .map(|p| p.correction(image.width, image.height, shot, greycard_lens::Wanted::ALL));
     let mut image = image;
-    for c in edit.lens.corrections(profile) {
+    for c in lens_corrections_of(image.width, image.height, make, model, shot, edit, db) {
         image = greycard_core::develop::lens::correct(&image, &c).0;
     }
     image

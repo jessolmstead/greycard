@@ -48,7 +48,7 @@ pub(super) fn develop_job(
     if let Some(b) = base.as_mut()
         && b.turn != turn
         && b.edit.same_base(edit)
-        && (gpu.is_some() || !b.ca_on_gpu)
+        && (gpu.is_some() || !b.on_gpu)
         && turns_exactly(edit, lenses)
     {
         let started = Instant::now();
@@ -59,12 +59,13 @@ pub(super) fn develop_job(
         );
     }
     // A base is kept while its edit's base is the same, and, without
-    // a GPU (the export), only if its CA correction was not the GPU's:
-    // the export's picture is the reference's, so it makes the base
-    // afresh on the CPU, and the session keeps that one.
-    let fresh_base = !base.as_ref().is_some_and(|b| {
-        b.edit.same_base(edit) && b.turn == turn && (gpu.is_some() || !b.ca_on_gpu)
-    });
+    // a GPU (the export), only if neither its CA correction nor its
+    // lens correction was the GPU's: the export's picture is the
+    // reference's, so it makes the base afresh on the CPU, and the
+    // session keeps that one.
+    let fresh_base = !base
+        .as_ref()
+        .is_some_and(|b| b.edit.same_base(edit) && b.turn == turn && (gpu.is_some() || !b.on_gpu));
     // Where the base came from, for the log line: one taken back from
     // the shelf says so on its first develop, and is kept after.
     let from = if fresh_base {
@@ -112,7 +113,7 @@ pub(super) fn develop_job(
                 uploaded: None,
                 haze: None,
                 planes: None,
-                ca_on_gpu: false,
+                on_gpu: false,
                 stand_in: None,
                 gave_way: None,
                 profile: None,
@@ -183,7 +184,7 @@ pub(super) fn develop_job(
         }
         match made {
             Ok(mut b) => {
-                b.ca_on_gpu |= ca_on_gpu;
+                b.on_gpu |= ca_on_gpu;
                 // The profile the develop resolved its white through,
                 // chosen as `white_balance_for` in the engine chooses
                 // it: the edit's DCP, else the file's own.
@@ -197,7 +198,14 @@ pub(super) fn develop_job(
                         | LearnedReport::Unavailable(_)
                 )
                 .then(|| report.clone());
-                lens_step(&mut b, input, edit, lenses, &mut stages);
+                if let Some(e) = lens_step(&mut b, input, edit, lenses, gpu.as_ref(), &mut stages) {
+                    // As the CA's: the device is not trusted again
+                    // this session.
+                    tracing::warn!("the GPU lens correction: {e}; the CPU's from now on");
+                    if let Some(ctx) = gpu.take() {
+                        ctx.release();
+                    }
+                }
                 guide_step(&mut b, &mut stages);
                 *base = Some(b)
             }
@@ -628,24 +636,59 @@ pub(super) fn resolved_profile(
 }
 
 /// A fresh base's lens step: the edit's lens corrections, then its
-/// defringe, timed as "lens" when either runs.
+/// defringe, timed as "lens" when either runs. A correction that moves
+/// the picture runs on `gpu` when there is one, and the base says so
+/// (`on_gpu`). A picture the device cannot hold is this op's to
+/// decline, on the CPU with the context kept; a device error falls
+/// back to the reference for the rest of this base and is returned,
+/// for the caller to act on as it does the CA's.
 pub(super) fn lens_step(
     b: &mut Base,
     input: &Input,
     edit: &Edit,
     lenses: Option<&greycard_lens::Database>,
+    gpu: Option<&greycard_gpu::Context>,
     stages: &mut Stages,
-) {
+) -> Option<greycard_gpu::Error> {
     let corrects = !edit.lens.is_identity(lenses.is_some());
     let defringe = edit.lens.defringe();
     if !corrects && defringe.is_none() {
-        return;
+        return None;
     }
+    let mut failed = None;
     let started = Instant::now();
     let held = std::mem::replace(&mut b.image, Arc::new(WorkingImage::new(0, 0)));
     let mut image = Arc::try_unwrap(held).unwrap_or_else(|a| (*a).clone());
     if corrects {
-        image = correct_lens(image, input, edit, lenses);
+        let mut gpu = gpu;
+        let mut on_gpu = false;
+        for c in lens_corrections(image.width, image.height, input, edit, lenses) {
+            // A correction that moves nothing is a multiply a pixel,
+            // quicker on the CPU than the frame's trip to the device
+            // and back, and the export can then keep the base.
+            let gpu_here = gpu.filter(|_| c.moves());
+            image = match gpu_here.map(|ctx| ctx.correct_lens(&image, &c)) {
+                Some(Ok((out, _))) => {
+                    on_gpu = true;
+                    out
+                }
+                Some(Err(e)) => {
+                    match e {
+                        greycard_gpu::Error::Unsupported(why) => {
+                            tracing::info!("the lens correction on the CPU: {why}");
+                        }
+                        e => failed = Some(e),
+                    }
+                    gpu = None;
+                    greycard_core::develop::lens::correct(&image, &c).0
+                }
+                None => greycard_core::develop::lens::correct(&image, &c).0,
+            };
+        }
+        if on_gpu {
+            b.on_gpu = true;
+            tracing::info!("lens on the GPU");
+        }
     }
     // After the geometry, so the resample does not smear a chroma just
     // neutralized, and before the retouch and the sharpen.
@@ -654,6 +697,7 @@ pub(super) fn lens_step(
     }
     b.image = Arc::new(image);
     stages.push(("lens", started.elapsed().as_secs_f64()));
+    failed
 }
 
 /// A fresh base's guide plane, after the lens and the defringe and

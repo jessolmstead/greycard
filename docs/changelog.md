@@ -27,6 +27,9 @@ design note behind it.
   Radial for the next drag. In the lightbox, J shows the rating, flag,
   and label on each tile, off at each start
   ([§385](https://github.com/jessolmstead/greycard/blob/master/docs/notes/385-keys-for-the-tools-and-the-lightboxs-badges.md))
+- A frame's first open is about 0.7 s quicker on a machine with eight
+  cores or fewer: the lens correction runs on the GPU
+  ([§386](https://github.com/jessolmstead/greycard/blob/master/docs/notes/386-the-lens-correction-on-the-gpu.md))
 - Going back to a frame you just left no longer develops it again.
   The bases of recent frames are kept in memory under a budget set by
   the machine's RAM, so a return costs a fraction of a second where a

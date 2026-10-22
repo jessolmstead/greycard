@@ -190,11 +190,9 @@ seconds.
       only worth showing if the Mac timing says the first develop
       itself is the wait; waits on that timing. §270 builds the
       reduced develop itself, for the edited thumbnails
-- [ ] The first open of a 45 MP frame: the demosaic (1.2 s) and the
-      lens correction (0.7 s) are most of a fresh base's 2.5 s on
-      eight threads, now that the develop line times each stage
-      (§378); the lens correction on the GPU is the larger
-      untouched piece
+- [ ] The first open of a 45 MP frame: the demosaic (1.2 s) is most
+      of a fresh base's 1.9 s on eight threads, now the lens is on the
+      GPU (§378, §386)
 - [ ] The CoreML provider, so the learned denoiser runs on the Neural
       Engine and the M5's GPU neural accelerators: ort's `coreml`
       feature, a `Provider::CoreMl` with the ML Program format and a
