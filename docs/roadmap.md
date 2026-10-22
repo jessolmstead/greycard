@@ -730,10 +730,6 @@ clears or a tester asks for it.
       Export the queue and Clear; the queued frames marked in the strip
       and the grid. Covers the destination half of the naming-patterns
       line (§157) and the last-location line above
-- [ ] After the keys of §383 and §385: a focused slider kept in view
-      as the panel moves; the filter's, a custom aspect's, and a mask
-      name's text boxes losing the keys when the pointer crosses the
-      picture; Escape leaving the crop
 
 
 #### Library

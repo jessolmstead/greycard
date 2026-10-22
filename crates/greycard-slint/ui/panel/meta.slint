@@ -5,7 +5,7 @@
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { KeywordChip } from "../structs.slint";
-import { Section } from "../controls.slint";
+import { Section, Typing } from "../controls.slint";
 
 // A keyword on the selection: the word, and a cross that takes it off
 // every frame. One that only some of the frames carry is dimmed, and
@@ -132,6 +132,7 @@ export component MetaSection inherits Section {
         // elsewhere sends it too.
         accepted(t) => { root.send-title(); root.focus-keys(); }
         changed has-focus => {
+            Typing.box-focus(self.has-focus);
             if (!self.has-focus) { root.send-title(); }
         }
         key-pressed(e) => {
@@ -177,6 +178,7 @@ export component MetaSection inherits Section {
             }
         }
         changed has-focus => {
+            Typing.box-focus(self.has-focus);
             if (self.has-focus) {
                 root.keyword-focused();
             } else {

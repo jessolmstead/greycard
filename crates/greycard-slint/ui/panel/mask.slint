@@ -5,7 +5,7 @@
 
 import { LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Tips, TipArea, Section, EditSlider, Steps, Toggle, PanelButton, Segmented } from "../controls.slint";
+import { Tips, TipArea, Section, EditSlider, Steps, Toggle, PanelButton, Segmented, Typing } from "../controls.slint";
 
 // The list: Global, then each mask with its switch, the chosen one
 // with its bin; then New mask. It never scrolls with the sections
@@ -250,7 +250,16 @@ export component AdjustmentsSection inherits Section {
                 LineEdit {
                     text <=> root.adjustment-name;
                     placeholder-text: "Name";
+                    accessible-label: "Mask name";
                     edited(t) => { root.renamed(); }
+                    // Enter or Escape gives the keys back to the
+                    // window.
+                    accepted(t) => { Typing.done += 1; }
+                    key-pressed(e) => {
+                        if (e.text == Key.Escape) { Typing.done += 1; return accept; }
+                        return reject;
+                    }
+                    changed has-focus => { Typing.box-focus(self.has-focus); }
                 }
                 HorizontalLayout {
                     spacing: Theme.space-2;

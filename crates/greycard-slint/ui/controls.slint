@@ -116,6 +116,13 @@ export component Section inherits VerticalLayout {
     in property <string> note;
     in property <bool> switchable: false;
     in-out property <bool> on: true;
+    // Whether the focused slider is in this section, by where it last
+    // said it was (it says so at each move).
+    pure function holds-the-keys() -> bool {
+        let x = SliderKeys.reveal-x - root.absolute-position.x;
+        let y = SliderKeys.reveal-y - root.absolute-position.y;
+        return x >= 0 && x <= root.width && y >= 0 && y < root.height;
+    }
     // Another section has taken this one over and it does not act
     // whatever its switch says: the switch shows off and is dead,
     // the body is dimmed, and `on` keeps what it was for when the
@@ -187,7 +194,16 @@ export component Section inherits VerticalLayout {
             }
             head := TouchArea {
                 mouse-cursor: MouseCursor.pointer;
-                clicked => { Typing.close-all(); root.collapsed = !root.collapsed; }
+                // A focused slider elsewhere in the panel keeps the
+                // keys, and the panel keeps it in view as this
+                // section opens or folds; one in this section lets
+                // go, since the fold takes it out of view.
+                clicked => {
+                    if (SliderKeys.holder == 0 || Typing.editing || root.holds-the-keys()) {
+                        Typing.close-all();
+                    }
+                    root.collapsed = !root.collapsed;
+                }
             }
         }
         if root.switchable: Switch {
@@ -262,8 +278,12 @@ export global SliderKeys {
     // Counted up once every slider has answered.
     in-out property <int> settled: 0;
     // A slider reached by a key, for the panel to scroll into view:
-    // counted up, and where it is in the window.
+    // counted up, and where it is in the window. Not `by-key` when
+    // the focused slider has only moved on the screen: the panel
+    // keeps it in view if the layout moved it, and lets it go if the
+    // wheel took it out of view.
     in-out property <int> reveal: 0;
+    in-out property <bool> by-key: true;
     in-out property <length> reveal-x;
     in-out property <length> reveal-y;
     in-out property <length> reveal-height;
@@ -297,11 +317,20 @@ export global Typing {
     in-out property <bool> editing: false;
     // Counted up to close whatever field is open.
     in-out property <int> cancel: 0;
+    // The panel's text boxes focused (the filter's words, a custom
+    // aspect, a mask's name, and the frame's title and keywords): each counts itself in as it takes the focus
+    // and out as it loses it, so the order of the two between boxes
+    // does not matter. While above zero, the pointer crossing the
+    // picture leaves the keys with the box.
+    in-out property <int> boxes: 0;
+    public function box-focus(has: bool) {
+        self.boxes = has ? self.boxes + 1 : max(0, self.boxes - 1);
+    }
     // Close the open field, if any, typed text not counting: for a
     // click on a control that takes no focus (a tab, a swatch, the
     // curve, a section's header), and for a tab or a mask target
     // changed under the field.
-    // A focused slider lets go of the keys the same way.
+    // A focused slider or text box lets go of the keys the same way.
     public function close-all() {
         if (self.editing) {
             self.editing = false;
@@ -309,6 +338,10 @@ export global Typing {
             self.done += 1;
         } else if (SliderKeys.holder != 0) {
             SliderKeys.holder = 0;
+            self.done += 1;
+        } else if (self.boxes > 0) {
+            // A box taken away while focused says nothing itself.
+            self.boxes = 0;
             self.done += 1;
         }
     }
@@ -619,10 +652,23 @@ export component EditSlider inherits Rectangle {
         SliderKeys.asked += 1;
     }
     function reveal() {
+        SliderKeys.by-key = true;
+        root.show();
+    }
+    function show() {
         SliderKeys.reveal-x = root.absolute-position.x + root.width / 2;
         SliderKeys.reveal-y = root.absolute-position.y;
         SliderKeys.reveal-height = root.height;
         SliderKeys.reveal += 1;
+    }
+    // Where it is while it has the keys, followed so that the panel
+    // keeps it in view.
+    property <length> held-y: fs.has-focus ? root.absolute-position.y : 0px;
+    changed held-y => {
+        if (fs.has-focus) {
+            SliderKeys.by-key = false;
+            root.show();
+        }
     }
     // The first round: put itself forward if it is past the asker in
     // its column and nearer than the best so far. Not a disabled

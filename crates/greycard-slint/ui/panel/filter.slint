@@ -4,7 +4,7 @@
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { FilterChip, FacetRow, SortMenu } from "../structs.slint";
-import { PanelButton } from "../controls.slint";
+import { PanelButton, Typing } from "../controls.slint";
 
 // A chip of the filter: a pill that says what it asks and how many
 // frames it would leave. A chip that leads nowhere is dimmed rather
@@ -370,6 +370,7 @@ export component FilterBar inherits Rectangle {
                 horizontal-stretch: 1;
                 edited(t) => { root.text-edited(t); }
                 accepted(t) => { root.released(); }
+                changed has-focus => { Typing.box-focus(self.has-focus); }
                 key-pressed(e) => {
                     // Esc undoes the whole excursion in one press:
                     // the words go and the window's keys have the

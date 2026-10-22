@@ -303,7 +303,7 @@ pub(crate) const TABLE: &[Group] = &[
             act("keys", &["?"], "The keys sheet"),
             line(
                 &["Esc"],
-                "Close a sheet, put a tool down, let go of a set, or go back to one frame",
+                "Close a sheet, put a tool down, leave the crop, let go of a set, or go back to one frame",
             ),
         ],
     },
@@ -1810,6 +1810,191 @@ mod tests {
             .dispatch_event(WindowEvent::KeyReleased { text: "k".into() });
         press(&app, "k");
         assert_eq!(asked.get(), 1, "a fresh press opens one");
+    }
+
+    /// Escape in the crop puts down what is in hand first, one thing a
+    /// press: a typed value, the Draw, the level; then it leaves the
+    /// crop, as Done does. In the grid it is the grid's.
+    #[test]
+    fn escape_leaves_the_crop_once_nothing_is_in_hand() {
+        let (app, _state, _worker) = develop_window();
+        press(&app, "r");
+        assert!(app.get_crop_mode());
+        let (at, size) = crate::testing::labeled(&app, "Angle value");
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        press(&app, Key::Escape);
+        assert!(app.get_crop_mode(), "the typed value went first");
+        app.set_crop_draw_armed(true);
+        press(&app, Key::Escape);
+        assert!(!app.get_crop_draw_armed());
+        assert!(app.get_crop_mode(), "the Draw went next");
+        app.set_level_mode(true);
+        press(&app, Key::Escape);
+        assert!(!app.get_level_mode());
+        assert!(app.get_crop_mode(), "then the level");
+        press(&app, Key::Escape);
+        assert!(!app.get_crop_mode(), "then the crop");
+        assert_eq!(app.get_panel_tab(), "Crop");
+        // Out of the crop, Escape is nothing more here.
+        press(&app, Key::Escape);
+        assert!(!app.get_crop_mode());
+        // The grid over a crop left on: its Escape, back to the loupe.
+        press(&app, "r");
+        app.set_grid_open(true);
+        press(&app, Key::Escape);
+        assert!(!app.get_grid_open());
+        assert!(app.get_crop_mode(), "the grid's Escape");
+    }
+
+    /// A held Escape is one press: leaving the crop, its repeats do not
+    /// go on to stop an export or let go of a set.
+    #[test]
+    fn a_held_escape_leaves_the_crop_and_does_nothing_more() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let (app, _state, _worker) = develop_window();
+        let (stops, collapses) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+        {
+            let stops = stops.clone();
+            app.on_export_stop(move || stops.set(stops.get() + 1));
+            let collapses = collapses.clone();
+            app.on_set_collapsed(move || collapses.set(collapses.get() + 1));
+        }
+        press(&app, "r");
+        app.set_export_running(true);
+        app.set_set_count(2);
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Escape.into(),
+        });
+        for _ in 0..2 {
+            app.window().dispatch_event(WindowEvent::KeyPressRepeated {
+                text: Key::Escape.into(),
+            });
+        }
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Escape.into(),
+        });
+        assert!(!app.get_crop_mode());
+        assert_eq!(stops.get(), 0, "the export runs on");
+        assert_eq!(collapses.get(), 0, "the set is held");
+        // A press of its own is the export's.
+        press(&app, Key::Escape);
+        assert_eq!(stops.get(), 1);
+    }
+
+    /// The custom aspect's box taken away under its focus, by a frame
+    /// with another aspect: the picture takes the keys at a crossing
+    /// again.
+    #[test]
+    fn a_custom_aspect_box_taken_away_hands_the_keys_back() {
+        use crate::testing::{click, labeled, type_text};
+        let (app, state, _worker) = develop_window();
+        press(&app, "r");
+        app.set_aspect_name("Custom".into());
+        let (at, size) = labeled(&app, "Custom aspect");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(app.global::<crate::Typing>().get_boxes(), 1);
+        app.invoke_select(1);
+        assert_ne!(app.get_aspect_name(), "Custom");
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(700.0, 400.0),
+        });
+        assert_eq!(app.global::<crate::Typing>().get_boxes(), 0);
+        type_text(&app, "2");
+        assert_eq!(state.borrow().sidecars[1].meta.rating, 2, "rated");
+    }
+
+    /// An aspect changed from the Rust side under another box (the
+    /// filter's words moving the frame, say) leaves that box the keys.
+    #[test]
+    fn an_aspect_change_leaves_another_box_its_keys() {
+        use crate::testing::type_text;
+        let (app, _state, _worker) = develop_window();
+        app.set_aspect_name("1:1".into());
+        app.set_panel_tab("Crop".into());
+        press(&app, "/");
+        slint::platform::update_timers_and_animations();
+        type_text(&app, "a");
+        app.set_aspect_name("Free".into());
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(0.0, 0.0),
+        });
+        assert_eq!(app.global::<crate::Typing>().get_boxes(), 1);
+        type_text(&app, "b");
+        assert_eq!(app.get_filter_text(), "ab");
+    }
+
+    /// Each of the panel's text boxes keeps the keys while the pointer
+    /// crosses the picture: a digit is typed, not a rating. Escape
+    /// gives them back to the window.
+    #[test]
+    fn a_text_box_keeps_the_keys_over_the_picture() {
+        use crate::testing::{click, labeled, type_text};
+        let (app, state, _worker) = develop_window();
+        let rating = |state: &std::rc::Rc<std::cell::RefCell<crate::State>>| {
+            state.borrow().sidecars[0].meta.rating
+        };
+        let over_the_picture = |app: &App| {
+            app.window().dispatch_event(WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(700.0, 400.0),
+            });
+        };
+        let click_on = |app: &App, label: &str| {
+            let (at, size) = labeled(app, label);
+            click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        };
+        let mut expected = 0;
+        let mut keys_back = |app: &App, what: &str| {
+            assert_eq!(rating(&state), expected, "{what}: typed, not rated");
+            press(app, Key::Escape);
+            expected = if expected == 3 { 4 } else { 3 };
+            press(app, expected.to_string());
+            assert_eq!(rating(&state), expected, "{what}: the keys are back");
+        };
+
+        // The title and the keywords, on the Develop tab.
+        click_on(&app, "Frame title");
+        over_the_picture(&app);
+        type_text(&app, "5");
+        assert_eq!(app.get_title_text(), "5");
+        keys_back(&app, "the title");
+        click_on(&app, "Add keywords");
+        over_the_picture(&app);
+        type_text(&app, "5");
+        assert_eq!(app.get_keyword_text(), "5");
+        keys_back(&app, "the keywords");
+
+        // A custom aspect, in the crop: its Escape gives the keys
+        // back and leaves the crop on.
+        press(&app, "r");
+        app.set_aspect_name("Custom".into());
+        click_on(&app, "Custom aspect");
+        over_the_picture(&app);
+        type_text(&app, "5");
+        assert!(app.get_aspect_custom().ends_with('5'));
+        keys_back(&app, "the custom aspect");
+        assert!(app.get_crop_mode(), "the box's Escape, not the crop's");
+        press(&app, "r");
+
+        // A mask's name.
+        press(&app, "m");
+        press(&app, Key::Escape);
+        assert_eq!(app.get_placing(), "");
+        click_on(&app, "Mask name");
+        over_the_picture(&app);
+        type_text(&app, "5");
+        assert!(app.get_adjustment_name().ends_with('5'));
+        keys_back(&app, "the mask's name");
+
+        // The filter's words, in the CULLING section beside the
+        // picture.
+        app.set_panel_tab(crate::panel::cull::CULL_TAB.into());
+        press(&app, "/");
+        slint::platform::update_timers_and_animations();
+        over_the_picture(&app);
+        type_text(&app, "5");
+        assert_eq!(app.get_filter_text(), "5");
+        keys_back(&app, "the filter");
     }
 
     #[test]

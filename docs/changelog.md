@@ -12,6 +12,11 @@ design note behind it.
   jobs says so in red; Reset to defaults puts them all back. Kept in
   settings.json
   ([§390](https://github.com/jessolmstead/greycard/blob/master/docs/notes/390-rebindable-keys.md))
+- A focused slider stays in view when a section opens above it; the
+  filter, a custom aspect, a mask name, the title, and the keywords
+  keep the keys while the pointer crosses the picture; Esc leaves
+  the crop
+  ([§391](https://github.com/jessolmstead/greycard/blob/master/docs/notes/391-keys-follow-ups.md))
 
 ### Library
 

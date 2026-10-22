@@ -82,4 +82,5 @@ table's handler test holds the new chords to the handler.
 
 The user guide's Keys chapter needs the five rows, and its J row "in the Loupe". We did not run the
 editor; the badges' place on a tile is checked by the accessible
-labels, not by eye. Escape does not leave the crop, as before.
+labels, not by eye. Escape does not leave the crop, as before
+(§391 does).

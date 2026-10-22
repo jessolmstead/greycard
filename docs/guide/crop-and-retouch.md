@@ -27,8 +27,9 @@ The tab has three sections: **CROP**, **ROTATE** and **PERSPECTIVE**.
    - Hold **Alt** as you drag inside the rectangle to draw a new crop
      the same way. Some desktops keep Alt and a drag for moving
      windows; use **Draw** there.
-3. Click **Done**, or switch to another tab. The picture shows
-   cropped.
+3. Click **Done**, press Esc, or switch to another tab. The picture
+   shows cropped. With **Draw**, **Level**, or a guide in hand, the
+   first Esc puts it down and the next leaves the crop.
 
 **Aspect** holds the crop to a shape:
 

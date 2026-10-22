@@ -2261,11 +2261,20 @@ export component App inherits Window {
             if (chord == "Esc" && root.guide-mode != "") { root.guide-mode = ""; root.guide-dropped(); return accept; }
             if (chord == "Esc" && root.level-mode) { root.level-mode = false; return accept; }
             if (chord == "Esc" && root.crop-draw-armed) { root.crop-draw-armed = false; return accept; }
+            // The crop, once nothing in it is in hand: out, as by its
+            // Done. The Develop view's alone, as R is.
+            if (chord == "Esc" && root.crop-mode && !root.grid-open && !root.cull-mode
+                && !root.lightbox && !root.sheet-open()) {
+                if (!e.repeat) { root.crop-in-or-out(); }
+                return accept;
+            }
             // A set being exported stops before Escape means anything
             // else: the sheet is gone by then, and this is its cancel.
             // Once stopping, Escape is the window's again.
+            // A held Escape is one press here too: its repeats, after
+            // the press left the crop, say, must not stop the set.
             if (chord == "Esc" && root.export-running && !root.export-stopping && !root.sheet-open()) {
-                root.export-stop();
+                if (!e.repeat) { root.export-stop(); }
                 return accept;
             }
             // A set of frames goes back to the one on screen before
@@ -2273,7 +2282,7 @@ export component App inherits Window {
             // culling mode with the set still held would leave it
             // chosen where it cannot be seen.
             if (chord == "Esc" && root.set-count > 1 && !root.sheet-open()) {
-                root.set-collapsed();
+                if (!e.repeat) { root.set-collapsed(); }
                 return accept;
             }
             // The lightbox: L in and out, Return to the loupe on the
@@ -2440,7 +2449,7 @@ export component App inherits Window {
             // enough that stopping it by the way would cost a card's
             // worth of waiting. Its Stop button always stops it.
             if (chord == "Esc" && root.import-running && !root.import-stopping && !root.sheet-open()) {
-                root.import-stop();
+                if (!e.repeat) { root.import-stop(); }
                 return accept;
             }
             if (root.culling && !root.sheet-open() && chord == "V") {
@@ -2666,7 +2675,8 @@ export component App inherits Window {
             // viewport clips, or that work is drawn over the left bar
             // and the filmstrip and takes their clicks besides.
             view := Viewport {
-                typing: root.snapshot-editing >= 0 || SliderKeys.holder != 0 || Typing.editing;
+                typing: root.snapshot-editing >= 0 || SliderKeys.holder != 0 || Typing.editing
+                    || Typing.boxes > 0;
                 zoom(a, b, c) => { root.zoom(a, b, c); }
                 pan(a, b) => { root.pan(a, b); }
                 wheel-pan(a, b) => { root.wheel-pan(a, b); }
@@ -2867,19 +2877,33 @@ export component App inherits Window {
                 // Named so the tests find the view's own edges.
                 panel-view := ScrollView {
                     content-y <=> root.panel-scroll;
-                    // A slider reached by a key, scrolled into view.
+                    // A slider reached by a key, scrolled into view,
+                    // and kept there as the layout moves it. Moved by
+                    // the wheel, it is not chased: out of view, it
+                    // lets go of the keys, which Slint would drop at
+                    // the next event and give to nobody.
                     property <int> reveal: SliderKeys.reveal;
+                    property <length> held-scroll;
                     changed reveal => {
+                        // A sheet's own sliders are not the panel's.
+                        if (root.sheet-open()) { return; }
                         let left = self.absolute-position.x;
                         if (SliderKeys.reveal-x < left || SliderKeys.reveal-x > left + self.width) { return; }
                         let top = SliderKeys.reveal-y - self.absolute-position.y;
                         let bottom = top + SliderKeys.reveal-height;
+                        let wheeled = !SliderKeys.by-key && root.panel-scroll != self.held-scroll;
+                        self.held-scroll = root.panel-scroll;
+                        if (wheeled) {
+                            if (bottom <= 0 || top >= self.visible-height) { Typing.close-all(); }
+                            return;
+                        }
                         if (top < Theme.space-2) {
                             root.panel-scroll = min(0px, root.panel-scroll + Theme.space-2 - top);
                         } else if (bottom > self.visible-height - Theme.space-2) {
                             root.panel-scroll = max(min(0px, self.visible-height - self.content-height),
                                 root.panel-scroll - (bottom - self.visible-height + Theme.space-2));
                         }
+                        self.held-scroll = root.panel-scroll;
                     }
                     // Under a tall scope in a short window the pinned
                     // list, down to its one row, can still want more

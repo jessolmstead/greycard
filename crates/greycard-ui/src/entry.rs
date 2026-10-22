@@ -572,6 +572,172 @@ mod tests {
         assert!(near(app.get_contrast(), 2f32.powf(0.02)));
     }
 
+    /// The Develop tab's sliders by their labels, and each one's value
+    /// as a screen reader has it, its top, and its height.
+    fn slider_values(app: &App) -> Vec<(String, String, f32, f32)> {
+        use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+        const LABELS: &[&str] = &[
+            "Temperature",
+            "Tint",
+            "Exposure",
+            "Contrast",
+            "Highlights",
+            "Shadows",
+            "Whites",
+            "Blacks",
+            "Vibrance",
+            "Saturation",
+            "Blend",
+            "Strength",
+            "Texture",
+            "Clarity",
+            "Dehaze",
+            "Radius",
+            "Iterations",
+            "Threshold",
+            "Amount",
+            "Midpoint",
+            "Feather",
+            "Roundness",
+            "Size",
+        ];
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        LABELS
+            .iter()
+            .flat_map(|label| ElementHandle::find_by_accessible_label(app, label))
+            .filter(|e| e.accessible_role() == Some(AccessibleRole::Slider))
+            .map(|e| {
+                (
+                    e.accessible_label().unwrap_or_default().to_string(),
+                    e.accessible_value().unwrap_or_default().to_string(),
+                    e.absolute_position().y,
+                    e.size().height,
+                )
+            })
+            .collect()
+    }
+
+    /// The slider Up moves, and where it is: found by the value that
+    /// changed, then put back with Down.
+    fn focused_slider(app: &App) -> (String, f32, f32) {
+        use crate::testing::press;
+        use slint::platform::Key;
+        let before = slider_values(app);
+        press(app, Key::UpArrow);
+        let after = slider_values(app);
+        press(app, Key::DownArrow);
+        let moved = after
+            .into_iter()
+            .find(|a| !before.iter().any(|b| b.0 == a.0 && b.1 == a.1))
+            .expect("a slider took the arrow");
+        (moved.0, moved.2, moved.2 + moved.3)
+    }
+
+    /// The panel's view, top and foot, in the window.
+    fn panel_view(app: &App) -> (f32, f32) {
+        let view =
+            i_slint_backend_testing::ElementHandle::find_by_element_id(app, "App::panel-view")
+                .next()
+                .unwrap();
+        let (at, size) = (view.absolute_position(), view.size());
+        (at.y, at.y + size.height)
+    }
+
+    /// Period down the Develop tab: the panel scrolls so that each
+    /// slider reached is in its view. A section opening above the
+    /// focused one keeps it in view; the wheel taking it out of view
+    /// hands the keys to the window rather than to nobody.
+    #[test]
+    fn a_slider_reached_by_a_key_is_scrolled_into_view() {
+        use crate::testing::press;
+        use slint::platform::Key;
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1000));
+            slint::platform::update_timers_and_animations();
+        };
+        let (app, state, _worker) = exposure_focused();
+        app.set_collapsed_wb(true);
+        settle();
+        let (top, bottom) = panel_view(&app);
+        let start = app.get_panel_scroll();
+        let mut steps = 0;
+        while steps < 30 && app.get_panel_scroll() >= start {
+            steps += 1;
+            press(&app, ".");
+            let (label, y0, y1) = focused_slider(&app);
+            assert!(
+                y0 >= top && y1 <= bottom,
+                "{label} at {y0}..{y1}, the view {top}..{bottom}"
+            );
+        }
+        assert!(
+            app.get_panel_scroll() < start,
+            "the walk never left the first view"
+        );
+        // The white balance opened above it by a click on its header:
+        // the slider is pushed down past the view's foot, and the
+        // panel follows it.
+        let (label, _, _) = focused_slider(&app);
+        click_header(&app, "WHITE BALANCE", top, bottom);
+        settle();
+        assert!(!app.get_collapsed_wb());
+        let (again, y0, y1) = focused_slider(&app);
+        assert_eq!(again, label, "the slider kept the keys");
+        assert!(y0 >= top && y1 <= bottom, "{y0}..{y1} in {top}..{bottom}");
+        // Back up to the exposure, in view again.
+        for _ in 0..steps {
+            press(&app, ",");
+        }
+        let (label, y0, y1) = focused_slider(&app);
+        assert_eq!(label, "Exposure");
+        assert!(y0 >= top && y1 <= bottom, "{y0}..{y1} in {top}..{bottom}");
+        // The wheel takes the panel to its foot, from under it.
+        let sections =
+            i_slint_backend_testing::ElementHandle::find_by_element_id(&app, "App::panel-sections")
+                .next()
+                .unwrap();
+        app.set_panel_scroll(-(sections.size().height - (bottom - top)));
+        settle();
+        press(&app, Key::RightArrow);
+        assert_eq!(state.borrow().current, Some(1), "the window's arrow");
+        assert_eq!(app.get_exposure(), 0.0);
+    }
+
+    /// A click on a section's header in view, found without scrolling
+    /// the panel (as `testing::labeled` would).
+    fn click_header(app: &App, title: &str, top: f32, bottom: f32) {
+        let header = i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, title)
+            .next()
+            .unwrap_or_else(|| panic!("no {title:?}"));
+        let (at, size) = (header.absolute_position(), header.size());
+        let y = at.y + size.height / 2.0;
+        assert!(
+            y > top && y < bottom,
+            "{title:?} at {y}, the view {top}..{bottom}"
+        );
+        crate::testing::click(app, at.x + size.width / 2.0, y);
+    }
+
+    /// A click on the header of the focused slider's own section folds
+    /// it away: the slider lets go, and the window has the keys.
+    #[test]
+    fn folding_the_focused_sliders_section_hands_the_keys_back() {
+        use crate::testing::press;
+        use slint::platform::Key;
+        let (app, state, _worker) = exposure_focused();
+        let (top, bottom) = panel_view(&app);
+        click_header(&app, "LIGHT", top, bottom);
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1000));
+        slint::platform::update_timers_and_animations();
+        assert!(app.get_collapsed_light());
+        press(&app, Key::RightArrow);
+        assert_eq!(state.borrow().current, Some(1), "the window's arrow");
+        assert_eq!(app.get_exposure(), 0.0);
+    }
+
     /// In a slider's typed value, Up and Down nudge it and Tab sets
     /// what was typed and opens the next slider's, Shift+Tab the one
     /// above. The last Enter hands the keys back.

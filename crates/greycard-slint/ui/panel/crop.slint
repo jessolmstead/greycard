@@ -3,7 +3,7 @@
 
 import { ComboBox, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Section, EditSlider, Steps, Toggle, PanelButton } from "../controls.slint";
+import { Section, EditSlider, Steps, Toggle, PanelButton, Typing } from "../controls.slint";
 
 export component CropSection inherits Section {
     in-out property <bool> crop-mode;
@@ -23,6 +23,18 @@ export component CropSection inherits Section {
     callback crop-clicked();
     callback geometry-changed();
     callback guide-dropped();
+
+    // The custom aspect's box goes with "Custom", which a frame
+    // change, an undo, or a paste can take away under its focus: a
+    // box destroyed says nothing itself. Only that box: another
+    // with the keys (the filter's) keeps them.
+    property <bool> custom-focused: false;
+    changed aspect-name => {
+        if (root.aspect-name != "Custom" && root.custom-focused) {
+            root.custom-focused = false;
+            Typing.close-all();
+        }
+    }
 
     title: "CROP";
     icon: @image-url("../icons/crop.svg");
@@ -67,8 +79,18 @@ export component CropSection inherits Section {
         LineEdit {
             text <=> root.aspect-custom;
             placeholder-text: "W:H";
-            accepted(t) => { root.geometry-changed(); }
+            accessible-label: "Custom aspect";
+            // Enter or Escape gives the keys back to the window.
+            accepted(t) => { root.geometry-changed(); Typing.done += 1; }
             edited(t) => { root.geometry-changed(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) { Typing.done += 1; return accept; }
+                return reject;
+            }
+            changed has-focus => {
+                root.custom-focused = self.has-focus;
+                Typing.box-focus(self.has-focus);
+            }
         }
     }
     // Shows whether the crop is tall, which is the stored flag but

@@ -403,3 +403,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§388. The scopes read the export, not the monitor's table](notes/388-the-scopes-read-the-export-not-the-monitors-table.md) (2026-10-21)
 - [§389. The catalog import over a share](notes/389-the-catalog-import-over-a-share.md) (2026-10-21)
 - [§390. Rebindable keys](notes/390-rebindable-keys.md) (2026-10-21)
+- [§391. Keys follow-ups: a focused slider in view, text boxes, Escape out of the crop](notes/391-keys-follow-ups.md) (2026-10-21)

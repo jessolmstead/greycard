@@ -115,5 +115,4 @@ holder stuck, so the picture does not take the keys at a crossing,
 until another slider is focused or one of those changes comes; a
 click on the picture still gives the window the keys. We reveal a
 slider when a key brings the focus to it, not when the layout moves
-it; Slint drops the focus at the next key from a control outside its
-scroll view's visible part.
+it (§391 follows it).

@@ -224,7 +224,7 @@ do.
 | Ctrl+Shift+E | Export |
 | Ctrl+, | Settings |
 | ? | The keys sheet |
-| Esc | Close a sheet, put a tool down, let go of a set, or go back to one frame |
+| Esc | Close a sheet, put a tool down, leave the crop, let go of a set, or go back to one frame |
 
 In the filter's text field, **Esc** clears the text and gives the keys
 back to the frames.
