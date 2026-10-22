@@ -83,7 +83,9 @@ Look section's job.
       and the inset's rotation (the reds' warmth, the lanterns) are
       sliders, a preset's, or fixed, by the track's rule. A Mac tester
       (2026-10-20) asks for the slope, the toe, the shoulder, the
-      contrast, and the width exposed by hand
+      contrast, and the width exposed by hand; a pixls tester
+      (2026-10-22) for the pivot and the toe and shoulder powers, as
+      darktable's sigmoid has them
 - [ ] OpenDRT (jedypod's open display transform) evaluated beside AgX
       as a second display transform, with its parameters, on the
       reference set; asked by the same tester
@@ -544,6 +546,25 @@ clears or a tester asks for it.
 
 
 #### Editor
+- [ ] Every section switch and button a bindable action in the keys
+      table (§390), so a key applies the lens correction or opens the
+      crop; a key that applies a named preset beside it
+- [ ] Section order and default folds: drag sections into the order
+      wanted (the pipeline's order unchanged), fold a set by default;
+      and the scopes folded away on a small screen, their space to
+      the panel
+- [ ] A mat around the picture in the viewport, a band of grey or a
+      chosen color toggled by a key, to judge exposure and color
+      against; the export's border (§314) is a different thing
+- [ ] Before and after: the picture against a chosen history step or
+      snapshot under a wipe the pointer drags
+- [ ] Bezier handles on a curve's points, so a point's reach along
+      the curve can be set
+- [ ] The crop's grid: its lines' count and spacing chosen, so a line
+      can sit near a horizon
+- [ ] History grouped by tool: a run of steps on one tool folded into
+      one line that opens, so the timeline reads clean and nothing is
+      lost
 - [ ] Spektrafilm: Andrea Volpato's spectral film simulation, a
       physical model of exposure, development, printing, and scanning
       from measured emulsion and paper data rather than a LUT, with
@@ -704,7 +725,10 @@ clears or a tester asks for it.
       on the scene-referred tail above, which decides where the curve
       sits
 - [ ] Export naming patterns (a suffix, a sequence number, the date)
-      on the sheet and in an export preset, for a set (§167)
+      on the sheet and in an export preset, for a set (§167); the
+      destination too, with the date and the frame's folder as tokens,
+      so `~/Raw/2026/2026-10-22_shoot` exports to its twin under
+      `~/Edited` (a pixls tester, 2026-10-22)
 - [ ] Export naming patterns and a destination folder on the sheet,
       and so in an export preset; a list of marks so text and a logo
       go on one export; a plate or shadow behind text; a bundled font
@@ -733,6 +757,12 @@ clears or a tester asks for it.
 
 
 #### Library
+- [ ] Ctrl+click on a filter chip excludes it (Reject, an ISO), shown
+      in red, so "everything but the rejects" is one click
+- [ ] Geotagging from a GPX track: the camera's UTC offset, a manual
+      offset for a clock left on the wrong time, a matching tolerance,
+      the position written to the sidecar and the XMP, as digiKam and
+      darktable do
 - [ ] The indexer reads raws without memory-mapping them, as the
       catalog import does (§389): it walks shares too, and a mapped
       file whose volume drops during sleep is a SIGBUS (issue #33)
