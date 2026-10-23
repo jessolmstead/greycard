@@ -555,9 +555,6 @@ clears or a tester asks for it.
 
 #### Editor
 
-- [ ] A mask's white balance as an offset from the global rather
-      than an absolute value, behind a toggle on the mask (a tester,
-      2026-10-22)
 - [ ] Every section switch and button a bindable action in the keys
       table (§390), so a key applies the lens correction or opens the
       crop; a key that applies a named preset beside it

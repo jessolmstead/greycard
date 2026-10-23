@@ -317,6 +317,9 @@ pub struct WhiteBase {
     pub gains: [f32; 3],
     pub matrix: [[f32; 3]; 3],
     pub clip: f32,
+    /// The same white as a temperature and tint, what a mask's offset
+    /// is from; none for a picture already in the working space.
+    pub temp_tint: Option<greycard_core::TempTint>,
 }
 
 impl WhiteBase {
@@ -325,6 +328,7 @@ impl WhiteBase {
         gains: [1.0; 3],
         matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         clip: f32::INFINITY,
+        temp_tint: None,
     };
 
     /// The white balance `wb`, with channels clipping at `clip`.
@@ -334,6 +338,7 @@ impl WhiteBase {
             gains: wb.coefficients_f32(),
             matrix: std::array::from_fn(|r| std::array::from_fn(|c| cols[c][r])),
             clip,
+            temp_tint: Some(wb.temp_tint),
         }
     }
 }
@@ -1191,6 +1196,7 @@ impl Base {
             (**profile).clone(),
             self.white.gains,
             self.white.matrix,
+            self.white.temp_tint?,
         ))
     }
 }

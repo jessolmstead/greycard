@@ -858,6 +858,98 @@ fn an_export_makes_a_masks_white_balance_from_its_own_develop() {
     assert!(kept == off, "a kept light reaches no pixel");
 }
 
+/// A mask whose white follows the global keeps its offset when the
+/// global moves, and a mask that names a light keeps the light: at a
+/// 6500 K global, 46 mired warmer light is the picture a 5000 K lamp
+/// makes; at a 5000 K global the same offset is another light, about
+/// 4060 K, and the lamp is the global's own. No offset is the global's
+/// picture at either.
+#[test]
+fn a_masks_offset_follows_the_global_and_its_light_does_not() {
+    use greycard_edit::LocalWhite;
+    let frame = Arc::new(aberrated_frame(200, 160));
+    let everywhere = |white: LocalWhite| greycard_edit::Adjustment {
+        id: 1,
+        mask: greycard_edit::mask::Mask {
+            components: vec![greycard_edit::mask::Component {
+                shape: Shape::Linear {
+                    from: [0.5, 10.0],
+                    to: [0.5, 11.0],
+                },
+                ..Default::default()
+            }],
+            invert: false,
+        },
+        look: greycard_edit::Look {
+            white_balance: white,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let settings = crate::export::Settings {
+        format: crate::export::Format::Tiff,
+        sharpen: crate::export::Sharpen::Off,
+        ..Default::default()
+    };
+    let mut ai = Ai::new();
+    let mut render = |temperature: f64, white: LocalWhite| {
+        let global = Edit {
+            white_balance: greycard_edit::WhiteBalance::Custom {
+                temperature,
+                tint: 0.002,
+            },
+            ..Edit::default()
+        };
+        let mut base = None;
+        let image = develop_turned(&frame, &global, 0, &mut base);
+        let mut edit = global.clone();
+        edit.adjustments.push(everywhere(white));
+        let (r, _) = finish_export(image, &edit, base.as_ref(), &mut ai, &settings);
+        let crate::export::Pixels::Sixteen(p) = r.pixels else {
+            panic!("a TIFF is sixteen bits")
+        };
+        p
+    };
+    let worst = |a: &[u16], b: &[u16]| a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max();
+    let blue = |p: &[u16]| {
+        p.chunks(3).map(|c| c[2] as f64 - c[0] as f64).sum::<f64>() / (p.len() / 3) as f64
+    };
+    let lamp = LocalWhite::Absolute {
+        temperature: 5000.0,
+        tint: 0.002,
+    };
+    // Toward the lower kelvin, so negative.
+    let cooler = LocalWhite::Relative {
+        mired: 1e6 / 6500.0 - 1e6 / 5000.0,
+        tint: 0.0,
+    };
+    let none = LocalWhite::Relative {
+        mired: 0.0,
+        tint: 0.0,
+    };
+    for global in [5000.0, 6500.0] {
+        let off = render(global, LocalWhite::Off);
+        let d = worst(&off, &render(global, none));
+        assert!(d <= Some(2), "{global} K: {d:?}");
+    }
+    // At 6500 K the offset names the lamp's light.
+    let d = worst(&render(6500.0, cooler), &render(6500.0, lamp));
+    assert!(d <= Some(2), "{d:?}");
+    // The global moved to 5000 K: the lamp is the global's own, the
+    // offset moved with it to about 4060 K, a warmer light, so a bluer
+    // picture under it.
+    let off = render(5000.0, LocalWhite::Off);
+    let d = worst(&off, &render(5000.0, lamp));
+    assert!(d <= Some(2), "{d:?}");
+    let followed = render(5000.0, cooler);
+    assert!(
+        blue(&followed) > blue(&off) + 500.0,
+        "{} {}",
+        blue(&followed),
+        blue(&off)
+    );
+}
+
 /// A last develop whose CA ran on the GPU is not handed to an export:
 /// it develops afresh on the CPU, and that picture is then reused.
 #[test]

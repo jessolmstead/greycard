@@ -815,17 +815,32 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     // what they last said, and turning it on starts them at the
     // global's (`local-wb-toggled`).
     // Held to the sliders' range, as the finish reads it.
+    // Follow global on, they show the offset from the global's.
     let white = look.white_balance.clamped();
     match white {
-        LocalWhite::Absolute { temperature, tint } | LocalWhite::Kept { temperature, tint } => {
-            app.set_local_wb_on(matches!(white, LocalWhite::Absolute { .. }));
+        LocalWhite::Absolute { temperature, tint }
+        | LocalWhite::Kept { temperature, tint }
+        | LocalWhite::Relative {
+            mired: temperature,
+            tint,
+        }
+        | LocalWhite::KeptRelative {
+            mired: temperature,
+            tint,
+        } => {
+            app.set_local_wb_on(matches!(
+                white,
+                LocalWhite::Absolute { .. } | LocalWhite::Relative { .. }
+            ));
             app.set_local_wb_kept(true);
+            app.set_local_wb_relative(white.is_relative());
             app.set_local_temperature(temperature as f32);
             app.set_local_tint(tint as f32);
         }
         LocalWhite::Off => {
             app.set_local_wb_on(false);
             app.set_local_wb_kept(false);
+            app.set_local_wb_relative(false);
         }
     }
     // A mask's own Detail; the global look's is the default, never

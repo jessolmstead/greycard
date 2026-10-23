@@ -337,14 +337,38 @@ fn look(b: &Look, a: &Look, prefix: &str) -> Vec<String> {
     out
 }
 
+/// `v`, or zero where it rounds to zero at `scale` places, so a small
+/// negative offset reads +0 and not -0.
+fn unsigned_zero(v: f64, scale: f64) -> f64 {
+    if (v * scale).round() == 0.0 { 0.0 } else { v }
+}
+
 /// A mask's white balance that moved, in the global's words.
 fn local_white(b: &crate::LocalWhite, a: &crate::LocalWhite) -> String {
-    use crate::LocalWhite::{Absolute, Kept, Off};
+    use crate::LocalWhite::{Absolute, Kept, KeptRelative, Off, Relative};
+    let on = |w: &crate::LocalWhite| matches!(w, Absolute { .. } | Relative { .. });
     match (b, a) {
         // The light forgotten: the mask follows the global again.
         (_, Off) => "White balance reset".to_string(),
-        (_, Kept { .. }) => "White balance off".to_string(),
-        (Off | Kept { .. }, Absolute { .. }) => "White balance on".to_string(),
+        // Follow global, the switch beside the sliders, by its label.
+        _ if *b != Off && on(b) == on(a) && b.is_relative() != a.is_relative() => {
+            switched("Follow global", a.is_relative())
+        }
+        (_, Kept { .. } | KeptRelative { .. }) => "White balance off".to_string(),
+        (Off | Kept { .. } | KeptRelative { .. }, _) => "White balance on".to_string(),
+        (
+            Relative {
+                mired: m0,
+                tint: d0,
+            },
+            Relative {
+                mired: m1,
+                tint: d1,
+            },
+        ) if m0 == m1 && d0 != d1 => format!("Tint {:+.3}", unsigned_zero(*d1, 1e3)),
+        (_, Relative { mired, .. }) => {
+            format!("White balance {:+.0} mired", unsigned_zero(*mired, 1.0))
+        }
         (
             Absolute {
                 temperature: t0,
@@ -847,6 +871,36 @@ mod tests {
         assert_eq!(describe(&off, &tinted, &[]), "Sky: White balance on");
         assert_eq!(describe(&tinted, &after, &[]), "Sky: White balance reset");
         assert_eq!(describe(&off, &after, &[]), "Sky: White balance reset");
+        // Follow global, by its label, and an offset with its sign.
+        let mut follows = tinted.clone();
+        follows.adjustments[0].look.white_balance = crate::LocalWhite::Relative {
+            mired: -60.0,
+            tint: 0.0,
+        };
+        assert_eq!(describe(&tinted, &follows, &[]), "Sky: Follow global on");
+        assert_eq!(describe(&follows, &tinted, &[]), "Sky: Follow global off");
+        let mut more = follows.clone();
+        more.adjustments[0].look.white_balance = crate::LocalWhite::Relative {
+            mired: 25.0,
+            tint: 0.0,
+        };
+        assert_eq!(
+            describe(&follows, &more, &[]),
+            "Sky: White balance +25 mired"
+        );
+        let mut nearly = more.clone();
+        nearly.adjustments[0].look.white_balance = crate::LocalWhite::Relative {
+            mired: -0.3,
+            tint: 0.0,
+        };
+        assert_eq!(describe(&more, &nearly, &[]), "Sky: White balance +0 mired");
+        let mut kept = more.clone();
+        kept.adjustments[0].look.white_balance = crate::LocalWhite::KeptRelative {
+            mired: 25.0,
+            tint: 0.0,
+        };
+        assert_eq!(describe(&more, &kept, &[]), "Sky: White balance off");
+        assert_eq!(describe(&kept, &more, &[]), "Sky: White balance on");
         // And its Detail, in the global's words.
         let mut smooth = after.clone();
         smooth.adjustments[0].look.detail.texture = -0.5;

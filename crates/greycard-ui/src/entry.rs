@@ -414,8 +414,9 @@ mod tests {
         assert_eq!(app.get_exposure(), 0.0);
     }
 
-    /// Every slider names its line of the one table of steps, and
-    /// the table has every line some slider names.
+    /// Every slider names its line of the one table of steps (a slider
+    /// whose units change, one line for each), and the table has every
+    /// line some slider names.
     #[test]
     fn every_slider_takes_its_steps_from_the_table() {
         let dir = std::path::Path::new(greycard_slint::PANEL_DIR);
@@ -442,10 +443,25 @@ mod tests {
             let name = path.file_name().unwrap().to_string_lossy().to_string();
             for (at, _) in source.match_indices("EditSlider {") {
                 let body = block(&source[at + "EditSlider {".len()..]);
-                let steps = field(body, "steps: Steps.")
+                let steps = field(body, "steps: ")
                     .unwrap_or_else(|| panic!("{name}: a slider without its steps"));
-                assert!(lines.contains(&steps), "{name}: no line {steps}");
-                named.insert(steps.to_string());
+                let each: Vec<&str> = steps
+                    .split("Steps.")
+                    .skip(1)
+                    .map(|s| {
+                        s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+                            .next()
+                            .unwrap()
+                    })
+                    .collect();
+                assert!(
+                    !each.is_empty(),
+                    "{name}: steps not from the table: {steps}"
+                );
+                for steps in each {
+                    assert!(lines.contains(&steps), "{name}: no line {steps}");
+                    named.insert(steps.to_string());
+                }
                 checked += 1;
             }
         }

@@ -1259,7 +1259,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     let people = crate::panel::parts::boxes(st, &app);
                     sync_rows(&st.develop.person_boxes, people);
                     let st = &mut *st;
-                    let shift = crate::panel::color::local_white_shift(st);
+                    let shift = crate::panel::color::local_white_shift(st, white_key);
                     let (locals, wants) = bake_locals(
                         &edit,
                         &mut st.develop.rasters,

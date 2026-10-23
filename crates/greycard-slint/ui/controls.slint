@@ -561,6 +561,8 @@ export global Steps {
     out property <Nudge> hue-shift: { small: 1, big: 5, fine: 1 };
     // White balance in kelvin, 2000 to 12000.
     out property <Nudge> kelvin: { small: 50, big: 500, fine: 5 };
+    // A mask's white as an offset from the global's, mired.
+    out property <Nudge> mired: { small: 1, big: 10, fine: 1 };
     // Shown to three places, or a tenth of a percent: the tint, a
     // chroma, a brush's or a repair's size.
     out property <Nudge> thousandths: { small: 0.001, big: 0.01, fine: 0.001 };

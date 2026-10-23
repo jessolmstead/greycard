@@ -1369,6 +1369,12 @@ export component App inherits Window {
     // Whether the sliders hold a light of the mask's own, on or
     // switched off; false, the mask follows the global.
     in-out property <bool> local-wb-kept: false;
+    // Whether the sliders are an offset from the global's white, so
+    // the light under the mask moves when the global does.
+    in-out property <bool> local-wb-relative: false;
+    // Follow global switched: the sliders turned into the offset, or
+    // back into the light, at the global's white as it stands.
+    callback local-wb-relative-toggled();
     // Its switch: turned on, it brings back the light it kept, or
     // starts at the global's white when there is none.
     callback local-wb-toggled();
@@ -3096,6 +3102,8 @@ export component App inherits Window {
                             switchable: true;
                             on <=> root.local-wb-on;
                             switched => { root.local-wb-toggled(); }
+                            relative <=> root.local-wb-relative;
+                            relative-toggled => { root.local-wb-relative-toggled(); }
                             local-reset => { root.local-wb-reset(); }
                             collapsed-wb <=> root.collapsed-wb;
                             picking <=> root.picking;

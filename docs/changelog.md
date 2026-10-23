@@ -32,6 +32,14 @@ design note behind it.
   Mac sleeps fails the frame instead of crashing the editor
   ([§389](https://github.com/jessolmstead/greycard/blob/master/docs/notes/389-the-catalog-import-over-a-share.md))
 
+### Masks
+
+- A mask's white balance can follow the global: Follow global in the
+  mask's section makes its temperature an offset in mired and its
+  tint a difference, so a mask stays that much warmer as the global
+  moves; off, it names an absolute light as before
+  ([§400](https://github.com/jessolmstead/greycard/blob/master/docs/notes/400-a-masks-white-as-an-offset.md))
+
 ### Retouch
 
 - A deep fill comes back with the frame's grain, measured around the

@@ -145,13 +145,17 @@ pub(crate) fn white_from_neutral(
     let tt = wb.temp_tint;
     // On a mask's own white balance: the white that makes the patch
     // grey is the light there, the same answer whatever the global
-    // says, since a mask's white is absolute. Under the mask at full
-    // weight the patch is then grey.
+    // says. Under the mask at full weight the patch is then grey. With
+    // Follow global on, it is stored as that light less the global's.
     if st.develop.target.is_some() && app.get_panel_tab() == "Masks" {
+        let Some((temperature, tint)) = crate::panel::color::local_from_light(&mut st, app, tt)
+        else {
+            return Err(NeutralMiss::NoWhite);
+        };
         app.set_local_wb_on(true);
         app.set_local_wb_kept(true);
-        app.set_local_temperature((tt.cct as f32).clamp(2000.0, 12000.0));
-        app.set_local_tint((tt.duv as f32).clamp(-0.05, 0.05));
+        app.set_local_temperature(temperature);
+        app.set_local_tint(tint);
         drop(st);
         app.invoke_stop_placing();
         app.invoke_view_changed();
@@ -3104,19 +3108,31 @@ mod tests {
         let mut st = state.borrow_mut();
         st.develop.base_white = Some(WhiteBase::from(&shot, 1.0));
         st.develop.frame = Some((Arc::new(frame), Box::new(profile)));
-        let own = crate::panel::color::local_white_shift(&mut st).expect("a raw's");
+        let own =
+            crate::panel::color::local_white_shift(&mut st, (true, 0.0, 0.0)).expect("a raw's");
+        // An offset is from the panel's white: As shot, the develop's
+        // own; a global slider ahead of the develop, that slider's,
+        // with the develop's gains and matrix kept.
+        assert_eq!(own.global, shot.temp_tint);
+        let ahead =
+            crate::panel::color::local_white_shift(&mut st, (false, 6100.0, 0.001)).unwrap();
+        assert_eq!(ahead.global.cct, 6100.0);
+        assert_eq!(ahead.global.duv, 0.001f32 as f64);
+        assert_eq!((ahead.gains, ahead.rows), (own.gains, own.rows));
+        let own = crate::panel::color::local_white_shift(&mut st, (true, 0.0, 0.0)).unwrap();
         // The next file chosen: the picture held, the frame gone and
         // the develop's white not yet the next one's.
         st.develop.held = Some(st.develop.edit.clone());
         st.develop.frame = None;
         st.develop.base_white = None;
-        let held = crate::panel::color::local_white_shift(&mut st).expect("the held one's");
+        let held = crate::panel::color::local_white_shift(&mut st, (true, 0.0, 0.0))
+            .expect("the held one's");
         assert_eq!((held.gains, held.rows), (own.gains, own.rows));
         // Its develop landed: the next frame's own, here none.
         st.develop.held = None;
-        assert!(crate::panel::color::local_white_shift(&mut st).is_none());
+        assert!(crate::panel::color::local_white_shift(&mut st, (true, 0.0, 0.0)).is_none());
         st.develop.held = Some(st.develop.edit.clone());
-        assert!(crate::panel::color::local_white_shift(&mut st).is_none());
+        assert!(crate::panel::color::local_white_shift(&mut st, (true, 0.0, 0.0)).is_none());
     }
 
     /// A mask's own white balance on the panel: switched on it starts
@@ -3198,7 +3214,16 @@ mod tests {
         // never carries one.
         app.set_local_wb_on(false);
         let edit = read_edit(&app, &state.borrow().develop.edit, Some(0));
-        assert!(edit.adjustments[0].look.white_balance.temp_tint().is_none());
+        assert!(
+            edit.adjustments[0]
+                .look
+                .white_balance
+                .temp_tint(greycard_core::TempTint {
+                    cct: 5500.0,
+                    duv: 0.0
+                })
+                .is_none()
+        );
         app.set_local_wb_on(true);
         let edit = read_edit(&app, &state.borrow().develop.edit, None);
         assert!(edit.look().white_balance.is_off());
@@ -3249,7 +3274,14 @@ mod tests {
             unreachable!()
         };
         assert_eq!(stored(), LocalWhite::Kept { temperature, tint });
-        assert!(stored().temp_tint().is_none());
+        assert!(
+            stored()
+                .temp_tint(greycard_core::TempTint {
+                    cct: 5500.0,
+                    duv: 0.0
+                })
+                .is_none()
+        );
         assert_eq!(steps(), before + 1, "switching off is a step");
         assert_eq!(app.get_local_temperature(), 3300.0);
 
@@ -3306,6 +3338,96 @@ mod tests {
         app.invoke_local_wb_toggled();
         assert_eq!(app.get_local_temperature(), 6100.0);
         assert_eq!(app.get_local_tint(), 0.001);
+    }
+
+    /// Follow global turns the mask's sliders into the offset from the
+    /// global's white and back, at the global as it stands, so nothing
+    /// moves; the dropper stores the light it finds less the global's;
+    /// a shown edit brings the switch back; and the reset forgets it.
+    #[test]
+    fn follow_global_turns_a_masks_light_into_an_offset_and_back() {
+        use greycard_edit::LocalWhite;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        a_lamp_mask(&app, &state);
+        app.set_as_shot(false);
+        app.set_temperature(5000.0);
+        app.set_tint(0.002);
+        let global = greycard_core::TempTint {
+            cct: 5000.0,
+            duv: 0.002f32 as f64,
+        };
+        app.set_local_wb_on(true);
+        app.invoke_local_wb_toggled();
+        app.set_local_temperature(3200.0);
+        app.set_local_tint(-0.004);
+        let stored = |app: &App| {
+            read_edit(app, &state.borrow().develop.edit, Some(0)).adjustments[0]
+                .look
+                .white_balance
+        };
+        let light = stored(&app).temp_tint(global).unwrap();
+        app.set_local_wb_relative(true);
+        app.invoke_local_wb_relative_toggled();
+        // 200 mired at 5000 K, 312.5 at 3200 K: 112.5 toward the
+        // lower kelvin.
+        assert_eq!(app.get_local_temperature(), -112.5);
+        assert!((app.get_local_tint() + 0.006).abs() < 1e-6);
+        let offset = stored(&app);
+        assert!(matches!(offset, LocalWhite::Relative { .. }), "{offset:?}");
+        let same = offset.temp_tint(global).unwrap();
+        assert!((same.cct - light.cct).abs() < 1e-3 && (same.duv - light.duv).abs() < 1e-6);
+        // The global moves; the light under the mask moves with it,
+        // the same 112.5 mired warmer.
+        let higher = greycard_core::TempTint {
+            cct: 6000.0,
+            duv: global.duv,
+        };
+        let moved = offset.temp_tint(higher).unwrap().cct;
+        assert!(
+            (moved - 1e6 / (1e6 / 6000.0 + 112.5)).abs() < 1e-6,
+            "{moved}"
+        );
+        // The dropper: the light that makes the patch grey, stored as
+        // that light less the global's.
+        white_from_neutral(state.borrow_mut(), &app, [0.4, 0.3, 0.15]).unwrap();
+        assert!(app.get_local_wb_relative());
+        let picked_offset = stored(&app).temp_tint(global).unwrap();
+        app.set_local_wb_relative(false);
+        white_from_neutral(state.borrow_mut(), &app, [0.4, 0.3, 0.15]).unwrap();
+        let picked = stored(&app).temp_tint(global).unwrap();
+        assert!(matches!(stored(&app), LocalWhite::Absolute { .. }));
+        assert!(
+            (picked.cct - picked_offset.cct).abs() < 0.5,
+            "{picked:?} {picked_offset:?}"
+        );
+        assert!((picked.duv - picked_offset.duv).abs() < 1e-5);
+        // Back on, and off again: the light it was, to the slider's
+        // own precision.
+        app.set_local_temperature(3200.0);
+        app.set_local_tint(-0.004);
+        app.set_local_wb_relative(true);
+        app.invoke_local_wb_relative_toggled();
+        app.set_local_wb_relative(false);
+        app.invoke_local_wb_relative_toggled();
+        assert!((app.get_local_temperature() - 3200.0).abs() < 1e-2);
+        assert!((app.get_local_tint() + 0.004).abs() < 1e-6);
+        // A shown edit with an offset, kept while switched off, brings
+        // the switch back with it.
+        let mut edit = state.borrow().develop.edit.clone();
+        edit.adjustments[0].look.white_balance = LocalWhite::KeptRelative {
+            mired: 40.0,
+            tint: 0.0,
+        };
+        crate::panel::edit::show_edit(&state.borrow(), &edit, &app, Some(0));
+        assert!(app.get_local_wb_relative() && app.get_local_wb_kept());
+        assert!(!app.get_local_wb_on());
+        assert_eq!(app.get_local_temperature(), 40.0);
+        // The reset forgets the offset with the light: off, absolute.
+        app.set_local_wb_on(true);
+        app.invoke_local_wb_reset();
+        assert!(!app.get_local_wb_relative());
+        assert_eq!(stored(&app), LocalWhite::Off);
     }
 
     /// A window with a 6000 by 4000 picture on the viewport, centered,

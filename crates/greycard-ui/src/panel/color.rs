@@ -304,7 +304,16 @@ pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
     let m = match resolve_white_balance(frame, &profile, white.white_point()) {
         // The arithmetic a mask's own white balance is made with too,
         // so the preview and a local cannot read one white two ways.
-        Ok(wb) => match WhiteShift::from_parts(profile, base.gains, base.matrix).to(&wb) {
+        // The matrix to a resolved white reads no temperature; the
+        // base's stands in where it has none.
+        Ok(wb) => match WhiteShift::from_parts(
+            profile,
+            base.gains,
+            base.matrix,
+            base.temp_tint.unwrap_or(wb.temp_tint),
+        )
+        .to(&wb)
+        {
             Some(m) => m,
             None => {
                 // Per frame while a slider moves; the decode warned
@@ -330,14 +339,21 @@ pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
 /// keeps what its own masks were made from (`Develop::shown_white`):
 /// the frame and its profile are the next one's by then, and its
 /// masks would otherwise flash back to the global's white.
-pub(crate) fn local_white_shift(st: &mut State) -> Option<WhiteShift> {
+///
+/// The white a mask's offset is from is the panel's, `panel`, not the
+/// develop's: while the global's slider moves ahead of the develop, a
+/// mask that follows it moves with the rest of the picture rather
+/// than holding still until the develop lands. Once it lands the two
+/// are one white.
+pub(crate) fn local_white_shift(st: &mut State, panel: WhiteKey) -> Option<WhiteShift> {
     if st.develop.held.is_some() {
         return st.develop.shown_white.clone();
     }
+    let global = global_white(st, panel);
     let shift = match (white_profile(st), st.develop.base_white) {
-        (Some(profile), Some(base)) => {
-            Some(WhiteShift::from_parts(profile, base.gains, base.matrix))
-        }
+        (Some(profile), Some(base)) => base.temp_tint.map(|own| {
+            WhiteShift::from_parts(profile, base.gains, base.matrix, global.unwrap_or(own))
+        }),
         _ => None,
     };
     st.develop.shown_white = shift.clone();
@@ -348,40 +364,101 @@ pub(crate) fn local_white_shift(st: &mut State) -> Option<WhiteShift> {
 /// resolved to the kelvin and Duv the camera's gains mean: where a
 /// mask's own starts when it is turned on, so nothing jumps.
 pub(crate) fn global_temp_tint(st: &mut State, panel: WhiteKey) -> Option<(f32, f32)> {
+    global_white(st, panel).map(|tt| (tt.cct as f32, tt.duv as f32))
+}
+
+/// [`global_temp_tint`] at full precision: As shot as the develop
+/// resolves it, so a mask's offset at the develop's own white is from
+/// that white to the last bit.
+fn global_white(st: &mut State, panel: WhiteKey) -> Option<greycard_core::TempTint> {
     let (as_shot, temperature, tint) = panel;
     if !as_shot {
-        return Some((temperature, tint));
+        return Some(greycard_core::TempTint {
+            cct: temperature as f64,
+            duv: tint as f64,
+        });
     }
     let profile = white_profile(st)?;
     let (frame, _) = st.develop.frame.as_ref()?;
-    let tt = greycard_core::color::as_shot_temp_tint(frame, &profile).ok()?;
-    Some((tt.cct as f32, tt.duv as f32))
+    greycard_core::color::as_shot_temp_tint(frame, &profile).ok()
 }
 
-/// The panel's mask white balance: on, the light its sliders name;
-/// switched off, that light kept; and off with none kept, following
-/// the global.
+/// The panel's mask white balance: on, the light its sliders name, or
+/// with Follow global on the offset they name, the Temperature slider
+/// then in mired; switched off, that kept; and off with none kept,
+/// following the global.
 pub(crate) fn panel_local_white(app: &App) -> LocalWhite {
     let (temperature, tint) = (
         app.get_local_temperature() as f64,
         app.get_local_tint() as f64,
     );
-    if app.get_local_wb_on() {
-        LocalWhite::Absolute { temperature, tint }
-    } else if app.get_local_wb_kept() {
-        LocalWhite::Kept { temperature, tint }
-    } else {
-        LocalWhite::Off
+    match (
+        app.get_local_wb_on(),
+        app.get_local_wb_kept(),
+        app.get_local_wb_relative(),
+    ) {
+        (true, _, false) => LocalWhite::Absolute { temperature, tint },
+        (true, _, true) => LocalWhite::Relative {
+            mired: temperature,
+            tint,
+        },
+        (false, true, false) => LocalWhite::Kept { temperature, tint },
+        (false, true, true) => LocalWhite::KeptRelative {
+            mired: temperature,
+            tint,
+        },
+        (false, false, _) => LocalWhite::Off,
     }
 }
 
+/// The panel's global white as the temperature and tint a mask's
+/// offset is from.
+fn panel_global(st: &mut State, app: &App) -> Option<greycard_core::TempTint> {
+    let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
+    global_white(st, key)
+}
+
 /// Where a mask's sliders start that hold no light of their own: the
-/// global's white, held to their range.
+/// global's white, held to their range; as an offset, none.
 fn start_at_global(st: &mut State, app: &App) {
+    if app.get_local_wb_relative() {
+        app.set_local_temperature(0.0);
+        app.set_local_tint(0.0);
+        return;
+    }
     let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
     if let Some((temperature, tint)) = global_temp_tint(st, key) {
         app.set_local_temperature(temperature.clamp(2000.0, 12000.0));
         app.set_local_tint(tint.clamp(-0.05, 0.05));
+    }
+}
+
+/// The light a Neutral pick names for a mask, as the panel stores it:
+/// the light, or with Follow global on, the light less the global's.
+pub(crate) fn local_from_light(
+    st: &mut State,
+    app: &App,
+    light: greycard_core::TempTint,
+) -> Option<(f32, f32)> {
+    let named = LocalWhite::Absolute {
+        temperature: light.cct,
+        tint: light.duv,
+    };
+    // Held to the range first, so the offset is from the light the
+    // sliders would show, not from one past it.
+    let named = named.clamped();
+    let stored = if app.get_local_wb_relative() {
+        named.to_relative(panel_global(st, app)?)
+    } else {
+        named
+    };
+    match stored.clamped() {
+        LocalWhite::Absolute { temperature, tint }
+        | LocalWhite::Relative {
+            mired: temperature,
+            tint,
+        } => Some((temperature as f32, tint as f32)),
+        _ => None,
     }
 }
 
@@ -478,7 +555,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
     // A double-click on its Temperature or Tint: both are one light,
     // so both are forgotten, the switch goes off and the mask follows
     // the global; the sliders show the global's white, where the next
-    // switch on starts.
+    // switch on starts, and Follow global goes off with the rest.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_local_wb_reset(move || {
@@ -487,7 +564,49 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             };
             app.set_local_wb_on(false);
             app.set_local_wb_kept(false);
+            app.set_local_wb_relative(false);
             start_at_global(&mut state.borrow_mut(), &app);
+            app.invoke_view_changed();
+        });
+    }
+    // Follow global switched: the sliders' numbers change meaning, so
+    // they are turned into the other at the global's white as it
+    // stands, the offset from it or the light it makes, and the
+    // picture under the mask holds still. Without a global to take
+    // them from (not a raw), the switch goes back.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_local_wb_relative_toggled(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let relative = app.get_local_wb_relative();
+            let Some(global) = panel_global(&mut state.borrow_mut(), &app) else {
+                app.set_local_wb_relative(!relative);
+                return;
+            };
+            let (temperature, tint) = (
+                app.get_local_temperature() as f64,
+                app.get_local_tint() as f64,
+            );
+            let moved = if relative {
+                LocalWhite::Absolute { temperature, tint }.to_relative(global)
+            } else {
+                LocalWhite::Relative {
+                    mired: temperature,
+                    tint,
+                }
+                .to_absolute(global)
+            };
+            if let LocalWhite::Absolute { temperature, tint }
+            | LocalWhite::Relative {
+                mired: temperature,
+                tint,
+            } = moved.clamped()
+            {
+                app.set_local_temperature(temperature as f32);
+                app.set_local_tint(tint as f32);
+            }
             app.invoke_view_changed();
         });
     }
@@ -752,6 +871,7 @@ mod tests {
             gains: [1.9, 1.0, 1.7],
             matrix: [[1.6, -0.4, -0.2], [-0.1, 1.3, -0.2], [0.0, -0.3, 1.3]],
             clip: 1.0,
+            temp_tint: None,
         };
         let p = greycard_core::color::white_shift(base.gains, base.matrix, base.gains, base.matrix)
             .unwrap();

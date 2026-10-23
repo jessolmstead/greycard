@@ -307,13 +307,19 @@ jumps.
   under the mask takes the global white; on again, the mask's own
   light comes back. Use it to compare the two.
 - **Double-click** **Temperature** or **Tint** while the section is on
-  to forget the mask's light. The section switches off and follows
-  the global white again, and the next time you switch it on it
-  starts there.
+  to forget the mask's light. The section switches off, **Follow
+  global** goes off with it, and the mask follows the global white
+  again; the next time you switch it on it starts there.
 
-There is no **As shot** or **Auto** here. The values are absolute: a
-mask set to 3200 K stays a 3200 K lamp when you move the global white
-balance, so the masked area holds still.
+There is no **As shot** or **Auto** here. With **Follow global** off,
+the values are a light: a mask set to 3200 K stays a 3200 K lamp when
+you move the global white balance. With it on, they are an offset
+from the global (+25 mired, a tint of +0.002), so a mask made warmer
+stays that much warmer when the global moves. The offset is in mired,
+so the same number is the same change of warmth at any global; plus
+is toward the higher kelvin, as on the Temperature slider. Switching
+it either way moves nothing on screen, and the dropper still makes
+the patch grey.
 
 Over blown highlights, a mask whose white is far from the global one
 can tint them if you pull exposure well down.

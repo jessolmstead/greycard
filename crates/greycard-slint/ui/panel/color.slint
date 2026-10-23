@@ -15,7 +15,8 @@ export component WhiteBalanceSection inherits Section {
     in-out property <float> tint;
     in property <bool> raw-input;
     // A mask's own: no As shot and no Auto, its switch on the
-    // section's title, its sliders live while it is on.
+    // section's title, Follow global where As shot would be, its
+    // sliders live while it is on.
     in property <bool> local: false;
     // Whether the sliders move the picture. The global's always do:
     // under As shot they show the camera's white, and moving either
@@ -30,6 +31,16 @@ export component WhiteBalanceSection inherits Section {
     // A mask's: a double-click on Temperature or Tint forgets the
     // light it names, both at once, and the mask follows the global.
     callback local-reset();
+    // A mask's: the sliders an offset from the global's white, which
+    // the light under the mask then moves with, rather than a light:
+    // the temperature in mired, the tint in Duv.
+    in-out property <bool> relative: false;
+    callback relative-toggled();
+    property <bool> offset: root.local && root.relative;
+    // The offsets as shown, a small negative rounded to zero shown
+    // as zero rather than as minus zero.
+    property <float> shown-mired: round(root.temperature) == 0 ? 0 : round(root.temperature);
+    property <float> shown-tint: round(root.tint * 1000) == 0 ? 0 : round(root.tint * 1000) / 1000;
 
     title: "WHITE BALANCE";
     icon: @image-url("../icons/thermometer.svg");
@@ -41,6 +52,12 @@ export component WhiteBalanceSection inherits Section {
         checked <=> root.as-shot;
         toggled => { root.as-shot-toggled(); }
     }
+    if root.local: Toggle {
+        label: "Follow global";
+        enabled: root.live;
+        checked <=> root.relative;
+        toggled => { root.relative-toggled(); }
+    }
     // The tracks show what the picture becomes: a
     // higher temperature renders warmer, a positive
     // tint (a green white point) renders magenta.
@@ -49,13 +66,18 @@ export component WhiteBalanceSection inherits Section {
         enabled: root.live;
         tinted: true;
         tint: @linear-gradient(90deg, #4d86e8 0%, #cfd6dc 50%, #f0b24a 100%);
-        minimum: 2000;
-        maximum: 12000;
-        default: 5500;
-        step: 50;
-        steps: Steps.kelvin;
+        // As an offset, mired toward the higher kelvin, past the
+        // range's whole span either way (500 less 83), so any light
+        // in it is an offset from any global in it.
+        minimum: root.offset ? -450 : 2000;
+        maximum: root.offset ? 450 : 12000;
+        default: root.offset ? 0 : 5500;
+        step: root.offset ? 1 : 50;
+        steps: root.offset ? Steps.mired : Steps.kelvin;
         value <=> root.temperature;
-        text: round(root.temperature) + " K";
+        text: root.offset
+            ? (root.shown-mired >= 0 ? "+" : "") + root.shown-mired + " mired"
+            : round(root.temperature) + " K";
         changed(v) => {
             if (!root.local) { root.as-shot = false; }
             root.develop-changed();
@@ -74,13 +96,15 @@ export component WhiteBalanceSection inherits Section {
         enabled: root.live;
         tinted: true;
         tint: @linear-gradient(90deg, #5fbf5f 0%, #cfd6dc 50%, #d65fd6 100%);
-        minimum: -0.05;
-        maximum: 0.05;
+        minimum: root.offset ? -0.1 : -0.05;
+        maximum: root.offset ? 0.1 : 0.05;
         default: 0;
         step: 0.001;
         steps: Steps.thousandths;
         value <=> root.tint;
-        text: round(root.tint * 1000) / 1000;
+        text: !root.offset ? "" + round(root.tint * 1000) / 1000
+            : root.shown-tint == 0 ? "+0.000"
+            : (root.shown-tint > 0 ? "+" : "") + root.shown-tint;
         changed(v) => {
             if (!root.local) { root.as-shot = false; }
             root.develop-changed();

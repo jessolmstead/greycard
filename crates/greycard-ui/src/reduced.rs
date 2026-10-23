@@ -280,6 +280,7 @@ pub(crate) fn develop(
                     profile,
                     d.white_balance.coefficients_f32(),
                     matrix,
+                    d.white_balance.temp_tint,
                 )
             });
             (
