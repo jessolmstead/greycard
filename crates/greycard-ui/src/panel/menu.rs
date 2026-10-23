@@ -562,6 +562,10 @@ mod tests {
         assert_eq!(state.borrow().current, Some(5));
     }
 
+    /// Slint hands the press outside a menu to the menu area's
+    /// parent, which for the frame menu is a corner of nothing, and the
+    /// release to whatever is under the pointer: the picture must not
+    /// read that release as a click and zoom.
     #[test]
     fn the_press_that_closes_the_menu_over_the_picture_does_not_zoom() {
         let app = window(3);
@@ -589,10 +593,12 @@ mod tests {
             app.window().dispatch_event(event);
         }
         assert!(app.get_menu_up());
-        crate::testing::click(&app, 720.0, 420.0);
+        // Up and left of the press, clear of the menu, which opens
+        // down and right of it.
+        crate::testing::click(&app, 600.0, 300.0);
         assert!(!app.get_menu_up());
         assert_eq!(*zooms.borrow(), 1, "the closing click did not");
-        crate::testing::click(&app, 720.0, 420.0);
+        crate::testing::click(&app, 600.0, 300.0);
         assert_eq!(*zooms.borrow(), 2);
     }
 

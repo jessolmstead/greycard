@@ -2087,9 +2087,11 @@ export component App inherits Window {
     changed sync-open => {
         if (!self.sync-open) { self.sync-paste = false; }
     }
-    /// Whether the frame menu is up, for the surfaces: a press outside
-    /// it closes it and is still delivered to what is under the
-    /// pointer, which lets that one go by. Slint 1.18 does not say
+    /// Whether the frame menu is up, for the surfaces. A press outside
+    /// a menu closes it and goes only to the menu area's parent, which
+    /// lets that one go by; for the frame menu, a zero-sized corner,
+    /// it reaches nothing. Its release goes to whatever is under the
+    /// pointer, which ignores a release it had no press for. Slint 1.18 does not say
     /// whether a ContextMenuArea's menu is open, so it is read off the
     /// keys: Slint's own menu takes the focus from them while it is up
     /// and gives it back when it closes, however it closes. A native

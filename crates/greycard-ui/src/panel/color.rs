@@ -987,6 +987,41 @@ mod tests {
         );
     }
 
+    /// A release with no press on the ring, as the click that closes a
+    /// menu brings, is no end of a drag: it must not re-render.
+    #[test]
+    fn a_lone_release_on_the_tint_ring_is_nothing() {
+        use crate::testing;
+        use slint::platform::WindowEvent;
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 3000.0));
+        let (_state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        let releases = Rc::new(std::cell::Cell::new(0));
+        {
+            let releases = releases.clone();
+            app.on_tint_release(move || releases.set(releases.get() + 1));
+        }
+        let ring =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "CurveEditor")
+                .find(|e| e.size().width == 176.0)
+                .expect("the tint ring is on screen");
+        let (at, size) = (ring.absolute_position(), ring.size());
+        let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let position = slint::LogicalPosition::new(x, y);
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position });
+        app.window().dispatch_event(WindowEvent::PointerReleased {
+            position,
+            button: slint::platform::PointerEventButton::Left,
+        });
+        assert_eq!(releases.get(), 0, "no press, no release");
+        testing::click(&app, x, y);
+        assert_eq!(releases.get(), 1, "a click on the ring is one");
+    }
+
     #[test]
     fn the_global_tint_switches_off_and_on() {
         use crate::testing;

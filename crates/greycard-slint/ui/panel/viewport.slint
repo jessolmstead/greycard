@@ -189,6 +189,11 @@ export component Viewport inherits Rectangle {
         // Whether the press opened the frame menu: its release is
         // then no click, and a Mac's Control+click no pan.
         property <bool> menu-down;
+        // Whether this area had the press the release ends. A press
+        // outside a menu closes it and goes to the menu area's parent,
+        // not here, while its release does come here: no press, no
+        // click.
+        property <bool> held;
         // Whether a left drag outside the crop, in crop mode, is
         // drawing a new one: set on the move that first clears the
         // drag threshold, so the release knows to end the gesture
@@ -222,6 +227,7 @@ export component Viewport inherits Rectangle {
         changed pointer-at => { root.hovered(self.has-hover, self.mouse-x, self.mouse-y); }
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down) {
+                self.held = true;
                 root.focus-keys();
                 // The press that closed the menu: its release is not a
                 // click to zoom by, and its drag no pan.
@@ -271,7 +277,9 @@ export component Viewport inherits Rectangle {
                     && !self.placed-down && root.mask-body-live
                     && root.mask-body-at(self.mouse-x, self.mouse-y, root.mask-shape-key);
             } else if (e.kind == PointerEventKind.up) {
-                if (self.menu-down) {
+                if (!self.held) {
+                    // The release of a press that closed a menu.
+                } else if (self.menu-down) {
                     self.menu-down = false;
                 } else if (self.body-moving) {
                     root.mask-dropped();
@@ -295,6 +303,7 @@ export component Viewport inherits Rectangle {
                 }
                 // The gesture is over: the cursor goes back to what
                 // is under it.
+                self.held = false;
                 self.body-down = false;
                 self.body-moving = false;
             } else if (e.kind == PointerEventKind.cancel) {
@@ -310,6 +319,7 @@ export component Viewport inherits Rectangle {
                 if (self.body-moving) {
                     root.mask-dropped();
                 }
+                self.held = false;
                 self.body-down = false;
                 self.body-moving = false;
                 self.menu-down = false;
@@ -903,12 +913,19 @@ export component Viewport inherits Rectangle {
         level := TouchArea {
             mouse-cursor: MouseCursor.crosshair;
             pointer-event(e) => {
+                // Cancel carries button `other`: read ahead of the
+                // filter, it drops the stroke, so a later lone release
+                // finds none to end.
+                if (e.kind == PointerEventKind.cancel) {
+                    leveler.dragging = false;
+                    return;
+                }
                 if (e.button != PointerEventButton.left) { return; }
                 if (e.kind == PointerEventKind.down) {
                     leveler.x0 = self.mouse-x; leveler.y0 = self.mouse-y;
                     leveler.x1 = self.mouse-x; leveler.y1 = self.mouse-y;
                     leveler.dragging = true;
-                } else if (e.kind == PointerEventKind.up) {
+                } else if (e.kind == PointerEventKind.up && leveler.dragging) {
                     leveler.dragging = false;
                     root.level-end(leveler.x0, leveler.y0, self.mouse-x, self.mouse-y);
                 }
@@ -950,13 +967,20 @@ export component Viewport inherits Rectangle {
                 if (self.has-hover && !root.typing) { root.focus-keys(); }
             }
             pointer-event(e) => {
+                // Cancel carries button `other`: read ahead of the
+                // filter, it drops the stroke, so a later lone release
+                // finds none to end.
+                if (e.kind == PointerEventKind.cancel) {
+                    guider.dragging = false;
+                    return;
+                }
                 if (e.button != PointerEventButton.left) { return; }
                 if (e.kind == PointerEventKind.down) {
                     root.focus-keys();
                     guider.x0 = self.mouse-x; guider.y0 = self.mouse-y;
                     guider.x1 = self.mouse-x; guider.y1 = self.mouse-y;
                     guider.dragging = true;
-                } else if (e.kind == PointerEventKind.up) {
+                } else if (e.kind == PointerEventKind.up && guider.dragging) {
                     guider.dragging = false;
                     // A stroke too short to say which way a
                     // line runs is no stroke at all.

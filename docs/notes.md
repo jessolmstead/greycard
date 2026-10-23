@@ -408,3 +408,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§393. The lightbox shows every raw: the ORF preview, a develop where there is none, the pair's JPEG](notes/393-the-lightbox-shows-every-raw.md) (2026-10-22)
 - [§394. The index pass and the thumbnail pool map nothing](notes/394-the-index-pass-maps-nothing.md) (2026-10-22)
 - [§395. A start marker for a driver that dies](notes/395-a-start-marker-for-a-driver-that-dies.md) (2026-10-22)
+- [§396. The click that closes a menu](notes/396-the-click-that-closes-a-menu.md) (2026-10-23)

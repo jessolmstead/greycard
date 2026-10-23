@@ -15,9 +15,7 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] The click that dismisses the viewport's context menu also
-      reaches the picture and recenters it there (a pixls tester,
-      2026-10-22)
+None open.
 
 ## Open Questions
 
@@ -555,7 +553,9 @@ clears or a tester asks for it.
 
 #### Editor
 
-- [ ] Toggle for relative (normal) white balance adjustment in masks
+- [ ] A mask's white balance as an offset from the global rather
+      than an absolute value, behind a toggle on the mask (a tester,
+      2026-10-22)
 - [ ] Every section switch and button a bindable action in the keys
       table (§390), so a key applies the lens correction or opens the
       crop; a key that applies a named preset beside it
@@ -899,17 +899,20 @@ clears or a tester asks for it.
 
 #### User Requests
 
-- [ ] Convenient reset-to-original develop settings button.
 - [ ] MIDI Controller support
 - [ ] Zoom bar for grid and lightbox
 - [ ] Spektrafilm, darktable's spectral film simulation
-  (measured film and paper data, grain, halation), in place of
-  the look stage rather than over it, as darktable advises. Waits
-  on darktable's module shipping and on the licenses of
-  spektrafilm and its data pack
+      (measured film and paper data, grain, halation), in place of
+      the look stage rather than over it, as darktable advises. Waits
+      on darktable's module shipping and on the licenses of
+      spektrafilm and its data pack
 - [ ] UI Theme control (mid and lighter grey for example, maybe
-  different accent color(s))
-- [ ] HEIC/HEIF support
+      different accent color(s))
+- [ ] HEIC/HEIF as pictures: HEVC is patent-encumbered, so nothing of
+      ours ships a decoder; macOS through ImageIO, Linux and Windows
+      through a libheif found at runtime and loaded by name as ONNX
+      Runtime is, a file skipped with a log line where none is; AVIF
+      beside it from a pure-Rust decoder
 - [ ] Setting to auto-hide all but the currently selected/opened
       tool in the develop pane
 - [ ] A zoom menu beside Fit: 50%, 100%, 200% (pixls, 2026-10-22)

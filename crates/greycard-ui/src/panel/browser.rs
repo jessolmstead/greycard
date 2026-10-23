@@ -4646,6 +4646,32 @@ mod tests {
         assert_eq!(last_scroll(&seen), 805.0);
     }
 
+    #[test]
+    fn a_click_on_a_frame_with_a_menu_up_only_closes_the_menu() {
+        let (app, _seen) = grid_with_reports(120);
+        let clicks = Rc::new(std::cell::Cell::new(0));
+        {
+            let clicks = clicks.clone();
+            app.on_frame_clicked(move |_, _, _| clicks.set(clicks.get() + 1));
+        }
+        let position = slint::LogicalPosition::new(1000.0, 250.0);
+        let button = slint::platform::PointerEventButton::Right;
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position });
+        app.window()
+            .dispatch_event(WindowEvent::PointerPressed { position, button });
+        app.window()
+            .dispatch_event(WindowEvent::PointerReleased { position, button });
+        assert!(app.get_menu_up(), "the frame menu");
+        // On another frame, clear of the menu, which opens down and
+        // right of the press.
+        crate::testing::click(&app, 400.0, 250.0);
+        assert!(!app.get_menu_up(), "the press closed the menu");
+        assert_eq!(clicks.get(), 0, "and picked no frame");
+        crate::testing::click(&app, 400.0, 250.0);
+        assert_eq!(clicks.get(), 1, "the next click picks it");
+    }
+
     /// The strip's bar, if it is there: its top left, its size, the
     /// scroll it reads and the scroll's maximum.
     fn strip_bar(app: &App) -> Option<(slint::LogicalPosition, slint::LogicalSize, f32, f32)> {

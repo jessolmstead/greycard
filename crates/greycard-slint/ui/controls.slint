@@ -1073,12 +1073,22 @@ export component CurveEditor inherits Rectangle {
     ta := TouchArea {
         enabled: root.enabled;
         mouse-cursor: MouseCursor.crosshair;
+        // Whether the press was this area's: the release of a press
+        // that closed a menu comes here without one.
+        property <bool> held;
         pointer-event(e) => {
-            if (e.button == PointerEventButton.left) {
+            // Cancel carries button `other`: read ahead of the filter,
+            // it ends a drag the window took back.
+            if (e.kind == PointerEventKind.cancel) {
+                if (self.held) { root.released(); }
+                self.held = false;
+            } else if (e.button == PointerEventButton.left) {
                 if (e.kind == PointerEventKind.down) {
+                    self.held = true;
                     Typing.close-all();
                     root.pressed(self.mouse-x / root.width, 1 - self.mouse-y / root.height);
-                } else if (e.kind == PointerEventKind.up) {
+                } else if (e.kind == PointerEventKind.up && self.held) {
+                    self.held = false;
                     root.released();
                 }
             }

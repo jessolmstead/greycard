@@ -29,6 +29,10 @@ design note behind it.
 
 ### Fixes
 
+- The click that closes a menu over the picture no longer zooms the
+  picture, and a lone release no longer ends a straighten stroke or
+  moves the tint ring
+  ([§396](https://github.com/jessolmstead/greycard/blob/master/docs/notes/396-the-click-that-closes-a-menu.md))
 - On Windows, a start that died inside a GPU driver as the window
   was made is noticed by the next one, which starts on Direct3D 12
   instead; `WGPU_BACKEND=dx12` does the same by hand
