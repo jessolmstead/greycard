@@ -1064,6 +1064,77 @@ mod tests {
     use super::*;
     use crate::testing::window;
 
+    /// One section open at a time: off, sections open side by side;
+    /// on, opening one, by its header or by the settings' restore,
+    /// folds the others of the tab and leaves the panes' alone.
+    #[test]
+    fn one_section_open_folds_the_tabs_others() {
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let settle = |app: &App| {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(0.0, 0.0),
+                });
+            slint::platform::update_timers_and_animations();
+        };
+        assert_eq!(app.get_panel_tab(), "Develop");
+        for (_, _, set) in FOLDS {
+            set(&app, true);
+        }
+        settle(&app);
+        app.set_collapsed_light(false);
+        app.set_collapsed_color(false);
+        app.set_collapsed_history(false);
+        settle(&app);
+        assert!(
+            !app.get_collapsed_light() && !app.get_collapsed_color(),
+            "off: both open"
+        );
+
+        app.set_one_section(true);
+        app.set_collapsed_grain(false);
+        settle(&app);
+        assert!(!app.get_collapsed_grain());
+        assert!(
+            app.get_collapsed_light() && app.get_collapsed_color(),
+            "on: the rest fold"
+        );
+        assert!(
+            !app.get_collapsed_history(),
+            "the left pane's are not the panel's"
+        );
+        app.set_collapsed_light(false);
+        settle(&app);
+        assert!(!app.get_collapsed_light() && app.get_collapsed_grain());
+        // Folding one opens nothing.
+        app.set_collapsed_light(true);
+        settle(&app);
+        assert!(read_folds(&app).iter().any(|f| f == "grain"));
+
+        // METADATA opened in the grid's pane shares its fold with the
+        // panel's, which the grid covers: the panel behind stays.
+        app.set_collapsed_grain(false);
+        settle(&app);
+        assert!(app.get_collapsed_metadata());
+        app.set_grid_open(true);
+        settle(&app);
+        app.set_collapsed_metadata(false);
+        settle(&app);
+        assert!(!app.get_collapsed_metadata());
+        assert!(
+            !app.get_collapsed_grain(),
+            "the grid's METADATA folded the panel"
+        );
+        // Back in Develop, an opening folds as before.
+        app.set_grid_open(false);
+        settle(&app);
+        app.set_collapsed_light(false);
+        settle(&app);
+        assert!(app.get_collapsed_grain() && app.get_collapsed_metadata());
+    }
+
     /// The DEMOSAIC menu lists the open raw's mosaic's methods and
     /// selects what its develop runs; read back untouched it keeps the
     /// stored choice; a pick through the window's callback is stored,

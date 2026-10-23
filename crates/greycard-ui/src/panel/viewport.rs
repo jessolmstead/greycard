@@ -735,25 +735,31 @@ pub(crate) fn zoom_label(zoom: f32) -> slint::SharedString {
 }
 
 /// [`zoom::effective`] for the state: the zoom it holds, the cell
-/// the compare view gives, and the size of the picture on the GPU.
+/// the compare view gives, the mat on one frame alone, and the size
+/// of the picture on the GPU.
 pub(crate) fn effective_zoom(st: &State, vw: u32, vh: u32) -> f32 {
-    zoom::effective(
-        st.develop.zoom,
-        view_cell(st, vw, vh),
-        st.develop.image_size,
-    )
+    let cell = view_cell(st, vw, vh);
+    let cell = if st.develop.mat && compared(st) <= 1 {
+        zoom::matted(cell)
+    } else {
+        cell
+    };
+    zoom::effective(st.develop.zoom, cell, st.develop.image_size)
+}
+
+/// How many frames the compare view is showing, 1 for none.
+fn compared(st: &State) -> usize {
+    st.culling
+        .cull
+        .as_ref()
+        .or(st.culling.hold.as_ref())
+        .map_or(1, |c| c.compare)
 }
 
 /// [`zoom::cell`] for the state: how many frames the compare view
 /// is showing, if it is showing any.
 pub(crate) fn view_cell(st: &State, vw: u32, vh: u32) -> (u32, u32) {
-    let compare = st
-        .culling
-        .cull
-        .as_ref()
-        .or(st.culling.hold.as_ref())
-        .map_or(1, |c| c.compare);
-    zoom::cell(vw, vh, compare)
+    zoom::cell(vw, vh, compared(st))
 }
 
 /// The monitor's table on the renderer, for the panel's output
@@ -2054,6 +2060,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let fitted = st.develop.zoom == 0.0;
             drop(st);
             zoom_to2(if fitted { 1.0 } else { 0.0 }, x, y);
+        });
+        let (state, app_weak) = (outer.clone(), app.as_weak());
+        app.on_mat_key(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            st.develop.mat = !st.develop.mat;
+            app.window().request_redraw();
         });
         let (state, app_weak) = (outer.clone(), app.as_weak());
         app.on_zoom_key(move |level| {

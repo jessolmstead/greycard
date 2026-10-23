@@ -58,8 +58,6 @@ same direction and a similar size in the first third of the travel,
 within a tenth of a stop; past that it is a look, and looks are the
 Look section's job.
 
-- [ ] Tester requested a fine-control mode for sliders. Maybe holding a
-      different key and turning the mousewheel.
 - [ ] A file opened from the Finder opens in the editor: the delegate's
       `application:openURLs:` is written but has not run on a Mac;
       try a double-click, Open With and a Dock drop, at launch and
@@ -563,9 +561,6 @@ clears or a tester asks for it.
       wanted (the pipeline's order unchanged), fold a set by default;
       and the scopes folded away on a small screen, their space to
       the panel
-- [ ] A mat around the picture in the viewport, a band of grey or a
-      chosen color toggled by a key, to judge exposure and color
-      against; the export's border (§314) is a different thing
 - [ ] Before and after: the picture against a chosen history step or
       snapshot under a wipe the pointer drags
 - [ ] Bezier handles on a curve's points, so a point's reach along
@@ -913,8 +908,6 @@ clears or a tester asks for it.
       through a libheif found at runtime and loaded by name as ONNX
       Runtime is, a file skipped with a log line where none is; AVIF
       beside it from a pure-Rust decoder
-- [ ] Setting to auto-hide all but the currently selected/opened
-      tool in the develop pane
 - [ ] A zoom menu beside Fit: 50%, 100%, 200% (pixls, 2026-10-22)
 - [ ] The UI scale as any percentage, not steps: 100% too small and
       125% too large on one monitor (pixls, 2026-10-22)

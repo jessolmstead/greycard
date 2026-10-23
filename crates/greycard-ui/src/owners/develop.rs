@@ -50,6 +50,9 @@ pub(crate) struct Develop {
     pub(crate) image_size: (u32, u32),
     /// Display pixels per image pixel; 0 means fit to the view.
     pub(crate) zoom: f32,
+    /// The mat: a band of the canvas around the fitted picture, by
+    /// its key, kept in the settings.
+    pub(crate) mat: bool,
     /// The image pixel at the view's center.
     pub(crate) center: (f32, f32),
     pub(crate) renderer: Option<Renderer>,

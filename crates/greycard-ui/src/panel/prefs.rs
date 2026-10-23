@@ -579,6 +579,17 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             jpegs_apart_changed(&state, &app, &worker, app.get_jpegs_apart());
         });
     }
+    // One section of the panel open at a time: kept as flipped.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_one_section_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let on = app.get_one_section();
+            keep(&state.borrow(), |s| s.one_section = on);
+        });
+    }
     // The aspect an uncropped frame's crop opens at: kept as chosen.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());

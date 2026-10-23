@@ -184,6 +184,11 @@ pub(crate) const TABLE: &[Group] = &[
             act("zoom-1to1", &["Space"], "Fit or 1:1"),
             act("zoom-3to1", &["Z"], "Fit or 3:1"),
             act(
+                "mat",
+                &["F"],
+                "A mat of the canvas around the picture at Fit, or none",
+            ),
+            act(
                 "overlays",
                 &["J"],
                 "In the Loupe, shadow and highlight clipping warnings",
@@ -278,7 +283,7 @@ pub(crate) const TABLE: &[Group] = &[
             shown(
                 &[],
                 "↑ ↓ ← →, + −",
-                "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more",
+                "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more, Ctrl on the slider for less",
             ),
             shown(&[], ", .", "The previous or the next slider"),
             shown(
@@ -1319,6 +1324,29 @@ mod tests {
         let (at, size) = crate::testing::labeled(&app, "Done");
         crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         assert!(!app.get_crop_mode());
+    }
+
+    /// F puts the mat on the fit and takes it off; the settings keep
+    /// it, and a zoom asked for is not touched.
+    #[test]
+    fn f_mats_the_fitted_picture_and_again_takes_it_off() {
+        let (app, state, _worker) = develop_window();
+        state.borrow_mut().develop.image_size = (6000, 4000);
+        let fit = |st: &crate::State| crate::panel::viewport::effective_zoom(st, 1000, 800);
+        let bare = fit(&state.borrow());
+        press(&app, "f");
+        assert!(state.borrow().develop.mat);
+        let matted = fit(&state.borrow());
+        assert!(matted < bare, "{matted} inside the mat, {bare} without");
+        let mut kept = crate::settings::Settings::default();
+        crate::panel::startup::take_state_choices(&mut kept, &state.borrow());
+        assert!(kept.mat, "kept for the next run");
+        state.borrow_mut().develop.zoom = 1.0;
+        assert_eq!(fit(&state.borrow()), 1.0, "1:1 fills the view");
+        state.borrow_mut().develop.zoom = 0.0;
+        press(&app, "f");
+        assert!(!state.borrow().develop.mat);
+        assert_eq!(fit(&state.borrow()), bare);
     }
 
     /// W is the white balance's pipette, from any tab; again, put

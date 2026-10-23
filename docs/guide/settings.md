@@ -30,6 +30,16 @@ capture taken with `--snapshot` or `--screenshot` is drawn at the
 system's scale whatever the setting, so it looks the same on every
 machine; set `SLINT_SCALE_FACTOR` for one at another size.
 
+### One section open at a time
+
+Off by default. On, opening a section of the develop panel folds every
+other section of its tab, so the one you are working in has the room.
+The Develop, Crop, Masks, Retouch, and Cull tabs each fold their own,
+but a section on both Develop and Masks (Light, Color, Curves, Mixer,
+Grading, Tint, and Detail) is folded or open on both at once. The left
+pane's sections are not touched. Turning it on folds nothing until the
+next section opens.
+
 ## Sidecars
 
 ### Edits go

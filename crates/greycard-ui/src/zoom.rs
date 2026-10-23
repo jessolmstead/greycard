@@ -21,6 +21,21 @@ pub fn cell(vw: u32, vh: u32, compare: usize) -> (u32, u32) {
     }
 }
 
+/// The mat's band on each side of a fitted picture, as a share of
+/// the view's shorter side.
+pub const MAT: f32 = 0.06;
+
+/// The room a fit has inside the mat: a `cell` less the band on each
+/// side, the band a share of its shorter side. Only the fit reads
+/// it; a zoom asked for is the zoom, and fills the view.
+pub fn matted(cell: (u32, u32)) -> (u32, u32) {
+    let band = (cell.0.min(cell.1) as f32 * MAT).round() as u32;
+    (
+        cell.0.saturating_sub(2 * band).max(1),
+        cell.1.saturating_sub(2 * band).max(1),
+    )
+}
+
 /// The zoom in display pixels per image pixel: `asked` when it is
 /// one, else the fit of an `image` into a `cell`.
 ///
@@ -96,5 +111,20 @@ mod tests {
             effective(0.0, (cw, ch), (6000, 4000)) < effective(0.0, (1000, 800), (6000, 4000)),
             "a tile fits smaller than the whole view"
         );
+    }
+
+    #[test]
+    fn the_mat_takes_a_band_off_each_side_of_the_fit() {
+        // 6% of the shorter side, 800: a band of 48 all round.
+        assert_eq!(matted((1000, 800)), (904, 704));
+        // A wide picture fits the narrower room by its width.
+        let fit = effective(0.0, matted((1000, 800)), (6000, 4000));
+        assert!((fit - 904.0 / 6000.0).abs() < 1e-6);
+        assert!(fit < effective(0.0, (1000, 800), (6000, 4000)));
+        // A zoom asked for fills the view whatever the mat.
+        assert_eq!(effective(1.0, matted((1000, 800)), (6000, 4000)), 1.0);
+        // A view too small for the band keeps a pixel of room.
+        assert_eq!(matted((10, 1)), (10, 1));
+        assert_eq!(matted((1, 1)), (1, 1));
     }
 }

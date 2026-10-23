@@ -114,7 +114,7 @@ with **File** (Windows keeps them in
 monitor is set to it.
 
 **Canvas** sets the color around the picture: black or one of three
-greys.
+greys. **F** gives the fitted picture a mat of it on every side.
 
 The monitor choice is remembered. It changes only what you see; an
 export is never affected.

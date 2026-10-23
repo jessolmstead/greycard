@@ -52,9 +52,16 @@ pub struct Settings {
     /// The viewport's surround, by the name `render::canvas_name`
     /// gives it: "Black", or one of three greys.
     pub canvas_color: String,
+    /// Whether the fitted picture has a mat, a band of the canvas
+    /// around it. Off by default.
+    pub mat: bool,
     /// The panel's sections folded away, by the names the panel
     /// keeps them under.
     pub collapsed: Vec<String>,
+    /// Whether opening one of the develop panel's sections folds the
+    /// others of its tab. Off by default. Written as the switch is
+    /// flipped.
+    pub one_section: bool,
     /// The grid's cell, logical pixels: the zoom it was left at.
     pub grid_cell: f32,
     /// How many tiles go across the lightbox, as it was left. Held to
@@ -314,7 +321,9 @@ impl Default for Settings {
             display_profile: "System".into(),
             display_monitor: String::new(),
             canvas_color: crate::render::CANVAS_NAMES[0].into(),
+            mat: false,
             collapsed: Vec::new(),
+            one_section: false,
             grid_cell: crate::grid::CELL,
             lightbox_across: crate::lightbox::ACROSS,
             hide_left: false,
@@ -499,7 +508,9 @@ mod tests {
             display_profile: "Adobe RGB".into(),
             display_monitor: "PA279CRV".into(),
             canvas_color: "Mid grey".into(),
+            mat: true,
             collapsed: vec!["grain".into(), "demosaic".into()],
+            one_section: true,
             grid_cell: 256.0,
             lightbox_across: 5,
             hide_left: true,

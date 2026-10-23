@@ -952,6 +952,7 @@ impl State {
                 save_timer: slint::Timer::default(),
                 image_size: (1, 1),
                 zoom: 0.0,
+                mat: false,
                 center: (0.0, 0.0),
                 renderer: None,
                 gpu: None,

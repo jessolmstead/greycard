@@ -28,6 +28,10 @@ pan and zoom straight away.
 - A **pinch** on a Mac trackpad, or on a Windows precision touchpad,
   zooms about the pointer. On Linux a touchpad pinch does nothing yet;
   use Ctrl and a scroll.
+- **F** puts a mat around the fitted picture, a band of the canvas
+  color on every side, to judge exposure and color against. **F**
+  again takes it away. Zoomed in, the picture fills the view as
+  before. The mat is remembered.
 
 A scroll over an open sheet stays with the sheet and never zooms the
 picture behind it.
@@ -47,7 +51,10 @@ panel". The word goes when you click, press a key or scroll.
   shown and press Enter. Escape leaves it as it was.
 - **Fine steps:** click a slider, then use the left and right arrow
   keys or the mouse wheel. Each click of the wheel is one step. Shift
-  with the wheel moves any slider without clicking it first.
+  with the wheel moves any slider without clicking it first. Hold Ctrl
+  with the arrows or the wheel for finer steps, a tenth of one where
+  the number shows it (Ctrl+Shift with the wheel on a slider not
+  clicked).
 
 ### Sections
 

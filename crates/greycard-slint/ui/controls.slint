@@ -98,6 +98,19 @@ export component Switch inherits Rectangle {
     }
 }
 
+// The panel's sections, one open at a time when the Settings sheet
+// asks: a section of the panel that opens, by its header or by a key,
+// says so here, and every other section of the panel then folds. Only
+// the tab on screen has its sections made, so the others are its own.
+export global Folds {
+    in-out property <bool> one-open: false;
+    // The sections numbered as they first open, the last to open, and
+    // a count of openings that the others watch.
+    in-out property <int> count: 0;
+    in-out property <int> opener: 0;
+    in-out property <int> opened: 0;
+}
+
 // A section: a header of icon, title and chevron over a rule, and
 // the body under it. The header folds the body away and back. A
 // section with an effect carries a switch at the header's right: off,
@@ -129,6 +142,30 @@ export component Section inherits VerticalLayout {
     // other section lets go.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
+    // One of the panel's sections, which fold for each other under
+    // `Folds`, while the panel is on screen; a pane's or a list's do
+    // not. The grid covers the panel without unmaking it, and a pane's
+    // section sharing a fold with one of the panel's (METADATA's)
+    // must not fold the panel behind it.
+    in property <bool> one-of-panel: false;
+    property <int> fold-number: 0;
+    changed collapsed => {
+        if (!root.collapsed && root.one-of-panel && Folds.one-open) {
+            if (root.fold-number == 0) {
+                Folds.count += 1;
+                root.fold-number = Folds.count;
+            }
+            Folds.opener = root.fold-number;
+            Folds.opened += 1;
+        }
+    }
+    property <int> fold-opened: Folds.opened;
+    changed fold-opened => {
+        if (root.one-of-panel && Folds.one-open && !root.collapsed
+            && Folds.opener != root.fold-number) {
+            root.collapsed = true;
+        }
+    }
     callback switched();
     spacing: 6px;
     padding-top: Theme.space-1;
@@ -472,57 +509,65 @@ export component ValueField inherits Rectangle {
     }
 }
 
-// A slider's two steps for the keys, in its value (in stops on a
-// logarithmic one): an arrow, plus or minus, and an arrow with Shift.
+// A slider's steps for the keys, in its value (in stops on a
+// logarithmic one): an arrow, plus or minus, and an arrow with Shift;
+// and the fine step, of an arrow or a wheel's click with Ctrl.
 export struct Nudge {
     small: float,
     big: float,
+    fine: float,
 }
 
 // Every slider's steps, one table: each slider names its line. The
 // steps are the ones Lightroom's hand expects, read in what the slider
 // shows: a tenth and a third of a stop on exposure, 1 and 10 on a
-// slider shown 0 to 100 or -100 to +100.
+// slider shown 0 to 100 or -100 to +100. The fine step is a tenth of
+// the small one, or the least the slider's number shows where that is
+// more: a line shown no finer than its small step has no finer step.
 export global Steps {
     // Exposure, and the vignette's amount, in EV over ±5.
-    out property <Nudge> exposure: { small: 0.1, big: 1 / 3 };
+    out property <Nudge> exposure: { small: 0.1, big: 1 / 3, fine: 0.01 };
     // Highlights, shadows and whites, in EV over ±2.
-    out property <Nudge> tone: { small: 0.05, big: 0.25 };
+    out property <Nudge> tone: { small: 0.05, big: 0.25, fine: 0.01 };
     // Blacks, ±30 % shown: 1 and 5.
-    out property <Nudge> blacks: { small: 0.01, big: 0.05 };
-    // Contrast's multiplier, in stops over two.
-    out property <Nudge> contrast: { small: 0.02, big: 0.2 };
+    out property <Nudge> blacks: { small: 0.01, big: 0.05, fine: 0.01 };
+    // Contrast's multiplier, in stops over two. Shown as the
+    // multiplier, where a finer step in stops would not always show.
+    out property <Nudge> contrast: { small: 0.02, big: 0.2, fine: 0.02 };
     // Shown as a percent, 0 to 100 or ±100 (a 0 to 1 or ±1 value):
     // 1 and 10.
-    out property <Nudge> percent: { small: 0.01, big: 0.1 };
+    out property <Nudge> percent: { small: 0.01, big: 0.1, fine: 0.01 };
     // Shown to two places: a radius, a grain's size.
-    out property <Nudge> hundredths: { small: 0.01, big: 0.1 };
+    out property <Nudge> hundredths: { small: 0.01, big: 0.1, fine: 0.01 };
     // Shown to two places over a range of a few: the black and white
-    // weight and strength, the denoise's strength.
-    out property <Nudge> twentieths: { small: 0.05, big: 0.25 };
+    // strength, the denoise's strength.
+    out property <Nudge> twentieths: { small: 0.05, big: 0.25, fine: 0.01 };
+    // The black and white weight, shown as weighed by the strength,
+    // where a finer step than the small one can hide.
+    out property <Nudge> weight: { small: 0.05, big: 0.25, fine: 0.05 };
     // Shown to one place: an angle, a keystone, a radius in pixels, a
     // margin.
-    out property <Nudge> tenths: { small: 0.1, big: 1 };
+    out property <Nudge> tenths: { small: 0.1, big: 1, fine: 0.1 };
     // Shown to one place in halves: the mark's size, the border.
-    out property <Nudge> halves: { small: 0.5, big: 5 };
+    out property <Nudge> halves: { small: 0.5, big: 5, fine: 0.1 };
     // A whole number to 100: a quality, an opacity, a count, a
     // threshold.
-    out property <Nudge> whole: { small: 1, big: 10 };
+    out property <Nudge> whole: { small: 1, big: 10, fine: 1 };
     // An angle on the hue circle.
-    out property <Nudge> degrees: { small: 1, big: 10 };
+    out property <Nudge> degrees: { small: 1, big: 10, fine: 1 };
     // The tint's hue, whose wheel step is a tenth of a degree.
-    out property <Nudge> tenth-degrees: { small: 0.1, big: 1 };
+    out property <Nudge> tenth-degrees: { small: 0.1, big: 1, fine: 0.1 };
     // A hue's shift, ±30°.
-    out property <Nudge> hue-shift: { small: 1, big: 5 };
+    out property <Nudge> hue-shift: { small: 1, big: 5, fine: 1 };
     // White balance in kelvin, 2000 to 12000.
-    out property <Nudge> kelvin: { small: 50, big: 500 };
+    out property <Nudge> kelvin: { small: 50, big: 500, fine: 5 };
     // Shown to three places, or a tenth of a percent: the tint, a
     // chroma, a brush's or a repair's size.
-    out property <Nudge> thousandths: { small: 0.001, big: 0.01 };
+    out property <Nudge> thousandths: { small: 0.001, big: 0.01, fine: 0.001 };
     // The lens's manual distortion, shown to a tenth over ±50.
-    out property <Nudge> distortion: { small: 0.005, big: 0.05 };
+    out property <Nudge> distortion: { small: 0.005, big: 0.05, fine: 0.001 };
     // The lens's red and blue scale, shown to a tenth over ±10.
-    out property <Nudge> fringe: { small: 0.0001, big: 0.001 };
+    out property <Nudge> fringe: { small: 0.0001, big: 0.001, fine: 0.0001 };
 }
 
 // A slider: label, track with fill, handle, value. A click on the
@@ -535,8 +580,9 @@ export global Steps {
 // Focused, by a click or a key, it holds the keys until a click, Tab,
 // comma, period or Escape moves them on: the four arrows, and plus
 // and minus (= and _ with them), nudge by its small step, an arrow
-// with Shift by its big one, as a drag moves it; comma and period focus the
-// previous and the next slider in the panel; Escape gives the keys
+// with Shift by its big one and with Ctrl by its fine one, as a drag
+// moves it; comma and period focus the previous and the next slider
+// in the panel; Escape gives the keys
 // back to the window. Tab is Slint's own, to the next control. Every
 // other key is the window's, as if nothing had the focus: a rating, a
 // flag, an undo.
@@ -626,6 +672,11 @@ export component EditSlider inherits Rectangle {
     }
     function bump(way: int, big: bool) {
         root.nudge(way * (big ? root.steps.big : root.steps.small));
+    }
+    // A wheel's click with Ctrl: the fine step, or the slider's own
+    // wheel step where that is finer still.
+    function wheel-step(fine: bool) -> float {
+        return fine ? min(root.step, root.steps.fine) : root.step;
     }
 
     // Its number among the sliders, for `SliderKeys`: handed out when
@@ -758,6 +809,16 @@ export component EditSlider inherits Rectangle {
                 Typing.done += 1;
                 return accept;
             }
+            if (e.modifiers.control && !e.modifiers.shift && !e.modifiers.alt && !e.modifiers.meta) {
+                if (e.text == Key.UpArrow || e.text == Key.RightArrow) {
+                    root.nudge(root.steps.fine);
+                    return accept;
+                }
+                if (e.text == Key.DownArrow || e.text == Key.LeftArrow) {
+                    root.nudge(-root.steps.fine);
+                    return accept;
+                }
+            }
             if (!e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta) {
                 // Shift is the big step on an arrow only: on some
                 // boards Shift with plus or minus is another key.
@@ -839,7 +900,8 @@ export component EditSlider inherits Rectangle {
             }
         }
         // The wheel moves a focused slider, or any slider with Shift
-        // held; otherwise it passes through. A mouse wheel's click is
+        // held; otherwise it passes through. Ctrl with it is the fine
+        // step, notches counted the same. A mouse wheel's click is
         // one step: one event of a notch or more, whatever the
         // platform makes a click in pixels (60 on one, 15 on another),
         // so clicks never add up to two steps and never to none. A
@@ -848,12 +910,12 @@ export component EditSlider inherits Rectangle {
             if (!root.enabled || !(e.modifiers.shift || fs.has-focus)) { return reject; }
             if (abs(e.delta-y != 0 ? e.delta-y : e.delta-x) >= root.notch * 1px) {
                 root.scroll-acc = 0;
-                root.nudge(((e.delta-y != 0 ? e.delta-y : e.delta-x) > 0 ? 1 : -1) * root.step);
+                root.nudge(((e.delta-y != 0 ? e.delta-y : e.delta-x) > 0 ? 1 : -1) * root.wheel-step(e.modifiers.control));
                 return accept;
             }
             root.scroll-acc += (e.delta-y != 0 ? e.delta-y : e.delta-x) / 1px;
             if (abs(root.scroll-acc) >= root.notch) {
-                root.nudge((root.scroll-acc > 0 ? 1 : -1) * root.step);
+                root.nudge((root.scroll-acc > 0 ? 1 : -1) * root.wheel-step(e.modifiers.control));
                 root.scroll-acc = 0;
             }
             return accept;

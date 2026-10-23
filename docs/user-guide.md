@@ -176,6 +176,7 @@ frames as ← and → do.
 | F6, F7, F8 | The filmstrip, the left pane or the develop panel alone |
 | Space | Fit or 1:1 |
 | Z | Fit or 3:1 |
+| F | A mat of the canvas around the picture at Fit, or none |
 | J | In the Loupe, shadow and highlight clipping warnings; in the lightbox, the badges |
 | S | Soft proof (in the grid, a stack: below) |
 
@@ -210,7 +211,8 @@ do.
 | W | White balance from a neutral patch: the pipette |
 | M | New mask with a Linear, placed by the next drag |
 | Shift+M | New mask with a Radial, placed by the next drag |
-| ↑ ↓ ← →, + − | Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more |
+| ↑ ↓ ← →, + − | Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more, Ctrl on the slider for less |
+| Wheel | Nudge the focused slider, any slider with Shift; Ctrl for finer steps |
 | , . | The previous or the next slider |
 | Tab, Shift+Tab | In a slider's typed value, the next or the previous one |
 

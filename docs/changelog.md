@@ -7,6 +7,11 @@ design note behind it.
 
 ### The window
 
+- Ctrl on a focused slider's arrow or with the wheel moves a fine
+  step, where the slider's number can show it. F puts a mat of the
+  canvas color around the picture at Fit. A Settings switch opens one
+  section at a time
+  ([§397](https://github.com/jessolmstead/greycard/blob/master/docs/notes/397-fine-steps-a-mat-and-one-section-open.md))
 - Any shortcut can be changed: Settings ends with a Keys section;
   click a key, press the new one, Esc keeps the old. A key given two
   jobs says so in red; Reset to defaults puts them all back. Kept in

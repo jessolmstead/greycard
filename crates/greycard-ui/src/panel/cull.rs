@@ -1323,11 +1323,19 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
         let scale = tw / fw;
         let full = geometry.plane_size(fw, fh);
         let frame = geometry.frame(tw, th);
+        // One frame alone fits inside the mat, as the develop's does
+        // (`effective_zoom`): the camera's picture standing in for it
+        // must not jump when the develop lands.
+        let room = if st.develop.mat && rows.len() <= 1 {
+            crate::zoom::matted((rect.2, rect.3))
+        } else {
+            (rect.2, rect.3)
+        };
         let zoom = if st.develop.zoom > 0.0 {
             st.develop.zoom
         } else {
-            (rect.2 as f32 / full.0)
-                .min(rect.3 as f32 / full.1)
+            (room.0 as f32 / full.0)
+                .min(room.1 as f32 / full.1)
                 .min(1.0)
         };
         // The compared frames share the selection's center as a

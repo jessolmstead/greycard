@@ -7,7 +7,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys } from "controls.slint";
+import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
 import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, BindRow, KeywordChip } from "structs.slint";
@@ -91,6 +91,8 @@ export component App inherits Window {
     callback toggle-zoom(length, length);
     /// Fit if at this level, else this level about the view's center.
     callback zoom-key(float);
+    /// The mat around the fitted picture, on or off.
+    callback mat-key();
     /// The effective zoom in words: "Fit", or a percentage.
     in property <string> zoom-text: "Fit";
 
@@ -2044,6 +2046,10 @@ export component App inherits Window {
     /// which the left pane's entry opens or is told not to offer.
     in-out property <bool> update-check: true;
     callback update-check-changed();
+    /// The Settings sheet's switch: opening one of the panel's
+    /// sections folds the others (`Folds`).
+    in-out property <bool> one-section <=> Folds.one-open;
+    callback one-section-changed();
     callback update-check-now();
     in property <string> update-note: "";
     in property <bool> update-checking: false;
@@ -2596,6 +2602,7 @@ export component App inherits Window {
             if (chord == "Ctrl+A") { root.select-all(); return accept; }
             if (chord == "Space" && !root.grid-open) { root.zoom-key(1); return accept; }
             if (chord == "Z" && !root.grid-open) { root.zoom-key(3); return accept; }
+            if (chord == "F" && !root.grid-open) { root.mat-key(); return accept; }
             if (chord == "S" && !root.grid-open) {
                 root.proofing = !root.proofing;
                 root.proof-changed();
@@ -2923,6 +2930,7 @@ export component App inherits Window {
                         // filter, the compare view, and the two ways
                         // out of it, one of them for the rejects.
                         if root.panel-tab == "Cull": CullSection {
+                            one-of-panel: !root.grid-open;
                             developed: root.cull-developed;
                             source-asked(d) => { root.cull-source-asked(d); }
                             frame-turned(a) => { root.frame-turned(a); }
@@ -2968,6 +2976,7 @@ export component App inherits Window {
                         // CULLING, whose keys and buttons keep their
                         // place at the top.
                         if root.panel-tab == "Cull": MetaSection {
+                            one-of-panel: !root.grid-open;
                             frame-meta-on: root.frame-meta-on;
                             frame-title: root.frame-title;
                             frame-title-mixed: root.frame-title-mixed;
@@ -2987,6 +2996,7 @@ export component App inherits Window {
                             focus-keys => { keys.focus(); }
                         }
                         if root.panel-tab == "Masks" && root.target > 0: AdjustmentsSection {
+                            one-of-panel: !root.grid-open;
                             adjustment-names <=> root.adjustment-names;
                             target <=> root.target;
                             mask-invert <=> root.mask-invert;
@@ -3041,6 +3051,7 @@ export component App inherits Window {
                             view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": LookSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-look <=> root.collapsed-look;
                             look-name <=> root.look-name;
                             look-strength <=> root.look-strength;
@@ -3062,6 +3073,7 @@ export component App inherits Window {
                             view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": WhiteBalanceSection {
+                            one-of-panel: !root.grid-open;
                             as-shot <=> root.as-shot;
                             collapsed-wb <=> root.collapsed-wb;
                             picking <=> root.picking;
@@ -3078,6 +3090,7 @@ export component App inherits Window {
                         // under it, where that is not the light under the
                         // rest. Off until switched on.
                         if root.panel-tab == "Masks" && root.target > 0: WhiteBalanceSection {
+                            one-of-panel: !root.grid-open;
                             local: true;
                             owner: root.target-name;
                             switchable: true;
@@ -3093,6 +3106,7 @@ export component App inherits Window {
                             develop-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": CameraSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-camera <=> root.collapsed-camera;
                             raw-input: root.raw-input;
                             source-note: root.source-note;
@@ -3104,6 +3118,7 @@ export component App inherits Window {
                             camera-profile-picked => { root.camera-profile-picked(); }
                         }
                         if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): LightSection {
+                            one-of-panel: !root.grid-open;
                             exposure <=> root.exposure;
                             contrast <=> root.contrast;
                             highlights <=> root.highlights;
@@ -3118,6 +3133,7 @@ export component App inherits Window {
                             view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): ColorSection {
+                            one-of-panel: !root.grid-open;
                             color-enabled <=> root.color-enabled;
                             saturation <=> root.saturation;
                             vibrance <=> root.vibrance;
@@ -3128,6 +3144,7 @@ export component App inherits Window {
                             view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): CurvesSection {
+                            one-of-panel: !root.grid-open;
                             curves-enabled <=> root.curves-enabled;
                             curve-mode <=> root.curve-mode;
                             para-highlights <=> root.para-highlights;
@@ -3155,6 +3172,7 @@ export component App inherits Window {
                             view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): MixerSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-mixer <=> root.collapsed-mixer;
                             picking <=> root.picking;
                             pick-started(a) => { root.pick-started(a); }
@@ -3176,6 +3194,7 @@ export component App inherits Window {
                         // picture is mono or it is not, so this one
                         // is not offered on the Masks tab.
                         if root.panel-tab == "Develop": BlackWhiteSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-bw <=> root.collapsed-bw;
                             band-colors: root.band-colors;
                             dull: root.dull;
@@ -3191,6 +3210,7 @@ export component App inherits Window {
                             view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): GradingSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-grading <=> root.collapsed-grading;
                             target-name <=> root.target-name;
                             grading-enabled <=> root.grading-enabled;
@@ -3215,6 +3235,7 @@ export component App inherits Window {
                         // every mask can carry one, each with its
                         // switch.
                         if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): TintSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-tint <=> root.collapsed-tint;
                             target-name <=> root.target-name;
                             tint-enabled <=> root.tint-enabled;
@@ -3236,6 +3257,7 @@ export component App inherits Window {
                         // from the bands the develop keeps beside the
                         // picture.
                         if root.panel-tab == "Masks" && root.target > 0: DetailSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-detail <=> root.collapsed-detail;
                             target-name <=> root.target-name;
                             detail-enabled <=> root.local-detail-enabled;
@@ -3245,6 +3267,7 @@ export component App inherits Window {
                             develop-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": NoiseSection {
+                            one-of-panel: !root.grid-open;
                             noise-enabled <=> root.noise-enabled;
                             collapsed-noise <=> root.collapsed-noise;
                             denoise <=> root.denoise;
@@ -3257,6 +3280,7 @@ export component App inherits Window {
                             develop-changed => { root.develop-changed(); }
                         }
                         if root.panel-tab == "Develop": LensSection {
+                            one-of-panel: !root.grid-open;
                             lens-enabled <=> root.lens-enabled;
                             collapsed-lens <=> root.collapsed-lens;
                             picking <=> root.picking;
@@ -3291,6 +3315,7 @@ export component App inherits Window {
                         // worker runs it, after the retouch and before
                         // the sharpen.
                         if root.panel-tab == "Develop": DetailSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-detail <=> root.collapsed-detail;
                             detail-enabled <=> root.detail-enabled;
                             detail-texture <=> root.detail-texture;
@@ -3299,6 +3324,7 @@ export component App inherits Window {
                             develop-changed => { root.develop-changed(); }
                         }
                         if root.panel-tab == "Develop": SharpenSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-sharpen <=> root.collapsed-sharpen;
                             show-sharpen-mask <=> root.show-sharpen-mask;
                             sharpen <=> root.sharpen;
@@ -3313,6 +3339,7 @@ export component App inherits Window {
                             develop-changed => { root.develop-changed(); }
                         }
                         if root.panel-tab == "Develop": VignetteSection {
+                            one-of-panel: !root.grid-open;
                             vignette-enabled <=> root.vignette-enabled;
                             collapsed-vignette <=> root.collapsed-vignette;
                             vignette-amount <=> root.vignette-amount;
@@ -3322,6 +3349,7 @@ export component App inherits Window {
                             view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": GrainSection {
+                            one-of-panel: !root.grid-open;
                             grain-enabled <=> root.grain-enabled;
                             collapsed-grain <=> root.collapsed-grain;
                             grain-amount <=> root.grain-amount;
@@ -3330,6 +3358,7 @@ export component App inherits Window {
                             view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": ProofSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-proof <=> root.collapsed-proof;
                             proofing <=> root.proofing;
                             proof-profile <=> root.proof-profile;
@@ -3340,6 +3369,7 @@ export component App inherits Window {
                             choose-proof-file => { root.choose-proof-file(); }
                         }
                         if root.panel-tab == "Develop": MonitorSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-monitor <=> root.collapsed-monitor;
                             display-profile <=> root.display-profile;
                             display-monitor <=> root.display-monitor;
@@ -3358,6 +3388,7 @@ export component App inherits Window {
                         // the perspective's own heading began to read as
                         // a second section inside the first.
                         if root.panel-tab == "Crop": CropSection {
+                            one-of-panel: !root.grid-open;
                             crop-mode <=> root.crop-mode;
                             level-mode <=> root.level-mode;
                             guide-mode <=> root.guide-mode;
@@ -3374,6 +3405,7 @@ export component App inherits Window {
                             guide-dropped => { root.guide-dropped(); }
                         }
                         if root.panel-tab == "Crop": RotateSection {
+                            one-of-panel: !root.grid-open;
                             frame-turned(a) => { root.frame-turned(a); }
                             crop-mode <=> root.crop-mode;
                             level-mode <=> root.level-mode;
@@ -3390,6 +3422,7 @@ export component App inherits Window {
                         // right positive, for a lens whose focal length
                         // is the frame's half side.
                         if root.panel-tab == "Crop": PerspectiveSection {
+                            one-of-panel: !root.grid-open;
                             crop-mode <=> root.crop-mode;
                             level-mode <=> root.level-mode;
                             guide-mode <=> root.guide-mode;
@@ -3402,6 +3435,7 @@ export component App inherits Window {
                             guide-dropped => { root.guide-dropped(); }
                         }
                         if root.panel-tab == "Develop": DemosaicSection {
+                            one-of-panel: !root.grid-open;
                             collapsed-demosaic <=> root.collapsed-demosaic;
                             raw-input: root.raw-input;
                             source-note: root.source-note;
@@ -3414,6 +3448,7 @@ export component App inherits Window {
                         // the Develop tab: not part of the develop, but
                         // within reach of the frame being worked on.
                         if root.panel-tab == "Develop": MetaSection {
+                            one-of-panel: !root.grid-open;
                             frame-meta-on: root.frame-meta-on;
                             frame-title: root.frame-title;
                             frame-title-mixed: root.frame-title-mixed;
@@ -3433,6 +3468,7 @@ export component App inherits Window {
                             focus-keys => { keys.focus(); }
                         }
                         if root.panel-tab == "Retouch": RetouchSection {
+                            one-of-panel: !root.grid-open;
                             retouch-enabled <=> root.retouch-enabled;
                             collapsed-retouch <=> root.collapsed-retouch;
                             develop-changed => { root.develop-changed(); }
@@ -4455,6 +4491,8 @@ export component App inherits Window {
         ui-scale-started: root.ui-scale-started;
         ui-scale-by-hand: root.ui-scale-by-hand;
         ui-scale-changed => { root.ui-scale-changed(); }
+        one-section <=> root.one-section;
+        one-section-changed => { root.one-section-changed(); }
         open-frames: root.open-frames;
         sidecars-written: root.sidecars-written;
         sidecars-elsewhere: root.sidecars-elsewhere;

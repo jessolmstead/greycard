@@ -380,6 +380,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         monitors
     };
     app.set_canvas_choice(render::canvas_choice(&remembered.canvas_color));
+    app.set_one_section(remembered.one_section);
     if remembered.curve_mode == PARAMETRIC {
         app.set_curve_mode(PARAMETRIC.into());
     }
@@ -623,6 +624,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.views.recent = recent;
         st.views.tree = tree;
         st.develop.zoom = zoom;
+        st.develop.mat = remembered.mat;
         st.develop.scope = scope;
         st.develop.store = store;
         st.develop.monitors = monitors;
@@ -1675,6 +1677,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.xmp_sidecars = kept.xmp_sidecars;
         settings.sidecars_in_folder = kept.sidecars_in_folder;
         settings.jpegs_apart = kept.jpegs_apart;
+        settings.one_section = kept.one_section;
         settings.cull_move_on = kept.cull_move_on;
         settings.loupe_cull = kept.loupe_cull;
         settings.cull_developed = kept.cull_developed;
@@ -2131,6 +2134,7 @@ pub(crate) fn remembered_folder(settings: &settings::Settings) -> Option<PathBuf
 /// What the state owns of the settings, not the panel: put on the
 /// settings the panel's choices made, for the file at close.
 pub(crate) fn take_state_choices(settings: &mut settings::Settings, st: &State) {
+    settings.mat = st.develop.mat;
     settings.export_presets = st.work.export_presets.clone();
     settings.export_last_folder = st
         .work
@@ -2164,7 +2168,11 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         display_profile: display_key(app),
         display_monitor: app.get_display_monitor().to_string(),
         canvas_color: render::canvas_name(app.get_canvas_choice()).to_string(),
+        // The state's, put in by `take_state_choices`.
+        mat: false,
         collapsed: read_folds(app),
+        // Written as the switch is flipped; the caller keeps the file's.
+        one_section: false,
         grid_cell: app.get_grid_cell(),
         lightbox_across: app.get_lightbox_across(),
         // The lightbox puts the panes away for as long as it is on:

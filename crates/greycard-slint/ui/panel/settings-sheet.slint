@@ -24,6 +24,9 @@ export component SettingsSheet inherits Rectangle {
     in property <string> ui-scale-started;
     in property <bool> ui-scale-by-hand;
     callback ui-scale-changed();
+    /// Opening one of the panel's sections folds the others.
+    in-out property <bool> one-section;
+    callback one-section-changed();
     /// "Beside the raw" or "Hidden folder", as the row spells it.
     in-out property <string> sidecar-placement;
     in-out property <bool> xmp-sidecars;
@@ -189,6 +192,11 @@ export component SettingsSheet inherits Rectangle {
                         font-size: Theme.font-xs;
                         color: Theme.text-secondary;
                         wrap: word-wrap;
+                    }
+                    Toggle {
+                        label: "One section open at a time";
+                        checked <=> root.one-section;
+                        toggled => { root.one-section-changed(); }
                     }
                     Rectangle { height: Theme.space-1; }
                     Text {
