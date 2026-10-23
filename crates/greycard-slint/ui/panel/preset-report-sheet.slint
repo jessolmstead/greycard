@@ -4,9 +4,8 @@
 // once, when the status line is too short for it; OK, Enter, Escape
 // or a click outside closes it, and nothing of it is kept.
 
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { PanelButton } from "../controls.slint";
+import { PanelButton, ScrollPane } from "../controls.slint";
 
 export component PresetReportSheet inherits Rectangle {
     in-out property <bool> report-open;
@@ -51,12 +50,14 @@ export component PresetReportSheet inherits Rectangle {
                 }
                 // However many files were chosen: a long report scrolls,
                 // and its lines wrap at the sheet's width, never past it.
-                scroll := ScrollView {
+                scroll := ScrollPane {
                     height: min(list.preferred-height, 280px);
                     content-height: list.preferred-height;
                     content-width: self.visible-width;
                     list := VerticalLayout {
                         width: scroll.visible-width;
+                        // Clear of the scroll bar's band.
+                        padding-right: Theme.scrollbar-band;
                         spacing: Theme.space-1;
                         for line in root.report-refusals: Text {
                             text: line;

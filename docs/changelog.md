@@ -7,6 +7,9 @@ design note behind it.
 
 ### The window
 
+- Scroll bars read: a brighter thumb everywhere, and Settings >
+  Interface can make them stay and pick Thin, Medium, or Wide
+  ([§411](https://github.com/jessolmstead/greycard/blob/master/docs/notes/411-scroll-bars-of-our-own.md)).
 - Settings > Editing lists the canvas, the monitor and soft proof
   profiles, and the export's format and color space beside where
   they are set; a change in either place shows in both

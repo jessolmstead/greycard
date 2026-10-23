@@ -8,9 +8,8 @@
 // folder of hundreds of profiles never puts the totals or the buttons
 // off the sheet.
 
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { PanelButton, Toggle } from "../controls.slint";
+import { PanelButton, Toggle, ScrollPane } from "../controls.slint";
 import { ReportLine } from "../structs.slint";
 
 // A line of the report: its word in a column, then what it says.
@@ -110,7 +109,7 @@ export component RawTherapeeSheet inherits Rectangle {
                 }
             }
             // The middle, which scrolls: each frame's lines.
-            scroll := ScrollView {
+            scroll := ScrollPane {
                 vertical-stretch: 1;
                 min-height: root.rt-lines.length == 0 ? 0px : 72px;
                 preferred-height: list.preferred-height;
@@ -118,6 +117,8 @@ export component RawTherapeeSheet inherits Rectangle {
                 content-width: self.visible-width;
                 list := VerticalLayout {
                     width: scroll.visible-width;
+                    // Clear of the scroll bar's band.
+                    padding-right: Theme.scrollbar-band;
                     spacing: 2px;
                     for l in root.rt-lines: RtLine {
                         label: l.label;

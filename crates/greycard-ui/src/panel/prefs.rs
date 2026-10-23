@@ -586,6 +586,31 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             tracing::info!("theme {name}");
         });
     }
+    // The scroll bars' way and size, as the palette is.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_scroll_bars_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let name = settings::scroll_bars_named(&app.get_scroll_bars());
+            app.set_scroll_bars(name.into());
+            keep(&state.borrow(), |s| s.scroll_bars = name.into());
+            tracing::info!("scroll bars {name}");
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_scroll_bar_size_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let name = settings::scroll_bar_size_named(&app.get_scroll_bar_size());
+            app.set_scroll_bar_size(name.into());
+            keep(&state.borrow(), |s| s.scroll_bar_size = name.into());
+            tracing::info!("scroll bar size {name}");
+        });
+    }
     // Clear the thumbnail cache: every folder's thumbnails are made
     // again the next time it opens.
     {
@@ -1224,6 +1249,83 @@ mod tests {
         app.set_theme("Mauve".into());
         app.invoke_theme_changed();
         assert_eq!(app.global::<crate::Theme>().get_name(), "Charcoal");
+    }
+
+    /// The scroll bar rows: a click puts the way and the size in force
+    /// at once, through the window's `ScrollBars`, and every bar's
+    /// thumb is as thick as the size says, at rest and under the
+    /// pointer; a name the settings do not know goes back to the first.
+    #[test]
+    fn the_scroll_bar_rows_set_every_bar() {
+        use i_slint_backend_testing::ElementHandle;
+        let app = crate::testing::window(40);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1000));
+            slint::platform::update_timers_and_animations();
+        };
+        // The thinnest of the thumbs that scroll something, the strip's
+        // among them: its thickness across its bar.
+        let thickness = || {
+            settle();
+            ElementHandle::find_by_element_id(&app, "ScrollBand::thumb")
+                .map(|e| e.size())
+                .filter(|s| s.width > 0.0 && s.height > 0.0)
+                .map(|s| s.width.min(s.height))
+                .reduce(f32::min)
+                .expect("a bar that scrolls")
+        };
+        assert_eq!(thickness(), 2.0, "Thin at the start");
+        app.invoke_settings_asked();
+        let bars = || app.global::<crate::ScrollBars>();
+        assert_eq!(
+            (bars().get_mode(), bars().get_size()),
+            ("Fade".into(), "Thin".into())
+        );
+        // A row's segment, by the row's own label beside it.
+        let click_on = |row: &str, label: &str| {
+            let row_y = ElementHandle::find_by_accessible_label(&app, row)
+                .next()
+                .unwrap_or_else(|| panic!("{row:?} on the sheet"))
+                .absolute_position()
+                .y;
+            let segment = ElementHandle::find_by_accessible_label(&app, label)
+                .min_by(|a, b| {
+                    let off = |e: &ElementHandle| (e.absolute_position().y - row_y).abs();
+                    off(a).total_cmp(&off(b))
+                })
+                .unwrap_or_else(|| panic!("{label:?} on the sheet"));
+            let (at, size) = (segment.absolute_position(), segment.size());
+            crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        };
+        click_on("Scroll bars", "Stay");
+        assert_eq!(app.get_scroll_bars(), "Stay");
+        assert!(bars().get_stay());
+        click_on("Scroll bars", "Fade");
+        assert!(!bars().get_stay());
+        for (size, rest, lit, band) in [
+            ("Medium", 4.0, 10.0, 18.0),
+            ("Wide", 6.0, 14.0, 22.0),
+            ("Thin", 2.0, 6.0, 14.0),
+        ] {
+            click_on("Scroll bar size", size);
+            assert_eq!(app.get_scroll_bar_size(), size);
+            assert_eq!(bars().get_size(), size);
+            assert_eq!(bars().get_rest(), rest, "{size}");
+            assert_eq!(bars().get_lit(), lit, "{size}");
+            assert_eq!(
+                app.global::<crate::Theme>().get_scrollbar_band(),
+                band,
+                "{size}"
+            );
+            assert_eq!(thickness(), rest, "{size}");
+        }
+        app.set_scroll_bars("Always".into());
+        app.invoke_scroll_bars_changed();
+        assert_eq!(bars().get_mode(), "Fade");
+        app.set_scroll_bar_size("Huge".into());
+        app.invoke_scroll_bar_size_changed();
+        assert_eq!(bars().get_size(), "Thin");
     }
 
     /// About: the version, and the folders the run keeps its files in,

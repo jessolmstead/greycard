@@ -1,9 +1,9 @@
 // The left bar's record of the edit: the snapshots kept by name, and
 // the history's steps.
 
-import { ScrollView, LineEdit } from "std-widgets.slint";
+import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Section, PanelButton, TipArea } from "../controls.slint";
+import { Section, PanelButton, TipArea, ScrollPane } from "../controls.slint";
 import { HistoryRow } from "../structs.slint";
 
 /// A snapshot row's icon: its picture, lit under the pointer, and
@@ -98,7 +98,7 @@ export component SnapshotsSection inherits Section {
         preferred-height: min(snapshot-list.preferred-height, 200px);
         max-height: self.preferred-height;
         vertical-stretch: 1;
-        ScrollView {
+        ScrollPane {
             snapshot-list := VerticalLayout {
                 padding: 2px;
                 spacing: 2px;
@@ -137,7 +137,7 @@ export component SnapshotsSection inherits Section {
                     }
                     HorizontalLayout {
                         padding-left: Theme.space-2;
-                        // Clears the fluent ScrollView's bar so an
+                        // Clears the scroll bar's band so an
                         // overflowing list never lets the bin's hit
                         // area sit under it.
                         padding-right: Theme.space-1 + Theme.scrollbar-band;
@@ -253,7 +253,7 @@ export component HistorySection inherits Section {
         // sections: the pane scrolls before this box shrinks past them.
         min-height: min(history-list.preferred-height, 3 * (Theme.control-height - 4px) + 4px);
         vertical-stretch: 1;
-        ScrollView {
+        ScrollPane {
             history-list := VerticalLayout {
                 padding: 2px;
                 spacing: 2px;
@@ -270,10 +270,9 @@ export component HistorySection inherits Section {
                     }
                     HorizontalLayout {
                         padding-left: Theme.space-2;
-                        // An export's time clears the fluent ScrollView's
-                        // bar, as the snapshots' bins do.
-                        padding-right: row.exported ? Theme.space-1 + Theme.scrollbar-band
-                            : Theme.space-2;
+                        // A row's words, and an export's time, clear the
+                        // scroll bar's band, as the snapshots' bins do.
+                        padding-right: Theme.space-1 + Theme.scrollbar-band;
                         spacing: Theme.space-1;
                         // An export is a record of what went out, not a
                         // change: the export's mark before its words,

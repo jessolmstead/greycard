@@ -8,10 +8,10 @@
 // stay: a catalog of many roots, or long details, never puts the set
 // or the buttons off the sheet.
 
-import { LineEdit, ScrollView } from "std-widgets.slint";
+import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { LoadingCard } from "loading.slint";
-import { PanelButton, Toggle } from "../controls.slint";
+import { PanelButton, Toggle, ScrollPane } from "../controls.slint";
 import { LightroomRoot, ReportLine } from "../structs.slint";
 
 // A line of the details: its word in a column, then what it says.
@@ -187,7 +187,7 @@ export component LightroomSheet inherits Rectangle {
                     open <=> root.details-open;
                 }
 
-                scroll := ScrollView {
+                scroll := ScrollPane {
                     vertical-stretch: 1;
                     min-height: root.shows-list ? 72px : 0px;
                     preferred-height: root.shows-list ? list.preferred-height : 0px;
@@ -196,6 +196,9 @@ export component LightroomSheet inherits Rectangle {
                     visible: root.shows-list;
                     list := VerticalLayout {
                         width: scroll.visible-width;
+                        // Clear of the scroll bar's band, so a click on
+                        // a row's Choose... is never the bar's.
+                        padding-right: Theme.scrollbar-band;
                         if root.lr-step == 0: VerticalLayout {
                             spacing: Theme.space-2;
                             // A root a line: its folder's name, where it

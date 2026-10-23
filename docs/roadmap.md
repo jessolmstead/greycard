@@ -168,9 +168,6 @@ Look section's job.
       mask or cut from it, and an experienced tester could not find
       the way; the Masks tab wants the next shape's entry under the
       mask it joins, with the mode in view. Asked 2026-10-18
-- [ ] Scroll bars that can be seen: a tester missed that a panel held
-      more controls below because the bar is too faint to notice.
-      Asked 2026-10-19 (issue 30)
 
 ### Speed
 
@@ -912,7 +909,6 @@ clears or a tester asks for it.
       125% too large on one monitor (pixls, 2026-10-22)
 - [ ] A toolbar of common actions, the set the user's, with the
       menu bar (pixls, 2026-10-22)
-- [ ] Scroll bars that stay, and a size for them (pixls, 2026-10-22)
 - [ ] Grid cells shaped to the picture rather than square, so a 3:2
       frame does not sit in 55 px of plate above and below (§410);
       what makes the grid read loose after the gap tightened

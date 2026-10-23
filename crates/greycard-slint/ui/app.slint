@@ -5,11 +5,11 @@
 // sections, bars and sheets are in panel/, one file a section, each
 // bound to the properties and callbacks below that it uses.
 
-import { ScrollView, Palette } from "std-widgets.slint";
-import { Theme } from "theme.slint";
+import { Palette } from "std-widgets.slint";
+import { Theme, ScrollBars } from "theme.slint";
 // The theme's name is read on the Rust side's tests.
-export { Theme } from "theme.slint";
-import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds } from "controls.slint";
+export { Theme, ScrollBars } from "theme.slint";
+import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds, ScrollPane } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
 import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, BindRow, KeywordChip, QueueRow } from "structs.slint";
@@ -240,6 +240,7 @@ export component App inherits Window {
     property <length> strip-item: 178px;
     property <length> strip-pitch: root.strip-item + Theme.space-2;
     property <length> strip-pad: Theme.space-3;
+    property <length> strip-foot: max(root.strip-pad, ScrollBars.band - 2px);
     /// The frames the strip shows now, first and last, so their
     /// pictures are made before the rest of the folder's.
     callback strip-range(int, int);
@@ -928,10 +929,10 @@ export component App inherits Window {
     in-out property <[float]> curve-red-green: [0, 0.5, 1, 0.5];
     in-out property <[float]> curve-blue-yellow: [0, 0.5, 1, 0.5];
     in property <image> curve-image;
-    // How far the panel's sections are scrolled, the ScrollView's
+    // How far the panel's sections are scrolled, the ScrollPane's
     // own content-y (so down is negative); set from Rust for a
     // snapshot of a section below the fold, once the sections have
-    // their height, as the ScrollView puts an earlier value back to
+    // their height, as the ScrollPane puts an earlier value back to
     // the top when it first lays out.
     in-out property <length> panel-scroll: 0px;
     // Straighten and crop. The crop is fractions of the source; the
@@ -2020,6 +2021,12 @@ export component App inherits Window {
     changed theme => {
         Palette.color-scheme = Theme.light ? ColorScheme.light : ColorScheme.dark;
     }
+    // The Settings sheet's scroll bar rows: whether the bars fade or
+    // stay, and their size (`ScrollBars`), every bar following at once.
+    in-out property <string> scroll-bars <=> ScrollBars.mode;
+    callback scroll-bars-changed();
+    in-out property <string> scroll-bar-size <=> ScrollBars.size;
+    callback scroll-bar-size-changed();
     in property <int> sidecars-elsewhere: 0;
     /// How many frames are open, which the count and the move run
     /// over; and whether this run writes sidecars at all.
@@ -2205,7 +2212,9 @@ export component App inherits Window {
     // viewport's edges.
     property <length> left-w: root.left-hidden ? 0px : 240px;
     property <length> right-w: root.right-hidden ? 0px : 320px;
-    property <length> strip-h: root.strip-hidden ? 0px : 148px;
+    // The strip's foot grows with the scroll bar's size, so a wider
+    // thumb still keeps off the frames.
+    property <length> strip-h: root.strip-hidden ? 0px : 148px + root.strip-foot - root.strip-pad;
     pure function all-hidden() -> bool {
         return root.left-hidden && root.right-hidden && root.strip-hidden;
     }
@@ -2944,7 +2953,7 @@ export component App inherits Window {
                     }
                 }
                 // Named so the tests find the view's own edges.
-                panel-view := ScrollView {
+                panel-view := ScrollPane {
                     content-y <=> root.panel-scroll;
                     // A slider reached by a key, scrolled into view,
                     // and kept there as the layout moves it. Moved by
@@ -2977,13 +2986,15 @@ export component App inherits Window {
                     // Under a tall scope in a short window the pinned
                     // list, down to its one row, can still want more
                     // than the panel has: there the sections' view
-                    // gives up the rest of its room (std's own floor
+                    // gives up the rest of its room (the pane's own floor
                     // is 50 px) before the footer is pushed under the
                     // strip.
                     min-height: root.panel-tab == "Masks" ? 0px : 50px;
                     panel-sections := VerticalLayout {
                         alignment: start;
                         padding: Theme.space-4;
+                        // Clear of the scroll bar's band, however wide it is.
+                        padding-right: max(Theme.space-4, ScrollBars.band + 2px);
                         padding-top: Theme.space-2;
                         spacing: Theme.space-2;
                         // Culling: what the mode is, the browser's
@@ -3633,6 +3644,7 @@ export component App inherits Window {
             strip-item: root.strip-item;
             strip-pitch: root.strip-pitch;
             strip-pad: root.strip-pad;
+            strip-foot: root.strip-foot;
             strip-relay => { root.strip-relay(); }
             strip-report => { root.strip-report(); }
             bar-length(a, b) => { return root.bar-length(a, b); }
@@ -3866,15 +3878,17 @@ export component App inherits Window {
         // their own list, and the navigator is just one
         // thumbnail, held to the pane's width — nothing here
         // is unbounded on its own, but their sum, on a small
-        // or high-DPI screen, still could be. A ScrollView
+        // or high-DPI screen, still could be. A ScrollPane
         // never passes its content's size up to its parent,
         // so nothing here can raise the window's minimum
         // height past the screen's (see the note above about
         // Windows leaving fullscreen).
-        ScrollView {
+        ScrollPane {
             VerticalLayout {
                 alignment: start;
                 padding: Theme.space-4;
+                // Clear of the scroll bar's band, however wide it is.
+                padding-right: max(Theme.space-4, ScrollBars.band + 2px);
                 padding-top: Theme.space-2;
                 spacing: Theme.space-2;
                 // The frame's, and so the loupe's alone: first, so
@@ -4621,6 +4635,10 @@ export component App inherits Window {
         ui-scale-changed => { root.ui-scale-changed(); }
         theme <=> root.theme;
         theme-changed => { root.theme-changed(); }
+        scroll-bars <=> root.scroll-bars;
+        scroll-bars-changed => { root.scroll-bars-changed(); }
+        scroll-bar-size <=> root.scroll-bar-size;
+        scroll-bar-size-changed => { root.scroll-bar-size-changed(); }
         one-section <=> root.one-section;
         one-section-changed => { root.one-section-changed(); }
         start-choice <=> root.start-choice;

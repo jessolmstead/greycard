@@ -5,9 +5,8 @@
 // index; the switch above takes in the folders under it too. Built
 // from the index, so a root that is offline still shows its shape.
 
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Section, Toggle } from "../controls.slint";
+import { Section, Toggle, ScrollPane } from "../controls.slint";
 import { FolderRow } from "../structs.slint";
 
 export component FoldersSection inherits Section {
@@ -42,7 +41,7 @@ export component FoldersSection inherits Section {
         max-height: self.preferred-height;
         min-height: min(folder-list.preferred-height, 3 * (Theme.control-height - 6px) + 4px);
         vertical-stretch: 1;
-        ScrollView {
+        ScrollPane {
             folder-list := VerticalLayout {
                 padding: 2px;
                 spacing: 1px;
@@ -62,7 +61,7 @@ export component FoldersSection inherits Section {
                     }
                     HorizontalLayout {
                         padding-left: 2px + row.depth * 12px;
-                        // Clears the fluent ScrollView's bar, as the
+                        // Clears the scroll bar's band, as the
                         // snapshots' bins do.
                         padding-right: Theme.space-1 + Theme.scrollbar-band;
                         spacing: 2px;

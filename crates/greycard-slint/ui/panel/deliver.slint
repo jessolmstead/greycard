@@ -3,9 +3,9 @@
 // and the watermark laid over it, kept by name as presets; over
 // everything until a choice is made.
 
-import { ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { ComboBox, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { EditSlider, Steps, Toggle, PanelButton, Segmented } from "../controls.slint";
+import { EditSlider, Steps, Toggle, PanelButton, Segmented, ScrollPane } from "../controls.slint";
 import { QueueRow } from "../structs.slint";
 
 // Nine places for a watermark, three by three, one chosen.
@@ -241,7 +241,7 @@ export component ExportSheet inherits Rectangle {
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            ScrollView {
+            ScrollPane {
                 vertical-stretch: 1;
                 body := VerticalLayout {
                     alignment: start;
@@ -547,7 +547,7 @@ export component ExportSheet inherits Rectangle {
                     border-color: Theme.border;
                     height: min(queue-list.preferred-height,
                                 root.queue-rows-shown * root.queue-row-height + (root.queue-rows-shown - 1) * 2px + 4px);
-                    ScrollView {
+                    ScrollPane {
                         queue-list := VerticalLayout {
                             padding: 2px;
                             spacing: 2px;

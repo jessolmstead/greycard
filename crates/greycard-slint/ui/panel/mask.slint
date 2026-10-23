@@ -3,9 +3,9 @@
 // slider, and the chosen mask's own controls, its shapes, and the one
 // row that adds another to it, the first of those sections.
 
-import { LineEdit, ScrollView } from "std-widgets.slint";
+import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Tips, TipArea, Section, EditSlider, Steps, Toggle, PanelButton, Segmented, Typing } from "../controls.slint";
+import { Tips, TipArea, Section, EditSlider, Steps, Toggle, PanelButton, Segmented, Typing, ScrollPane } from "../controls.slint";
 
 // The list: Global, then each mask with its switch, the chosen one
 // with its bin; then New mask. It never scrolls with the sections
@@ -78,7 +78,7 @@ export component AdjustmentsList inherits Section {
         border-width: 1px;
         border-color: Theme.border;
         height: min(rows.preferred-height, root.max-rows * root.pitch) + 2px;
-        list := ScrollView {
+        list := ScrollPane {
             // A row scrolled from under a resting pointer takes its word along.
             changed content-y => { Tips.show("", 0, 0); }
             x: 1px;

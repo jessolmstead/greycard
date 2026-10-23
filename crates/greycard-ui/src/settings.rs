@@ -226,6 +226,15 @@ pub struct Settings {
     /// chosen; anything else in the file reads as the first.
     #[serde(deserialize_with = "theme_leniently")]
     pub theme: String,
+    /// Whether the scroll bars fade at rest or stay drawn, one of
+    /// [`SCROLL_BARS`]. Written as it is chosen; anything else in the
+    /// file reads as the first.
+    #[serde(deserialize_with = "scroll_bars_leniently")]
+    pub scroll_bars: String,
+    /// How thick the scroll bars are, one of [`SCROLL_BAR_SIZES`], as
+    /// leniently.
+    #[serde(deserialize_with = "scroll_bar_size_leniently")]
+    pub scroll_bar_size: String,
 }
 
 /// The Settings sheet's categories, top to bottom, by the names the
@@ -254,6 +263,32 @@ pub fn theme_named(name: &str) -> &'static str {
         .unwrap_or(THEMES[0])
 }
 
+/// The scroll bars' two ways, by the names the Settings sheet shows;
+/// the first is the default.
+pub const SCROLL_BARS: [&str; 2] = ["Fade", "Stay"];
+
+/// The way `name` names, or the first for a name that is none.
+pub fn scroll_bars_named(name: &str) -> &'static str {
+    SCROLL_BARS
+        .iter()
+        .find(|t| **t == name)
+        .copied()
+        .unwrap_or(SCROLL_BARS[0])
+}
+
+/// The scroll bars' sizes, as the sheet shows them; the first is the
+/// default.
+pub const SCROLL_BAR_SIZES: [&str; 3] = ["Thin", "Medium", "Wide"];
+
+/// The size `name` names, or the first for a name that is none.
+pub fn scroll_bar_size_named(name: &str) -> &'static str {
+    SCROLL_BAR_SIZES
+        .iter()
+        .find(|t| **t == name)
+        .copied()
+        .unwrap_or(SCROLL_BAR_SIZES[0])
+}
+
 /// The `settings_category` of a file edited by hand: one of the
 /// categories, the first for any other value, so a bad one never costs
 /// the rest of the file its settings.
@@ -270,6 +305,22 @@ where
     D: serde::Deserializer<'de>,
 {
     one_of(d, &THEMES, "theme")
+}
+
+/// The `scroll_bars` of a file edited by hand, as leniently.
+fn scroll_bars_leniently<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    one_of(d, &SCROLL_BARS, "scroll_bars")
+}
+
+/// The `scroll_bar_size` of a file edited by hand, as leniently.
+fn scroll_bar_size_leniently<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    one_of(d, &SCROLL_BAR_SIZES, "scroll_bar_size")
 }
 
 /// One of `names` read from a file edited by hand, the first for any
@@ -507,6 +558,8 @@ impl Default for Settings {
             keys: std::collections::BTreeMap::new(),
             settings_category: CATEGORIES[0].into(),
             theme: THEMES[0].into(),
+            scroll_bars: SCROLL_BARS[0].into(),
+            scroll_bar_size: SCROLL_BAR_SIZES[0].into(),
         }
     }
 }
@@ -736,6 +789,8 @@ mod tests {
                 .collect(),
             settings_category: "Keys".into(),
             theme: "Light".into(),
+            scroll_bars: "Stay".into(),
+            scroll_bar_size: "Wide".into(),
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);
@@ -982,6 +1037,49 @@ mod tests {
         }
         assert_eq!(theme_named("Grey"), "Grey");
         assert_eq!(theme_named("Gray"), "Charcoal");
+    }
+
+    /// The scroll bars' way and size: each name reads and writes back
+    /// as itself, and a file without them, or with a name that is
+    /// neither, reads as Fade and Thin and costs the rest nothing.
+    #[test]
+    fn the_scroll_bars_are_read_leniently() {
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            (read.scroll_bars.as_str(), read.scroll_bar_size.as_str()),
+            ("Fade", "Thin")
+        );
+        for (field, names) in [
+            ("scroll_bars", &SCROLL_BARS[..]),
+            ("scroll_bar_size", &SCROLL_BAR_SIZES[..]),
+        ] {
+            for name in names {
+                let text = format!(r#"{{"{field}": "{name}"}}"#);
+                let read: Settings = serde_json::from_str(&text).unwrap();
+                let back: Settings =
+                    serde_json::from_str(&serde_json::to_string(&read).unwrap()).unwrap();
+                for s in [&read, &back] {
+                    let got = if field == "scroll_bars" {
+                        &s.scroll_bars
+                    } else {
+                        &s.scroll_bar_size
+                    };
+                    assert_eq!(got, name, "{text}");
+                }
+            }
+        }
+        for bad in [r#""stay""#, "2", "null", r#""Huge""#] {
+            let text =
+                format!(r#"{{"ui_scale": 150, "scroll_bars": {bad}, "scroll_bar_size": {bad}}}"#);
+            let read: Settings = serde_json::from_str(&text).expect(&text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert_eq!(read.scroll_bars, "Fade", "{text}");
+            assert_eq!(read.scroll_bar_size, "Thin", "{text}");
+        }
+        assert_eq!(scroll_bars_named("Stay"), "Stay");
+        assert_eq!(scroll_bars_named("Always"), "Fade");
+        assert_eq!(scroll_bar_size_named("Medium"), "Medium");
+        assert_eq!(scroll_bar_size_named("medium"), "Thin");
     }
 
     #[test]

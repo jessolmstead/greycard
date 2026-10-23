@@ -826,7 +826,7 @@ pub(crate) fn sync_display(
 /// loop rather than from inside a frame, once the picture asked for
 /// is on screen (`ready`). A scroll asked for is applied now that the
 /// panel's sections have their height (set before the first layout,
-/// the ScrollView puts it back to the top) and the capture waits a
+/// the ScrollPane puts it back to the top) and the capture waits a
 /// further moment for that frame.
 ///
 /// `then_quit` ends the run with the capture, which is what a batch

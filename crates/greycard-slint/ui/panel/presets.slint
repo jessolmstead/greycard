@@ -4,9 +4,8 @@
 // panel's scroll until the left pane had room for it; where Lightroom
 // keeps its presets is where a hand looks for them.
 
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Tips, TipArea, Section, PanelButton } from "../controls.slint";
+import { Tips, TipArea, Section, PanelButton, ScrollPane } from "../controls.slint";
 
 export component PresetsSection inherits Section {
     in-out property <int> selected;
@@ -44,7 +43,7 @@ export component PresetsSection inherits Section {
         preferred-height: min(preset-list.preferred-height, 200px);
         max-height: self.preferred-height;
         vertical-stretch: 1;
-        ScrollView {
+        ScrollPane {
             // A row scrolled from under a resting pointer takes its word along.
             changed content-y => { Tips.show("", 0, 0); }
             preset-list := VerticalLayout {
@@ -62,7 +61,7 @@ export component PresetsSection inherits Section {
                     }
                     HorizontalLayout {
                         padding-left: Theme.space-2;
-                        // Clears the fluent ScrollView's bar so an
+                        // Clears the scroll bar's band so an
                         // overflowing list never lets the bin's hit
                         // area sit under it.
                         padding-right: Theme.space-1 + Theme.scrollbar-band;

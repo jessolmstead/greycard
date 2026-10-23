@@ -5,9 +5,9 @@
 // place: a folder added to the library where it is, nothing copied.
 // Over everything until a choice is made.
 
-import { ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { ComboBox, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { PanelButton, Toggle, Segmented } from "../controls.slint";
+import { PanelButton, Toggle, Segmented, ScrollPane } from "../controls.slint";
 
 // A folder: its path, or what is missing, and the button that asks
 // the desktop for one.
@@ -87,7 +87,7 @@ export component ImportSheet inherits Rectangle {
         clip: true;
         TouchArea { }
         VerticalLayout {
-            ScrollView {
+            ScrollPane {
                 min-height: 80px;
                 vertical-stretch: 1;
                 body := VerticalLayout {

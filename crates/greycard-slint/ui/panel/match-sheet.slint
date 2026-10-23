@@ -4,8 +4,7 @@
 // line a group as each lands.
 
 import { Theme } from "../theme.slint";
-import { PanelButton, Segmented, Toggle } from "../controls.slint";
-import { ScrollView } from "std-widgets.slint";
+import { PanelButton, Segmented, Toggle, ScrollPane } from "../controls.slint";
 import { MatchGroup } from "../structs.slint";
 import { LoadingCard } from "loading.slint";
 
@@ -75,7 +74,7 @@ export component MatchSheet inherits Rectangle {
         clip: true;
         TouchArea { }
         VerticalLayout {
-        ScrollView {
+        ScrollPane {
             min-height: 80px;
             vertical-stretch: 1;
         match-sheet := VerticalLayout {
@@ -126,7 +125,7 @@ export component MatchSheet inherits Rectangle {
                 // its width: room for that, so a box is never hidden.
                 preferred-height: min(max(group-list.preferred-height, root.match-groups.length * 40px + 16px), 200px);
                 max-height: self.preferred-height;
-                ScrollView {
+                ScrollPane {
                     group-list := VerticalLayout {
                         padding: Theme.space-2;
                         padding-right: Theme.space-2 + Theme.scrollbar-band;

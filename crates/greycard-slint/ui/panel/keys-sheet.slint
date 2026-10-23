@@ -4,9 +4,9 @@
 // else. ? or Help > Keys opens it; the field narrows it as it is typed
 // into; Escape or a click beside it closes it.
 
-import { LineEdit, ScrollView } from "std-widgets.slint";
+import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { PanelButton } from "../controls.slint";
+import { PanelButton, ScrollPane } from "../controls.slint";
 import { KeyRow } from "../structs.slint";
 
 export component KeysSheet inherits Rectangle {
@@ -55,12 +55,14 @@ export component KeysSheet inherits Rectangle {
                         init => { self.focus(); }
                     }
                 }
-                ScrollView {
+                ScrollPane {
                     // The window less the sheet's head and foot.
                     min-height: 80px;
                     preferred-height: list.preferred-height;
                     list := VerticalLayout {
                         alignment: start;
+                        // Clear of the scroll bar's band.
+                        padding-right: Theme.scrollbar-band;
                         spacing: 2px;
                         for row in root.rows: HorizontalLayout {
                             padding-top: row.heading ? Theme.space-3 : 0;

@@ -289,6 +289,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The palette the window was left in, the user's under a capture
     // too, as the system's scale is.
     app.set_theme(settings::theme_named(&remembered.theme).into());
+    app.set_scroll_bars(settings::scroll_bars_named(&remembered.scroll_bars).into());
+    app.set_scroll_bar_size(settings::scroll_bar_size_named(&remembered.scroll_bar_size).into());
     // Which curve the panel shows at the start, for a dump of its
     // picture with `GREYCARD_UI_CURVE`.
     if let Ok(name) = std::env::var("GREYCARD_UI_CURVE_CHANNEL") {
@@ -1708,6 +1710,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.keys = kept.keys;
         settings.settings_category = kept.settings_category;
         settings.theme = kept.theme;
+        settings.scroll_bars = kept.scroll_bars;
+        settings.scroll_bar_size = kept.scroll_bar_size;
         settings.ui_scale_system =
             crate::window_fit::scale::system_seen().unwrap_or(kept.ui_scale_system);
         // A run opened with `--hide-panels` was a look at the picture
@@ -2264,6 +2268,9 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         settings_category: String::new(),
         // Written as the Settings sheet's theme is chosen.
         theme: String::new(),
+        // Written as the Settings sheet's scroll bar rows are chosen.
+        scroll_bars: String::new(),
+        scroll_bar_size: String::new(),
     }
 }
 

@@ -4,9 +4,8 @@
 // and Enter's; Overwrite is red, never the default and never Enter's:
 // only a click reaches it (the delete sheet's rule).
 
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { PanelButton } from "../controls.slint";
+import { PanelButton, ScrollPane } from "../controls.slint";
 import { DangerButton } from "delete-sheet.slint";
 
 export component OverwriteSheet inherits Rectangle {
@@ -61,9 +60,11 @@ export component OverwriteSheet inherits Rectangle {
                     color: Theme.text-secondary;
                 }
                 // Every file, however many: a long list scrolls.
-                ScrollView {
+                ScrollPane {
                     height: min(list.preferred-height, 240px);
                     list := VerticalLayout {
+                        // Clear of the scroll bar's band.
+                        padding-right: Theme.scrollbar-band;
                         spacing: Theme.space-1;
                         for file in root.overwrite-files: Text {
                             text: file;

@@ -2,7 +2,7 @@
 // (rest, hover, pressed, disabled) and a focus ring where it takes
 // focus. Icons are Lucide (ISC, see icons/LICENSE), tinted here.
 
-import { Theme } from "theme.slint";
+import { Theme, ScrollBars } from "theme.slint";
 
 // The window's one hover text, written by whatever has rested under the
 // pointer (a `TipArea`) and drawn by the window over everything: it
@@ -1530,14 +1530,15 @@ export component EdgeArrow inherits Rectangle {
     }
 }
 
-// A scroll bar over the edge of something the window scrolls by an
-// offset of its own, the grid's sheet down its right edge and the
-// strip along its foot, in the band and the colors the pane's lists
-// have from the fluent style: a thin thumb that widens on a track
-// under the pointer. Not the widget: the offset stays the owner's, and
-// every move the bar makes goes through `scroll-to`. There whenever
-// anything scrolls, faded at rest, so a hover over the band finds it;
-// a press in the band is the bar's and never what is under it.
+// A scroll bar over the edge of something scrolled: the grid's sheet
+// down its right edge, the strip along its foot, and a `ScrollPane`'s
+// lists and panels. A thin thumb that widens on a track under the
+// pointer, as thick as `ScrollBars` says. Not the widget: the offset
+// stays the owner's, and every move the bar makes goes through
+// `scroll-to`. There whenever anything scrolls, faded at rest where
+// it `fades`, so a hover over the band finds it, and drawn with its
+// track at rest when the bars are set to stay; a press in the band is
+// the bar's and never what is under it.
 export component ScrollBand inherits TouchArea {
     /// Along the foot rather than down the right edge.
     in property <bool> horizontal;
@@ -1546,6 +1547,9 @@ export component ScrollBand inherits TouchArea {
     in property <length> max;
     /// What a screen reader calls the bar.
     in property <string> label;
+    /// Whether the thumb fades away at rest; false keeps it drawn,
+    /// as a list's bar is. A bar set to stay never fades.
+    in property <bool> fades: true;
     /// A drag of the thumb or a press in the track: the offset wanted,
     /// which the owner holds to its range as it holds the wheel's.
     callback scroll-to(length);
@@ -1683,16 +1687,27 @@ export component ScrollBand inherits TouchArea {
         return accept;
     }
     Rectangle {
-        opacity: root.awake || root.lit ? 1 : 0;
+        opacity: ScrollBars.stay || !root.fades || root.awake || root.lit ? 1 : 0;
         animate opacity { duration: 200ms; }
-        // Round ends, in a band narrower than the grid's too.
-        border-radius: min(7px, (root.horizontal ? root.height : root.width) / 2);
-        background: root.lit ? Theme.scrollbar-track : transparent;
+        // The track, round ended, as wide as the widened thumb and 2 px
+        // more each side, so it keeps to the outer edge of the band and
+        // a list's padding clears it.
         Rectangle {
+            property <length> across: ScrollBars.lit + 4px;
+            property <length> edge: (root.horizontal ? parent.height : parent.width) - 2px;
+            x: root.horizontal ? 0 : self.edge - self.across;
+            y: root.horizontal ? self.edge - self.across : 0;
+            width: root.horizontal ? parent.width : self.across;
+            height: root.horizontal ? self.across : parent.height;
+            border-radius: self.across / 2;
+            background: root.lit ? Theme.scrollbar-track
+                : ScrollBars.stay ? Theme.scrollbar-track-rest : transparent;
+        }
+        thumb := Rectangle {
             // On whole device pixels, so a 2 px thumb is crisp at a
             // fractional scale: its thickness across the band, 4 px in
             // from the outer edge, and its place and length along it.
-            property <length> thick: round((root.lit ? 6px : 2px) / 1phx) * 1phx;
+            property <length> thick: round((root.lit ? ScrollBars.lit : ScrollBars.rest) / 1phx) * 1phx;
             property <length> at: round(root.thumb-at / 1phx) * 1phx;
             property <length> long: round(root.thumb-len / 1phx) * 1phx;
             property <length> edge: round(((root.horizontal ? parent.height : parent.width) - 4px) / 1phx) * 1phx;
@@ -1703,6 +1718,93 @@ export component ScrollBand inherits TouchArea {
             height: root.horizontal ? self.thick : self.long;
             border-radius: self.thick / 2;
             background: root.lit ? Theme.scrollbar-thumb-hover : Theme.scrollbar-thumb;
+        }
+    }
+}
+
+// A view that scrolls what it holds, with `ScrollBand`s down its right
+// edge and along its foot in place of the std widgets' bars, so a
+// list's and a panel's bar look, stay, and size as the grid's does.
+// The thumb stays drawn at rest here: a view whose bar faded would
+// hide that it holds more below. The thumb's arithmetic is the
+// grid's: 4 px from the ends, no shorter than 24 px.
+export component ScrollPane {
+    out property <length> visible-width <=> flick.width;
+    out property <length> visible-height <=> flick.height;
+    in-out property <length> content-width <=> flick.content-width;
+    in-out property <length> content-height <=> flick.content-height;
+    in-out property <length> content-x <=> flick.content-x;
+    in-out property <length> content-y <=> flick.content-y;
+    min-height: 50px;
+    min-width: 50px;
+    horizontal-stretch: 1;
+    vertical-stretch: 1;
+    preferred-height: 100%;
+    preferred-width: 100%;
+    property <length> max-x: max(0px, flick.content-width - flick.width);
+    property <length> max-y: max(0px, flick.content-height - flick.height);
+    pure function track(span: length) -> length {
+        return max(0px, span - 8px);
+    }
+    pure function thumb-length(span: length, far: length) -> length {
+        if (far <= 0px || span <= 0px) { return 0px; }
+        return max(root.track(span) * span / (span + far), min(24px, root.track(span)));
+    }
+    pure function room(span: length, far: length) -> length {
+        return root.track(span) - root.thumb-length(span, far);
+    }
+    flick := Flickable {
+        mouse-drag-pan-enabled: false;
+        width: parent.width;
+        height: parent.height;
+        @children
+    }
+    ScrollBand {
+        x: parent.width - self.width;
+        width: ScrollBars.band;
+        height: root.max-x > 0 ? parent.height - ScrollBars.band : parent.height;
+        fades: false;
+        label: "Scroll";
+        scroll: -flick.content-y;
+        max: root.max-y;
+        scroll-to(to) => { flick.content-y = -clamp(to, 0px, root.max-y); }
+        wheel(dx, dy, ctrl) => {
+            if (dy != 0px) { flick.content-y = clamp(flick.content-y + dy, -root.max-y, 0px); }
+        }
+        bar-length(span, far) => { return root.thumb-length(span, far); }
+        bar-offset(span, far, at) => {
+            if (far <= 0px) { return 4px; }
+            return 4px + max(0px, root.room(span, far)) * clamp(at / far, 0, 1);
+        }
+        bar-drag(span, far, from, by) => {
+            if (far <= 0px) { return 0px; }
+            if (root.room(span, far) <= 0px) { return clamp(from, 0px, far); }
+            return clamp(from + by * far / root.room(span, far), 0px, far);
+        }
+    }
+    ScrollBand {
+        horizontal: true;
+        y: parent.height - self.height;
+        height: ScrollBars.band;
+        width: root.max-y > 0 ? parent.width - ScrollBars.band : parent.width;
+        fades: false;
+        label: "Scroll";
+        scroll: -flick.content-x;
+        max: root.max-x;
+        scroll-to(to) => { flick.content-x = -clamp(to, 0px, root.max-x); }
+        wheel(dx, dy, ctrl) => {
+            let by = dx != 0px ? dx : dy;
+            if (by != 0px) { flick.content-x = clamp(flick.content-x + by, -root.max-x, 0px); }
+        }
+        bar-length(span, far) => { return root.thumb-length(span, far); }
+        bar-offset(span, far, at) => {
+            if (far <= 0px) { return 4px; }
+            return 4px + max(0px, root.room(span, far)) * clamp(at / far, 0, 1);
+        }
+        bar-drag(span, far, from, by) => {
+            if (far <= 0px) { return 0px; }
+            if (root.room(span, far) <= 0px) { return clamp(from, 0px, far); }
+            return clamp(from + by * far / root.room(span, far), 0px, far);
         }
     }
 }

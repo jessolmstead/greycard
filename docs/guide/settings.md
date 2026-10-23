@@ -43,6 +43,21 @@ The window's panels and text in **Charcoal** (default), a mid
 in all three. The picture's surround keeps its own **Canvas**
 setting, so the theme never changes what a picture is judged against.
 
+### Scroll bars
+
+**Fade** (default) draws a list's or a panel's bar as a thin thumb
+and lets the grid's and the filmstrip's fade away a moment after you
+stop scrolling. **Stay** keeps every bar drawn, its track too, so a
+panel that holds more below always shows it. Either way a bar widens
+under the pointer.
+
+### Scroll bar size
+
+How thick every scroll bar is: **Thin** (default), **Medium**, or
+**Wide**, changed at once. A wider bar is easier to see and to grab;
+the filmstrip grows a few pixels taller to keep its bar off the
+frames.
+
 ### One section open at a time
 
 Off by default. On, opening a section of the develop panel folds every

@@ -44,6 +44,9 @@ export component Filmstrip inherits Rectangle {
     in property <length> strip-item;
     in property <length> strip-pitch;
     in property <length> strip-pad;
+    /// The padding under the cells, where the scroll bar runs: the
+    /// pad, or more for a thumb too wide for it.
+    in property <length> strip-foot;
     /// Scroll the strip by a wheel's delta, kept within its ends.
     function strip-scroll(by: length) {
         strip.content-x = min(0px, max(strip.width - strip.content-width, strip.content-x + by));
@@ -70,7 +73,7 @@ export component Filmstrip inherits Rectangle {
     in-out property <length> content-x <=> strip.content-x;
     out property <length> content-width: strip.content-width;
 
-    height: 148px;
+    height: 148px + root.strip-foot - root.strip-pad;
     background: Theme.surface;
     Rectangle { y: 0; height: 1px; width: 100%; background: Theme.border; }
     // A wheel over the strip scrolls it sideways. Slint's
@@ -109,7 +112,7 @@ export component Filmstrip inherits Rectangle {
                 property <Thumb> t: c.thumb;
                 x: root.strip-pad + self.i * root.strip-pitch;
                 y: root.strip-pad;
-                height: parent.height - 2 * root.strip-pad;
+                height: parent.height - root.strip-pad - root.strip-foot;
                 // The current frame, and the set it is one of:
                 // every frame in the set wears the selection's
                 // ground, the current one its ring as well.
@@ -267,9 +270,9 @@ export component Filmstrip inherits Rectangle {
     // every pixel of its click. The thumb keeps its 4 px from the foot.
     ScrollBand {
         horizontal: true;
-        y: parent.height - root.strip-pad;
+        y: parent.height - root.strip-foot;
         width: parent.width;
-        height: root.strip-pad;
+        height: root.strip-foot;
         label: "Strip scroll";
         scroll: -strip.content-x;
         max: root.strip-max;

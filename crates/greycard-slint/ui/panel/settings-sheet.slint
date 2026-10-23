@@ -1,12 +1,12 @@
 // The settings sheet: what belongs to the installation rather than to a
 // picture, over everything until closed, in five categories down its
 // left side, one shown at a time. Interface: the scale, which applies
-// at the next start, the theme, and whether opening a panel section
-// folds the rest. Library: the folder a launch opens and whether the
-// filter bar shows; where the sidecars go and whether an XMP goes
-// beside them; with frames open, the move that puts their sidecars
-// where the setting says now, since flipping it moves nothing by
-// itself; whether the camera's JPEG beside a raw is a frame of its
+// at the next start, the theme, the scroll bars, and whether opening a
+// panel section folds the rest. Library: the folder a launch opens and
+// whether the filter bar shows; where the sidecars go and whether an
+// XMP goes beside them; with frames open, the move that puts their
+// sidecars where the setting says now, since flipping it moves nothing
+// by itself; whether the camera's JPEG beside a raw is a frame of its
 // own; the thumbnail cache; and the network folders' rescan. Editing:
 // the canvas, the monitor's profile, and the soft proof's, the same
 // choices the panel's MONITOR and SOFT PROOF sections make, bound to
@@ -15,12 +15,12 @@
 // presets put back; and the export sheet's format and color space,
 // bound the same way. Keys: each rebindable action of the key table
 // (`keys.rs`), a click on its chord to press a new one, Escape to keep
-// the old. About: the check for a newer release, the version, and
-// where greycard keeps its files.
+// the old. About: the check for a newer release, the version, and where
+// greycard keeps its files.
 import { Theme } from "../theme.slint";
 import { BindRow } from "../structs.slint";
-import { Toggle, PanelButton, Segmented } from "../controls.slint";
-import { LineEdit, ScrollView } from "std-widgets.slint";
+import { Toggle, PanelButton, Segmented, ScrollPane } from "../controls.slint";
+import { LineEdit } from "std-widgets.slint";
 
 export component SettingsSheet inherits Rectangle {
     in-out property <bool> settings-open;
@@ -35,6 +35,14 @@ export component SettingsSheet inherits Rectangle {
     /// The palette: "Charcoal", "Grey", or "Light" (`Theme`).
     in-out property <string> theme;
     callback theme-changed();
+    /// The scroll bars: "Fade" or "Stay", and "Thin", "Medium", or
+    /// "Wide" (`ScrollBars`).
+    in-out property <string> scroll-bars;
+    callback scroll-bars-changed();
+    in-out property <string> scroll-bar-size;
+    callback scroll-bar-size-changed();
+    // The Interface rows' labels, wide enough for "Scroll bar size".
+    property <length> interface-label-w: 96px;
     /// Opening one of the panel's sections folds the others.
     in-out property <bool> one-section;
     callback one-section-changed();
@@ -348,7 +356,7 @@ export component SettingsSheet inherits Rectangle {
                             }
                         }
                     }
-                    pane := ScrollView {
+                    pane := ScrollPane {
                         width: root.pane-w;
                         min-height: 80px;
                         content-width: root.pane-w;
@@ -375,7 +383,7 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Scale"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: "Scale"; width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["System", "125%", "150%", "175%", "200%"];
                                     current <=> root.ui-scale;
@@ -402,11 +410,29 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Theme"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: "Theme"; width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Charcoal", "Grey", "Light"];
                                     current <=> root.theme;
                                     selected => { root.theme-changed(); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Scroll bars"; width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Segmented {
+                                    options: ["Fade", "Stay"];
+                                    current <=> root.scroll-bars;
+                                    selected => { root.scroll-bars-changed(); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Scroll bar size"; width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Segmented {
+                                    options: ["Thin", "Medium", "Wide"];
+                                    current <=> root.scroll-bar-size;
+                                    selected => { root.scroll-bar-size-changed(); }
                                 }
                             }
                             Toggle {

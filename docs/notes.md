@@ -423,3 +423,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§408. The decoder in tiles](notes/408-the-decoder-in-tiles.md) (2026-10-23)
 - [§409. The export queue listed](notes/409-the-export-queue-listed.md) (2026-10-23)
 - [§410. The grid's cell by number, the wheel switchable](notes/410-the-grids-cell-by-number.md) (2026-10-23)
+- [§411. Scroll bars of our own](notes/411-scroll-bars-of-our-own.md) (2026-10-23)

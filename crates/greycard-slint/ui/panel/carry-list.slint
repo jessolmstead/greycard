@@ -6,9 +6,8 @@
 // section's parts two to a line. Past the room the sheet gives it,
 // the list scrolls.
 
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { PanelButton, Segmented } from "../controls.slint";
+import { PanelButton, Segmented, ScrollPane } from "../controls.slint";
 import { CarryRow } from "../structs.slint";
 
 // A check: off, on, or "some" for a heading with some of its parts
@@ -119,7 +118,7 @@ export component CarryList inherits VerticalLayout {
             clicked => { root.all(false); }
         }
     }
-    ScrollView {
+    ScrollPane {
         height: min(root.lines * root.pitch, max(root.max-list-height, 4 * root.pitch));
         content-height: grid.height;
         content-width: self.visible-width;

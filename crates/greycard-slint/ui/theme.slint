@@ -37,6 +37,24 @@ struct Tones {
     scrollbar-thumb: color,
     scrollbar-thumb-hover: color,
     scrollbar-track: color,
+    scrollbar-track-rest: color,
+}
+
+// The scroll bars, every one of them at once: whether a bar fades at
+// rest or stays drawn with its track, and how thick its thumb is, at
+// rest and widened under the pointer. Set from the Settings sheet's
+// Scroll bars and Scroll bar size rows.
+export global ScrollBars {
+    /// "Fade" or "Stay"; any other reads as Fade.
+    in-out property <string> mode: "Fade";
+    /// "Thin", "Medium", or "Wide"; any other reads as Thin.
+    in-out property <string> size: "Thin";
+    out property <bool> stay: mode == "Stay";
+    out property <length> rest: size == "Wide" ? 6px : size == "Medium" ? 4px : 2px;
+    out property <length> lit: size == "Wide" ? 14px : size == "Medium" ? 10px : 6px;
+    /// The band the bar takes its presses in: the widened thumb, 4 px
+    /// in from the outer edge, and as much again inside it.
+    out property <length> band: lit + 8px;
 }
 
 export global Theme {
@@ -53,7 +71,8 @@ export global Theme {
         text-strong: #ffffff, accent-text: #6ea8ff,
         selection: #6ea8ff26, focus-ring: #6ea8ff99,
         warn-red: #e0645c, warn-yellow: #dcb63c, ok-green: #55b46e,
-        scrollbar-thumb: #8a8a8a, scrollbar-thumb-hover: #b4b4b4, scrollbar-track: #2c2c2c,
+        scrollbar-thumb: #a0a0a0, scrollbar-thumb-hover: #c4c4c4,
+        scrollbar-track: #2c2c2c, scrollbar-track-rest: #2c2c2c,
     };
     property <Tones> grey: {
         canvas: #2a2a2a, base: #333333, surface: #3b3b3b, raised: #444444,
@@ -63,7 +82,8 @@ export global Theme {
         text-strong: #ffffff, accent-text: #6ea8ff,
         selection: #6ea8ff26, focus-ring: #6ea8ff99,
         warn-red: #e0645c, warn-yellow: #dcb63c, ok-green: #55b46e,
-        scrollbar-thumb: #9a9a9a, scrollbar-thumb-hover: #c4c4c4, scrollbar-track: #474747,
+        scrollbar-thumb: #b0b0b0, scrollbar-thumb-hover: #d4d4d4,
+        scrollbar-track: #474747, scrollbar-track-rest: #474747,
     };
     property <Tones> light-palette: {
         canvas: #b0b0b0, base: #c4c4c4, surface: #d4d4d4, raised: #e2e2e2,
@@ -73,7 +93,8 @@ export global Theme {
         text-strong: #000000, accent-text: #174a96,
         selection: #1f5fbf38, focus-ring: #174a96,
         warn-red: #a12a22, warn-yellow: #6e5600, ok-green: #1f6531,
-        scrollbar-thumb: #7a7a7a, scrollbar-thumb-hover: #5a5a5a, scrollbar-track: #bdbdbd,
+        scrollbar-thumb: #666666, scrollbar-thumb-hover: #484848,
+        scrollbar-track: #bdbdbd, scrollbar-track-rest: #bababa,
     };
     property <Tones> now: name == "Light" ? light-palette
         : name == "Grey" ? grey
@@ -207,20 +228,21 @@ export global Theme {
     out property <length> control-height: 28px;
     out property <length> icon: 16px;
     out property <duration> quick: 80ms;
-    // The fluent style's ScrollView draws its bar's touch band this
-    // wide over a list's right edge, whether or not the thumb itself
-    // is showing. A list row with a trailing control (a bin, say)
-    // gives it this much clearance so the band never sits over that
-    // control's hit area.
-    out property <length> scrollbar-band: 14px;
-    // A bar drawn in that band for a scroll of our own (the grid's and
-    // the strip's), over pictures and without the fluent bar's arrows
-    // or border: its thumb, solid and grey enough to read on the sheet
-    // and on a bright picture (about 5.6:1 on #1f1f1f, 3.5:1 on white), lighter
-    // when it widens under the pointer, and the track shown then, the
-    // fluent-dark alternate background.
-    // (Light's darker, to read on its sheet.)
+    // The scroll bar's band over a list's right edge, whether or not
+    // the thumb itself is showing, as wide as `ScrollBars` makes it. A
+    // list row with a trailing control (a bin, say) gives it this
+    // much clearance so the band never sits over that control's hit
+    // area.
+    out property <length> scrollbar-band: ScrollBars.band;
+    // The bar's colors: its thumb, solid and grey enough to read on
+    // the panels, on the grid's sheet, and on a bright picture (on
+    // Charcoal 6.4:1 on its surface, 6.0:1 on the sheet, and 2.6:1 on
+    // white; Grey 5.2:1 and 4.8:1; Light 3.9:1 and 3.5:1), lighter
+    // when it widens under the pointer (darker on Light, to read on
+    // its sheet), and the track shown then; and the track's quieter
+    // grey for a bar that stays at rest.
     out property <color> scrollbar-thumb: now.scrollbar-thumb;
     out property <color> scrollbar-thumb-hover: now.scrollbar-thumb-hover;
     out property <color> scrollbar-track: now.scrollbar-track;
+    out property <color> scrollbar-track-rest: now.scrollbar-track-rest;
 }
