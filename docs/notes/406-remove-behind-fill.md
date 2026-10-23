@@ -69,11 +69,10 @@ shifted one on structured content are refused below 0.5.
 - A fill that fails is remembered by patch, seed, and window for
   the open file, so a slider move does not rerun a 13 s remove; a
   new seed, an edit to the patch, or another file tries again. The
-  reviewer found the cache of fills, remembered failures with it,
-  keyed without the file: after an export of a set or a background
-  mask job, a frame whose patch matches another's by id, seed, and
-  geometry can be handed the other's pixels. Master's LaMa cache
-  has had this; it is on the roadmap's bugs.
+  cache of fills and the failures with it are keyed without the
+  file, which the review flagged; it holds because a set's export
+  and the background mask jobs each run on an engine state of their
+  own, and the open file's is cleared at every open.
 - The harness against Lightroom's Generative Remove (§380) before
   the release that ships this.
 - A tiled VAE for 8 GB cards; the 512 window for small holes is the

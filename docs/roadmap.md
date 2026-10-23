@@ -15,12 +15,7 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] The worker's fill cache (and the remembered failures since
-      §406) is keyed by patch id, seed, and window with no file: after
-      an export of a set or a mask job for another frame, an open
-      frame whose patch matches the other's can be given its pixels
-      (synced retouch across a camera's frames). Forget on a file
-      change in `fill`, or key by file
+None open.
 
 ## Open Questions
 
