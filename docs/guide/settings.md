@@ -4,9 +4,11 @@ The Settings sheet holds the choices that belong to your computer
 rather than to a picture, in five categories down its left side:
 Interface, Library, Editing, Keys, and About. Click one, or press the
 up and down arrows or Ctrl+Tab, to show it; Tab goes on into its
-rows. The sheet opens at the category you left it at. This chapter
-lists each choice in the order the sheet shows it, then where greycard
-keeps its files.
+rows. The sheet opens at the category you left it at. It also lists
+the lasting choices you make elsewhere: the canvas, the monitor and
+soft proof profiles, and the export's format and color space. A
+change in either place shows in both. This chapter lists each choice
+in the order the sheet shows it, then where greycard keeps its files.
 
 Open it with **Settings...** at the bottom of the left panel, or press
 **Ctrl+,**. Close it with **Done**, Esc or a click outside. A number
@@ -144,6 +146,24 @@ watched and need no rescan.
 
 ## Editing
 
+### Canvas
+
+The surround behind the picture, **Black**, **Dark grey**, **Mid
+grey**, or **Light grey**: the same choice as the swatches beside
+**Canvas** in the Develop tab's **MONITOR** section.
+
+### Monitor
+
+The monitor's color profile, the same choice as the **MONITOR**
+section's, with a chosen file's path and **Choose...** under the row
+when it is **File**.
+
+### Soft proof
+
+The profile and the intent, **Perceptual** or **Relative**, the soft
+proof shows the picture through: the same choices as the **SOFT
+PROOF** section's, which still turns the proof on and off.
+
 ### Crop
 
 #### Aspect
@@ -170,6 +190,18 @@ frame you have already cropped keeps its crop and its aspect. See
 
 Says whether any of the develop presets that come with greycard are
 missing from your list. **Restore** puts back the ones you removed.
+
+### Export
+
+#### Format
+
+The format an export is written in, the same choice as the Export
+sheet's **Format** row.
+
+#### Color
+
+The color space an export is written in, the same choice as the Export
+sheet's **Color** row.
 
 ## Keys
 
@@ -200,11 +232,9 @@ whether the switch is on or off.
 Some choices live where you use them, and are remembered from one
 session to the next:
 
-- the monitor's color profile: the **MONITOR** section on the Develop
-  tab ([Scopes and color](scopes-and-color.md))
 - **With subfolders**, in the left pane's folder tree
   ([Library](library.md))
-- the Export sheet's choices and export presets, and the folder
+- the Export sheet's other choices and export presets, and the folder
   exports go to ([Exporting](export.md))
 - how many frames go across the lightbox
   ([Culling](culling.md#the-lightbox))

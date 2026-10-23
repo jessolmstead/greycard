@@ -1708,6 +1708,9 @@ export component App inherits Window {
     // the frame alike (`canvas-colors`); the index into both.
     in-out property <int> canvas-choice: 0;
     property <[color]> canvas-colors: [#0f0f0f, #262626, #2e2e2e, #444444];
+    /// The same four by name, as the settings file and the Settings
+    /// sheet's row spell them (`render::CANVAS_NAMES`).
+    out property <[string]> canvas-names: ["Black", "Dark grey", "Mid grey", "Light grey"];
     callback canvas-changed();
     /// A develop is on its way.
     in property <bool> busy;
@@ -4578,6 +4581,22 @@ export component App inherits Window {
         jpegs-apart-changed => { root.jpegs-apart-changed(); }
         crop-start <=> root.crop-start;
         crop-start-changed => { root.crop-start-changed(); }
+        canvas-choice <=> root.canvas-choice;
+        canvas-names: root.canvas-names;
+        canvas-changed => { root.canvas-changed(); }
+        display-profile <=> root.display-profile;
+        display-monitor <=> root.display-monitor;
+        display-file: root.display-file;
+        monitors: root.monitors;
+        display-changed => { root.display-changed(); }
+        choose-display-file => { root.choose-display-file(); }
+        proof-profile <=> root.proof-profile;
+        proof-file: root.proof-file;
+        proof-intent <=> root.proof-intent;
+        proof-changed => { root.proof-changed(); }
+        choose-proof-file => { root.choose-proof-file(); }
+        export-format <=> root.export-format;
+        export-space <=> root.export-space;
         ui-scale <=> root.ui-scale;
         ui-scale-started: root.ui-scale-started;
         ui-scale-by-hand: root.ui-scale-by-hand;

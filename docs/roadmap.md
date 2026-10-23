@@ -911,9 +911,6 @@ clears or a tester asks for it.
       125% too large on one monitor (pixls, 2026-10-22)
 - [ ] A toolbar of common actions, the set the user's, with the
       menu bar (pixls, 2026-10-22)
-- [ ] Preferences gathered in Settings: the sticky choices around the
-      app (export format, canvas grey, color spaces) listed there too;
-      the sheet has its categories since §401 (pixls, 2026-10-22)
 - [ ] Scroll bars that stay, and a size for them (pixls, 2026-10-22)
 - [ ] A tighter grid; the cell size as a number and the wheel resize
       off (pixls, 2026-10-22)

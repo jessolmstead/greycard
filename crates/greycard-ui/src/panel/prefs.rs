@@ -1402,4 +1402,193 @@ mod tests {
         assert_eq!(cap_bytes(1 << 44), u64::MAX);
         assert_eq!(cap_bytes(u64::MAX), u64::MAX);
     }
+
+    /// A window with a frame open on the Develop tab, the panel's
+    /// MONITOR and SOFT PROOF sections showing.
+    fn develop_window() -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+        let app = crate::testing::window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(0);
+        (app, state, worker)
+    }
+
+    /// The Settings sheet's row `id`: what it shows as chosen.
+    fn row_shows(app: &App, id: &str) -> String {
+        use i_slint_backend_testing::ElementHandle;
+        crate::testing::count_labeled(app, id);
+        ElementHandle::find_by_element_id(app, &format!("SettingsSheet::{id}"))
+            .next()
+            .unwrap_or_else(|| panic!("{id} on the sheet"))
+            .accessible_value()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    /// A click on `option` in the sheet's row `id`.
+    fn click_row(app: &App, id: &str, option: &str) {
+        use i_slint_backend_testing::ElementHandle;
+        crate::testing::count_labeled(app, option);
+        let row = ElementHandle::find_by_element_id(app, &format!("SettingsSheet::{id}"))
+            .next()
+            .unwrap_or_else(|| panic!("{id} on the sheet"));
+        let (top, foot) = (
+            row.absolute_position().y,
+            row.absolute_position().y + row.size().height,
+        );
+        let (left, right) = (
+            row.absolute_position().x,
+            row.absolute_position().x + row.size().width,
+        );
+        let segment = ElementHandle::find_by_accessible_label(app, option)
+            .find(|e| {
+                let (at, size) = (e.absolute_position(), e.size());
+                let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+                (left..right).contains(&x) && (top..foot).contains(&y)
+            })
+            .unwrap_or_else(|| panic!("{option:?} in {id}"));
+        let (at, size) = (segment.absolute_position(), segment.size());
+        crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    }
+
+    /// A click on the one `option` the panel shows, the sheet closed.
+    fn click_panel(app: &App, option: &str) {
+        let (at, size) = crate::testing::labeled(app, option);
+        assert_eq!(crate::testing::count_labeled(app, option), 1, "{option}");
+        crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    }
+
+    fn open_editing(app: &App) {
+        app.set_settings_category("Editing".into());
+        app.invoke_settings_asked();
+        assert!(app.get_settings_open());
+    }
+
+    /// The canvas, the monitor's profile, and the soft proof's profile
+    /// and intent: a row of the sheet changes the setting the panel's
+    /// control changes, and the panel's control shows on the row.
+    #[test]
+    fn the_editing_rows_are_the_panels_own_choices() {
+        let (app, _state, _worker) = develop_window();
+        assert_eq!(
+            app.get_canvas_names()
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>(),
+            crate::render::CANVAS_NAMES
+        );
+        let kept = || crate::panel::startup::remember(&app);
+        // The sheet's rows, read back from the settings kept.
+        open_editing(&app);
+        for name in crate::render::CANVAS_NAMES.iter() {
+            click_row(&app, "canvas-row", name);
+            assert_eq!(kept().canvas_color, *name);
+            assert_eq!(row_shows(&app, "canvas-row"), *name);
+        }
+        click_row(&app, "monitor-row", "Adobe RGB");
+        assert_eq!(app.get_display_profile(), "Adobe RGB");
+        assert_eq!(kept().display_profile, "Adobe RGB");
+        click_row(&app, "proof-row", "Display P3");
+        assert_eq!(kept().proof_profile, "Display P3");
+        click_row(&app, "intent-row", "Relative");
+        assert_eq!(kept().proof_intent, "Relative");
+        // A file chosen shows its path under the row, as the panel's.
+        app.set_display_file("/profiles/monitor.icc".into());
+        click_row(&app, "monitor-row", "File");
+        assert_eq!(kept().display_profile, "/profiles/monitor.icc");
+        assert_eq!(
+            crate::testing::count_labeled(&app, "/profiles/monitor.icc"),
+            1
+        );
+        // The panel's controls, the sheet closed; the rows show them.
+        app.set_settings_open(false);
+        click_panel(&app, "System");
+        assert_eq!(kept().display_profile, "System");
+        click_panel(&app, "Rec.2020");
+        assert_eq!(kept().proof_profile, "Rec.2020");
+        click_panel(&app, "Perceptual");
+        assert_eq!(kept().proof_intent, "Perceptual");
+        // The canvas's first swatch, right of its word.
+        let (at, size) = crate::testing::labeled(&app, "Canvas");
+        crate::testing::click(&app, at.x + 68.0 + 8.0 + 4.0, at.y + size.height / 2.0);
+        assert_eq!(kept().canvas_color, crate::render::CANVAS_NAMES[0]);
+        open_editing(&app);
+        assert_eq!(
+            row_shows(&app, "canvas-row"),
+            crate::render::CANVAS_NAMES[0]
+        );
+        assert_eq!(row_shows(&app, "monitor-row"), "System");
+        assert_eq!(row_shows(&app, "proof-row"), "Rec.2020");
+        assert_eq!(row_shows(&app, "intent-row"), "Perceptual");
+    }
+
+    /// The export's format and color space: a row of the sheet is the
+    /// export sheet's choice, and the export sheet's shows on the row.
+    #[test]
+    fn the_export_rows_are_the_export_sheets_own() {
+        use i_slint_backend_testing::ElementHandle;
+        let (app, _state, _worker) = develop_window();
+        let kept = || crate::panel::startup::remember(&app);
+        open_editing(&app);
+        assert_eq!(crate::testing::count_labeled(&app, "EXPORT"), 1);
+        click_row(&app, "format-row", "PNG");
+        assert_eq!(kept().export.format, "PNG");
+        click_row(&app, "space-row", "Adobe RGB");
+        assert_eq!(kept().export.space, "Adobe RGB");
+        app.set_settings_open(false);
+        // The export sheet shows them, and its clicks come back.
+        app.set_export_open(true);
+        assert_eq!(app.get_export_format(), "PNG");
+        let near = |word: &str, option: &str| {
+            crate::testing::count_labeled(&app, option);
+            let at = ElementHandle::find_by_accessible_label(&app, word)
+                .next()
+                .unwrap_or_else(|| panic!("{word:?} on the export sheet"))
+                .absolute_position();
+            let segment = ElementHandle::find_by_accessible_label(&app, option)
+                .min_by(|a, b| {
+                    let off = |e: &ElementHandle| {
+                        let p = e.absolute_position();
+                        (p.y - at.y).abs() + (p.x - at.x).abs()
+                    };
+                    off(a).total_cmp(&off(b))
+                })
+                .unwrap_or_else(|| panic!("{option:?} on the export sheet"));
+            let (p, size) = (segment.absolute_position(), segment.size());
+            crate::testing::click(&app, p.x + size.width / 2.0, p.y + size.height / 2.0);
+        };
+        near("Format", "TIFF 16-bit");
+        near("Color", "Rec.2020");
+        assert_eq!(kept().export.format, "TIFF 16-bit");
+        assert_eq!(kept().export.space, "Rec.2020");
+        app.set_export_open(false);
+        open_editing(&app);
+        assert_eq!(row_shows(&app, "format-row"), "TIFF 16-bit");
+        assert_eq!(row_shows(&app, "space-row"), "Rec.2020");
+    }
+
+    /// In the smallest window the fit allows, each category keeps the
+    /// card in the window and Done in reach.
+    #[test]
+    fn every_category_fits_the_smallest_window() {
+        use i_slint_backend_testing::ElementHandle;
+        let (app, _state, _worker) = develop_window();
+        app.window()
+            .set_size(slint::LogicalSize::new(1024.0, 640.0));
+        for category in ["Interface", "Library", "Editing", "Keys", "About"] {
+            app.set_settings_open(false);
+            app.set_settings_category(category.into());
+            app.invoke_settings_asked();
+            assert!(
+                crate::testing::count_labeled(&app, "Done") > 0,
+                "{category}"
+            );
+            for done in ElementHandle::find_by_accessible_label(&app, "Done") {
+                let at = done.absolute_position();
+                let foot = at.y + done.size().height;
+                assert!(at.y >= 0.0 && foot <= 640.0, "{category}: Done at {foot}");
+            }
+        }
+    }
 }

@@ -419,3 +419,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§404. Three themes](notes/404-three-themes.md) (2026-10-23)
 - [§405. The remove engine](notes/405-the-remove-engine.md) (2026-10-23)
 - [§406. The remove behind Fill](notes/406-remove-behind-fill.md) (2026-10-23)
+- [§407. The sticky choices listed in Settings](notes/407-the-sticky-choices-listed.md) (2026-10-23)

@@ -8,8 +8,12 @@
 // where the setting says now, since flipping it moves nothing by
 // itself; whether the camera's JPEG beside a raw is a frame of its
 // own; the thumbnail cache; and the network folders' rescan. Editing:
-// the aspect an uncropped frame's crop opens at, and the shipped
-// presets put back. Keys: each rebindable action of the key table
+// the canvas, the monitor's profile, and the soft proof's, the same
+// choices the panel's MONITOR and SOFT PROOF sections make, bound to
+// the window's own properties so a change in either place shows in
+// both; the aspect an uncropped frame's crop opens at; the shipped
+// presets put back; and the export sheet's format and color space,
+// bound the same way. Keys: each rebindable action of the key table
 // (`keys.rs`), a click on its chord to press a new one, Escape to keep
 // the old. About: the check for a newer release, the version, and
 // where greycard keeps its files.
@@ -69,6 +73,29 @@ export component SettingsSheet inherits Rectangle {
     /// "Original", "Last used" or "Free".
     in-out property <string> crop-start;
     callback crop-start-changed();
+    /// The canvas, by its index into `canvas-names`, which the row
+    /// spells it by.
+    in-out property <int> canvas-choice;
+    in property <[string]> canvas-names;
+    callback canvas-changed();
+    /// The monitor's profile: as the panel's MONITOR section has it.
+    in-out property <string> display-profile;
+    in-out property <string> display-monitor;
+    in property <string> display-file;
+    in property <[string]> monitors;
+    callback display-changed();
+    callback choose-display-file();
+    /// The soft proof's profile and intent: as the panel's SOFT PROOF
+    /// section has them.
+    in-out property <string> proof-profile;
+    in property <string> proof-file;
+    in-out property <string> proof-intent;
+    callback proof-changed();
+    callback choose-proof-file();
+    /// The export sheet's format and color space, which the window
+    /// keeps as each changes.
+    in-out property <string> export-format;
+    in-out property <string> export-space;
     /// The thumbnail cache: whether this run has one, what it holds
     /// in words, and the button that empties it.
     in property <bool> thumb-cache-on;
@@ -615,6 +642,97 @@ export component SettingsSheet inherits Rectangle {
                             padding-right: Theme.space-5 + Theme.scrollbar-band;
                             padding-bottom: Theme.space-2;
                             spacing: Theme.space-3;
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Canvas"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                canvas-row := Segmented {
+                                    options: root.canvas-names;
+                                    current: root.canvas-names[root.canvas-choice];
+                                    picks: false;
+                                    accessible-role: list;
+                                    accessible-value: self.current;
+                                    selected(c) => {
+                                        root.canvas-choice = c == root.canvas-names[3] ? 3
+                                            : c == root.canvas-names[2] ? 2
+                                            : c == root.canvas-names[1] ? 1
+                                            : 0;
+                                        root.canvas-changed();
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Monitor"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                monitor-row := Segmented {
+                                    options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
+                                    current <=> root.display-profile;
+                                    accessible-role: list;
+                                    accessible-value: self.current;
+                                    selected(p) => { root.display-changed(); }
+                                }
+                            }
+                            if root.display-profile == "System" && root.monitors.length > 1: HorizontalLayout {
+                                padding-left: 68px + Theme.space-2;
+                                Segmented {
+                                    options: root.monitors;
+                                    current <=> root.display-monitor;
+                                    selected(m) => { root.display-changed(); }
+                                }
+                            }
+                            if root.display-profile == "File": HorizontalLayout {
+                                spacing: Theme.space-2;
+                                padding-left: 68px + Theme.space-2;
+                                Text {
+                                    text: root.display-file == "" ? "No profile chosen" : root.display-file;
+                                    font-size: Theme.font-xs;
+                                    color: root.display-file == "" ? Theme.text-muted : Theme.text-secondary;
+                                    vertical-alignment: center;
+                                    wrap: char-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                                PanelButton {
+                                    text: "Choose...";
+                                    clicked => { root.choose-display-file(); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Soft proof"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                proof-row := Segmented {
+                                    options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
+                                    current <=> root.proof-profile;
+                                    accessible-role: list;
+                                    accessible-value: self.current;
+                                    selected(p) => { root.proof-changed(); }
+                                }
+                            }
+                            if root.proof-profile == "File": HorizontalLayout {
+                                spacing: Theme.space-2;
+                                padding-left: 68px + Theme.space-2;
+                                Text {
+                                    text: root.proof-file == "" ? "No profile chosen" : root.proof-file;
+                                    font-size: Theme.font-xs;
+                                    color: root.proof-file == "" ? Theme.text-muted : Theme.text-secondary;
+                                    vertical-alignment: center;
+                                    wrap: char-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                                PanelButton {
+                                    text: "Choose...";
+                                    clicked => { root.choose-proof-file(); }
+                                }
+                            }
+                            HorizontalLayout {
+                                padding-left: 68px + Theme.space-2;
+                                intent-row := Segmented {
+                                    options: ["Perceptual", "Relative"];
+                                    current <=> root.proof-intent;
+                                    accessible-role: list;
+                                    accessible-value: self.current;
+                                    selected(i) => { root.proof-changed(); }
+                                }
+                            }
+                            Rectangle { height: Theme.space-1; }
                             Text {
                                 text: "CROP";
                                 font-size: Theme.font-xs;
@@ -668,6 +786,33 @@ export component SettingsSheet inherits Rectangle {
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
+                            }
+                            Rectangle { height: Theme.space-1; }
+                            Text {
+                                text: "EXPORT";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Format"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                format-row := Segmented {
+                                    options: ["JPEG", "PNG", "TIFF 16-bit"];
+                                    current <=> root.export-format;
+                                    accessible-role: list;
+                                    accessible-value: self.current;
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Color"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                space-row := Segmented {
+                                    options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"];
+                                    current <=> root.export-space;
+                                    accessible-role: list;
+                                    accessible-value: self.current;
+                                }
                             }
                         }
                         keys := VerticalLayout {

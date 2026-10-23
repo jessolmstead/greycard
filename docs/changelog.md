@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- Settings > Editing lists the canvas, the monitor and soft proof
+  profiles, and the export's format and color space beside where
+  they are set; a change in either place shows in both
+  ([§407](https://github.com/jessolmstead/greycard/blob/master/docs/notes/407-the-sticky-choices-listed.md)).
 - A Theme setting under Interface: Charcoal, Grey, or Light; the
   picture's surround keeps its own setting
   ([§404](https://github.com/jessolmstead/greycard/blob/master/docs/notes/404-three-themes.md)).
