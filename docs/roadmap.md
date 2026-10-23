@@ -181,9 +181,11 @@ seconds.
 - [ ] A GPU pass bounded under the driver's watchdog: on a slow iGPU
       (a Renoir with 2 GB, issue #35) the lens or sharpen pass on a
       32 MP frame ran past amdgpu's 10 s and the ring reset took the
-      device with it; split a pass into submissions short enough that
-      a slow adapter degrades instead of resetting, and survive a lost
-      device on the window's thread
+      device with it, and on a GTX 1060 (issue #41) the sharpen at 50
+      iterations on a 20 MP frame ran past Windows' 2 s and the lost
+      device crashed the window, again at every restart of the same
+      file; split a pass into submissions short enough that a slow
+      adapter degrades instead of resetting, and survive a lost device
 - [ ] A proxy develop for the fit view, as a placeholder and not a
       mode: 2x2 Bayer quads binned to one RGB pixel, shown only while
       the full develop is pending and replaced by it when it lands, so
