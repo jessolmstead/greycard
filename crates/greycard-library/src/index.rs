@@ -2642,6 +2642,50 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The pass reads each raw into memory and never maps one: its
+    /// EXIF and mosaic, the mosaic a row from before the column is owed,
+    /// and the camera's orientation an XMP's turn is measured from. The
+    /// index walks shares, and a mapped raw whose volume drops (a Mac
+    /// asleep on an SMB share) is a SIGBUS nothing catches.
+    #[test]
+    fn a_pass_maps_no_raw() {
+        use crate::fixture::write_mosaic_dng;
+        use greycard_core::raw::Mosaic;
+        let dir = scratch("unmapped");
+        let (turned, plain) = (dir.join("turned.dng"), dir.join("plain.DNG"));
+        write_mosaic_dng(&turned, "RGGB");
+        write_mosaic_dng(&plain, "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG");
+        let xmp = greycard_edit::xmp::fresh(&Meta::default(), None).replace(
+            "<rdf:Description rdf:about=\"\"",
+            "<rdf:Description rdf:about=\"\" \
+             xmlns:tiff=\"http://ns.adobe.com/tiff/1.0/\" tiff:Orientation=\"6\"",
+        );
+        std::fs::write(greycard_edit::xmp::short_path(&turned), xmp).unwrap();
+        greycard_core::decode::watch_maps_under(&dir);
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 2, "{report:?}");
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        let row = |p: &Path| lib.by_path(p).unwrap().unwrap();
+        assert_eq!(row(&plain).exif.make, "Synthetic");
+        assert_ne!(row(&turned).turns, 0, "the XMP's turn, on the camera's tag");
+        assert_eq!(
+            lib.mosaic(&plain).unwrap(),
+            Some(FileMosaic::Mosaic(Mosaic::XTrans))
+        );
+        // A row from before the column: its mosaic read alone.
+        lib.conn
+            .execute("UPDATE files SET mosaic = NULL", [])
+            .unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(
+            lib.mosaic(&turned).unwrap(),
+            Some(FileMosaic::Mosaic(Mosaic::Bayer))
+        );
+        assert_eq!(greycard_core::decode::maps_under(&dir), 0, "raws mapped");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// Two bodies at one event, the second's clock five minutes slow,
     /// one of its frames shot just after midnight by the first's clock.
     /// Returned with the four frames: the first body's two, the second

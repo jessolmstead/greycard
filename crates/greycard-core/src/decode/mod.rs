@@ -31,15 +31,23 @@ pub trait Decoder {
     }
 }
 
-/// Decode with the default backend.
 /// The camera's own JPEG rendering of a file, if it has one, and the
-/// orientation to show it in; see `rawler_backend::preview_path`.
+/// orientation to show it in, read without a memory map; see
+/// `rawler_backend::preview_path`.
 pub fn preview_path(path: impl AsRef<Path>) -> Result<Option<(image::RgbImage, Orientation)>> {
     rawler_backend::preview_path(path.as_ref())
 }
 
+/// Decode with the default backend.
 pub fn decode_path(path: impl AsRef<Path>) -> Result<RawFrame> {
     RawlerDecoder.decode_path(path.as_ref())
+}
+
+/// [`decode_path`] from the file read whole into memory, never mapped:
+/// for a pass over a folder's files (the thumbnails' quick develop of a
+/// raw with no preview), whose volume can go away under it.
+pub fn decode_path_unmapped(path: impl AsRef<Path>) -> Result<RawFrame> {
+    RawlerDecoder.decode_path_unmapped(path.as_ref())
 }
 
 /// The frame and the metadata rawler read beside it, for an output that
@@ -84,14 +92,15 @@ pub fn probe_ends_path(path: impl AsRef<Path>) -> Result<Probe> {
     rawler_backend::probe_ends_path(path.as_ref())
 }
 
-/// [`probe_path`] and the raw's kind of mosaic in one read of the file:
-/// see `rawler_backend::probe_and_mosaic_path`.
+/// [`probe_path`] and the raw's kind of mosaic in one read of the file,
+/// from its ends where its format allows and never through a memory
+/// map: see `rawler_backend::probe_and_mosaic_path`.
 pub fn probe_and_mosaic_path(path: impl AsRef<Path>) -> Result<(Probe, MosaicRead)> {
     rawler_backend::probe_and_mosaic_path(path.as_ref())
 }
 
-/// A raw's kind of mosaic alone, without a sample decoded; `Ok(None)`
-/// for a raw that is not a mosaic.
+/// A raw's kind of mosaic alone, without a sample decoded and without a
+/// memory map; `Ok(None)` for a raw that is not a mosaic.
 pub fn mosaic_path(path: impl AsRef<Path>) -> Result<Option<crate::raw::Mosaic>> {
     rawler_backend::mosaic_path(path.as_ref())
 }
@@ -200,9 +209,23 @@ pub fn probe_and_stance_counted(path: impl AsRef<Path>) -> Result<(Probe, Stance
     ))
 }
 
+/// [`stance_path`] never through a memory map: a raw's from its ends
+/// where its format allows, else read whole ([`probe_and_stance_counted`]),
+/// a picture's from its own reader. For a pass over many files, the
+/// thumbnails' develop and the lightbox's among them, whose volume can go
+/// away under a mapping.
+pub fn stance_path_unmapped(path: impl AsRef<Path>) -> Result<Stance> {
+    let path = path.as_ref();
+    if is_raw_path(path) && !crate::picture::is_picture_path(path) {
+        return Ok(probe_and_stance_counted(path)?.1);
+    }
+    stance_path(path)
+}
+
 /// Count from now, on every thread, the raws under `dir` memory-mapped:
 /// for a test that a read meant for a volume that can go away
-/// ([`probe_and_stance_counted`], [`probe_ends_path`]) never maps one.
+/// ([`probe_and_stance_counted`], [`probe_ends_path`], what the index
+/// and the thumbnails read) never maps one.
 pub fn watch_maps_under(dir: &Path) {
     rawler_backend::watch_maps_under(dir)
 }
@@ -214,8 +237,15 @@ pub fn maps_under(dir: &Path) -> u64 {
 }
 
 /// The orientation tag a file carries, raw or picture, without
-/// decoding a pixel of it.
+/// decoding a pixel of it. A raw's is its probe's, read from its ends
+/// where its format allows ([`probe_ends_path`]) and never mapped: the
+/// tag the stance reads, from the same metadata, at a fraction of the
+/// bytes. A picture's, or a file named as neither, is the stance's.
 pub fn orientation_path(path: impl AsRef<Path>) -> Result<Orientation> {
+    let path = path.as_ref();
+    if is_raw_path(path) && !crate::picture::is_picture_path(path) {
+        return Ok(probe_ends_path(path)?.orientation);
+    }
     Ok(stance_path(path)?.orientation)
 }
 

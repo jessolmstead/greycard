@@ -3088,6 +3088,51 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// The indexer's pass over a folder of raws, and the thumbnail and
+    /// the local preview the pool makes of each, map no raw: they walk
+    /// shares, and a mapped raw whose volume drops while the machine
+    /// sleeps is a SIGBUS nothing catches. The test DNGs carry no
+    /// preview, so the thumbnail is the quick develop, read whole; it
+    /// decodes, and stops at the color matrix the DNGs do not carry.
+    #[test]
+    fn the_indexers_pass_and_the_thumbnails_map_no_raw() {
+        let dir = scratch("unmapped");
+        let shoot = dir.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        let (a, b) = (shoot.join("a.dng"), shoot.join("b.DNG"));
+        write_mosaic_dng(&a, "RGGB");
+        write_mosaic_dng(&b, "RGGB");
+        greycard_core::decode::watch_maps_under(&shoot);
+        let db = dir.join("data").join("library.sqlite");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let indexer = Indexer::start(db.clone(), move |told| {
+            let _ = tx.send(told);
+        })
+        .expect("the indexer starts");
+        indexer.folders(folders_of(&[a.clone(), b.clone()]), 1);
+        loop {
+            match rx
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the indexer answers")
+            {
+                Told::Indexed { report, .. } => {
+                    assert_eq!(report.added, 2, "{report:?}");
+                    break;
+                }
+                _ => continue,
+            }
+        }
+        indexer.stop(Duration::from_secs(20));
+        for p in [&a, &b] {
+            let made = crate::worker::thumbnail(p, crate::worker::THUMB_WIDTH);
+            let e = made.expect_err("no color matrix").to_string();
+            assert!(e.contains("calibration"), "{e}");
+            assert!(crate::cull::camera_picture(p).is_err(), "no preview in it");
+        }
+        assert_eq!(greycard_core::decode::maps_under(&shoot), 0, "raws mapped");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// Two roots of two frames each under `dir`, `a` and `b`, and an
     /// indexer on a library there with `guard`; what it tells, on a
     /// channel.

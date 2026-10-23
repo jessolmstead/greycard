@@ -201,10 +201,13 @@ pub(crate) fn thumbnail(path: &std::path::Path, size: u32) -> anyhow::Result<(u3
         let rgb = image::DynamicImage::from_decoder(decoder)?.to_rgb8();
         return Ok(thumbnail_of_preview(&rgb, orientation, size));
     }
+    // Neither read maps the file: the pool walks every frame of a
+    // folder, a share's among them, and a mapped file whose volume
+    // goes away is a SIGBUS.
     if let Ok(Some((preview, orientation))) = greycard_core::decode::preview_path(path) {
         return Ok(thumbnail_of_preview(&preview, orientation, size));
     }
-    let frame = greycard_core::decode::decode_path(path)?;
+    let frame = greycard_core::decode::decode_path_unmapped(path)?;
     let settings = DevelopSettings {
         demosaic: DemosaicMethod::Bilinear,
         chromatic_aberration: None,

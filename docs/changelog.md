@@ -29,6 +29,11 @@ design note behind it.
 
 ### Fixes
 
+- The library's index pass and the thumbnails no longer memory-map
+  raws, so a share that drops while the machine sleeps fails a frame
+  instead of crashing the editor; a CR3's index pass reads about a
+  tenth of what it did
+  ([§394](https://github.com/jessolmstead/greycard/blob/master/docs/notes/394-the-index-pass-maps-nothing.md))
 - An unedited ORF shows in the lightbox: the decoder reads the
   preview an ORF carries, a raw with no preview gets a quick develop
   there, and a raw+JPEG pair shows its JPEG in the lightbox as it

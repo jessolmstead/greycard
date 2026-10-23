@@ -228,34 +228,204 @@ impl RawlerDecoder {
     pub fn decode_path_with_metadata(&self, path: &Path) -> Result<(RawFrame, RawMetadata)> {
         guarded(|| tail_of(path), || decode_source(&mapped(path)?))
     }
+
+    /// [`Decoder::decode_path`] from the whole file read into memory, not
+    /// mapped: for a pass over every file of a folder that may be on a
+    /// share, where a volume that goes away under a mapping is a SIGBUS.
+    /// The same bytes a mapping reads, since rawler populates its map.
+    pub fn decode_path_unmapped(&self, path: &Path) -> Result<RawFrame> {
+        guarded(
+            || tail_of(path),
+            || Ok(decode_source(&read_whole(path)?.0)?.0),
+        )
+    }
 }
 
 /// The camera's own rendering of a file, when the file carries one: the
 /// largest preview JPEG, else the thumbnail, decoded to 8-bit sRGB, in
 /// the orientation the camera stored it with, and the orientation to
 /// show it in.
+///
+/// Never through a memory map: the thumbnails and the local previews
+/// walk every file of a folder, a share's among them, and a mapped file
+/// whose volume goes away faults as a SIGBUS no Rust code catches. A
+/// CR3's preview is read as its probe is, from its ends, with the
+/// preview's own bytes, which its `moov` box locates; a RAF's is the
+/// head through its embedded JPEG, which its header locates; every
+/// other format is read whole into memory. See [`preview_counted`].
 pub fn preview_path(path: &Path) -> Result<Option<(image::RgbImage, Orientation)>> {
-    guarded(|| tail_of(path), || preview_unguarded(path))
+    preview_counted(path).map(|(preview, _)| preview)
 }
 
-fn preview_unguarded(path: &Path) -> Result<Option<(image::RgbImage, Orientation)>> {
-    let source = mapped(path)?;
-    let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
+/// What [`preview_path`] answers.
+type Preview = Option<(image::RgbImage, Orientation)>;
+
+/// [`preview_path`] and how many bytes of the file it read.
+///
+/// From the ends only the camera's preview itself is taken: a JPEG the
+/// gap left short does not decode, and rawler then falls to the
+/// thumbnail, which from the whole file it would not have. So any
+/// error, panic, or answer short of the preview from the ends reads the
+/// whole file, which gives `preview_path`'s answer as it always did.
+fn preview_counted(path: &Path) -> Result<(Preview, u64)> {
+    let mut tried = 0;
+    match read_preview_ends(path) {
+        Ok(Some((buf, read))) => {
+            let source = RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path);
+            match guarded(|| None, || preview_source(&source, false)) {
+                Ok(Some(found)) => return Ok((Some(found), read)),
+                Ok(None) => log::debug!("{}: no preview from its ends; read whole", path.display()),
+                Err(e) => log::debug!(
+                    "{}: its preview from its ends: {e}; read whole",
+                    path.display()
+                ),
+            }
+            tried = read;
+        }
+        Ok(None) => {}
+        Err(e) => log::debug!("{}: its preview's ends: {e}; read whole", path.display()),
+    }
+    guarded(
+        || tail_of(path),
+        || {
+            let (source, whole) = read_whole(path)?;
+            preview_source(&source, true).map(|preview| (preview, tried + whole))
+        },
+    )
+}
+
+/// The preview from one source: the largest preview JPEG, else, when
+/// `thumbnail` says, the thumbnail.
+fn preview_source(source: &RawSource, thumbnail: bool) -> Result<Preview> {
+    let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
-    let image = match decoder.preview_image(&source, &params) {
+    let image = match decoder.preview_image(source, &params) {
         Ok(Some(i)) => Some(i),
-        _ => decoder.thumbnail_image(&source, &params).ok().flatten(),
+        _ if thumbnail => decoder.thumbnail_image(source, &params).ok().flatten(),
+        _ => None,
     };
     let Some(image) = image else {
         return Ok(None);
     };
     let orientation = decoder
-        .raw_metadata(&source, &params)
+        .raw_metadata(source, &params)
         .ok()
         .and_then(|m| m.exif.orientation)
         .and_then(Orientation::from_exif)
         .unwrap_or_default();
     Ok(Some((image.to_rgb8(), orientation)))
+}
+
+/// The bytes of the file at `path` its preview is read from, in a
+/// buffer of its length, the gap zeroed, and how many were read; `None`
+/// for a format read whole. A CR3's are its ends as [`cr3_ends`] reads
+/// them and the preview's sample, a RAF's its head through its JPEG.
+fn read_preview_ends(path: &Path) -> std::io::Result<Option<(Vec<u8>, u64)>> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    match ext.as_deref() {
+        Some("cr3") => {
+            let Some(head) = cr3_head(&mut file, len)? else {
+                return Ok(None);
+            };
+            let Some((mut buf, read)) = read_ends_of(&mut file, len, head, CR3_TAIL)? else {
+                return Ok(None);
+            };
+            let Some((at, size)) = cr3_preview_at(&buf) else {
+                return Ok(None);
+            };
+            if at.checked_add(size).is_none_or(|end| end > len) {
+                return Ok(None);
+            }
+            // The part of the sample not read already: the preview
+            // sits past the head, and ahead of the tail but in a small
+            // file.
+            let (from, to) = (at.max(head), (at + size).min(len - CR3_TAIL));
+            if from < to {
+                use std::io::{Read, Seek, SeekFrom};
+                file.seek(SeekFrom::Start(from))?;
+                file.read_exact(&mut buf[from as usize..to as usize])?;
+            }
+            Ok(Some((buf, read + to.saturating_sub(from))))
+        }
+        Some("raf") => {
+            let Some(end) = raf_jpeg_end(&mut file, len)? else {
+                return Ok(None);
+            };
+            read_ends_of(&mut file, len, end, 0)
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Where a CR3's preview sample lies, as rawler's `preview_image` finds
+/// it: the trak its `CCTP` names for the big preview, else the first,
+/// and that trak's first sample, from the `moov` box in `buf`. `None`
+/// when the boxes will not parse or say; a panic in rawler's parse is
+/// the same `None`, caught as [`guarded`] catches one, so the panic hook
+/// takes it for a damaged file and not a crash.
+fn cr3_preview_at(buf: &[u8]) -> Option<(u64, u64)> {
+    guarded(|| None, || Ok(cr3_preview_parse(buf)))
+        .ok()
+        .flatten()
+}
+
+/// [`cr3_preview_at`] unguarded.
+fn cr3_preview_parse(buf: &[u8]) -> Option<(u64, u64)> {
+    /// rawler's `Cr3ImageType::PreviewBig`.
+    const PREVIEW_BIG: u64 = 2;
+    let bmff = ::rawler::formats::bmff::Bmff::new_buf(buf).ok()?;
+    let moov = &bmff.filebox.moov;
+    let trak = moov
+        .cr3desc
+        .as_ref()
+        .and_then(|d| {
+            d.cctp
+                .ccdts
+                .iter()
+                .find(|c| c.image_type == PREVIEW_BIG)
+                .map(|c| (c.trak_index as usize).saturating_sub(1))
+        })
+        .unwrap_or(0);
+    let stbl = &moov.traks.get(trak)?.mdia.minf.stbl;
+    if stbl.stsz.sample_count == 0 {
+        return None;
+    }
+    let (at, size) = stbl.get_sample_offset(1)?;
+    Some((at as u64, size as u64))
+}
+
+/// Where a RAF's embedded JPEG ends, by the offset and the length its
+/// header gives, as rawler reads them for the preview: what is read of
+/// a RAF for it. Past [`raf_head`], so the probe's metadata is in it.
+/// `None` for a file not laid out so.
+fn raf_jpeg_end(
+    file: &mut (impl std::io::Read + std::io::Seek),
+    len: u64,
+) -> std::io::Result<Option<u64>> {
+    use std::io::SeekFrom;
+    // The JPEG's offset and then its length, big-endian, at 84.
+    const JPEG_AT: usize = 84;
+    let Some(head) = raf_head(file, len)? else {
+        return Ok(None);
+    };
+    let mut header = [0u8; JPEG_AT + 8];
+    file.seek(SeekFrom::Start(0))?;
+    file.read_exact(&mut header)?;
+    let word = |at: usize| {
+        u64::from(u32::from_be_bytes([
+            header[at],
+            header[at + 1],
+            header[at + 2],
+            header[at + 3],
+        ]))
+    };
+    let end = word(JPEG_AT) + word(JPEG_AT + 4);
+    Ok(Some(end).filter(|&end| end >= head && end <= len))
 }
 
 /// Samples and metadata from one source; the frame takes what it keeps
@@ -532,19 +702,22 @@ mod tests {
     }
 
     /// A description that will not read, or a decoder that panics on
-    /// it, is an unknown mosaic and nothing worse.
+    /// it, is an error's words and nothing worse; the index stores it
+    /// as an unknown mosaic.
     #[test]
-    fn a_mosaic_read_that_fails_is_unknown() {
-        let path = Path::new("x.NEF");
+    fn a_mosaic_read_that_fails_is_an_error_not_a_panic() {
         assert_eq!(
-            mosaic_read(path, || Err(Error::Decode("no".into()))),
-            MosaicRead::Unknown
+            described(|| Err(Error::Decode("no".into()))),
+            Err("decode failed: no".into())
         );
-        assert_eq!(mosaic_read(path, || panic!("rawler")), MosaicRead::Unknown);
-        assert_eq!(mosaic_read(path, || Ok(None)), MosaicRead::NotMosaic);
         assert_eq!(
-            mosaic_read(path, || Ok(Some(Mosaic::XTrans))),
-            MosaicRead::Mosaic(Mosaic::XTrans)
+            described(|| panic!("rawler")),
+            Err("the decoder panicked".into())
+        );
+        assert_eq!(described(|| Ok(None)), Ok(None));
+        assert_eq!(
+            described(|| Ok(Some(Mosaic::XTrans))),
+            Ok(Some(Mosaic::XTrans))
         );
     }
 
@@ -1163,6 +1336,220 @@ mod tests {
         );
     }
 
+    /// What the library's index and the thumbnails read of a raw (its
+    /// probe and mosaic, its mosaic alone, its orientation, its preview,
+    /// and the quick develop of one with none) gives what the mapped
+    /// reads give, and maps nothing: a volume that goes away under a
+    /// mapped raw is a SIGBUS nothing catches. A format read whole reads
+    /// its length once; ends that will not parse cost the whole file
+    /// besides. Our DNG named a CR3 or a RAF has neither one's ends, so
+    /// the reads from a CR3's or a RAF's ends are covered by the ignored
+    /// test on the samples alone.
+    #[test]
+    fn the_index_and_thumbnail_reads_map_nothing() {
+        let dng = a_dng();
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-unmapped-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let len = dng.len() as u64;
+        for name in ["frame.dng", "frame.CR3", "frame.RAF"] {
+            // A folder a file, each watched once its mapped reads'
+            // answers are in hand.
+            let folder = dir.join(name.replace('.', "-"));
+            std::fs::create_dir_all(&folder).unwrap();
+            let path = folder.join(name);
+            std::fs::write(&path, &dng).unwrap();
+            let probe = probe_path(&path).unwrap();
+            let stance = stance_path(&path).unwrap();
+            let frame = RawlerDecoder.decode_path(&path).unwrap();
+            watch_maps_under(&folder);
+
+            let whole = mosaic_source(&read_whole(&path).unwrap().0, &path).unwrap();
+            let mosaic = whole.map_or(MosaicRead::NotMosaic, MosaicRead::Mosaic);
+            assert_eq!(
+                probe_and_mosaic_with(&path, cr3_ends).unwrap(),
+                (probe.clone(), mosaic, len),
+                "{name}"
+            );
+            let short = probe_and_mosaic_with(&path, |_, _, _| Ok(Some((8, 0)))).unwrap();
+            assert_eq!(short, (probe.clone(), mosaic, len + 8), "{name}");
+            assert_eq!(
+                mosaic_with(&path, cr3_ends).unwrap(),
+                (whole, len),
+                "{name}"
+            );
+            assert_eq!(
+                crate::decode::orientation_path(&path).unwrap(),
+                stance.0,
+                "{name}"
+            );
+            let unmapped = crate::decode::stance_path_unmapped(&path).unwrap();
+            assert_eq!(
+                (unmapped.orientation, unmapped.size, unmapped.mosaic),
+                stance,
+                "{name}"
+            );
+            // Our DNG carries no preview; asked for one, the file is
+            // read whole once and says so.
+            assert_eq!(preview_counted(&path).unwrap().1, len, "{name}");
+            assert!(preview_path(&path).unwrap().is_none(), "{name}");
+            let unmapped = RawlerDecoder.decode_path_unmapped(&path).unwrap();
+            assert_eq!(
+                (
+                    unmapped.width,
+                    unmapped.height,
+                    unmapped.as_shot_coefficients
+                ),
+                (frame.width, frame.height, frame.as_shot_coefficients),
+                "{name}"
+            );
+            assert_eq!(maps_under(&folder), 0, "{name} mapped");
+            // The decode the editor opens a frame with still maps.
+            let _ = RawlerDecoder.decode_path(&path);
+            assert_eq!(maps_under(&folder), 1, "{name}");
+        }
+        // Not a raw by its name: the probe reads nothing.
+        let clip = dir.join("clip.mov");
+        std::fs::write(&clip, &dng).unwrap();
+        assert!(probe_and_mosaic_path(&clip).is_err());
+        assert!(mosaic_path(&clip).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A RAF's preview is read through its embedded JPEG's end, by the
+    /// offset and the length its header gives; a length that ends
+    /// before the EXIF the probe wants, or past the file, or a file
+    /// that is no RAF, has none.
+    #[test]
+    fn a_rafs_preview_ends_where_its_jpeg_does() {
+        use std::io::Cursor;
+        let raf = |magic: &[u8], jpeg_len: u32| {
+            let mut bytes = vec![0u8; 148];
+            bytes[..magic.len()].copy_from_slice(magic);
+            bytes[84..88].copy_from_slice(&148u32.to_be_bytes());
+            bytes[88..92].copy_from_slice(&jpeg_len.to_be_bytes());
+            bytes.extend_from_slice(&[0xff, 0xd8, 0xff, 0xe1, 0x10, 0x00]);
+            bytes.resize(1 << 20, 0);
+            bytes
+        };
+        let end = |bytes: &[u8]| raf_jpeg_end(&mut Cursor::new(bytes), bytes.len() as u64).unwrap();
+        assert_eq!(end(&raf(b"FUJIFILMCCD-RAW 0201", 300_000)), Some(300_148));
+        // The EXIF segment alone runs to 148 + 4 + 0x1000.
+        assert_eq!(end(&raf(b"FUJIFILMCCD-RAW 0201", 0x1000)), None);
+        assert_eq!(end(&raf(b"FUJIFILMCCD-RAW 0201", 1 << 20)), None);
+        assert_eq!(end(&raf(b"FUJIFILMCCD-RAX 0201", 300_000)), None);
+    }
+
+    /// With `GREYCARD_TEST_RAWS` a folder of raws: what the index and
+    /// the thumbnails read of each raw against the same read of the
+    /// whole file, required to agree (the preview pixel for pixel), and
+    /// the bytes printed by format. Ignored, since it wants the samples.
+    #[test]
+    #[ignore]
+    fn the_index_and_thumbnail_reads_agree_on_the_samples() {
+        let Some(dir) = std::env::var_os("GREYCARD_TEST_RAWS") else {
+            eprintln!("GREYCARD_TEST_RAWS names no folder; nothing measured");
+            return;
+        };
+        let mut raws = Vec::new();
+        let mut folders = vec![std::path::PathBuf::from(dir)];
+        while let Some(folder) = folders.pop() {
+            for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+                let path = entry.path();
+                if entry.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                if path.is_dir() {
+                    folders.push(path);
+                } else if crate::decode::is_raw_path(&path) {
+                    raws.push(path);
+                }
+            }
+        }
+        raws.sort();
+        assert!(!raws.is_empty(), "no raws under GREYCARD_TEST_RAWS");
+        // Files, their bytes, and what the probe and the mosaic, and
+        // the preview, read of them.
+        let mut totals: std::collections::BTreeMap<String, (usize, u64, u64, u64)> =
+            Default::default();
+        for path in &raws {
+            let len = std::fs::metadata(path).unwrap().len();
+            let format = path
+                .extension()
+                .unwrap()
+                .to_string_lossy()
+                .to_ascii_uppercase();
+            let whole = || read_whole(path).unwrap().0;
+            let apart = guarded(|| None, || probe_and_mosaic_source(&whole(), path));
+            let together = probe_and_mosaic_with(path, cr3_ends);
+            let read = match (apart, together) {
+                (Ok((probe, mosaic)), Ok((p, m, read))) => {
+                    assert_eq!(p, probe, "{}", path.display());
+                    assert_eq!(
+                        m,
+                        mosaic.unwrap_or(MosaicRead::Unknown),
+                        "{}",
+                        path.display()
+                    );
+                    let alone = match m {
+                        MosaicRead::Mosaic(k) => Some(Some(k)),
+                        MosaicRead::NotMosaic => Some(None),
+                        MosaicRead::Unknown => None,
+                    };
+                    assert_eq!(mosaic_path(path).ok(), alone, "{}", path.display());
+                    assert_eq!(
+                        crate::decode::orientation_path(path).unwrap(),
+                        stance_path(path).unwrap().0,
+                        "{}",
+                        path.display()
+                    );
+                    read
+                }
+                (Err(a), Err(b)) => {
+                    assert_eq!(a.to_string(), b.to_string(), "{}", path.display());
+                    continue;
+                }
+                (a, b) => panic!("{}: {a:?} whole, {b:?} from the ends", path.display()),
+            };
+            let (preview, preview_read) = preview_counted(path).unwrap();
+            let expected = guarded(|| None, || preview_source(&whole(), true)).unwrap();
+            assert_eq!(
+                preview.as_ref().map(|(i, o)| (i.dimensions(), *o)),
+                expected.as_ref().map(|(i, o)| (i.dimensions(), *o)),
+                "{}",
+                path.display()
+            );
+            assert!(
+                preview.map(|(i, _)| i.into_raw()) == expected.map(|(i, _)| i.into_raw()),
+                "{}: the preview's pixels",
+                path.display()
+            );
+            println!(
+                "{}: probe and mosaic {read}, preview {preview_read} of {len} bytes",
+                path.display()
+            );
+            let t = totals.entry(format).or_default();
+            *t = (t.0 + 1, t.1 + len, t.2 + read, t.3 + preview_read);
+        }
+        for (format, (n, l, r, p)) in &totals {
+            println!(
+                "{format}: {n} files of {:.1} MB; probe and mosaic {:.1} MB ({:.2}%), \
+                 preview {:.1} MB ({:.2}%)",
+                *l as f64 / 1e6,
+                *r as f64 / 1e6,
+                100.0 * *r as f64 / *l as f64,
+                *p as f64 / 1e6,
+                100.0 * *p as f64 / *l as f64
+            );
+        }
+    }
+
     #[test]
     fn bayer_pattern_maps_color_indices() {
         let cfa = CFA::new("RGGB");
@@ -1330,47 +1717,89 @@ pub enum MosaicRead {
 /// description that will not read costs only the mosaic
 /// ([`MosaicRead::Unknown`]), so a raw keeps its camera, ISO, date and
 /// lens in the index whatever its image says.
+///
+/// Never through a memory map, since the index walks shares: a CR3 is
+/// read from its ends as [`probe_and_stance_counted`] reads it, and any
+/// other format whole into memory. Ends that give no mosaic, or an
+/// error, or a panic, fall back to the whole file. An error for a file
+/// whose name is not a raw's, before a byte of it is read.
 pub fn probe_and_mosaic_path(path: &Path) -> Result<(Probe, MosaicRead)> {
-    guarded(|| tail_of(path), || probe_and_mosaic_unguarded(path))
+    probe_and_mosaic_with(path, cr3_ends).map(|(probe, mosaic, _)| (probe, mosaic))
 }
 
-/// What a read of the image's description says, with its failure and
-/// its panic both [`MosaicRead::Unknown`] and a line in the log: the
-/// probe beside it is in hand and is not given up for it.
-fn mosaic_read(path: &Path, read: impl FnOnce() -> Result<Option<Mosaic>>) -> MosaicRead {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)) {
-        Ok(Ok(Some(m))) => MosaicRead::Mosaic(m),
-        Ok(Ok(None)) => MosaicRead::NotMosaic,
-        Ok(Err(e)) => {
-            log::warn!("{}: its mosaic: {e}", path.display());
-            MosaicRead::Unknown
+/// [`probe_and_mosaic_path`] with the ends of the file to read given,
+/// and the bytes read.
+fn probe_and_mosaic_with(path: &Path, ends: Ends) -> Result<(Probe, MosaicRead, u64)> {
+    not_raw(path)?;
+    let mut tried = 0;
+    match read_ends(path, ends) {
+        Ok(Some((buf, read))) => {
+            let source = RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path);
+            match guarded(|| None, || probe_and_mosaic_source(&source, path)) {
+                Ok((probe, Ok(m))) => return Ok((probe, m, read)),
+                Ok((_, Err(e))) => {
+                    log::debug!(
+                        "{}: no mosaic from its ends: {e}; read whole",
+                        path.display()
+                    )
+                }
+                Err(e) => log::debug!("{}: from its ends: {e}; read whole", path.display()),
+            }
+            tried = read;
         }
-        Err(_) => {
-            log::warn!("{}: its mosaic: the decoder panicked", path.display());
-            MosaicRead::Unknown
-        }
+        Ok(None) => {}
+        Err(e) => log::debug!("{}: its ends: {e}; read whole", path.display()),
     }
+    guarded(
+        || tail_of(path),
+        || {
+            let (source, whole) = read_whole(path)?;
+            let (probe, described) = probe_and_mosaic_source(&source, path)?;
+            let mosaic = described.unwrap_or_else(|e| {
+                log::warn!("{}: its mosaic: {e}", path.display());
+                MosaicRead::Unknown
+            });
+            Ok((probe, mosaic, tried + whole))
+        },
+    )
 }
 
-fn probe_and_mosaic_unguarded(path: &Path) -> Result<(Probe, MosaicRead)> {
-    let source = mapped(path)?;
-    let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
+/// The probe and the mosaic from one decoder on `source`, the mosaic's
+/// failure or panic said apart, since the probe beside it stands.
+fn probe_and_mosaic_source(
+    source: &RawSource,
+    path: &Path,
+) -> Result<(Probe, std::result::Result<MosaicRead, String>)> {
+    let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
     let metadata = decoder
-        .raw_metadata(&source, &params)
+        .raw_metadata(source, &params)
         .map_err(decoder_error)?;
     let probe = Probe::from_metadata(&metadata);
-    let mosaic = mosaic_read(path, || {
+    let mosaic = described(|| {
         if is_dng(path) {
-            dng_mosaic(path)
+            dng_mosaic(source)
         } else {
             decoder
-                .raw_image(&source, &params, true)
+                .raw_image(source, &params, true)
                 .map(|image| mosaic_of(&image))
                 .map_err(decoder_error)
         }
-    });
+    })
+    .map(|m| m.map_or(MosaicRead::NotMosaic, MosaicRead::Mosaic));
     Ok((probe, mosaic))
+}
+
+/// What a read of the image's description says, its failure and its
+/// panic both an error's words.
+fn described(
+    read: impl FnOnce() -> Result<Option<Mosaic>>,
+) -> std::result::Result<Option<Mosaic>, String> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)) {
+        Ok(Ok(m)) => Ok(m),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("the decoder panicked".into()),
+    }
 }
 
 fn is_dng(path: &Path) -> bool {
@@ -1384,10 +1813,9 @@ fn is_dng(path: &Path) -> bool {
 /// whatever the flag), 20 ms and more a file, where the tags are a
 /// millisecond. The raw IFD is the one rawler takes: compressed as a
 /// raw is and not a reduced copy.
-fn dng_mosaic(path: &Path) -> Result<Option<Mosaic>> {
+fn dng_mosaic(source: &RawSource) -> Result<Option<Mosaic>> {
     use ::rawler::formats::tiff::reader::{GenericTiffReader, TiffReader};
     use ::rawler::tags::TiffCommonTag;
-    let source = mapped(path)?;
     let tiff = GenericTiffReader::new(&mut source.reader(), 0, 0, None, &[])
         .map_err(|e| Error::Decode(e.to_string()))?;
     let raw = tiff
@@ -1484,22 +1912,54 @@ fn mosaic_from_tags(dims: &[u32], pattern: &[u32], planes: Option<&[u32]>) -> Mo
 
 /// The kind of mosaic alone: the image's description without a sample
 /// and without the metadata read. `Ok(None)` for a raw that is not a
-/// mosaic.
+/// mosaic. Never through a memory map, as [`probe_and_mosaic_path`]
+/// reads: a CR3 from its ends, any other format whole, and ends that
+/// give no mosaic, or an error, fall back to the whole file.
 pub fn mosaic_path(path: &Path) -> Result<Option<Mosaic>> {
+    mosaic_with(path, cr3_ends).map(|(mosaic, _)| mosaic)
+}
+
+/// [`mosaic_path`] with the ends of the file to read given, and the
+/// bytes read.
+fn mosaic_with(path: &Path, ends: Ends) -> Result<(Option<Mosaic>, u64)> {
+    not_raw(path)?;
+    let mut tried = 0;
+    match read_ends(path, ends) {
+        Ok(Some((buf, read))) => {
+            let source = RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path);
+            match guarded(|| None, || mosaic_source(&source, path)) {
+                Ok(Some(m)) => return Ok((Some(m), read)),
+                Ok(None) => log::debug!("{}: no mosaic from its ends; read whole", path.display()),
+                Err(e) => log::debug!(
+                    "{}: its mosaic from its ends: {e}; read whole",
+                    path.display()
+                ),
+            }
+            tried = read;
+        }
+        Ok(None) => {}
+        Err(e) => log::debug!("{}: its ends: {e}; read whole", path.display()),
+    }
     guarded(
         || tail_of(path),
         || {
-            if is_dng(path) {
-                return dng_mosaic(path);
-            }
-            let source = mapped(path)?;
-            let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
-            let image = decoder
-                .raw_image(&source, &RawDecodeParams::default(), true)
-                .map_err(decoder_error)?;
-            Ok(mosaic_of(&image))
+            let (source, whole) = read_whole(path)?;
+            mosaic_source(&source, path).map(|m| (m, tried + whole))
         },
     )
+}
+
+/// The kind of mosaic from one source: a DNG's from its tags (see
+/// [`dng_mosaic`]), any other raw's from rawler's dummy image.
+fn mosaic_source(source: &RawSource, path: &Path) -> Result<Option<Mosaic>> {
+    if is_dng(path) {
+        return dng_mosaic(source);
+    }
+    let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
+    let image = decoder
+        .raw_image(source, &RawDecodeParams::default(), true)
+        .map_err(decoder_error)?;
+    Ok(mosaic_of(&image))
 }
 
 /// The file at `path` as rawler's source, memory-mapped: what a decode
@@ -1507,7 +1967,8 @@ pub fn mosaic_path(path: &Path) -> Result<Option<Mosaic>> {
 /// mapping. A mapped file whose volume goes away (a share that drops,
 /// a disk asleep) faults on its next page as a SIGBUS no Rust code
 /// catches, so a read that walks many files on such a volume, as the
-/// catalog import does, takes [`read_whole`] or the ends instead.
+/// catalog import, the library's index, and the thumbnails do, takes
+/// [`read_whole`] or the ends instead.
 fn mapped(path: &Path) -> Result<RawSource> {
     let mut watched = WATCHED.lock().unwrap_or_else(|e| e.into_inner());
     for (dir, n) in watched.iter_mut() {

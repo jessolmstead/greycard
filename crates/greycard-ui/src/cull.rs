@@ -980,7 +980,7 @@ fn decode_paired(
         return decode_keeping(raw, size, fallback).map(|d| (d, false));
     };
     let long = jw.max(jh);
-    let frame = greycard_core::decode::stance_path(raw)
+    let frame = greycard_core::decode::stance_path_unmapped(raw)
         .ok()
         .and_then(|s| s.size)
         .map(|(w, h)| w.max(h));
@@ -2668,6 +2668,36 @@ mod tests {
                 "{name} developed"
             );
         }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A raw and the camera's JPEG beside it, loaded for a lightbox
+    /// tile, map no raw: the frame's size the JPEG is weighed against
+    /// is read into memory. The lightbox loads and prefetches every
+    /// pair of a folder, a share's among them, and a mapped raw whose
+    /// volume drops while the machine sleeps is a SIGBUS nothing
+    /// catches.
+    #[test]
+    fn a_pair_in_the_lightbox_maps_no_raw() {
+        let dir = crate::testing::scratch_dir("cull-pair-unmapped");
+        let raw = dir.join("A.dng");
+        greycard_library::fixture::write_mosaic_dng(&raw, "RGGB");
+        let jpeg = dir.join("A.JPG");
+        image::RgbImage::from_pixel(60, 40, image::Rgb([200, 120, 40]))
+            .save(&jpeg)
+            .unwrap();
+        greycard_core::decode::watch_maps_under(&dir);
+        let want = Want {
+            lightbox: true,
+            ..Want::for_loupe(0, raw.clone(), 0).with_picture(Some(jpeg.clone()))
+        };
+        let got = std::cell::RefCell::new(Vec::new());
+        fetch(&want, None, &|l| got.borrow_mut().push(l));
+        assert!(
+            matches!(&got.into_inner()[..], [Loaded::Ok { preview, .. }] if preview.companion),
+            "the JPEG, the raw having no preview"
+        );
+        assert_eq!(greycard_core::decode::maps_under(&dir), 0, "raws mapped");
         crate::testing::remove_dir_retry(&dir);
     }
 

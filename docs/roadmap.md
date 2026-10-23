@@ -182,6 +182,12 @@ On a fanless laptop the fit view follows a slider without a wait,
 the sharpen included, and the first Subject mask is there in ten
 seconds.
 
+- [ ] A GPU pass bounded under the driver's watchdog: on a slow iGPU
+      (a Renoir with 2 GB, issue #35) the lens or sharpen pass on a
+      32 MP frame ran past amdgpu's 10 s and the ring reset took the
+      device with it; split a pass into submissions short enough that
+      a slow adapter degrades instead of resetting, and survive a lost
+      device on the window's thread
 - [ ] A proxy develop for the fit view, as a placeholder and not a
       mode: 2x2 Bayer quads binned to one RGB pixel, shown only while
       the full develop is pending and replaced by it when it lands, so
@@ -768,9 +774,6 @@ clears or a tester asks for it.
       offset for a clock left on the wrong time, a matching tolerance,
       the position written to the sidecar and the XMP, as digiKam and
       darktable do
-- [ ] The indexer reads raws without memory-mapping them, as the
-      catalog import does (§389): it walks shares too, and a mapped
-      file whose volume drops during sleep is a SIGBUS (issue #33)
 
 - [ ] Folders opened outside every root looked at again as a root's
       folders are: opening a folder indexes it, but nothing passes over

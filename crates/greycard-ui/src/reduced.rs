@@ -219,9 +219,12 @@ fn open(path: &Path) -> anyhow::Result<Opened> {
             greycard_core::picture::decode_picture_path(path)?,
         )));
     }
-    Ok(Opened::Raw(Box::new(greycard_core::decode::decode_path(
-        path,
-    )?)))
+    // Read whole, never mapped: the thumbnails' pool develops every
+    // edited frame of a folder, a share's among them, and a mapped file
+    // whose volume goes away is a SIGBUS.
+    Ok(Opened::Raw(Box::new(
+        greycard_core::decode::decode_path_unmapped(path)?,
+    )))
 }
 
 /// The frame at `path` developed reduced under `edit` at `turn`, up to
@@ -412,7 +415,7 @@ pub(crate) fn masks_ready(ai: &mut Ai, path: &Path, edit: &Edit, turn: u8) -> Re
             }
             let size = match &c.shape {
                 greycard_edit::mask::Shape::Sky { .. } => *frame.get_or_insert_with(|| {
-                    greycard_core::decode::stance_path(path)
+                    greycard_core::decode::stance_path_unmapped(path)
                         .ok()
                         .and_then(|s| s.shown_size(turn))
                         .map(|(w, h)| (w as usize, h as usize))
@@ -1010,6 +1013,56 @@ mod tests {
             Err(Why::NotWanted) | Err(Why::Failed(_))
         ));
         assert_eq!(edited.shows(&version), Shows::Camera);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The pool's develop of an edited raw, and the Sky's read of the
+    /// frame's size beside it, map no raw: the pool works through every
+    /// edited frame of a folder while the window is idle, a share's
+    /// among them, and a mapped raw whose volume drops while the
+    /// machine sleeps is a SIGBUS nothing catches. The test DNGs carry
+    /// no color matrix, so the develop fails after the decode has read
+    /// the file; with no Sky model in the store, the Sky's frame stops
+    /// once its size is read.
+    #[test]
+    fn an_edited_raw_is_developed_without_a_map() {
+        let dir = scratch("unmapped");
+        let raws = dir.join("raws");
+        std::fs::create_dir_all(&raws).unwrap();
+        let mut plain = Edit::default();
+        plain.light.exposure = 1.0;
+        let mut sky = plain.clone();
+        sky.adjustments = with_sky().adjustments;
+        let cache: crate::worker::ThumbCache =
+            Arc::new(Mutex::new(Some(greycard_library::thumbs::Thumbs::at(
+                dir.join("thumbs"),
+                greycard_library::thumbs::DEFAULT_CAP,
+            ))));
+        let edited = Arc::new(Edited::new(cache));
+        let mut frames = Vec::new();
+        for (name, edit) in [("plain.dng", &plain), ("sky.DNG", &sky)] {
+            let path = raws.join(name);
+            greycard_library::fixture::write_mosaic_dng(&path, "RGGB");
+            greycard_edit::Sidecar {
+                line: greycard_edit::Line::of(edit.clone()),
+                ..Default::default()
+            }
+            .save(&path)
+            .unwrap();
+            frames.push(Key::file(&path));
+        }
+        edited.note_all(frames.iter().map(|f| (f.clone(), true, None, None)));
+        greycard_core::decode::watch_maps_under(&raws);
+        let reducer = Reducer::new();
+        for frame in &frames {
+            let made = reducer.make(&edited, frame);
+            assert!(
+                matches!(made, Err(Why::Failed(_)) | Err(Why::NoModel(_))),
+                "{made:?}"
+            );
+        }
+        // Each read its file: the decode, and the Sky's size.
+        assert_eq!(greycard_core::decode::maps_under(&raws), 0, "raws mapped");
         crate::testing::remove_dir_retry(&dir);
     }
 

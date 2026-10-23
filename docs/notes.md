@@ -406,3 +406,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§391. Keys follow-ups: a focused slider in view, text boxes, Escape out of the crop](notes/391-keys-follow-ups.md) (2026-10-21)
 - [§392. The discrete GPU by default, and the clipping toggles' on state](notes/392-the-discrete-gpu-by-default.md) (2026-10-22)
 - [§393. The lightbox shows every raw: the ORF preview, a develop where there is none, the pair's JPEG](notes/393-the-lightbox-shows-every-raw.md) (2026-10-22)
+- [§394. The index pass and the thumbnail pool map nothing](notes/394-the-index-pass-maps-nothing.md) (2026-10-22)
