@@ -43,8 +43,15 @@ export component TipArea inherits TouchArea {
             Tips.show(root.words, root.absolute-position.x, root.absolute-position.y + root.height + 2px);
         }
     }
+    /// A press of any button, after the tip is taken down.
+    callback down(PointerEvent);
     changed has-hover => { if (!root.has-hover) { root.untip(); } }
-    pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.untip(); } }
+    pointer-event(e) => {
+        if (e.kind == PointerEventKind.down) {
+            root.untip();
+            root.down(e);
+        }
+    }
 }
 
 // A switch on its own, smaller than a Toggle's, for a header.
@@ -1023,7 +1030,12 @@ export component PanelButton inherits Rectangle {
     /// For a button with a picture and no text: its name, a word or
     /// two, at the pointer after a rest.
     in property <string> words;
+    /// A menu of its own: a chevron at the right edge, which a click
+    /// opens it from, as a right-click anywhere on the button does.
+    in property <bool> has-menu: false;
     callback clicked();
+    /// The menu asked for, at a point of the button.
+    callback menu(length, length);
     height: Theme.control-height;
     border-radius: Theme.radius-md;
     border-width: root.primary && root.enabled ? 0 : 1px;
@@ -1036,7 +1048,7 @@ export component PanelButton inherits Rectangle {
         alignment: center;
         spacing: Theme.space-2;
         padding-left: root.text == "" ? 0 : Theme.space-3;
-        padding-right: root.text == "" ? 0 : Theme.space-3;
+        padding-right: root.text == "" ? 0 : root.has-menu ? root.chevron-w : Theme.space-3;
         if root.icon.width > 0: Image {
             source: root.icon;
             colorize: !root.enabled ? Theme.text-muted : root.primary ? #101010 : Theme.text;
@@ -1053,6 +1065,16 @@ export component PanelButton inherits Rectangle {
             overflow: elide;
         }
     }
+    // The chevron's strip at the right edge, which a click there
+    // opens the menu from rather than clicking the button.
+    out property <length> chevron-w: Theme.icon + 2 * Theme.space-2;
+    if root.has-menu: Image {
+        x: root.width - root.chevron-w + Theme.space-2;
+        source: @image-url("icons/chevron-down.svg");
+        colorize: !root.enabled ? Theme.text-muted : root.primary ? #101010 : Theme.text-secondary;
+        width: Theme.icon;
+        height: Theme.icon;
+    }
     fs := FocusScope {
         enabled: root.enabled;
         key-pressed(e) => {
@@ -1064,7 +1086,20 @@ export component PanelButton inherits Rectangle {
         words: root.words;
         enabled: root.enabled;
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
-        clicked => { fs.focus(); root.clicked(); }
+        down(e) => {
+            if (root.has-menu && e.button == PointerEventButton.right) {
+                fs.focus();
+                root.menu(self.mouse-x, self.mouse-y);
+            }
+        }
+        clicked => {
+            fs.focus();
+            if (root.has-menu && self.mouse-x >= root.width - root.chevron-w) {
+                root.menu(root.width - root.chevron-w, root.height);
+            } else {
+                root.clicked();
+            }
+        }
     }
 }
 

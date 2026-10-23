@@ -7,6 +7,9 @@ design note behind it.
 
 ### The window
 
+- A menu on the Fit button, from its chevron or a right-click: Fit,
+  50%, 100%, 200%, and 400%
+  ([§402](https://github.com/jessolmstead/greycard/blob/master/docs/notes/402-a-zoom-menu-on-fit.md)).
 - The Settings sheet is five categories down its left side: Interface,
   Library, Editing, Keys, and About, which also shows the version and
   where greycard keeps its files

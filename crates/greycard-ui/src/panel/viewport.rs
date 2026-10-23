@@ -949,6 +949,8 @@ pub(crate) enum Shown {
     Keys,
     /// The Help menu at the left pane's foot, open.
     Help,
+    /// The Fit button's menu of zooms, open.
+    Zoom,
 }
 
 /// Which step of the RawTherapee profiles' offer and sheet a capture
@@ -1008,6 +1010,7 @@ impl Shown {
             "sort" => Ok(Self::Sort),
             "keys" => Ok(Self::Keys),
             "help" => Ok(Self::Help),
+            "zoom" => Ok(Self::Zoom),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, preset-report, paste, pasted, import, \
@@ -1015,7 +1018,7 @@ impl Shown {
                  time-shift, root-name, \
                  delete, archive, archive-rejects, parts, landscape, lightroom, \
                  lightroom-report, lightroom-written, rawtherapee-offer, rawtherapee, \
-                 rawtherapee-written, sort, keys or help, not {name}"
+                 rawtherapee-written, sort, keys, help, or zoom, not {name}"
             )),
         }
     }
@@ -1235,6 +1238,7 @@ impl Shown {
             Self::Sort => app.set_sort_menu_shown(true),
             Self::Keys => app.set_keys_open(true),
             Self::Help => app.set_help_menu_shown(true),
+            Self::Zoom => app.set_zoom_menu_shown(true),
         }
         app.window().request_redraw();
     }
@@ -3744,6 +3748,100 @@ mod tests {
         crate::testing::count_labeled(&app, "Help menu");
         slint::platform::update_timers_and_animations();
         assert!(!app.get_help_menu_shown());
+    }
+
+    /// The Fit button's menu, opened by a right-click on it: 200%
+    /// zooms to 2:1 about the view's center, Fit fits again, and a
+    /// plain click on the button still fits.
+    #[test]
+    fn the_fit_buttons_menu_chooses_a_zoom_and_a_click_still_fits() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        {
+            let mut st = state.borrow_mut();
+            st.develop.image_size = (6000, 4000);
+            st.develop.center = (3000.0, 2000.0);
+        }
+        let zoom = || {
+            let (vw, vh) = (app.get_view_width() as u32, app.get_view_height() as u32);
+            effective_zoom(&state.borrow(), vw, vh)
+        };
+        let fitted = zoom();
+        assert!(fitted < 1.0, "{fitted}");
+        let found = |label: &str| -> Vec<(f32, f32)> {
+            app.window().dispatch_event(WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+            ElementHandle::find_by_accessible_label(&app, label)
+                .map(|e| {
+                    let (at, size) = (e.absolute_position(), e.size());
+                    (at.x + size.width / 2.0, at.y + size.height / 2.0)
+                })
+                .collect()
+        };
+        // The footer's Fit is the lowest: the zoom's words say it too.
+        let button = found("Fit")
+            .into_iter()
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .expect("the Fit button");
+        // An entry of the open menu by its place, from the keys: the
+        // menu is a popup of its own, with places of its own. Its
+        // last entry's words are nowhere else.
+        let pick = |nth: usize| {
+            assert_eq!(found("400%").len(), 1, "the menu is up");
+            for _ in 0..nth {
+                crate::testing::press(&app, slint::platform::Key::DownArrow);
+            }
+            crate::testing::press(&app, slint::platform::Key::Return);
+            slint::platform::update_timers_and_animations();
+        };
+        assert!(found("400%").is_empty(), "no menu yet");
+        let right_click = || {
+            let position = slint::LogicalPosition::new(button.0, button.1);
+            let right = PointerEventButton::Right;
+            for event in [
+                WindowEvent::PointerMoved { position },
+                WindowEvent::PointerPressed {
+                    position,
+                    button: right,
+                },
+                WindowEvent::PointerReleased {
+                    position,
+                    button: right,
+                },
+            ] {
+                app.window().dispatch_event(event);
+            }
+        };
+        right_click();
+        pick(4);
+        assert_eq!(zoom(), 2.0);
+        assert_eq!(state.borrow().develop.center, (3000.0, 2000.0));
+        // The ask from Rust opens the same menu, and Fit in it fits.
+        app.set_zoom_menu_shown(true);
+        pick(1);
+        assert!((zoom() - fitted).abs() < 1e-6);
+        // Back at 2:1, a plain click on the button fits as before.
+        app.set_zoom_menu_shown(true);
+        pick(4);
+        assert_eq!(zoom(), 2.0);
+        crate::testing::click(&app, button.0, button.1);
+        assert!((zoom() - fitted).abs() < 1e-6);
+        // Escape puts the menu away and leaves the window's keys with
+        // the focus, not the button: Space zooms to 1:1 rather than
+        // pressing Fit.
+        right_click();
+        assert_eq!(found("400%").len(), 1, "the menu is up");
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        slint::platform::update_timers_and_animations();
+        assert!(found("400%").is_empty(), "the menu is away");
+        crate::testing::press(&app, " ");
+        assert_eq!(zoom(), 1.0);
+        assert_eq!(Shown::sheet("zoom"), Ok(Shown::Zoom));
     }
 
     /// The edge arrows and the undo and redo buttons show a picture

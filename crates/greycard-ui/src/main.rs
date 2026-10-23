@@ -433,7 +433,8 @@ struct Cli {
     /// rawtherapee-written (the same, written as its Write button
     /// writes it: point it at a scratch folder), sort (the grid's
     /// Sort menu, open; with --grid), keys (the keys sheet, as ?
-    /// opens it) or help (the Help menu, open)
+    /// opens it), help (the Help menu, open), or zoom (the Fit
+    /// button's menu of zooms, open)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of

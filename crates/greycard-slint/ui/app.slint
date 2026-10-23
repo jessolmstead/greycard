@@ -95,6 +95,8 @@ export component App inherits Window {
     callback mat-key();
     /// The effective zoom in words: "Fit", or a percentage.
     in property <string> zoom-text: "Fit";
+    /// Set to open the Fit button's menu of zooms, for a capture of it.
+    in-out property <bool> zoom-menu-shown: false;
 
     // The filmstrip.
     in property <[Thumb]> thumbs;
@@ -3513,10 +3515,47 @@ export component App inherits Window {
                         padding-left: Theme.space-4;
                         padding-right: Theme.space-4;
                         spacing: Theme.space-2;
+                        // A click fits; the chevron or a right-click
+                        // offers the zooms, each about the view's
+                        // center, as the keys' are.
                         PanelButton {
                             text: "Fit";
                             icon: @image-url("icons/maximize.svg");
+                            has-menu: true;
                             clicked => { root.reset-view(); }
+                            // The keys first, as the other menus do, so the
+                            // window's keys have the focus back when it
+                            // closes.
+                            menu(x, y) => {
+                                keys.focus();
+                                zoom-menu.show({ x: x, y: y });
+                            }
+                            property <bool> asked: root.zoom-menu-shown;
+                            changed asked => {
+                                if (self.asked) {
+                                    root.zoom-menu-shown = false;
+                                    keys.focus();
+                                    zoom-menu.show({ x: self.width - self.chevron-w, y: self.height });
+                                }
+                            }
+                            zoom-menu := ContextMenuArea {
+                                width: 0px;
+                                height: 0px;
+                                enabled: false;
+                                Menu {
+                                    MenuItem {
+                                        title: "Fit";
+                                        activated => { root.reset-view(); root.menu-done(); }
+                                    }
+                                    for level in [0.5, 1, 2, 4]: MenuItem {
+                                        title: (level * 100) + "%";
+                                        activated => {
+                                            root.zoom-to(level, root.view-width * 1phx / 2, root.view-height * 1phx / 2);
+                                            root.menu-done();
+                                        }
+                                    }
+                                }
+                            }
                         }
                         PanelButton {
                             text: root.export-running ? "Stop export" : "Export...";

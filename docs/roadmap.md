@@ -909,7 +909,6 @@ clears or a tester asks for it.
       through a libheif found at runtime and loaded by name as ONNX
       Runtime is, a file skipped with a log line where none is; AVIF
       beside it from a pure-Rust decoder
-- [ ] A zoom menu beside Fit: 50%, 100%, 200% (pixls, 2026-10-22)
 - [ ] The UI scale as any percentage, not steps: 100% too small and
       125% too large on one monitor (pixls, 2026-10-22)
 - [ ] A toolbar of common actions, the set the user's, with the
