@@ -29,6 +29,10 @@ design note behind it.
 
 ### Fixes
 
+- On a laptop with two GPUs the window and the develop take the
+  discrete one; `WGPU_POWER_PREF=low` keeps the other. The clipping
+  toggles on the RGB scope show plainly when they are on
+  ([§392](https://github.com/jessolmstead/greycard/blob/master/docs/notes/392-the-discrete-gpu-by-default.md))
 - The histogram, the scopes, the clipping lamps, and the readout under
   the pointer read the export's values again when a monitor profile is
   in use; they were going through the monitor's table, and the shadow

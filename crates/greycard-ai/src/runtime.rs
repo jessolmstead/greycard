@@ -159,14 +159,16 @@ impl Provider {
 /// off its Slint device (`main.rs`). This is a second, short-lived
 /// `wgpu::Instance` used only to read that struct — Dawn, which ONNX
 /// Runtime's WebGPU execution provider actually runs on, keeps its
-/// own adapter choice to itself. On one GPU, which is what greycard
-/// is built for today, the two agree. Probed with `Backends::PRIMARY`
+/// own adapter choice to itself. Probed with `Backends::PRIMARY`
 /// (Vulkan, Metal, DX12): closer to what Dawn itself offers than
 /// every backend wgpu knows, and it skips GL/EGL, which a process
 /// that already holds Slint's own wgpu device has no business opening
 /// a second context on. Asked once a process and kept: the adapter
 /// does not change under a running greycard, and asking again would
-/// pay this same cost once a model file, not once a launch.
+/// pay this same cost once a model file, not once a launch. It asks
+/// for what `WGPU_POWER_PREF` names, high performance where it names
+/// nothing, as the window does; greycard-gpu always asks high
+/// performance.
 #[cfg(feature = "webgpu")]
 fn webgpu_adapter_identity() -> Option<String> {
     static IDENTITY: OnceLock<Option<String>> = OnceLock::new();
@@ -178,7 +180,11 @@ fn webgpu_adapter_identity() -> Option<String> {
                 ..wgpu::InstanceDescriptor::new_without_display_handle()
             });
             let adapter = instance
-                .request_adapter(&wgpu::RequestAdapterOptions::default())
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::from_env()
+                        .unwrap_or(wgpu::PowerPreference::HighPerformance),
+                    ..Default::default()
+                })
                 .block_on()
                 .ok()?;
             let info = adapter.get_info();

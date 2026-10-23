@@ -1162,8 +1162,10 @@ export component CropHandle inherits TouchArea {
 }
 
 // A clipping mark at a corner of the histogram: a small square, lit
-// in the color of the channels that clip, outlined in white while
-// its warning is painted over the picture. Click toggles the warning.
+// in the color of the channels that clip. While its warning is
+// painted over the picture the control is filled in the accent, as
+// an on switch is, with the square inside it outlined dark so a lit
+// square reads on the fill. Click toggles the warning.
 export component ClipMark inherits Rectangle {
     in property <bool> lit;
     in property <color> mark;
@@ -1172,7 +1174,9 @@ export component ClipMark inherits Rectangle {
     width: 16px;
     height: 16px;
     border-radius: Theme.radius-sm;
-    background: ta.has-hover ? Theme.hover : transparent;
+    background: root.on
+        ? (ta.has-hover ? Theme.accent-hover : Theme.accent)
+        : (ta.has-hover ? Theme.hover : transparent);
     animate background { duration: Theme.quick; }
     Rectangle {
         width: 8px;
@@ -1180,7 +1184,7 @@ export component ClipMark inherits Rectangle {
         border-radius: 2px;
         background: root.lit ? root.mark : transparent;
         border-width: 1px;
-        border-color: root.on ? Theme.text : (root.lit ? root.mark : Theme.text-muted);
+        border-color: root.on ? Theme.canvas : (root.lit ? root.mark : Theme.text-muted);
     }
     ta := TouchArea {
         clicked => { root.clicked(); }

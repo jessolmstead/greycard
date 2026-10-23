@@ -157,6 +157,23 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     );
 
     let mut settings = WGPUSettings::default();
+    // The power preference `WGPU_POWER_PREF` names, as Slint's default
+    // reads it, and high performance where it names nothing: Slint's
+    // own default is none, and wgpu then takes the first adapter
+    // listed, on a laptop often the integrated GPU beside a discrete
+    // one. greycard-ai's probe asks the same; greycard-gpu's own
+    // instances ask high performance.
+    settings.power_preference =
+        wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::HighPerformance);
+    let asked = match settings.power_preference {
+        wgpu::PowerPreference::HighPerformance => "high performance",
+        wgpu::PowerPreference::LowPower => "low power",
+        wgpu::PowerPreference::None => "no preference",
+    };
+    match std::env::var("WGPU_POWER_PREF") {
+        Ok(value) => tracing::info!("adapter: {asked} (WGPU_POWER_PREF={value})"),
+        Err(_) => tracing::info!("adapter: {asked} (greycard's default)"),
+    }
     // Slint asks for downlevel limits, which allow no storage buffers;
     // the histogram needs one. Desktop defaults, and 45 MP frames are
     // 8192 wide and more, exactly the default texture limit.

@@ -15,7 +15,9 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-None open.
+- [ ] The click that dismisses the viewport's context menu also
+      reaches the picture and recenters it there (a pixls tester,
+      2026-10-22)
 
 ## Open Questions
 
@@ -546,6 +548,8 @@ clears or a tester asks for it.
 
 
 #### Editor
+
+- [ ] Toggle for relative (normal) white balance adjustment in masks
 - [ ] Every section switch and button a bindable action in the keys
       table (§390), so a key applies the lens correction or opens the
       crop; a key that applies a named preset beside it
@@ -676,7 +680,6 @@ clears or a tester asks for it.
       code, so the Windows CI failure that has recurred five times
       (an open SQLite file under a folder being removed) cannot come
       back
-
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made
       from a base whose CA ran on the GPU, where `--export` makes it
@@ -686,7 +689,8 @@ clears or a tester asks for it.
 - [ ] The panel's look, refined as the editor grows (§14); in develop
       order on Develop, Crop, Masks and Retouch tabs since 2026-09-14
 - [ ] Choose output color space/gamut for export: sRGB, Display P3 and
-      Rec.2020 since §20; the viewport shows the chosen one since §42
+      Rec.2020 since §20; the viewport shows the chosen one since §42;
+      ProPhoto as an output (a pixls tester, 2026-10-22)
   - ProPhoto as a working space: no (§84). It stays an output space and
     an intermediate inside the operations defined in it
 - [ ] The develop sections in an order of the user's: a list of
@@ -757,6 +761,7 @@ clears or a tester asks for it.
 
 
 #### Library
+
 - [ ] Ctrl+click on a filter chip excludes it (Reject, an ISO), shown
       in red, so "everything but the rejects" is one click
 - [ ] Geotagging from a GPX track: the camera's UTC offset, a manual
@@ -880,21 +885,44 @@ clears or a tester asks for it.
 
 #### Nice-to-have
 
-- [ ] Zoom bar for grid and lightbox
 - [ ] Flexible dual monitor support; color management per display.
-- [ ] MIDI Controller support
 - [ ] Different frameline options when cropping
 - [ ] Camera tethering
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
 - [ ] Idea: AI highlight recovery
 - [ ] Maybe: MCP
-- [ ] Maybe: Spektrafilm, darktable's spectral film simulation
-      (measured film and paper data, grain, halation), in place of
-      the look stage rather than over it, as darktable advises. Waits
-      on darktable's module shipping and on the licenses of
-      spektrafilm and its data pack
 - [ ] Maybe: Depth mapping for blur
+
+#### User Requests
+
+- [ ] Convenient reset-to-original develop settings button.
+- [ ] MIDI Controller support
+- [ ] Zoom bar for grid and lightbox
+- [ ] Spektrafilm, darktable's spectral film simulation
+  (measured film and paper data, grain, halation), in place of
+  the look stage rather than over it, as darktable advises. Waits
+  on darktable's module shipping and on the licenses of
+  spektrafilm and its data pack
+- [ ] UI Theme control (mid and lighter grey for example, maybe
+  different accent color(s))
+- [ ] HEIC/HEIF support
+- [ ] Setting to auto-hide all but the currently selected/opened
+      tool in the develop pane
+- [ ] A zoom menu beside Fit: 50%, 100%, 200% (pixls, 2026-10-22)
+- [ ] The UI scale as any percentage, not steps: 100% too small and
+      125% too large on one monitor (pixls, 2026-10-22)
+- [ ] A toolbar of common actions, the set the user's, with the
+      menu bar (pixls, 2026-10-22)
+- [ ] Preferences gathered in Settings: the sticky choices around the
+      app (export format, canvas grey, color spaces) listed there too
+      (pixls, 2026-10-22)
+- [ ] Scroll bars that stay, and a size for them (pixls, 2026-10-22)
+- [ ] The folder to open at start, instead of the last one; a tighter
+      grid; the cell size as a number and the wheel resize off; hide
+      the filter bar (pixls, 2026-10-22)
+- [ ] The export queue shown and edited: its sets listed, one removed
+      (pixls, 2026-10-22)
 
 ## Blocked
 
