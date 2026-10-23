@@ -303,8 +303,15 @@ pub struct FillReport {
     /// Patches made up this develop, and the seconds they took together.
     pub made: Vec<String>,
     pub seconds: f64,
-    /// Patches left as they were: the model is not in the store.
-    pub missing: Vec<String>,
+    /// Patches left as they were, and the model each waits on: it is
+    /// not in the store.
+    pub missing: Vec<(String, &'static greycard_ai::Model)>,
+    /// Patches the generative remove made, left as they were: this
+    /// machine has no WebGPU.
+    pub no_gpu: Vec<String>,
+    /// The engine each Fill patch applied this develop was made by,
+    /// kept or made, by patch id: none when the retouch was kept whole.
+    pub engines: Vec<(u64, crate::ai::Engine)>,
     /// Patches left as they were, and why: the model could not run.
     pub failed: Vec<(String, String)>,
 }

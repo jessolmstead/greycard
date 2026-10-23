@@ -1,5 +1,6 @@
 // The RETOUCH section: the tools, the next or chosen repair's size,
-// feather and opacity, and the repairs by name.
+// feather and opacity, and the repairs by name; a Fill the generative
+// remove made has Another on its row, its next variation.
 
 import { Theme } from "../theme.slint";
 import { TipArea, Section, EditSlider, Steps, PanelButton } from "../controls.slint";
@@ -14,7 +15,9 @@ export component RetouchSection inherits Section {
     in-out property <float> patch-opacity;
     in-out property <[string]> patch-names;
     in-out property <int> patch;
+    in-out property <bool> patch-varies;
     callback retouch-toggled(string);
+    callback patch-another();
     callback patch-changed(int);
     callback delete-patch();
     callback patch-edited();
@@ -113,6 +116,12 @@ export component RetouchSection inherits Section {
                         font-weight: on ? Theme.weight-medium : Theme.weight-regular;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
+                    }
+                    if on && root.patch-varies: PanelButton {
+                        text: "Another";
+                        height: Theme.control-height - 4px;
+                        y: 2px;
+                        clicked => { root.patch-another(); }
                     }
                     if on: Rectangle {
                         width: Theme.control-height - 4px;

@@ -663,10 +663,20 @@ fn retouch(b: &Edit, a: &Edit) -> String {
             let moved: Vec<_> = y
                 .patches
                 .iter()
-                .filter(|p| x.patches.iter().any(|q| q.id == p.id && q != *p))
+                .filter_map(|p| Some((x.patches.iter().find(|q| q.id == p.id && *q != p)?, p)))
                 .collect();
             match moved.as_slice() {
-                [one] => format!("{} moved", one.name()),
+                // A seed moved on and nothing else: another variation.
+                [(was, one)]
+                    if **was
+                        == crate::retouch::Patch {
+                            seed: was.seed,
+                            ..(*one).clone()
+                        } =>
+                {
+                    format!("{} varied", one.name())
+                }
+                [(_, one)] => format!("{} moved", one.name()),
                 _ => "Retouch".to_string(),
             }
         }
@@ -1066,12 +1076,21 @@ mod tests {
             feather: 0.5,
             opacity: 1.0,
             source: None,
+            ..Default::default()
         });
         assert_eq!(describe(&base, &p, &[]), "Heal 3");
         assert_eq!(describe(&p, &base, &[]), "Heal 3 removed");
         let mut q = p.clone();
         q.retouch.patches[0].radius = 0.05;
         assert_eq!(describe(&p, &q, &[]), "Heal 3 moved");
+        // A seed moved on alone is another variation.
+        let mut v = p.clone();
+        v.retouch.patches[0].method = Method::Fill;
+        let mut w = v.clone();
+        w.retouch.patches[0].seed = 1;
+        assert_eq!(describe(&v, &w, &[]), "Fill 3 varied");
+        w.retouch.patches[0].radius = 0.05;
+        assert_eq!(describe(&v, &w, &[]), "Fill 3 moved");
     }
 
     #[test]

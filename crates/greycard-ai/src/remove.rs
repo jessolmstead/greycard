@@ -29,19 +29,15 @@
 //!
 //! Three sessions, each 5.1 GB (UNet) or up to 6 GB at its peak
 //! (decoder at 1024): all open at once is 12.2 GB of the card, one at
-//! a time 6.8 GB for a few seconds more ([`Memory`]). Neither ONNX
+//! a time about 7 GB for a few seconds more ([`Memory`]). Neither ONNX
 //! Runtime's WebGPU provider nor wgpu says how much memory the adapter
 //! has, so one at a time is the default and `GREYCARD_REMOVE_RESIDENT=1`
 //! keeps them open.
 //!
-//! One at a time gives each dropped session's buffers back through the
-//! provider's lazy release ([`Buffers::Released`]), but ONNX Runtime
-//! keeps the buffer cache mode on the WebGPU context, made once a
-//! process (under a `call_once`) and shared by every session on the
-//! default device: the mode is the first session's. It takes effect
-//! only when Remove opens the context; in the editor another model
-//! usually has, with the default cache, and one at a time then peaks
-//! near 8.6 GB at 1024, not 6.8.
+//! The sessions keep the provider's default buffer cache, as every
+//! session of the process does (`runtime`'s provider dispatch says
+//! why): in the editor, after the denoiser, a 1024 removal one at a
+//! time peaks 7.3 GB over what was there, 9.4 GB over the desktop.
 
 use std::time::Instant;
 
@@ -53,7 +49,7 @@ use ort::value::{Tensor, TensorElementType};
 use crate::fill::{implausible, mirror};
 use crate::image::Rgbf;
 use crate::registry::{File, REMOVE};
-use crate::runtime::{self, Buffers, Error, Provider, Result};
+use crate::runtime::{self, Error, Provider, Result};
 use crate::store::Store;
 
 /// The longest side of a window, the larger VAE export's.
@@ -105,8 +101,8 @@ pub enum Memory {
     /// All three kept open for the size last used: 12.2 GB at 1024,
     /// about 11 s a removal.
     Resident,
-    /// Each opened for its part and dropped after, its buffers given
-    /// back: 6.8 GB at 1024, about 14 s a removal.
+    /// Each opened for its part and dropped after: about 7 GB at
+    /// 1024, about 13 s a removal.
     OneAtATime,
 }
 
@@ -147,12 +143,34 @@ pub struct Times {
 /// The decoder's answer outside the hole against the picture: the
 /// mean absolute difference, and the window's mean local gradient
 /// there, the mean absolute difference of each pixel from its right
-/// and lower neighbors (both in 0 to 1, over the three channels).
+/// and lower neighbors (both in 0 to 1, over the three channels); and
+/// the normalized correlation of the two on the latents' grid, the
+/// means of 8 × 8 blocks mostly outside the hole, each channel about
+/// its own mean, or `None` where the picture there is too flat for one
+/// to mean anything ([`FLAT`]). A block's mean leaves the grain out,
+/// which the VAE does not give back and which correlates with nothing.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Drift {
     pub off: f32,
     pub detail: f32,
+    pub correlation: Option<f32>,
 }
+
+/// The least correlation of the decoder's answer outside the hole with
+/// the picture that is taken for the picture. The drift bound alone
+/// lets through a flat answer on a busy low-contrast window and the
+/// picture shifted by a few pixels, both off by little on average; an
+/// honest answer follows the picture, and either of those does not.
+pub const CORRELATION: f32 = 0.5;
+
+/// The standard deviation of the picture's 8 × 8 block means outside
+/// the hole, over its channels, under which no correlation is asked:
+/// a flat sky has no structure for an answer to follow, and the drift
+/// bound is the check there.
+pub const FLAT: f32 = 0.005;
+
+/// The side of the blocks the correlation is taken over: a latent's.
+const BLOCK: usize = 8;
 
 /// [`Drift`] of `decoded` from `image` where `hole` is zero; zeros
 /// with nothing outside the hole.
@@ -160,9 +178,17 @@ pub fn drift(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Drift {
     let (w, h) = (image.width, image.height);
     let p = |i: usize, c: usize| image.data[i * 3 + c].clamp(0.0, 1.0);
     let (mut off, mut detail, mut n, mut pairs) = (0.0f64, 0.0f64, 0usize, 0usize);
+    // Each block's sums outside the hole, the picture's and the
+    // answer's by channel, and how many pixels.
+    let bw = w.div_ceil(BLOCK);
+    let mut blocks = vec![([0.0f64; 3], [0.0f64; 3], 0usize); bw * h.div_ceil(BLOCK)];
     for (i, _) in hole.iter().enumerate().filter(|(_, m)| **m <= 0.0) {
         let (x, y) = (i % w, i / w);
+        let b = &mut blocks[(y / BLOCK) * bw + x / BLOCK];
+        b.2 += 1;
         for c in 0..3 {
+            b.0[c] += f64::from(p(i, c));
+            b.1[c] += f64::from(decoded.data[i * 3 + c]);
             off += f64::from((p(i, c) - decoded.data[i * 3 + c]).abs());
             if x + 1 < w {
                 detail += f64::from((p(i, c) - p(i + 1, c)).abs());
@@ -175,6 +201,36 @@ pub fn drift(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Drift {
         }
         n += 3;
     }
+    // The blocks at least half outside the hole, by their means: the
+    // sums of the picture's, the answer's, their squares and their
+    // product, by channel.
+    let mut sums = [[0.0f64; 5]; 3];
+    let mut k = 0.0f64;
+    for (j, (a, b, count)) in blocks.iter().enumerate() {
+        let (bx, by) = (j % bw * BLOCK, j / bw * BLOCK);
+        let area = (w - bx).min(BLOCK) * (h - by).min(BLOCK);
+        if *count == 0 || 2 * count < area {
+            continue;
+        }
+        k += 1.0;
+        for (c, s) in sums.iter_mut().enumerate() {
+            let (a, b) = (a[c] / *count as f64, b[c] / *count as f64);
+            s[0] += a;
+            s[1] += b;
+            s[2] += a * a;
+            s[3] += b * b;
+            s[4] += a * b;
+        }
+    }
+    let (mut cov, mut va, mut vb) = (0.0f64, 0.0f64, 0.0f64);
+    if k > 0.0 {
+        for s in &sums {
+            va += s[2] - s[0] * s[0] / k;
+            vb += s[3] - s[1] * s[1] / k;
+            cov += s[4] - s[0] * s[1] / k;
+        }
+    }
+    let flat = k < 2.0 || (va.max(0.0) / (3.0 * k)).sqrt() < f64::from(FLAT);
     Drift {
         off: if n > 0 { (off / n as f64) as f32 } else { 0.0 },
         detail: if pairs > 0 {
@@ -182,6 +238,15 @@ pub fn drift(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Drift {
         } else {
             0.0
         },
+        // A flat answer on a picture that is not has no variance, and
+        // correlates with it not at all.
+        correlation: (!flat).then(|| {
+            if vb <= 1e-12 {
+                0.0
+            } else {
+                (cov / (va * vb).sqrt()) as f32
+            }
+        }),
     }
 }
 
@@ -325,8 +390,8 @@ fn cut(planes: &[f32], size: usize, width: usize, height: usize) -> Result<Rgbf>
 /// the rest the picture clamped to 0 to 1 as [`implausible`] reads it.
 /// [`Error::Implausible`] when the decoder's answer outside the hole
 /// strays from the picture by more than [`bound`] allows for its
-/// detail ([`drift`]), or is not finite: what a card out of memory
-/// gives.
+/// detail ([`drift`]), correlates with it under [`CORRELATION`], or is
+/// not finite: what a card out of memory gives.
 pub fn composite(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<Rgbf> {
     if decoded.data.iter().any(|v| !v.is_finite()) {
         return Err(Error::Implausible("the removal is not finite".into()));
@@ -336,6 +401,11 @@ pub fn composite(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<Rgbf> {
         return Err(Error::Implausible(format!(
             "the picture outside the hole came back as something else (off by {:.3} on average, where its detail is {:.3})",
             d.off, d.detail
+        )));
+    }
+    if let Some(r) = d.correlation.filter(|&r| r.is_nan() || r < CORRELATION) {
+        return Err(Error::Implausible(format!(
+            "the picture outside the hole came back as something else (a correlation of {r:.3} with it)"
         )));
     }
     let mut data = Vec::with_capacity(image.data.len());
@@ -543,19 +613,14 @@ impl Remove {
 
     fn open(&self, part: Part, size: usize) -> Result<Session> {
         let path = self.store.path(&REMOVE, Self::graph(part, size));
-        let buffers = match self.memory {
-            Memory::Resident => Buffers::Kept,
-            Memory::OneAtATime => Buffers::Released,
-        };
         // No warm-up: with WebGPU the only provider there is nothing
         // to fall through to, and a warm-up of the UNet is a step's
         // time on every open.
-        let loaded = runtime::open_with(
+        let loaded = runtime::open(
             &path,
             GraphOptimizationLevel::Level3,
             &[Provider::WebGpu],
             None,
-            buffers,
             |_| Ok(()),
         )?;
         Ok(loaded.session)
@@ -688,7 +753,7 @@ impl Remove {
         times.total = total.elapsed().as_secs_f64();
         self.times = times;
         log::info!(
-            "remove {w}x{h} at {size}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?}); outside the hole off by {:.4} where its detail is {:.4}",
+            "remove {w}x{h} at {size}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?}); outside the hole off by {:.4} where its detail is {:.4}, correlation {}",
             times.loads,
             times.encode,
             times.unet_calls,
@@ -697,7 +762,11 @@ impl Remove {
             times.total,
             self.memory,
             times.drift.off,
-            times.drift.detail
+            times.drift.detail,
+            times
+                .drift
+                .correlation
+                .map_or("not asked (flat)".to_string(), |r| format!("{r:.3}"))
         );
         out
     }
@@ -907,8 +976,105 @@ mod tests {
         let d = drift(&stripes, &hole, &flat(w, h, 0.5));
         assert!((d.off - 0.1).abs() < 1e-5, "{d:?}");
         assert!((d.detail - 0.1).abs() < 0.01, "{d:?}");
+        // Stripes a pixel wide are grain to the latents' grid: their
+        // blocks are flat, so a smooth answer is not asked to follow.
+        assert_eq!(d.correlation, None);
         assert!(composite(&stripes, &hole, &flat(w, h, 0.5)).is_ok());
         assert!(composite(&image, &hole, &flat(w, h, 0.6)).is_err());
+        assert_eq!(drift(&image, &hole, &flat(w, h, 0.51)).correlation, None);
+    }
+
+    /// Stripes 8 pixels wide under a fine checker: the drift bound
+    /// passes a flat answer on them and the stripes shifted a stripe
+    /// over, both off by about 0.1 where the checker allows 0.4; the
+    /// correlation of the blocks refuses both, and passes the stripes
+    /// smoothed of their checker.
+    #[test]
+    fn an_answer_that_does_not_follow_the_picture_is_refused() {
+        let (w, h) = (32, 32);
+        let hole: Vec<f32> = (0..w * h).map(|i| if i < 20 { 1.0 } else { 0.0 }).collect();
+        let picture = |shift: usize, checker: f32| {
+            Rgbf::new(
+                w,
+                h,
+                (0..w * h * 3)
+                    .map(|i| {
+                        let (x, y) = ((i / 3) % w, (i / 3) / w);
+                        let stripe = if ((x + shift) / 8).is_multiple_of(2) {
+                            0.4
+                        } else {
+                            0.6
+                        };
+                        stripe + if (x + y) % 2 == 0 { checker } else { -checker }
+                    })
+                    .collect(),
+            )
+        };
+        let stripes = picture(0, 0.15);
+        let d = drift(&stripes, &hole, &flat(w, h, 0.5));
+        assert!(d.off < 0.02 + 2.0 * d.detail, "inside the bound: {d:?}");
+        assert_eq!(d.correlation, Some(0.0), "{d:?}");
+        assert!(matches!(
+            composite(&stripes, &hole, &flat(w, h, 0.5)),
+            Err(Error::Implausible(_))
+        ));
+        let shifted = picture(8, 0.15);
+        let d = drift(&stripes, &hole, &shifted);
+        assert!(d.off < 0.02 + 2.0 * d.detail, "inside the bound: {d:?}");
+        assert!(d.correlation.is_some_and(|r| r < -0.9), "{d:?}");
+        assert!(composite(&stripes, &hole, &shifted).is_err());
+        let smooth = picture(0, 0.0);
+        assert!(
+            drift(&stripes, &hole, &smooth)
+                .correlation
+                .is_some_and(|r| r > 0.99)
+        );
+        assert!(composite(&stripes, &hole, &smooth).is_ok());
+    }
+
+    /// A flat sky with grain: structure of 0.002 under grain of 0.005,
+    /// and the VAE's smooth answer. Taken pixel by pixel the two
+    /// correlate at about 0.37, grain against none; on the blocks the
+    /// picture is flat and no correlation is asked. A gentle gradient
+    /// under the same grain is asked, and the smooth answer follows it.
+    #[test]
+    fn a_smooth_answer_on_a_grainy_sky_is_taken() {
+        let (w, h) = (256, 256);
+        let mut state = 0x5ca1_ab1e_u64;
+        let mut gauss = move || {
+            let mut u = || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                ((state >> 11) as f32 + 0.5) / (1u64 << 53) as f32
+            };
+            let (u1, u2) = (u(), u());
+            (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
+        };
+        let hole: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                f32::from(u8::from((96..160).contains(&x) && (96..160).contains(&y)))
+            })
+            .collect();
+        for (slope, asked) in [(0.002f32 * 3.46, false), (0.05, true)] {
+            // A ramp from top to bottom whose standard deviation is
+            // about `slope` / 3.46.
+            let smooth = |y: usize| 0.5 + slope * (y as f32 / h as f32 - 0.5);
+            let mut grainy = Vec::with_capacity(w * h * 3);
+            let mut answer = Vec::with_capacity(w * h * 3);
+            for i in 0..w * h {
+                let v = smooth(i / w);
+                let g = 0.005 * gauss();
+                grainy.extend([v + g; 3]);
+                answer.extend([v; 3]);
+            }
+            let (grainy, answer) = (Rgbf::new(w, h, grainy), Rgbf::new(w, h, answer));
+            let d = drift(&grainy, &hole, &answer);
+            assert_eq!(d.correlation.is_some(), asked, "{slope}: {d:?}");
+            assert!(d.correlation.is_none_or(|r| r > 0.9), "{slope}: {d:?}");
+            assert!(composite(&grainy, &hole, &answer).is_ok(), "{slope}: {d:?}");
+        }
     }
 
     #[test]

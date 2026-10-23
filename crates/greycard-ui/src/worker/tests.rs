@@ -2300,15 +2300,29 @@ fn a_develop_without_its_model_says_what_was_left_out() {
         &developed(
             LearnedReport::Missing(model),
             FillReport {
-                missing: vec!["Patch 1".into()],
+                missing: vec![
+                    ("Patch 1".into(), &greycard_ai::FILL),
+                    ("Patch 2".into(), &greycard_ai::REMOVE),
+                ],
+                no_gpu: vec!["Patch 3".into()],
                 ..FillReport::default()
             },
         ),
         None,
     );
-    assert_eq!(said.len(), 2, "{said:?}");
+    assert_eq!(said.len(), 4, "{said:?}");
     assert!(said[0].contains(model.name), "{}", said[0]);
     assert!(said[1].starts_with("fill Patch 1:"), "{}", said[1]);
+    // A patch the generative remove made, on a machine without it,
+    // names the model it waits on.
+    assert!(said[2].starts_with("fill Patch 2:"), "{}", said[2]);
+    assert!(said[2].contains(greycard_ai::REMOVE.name), "{}", said[2]);
+    assert!(said[2].ends_with("left as it was"), "{}", said[2]);
+    // One it made, on a machine without a GPU, says so instead.
+    assert_eq!(
+        said[3],
+        "fill Patch 3: the remove needs a GPU; left as it was"
+    );
 }
 
 /// A base made as the engine's stand-in for a learned denoiser

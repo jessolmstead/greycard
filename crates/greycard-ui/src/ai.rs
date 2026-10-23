@@ -20,8 +20,8 @@ use greycard_ai::sky;
 #[cfg(test)]
 use greycard_ai::sky::Prior;
 use greycard_ai::{
-    Denoiser, Fill, Model, Prompt, Provider, Rgb8, Rgbf, SAM, SAM3, SKY, Sam, Sky, Store, Subject,
-    refine,
+    Denoiser, Fill, Model, Prompt, Provider, REMOVE, Remove, Rgb8, Rgbf, SAM, SAM3, SKY, Sam, Sky,
+    Store, Subject, refine,
 };
 use greycard_core::develop::noise;
 use greycard_core::develop::retouch::Region;
@@ -33,7 +33,7 @@ use greycard_edit::Edit;
 use greycard_edit::brush::{RASTER_WIDTH, Raster, WIDE_RASTER_WIDTH, raster_height, raster_width};
 use greycard_edit::key::{LANDSCAPE_PIPELINE, PART_PIPELINE, PERSON_EDGE, SKY_PIPELINE};
 use greycard_edit::mask::Shape;
-use greycard_edit::retouch::Patch;
+use greycard_edit::retouch::{Patch, Retouch};
 
 /// A learned component: its adjustment's id and its index in the mask.
 pub type Key = (u64, usize);
@@ -47,6 +47,29 @@ pub fn providers() -> &'static [Provider] {
         return &[];
     }
     PROVIDERS.get_or_init(Provider::available)
+}
+
+/// Whether the providers here include WebGPU, which the generative
+/// remove runs on and nothing else: [`providers`], or what a test set
+/// with [`set_test_webgpu`].
+pub fn on_webgpu() -> bool {
+    #[cfg(test)]
+    if let Some(on) = TEST_WEBGPU.with(|t| t.get()) {
+        return on;
+    }
+    providers().contains(&Provider::WebGpu)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_WEBGPU: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// [`on_webgpu`]'s answer on this thread, for a test; `None` asks the
+/// providers again.
+#[cfg(test)]
+pub(crate) fn set_test_webgpu(on: Option<bool>) {
+    TEST_WEBGPU.with(|t| t.set(on));
 }
 
 /// Whether the Subject original is on record as having failed on
@@ -182,12 +205,20 @@ pub struct Ai {
     /// What the last Sky raster took, stage by stage.
     pub(crate) last_sky: Option<SkyReport>,
     fill: Option<Fill>,
+    /// The generative remove, loaded at the first Fill patch it makes.
+    remove: Option<Remove>,
     /// The learned denoiser loaded, by its model's id: one at a time,
     /// since each holds the GPU's memory.
     denoiser: Option<(&'static str, Denoiser)>,
-    /// Fills made, by patch id, with the patch and the window each was
-    /// made for.
-    fills: HashMap<u64, (Patch, Window, Vec<f32>)>,
+    /// Fills made, by patch id and seed, with the patch, the window
+    /// and the engine each was made for: a seed's fill is kept when
+    /// "Another" moves the patch on to the next, so undo is free.
+    fills: HashMap<(u64, u32), FillMade>,
+    /// Fills whose model ran and failed or was refused, by patch id and
+    /// seed, with the patch, the window and why: not run again for the
+    /// open file, where each develop would wait on it again, until the
+    /// patch or its seed changes.
+    failed: HashMap<(u64, u32), (Patch, Window, String)>,
     /// Each Fill patch's window and depth ([`window_for`]), by patch
     /// id, with the patch and the picture's size they were found for:
     /// finding them reads the whole region, which a stroke across the
@@ -614,16 +645,75 @@ pub(crate) enum Ready {
 /// Why a fill was not made: the patch is left as it was either way.
 #[derive(Debug, Clone)]
 pub enum NoFill {
-    /// The model is not in the store.
-    Missing,
+    /// The model named is not in the store.
+    Missing(&'static Model),
+    /// A patch the generative remove made, on a machine without
+    /// WebGPU, which the remove needs.
+    NoGpu,
     /// It could not run.
     Failed(String),
 }
 
+/// A fill made: the patch, window and engine it was made for, and the
+/// region's values.
+type FillMade = (Patch, Window, Engine, Vec<f32>);
+
+/// Which model makes a Fill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    /// LaMa, on any machine and any window, through its tiles.
+    Lama,
+    /// The generative remove, on WebGPU, a window up to
+    /// [`greycard_ai::remove::MAX`] a side.
+    Remove,
+}
+
+/// Whether a Fill drawn now is the generative remove's
+/// ([`Patch::remove`]): the store has its model and the providers
+/// include WebGPU. A patch drawn before the model came keeps LaMa.
+pub fn marks_remove(have_remove: bool, webgpu: bool) -> bool {
+    have_remove && webgpu
+}
+
+/// The engine a Fill patch's `window`, at the picture's own pixels, is
+/// made by. A patch drawn for the remove ([`marks_remove`]) is made by
+/// it when the window fits it; a bigger one is LaMa's through its
+/// tiles. Where the remove cannot run (its model missing or declined,
+/// no WebGPU), its patch is left as it was rather than made by LaMa,
+/// so an export there is not another picture than the window's.
+pub fn engine_for(
+    marked: bool,
+    have_remove: bool,
+    providers: &[Provider],
+    window: Window,
+) -> Result<Engine, NoFill> {
+    let max = greycard_ai::remove::MAX;
+    if !marked || window.width > max || window.height > max {
+        Ok(Engine::Lama)
+    } else if !providers.contains(&Provider::WebGpu) {
+        Err(NoFill::NoGpu)
+    } else if have_remove {
+        Ok(Engine::Remove)
+    } else {
+        Err(NoFill::Missing(&REMOVE))
+    }
+}
+
+/// The noise seed of a patch's variation: its id and its seed, so two
+/// patches at seed 0 do not share their noise.
+fn remove_seed(patch: &Patch) -> u64 {
+    (patch.id << 32) ^ u64::from(patch.seed)
+}
+
 /// Whether a kept fill was made for this patch as it is now: its
-/// opacity is applied afterwards and does not count.
+/// opacity is applied afterwards and does not count, and its seed is
+/// the cache's key.
 fn same_fill(a: &Patch, b: &Patch) -> bool {
-    a.points == b.points && a.radius == b.radius && a.feather == b.feather && a.method == b.method
+    a.points == b.points
+        && a.radius == b.radius
+        && a.feather == b.feather
+        && a.method == b.method
+        && a.remove == b.remove
 }
 
 /// What [`regrain`] measured at the hole's mean level, in the frame
@@ -706,6 +796,13 @@ fn regrain(
     })
 }
 
+/// Whether a fill made by `engine` at `scale` has the frame's noise
+/// put back ([`regrain`]): LaMa's when it was taken down, the remove's
+/// always.
+fn regrains(engine: Engine, scale: f32) -> bool {
+    engine == Engine::Remove || scale < 1.0
+}
+
 /// The window a region's fill is made in, in a picture of `width` ×
 /// `height`, and how deep the hole is: round the box of what the
 /// region covers, at the picture's own pixels
@@ -759,8 +856,10 @@ impl Ai {
             sky_cut: None,
             last_sky: None,
             fill: None,
+            remove: None,
             denoiser: None,
             fills: HashMap::new(),
+            failed: HashMap::new(),
             windows: HashMap::new(),
             preview: None,
             embedding: None,
@@ -828,6 +927,7 @@ impl Ai {
         self.file = file;
         self.cache.clear();
         self.fills.clear();
+        self.failed.clear();
         self.windows.clear();
         self.preview = None;
         self.embedding = None;
@@ -898,13 +998,72 @@ impl Ai {
             .is_some_and(|s| s.have(&greycard_ai::FILL))
     }
 
+    /// Whether a Fill of `retouch` on `image` that is not kept could be
+    /// made now, by either engine: a picture kept with fills left out
+    /// is made again only then.
+    pub fn could_fill_more(&mut self, retouch: &Retouch, image: &WorkingImage) -> bool {
+        retouch
+            .patches
+            .iter()
+            .filter(|p| p.method == greycard_edit::retouch::Method::Fill)
+            .any(|p| {
+                p.region(image.width, image.height).is_some_and(|region| {
+                    !self.fill_kept(p, &region, image)
+                        && self.failed_before(p, &region, image).is_none()
+                        && self.engine(p, &region, image).is_ok()
+                })
+            })
+    }
+
+    /// Why the patch's fill failed when its model last ran on it as it
+    /// is now, if it did.
+    fn failed_before(
+        &mut self,
+        patch: &Patch,
+        region: &Region,
+        image: &WorkingImage,
+    ) -> Option<String> {
+        let (window, _) = self.window_of(patch, region, image);
+        self.failed
+            .get(&(patch.id, patch.seed))
+            .filter(|(p, w, _)| same_fill(p, patch) && *w == window)
+            .map(|(_, _, why)| why.clone())
+    }
+
+    /// The patch's fill, as it is now, failed with `why`.
+    fn remember_failure(&mut self, patch: &Patch, window: Window, why: String) -> NoFill {
+        self.failed
+            .insert((patch.id, patch.seed), (patch.clone(), window, why.clone()));
+        NoFill::Failed(why)
+    }
+
     /// Whether the patch's fill is made already and kept, so asking
     /// for it costs nothing.
     pub fn fill_kept(&mut self, patch: &Patch, region: &Region, image: &WorkingImage) -> bool {
         let (window, _) = self.window_of(patch, region, image);
         self.fills
-            .get(&patch.id)
-            .is_some_and(|(p, w, _)| same_fill(p, patch) && *w == window)
+            .get(&(patch.id, patch.seed))
+            .is_some_and(|(p, w, _, _)| same_fill(p, patch) && *w == window)
+    }
+
+    /// The engine the patch's fill is made by here, or why it is left
+    /// as it was ([`engine_for`]).
+    pub fn engine(
+        &mut self,
+        patch: &Patch,
+        region: &Region,
+        image: &WorkingImage,
+    ) -> Result<Engine, NoFill> {
+        let (window, _) = self.window_of(patch, region, image);
+        let have = self.store.as_ref().is_some_and(|s| s.have(&REMOVE));
+        if patch.remove && self.providers.is_empty() {
+            self.providers = Provider::available();
+        }
+        let engine = engine_for(patch.remove, have, &self.providers, window)?;
+        if engine == Engine::Lama && !self.fill_available() {
+            return Err(NoFill::Missing(&greycard_ai::FILL));
+        }
+        Ok(engine)
     }
 
     /// The patch's window and depth in `image`, found once for the
@@ -923,42 +1082,55 @@ impl Ai {
         (window, depth)
     }
 
-    /// The region's window made up by the fill model from what is
-    /// around it, in the picture's own values; or why not. Kept by
-    /// patch and window, so a slider elsewhere does not run the model
-    /// again.
+    /// The region's window made up from what is around it, in the
+    /// picture's own values, and the engine that made it ([`Engine`],
+    /// [`engine_for`]); or why not. Kept by patch, seed and window, so
+    /// a slider elsewhere does not run the model again.
     pub fn fill(
         &mut self,
         patch: &Patch,
         region: &Region,
         image: &WorkingImage,
-    ) -> Result<Vec<f32>, NoFill> {
+    ) -> Result<(Vec<f32>, Engine), NoFill> {
         let (window, depth) = self.window_of(patch, region, image);
-        if let Some((p, w, data)) = self.fills.get(&patch.id)
+        if let Some((p, w, engine, data)) = self.fills.get(&(patch.id, patch.seed))
             && same_fill(p, patch)
             && *w == window
         {
-            return Ok(data.clone());
+            return Ok((data.clone(), *engine));
+        }
+        if let Some(why) = self.failed_before(patch, region, image) {
+            return Err(NoFill::Failed(why));
         }
         greycard_ai::runtime::status().map_err(|why| NoFill::Failed(why.to_string()))?;
-        let store = self.store.clone().ok_or(NoFill::Missing)?;
-        if !store.have(&greycard_ai::FILL) {
-            return Err(NoFill::Missing);
+        if self.store.is_none() {
+            return Err(NoFill::Missing(&greycard_ai::FILL));
         }
+        let engine = self.engine(patch, region, image)?;
+        let store = self.store.clone().expect("a store, asked above");
         if self.providers.is_empty() {
             self.providers = Provider::available();
         }
-        let fill = match &mut self.fill {
-            Some(f) => f,
-            None => match Fill::load(&store, &self.providers) {
-                Ok(f) => self.fill.insert(f),
+        match engine {
+            Engine::Lama if self.fill.is_none() => match Fill::load(&store, &self.providers) {
+                Ok(f) => self.fill = Some(f),
                 Err(e) => {
                     // The worker warns, with the patch's name.
                     tracing::debug!("fill model: {e}");
                     return Err(NoFill::Failed(e.to_string()));
                 }
             },
-        };
+            Engine::Remove if self.remove.is_none() => {
+                match Remove::load(&store, &self.providers) {
+                    Ok(r) => self.remove = Some(r),
+                    Err(e) => {
+                        tracing::debug!("remove model: {e}");
+                        return Err(NoFill::Failed(e.to_string()));
+                    }
+                }
+            }
+            _ => {}
+        }
         let Window {
             x: wx,
             y: wy,
@@ -1001,25 +1173,60 @@ impl Ai {
         let encoded: Vec<f32> = values.iter().map(|v| encode(v * gain)).collect();
         let input = Rgbf::new(ww, wh, encoded);
         let started = Instant::now();
-        let made = match fill.fill_window(&input, &hole, depth) {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::debug!("fill: {e}");
-                return Err(NoFill::Failed(e.to_string()));
+        // The scale the window was made at: the remove's is always its
+        // own pixels.
+        let (filled, scale) = match engine {
+            Engine::Lama => {
+                let fill = self.fill.as_mut().expect("LaMa, loaded above");
+                let made = match fill.fill_window(&input, &hole, depth) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        tracing::debug!("fill: {e}");
+                        return Err(self.remember_failure(patch, window, e.to_string()));
+                    }
+                };
+                let fill = self.fill.as_ref().expect("LaMa, loaded above");
+                tracing::info!(
+                    "fill {}: LaMa, a window of {ww}x{wh} at {:.2} ({}x{}), {} tile(s) of up to {} on {}, {:.2}s",
+                    patch.name(),
+                    made.scale,
+                    made.size.0,
+                    made.size.1,
+                    made.tiles,
+                    greycard_ai::fill::MAX,
+                    fill.provider().name(),
+                    started.elapsed().as_secs_f64()
+                );
+                (made.image, made.scale)
+            }
+            Engine::Remove => {
+                let remove = self.remove.as_mut().expect("the remove, loaded above");
+                let made = match remove.remove(&input, &hole, remove_seed(patch)) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        tracing::debug!("remove: {e}");
+                        return Err(self.remember_failure(patch, window, e.to_string()));
+                    }
+                };
+                let remove = self.remove.as_ref().expect("the remove, loaded above");
+                let t = remove.times();
+                tracing::info!(
+                    "fill {}: the generative remove, seed {}, a window of {ww}x{wh} at {} on {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?})",
+                    patch.name(),
+                    patch.seed,
+                    t.size,
+                    remove.provider().name(),
+                    t.loads,
+                    t.encode,
+                    t.unet_calls,
+                    t.steps,
+                    t.decode,
+                    t.total,
+                    remove.memory()
+                );
+                (made, 1.0)
             }
         };
-        tracing::info!(
-            "fill {}: a window of {ww}x{wh} at {:.2} ({}x{}), {} tile(s) of up to {} on {}, {:.2}s",
-            patch.name(),
-            made.scale,
-            made.size.0,
-            made.size.1,
-            made.tiles,
-            greycard_ai::fill::MAX,
-            fill.provider().name(),
-            started.elapsed().as_secs_f64()
-        );
-        let filled = made.image;
         if let Some(dir) = std::env::var_os("GREYCARD_AI_DUMP") {
             let dir = std::path::PathBuf::from(dir);
             let png = |name: &str, img: &Rgbf| {
@@ -1067,11 +1274,18 @@ impl Ai {
                 }
             }
         }
-        // Taken down for the model, the hole comes back smooth where
-        // the frame round it has grain; at its own pixels it keeps its
-        // own.
-        if made.scale < 1.0
-            && let Some(r) = regrain(&mut out, region, window, image, patch.id)
+        // Taken down for LaMa, the hole comes back smooth where the
+        // frame round it has grain; at its own pixels it keeps its
+        // own. The remove's answer is smooth at any size, its VAE
+        // giving back no grain: the frame's is put back always.
+        if regrains(engine, scale)
+            && let Some(r) = regrain(
+                &mut out,
+                region,
+                window,
+                image,
+                patch.id ^ (u64::from(patch.seed) << 40),
+            )
         {
             tracing::info!(
                 "fill {}: the frame's noise put back, luma and chroma sigma at {:.2}: {:.5} and {:.5} round the hole, {:.5} and {:.5} in the fill before, {:.5} and {:.5} after",
@@ -1085,9 +1299,11 @@ impl Ai {
                 r.after[1]
             );
         }
-        self.fills
-            .insert(patch.id, (patch.clone(), window, out.clone()));
-        Ok(out)
+        self.fills.insert(
+            (patch.id, patch.seed),
+            (patch.clone(), window, engine, out.clone()),
+        );
+        Ok((out, engine))
     }
 
     /// Which Subject file to use: the one already loaded, once there
@@ -2835,6 +3051,210 @@ fn decode(v: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The remove makes a Fill drawn for it when its window fits and
+    /// it can run; a bigger window is LaMa's; where it cannot run, the
+    /// patch is left as it was; a patch drawn for LaMa stays LaMa's.
+    #[test]
+    fn the_engine_is_chosen_by_the_store_the_providers_and_the_window() {
+        let window = |width, height| Window {
+            x: 10,
+            y: 20,
+            width,
+            height,
+        };
+        let gpu = [Provider::WebGpu, Provider::Cpu];
+        let cpu = [Provider::Cpu];
+        assert!(marks_remove(true, true));
+        assert!(!marks_remove(false, true));
+        assert!(!marks_remove(true, false));
+        let engine = |marked, have, providers: &[Provider], w| {
+            engine_for(marked, have, providers, w).map_err(|e| match e {
+                NoFill::Missing(m) => m.id,
+                NoFill::NoGpu => "no GPU",
+                NoFill::Failed(why) => panic!("{why}"),
+            })
+        };
+        assert_eq!(
+            engine(true, true, &gpu, window(1024, 600)),
+            Ok(Engine::Remove)
+        );
+        assert_eq!(engine(true, true, &gpu, window(1, 1)), Ok(Engine::Remove));
+        assert_eq!(
+            engine(true, true, &gpu, window(1025, 600)),
+            Ok(Engine::Lama)
+        );
+        assert_eq!(
+            engine(true, true, &gpu, window(300, 1025)),
+            Ok(Engine::Lama)
+        );
+        assert_eq!(engine(true, true, &cpu, window(500, 500)), Err("no GPU"));
+        assert_eq!(engine(true, false, &cpu, window(500, 500)), Err("no GPU"));
+        assert_eq!(engine(true, false, &gpu, window(500, 500)), Err(REMOVE.id));
+        assert_eq!(
+            engine(true, false, &cpu, window(2000, 500)),
+            Ok(Engine::Lama)
+        );
+        for providers in [&gpu[..], &cpu[..]] {
+            assert_eq!(
+                engine(false, true, providers, window(500, 500)),
+                Ok(Engine::Lama)
+            );
+        }
+        // The seed's noise is the patch's own.
+        let p = |id, seed| Patch {
+            id,
+            seed,
+            ..Default::default()
+        };
+        assert_ne!(remove_seed(&p(1, 0)), remove_seed(&p(2, 0)));
+        assert_ne!(remove_seed(&p(1, 0)), remove_seed(&p(1, 1)));
+    }
+
+    /// A fill whose model ran and failed is not run again on every
+    /// develop: `fill` gives back why, and the kept picture is not made
+    /// again for it, until its seed moves on or another file opens.
+    #[test]
+    fn a_failed_fill_is_not_run_again() {
+        // LaMa's file at its size, so the store has it and the engine
+        // is LaMa's; its contents would not load.
+        let dir = crate::testing::scratch_dir("failed-fill");
+        let store = Store::at(&dir);
+        for f in greycard_ai::FILL.files {
+            let path = store.path(&greycard_ai::FILL, f);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::File::create(&path)
+                .unwrap()
+                .set_len(f.bytes)
+                .unwrap();
+        }
+        let mut ai = Ai::for_test(store, vec![Provider::Cpu]);
+        let image = WorkingImage::new(200, 100);
+        let mut patch = Patch {
+            id: 7,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[0.5, 0.25]],
+            radius: 0.05,
+            ..Default::default()
+        };
+        let retouch = |patch: &Patch| Retouch {
+            enabled: true,
+            patches: vec![patch.clone()],
+        };
+        let region = patch.region(image.width, image.height).unwrap();
+        assert!(ai.could_fill_more(&retouch(&patch), &image));
+        let (window, _) = ai.window_of(&patch, &region, &image);
+        ai.remember_failure(&patch, window, "the card answered garbage".into());
+        assert!(!ai.could_fill_more(&retouch(&patch), &image));
+        match ai.fill(&patch, &region, &image) {
+            Err(NoFill::Failed(why)) => assert_eq!(why, "the card answered garbage"),
+            other => panic!("{:?}", other.map(|(_, e)| e)),
+        }
+        // Another variation is tried.
+        patch.seed = 1;
+        assert!(ai.could_fill_more(&retouch(&patch), &image));
+        patch.seed = 0;
+        // So is the patch changed.
+        let mut bigger = patch.clone();
+        bigger.radius = 0.06;
+        assert!(ai.could_fill_more(&retouch(&bigger), &image));
+        // And so is it on another file.
+        ai.forget(None);
+        assert!(ai.could_fill_more(&retouch(&patch), &image));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The remove's answer at the frame's own pixels is smooth under
+    /// the hole, as its VAE gives it back; the frame's noise is put
+    /// back there all the same, where LaMa's at its own pixels keeps
+    /// its own.
+    #[test]
+    fn a_removes_answer_gets_the_frames_noise_back() {
+        assert!(regrains(Engine::Remove, 1.0));
+        assert!(!regrains(Engine::Lama, 1.0));
+        assert!(regrains(Engine::Lama, 0.5));
+        let (w, h, sigma) = (240usize, 240usize, 0.01f32);
+        let mut state = 0x7e57_u64;
+        let mut gauss = || {
+            let mut u = || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                ((state >> 11) as f32 + 0.5) / (1u64 << 53) as f32
+            };
+            let (u1, u2) = (u(), u());
+            (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
+        };
+        let mut image = WorkingImage::new(w, h);
+        for px in image.data.as_chunks_mut::<3>().0.iter_mut() {
+            let shared = sigma * gauss();
+            for v in px.iter_mut() {
+                *v = 0.3 + shared + 0.3 * sigma * gauss();
+            }
+        }
+        // A disc of radius 40 in the middle.
+        let (rx, rs) = (70usize, 100usize);
+        let cover: Vec<f32> = (0..rs * rs)
+            .map(|i| {
+                let (x, y) = ((i % rs) as f32 - 50.0, (i / rs) as f32 - 50.0);
+                ((40.0 - (x * x + y * y).sqrt()) / 4.0).clamp(0.0, 1.0)
+            })
+            .collect();
+        let region = Region {
+            x: rx,
+            y: rx,
+            width: rs,
+            height: rs,
+            cover,
+            ring: vec![0.0; rs * rs],
+        };
+        let (window, _) = window_for(&region, w, h);
+        assert!(window.width <= greycard_ai::remove::MAX);
+        let covered = |px: usize, py: usize| {
+            (rx..rx + rs).contains(&px)
+                && (rx..rx + rs).contains(&py)
+                && region.cover[(py - rx) * rs + px - rx] > 0.0
+        };
+        let (ww, wh) = (window.width, window.height);
+        let mut values = Vec::new();
+        let mut hole = Vec::new();
+        for py in window.y..window.y + wh {
+            let row = (py * w + window.x) * 3;
+            values.extend_from_slice(&image.data[row..row + ww * 3]);
+            hole.extend((window.x..window.x + ww).map(|px| f32::from(u8::from(covered(px, py)))));
+        }
+        let input = Rgbf::new(ww, wh, values);
+        // The decoder's answer: the picture outside, flat inside.
+        let mut decoded = input.clone();
+        for (i, &m) in hole.iter().enumerate() {
+            if m > 0.0 {
+                decoded.data[i * 3..i * 3 + 3].copy_from_slice(&[0.3; 3]);
+            }
+        }
+        let made =
+            greycard_ai::remove::composite(&input, &hole, &decoded).expect("an honest answer");
+        let mut out = Vec::with_capacity(rs * rs * 3);
+        for y in 0..rs {
+            for x in 0..rs {
+                out.extend(made.at(rx + x - window.x, rx + y - window.y));
+            }
+        }
+        let middle: Vec<usize> = (0..rs * rs).filter(|&i| region.cover[i] >= 1.0).collect();
+        let spread = |data: &[f32]| {
+            let v: Vec<f32> = middle
+                .iter()
+                .map(|&i| (data[i * 3] + data[i * 3 + 1] + data[i * 3 + 2]) / 3.0)
+                .collect();
+            let mean = v.iter().sum::<f32>() / v.len() as f32;
+            (v.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / v.len() as f32).sqrt()
+        };
+        assert!(spread(&out) < 1e-6, "flat before");
+        let r = regrain(&mut out, &region, window, &image, 3).expect("the frame has noise");
+        let want = sigma * (1.0f32 + 0.09 / 3.0).sqrt();
+        let after = spread(&out);
+        assert!((after / want - 1.0).abs() < 0.2, "{after} against {want}");
+        assert!(r.after[0] > 0.8 * r.frame[0], "{:?} {:?}", r.after, r.frame);
+    }
 
     /// A deep hole in a flat field of known noise, filled smooth at a
     /// smaller scale as the model fills it, comes back with its

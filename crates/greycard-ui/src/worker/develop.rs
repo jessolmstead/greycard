@@ -229,13 +229,13 @@ pub(super) fn develop_job(
     let retouch = edit.retouch.with_sources(&chosen);
     let sources = retouch.chosen_patches(&chosen);
     let mut fills = FillReport::default();
-    // A kept picture with fills left unmade serves while the model
-    // is still missing, and no longer once it has been fetched.
+    // A kept picture with fills left unmade serves while none of them
+    // can be made, and no longer once one can, by either engine.
     let patched = if retouch.is_empty() {
         b.image.clone()
     } else if let Some((r, image, whole)) = &b.patched
         && *r == retouch
-        && (*whole || !ai.fill_available())
+        && (*whole || !ai.could_fill_more(&retouch, &b.image))
     {
         image.clone()
     } else {
@@ -246,7 +246,7 @@ pub(super) fn develop_job(
             // A fill the model has to make is said so before it
             // starts, since it takes a while.
             let kept = ai.fill_kept(patch, region, picture);
-            if !kept && ai.fill_available() {
+            if !kept && ai.engine(patch, region, picture).is_ok() {
                 deliver(Outcome::Filling {
                     generation,
                     name: patch.name(),
@@ -254,15 +254,20 @@ pub(super) fn develop_job(
             }
             let started = Instant::now();
             match ai.fill(patch, region, picture) {
-                Ok(data) => {
+                Ok((data, engine)) => {
                     if !kept {
                         fills.made.push(patch.name());
                         fills.seconds += started.elapsed().as_secs_f64();
                     }
+                    fills.engines.push((patch.id, engine));
                     Some(data)
                 }
-                Err(NoFill::Missing) => {
-                    fills.missing.push(patch.name());
+                Err(NoFill::Missing(model)) => {
+                    fills.missing.push((patch.name(), model));
+                    None
+                }
+                Err(NoFill::NoGpu) => {
+                    fills.no_gpu.push(patch.name());
                     None
                 }
                 Err(NoFill::Failed(why)) => {

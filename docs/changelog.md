@@ -56,6 +56,10 @@ design note behind it.
 
 ### Retouch
 
+- Fill can use a second model trained for removal, offered once on a
+  machine with a GPU (5.5 GB, under the CreativeML Open RAIL++-M
+  license); "Another" on a fill's row makes a different one
+  ([§406](https://github.com/jessolmstead/greycard/blob/master/docs/notes/406-remove-behind-fill.md)).
 - A deep fill comes back with the frame's grain, measured around the
   hole on the luma and chroma axes, so a removed object no longer
   leaves a smooth patch; the retired Carve model's 208 MB file is

@@ -618,22 +618,37 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 ));
             }
             if !fills.missing.is_empty() {
+                let names: Vec<String> = fills.missing.iter().map(|(n, _)| n.clone()).collect();
                 fill_note.push_str(&format!(
                     ", {} left as {} until the fill model is fetched",
-                    listed(&fills.missing),
-                    if fills.missing.len() == 1 {
+                    listed(&names),
+                    if names.len() == 1 {
                         "it was"
                     } else {
                         "they were"
                     }
                 ));
-                let model = &greycard_ai::FILL;
-                if st.sheets.fetch.is_none()
+                // The first model waited on that can be had here: the
+                // generative remove not on a machine without WebGPU.
+                let model = fills
+                    .missing
+                    .iter()
+                    .map(|(_, m)| *m)
+                    .find(|m| m.id != greycard_ai::REMOVE.id || crate::ai::on_webgpu());
+                if let Some(model) = model
+                    && st.sheets.fetch.is_none()
                     && !st.sheets.fetching
                     && !st.sheets.declined.contains(&model.id)
                 {
                     offer_model(&mut st, app, model, false);
                 }
+            }
+            // Which engine made each Fill, for its row's "Another".
+            if crate::panel::retouch::took_engines(&mut st, &fills.engines) {
+                crate::panel::retouch::show_patches(&st, &st.develop.edit, app);
+            }
+            for name in &fills.no_gpu {
+                fill_note.push_str(&format!(", {name} left as it was: the remove needs a GPU"));
             }
             for (name, why) in &fills.failed {
                 tracing::warn!("fill {name} failed: {why}");
@@ -1124,7 +1139,9 @@ fn develop_for(st: &mut State, app: &App, arrived: impl Fn(&greycard_ai::Model) 
         .tier()
         .and_then(greycard_ai::denoiser)
         .is_some_and(&arrived);
-    let fill = arrived(&greycard_ai::FILL)
+    // Either fill model: a patch drawn for the remove is LaMa's where
+    // its window is past the remove's.
+    let fill = (arrived(&greycard_ai::FILL) || arrived(&greycard_ai::REMOVE))
         && st.develop.edit.retouch.enabled
         && st
             .develop

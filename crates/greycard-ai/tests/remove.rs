@@ -104,7 +104,7 @@ fn parity(n: usize, floor: f64) {
         .expect("remove");
     let t = remove.times();
     println!(
-        "{:?} at {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, total {:.2}s",
+        "{:?} at {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, total {:.2}s; outside the hole {:?}",
         remove.memory(),
         t.size,
         t.loads,
@@ -112,7 +112,14 @@ fn parity(n: usize, floor: f64) {
         t.unet_calls,
         t.steps,
         t.decode,
-        t.total
+        t.total,
+        t.drift
+    );
+    // An honest answer follows the picture outside the hole.
+    assert!(
+        t.drift.correlation.is_some_and(|r| r > 0.9),
+        "{:?}",
+        t.drift
     );
     let want = remove.decode(&reference, n).expect("decode");
     let hole_psnr = psnr(&out, &want, &inside);

@@ -693,7 +693,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_blacks(look.light.tone.blacks);
     // The adjustments' list, and the target's own controls.
     show_names(edit, app);
-    show_patches(edit, app);
+    show_patches(st, edit, app);
     let target = target.filter(|&i| i < edit.adjustments.len());
     app.set_target(target.map(|i| i as i32 + 1).unwrap_or(0));
     // A chosen adjustment is edited on the Masks tab.

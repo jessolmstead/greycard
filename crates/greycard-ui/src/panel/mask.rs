@@ -296,6 +296,7 @@ pub(crate) fn learned_for(st: &mut State, file: &Path) {
         st.develop.learned.clear();
         st.develop.asked.clear();
         st.develop.masks_failed.clear();
+        st.develop.fill_engines.clear();
         st.develop.learned_of = Some(file.to_path_buf());
     }
 }
@@ -1075,12 +1076,23 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     feather: app.get_patch_feather().clamp(0.0, 1.0),
                     opacity: app.get_patch_opacity().clamp(0.0, 1.0),
                     source: None,
+                    seed: 0,
+                    // Drawn where the generative remove can run, a
+                    // Fill is its; LaMa's otherwise, for good.
+                    remove: method == RetouchMethod::Fill
+                        && crate::ai::marks_remove(
+                            st.develop
+                                .store
+                                .as_ref()
+                                .is_some_and(|s| s.have(&greycard_ai::REMOVE)),
+                            crate::ai::on_webgpu(),
+                        ),
                 };
                 st.develop.edit.retouch.patches.push(patch);
                 let i = st.develop.edit.retouch.patches.len() - 1;
                 st.develop.patch_stroke = Some(i);
                 app.set_patch(i as i32);
-                show_patches(&st.develop.edit, &app);
+                show_patches(&st, &st.develop.edit, &app);
                 app.window().request_redraw();
                 return;
             }
@@ -1272,7 +1284,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 // the one just drawn. A deliberate click on it in the
                 // list selects it again.
                 app.set_patch(-1);
-                show_patches(&st.develop.edit, &app);
+                show_patches(&st, &st.develop.edit, &app);
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
                         develop_soon(&mut st, state.clone(), w.clone(), app.as_weak());

@@ -64,6 +64,21 @@ pub struct Patch {
     /// The source's offset from the patch. None until the engine has
     /// chosen one.
     pub source: Option<Pos>,
+    /// A Fill's variation: the generative remove makes another fill
+    /// for each seed. Left out of the sidecar at 0.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub seed: u32,
+    /// A Fill made by the generative remove rather than LaMa, set when
+    /// the patch is drawn where the remove can run. Where it cannot
+    /// (no model, no GPU), the patch is left as it was rather than
+    /// made by the other engine, which would be another picture.
+    /// Left out of the sidecar when false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub remove: bool,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 impl Default for Patch {
@@ -76,6 +91,8 @@ impl Default for Patch {
             feather: 0.3,
             opacity: 1.0,
             source: None,
+            seed: 0,
+            remove: false,
         }
     }
 }

@@ -418,3 +418,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§403. A start folder, and the filter bar hidden](notes/403-a-start-folder-and-the-bar-hidden.md) (2026-10-23)
 - [§404. Three themes](notes/404-three-themes.md) (2026-10-23)
 - [§405. The remove engine](notes/405-the-remove-engine.md) (2026-10-23)
+- [§406. The remove behind Fill](notes/406-remove-behind-fill.md) (2026-10-23)

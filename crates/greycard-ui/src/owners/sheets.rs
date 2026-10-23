@@ -47,6 +47,9 @@ pub(crate) struct Sheets {
     pub(crate) runtime_next: Option<panel::assets::AfterRuntime>,
     /// Models declined this session, not to be asked for again.
     pub(crate) declined: Vec<&'static str>,
+    /// The generative remove's model has been offered this session,
+    /// on choosing Fill: it is not offered there again.
+    pub(crate) remove_offered: bool,
     /// The Subject model declined this session as a Whole person's
     /// edge: not offered for it again.
     pub(crate) edge_declined: bool,

@@ -175,3 +175,18 @@ The model downloads the first time you choose **Fill**: about 210 MB,
 once. greycard shows you its license first. If a sidecar with a fill
 opens on a machine without the model, the area is left as it was until
 the model is downloaded, and the status line says so.
+
+There are two engines. LaMa fills on any machine and at any size. On a
+machine with a GPU, the generative remove makes up what was behind what
+you remove, working in a window around the area up to 1024 pixels
+a side; a bigger window is still LaMa's. A Fill drawn before the
+second model arrived stays LaMa's until you draw it again.
+
+The generative remove is a second download, 5.5 GB under the CreativeML
+Open RAIL++-M license, offered once the first time you choose **Fill**
+with LaMa in hand. **Not now** keeps LaMa. A fill it made opens on a
+machine without it, or without a GPU, left as it was.
+
+A fill the generative remove made has **Another** on its row in the
+list: each press makes a new version of it, and undo takes you back to
+the last one.

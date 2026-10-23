@@ -33,10 +33,15 @@ pub(super) fn left_out_of(outcome: &Outcome, base: Option<&Base>) -> Vec<String>
     if let Some(why) = base.and_then(|b| b.gave_way.as_ref()) {
         out.push(why.clone());
     }
-    for name in &fills.missing {
+    for (name, model) in &fills.missing {
         out.push(format!(
             "fill {name}: {} is not downloaded; left as it was",
-            greycard_ai::FILL.name
+            model.name
+        ));
+    }
+    for name in &fills.no_gpu {
+        out.push(format!(
+            "fill {name}: the remove needs a GPU; left as it was"
         ));
     }
     for (name, why) in &fills.failed {

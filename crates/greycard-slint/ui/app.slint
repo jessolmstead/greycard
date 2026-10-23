@@ -1740,6 +1740,9 @@ export component App inherits Window {
     in-out property <float> patch-opacity: 1.0;
     in-out property <[string]> patch-names: [];
     in-out property <int> patch: -1;
+    // Whether the chosen patch is a Fill the generative remove made,
+    // whose row offers its next variation.
+    in-out property <bool> patch-varies: false;
     in-out property <[Pt]> patch-handles: [];
     // The chosen patch's edge on the view, and where its feather
     // begins, as a Path's commands; empty when there is none to show.
@@ -1749,6 +1752,7 @@ export component App inherits Window {
     callback patch-changed(int);
     callback delete-patch();
     callback patch-edited();
+    callback patch-another();
     callback patch-grabbed(int);
     callback patch-dragged(int, length, length);
     callback patch-dropped();
@@ -3518,10 +3522,12 @@ export component App inherits Window {
                             patch-opacity <=> root.patch-opacity;
                             patch-names <=> root.patch-names;
                             patch <=> root.patch;
+                            patch-varies <=> root.patch-varies;
                             retouch-toggled(a) => { root.retouch-toggled(a); }
                             patch-changed(a) => { root.patch-changed(a); }
                             delete-patch => { root.delete-patch(); }
                             patch-edited => { root.patch-edited(); }
+                            patch-another => { root.patch-another(); }
                         }
                     }
                 }

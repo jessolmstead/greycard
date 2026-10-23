@@ -15,7 +15,12 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-None open.
+- [ ] The worker's fill cache (and the remembered failures since
+      §406) is keyed by patch id, seed, and window with no file: after
+      an export of a set or a mask job for another frame, an open
+      frame whose patch matches the other's can be given its pixels
+      (synced retouch across a camera's frames). Forget on a file
+      change in `fill`, or key by file
 
 ## Open Questions
 
@@ -279,11 +284,8 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       floor applied near the channel peaks only
 - [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
       Remove and through us, blind pairs, scored (§380)
-- [ ] Generative remove behind the retouch's fill: the engine (§405)
-      on WebGPU with LaMa the CPU path, the fetch on first use once
-      the files are published, three variations by seed, one buffer
-      cache mode for the process measured inside the editor, a tiled
-      VAE for 8 GB cards. Waits on the harness
+- [ ] A tiled VAE for the remove (§406) so an 8 GB card runs the 1024
+      window; the model's files published and the entry listed
 - [ ] ONNX Runtime's WebGPU Conv is wrong for input channel counts
       that are a multiple of 3 but not 12 (§399); report upstream with
       the reproducer under target/rorem/ortbug

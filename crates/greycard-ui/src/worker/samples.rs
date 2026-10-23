@@ -1577,3 +1577,115 @@ fn dump_the_models_inputs() {
         );
     }
 }
+
+/// The generative remove end to end on a real frame: the raw
+/// `GREYCARD_REMOVE_RAW` names (a CR3, say) developed under the default
+/// edit, a Fill spot drawn for the remove in the middle, made through
+/// `Ai::fill` on WebGPU with the store at `GREYCARD_MODELS`, and the
+/// retouch applied as the develop applies it: the hole changed, the
+/// outside did not, and seed 1 is another fill. Ignored, and it passes
+/// at once without the two variables; needs WebGPU and about 9 GB of
+/// the card.
+#[test]
+#[ignore]
+fn the_remove_fills_a_spot_on_a_raw() {
+    use crate::ai::Engine;
+    use greycard_edit::retouch::{Method, Patch, Retouch};
+    let (Some(raw), Some(models)) = (
+        std::env::var_os("GREYCARD_REMOVE_RAW"),
+        std::env::var_os("GREYCARD_MODELS"),
+    ) else {
+        eprintln!("skipped: GREYCARD_REMOVE_RAW and GREYCARD_MODELS are not both set");
+        return;
+    };
+    let store = greycard_ai::Store::at(models);
+    assert!(
+        store.have(&greycard_ai::REMOVE),
+        "the remove is in the store"
+    );
+    let mut ai = Ai::for_test(
+        store,
+        vec![greycard_ai::Provider::WebGpu, greycard_ai::Provider::Cpu],
+    );
+    let (input, _) = open(std::path::Path::new(&raw)).expect("the raw opens");
+    let mut base = None;
+    let deliver: Deliver = Arc::new(|_| {});
+    let _ = develop_job(
+        &input,
+        &Edit::default(),
+        0,
+        1,
+        &mut base,
+        &mut None,
+        &mut ai,
+        None,
+        None,
+        &mut None,
+        &deliver,
+    );
+    let image = base.as_ref().expect("a base").image.clone();
+    let (w, h) = (image.width, image.height);
+    // A spot about 300 pixels across on a 6000-wide frame.
+    let mut patch = Patch {
+        id: 1,
+        method: Method::Fill,
+        points: vec![[0.5, 0.5 * h as f32 / w as f32]],
+        radius: 150.0 / w as f32,
+        feather: 0.2,
+        remove: true,
+        ..Default::default()
+    };
+    let region = patch.region(w, h).expect("on the frame");
+    let filled = |ai: &mut Ai, patch: &Patch| {
+        let retouch = Retouch {
+            enabled: true,
+            patches: vec![patch.clone()],
+        };
+        let mut out = (*image).clone();
+        let mut engine = None;
+        retouch.apply_with(&mut out, |p, region, picture| {
+            let (data, e) = ai.fill(p, region, picture).expect("the remove fills");
+            engine = Some(e);
+            Some(data)
+        });
+        (out, engine)
+    };
+    let t = Instant::now();
+    let (out, engine) = filled(&mut ai, &patch);
+    println!(
+        "{w}x{h}, the spot filled in {:.2}s",
+        t.elapsed().as_secs_f64()
+    );
+    assert_eq!(engine, Some(Engine::Remove));
+    let (mut changed, mut inside, mut outside_moved) = (0.0f64, 0usize, 0usize);
+    for y in 0..region.height {
+        for x in 0..region.width {
+            let c = region.cover[y * region.width + x];
+            let i = ((region.y + y) * w + region.x + x) * 3;
+            if c >= 1.0 {
+                for k in 0..3 {
+                    changed += f64::from((out.data[i + k] - image.data[i + k]).abs());
+                }
+                inside += 3;
+            } else if c <= 0.0 && out.data[i..i + 3] != image.data[i..i + 3] {
+                outside_moved += 1;
+            }
+        }
+    }
+    let mean = changed / inside as f64;
+    println!("under the hole off by {mean:.4} on average");
+    assert!(mean > 1e-3, "the hole changed: {mean}");
+    assert_eq!(outside_moved, 0, "the outside did not change");
+    // Away from the region, nothing.
+    assert_eq!(out.data[..3], image.data[..3]);
+
+    // Another seed, another fill; the first kept for an undo.
+    patch.seed = 1;
+    let (again, _) = filled(&mut ai, &patch);
+    assert_ne!(again.data, out.data);
+    patch.seed = 0;
+    let t = Instant::now();
+    let (back, _) = filled(&mut ai, &patch);
+    assert!(t.elapsed().as_secs_f64() < 1.0, "seed 0's fill was kept");
+    assert_eq!(back.data, out.data);
+}

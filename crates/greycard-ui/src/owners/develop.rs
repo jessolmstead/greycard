@@ -154,6 +154,10 @@ pub(crate) struct Develop {
     /// handle, and where it was on the view.
     pub(crate) retouching: Option<RetouchMethod>,
     pub(crate) patch_stroke: Option<usize>,
+    /// The engine each Fill patch of the open file was made by, by
+    /// patch id, as the last develop to apply them said: a patch the
+    /// generative remove made has "Another" on its row.
+    pub(crate) fill_engines: HashMap<u64, crate::ai::Engine>,
     pub(crate) patch_drag: Option<(Patch, usize, (f32, f32))>,
     /// The patch handles' positions on the view, one model for the
     /// life of the window, as the masks' are.
