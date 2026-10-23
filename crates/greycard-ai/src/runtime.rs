@@ -160,23 +160,36 @@ impl Provider {
 /// `wgpu::Instance` used only to read that struct — Dawn, which ONNX
 /// Runtime's WebGPU execution provider actually runs on, keeps its
 /// own adapter choice to itself. Probed with `Backends::PRIMARY`
-/// (Vulkan, Metal, DX12): closer to what Dawn itself offers than
-/// every backend wgpu knows, and it skips GL/EGL, which a process
-/// that already holds Slint's own wgpu device has no business opening
-/// a second context on. Asked once a process and kept: the adapter
-/// does not change under a running greycard, and asking again would
-/// pay this same cost once a model file, not once a launch. It asks
-/// for what `WGPU_POWER_PREF` names, high performance where it names
-/// nothing, as the window does; greycard-gpu always asks high
-/// performance.
+/// (Vulkan, Metal, DX12), or those of them `WGPU_BACKEND` names:
+/// closer to what Dawn itself offers than every backend wgpu knows,
+/// and it skips GL/EGL, which a process that already holds Slint's
+/// own wgpu device has no business opening a second context on. Asked
+/// once a process and kept: the adapter does not change under a
+/// running greycard, and asking again would pay this same cost once a
+/// model file, not once a launch. It asks for what `WGPU_POWER_PREF`
+/// names, high performance where it names nothing, as the window
+/// does; greycard-gpu always asks high performance.
 #[cfg(feature = "webgpu")]
 fn webgpu_adapter_identity() -> Option<String> {
     static IDENTITY: OnceLock<Option<String>> = OnceLock::new();
     IDENTITY
         .get_or_init(|| {
             use pollster::FutureExt as _;
+            // What `WGPU_BACKEND` names, as the window's own instance
+            // takes it: a start that died loading one backend's driver
+            // sets it to go round that one, and so must this. Naming
+            // none of these, it is not widened: the driver it keeps
+            // out might be one of them.
+            let asked = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY);
+            let backends = asked & wgpu::Backends::PRIMARY;
+            if backends.is_empty() {
+                log::info!(
+                    "WGPU_BACKEND names none of Vulkan, Metal, or DX12: the WebGPU adapter is not asked for, nor the provider remembered"
+                );
+                return None;
+            }
             let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::PRIMARY,
+                backends,
                 ..wgpu::InstanceDescriptor::new_without_display_handle()
             });
             let adapter = instance

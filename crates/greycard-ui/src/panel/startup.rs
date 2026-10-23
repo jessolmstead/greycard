@@ -156,16 +156,21 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         remembered.ui_scale_system,
     );
 
-    let mut settings = WGPUSettings::default();
+    // A start that died setting up the GPU leaves a marker, and the
+    // next goes round the backend it died on where there is another:
+    // set now, before `WGPUSettings` reads the environment. Taken off
+    // once the select comes back (`gpu_marker`).
+    let _gpu_marker = crate::gpu_marker::start();
+
     // The power preference `WGPU_POWER_PREF` names, as Slint's default
     // reads it, and high performance where it names nothing: Slint's
     // own default is none, and wgpu then takes the first adapter
     // listed, on a laptop often the integrated GPU beside a discrete
     // one. greycard-ai's probe asks the same; greycard-gpu's own
     // instances ask high performance.
-    settings.power_preference =
+    let power_preference =
         wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::HighPerformance);
-    let asked = match settings.power_preference {
+    let asked = match power_preference {
         wgpu::PowerPreference::HighPerformance => "high performance",
         wgpu::PowerPreference::LowPower => "low power",
         wgpu::PowerPreference::None => "no preference",
@@ -174,13 +179,22 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         Ok(value) => tracing::info!("adapter: {asked} (WGPU_POWER_PREF={value})"),
         Err(_) => tracing::info!("adapter: {asked} (greycard's default)"),
     }
-    // Slint asks for downlevel limits, which allow no storage buffers;
-    // the histogram needs one. Desktop defaults, and 45 MP frames are
-    // 8192 wide and more, exactly the default texture limit.
-    settings.device_required_limits = wgpu::Limits {
-        max_texture_dimension_2d: 16384,
-        ..wgpu::Limits::default()
+    // Made from the environment, which `WGPUSettings` reads for its
+    // backends: again if the marker's backend is taken off.
+    let wgpu_settings = || {
+        let mut settings = WGPUSettings::default();
+        settings.power_preference = power_preference;
+        // Slint asks for downlevel limits, which allow no storage
+        // buffers; the histogram needs one. Desktop defaults, and 45 MP
+        // frames are 8192 wide and more, exactly the default texture
+        // limit.
+        settings.device_required_limits = wgpu::Limits {
+            max_texture_dimension_2d: 16384,
+            ..wgpu::Limits::default()
+        };
+        settings
     };
+    let mut settings = wgpu_settings();
     // No taller or wider than the monitor it opens on leaves room for,
     // fitted before the window is created: a handler a selector, its
     // slot filled once the window is made. The same handler holds the
@@ -200,7 +214,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // by.
     use crate::adapter::Drawing;
     let asked = crate::adapter::asked();
-    let (fit_slot, drawing) = match select_backend(settings.clone()) {
+    let mut selected = select_backend(settings.clone());
+    // A select on the backend a marker sent this start to that comes
+    // back an error is no death: the default backends next, before any
+    // software adapter is looked for, so a pinned machine is not shut
+    // out of its GPU or sent to WARP by it.
+    if let Err(first) = &selected
+        && crate::gpu_marker::fallback_failed(first)
+    {
+        settings = wgpu_settings();
+        selected = select_backend(settings.clone());
+    }
+    let (fit_slot, drawing) = match selected {
         Ok(slot) => (
             slot,
             if asked {
@@ -230,6 +255,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             }
         },
     };
+    // The select came back: past where a driver killed a start, so the
+    // marker comes off here and not at the first frame.
+    crate::gpu_marker::selected();
     // The event loop is built now and not yet running: the moment to
     // hear the Finder, whose launch event comes as the loop starts.
     #[cfg(target_os = "macos")]
@@ -851,6 +879,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         let info = device.adapter_info();
                         let gpu = report::gpu_line(&info);
                         tracing::info!("gpu: {gpu}");
+                        crate::gpu_marker::device_made();
                         // With no GPU the window draws in software, and
                         // the ops' shaders there take minutes a frame
                         // where their CPU paths take seconds: the ops
@@ -1592,6 +1621,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // with every save below and the worker out of the driver, and the
     // error is the run's at the end.
     let ran = app.run();
+    // An event loop that ended before any frame, on DX12 we chose, is
+    // the device refused there (`gpu_marker`).
+    crate::gpu_marker::run_ended();
     if let Err(e) = &ran {
         tracing::error!("the window's event loop: {e}");
     }

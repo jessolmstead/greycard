@@ -29,6 +29,10 @@ design note behind it.
 
 ### Fixes
 
+- On Windows, a start that died inside a GPU driver as the window
+  was made is noticed by the next one, which starts on Direct3D 12
+  instead; `WGPU_BACKEND=dx12` does the same by hand
+  ([§395](https://github.com/jessolmstead/greycard/blob/master/docs/notes/395-a-start-marker-for-a-driver-that-dies.md))
 - The library's index pass and the thumbnails no longer memory-map
   raws, so a share that drops while the machine sleeps fails a frame
   instead of crashing the editor; a CR3's index pass reads about a
