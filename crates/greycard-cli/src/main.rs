@@ -214,6 +214,7 @@ fn main() -> std::process::ExitCode {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     log::start(cli.verbose);
+    greycard_ai::Store::sweep_user_in_background();
     // A panic inside rawler is caught and comes back as the file's
     // decode error, which is printed: its own print would say the
     // same thing twice, the first time as if it were a crash.

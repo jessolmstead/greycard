@@ -273,10 +273,10 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       days. Waits on a license search (the strong face-embedding
       models are mostly non-commercial) and on whether a sidecar may
       hold a face embedding, which is biometric data (§253)
-- [ ] A grain pass after the fill from the pipeline's noise estimate,
-      so a deep hole scaled down for the model comes back with the
-      frame's grain (§382); a store cleanup for retired models (the
-      Carve LaMa file, 208 MB, sits unused in every older store)
+- [ ] The fill's grain estimate capped by the develop's mosaic model
+      mapped through the gains and the matrix, so a surround that is
+      all texture does not read as noise (§398); the second fit's
+      floor applied near the channel peaks only
 - [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
       Remove and through us, blind pairs, scored (§380)
 - [ ] Generative remove: RORem through ort on the GPU providers, three

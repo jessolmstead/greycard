@@ -32,6 +32,14 @@ design note behind it.
   Mac sleeps fails the frame instead of crashing the editor
   ([§389](https://github.com/jessolmstead/greycard/blob/master/docs/notes/389-the-catalog-import-over-a-share.md))
 
+### Retouch
+
+- A deep fill comes back with the frame's grain, measured around the
+  hole on the luma and chroma axes, so a removed object no longer
+  leaves a smooth patch; the retired Carve model's 208 MB file is
+  removed from the store
+  ([§398](https://github.com/jessolmstead/greycard/blob/master/docs/notes/398-the-frames-grain-under-a-fill.md))
+
 ### Fixes
 
 - The click that closes a menu over the picture no longer zooms the

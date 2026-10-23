@@ -484,7 +484,7 @@ impl Vst {
 /// Orthonormal luma and two chroma axes: `(r+g+b)/sqrt3`, `(r-b)/sqrt2`,
 /// `(r-2g+b)/sqrt6`.
 #[inline]
-fn to_yuv([r, g, b]: [f32; 3]) -> [f32; 3] {
+pub(crate) fn to_yuv([r, g, b]: [f32; 3]) -> [f32; 3] {
     [
         (r + g + b) / 3f32.sqrt(),
         (r - b) / 2f32.sqrt(),
@@ -493,7 +493,7 @@ fn to_yuv([r, g, b]: [f32; 3]) -> [f32; 3] {
 }
 
 #[inline]
-fn from_yuv([y, u, v]: [f32; 3]) -> [f32; 3] {
+pub(crate) fn from_yuv([y, u, v]: [f32; 3]) -> [f32; 3] {
     let (s3, s2, s6) = (3f32.sqrt(), 2f32.sqrt(), 6f32.sqrt());
     [
         y / s3 + u / s2 + v / s6,

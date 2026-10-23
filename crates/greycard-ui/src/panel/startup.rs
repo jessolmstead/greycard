@@ -30,6 +30,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Err(why) = greycard_ai::runtime::status() {
         tracing::warn!("{why}");
     }
+    greycard_ai::Store::sweep_user_in_background();
     // `--match-compare` measures the camera match and writes a report;
     // no window, no device.
     if let Some(out) = cli.match_compare.as_deref() {

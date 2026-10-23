@@ -311,8 +311,7 @@ const LAMA_LICENSE: &str = include_str!("lama_license.txt");
 /// eraser. greycard's export of the published checkpoint at any height
 /// and width that are multiples of 8, its Fourier transforms written
 /// as matrix products so it runs whole on WebGPU. It replaced Carve's
-/// fixed 512 export (`big-lama-carve-fp32`), whose file a store that
-/// has it keeps in its own directory, unused.
+/// fixed 512 export (`big-lama-carve-fp32`), which is [`RETIRED`].
 pub const FILL: Model = Model {
     id: "big-lama-dynamic-fp32",
     name: "LaMa (Suvorov et al.), big-lama, ONNX export by greycard",
@@ -333,6 +332,28 @@ pub const FILL: Model = Model {
         sha256: "5f39f5e80b91596fd50f3227858c97912dabc0ffbd4796f21ca688529abb8771",
     }],
 };
+
+/// A file a store once fetched for a model this build no longer
+/// uses, in that model's directory: the store removes it when opened,
+/// when its name, size, and hash are the ones listed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Retired {
+    /// The retired model's id, its directory in the store.
+    pub dir: &'static str,
+    pub file: File,
+}
+
+/// The files no model uses any more.
+pub const RETIRED: &[Retired] = &[Retired {
+    // Carve's fixed 512 export of big-lama, the fill until FILL.
+    dir: "big-lama-carve-fp32",
+    file: File {
+        name: "lama_fp32.onnx",
+        url: "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx",
+        bytes: 208_044_816,
+        sha256: "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6",
+    },
+}];
 
 const DENOISE_LICENSE: License = License {
     name: "GPL-3.0-or-later",

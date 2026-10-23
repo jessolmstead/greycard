@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::registry::{File, Model, Runtime};
+use crate::registry::{File, Model, RETIRED, Retired, Runtime};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -56,6 +56,76 @@ impl Store {
             .or_else(dirs::cache_dir)
             .ok_or(Error::NoCacheDir)?;
         Ok(Self::at(base.join("greycard").join("models")))
+    }
+
+    /// The [`RETIRED`] files removed from the user's store on a thread
+    /// of its own, since hashing one takes a while: for the editor and
+    /// the CLI to call once as they start, and never a test.
+    pub fn sweep_user_in_background() {
+        let spawned = std::thread::Builder::new()
+            .name("model store sweep".into())
+            .spawn(|| {
+                if let Ok(store) = Self::user() {
+                    store.sweep(RETIRED);
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("model store: no thread to sweep it on: {e}");
+        }
+    }
+
+    /// Remove the `retired` files that are here at their size and
+    /// hash, each logged with its size, and a retired model's
+    /// directory with them when nothing but its license note is left.
+    /// A file of the same name that is not the one listed is kept.
+    /// What was removed, and its size.
+    pub fn sweep(&self, retired: &[Retired]) -> Vec<(PathBuf, u64)> {
+        let mut removed = Vec::new();
+        for r in retired {
+            let plain = |p: &str| {
+                let mut c = Path::new(p).components();
+                matches!(c.next(), Some(std::path::Component::Normal(_))) && c.next().is_none()
+            };
+            debug_assert!(plain(r.dir) && plain(r.file.name), "{r:?}");
+            let dir = self.root.join(r.dir);
+            let path = dir.join(r.file.name);
+            if !std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() == r.file.bytes) {
+                continue;
+            }
+            let hashed = std::fs::File::open(&path).and_then(|mut f| {
+                let mut hasher = Sha256::new();
+                std::io::copy(&mut f, &mut hasher)?;
+                Ok(hex(&hasher.finalize()))
+            });
+            if !hashed.is_ok_and(|h| h == r.file.sha256) {
+                continue;
+            }
+            match std::fs::remove_file(&path) {
+                Ok(()) => {
+                    log::info!(
+                        "model store: removed {}, a retired model's file ({:.0} MB)",
+                        path.display(),
+                        r.file.bytes as f64 / 1e6
+                    );
+                    removed.push((path, r.file.bytes));
+                }
+                Err(e) => log::warn!(
+                    "model store: {} is retired, not removed: {e}",
+                    path.display()
+                ),
+            }
+            let others = std::fs::read_dir(&dir).map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| e.file_name() != "LICENSE.txt")
+                    .count()
+            });
+            if others.is_ok_and(|n| n == 0) {
+                let _ = std::fs::remove_file(dir.join("LICENSE.txt"));
+                let _ = std::fs::remove_dir(&dir);
+            }
+        }
+        removed
     }
 
     pub fn at(root: impl Into<PathBuf>) -> Self {
@@ -396,6 +466,64 @@ mod tests {
         assert!(fetch_to(&file, &part, &mut |_| {}).is_err());
         assert!(!part.exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A retired file at its size and hash goes, with its directory
+    /// and the license note beside it; one of the same name and size
+    /// but other bytes stays, as does the directory of a model in use.
+    #[test]
+    fn the_sweep_removes_a_retired_file_and_only_that() {
+        let root = std::env::temp_dir().join(format!(
+            "greycard-store-sweep-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let bytes: &[u8] = b"an old model's weights";
+        let sha =
+            |b: &[u8]| -> &'static str { Box::leak(hex(&Sha256::digest(b)).into_boxed_str()) };
+        let file = |name: &'static str| File {
+            name,
+            url: "http://greycard-store-test.invalid/old.onnx",
+            bytes: bytes.len() as u64,
+            sha256: sha(bytes),
+        };
+        let retired = [
+            Retired {
+                dir: "old-model",
+                file: file("old.onnx"),
+            },
+            Retired {
+                dir: "other-model",
+                file: file("other.onnx"),
+            },
+        ];
+        let old = root.join("old-model");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("old.onnx"), bytes).unwrap();
+        std::fs::write(old.join("LICENSE.txt"), "a note").unwrap();
+        // The same name and size, other bytes: not the file listed.
+        let other = root.join("other-model");
+        std::fs::create_dir_all(&other).unwrap();
+        let changed: Vec<u8> = bytes.iter().map(|b| b ^ 1).collect();
+        std::fs::write(other.join("other.onnx"), &changed).unwrap();
+        let store = Store::at(&root);
+        let removed = store.sweep(&retired);
+        assert_eq!(removed, vec![(old.join("old.onnx"), bytes.len() as u64)]);
+        assert!(!old.exists());
+        assert_eq!(std::fs::read(other.join("other.onnx")).unwrap(), changed);
+        // A second sweep finds nothing to do.
+        assert!(store.sweep(&retired).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The Carve file is retired and is no model's in use.
+    #[test]
+    fn the_carve_fill_is_retired() {
+        assert!(RETIRED.iter().any(|r| r.file.name == "lama_fp32.onnx"));
+        for r in RETIRED {
+            assert!(MODELS.iter().all(|m| m.id != r.dir), "{} is in use", r.dir);
+        }
     }
 
     #[test]

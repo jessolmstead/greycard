@@ -23,6 +23,7 @@ use greycard_ai::{
     Denoiser, Fill, Model, Prompt, Provider, Rgb8, Rgbf, SAM, SAM3, SKY, Sam, Sky, Store, Subject,
     refine,
 };
+use greycard_core::develop::noise;
 use greycard_core::develop::retouch::Region;
 use greycard_core::image::WorkingImage;
 use greycard_edit::Edit;
@@ -625,6 +626,86 @@ fn same_fill(a: &Patch, b: &Patch) -> bool {
     a.points == b.points && a.radius == b.radius && a.feather == b.feather && a.method == b.method
 }
 
+/// What [`regrain`] measured at the hole's mean level, in the frame
+/// round it and in the fill before and after: the luma's and the
+/// chroma's standard deviations.
+struct Regrained {
+    level: f32,
+    frame: [f32; 2],
+    before: [f32; 2],
+    after: [f32; 2],
+}
+
+/// The frame's own noise put under a fill the model made smooth:
+/// `out` is the region's replacement in the picture's values, filled
+/// in `window` of `image`. The noise is measured on the window's known
+/// pixels, in the picture's values after the develop's own denoise, so
+/// a denoised frame is given back only what it kept, and on its luma
+/// and chroma axes, so its grain keeps the frame's color
+/// ([`noise::PictureNoise`]); it is added under
+/// the region's coverage less what the fill carries already, and the
+/// retouch's blend feathers it with the coverage's own edge. Seeded by
+/// `seed` and the place in the frame, so a fill made again is the
+/// same. `None` when the frame measures no noise.
+fn regrain(
+    out: &mut [f32],
+    region: &Region,
+    window: Window,
+    image: &WorkingImage,
+    seed: u64,
+) -> Option<Regrained> {
+    let Window {
+        x: wx,
+        y: wy,
+        width: ww,
+        height: wh,
+    } = window;
+    let covered = |px: usize, py: usize| {
+        (region.x..region.x + region.width).contains(&px)
+            && (region.y..region.y + region.height).contains(&py)
+            && region.cover[(py - region.y) * region.width + (px - region.x)] > 0.0
+    };
+    let mut values = Vec::with_capacity(ww * wh * 3);
+    let mut known = Vec::with_capacity(ww * wh);
+    for py in wy..wy + wh {
+        let row = (py * image.width + wx) * 3;
+        values.extend_from_slice(&image.data[row..row + ww * 3]);
+        known.extend((wx..wx + ww).map(|px| !covered(px, py)));
+    }
+    let frame = noise::estimate_picture_noise(&values, ww, wh, &known);
+    if frame.is_silent() {
+        return None;
+    }
+    let (rw, rh) = (region.width, region.height);
+    let hole: Vec<bool> = (0..rw * rh)
+        .map(|i| {
+            let (px, py) = (region.x + i % rw, region.y + i / rw);
+            region.cover[i] > 0.0 && (wx..wx + ww).contains(&px) && (wy..wy + wh).contains(&py)
+        })
+        .collect();
+    let present = noise::estimate_picture_noise(out, rw, rh, &hole);
+    let mask: Vec<f32> = hole.iter().map(|&h| f32::from(u8::from(h))).collect();
+    noise::add_picture_noise(out, rw, (region.x, region.y), &mask, &frame, &present, seed);
+    let after = noise::estimate_picture_noise(out, rw, rh, &hole);
+    let inside = hole.iter().filter(|&&h| h).count().max(1);
+    let level = (0..rw * rh)
+        .filter(|&i| hole[i])
+        .map(|i| (out[i * 3] + out[i * 3 + 1] + out[i * 3 + 2]) / 3.0)
+        .sum::<f32>()
+        / inside as f32;
+    let at = |m: &noise::PictureNoise| {
+        let l = level.max(0.0);
+        let chroma = (m.axes.variance(1, l) + m.axes.variance(2, l)) / 2.0;
+        [m.luma_sigma(l), chroma.sqrt()]
+    };
+    Some(Regrained {
+        level,
+        frame: at(&frame),
+        before: at(&present),
+        after: at(&after),
+    })
+}
+
 /// The window a region's fill is made in, in a picture of `width` ×
 /// `height`, and how deep the hole is: round the box of what the
 /// region covers, at the picture's own pixels
@@ -985,6 +1066,24 @@ impl Ai {
                     out.extend_from_slice(&image.data[i..i + 3]);
                 }
             }
+        }
+        // Taken down for the model, the hole comes back smooth where
+        // the frame round it has grain; at its own pixels it keeps its
+        // own.
+        if made.scale < 1.0
+            && let Some(r) = regrain(&mut out, region, window, image, patch.id)
+        {
+            tracing::info!(
+                "fill {}: the frame's noise put back, luma and chroma sigma at {:.2}: {:.5} and {:.5} round the hole, {:.5} and {:.5} in the fill before, {:.5} and {:.5} after",
+                patch.name(),
+                r.level,
+                r.frame[0],
+                r.frame[1],
+                r.before[0],
+                r.before[1],
+                r.after[0],
+                r.after[1]
+            );
         }
         self.fills
             .insert(patch.id, (patch.clone(), window, out.clone()));
@@ -2736,6 +2835,156 @@ fn decode(v: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A deep hole in a flat field of known noise, filled smooth at a
+    /// smaller scale as the model fills it, comes back with its
+    /// surround's noise: far below it before the grain, within 15%
+    /// after, and the same on a second run. The field's grain is
+    /// mostly shared by the three channels, as a developed frame's is,
+    /// and the grain put back keeps that split of luma and chroma
+    /// rather than coloring the hole.
+    #[test]
+    fn a_deep_hole_filled_small_gets_the_frames_noise_back() {
+        let (w, h, sigma) = (640usize, 640usize, 0.01f32);
+        let mut state = 0x5eed_u64;
+        let mut gauss = || {
+            let mut u = || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                ((state >> 11) as f32 + 0.5) / (1u64 << 53) as f32
+            };
+            let (u1, u2) = (u(), u());
+            (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
+        };
+        let mut image = WorkingImage::new(w, h);
+        for px in image.data.as_chunks_mut::<3>().0.iter_mut() {
+            let shared = sigma * gauss();
+            for v in px.iter_mut() {
+                *v = 0.2 + shared + 0.3 * sigma * gauss();
+            }
+        }
+        // A disc of radius 150 with a soft edge.
+        let (rx, ry, rs) = (150usize, 150usize, 340usize);
+        let cover: Vec<f32> = (0..rs * rs)
+            .map(|i| {
+                let (x, y) = ((i % rs) as f32 - 170.0, (i / rs) as f32 - 170.0);
+                ((150.0 - (x * x + y * y).sqrt()) / 8.0).clamp(0.0, 1.0)
+            })
+            .collect();
+        let region = Region {
+            x: rx,
+            y: ry,
+            width: rs,
+            height: rs,
+            cover,
+            ring: vec![0.0; rs * rs],
+        };
+        let (window, depth) = window_for(&region, w, h);
+        let hole: Vec<f32> = (0..window.width * window.height)
+            .map(|i| {
+                let (px, py) = (window.x + i % window.width, window.y + i / window.width);
+                let inside = (rx..rx + rs).contains(&px) && (ry..ry + rs).contains(&py);
+                let c = if inside {
+                    region.cover[(py - ry) * rs + px - rx]
+                } else {
+                    0.0
+                };
+                f32::from(u8::from(c > 0.0))
+            })
+            .collect();
+        let mut values = Vec::new();
+        for py in window.y..window.y + window.height {
+            let row = (py * w + window.x) * 3;
+            values.extend_from_slice(&image.data[row..row + window.width * 3]);
+        }
+        let input = Rgbf::new(window.width, window.height, values);
+        // The model's answer at its scale: smooth, the known pixels'
+        // mean in the hole.
+        let made = greycard_ai::fill::filled(&input, &hole, depth, 1024, |img, part| {
+            let known: Vec<usize> = (0..part.len()).filter(|&i| part[i] == 0.0).collect();
+            let mut mean = [0.0f32; 3];
+            for &i in &known {
+                for (c, m) in mean.iter_mut().enumerate() {
+                    *m += img.data[i * 3 + c] / known.len() as f32;
+                }
+            }
+            let mut out = img.clone();
+            for (i, &m) in part.iter().enumerate() {
+                if m > 0.0 {
+                    out.data[i * 3..i * 3 + 3].copy_from_slice(&mean);
+                }
+            }
+            Ok(out)
+        })
+        .unwrap();
+        assert!(
+            made.scale < 0.5,
+            "a hole this deep is filled small: {}",
+            made.scale
+        );
+        let mut out = Vec::with_capacity(rs * rs * 3);
+        for y in 0..rs {
+            for x in 0..rs {
+                let (px, py) = (rx + x, ry + y);
+                out.extend(made.image.at(px - window.x, py - window.y));
+            }
+        }
+        // The luma's and the chroma's standard deviations per channel
+        // over the pixels `pick` names.
+        let spread = |data: &[f32], pick: &dyn Fn(usize) -> bool| {
+            let v: Vec<[f32; 2]> = (0..data.len() / 3)
+                .filter(|&i| pick(i))
+                .map(|i| {
+                    let [r, g, b] = [data[i * 3], data[i * 3 + 1], data[i * 3 + 2]];
+                    [(r + g + b) / 3.0, (r - b) / 2.0]
+                })
+                .collect();
+            let n = v.len() as f32;
+            [0, 1].map(|k| {
+                let mean = v.iter().map(|p| p[k]).sum::<f32>() / n;
+                (v.iter().map(|p| (p[k] - mean).powi(2)).sum::<f32>() / n).sqrt()
+            })
+        };
+        let middle = |i: usize| region.cover[i] >= 1.0;
+        let surround = spread(&image.data, &|i| {
+            let (x, y) = ((i % w) as f32 - 320.0, (i / w) as f32 - 320.0);
+            (x * x + y * y).sqrt() > 200.0
+        });
+        let before = spread(&out, &middle);
+        let mut again = out.clone();
+        regrain(&mut out, &region, window, &image, 7).expect("the frame has noise");
+        regrain(&mut again, &region, window, &image, 7).unwrap();
+        assert_eq!(out, again);
+        let mut patched = image.clone();
+        greycard_core::develop::retouch::apply_replacement(&mut patched, &region, &out, 1.0);
+        let after = spread(&patched.data, &|i| {
+            let (x, y) = (i % w, i / w);
+            (rx..rx + rs).contains(&x)
+                && (ry..ry + rs).contains(&y)
+                && middle((y - ry) * rs + x - rx)
+        });
+        // Luma: the shared part and a third of the rest; chroma: the
+        // rest's alone.
+        let want = [
+            sigma * (1.0f32 + 0.09 / 3.0).sqrt(),
+            0.3 * sigma / 2f32.sqrt(),
+        ];
+        for k in 0..2 {
+            assert!(
+                (surround[k] / want[k] - 1.0).abs() < 0.05,
+                "surround {surround:?}"
+            );
+            assert!(
+                before[k] < 0.3 * surround[k],
+                "before {before:?} against {surround:?}"
+            );
+            assert!(
+                (after[k] / surround[k] - 1.0).abs() < 0.15,
+                "after {after:?} against {surround:?} (before {before:?})"
+            );
+        }
+    }
 
     #[test]
     fn the_inverse_undoes_the_matrix_and_the_transfer_round_trips() {

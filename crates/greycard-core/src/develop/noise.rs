@@ -164,6 +164,197 @@ pub fn estimate_noise(
     Ok(fit_bins(rows))
 }
 
+/// The noise of a developed picture, on the denoiser's luma and two
+/// chroma axes ([`super::denoise`]'s orthonormal Y0U0V0): a picture's
+/// grain is correlated between its channels (the demosaic's color
+/// differences, the matrix, a denoise that cuts chroma harder than
+/// luma), and only on these axes is it close to independent. Each
+/// axis's variance is a line in the pixel's mean level, `(r+g+b)/3`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PictureNoise {
+    /// Per axis (luma, then the two chroma): variance at a mean level.
+    pub axes: NoiseModel,
+}
+
+impl PictureNoise {
+    /// The luma's standard deviation at `level`, per channel: the
+    /// spread a grey's three channels share.
+    pub fn luma_sigma(&self, level: f32) -> f32 {
+        (self.axes.variance(0, level) / 3.0).sqrt()
+    }
+
+    pub fn is_silent(&self) -> bool {
+        self.axes.is_silent()
+    }
+}
+
+/// Estimate the noise of a picture of three interleaved channels a
+/// pixel, a demosaiced one in its own linear values, from the pixels
+/// `known` marks, on the axes of [`PictureNoise`]. The same blocks,
+/// residual, and fit as [`estimate_noise`]; the neighbors are two
+/// pixels away, as a mosaic's same-color ones are, past most of the
+/// correlation a demosaic leaves between neighbors, so what is
+/// measured is the noise's variance at high frequency: noise drawn to
+/// it ([`add_picture_noise`]) matches the picture's there and is a
+/// little finer than the picture's own. A block is read when it and
+/// the two pixels round it are all known.
+///
+/// A picture has no one clip, and its highlights may be made up
+/// smooth (reconstructed past 1, or a clipped camera channel mixed
+/// through the matrix), which would pass for the quietest blocks at
+/// their level. So a block reaching the brightest value of a channel
+/// is left out, and the line is fitted twice, the second time without
+/// the blocks quieter than a sixteenth of what the first gave at their
+/// level.
+pub fn estimate_picture_noise(
+    data: &[f32],
+    width: usize,
+    height: usize,
+    known: &[bool],
+) -> PictureNoise {
+    if width < BLOCK + 4 || height < BLOCK + 4 || data.len() != width * height * 3 {
+        return PictureNoise::default();
+    }
+    // How many unknown pixels lie above and left of each corner.
+    let stride = width + 1;
+    let mut unknown = vec![0u32; stride * (height + 1)];
+    let mut peak = [f32::MIN; 3];
+    for y in 0..height {
+        let mut row = 0u32;
+        for x in 0..width {
+            let i = y * width + x;
+            row += u32::from(!known[i]);
+            unknown[(y + 1) * stride + x + 1] = unknown[y * stride + x + 1] + row;
+            if known[i] {
+                for c in 0..3 {
+                    peak[c] = peak[c].max(data[i * 3 + c]);
+                }
+            }
+        }
+    }
+    let unknown_in = |x0: usize, y0: usize, x1: usize, y1: usize| {
+        unknown[y1 * stride + x1] + unknown[y0 * stride + x0]
+            - unknown[y0 * stride + x1]
+            - unknown[y1 * stride + x0]
+    };
+    let near_peak = peak.map(|p| if p > 0.0 { p * PEAK_FRACTION } else { f32::MAX });
+    let yuv = |i: usize| super::denoise::to_yuv([data[i * 3], data[i * 3 + 1], data[i * 3 + 2]]);
+    let block_rows: Vec<usize> = (2..height - 2 - BLOCK + 1).step_by(BLOCK).collect();
+    // Per block: its mean level and each axis's variance.
+    let blocks: Vec<(f32, [f32; 3])> = block_rows
+        .par_iter()
+        .flat_map_iter(|&by| {
+            let mut out = Vec::new();
+            'block: for bx in (2..width - 2 - BLOCK + 1).step_by(BLOCK) {
+                if unknown_in(bx - 2, by - 2, bx + BLOCK + 2, by + BLOCK + 2) > 0 {
+                    continue;
+                }
+                let mut sum = 0.0f64;
+                let mut sq = [0.0f64; 3];
+                for y in by..by + BLOCK {
+                    for x in bx..bx + BLOCK {
+                        let i = y * width + x;
+                        let p = &data[i * 3..i * 3 + 3];
+                        if (0..3).any(|c| p[c] >= near_peak[c]) {
+                            continue 'block;
+                        }
+                        sum += (p[0] + p[1] + p[2]) as f64 / 3.0;
+                        let v = yuv(i);
+                        let n = [
+                            yuv(i - 2),
+                            yuv(i + 2),
+                            yuv(i - 2 * width),
+                            yuv(i + 2 * width),
+                        ];
+                        for k in 0..3 {
+                            let r = v[k] - (n[0][k] + n[1][k] + n[2][k] + n[3][k]) * 0.25;
+                            sq[k] += (r * r) as f64;
+                        }
+                    }
+                }
+                let n = (BLOCK * BLOCK) as f64;
+                out.push(((sum / n) as f32, sq.map(|s| (s / n) as f32 / RESIDUAL_GAIN)));
+            }
+            out
+        })
+        .collect();
+    let fit = |keep: &dyn Fn(usize, f32, f32) -> bool| {
+        let mut bins: Bins = std::array::from_fn(|_| vec![Vec::new(); BINS]);
+        let mut counts = [0usize; 3];
+        for &(level, var) in &blocks {
+            let bin = ((level.max(0.0).sqrt() * BINS as f32) as usize).min(BINS - 1);
+            for k in 0..3 {
+                if var[k] > STILL && keep(k, level, var[k]) {
+                    bins[k][bin].push((level, var[k], BLOCK * BLOCK));
+                    counts[k] += 1;
+                }
+            }
+        }
+        fit_bins(vec![(bins, counts)]).model
+    };
+    let first = fit(&|_, _, _| true);
+    let axes = fit(&|k, level, var| var * QUIET_FLOOR >= first.variance(k, level.max(0.0)));
+    PictureNoise { axes }
+}
+
+/// A block with a value this close to a channel's brightest is left
+/// out of a picture's estimate.
+const PEAK_FRACTION: f32 = 0.99;
+/// A block quieter than the first fit over this is made, not seen.
+const QUIET_FLOOR: f32 = 16.0;
+/// A block whose variance is no more than this does not move at all.
+const STILL: f32 = 1e-14;
+
+/// Noise added to `data`, three interleaved channels a pixel `width`
+/// wide whose top left lies at `origin` in the frame, where `mask` is
+/// nonzero: per axis of [`PictureNoise`], at the pixel's own mean
+/// level, the variance `model` gives less what `present` says it
+/// carries already, drawn on those axes and rotated back. Drawn from
+/// `seed` and the pixel's place in the frame alone, so the same call
+/// gives the same noise wherever its window lies.
+pub fn add_picture_noise(
+    data: &mut [f32],
+    width: usize,
+    origin: (usize, usize),
+    mask: &[f32],
+    model: &PictureNoise,
+    present: &PictureNoise,
+    seed: u64,
+) {
+    for (i, px) in data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+        if mask[i] <= 0.0 {
+            continue;
+        }
+        let (x, y) = ((origin.0 + i % width) as u64, (origin.1 + i / width) as u64);
+        let mut state = seed ^ (y << 32 | x).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        let level = ((px[0] + px[1] + px[2]) / 3.0).max(0.0);
+        let draw: [f32; 3] = std::array::from_fn(|k| {
+            let var = model.axes.variance(k, level) - present.axes.variance(k, level);
+            let g = gauss(&mut state);
+            if var > 0.0 { var.sqrt() * g } else { 0.0 }
+        });
+        let add = super::denoise::from_yuv(draw);
+        for c in 0..3 {
+            px[c] += add[c];
+        }
+    }
+}
+
+/// One standard normal sample from `state`, moved on (splitmix64 and
+/// Box-Muller).
+fn gauss(state: &mut u64) -> f32 {
+    let mut next = || {
+        *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+        ((z >> 11) as f64 + 0.5) / (1u64 << 53) as f64
+    };
+    let (u1, u2) = (next(), next());
+    ((-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()) as f32
+}
+
 /// Per row of blocks, each channel's bins and its count of blocks.
 type BlockRows = Vec<(Bins, [usize; 3])>;
 
@@ -487,5 +678,169 @@ pub(crate) mod tests {
         let est = estimate_noise(&cfa, w, h, &pattern).unwrap();
         assert_eq!(est.blocks, [0; 3]);
         assert!(est.model.is_silent());
+    }
+
+    /// A picture of `level` (one value a pixel, the same in its three
+    /// channels) with noise drawn on the luma and chroma axes to
+    /// `truth`: grain correlated between the channels.
+    fn noisy_picture(level: &[f32], truth: &PictureNoise, seed: u64) -> Vec<f32> {
+        let mut g = Gauss(seed);
+        level
+            .iter()
+            .flat_map(|&v| {
+                let n: [f32; 3] = std::array::from_fn(|k| g.next() * truth.axes.sigma(k, v));
+                let add = super::super::denoise::from_yuv(n);
+                [v + add[0], v + add[1], v + add[2]]
+            })
+            .collect()
+    }
+
+    /// Luma well above chroma, as a denoised frame has it.
+    fn picture_truth() -> PictureNoise {
+        PictureNoise {
+            axes: NoiseModel {
+                a: [9e-4, 1e-4, 2e-4],
+                b: [9e-6, 1e-6, 2e-6],
+            },
+        }
+    }
+
+    /// The noise on each axis, as a straight variance over the pixels
+    /// `pick` names.
+    pub(crate) fn axis_spread(data: &[f32], pick: impl Fn(usize) -> bool) -> [f32; 3] {
+        let yuv: Vec<[f32; 3]> = (0..data.len() / 3)
+            .filter(|&i| pick(i))
+            .map(|i| super::super::denoise::to_yuv([data[i * 3], data[i * 3 + 1], data[i * 3 + 2]]))
+            .collect();
+        let n = yuv.len() as f32;
+        std::array::from_fn(|k| {
+            let mean = yuv.iter().map(|p| p[k]).sum::<f32>() / n;
+            yuv.iter().map(|p| (p[k] - mean).powi(2)).sum::<f32>() / n
+        })
+    }
+
+    /// A picture's model comes back on each axis from a noisy ramp
+    /// whose grain is correlated between its channels, read round a
+    /// hole that is left out; the clean ramp is silent.
+    #[test]
+    fn recovers_a_known_model_from_a_picture_round_a_hole() {
+        let (w, h) = (384, 256);
+        let truth = picture_truth();
+        let level = ramp(w, h);
+        let mut data = noisy_picture(&level, &truth, 3);
+        // The hole holds nonsense, which must not be read.
+        let known: Vec<bool> = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32 - 192.0, (i / w) as f32 - 128.0);
+                x * x + y * y > 60.0 * 60.0
+            })
+            .collect();
+        for (i, k) in known.iter().enumerate() {
+            if !k {
+                data[i * 3..i * 3 + 3].copy_from_slice(&[5.0, -1.0, 0.0]);
+            }
+        }
+        let est = estimate_picture_noise(&data, w, h, &known);
+        for k in 0..3 {
+            for level in [0.1, 0.3, 0.7] {
+                let (got, want) = (est.axes.sigma(k, level), truth.axes.sigma(k, level));
+                assert!(
+                    (got / want - 1.0).abs() < 0.12,
+                    "axis {k} at {level}: sigma {got} vs {want}; {est:?}"
+                );
+            }
+        }
+        let clean: Vec<f32> = level.iter().flat_map(|&v| [v; 3]).collect();
+        assert!(estimate_picture_noise(&clean, w, h, &known).is_silent());
+    }
+
+    /// Smooth highlights past 1 in a third of the window, as a
+    /// reconstruction makes them, do not pass for the quietest blocks
+    /// and pull the mid tones' noise down.
+    #[test]
+    fn smooth_highlights_past_one_leave_the_mid_tones_alone() {
+        let (w, h) = (384, 256);
+        let truth = picture_truth();
+        let level: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let x = (i % w) as f32 / w as f32;
+                if x < 2.0 / 3.0 {
+                    0.02 + 1.3 * x
+                } else {
+                    // From 0.9 to 3, curved, so its residual is not 0.
+                    let t = (x - 2.0 / 3.0) * 3.0;
+                    0.9 + 2.1 * t * t
+                }
+            })
+            .collect();
+        let mut data = noisy_picture(&level, &truth, 5);
+        for (i, &v) in level.iter().enumerate() {
+            if v >= 0.9 && (i % w) as f32 / w as f32 >= 2.0 / 3.0 {
+                data[i * 3..i * 3 + 3].copy_from_slice(&[v, v * 0.98, v * 1.01]);
+            }
+        }
+        let est = estimate_picture_noise(&data, w, h, &vec![true; w * h]);
+        for k in 0..3 {
+            for level in [0.2, 0.5] {
+                let (got, want) = (est.axes.sigma(k, level), truth.axes.sigma(k, level));
+                assert!(
+                    (got / want - 1.0).abs() < 0.15,
+                    "axis {k} at {level}: sigma {got} vs {want}; {est:?}"
+                );
+            }
+        }
+    }
+
+    /// The noise added has the model's spread less what is there on
+    /// each axis, only under the mask, and is the same on a second
+    /// call whatever the window.
+    #[test]
+    fn added_noise_has_the_models_spread_and_repeats() {
+        let (w, h) = (200, 200);
+        let model = PictureNoise {
+            axes: NoiseModel {
+                a: [0.0; 3],
+                b: [9e-4, 1e-4, 2e-4],
+            },
+        };
+        let present = PictureNoise {
+            axes: NoiseModel {
+                a: [0.0; 3],
+                b: [3e-4, 0.0, 5e-4],
+            },
+        };
+        let mask: Vec<f32> = (0..w * h).map(|i| (i % w >= 100) as u8 as f32).collect();
+        let mut data = vec![0.5f32; w * h * 3];
+        add_picture_noise(&mut data, w, (10, 20), &mask, &model, &present, 9);
+        let var = axis_spread(&data, |i| mask[i] > 0.0);
+        for k in 0..3 {
+            let want = (model.axes.b[k] - present.axes.b[k]).max(0.0);
+            assert!(
+                (var[k] - want).abs() <= 0.05 * want + 1e-9,
+                "axis {k}: {var:?}"
+            );
+        }
+        assert!(
+            (0..w * h)
+                .filter(|&i| mask[i] == 0.0)
+                .all(|i| data[i * 3..i * 3 + 3] == [0.5; 3])
+        );
+        // The right half again, as a window of its own.
+        let mut half = vec![0.5f32; 100 * h * 3];
+        add_picture_noise(
+            &mut half,
+            100,
+            (110, 20),
+            &vec![1.0; 100 * h],
+            &model,
+            &present,
+            9,
+        );
+        for y in 0..h {
+            for x in 0..100 {
+                let (a, b) = ((y * w + 100 + x) * 3, (y * 100 + x) * 3);
+                assert_eq!(data[a..a + 3], half[b..b + 3]);
+            }
+        }
     }
 }
