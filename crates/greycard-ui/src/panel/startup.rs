@@ -412,6 +412,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_grid_cell(grid::clamp_cell(
         cli.grid_cell.unwrap_or(remembered.grid_cell),
     ));
+    app.set_wheel_resizes(remembered.grid_wheel);
     app.set_lightbox_across(crate::lightbox::held(remembered.lightbox_across));
     app.set_grid_open(cli.grid);
     // `--hide-panels` puts all three away for this run, whatever the
@@ -1683,6 +1684,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.recent_folders = kept.recent_folders;
         settings.start_folder = kept.start_folder;
         settings.filter_bar = kept.filter_bar;
+        settings.grid_wheel = kept.grid_wheel;
         settings.folder_tree_subfolders = kept.folder_tree_subfolders;
         settings.xmp_sidecars = kept.xmp_sidecars;
         settings.sidecars_in_folder = kept.sidecars_in_folder;
@@ -2186,6 +2188,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // Written as the switch is flipped; the caller keeps the file's.
         one_section: false,
         grid_cell: app.get_grid_cell(),
+        // Written as the switch is flipped; the caller keeps the file's.
+        grid_wheel: true,
         lightbox_across: app.get_lightbox_across(),
         // The lightbox puts the panes away for as long as it is on:
         // what is kept is how they were before it.

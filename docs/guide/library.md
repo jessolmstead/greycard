@@ -61,9 +61,10 @@ In the grid:
 - The scroll bar down the right edge, and the one under the
   filmstrip, show where you are in the folder; drag either, or click
   its track to page.
-- **Ctrl+wheel**, or **+** and **−**, change the cell size. There are
-  six sizes, from 96 to 512 px; the header shows the current one, and
-  greycard remembers it.
+- **Ctrl+wheel**, or **+** and **−**, change the cell size. They step
+  through six sizes, from 96 to 512 px; the header shows the current
+  one, and greycard remembers it. To set any size between, or to stop
+  the wheel resizing, see [Settings](settings.md#cell-size).
 - A color label tints the whole cell in the grid. In the filmstrip it
   shows as a thin colored line under the thumbnail.
 - A frame greycard can't read says **Unreadable**.

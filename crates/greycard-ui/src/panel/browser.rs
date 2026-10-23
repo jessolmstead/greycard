@@ -3005,6 +3005,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
         app.on_grid_zoom(move |by| {
             if let Some(app) = app_weak.upgrade() {
                 app.set_grid_cell(grid::zoom(app.get_grid_cell(), by));
+                crate::panel::prefs::show_grid_cell(&app);
             }
         });
     }
@@ -3503,7 +3504,7 @@ mod tests {
         assert_eq!(pictured(300), 0, "no cell: kept for later");
         assert_eq!(pictured(900), 0);
         // The grid scrolled to 900's screenful: on, and 5 off.
-        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8, 0.0);
+        app.invoke_grid_range(grid::PAD + 111.0 * grid::row_pitch(176.0), 773.0, 8, 0.0);
         assert_eq!(pictured(900), 2);
         assert_eq!(pictured(5), 0);
         assert!(state.borrow().views.thumb_shown[5].is_none());
@@ -3534,7 +3535,7 @@ mod tests {
             },
         );
         assert_eq!(pictured(900), 0);
-        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8, 0.0);
+        app.invoke_grid_range(grid::PAD + 111.0 * grid::row_pitch(176.0), 773.0, 8, 0.0);
         assert_eq!(pictured(900), 4);
     }
 
@@ -3570,7 +3571,7 @@ mod tests {
         }
         assert_eq!(pictured(5), 2, "a cell: made again on its row");
         assert_eq!(pictured(900), 0, "no cell: kept for later");
-        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8, 0.0);
+        app.invoke_grid_range(grid::PAD + 111.0 * grid::row_pitch(176.0), 773.0, 8, 0.0);
         assert_eq!(pictured(900), 2);
     }
 
@@ -4042,7 +4043,7 @@ mod tests {
         press(&app, "g");
         press(&app, Key::DownArrow);
         // Six 176 cells across the 1,260 the left pane leaves of
-        // 1500, rows 206 apart: under a header of the selection's
+        // 1500, rows 202 apart: under a header of the selection's
         // line, the filter's chips with its words, and its facets on
         // two rows the sheet is 805 tall and shows three rows and most
         // of a fourth, so the first twenty-four frames are what the
@@ -4484,19 +4485,19 @@ mod tests {
         let run = |count: usize| {
             let app = window(count);
             app.window()
-                .set_size(slint::LogicalSize::new(1488.0, 950.0));
+                .set_size(slint::LogicalSize::new(1460.0, 950.0));
             cells_from_reports(&app);
             app.set_selected(0);
             press(&app, "g");
             press(&app, Key::F7);
             press(&app, Key::Shift);
-            assert_eq!(app.get_grid_w(), 1488.0);
+            assert_eq!(app.get_grid_w(), 1460.0);
             let c = clicks.clone();
             app.on_frame_clicked(move |row, _, _| c.borrow_mut().push(row));
             let m = menus.clone();
             app.on_frame_menu_asked(move |row| m.borrow_mut().push(row));
             // In frame 7's cell, in the band.
-            let (x, y) = (1488.0 - 13.0, 950.0 - 805.0 + 100.0);
+            let (x, y) = (1460.0 - 13.0, 950.0 - 805.0 + 100.0);
             crate::testing::click(&app, x, y);
             let position = slint::LogicalPosition::new(x, y);
             let button = slint::platform::PointerEventButton::Right;

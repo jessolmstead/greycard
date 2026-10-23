@@ -48,6 +48,12 @@ export component SettingsSheet inherits Rectangle {
     /// Whether the filter bar is shown, over the grid and in culling.
     in-out property <bool> filter-bar;
     callback filter-bar-changed();
+    /// The grid's cell in logical pixels as typed; taken on Enter or
+    /// Done. Whether Ctrl and the wheel size the cells.
+    in-out property <string> grid-cell-typed;
+    callback grid-cell-typed-changed();
+    in-out property <bool> wheel-resizes;
+    callback wheel-resizes-changed();
     /// "Beside the raw" or "Hidden folder", as the row spells it.
     in-out property <string> sidecar-placement;
     in-out property <bool> xmp-sidecars;
@@ -445,6 +451,22 @@ export component SettingsSheet inherits Rectangle {
                                 label: "Show the filter bar";
                                 checked <=> root.filter-bar;
                                 toggled => { root.filter-bar-changed(); }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Cell size"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                LineEdit {
+                                    width: 96px;
+                                    text <=> root.grid-cell-typed;
+                                    input-type: number;
+                                    accepted => { root.grid-cell-typed-changed(); }
+                                }
+                                Text { text: "px"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+                            }
+                            Toggle {
+                                label: "Resize with the wheel";
+                                checked <=> root.wheel-resizes;
+                                toggled => { root.wheel-resizes-changed(); }
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {

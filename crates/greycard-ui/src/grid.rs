@@ -9,8 +9,10 @@
 //! startup, so the layout there and the arithmetic here cannot drift
 //! apart.
 
-/// The gap between cells, logical pixels.
-pub const GAP: f32 = 8.0;
+/// The gap between cells, logical pixels: the theme's smallest
+/// spacing step. The rings are drawn inside a cell, so any gap keeps
+/// two neighbors' rings apart; this one is enough to see the two.
+pub const GAP: f32 = 4.0;
 /// The padding round the whole grid, logical pixels.
 pub const PAD: f32 = 12.0;
 /// The room under a cell's picture for the file's name, logical
@@ -315,17 +317,21 @@ pub fn bar_drag(height: f32, max: f32, from: f32, by: f32) -> f32 {
     (from + by * max / room).clamp(0.0, max)
 }
 
-/// The next cell size up (`by` positive) or down the steps, from
-/// whichever step the cell is nearest.
+/// The cell size `by` steps up (positive) or down: each the next of
+/// [`STEPS`] past the cell in that direction, so a size typed between
+/// two steps goes to the nearer one in the direction asked, never
+/// over it. Held at the ends.
 pub fn zoom(cell: f32, by: i32) -> f32 {
-    let mut nearest = 0;
-    for (i, s) in STEPS.iter().enumerate() {
-        if (s - cell).abs() < (STEPS[nearest] - cell).abs() {
-            nearest = i;
+    let mut cell = clamp_cell(cell);
+    for _ in 0..by.unsigned_abs() {
+        cell = if by > 0 {
+            STEPS.iter().copied().find(|&s| s > cell)
+        } else {
+            STEPS.iter().rev().copied().find(|&s| s < cell)
         }
+        .unwrap_or(cell);
     }
-    let to = (nearest as i32 + by).clamp(0, STEPS.len() as i32 - 1) as usize;
-    STEPS[to]
+    cell
 }
 
 /// A cell size from the command line or the settings file, held to
@@ -404,20 +410,20 @@ mod tests {
 
     #[test]
     fn the_visible_rows_follow_the_scroll() {
-        // 4 columns, 11 frames, 176 cells: rows are 206 apart and the
+        // 4 columns, 11 frames, 176 cells: rows are 202 apart and the
         // first begins 12 down.
         let (cols, count, cell) = (4, 11, 176.0);
-        assert_eq!(row_pitch(cell), 206.0);
+        assert_eq!(row_pitch(cell), 202.0);
         // At the top, a 500 tall sheet shows rows 0 to 2.
         assert_eq!(visible(0.0, 500.0, cell, cols, count, 0.0), Some((0, 10)));
         // Half a row down still shows the first row's top edge.
-        assert_eq!(visible(100.0, 206.0, cell, cols, count, 0.0), Some((0, 7)));
+        assert_eq!(visible(100.0, 202.0, cell, cols, count, 0.0), Some((0, 7)));
         // Scrolled past the first row exactly: the second row alone,
         // with the third's top edge.
-        assert_eq!(visible(218.0, 206.0, cell, cols, count, 0.0), Some((4, 10)));
+        assert_eq!(visible(214.0, 202.0, cell, cols, count, 0.0), Some((4, 10)));
         // Over-scrolled: the last row, not an index past the end.
         assert_eq!(
-            visible(9000.0, 206.0, cell, cols, count, 0.0),
+            visible(9000.0, 202.0, cell, cols, count, 0.0),
             Some((8, 10))
         );
         assert_eq!(visible(0.0, 0.0, cell, cols, count, 0.0), None);
@@ -427,10 +433,10 @@ mod tests {
     #[test]
     fn the_cells_cover_what_is_on_screen_and_a_row_either_side() {
         let (cols, count, cell, height) = (8, 20_000, 176.0, 773.0);
-        // 773 over a pitch of 206 is four rows and a part, and a sixth
+        // 773 over a pitch of 202 is four rows and a part, and a sixth
         // part-row as it scrolls: seven with a row either side, at any
         // offset.
-        for offset in [0.0, 5.0, 100.0, 206.0, 1000.0, 123_456.0] {
+        for offset in [0.0, 5.0, 100.0, 202.0, 1000.0, 123_456.0] {
             let (first, n) = window(offset, height, cell, cols, count, 0.0);
             assert_eq!(n, 7 * 8, "{offset}");
             let (a, b) = visible(offset, height, cell, cols, count, 0.0).unwrap();
@@ -441,7 +447,7 @@ mod tests {
         assert_eq!(window(0.0, height, cell, cols, count, 0.0).0, 0);
         // Scrolled three rows down, the window starts a row above.
         assert_eq!(
-            window(PAD + 3.0 * 206.0, height, cell, cols, count, 0.0).0,
+            window(PAD + 3.0 * 202.0, height, cell, cols, count, 0.0).0,
             2 * 8
         );
         assert_eq!(window(0.0, 0.0, cell, cols, count, 0.0), (0, 0));
@@ -454,10 +460,10 @@ mod tests {
         // The first row needs no scroll.
         assert_eq!(reveal(0.0, height, cell, cols, count, 1, 0.0), 0.0);
         // A frame below the fold comes up against the bottom edge
-        // with its padding: row 2 ends at 12 + 2*206 + 198 = 622.
+        // with its padding: row 2 ends at 12 + 2*202 + 198 = 614.
         assert_eq!(
             reveal(0.0, height, cell, cols, count, 9, 0.0),
-            622.0 + PAD - height
+            614.0 + PAD - height
         );
         // One already on screen is left where it is.
         let shown = reveal(0.0, height, cell, cols, count, 9, 0.0);
@@ -480,11 +486,11 @@ mod tests {
         assert_eq!(tile_height(cell), 88.0);
         assert_eq!(tiles_top(0, cell, cols), 0.0);
         // One tile to four: one row of 88 and its gap; a fifth wraps.
-        assert_eq!(tiles_top(1, cell, cols), 96.0);
-        assert_eq!(tiles_top(4, cell, cols), 96.0);
-        assert_eq!(tiles_top(5, cell, cols), 192.0);
+        assert_eq!(tiles_top(1, cell, cols), 92.0);
+        assert_eq!(tiles_top(4, cell, cols), 92.0);
+        assert_eq!(tiles_top(5, cell, cols), 184.0);
         // At the smallest cell the row is 48 and its gap.
-        assert_eq!(tiles_top(3, STEPS[0], cols), 56.0);
+        assert_eq!(tiles_top(3, STEPS[0], cols), 52.0);
         let top = tiles_top(2, cell, cols);
         // The scroll range grows by exactly the tiles' rows.
         assert_eq!(
@@ -505,7 +511,7 @@ mod tests {
             visible(0.0, height, cell, cols, count, 0.0)
         );
         assert_eq!(
-            window(top + PAD + 3.0 * 206.0, height, cell, cols, count, top).0,
+            window(top + PAD + 3.0 * 202.0, height, cell, cols, count, top).0,
             2 * 4
         );
         // At the top, the tiles take room the cells had: 300 tall
@@ -518,20 +524,20 @@ mod tests {
         assert_eq!(reveal(300.0, height, cell, cols, count, 2, top), 0.0);
         assert_eq!(
             reveal(0.0, height, cell, cols, count, 9, top),
-            622.0 + top + PAD - height
+            614.0 + top + PAD - height
         );
         // And back up to the second row: its top at the sheet's top
         // with the padding, the tiles above it scrolled away.
         let down = reveal(0.0, height, cell, cols, count, 39, top);
-        assert_eq!(reveal(down, height, cell, cols, count, 4, top), top + 206.0);
+        assert_eq!(reveal(down, height, cell, cols, count, 4, top), top + 202.0);
 
-        // Tiles taller than the sheet: six columns, 837 px, and 54
-        // folders make nine tile rows, 864 px. Scrolled past them, a
+        // Tiles taller than the sheet: six columns, 820 px, and 54
+        // folders make nine tile rows, 828 px. Scrolled past them, a
         // frame of the first row is shown where it is, not under the
         // tiles at the top.
-        let (cols, height) = (6, 837.0);
+        let (cols, height) = (6, 820.0);
         let top = tiles_top(54, cell, cols);
-        assert_eq!(top, 864.0);
+        assert_eq!(top, 828.0);
         let first_row_y = PAD + top;
         let at = reveal(first_row_y - PAD, height, cell, cols, count, 2, top);
         assert_eq!(at, first_row_y - PAD);
@@ -562,10 +568,10 @@ mod tests {
 
     #[test]
     fn the_slack_puts_the_cells_in_the_middle() {
-        // Two 512 cells and their gaps come to 1056 of 1500.
-        assert_eq!(slack(1500.0, 512.0, 2), (1500.0 - 1056.0) / 2.0);
-        // Eight 176 cells and their padding fill 1488 of it.
-        assert_eq!(slack(1500.0, 176.0, 8), 6.0);
+        // Two 512 cells and their gaps come to 1052 of 1500.
+        assert_eq!(slack(1500.0, 512.0, 2), (1500.0 - 1052.0) / 2.0);
+        // Eight 176 cells and their padding fill 1460 of it.
+        assert_eq!(slack(1500.0, 176.0, 8), 20.0);
         // A row wider than the window is not pulled left.
         assert_eq!(slack(200.0, 512.0, 1), 0.0);
     }
@@ -576,8 +582,15 @@ mod tests {
         assert_eq!(zoom(176.0, -1), 128.0);
         assert_eq!(zoom(512.0, 1), 512.0);
         assert_eq!(zoom(96.0, -1), 96.0);
-        // From a size that is not a step, the nearest one moves.
+        // From a size that is not a step, the next step in the
+        // direction asked, never past it.
         assert_eq!(zoom(180.0, 1), 256.0);
+        assert_eq!(zoom(174.0, 1), 176.0);
+        assert_eq!(zoom(178.0, -1), 176.0);
+        assert_eq!(zoom(174.0, -1), 128.0);
+        assert_eq!(zoom(500.0, 1), 512.0);
+        assert_eq!(zoom(100.0, -1), 96.0);
+        assert_eq!(zoom(174.0, 2), 256.0);
         assert_eq!(clamp_cell(4000.0), 512.0);
         assert_eq!(clamp_cell(1.0), 96.0);
         assert_eq!(clamp_cell(f32::NAN), CELL);

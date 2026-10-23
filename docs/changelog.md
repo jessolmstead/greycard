@@ -39,6 +39,9 @@ design note behind it.
 
 ### Library
 
+- The grid's cells sit closer; Settings > Library takes the cell size
+  as a number and can turn the wheel resize off
+  ([§410](https://github.com/jessolmstead/greycard/blob/master/docs/notes/410-the-grids-cell-by-number.md)).
 - The export sheet lists the queued sets, each with its preset or
   format, frame count, and folder, and a bin that removes one
   ([§409](https://github.com/jessolmstead/greycard/blob/master/docs/notes/409-the-export-queue-listed.md)).

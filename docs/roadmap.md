@@ -913,8 +913,9 @@ clears or a tester asks for it.
 - [ ] A toolbar of common actions, the set the user's, with the
       menu bar (pixls, 2026-10-22)
 - [ ] Scroll bars that stay, and a size for them (pixls, 2026-10-22)
-- [ ] A tighter grid; the cell size as a number and the wheel resize
-      off (pixls, 2026-10-22)
+- [ ] Grid cells shaped to the picture rather than square, so a 3:2
+      frame does not sit in 55 px of plate above and below (§410);
+      what makes the grid read loose after the gap tightened
 
 ## Blocked
 

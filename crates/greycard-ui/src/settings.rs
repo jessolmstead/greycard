@@ -64,6 +64,12 @@ pub struct Settings {
     pub one_section: bool,
     /// The grid's cell, logical pixels: the zoom it was left at.
     pub grid_cell: f32,
+    /// Whether Ctrl and the wheel size the grid's cells. On by
+    /// default; off, the wheel only scrolls, Ctrl or not, and the plus
+    /// and minus keys still size them. Written as the switch is
+    /// flipped.
+    #[serde(default = "on", deserialize_with = "bool_on_leniently")]
+    pub grid_wheel: bool,
     /// How many tiles go across the lightbox, as it was left. Held to
     /// the lightbox's own range when read.
     pub lightbox_across: i32,
@@ -467,6 +473,7 @@ impl Default for Settings {
             collapsed: Vec::new(),
             one_section: false,
             grid_cell: crate::grid::CELL,
+            grid_wheel: true,
             lightbox_across: crate::lightbox::ACROSS,
             hide_left: false,
             hide_right: false,
@@ -658,6 +665,7 @@ mod tests {
             collapsed: vec!["grain".into(), "demosaic".into()],
             one_section: true,
             grid_cell: 256.0,
+            grid_wheel: false,
             lightbox_across: 5,
             hide_left: true,
             hide_right: false,
@@ -867,6 +875,25 @@ mod tests {
             assert_eq!(read.ui_scale, 150, "{text}");
             assert_eq!(read.start_folder, "", "{text}");
             assert!(read.filter_bar, "{text}");
+        }
+    }
+
+    /// The wheel's switch: a file without it, or with a value of the
+    /// wrong kind, reads as on, and costs the rest of the file nothing.
+    #[test]
+    fn the_wheel_switch_is_read_leniently() {
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert!(read.grid_wheel);
+        let read: Settings = serde_json::from_str(r#"{"grid_wheel": false}"#).unwrap();
+        assert!(!read.grid_wheel);
+        for text in [
+            r#"{"ui_scale": 150, "grid_wheel": "no"}"#,
+            r#"{"ui_scale": 150, "grid_wheel": null}"#,
+            r#"{"ui_scale": 150, "grid_wheel": 0}"#,
+        ] {
+            let read: Settings = serde_json::from_str(text).expect(text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert!(read.grid_wheel, "{text}");
         }
     }
 

@@ -297,9 +297,17 @@ export component App inherits Window {
     in-out property <bool> grid-open: false;
     /// A cell's side, logical pixels. Rust owns the steps it takes.
     in-out property <length> grid-cell: 176px;
+    /// Whether Ctrl and the wheel size the cells (Settings, Library);
+    /// off, they only scroll.
+    in-out property <bool> wheel-resizes: true;
+    callback wheel-resizes-changed();
+    /// The cell as the Settings sheet's row has it, logical pixels as
+    /// typed; taken on Enter or as the sheet closes.
+    in-out property <string> grid-cell-typed: "";
+    callback grid-cell-typed-changed();
     /// The grid's geometry, set from the Rust side's own constants so
     /// the layout here and the arithmetic there cannot drift apart.
-    in property <length> grid-gap: 8px;
+    in property <length> grid-gap: 4px;
     in property <length> grid-pad: 12px;
     in property <length> grid-label: 22px;
     /// The sheet's size, mirrored out of it so the reveal and the
@@ -467,8 +475,11 @@ export component App inherits Window {
     /// notch is a third of a row, whatever the row is: 60 logical
     /// pixels against a 542 px row at the largest cell would be a
     /// crawl.
+    ///
+    /// With `wheel-resizes` off, Ctrl and the wheel scroll as the wheel
+    /// alone does; the plus and minus keys still size the cells.
     function grid-wheel(by: length, ctrl: bool) {
-        if (ctrl) {
+        if (ctrl && root.wheel-resizes) {
             if (root.lightbox) {
                 root.lightbox-zoom(by > 0px ? 1 : -1);
             } else {
@@ -1982,6 +1993,7 @@ export component App inherits Window {
             root.thumb-cache-cap-changed();
             root.preview-cache-cap-changed();
             root.network-poll-changed();
+            root.grid-cell-typed-changed();
         }
         // A row listening for a chord had the keys: the window's again.
         if (!root.settings-open && !root.sheet-open()) { keys.focus(); }
@@ -4616,6 +4628,10 @@ export component App inherits Window {
         start-picked(c) => { root.start-picked(c); }
         filter-bar <=> root.filter-bar;
         filter-bar-changed => { root.filter-bar-changed(); }
+        grid-cell-typed <=> root.grid-cell-typed;
+        grid-cell-typed-changed => { root.grid-cell-typed-changed(); }
+        wheel-resizes <=> root.wheel-resizes;
+        wheel-resizes-changed => { root.wheel-resizes-changed(); }
         open-frames: root.open-frames;
         sidecars-written: root.sidecars-written;
         sidecars-elsewhere: root.sidecars-elsewhere;

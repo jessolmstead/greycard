@@ -76,6 +76,18 @@ on, so the grid may show fewer frames than the folder holds; turn the
 bar back on to see or clear it. **Sort** moves to the grid's top row
 while the bar is off.
 
+### Cell size
+
+The grid's cell, in pixels, from 96 to 512; 176 by default. Type a
+size and press Enter, or close the sheet. **Ctrl+wheel**, **+** and
+**−** change it too, and the row shows where they left it.
+
+### Resize with the wheel
+
+On by default. Turn it off and **Ctrl+wheel** scrolls the grid and the
+lightbox as the wheel alone does, never resizing them. **+** and **−**
+still resize.
+
 ### Sidecars
 
 #### Edits go

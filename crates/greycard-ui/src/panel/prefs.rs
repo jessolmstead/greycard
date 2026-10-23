@@ -232,6 +232,37 @@ pub(crate) fn filter_bar_changed(st: &State, app: &App) {
     tracing::info!("filter bar {}", if on { "shown" } else { "hidden" });
 }
 
+/// The grid's cell as the Settings row shows it: whole logical
+/// pixels. The wheel and the keys set it too, and the row follows.
+pub(crate) fn show_grid_cell(app: &App) {
+    app.set_grid_cell_typed(format!("{}", app.get_grid_cell().round()).into());
+}
+
+/// The cell size as typed in the sheet: held to the grid's range and
+/// taken, the grid re-flowing; anything but a number puts the field
+/// back. The size is kept with the window's other choices, as the
+/// wheel's is.
+pub(crate) fn grid_cell_typed_changed(app: &App) {
+    let typed = app.get_grid_cell_typed();
+    let px = typed.trim().parse::<f32>().ok().filter(|px| px.is_finite());
+    if let Some(px) = px {
+        let cell = grid::clamp_cell(px.round());
+        if cell != app.get_grid_cell() {
+            app.set_grid_cell(cell);
+            tracing::info!("grid cell {cell} px");
+        }
+    }
+    show_grid_cell(app);
+}
+
+/// Ctrl and the wheel sizing the grid's cells, or only scrolling:
+/// kept as flipped.
+pub(crate) fn wheel_resizes_changed(st: &State, app: &App) {
+    let on = app.get_wheel_resizes();
+    keep(st, |s| s.grid_wheel = on);
+    tracing::info!("grid wheel {}", if on { "resizes" } else { "only scrolls" });
+}
+
 /// The settings' cap in megabytes as bytes, a number too large for
 /// that being as good as no cap at all.
 pub(crate) fn cap_bytes(mb: u64) -> u64 {
@@ -665,6 +696,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_preview_cache_cap(preview_cap_mb(&worker).to_string().into());
             let st = state.borrow();
             app.set_network_poll_minutes(poll_minutes(&st).to_string().into());
+            show_grid_cell(&app);
             app.set_sidecar_placement(placement_name(st.window.placement).into());
             app.set_xmp_sidecars(st.window.xmp_sidecars);
             app.set_jpegs_apart(st.views.jpegs_apart);
@@ -737,6 +769,24 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             filter_bar_changed(&state.borrow(), &app);
+        });
+    }
+    // The cell size typed, and the wheel's switch.
+    {
+        let app_weak = app.as_weak();
+        app.on_grid_cell_typed_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                grid_cell_typed_changed(&app);
+            }
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_wheel_resizes_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            wheel_resizes_changed(&state.borrow(), &app);
         });
     }
     // One section of the panel open at a time: kept as flipped.
@@ -1590,5 +1640,124 @@ mod tests {
                 assert!(at.y >= 0.0 && foot <= 640.0, "{category}: Done at {foot}");
             }
         }
+    }
+
+    /// The grid at 1500 by 950 over 120 frames, open on the first,
+    /// with the window's callbacks.
+    fn grid_window() -> (App, std::rc::Rc<std::cell::RefCell<State>>) {
+        let app = crate::testing::window(120);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(120));
+        app.invoke_select(0);
+        crate::testing::press(&app, "g");
+        settle(&app);
+        assert!(app.get_grid_open());
+        (app, state)
+    }
+
+    fn settle(app: &App) {
+        slint::platform::update_timers_and_animations();
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        slint::platform::update_timers_and_animations();
+    }
+
+    /// A notch of the wheel over the sheet, with Ctrl held or not.
+    fn wheel(app: &App, by: f32, ctrl: bool) {
+        use slint::platform::{Key, WindowEvent};
+        let control: slint::SharedString = Key::Control.into();
+        if ctrl {
+            app.window().dispatch_event(WindowEvent::KeyPressed {
+                text: control.clone(),
+            });
+        }
+        app.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(800.0, 500.0),
+            delta_x: 0.0,
+            delta_y: by,
+        });
+        if ctrl {
+            app.window()
+                .dispatch_event(WindowEvent::KeyReleased { text: control });
+        }
+        settle(app);
+    }
+
+    /// The Cell size row and the wheel set the one cell: a size typed
+    /// is taken, held to the grid's range, and a word put back; a
+    /// Ctrl and wheel after it shows in the row.
+    #[test]
+    fn the_cell_size_row_and_the_wheel_agree() {
+        let (app, _state) = grid_window();
+        app.invoke_settings_asked();
+        settle(&app);
+        assert_eq!(app.get_grid_cell_typed(), "176");
+        for (typed, cell) in [
+            (" 300 ", 300.0),
+            ("4000", 512.0),
+            ("10", 96.0),
+            ("200.4", 200.0),
+        ] {
+            app.set_grid_cell_typed(typed.into());
+            app.invoke_grid_cell_typed_changed();
+            assert_eq!(app.get_grid_cell(), cell, "{typed:?}");
+            assert_eq!(app.get_grid_cell_typed(), format!("{cell}"), "{typed:?}");
+        }
+        for bad in ["big", "", "inf", "NaN"] {
+            app.set_grid_cell_typed(bad.into());
+            app.invoke_grid_cell_typed_changed();
+            assert_eq!(app.get_grid_cell(), 200.0, "{bad:?} leaves the cell");
+            assert_eq!(app.get_grid_cell_typed(), "200", "{bad:?} put back");
+        }
+        // Typed and not entered: the sheet's closing takes it.
+        app.set_grid_cell_typed("360".into());
+        app.set_settings_open(false);
+        // Slint runs the changed handlers with the next event.
+        crate::testing::press(&app, slint::platform::Key::Shift);
+        settle(&app);
+        assert_eq!(app.get_grid_cell(), 360.0);
+        // The wheel steps from there, and the row follows.
+        wheel(&app, 60.0, true);
+        assert_eq!(app.get_grid_cell(), 512.0);
+        assert_eq!(app.get_grid_cell_typed(), "512");
+        wheel(&app, -60.0, true);
+        assert_eq!(app.get_grid_cell(), 360.0);
+        app.invoke_settings_asked();
+        assert_eq!(app.get_grid_cell_typed(), "360");
+    }
+
+    /// The wheel's switch off: Ctrl and the wheel scroll the grid as
+    /// the wheel alone does, the cell left as it was; plus and minus
+    /// still size it.
+    #[test]
+    fn the_wheel_switch_off_only_scrolls() {
+        let (app, _state) = grid_window();
+        assert!(app.get_wheel_resizes(), "on by default");
+        let cell = app.get_grid_cell();
+        app.set_wheel_resizes(false);
+        app.invoke_wheel_resizes_changed();
+        assert_eq!(app.get_grid_scroll(), 0.0);
+        wheel(&app, -60.0, true);
+        assert_eq!(app.get_grid_cell(), cell);
+        let scrolled = app.get_grid_scroll();
+        assert!(scrolled > 0.0, "Ctrl and the wheel scroll");
+        wheel(&app, -60.0, false);
+        assert!(app.get_grid_scroll() > scrolled, "the wheel alone too");
+        assert_eq!(app.get_grid_cell(), cell);
+        crate::testing::press(&app, "+");
+        settle(&app);
+        assert_eq!(
+            app.get_grid_cell(),
+            grid::zoom(cell, 1),
+            "the keys still size"
+        );
+        // Back on, Ctrl and the wheel size the cells again.
+        app.set_wheel_resizes(true);
+        app.invoke_wheel_resizes_changed();
+        wheel(&app, -60.0, true);
+        assert_eq!(app.get_grid_cell(), cell);
     }
 }

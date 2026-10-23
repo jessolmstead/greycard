@@ -1815,7 +1815,7 @@ mod tests {
         crate::testing::press(&app, slint::platform::Key::Shift);
         // Six columns beside the pane; one tile row, 88 and its gap.
         let top = crate::grid::tiles_top(1, 176.0, 6);
-        assert_eq!(top, 96.0);
+        assert_eq!(top, 92.0);
         assert_eq!(seen.borrow().last().map(|r| (r.2, r.3)), Some((6, top)));
         // The tile at the sheet's first place: under the header (145)
         // and the padding, at the pane's edge (240), the padding and
@@ -1827,7 +1827,7 @@ mod tests {
         assert_eq!((size.width, size.height), (176.0, 88.0));
         // A frame's cell, a tile row lower: a click on the third opens
         // it.
-        let cell = |i: f32| (x0 + i * 184.0 + 88.0, y0 + top + 88.0);
+        let cell = |i: f32| (x0 + i * 180.0 + 88.0, y0 + top + 88.0);
         let (x, y) = cell(2.0);
         click(&app, x, y);
         assert_eq!(app.get_selected(), 2);

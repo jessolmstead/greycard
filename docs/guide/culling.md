@@ -223,9 +223,10 @@ as the filter leaves it and in the grid's
 [collection](library.md#collections), or only your picks (the
 **Pick** chip, then **L**).
 
-- **+** and **−**, or **Ctrl+wheel**, set how many frames go across,
-  from two to six. It starts at four, and greycard keeps your choice
-  for the next session.
+- **+** and **−**, or **Ctrl+wheel** while
+  [Resize with the wheel](settings.md#resize-with-the-wheel) is on,
+  set how many frames go across, from two to six. It starts at four,
+  and greycard keeps your choice for the next session.
 - The arrow keys, **Home** and **End** move through the frames. A ring
   marks the frame you are on, and a thinner one the rest of the
   selection.
