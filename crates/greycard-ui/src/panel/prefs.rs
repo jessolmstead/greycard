@@ -148,6 +148,90 @@ pub(crate) fn keep(st: &State, change: impl FnOnce(&mut settings::Settings)) {
     kept.save();
 }
 
+/// The Start in row's words for its two choices, in its order.
+pub(crate) const START_LAST: &str = "Last folder";
+pub(crate) const START_CHOSEN: &str = "Chosen folder";
+
+/// The Start in row as the settings keep it: its choice, and the
+/// chosen folder as shown, the home folder short.
+pub(crate) fn show_start(app: &App, chosen: &str) {
+    if chosen.is_empty() {
+        app.set_start_choice(START_LAST.into());
+        app.set_start_folder("".into());
+    } else {
+        app.set_start_choice(START_CHOSEN.into());
+        app.set_start_folder(crate::report::path_shown(Path::new(chosen)).into());
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What the Start in chooser answers in a test, in place of
+    /// asking: `Some(folder)`, or none (and when nothing is set) a
+    /// cancel.
+    pub(crate) static START_CHOSEN_IN_TEST: RefCell<Option<Option<PathBuf>>> =
+        const { RefCell::new(None) };
+}
+
+/// A click on the Start in row: the last folder taken at once; a
+/// chosen one asked of the desktop's folder chooser, opening on the
+/// folder chosen before, and taken when one is picked. A cancel leaves
+/// the row as it was.
+fn start_picked(st: &State, app: &App, choice: &str) {
+    if choice != START_CHOSEN {
+        keep(st, |s| s.start_folder.clear());
+        show_start(app, "");
+        tracing::info!("a launch opens the last folder");
+        return;
+    }
+    let batch = st.window.batch;
+    let take = move |app: &App, chosen: anyhow::Result<Option<PathBuf>>| match chosen {
+        Ok(Some(dir)) => {
+            let dir = dir.to_string_lossy().into_owned();
+            if !batch && !cfg!(test) {
+                let mut kept = settings::Settings::load();
+                kept.start_folder = dir.clone();
+                kept.save();
+            }
+            tracing::info!("a launch opens {dir}");
+            show_start(app, &dir);
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!("file chooser: {e:#}");
+            app.set_settings_note(chooser::chooser_failed(&e).into());
+        }
+    };
+    #[cfg(test)]
+    {
+        let answer = START_CHOSEN_IN_TEST
+            .with(|c| c.borrow_mut().take())
+            .flatten();
+        take(app, Ok(answer));
+    }
+    #[cfg(not(test))]
+    {
+        let kept = settings::Settings::load().start_folder;
+        let start = Some(PathBuf::from(kept))
+            .filter(|p| !p.as_os_str().is_empty())
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(|| PathBuf::from("/"));
+        let weak = app.as_weak();
+        chooser::choose_folder("Start in", start, move |chosen| {
+            let _ = weak.upgrade_in_event_loop(move |app| take(&app, chosen));
+        });
+    }
+}
+
+/// The filter bar shown or put away, over the grid and in culling's
+/// section alike: kept as flipped. The filter it holds is the state's
+/// and goes on applying either way.
+pub(crate) fn filter_bar_changed(st: &State, app: &App) {
+    let on = app.get_filter_bar();
+    keep(st, |s| s.filter_bar = on);
+    tracing::info!("filter bar {}", if on { "shown" } else { "hidden" });
+}
+
 /// The settings' cap in megabytes as bytes, a number too large for
 /// that being as good as no cap at all.
 pub(crate) fn cap_bytes(mb: u64) -> u64 {
@@ -571,6 +655,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_xmp_sidecars(st.window.xmp_sidecars);
             app.set_jpegs_apart(st.views.jpegs_apart);
             app.set_crop_start(st.develop.crop_start.name().into());
+            show_start(&app, &settings::Settings::load().start_folder);
             app.set_settings_note("".into());
             // A Check now still on its way keeps its "Checking...".
             if !app.get_update_checking() {
@@ -618,6 +703,26 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             jpegs_apart_changed(&state, &app, &worker, app.get_jpegs_apart());
+        });
+    }
+    // Where a launch opens: the last folder, or one chosen.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_start_picked(move |choice| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            start_picked(&state.borrow(), &app, &choice);
+        });
+    }
+    // The filter bar shown or not: kept as flipped.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_filter_bar_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            filter_bar_changed(&state.borrow(), &app);
         });
     }
     // One section of the panel open at a time: kept as flipped.
@@ -928,6 +1033,82 @@ mod tests {
         click_on("125%");
         assert_eq!(crate::testing::count_labeled(&app, BY_HAND), 1);
         assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
+    }
+
+    /// Start in: the last folder until a folder is chosen; a click on
+    /// Chosen folder asks, a cancel leaves the row as it was, a folder
+    /// picked is shown, and Last folder goes back.
+    #[test]
+    fn the_start_row_takes_a_chosen_folder_or_the_last() {
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_settings_category("Library".into());
+        app.invoke_settings_asked();
+        assert_eq!(app.get_start_choice(), START_LAST);
+        assert_eq!(crate::testing::count_labeled(&app, "Start in"), 1);
+        assert_eq!(crate::testing::count_labeled(&app, START_CHOSEN), 1);
+        // Canceled: still the last folder.
+        app.invoke_start_picked(START_CHOSEN.into());
+        assert_eq!(app.get_start_choice(), START_LAST);
+        // A folder picked, shown under the row.
+        let dir = scratch("start");
+        START_CHOSEN_IN_TEST.with(|c| *c.borrow_mut() = Some(Some(dir.clone())));
+        app.invoke_start_picked(START_CHOSEN.into());
+        assert_eq!(app.get_start_choice(), START_CHOSEN);
+        let shown = crate::report::path_shown(&dir);
+        assert_eq!(app.get_start_folder(), shown.as_str());
+        assert_eq!(crate::testing::count_labeled(&app, &shown), 1);
+        // Back to the last folder: the path goes.
+        app.invoke_start_picked(START_LAST.into());
+        assert_eq!(app.get_start_choice(), START_LAST);
+        assert_eq!(crate::testing::count_labeled(&app, &shown), 0);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The filter bar's switch: off, the bar is gone from the grid's
+    /// header and from culling's section, and the filter set still
+    /// holds; on, it is back in both.
+    #[test]
+    fn the_filter_bar_switch_hides_the_bar_in_the_grid_and_in_culling() {
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_filter_on(true);
+        const TIP: &str = "Sort: Name, A to Z";
+        app.set_sort_menu(SortMenu {
+            tip: TIP.into(),
+            ..Default::default()
+        });
+        // "Save..." is the grid's bar's alone; the Sort button is the
+        // bar's, and the header's top row's while the bar is away.
+        app.set_grid_open(true);
+        let grid_on = crate::testing::count_labeled(&app, "Save...");
+        assert_eq!(grid_on, 1);
+        assert_eq!(crate::testing::count_labeled(&app, TIP), 1);
+        let (bar_sort, _) = crate::testing::labeled(&app, TIP);
+        app.set_filter_bar(false);
+        app.invoke_filter_bar_changed();
+        assert_eq!(crate::testing::count_labeled(&app, "Save..."), 0);
+        assert_eq!(crate::testing::count_labeled(&app, TIP), 1, "Sort stays");
+        let (row_sort, _) = crate::testing::labeled(&app, TIP);
+        assert!(row_sort.y < bar_sort.y, "on the top row: {row_sort:?}");
+        assert!(app.get_filter_on(), "the filter still applies");
+        app.set_filter_bar(true);
+        app.invoke_filter_bar_changed();
+        assert_eq!(crate::testing::count_labeled(&app, "Save..."), 1);
+        assert_eq!(crate::testing::count_labeled(&app, TIP), 1);
+        // Culling's section, with its "Show" over a stacked bar.
+        app.set_grid_open(false);
+        app.set_panel_tab(crate::panel::cull::CULL_TAB.into());
+        let cull_on = crate::testing::count_labeled(&app, "Stars");
+        assert!(cull_on >= 1, "the stacked bar's Stars");
+        app.set_filter_bar(false);
+        app.invoke_filter_bar_changed();
+        assert_eq!(crate::testing::count_labeled(&app, "Stars"), cull_on - 1);
+        assert!(app.get_filter_on(), "the filter still applies");
+        // The filter key, with no bar to send it to, opens nothing.
+        app.invoke_filter_asked();
+        assert!(!app.get_grid_open());
+        drop(state);
     }
 
     /// About: the version, and the folders the run keeps its files in,

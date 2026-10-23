@@ -5,7 +5,7 @@
 import { Theme } from "../theme.slint";
 import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile, SortMenu } from "../structs.slint";
 import { PanelButton, ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
-import { FilterBar } from "filter.slint";
+import { FilterBar, SortButton } from "filter.slint";
 import { LoadingCard } from "loading.slint";
 
 export component GridSheet inherits Rectangle {
@@ -142,6 +142,9 @@ export component GridSheet inherits Rectangle {
     in-out property <int> filter-shown;
     in-out property <int> filter-total;
     in-out property <bool> filter-on;
+    /// Whether the filter bar is shown under the header's top row;
+    /// off, the header is that row alone and the filter still applies.
+    in property <bool> filter-bar: true;
     in-out property <bool> filter-focus;
     in property <[FacetRow]> filter-facets-long;
     in property <[FacetRow]> filter-facets-short;
@@ -234,8 +237,10 @@ export component GridSheet inherits Rectangle {
             // facets' rows are there before the index has anything to
             // put in them for the same reason, and a row the folder
             // has no facet for leaves its room empty.
-            height: root.lightbox ? 0px : 2 * Theme.control-height + 2 * (Theme.control-height - 4px)
-                + 5 * Theme.space-2 + 1px;
+            height: root.lightbox ? 0px
+                : root.filter-bar ? 2 * Theme.control-height + 2 * (Theme.control-height - 4px)
+                    + 5 * Theme.space-2 + 1px
+                : Theme.control-height + 2 * Theme.space-2 + 1px;
             clip: true;
             background: Theme.surface;
             Rectangle { y: parent.height - 1px; height: 1px; width: 100%; background: Theme.border; }
@@ -377,8 +382,20 @@ export component GridSheet inherits Rectangle {
                         icon: @image-url("../icons/grid-2x2.svg");
                         clicked => { root.focus-keys(); root.lightbox-asked(); }
                     }
+                    // The bar put away: its Sort button here instead,
+                    // the one way to change the order.
+                    if !root.filter-bar: SortButton {
+                        sort: root.sort-menu;
+                        sort-shown <=> root.sort-shown;
+                        picked(i) => { root.sort-picked(i); }
+                        turned(d) => { root.sort-turned(d); }
+                        released => { root.focus-keys(); }
+                    }
                 }
-                FilterBar {
+                // Made and unmade by an `if`, unlike the header: the
+                // bar comes and goes only from the Settings sheet, and
+                // the one re-flow then is the change asked for.
+                if root.filter-bar: FilterBar {
                     takes-focus: true;
                     wanted <=> root.filter-focus;
                     stars: root.filter-stars;

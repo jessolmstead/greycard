@@ -2069,6 +2069,15 @@ export component App inherits Window {
     /// sections folds the others (`Folds`).
     in-out property <bool> one-section <=> Folds.one-open;
     callback one-section-changed();
+    /// The Settings sheet's Start in: "Last folder" or "Chosen
+    /// folder", the chosen folder as shown, and a click on either.
+    in-out property <string> start-choice: "Last folder";
+    in property <string> start-folder: "";
+    callback start-picked(string);
+    /// The Settings sheet's switch: the filter bar shown, over the
+    /// grid and in culling's section.
+    in-out property <bool> filter-bar: true;
+    callback filter-bar-changed();
     callback update-check-now();
     in property <string> update-note: "";
     in property <bool> update-checking: false;
@@ -2967,6 +2976,7 @@ export component App inherits Window {
                             filter-shown <=> root.filter-shown;
                             filter-total <=> root.filter-total;
                             filter-on <=> root.filter-on;
+                            filter-bar: root.filter-bar;
                             filter-focus <=> root.filter-focus;
                             filter-facets: root.filter-facets;
                             filter-facet-note: root.filter-facet-note;
@@ -3706,6 +3716,7 @@ export component App inherits Window {
         filter-shown <=> root.filter-shown;
         filter-total <=> root.filter-total;
         filter-on <=> root.filter-on;
+        filter-bar: root.filter-bar;
         filter-focus <=> root.filter-focus;
         filter-facets-long: root.filter-facets-long;
         filter-facets-short: root.filter-facets-short;
@@ -4558,6 +4569,11 @@ export component App inherits Window {
         ui-scale-changed => { root.ui-scale-changed(); }
         one-section <=> root.one-section;
         one-section-changed => { root.one-section-changed(); }
+        start-choice <=> root.start-choice;
+        start-folder: root.start-folder;
+        start-picked(c) => { root.start-picked(c); }
+        filter-bar <=> root.filter-bar;
+        filter-bar-changed => { root.filter-bar-changed(); }
         open-frames: root.open-frames;
         sidecars-written: root.sidecars-written;
         sidecars-elsewhere: root.sidecars-elsewhere;

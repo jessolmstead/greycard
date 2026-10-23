@@ -129,6 +129,19 @@ pub struct Settings {
     /// stays until newer ones push it off the end; choosing it says
     /// it is gone rather than taking it out behind the user's back.
     pub recent_folders: Vec<String>,
+    /// The folder a launch with no path opens, as chosen in the
+    /// Settings sheet; empty for the last folder, the last file's, which
+    /// is what every earlier build opened. Taken as written, with no `~`
+    /// made a home; one gone from the disk opens the last folder
+    /// instead ([`start_listing`]). Written as it is chosen.
+    #[serde(deserialize_with = "string_leniently")]
+    pub start_folder: String,
+    /// Whether the filter bar is shown, over the grid and in culling's
+    /// section. On by default; off, the bar's room goes to the frames,
+    /// and a filter set before still applies. Written as the switch
+    /// is flipped.
+    #[serde(default = "on", deserialize_with = "bool_on_leniently")]
+    pub filter_bar: bool,
     /// Whether a folder chosen in a root's tree in the left pane opens
     /// with the frames of the folders under it too, or only its own.
     /// Off by default: a folder's own frames are the cheap way into a
@@ -233,6 +246,66 @@ where
     }
     tracing::warn!("settings: settings_category is {value}, not a category; the first");
     Ok(CATEGORIES[0].into())
+}
+
+fn on() -> bool {
+    true
+}
+
+/// A string field of a file edited by hand: anything but a string
+/// reads as empty, its default, and costs the rest nothing.
+fn string_leniently<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Ok(s),
+        other => {
+            tracing::warn!("settings: {other} is not a string; empty");
+            Ok(String::new())
+        }
+    }
+}
+
+/// A switch that is on by default, from a file edited by hand:
+/// anything but `true` or `false` reads as on.
+fn bool_on_leniently<'de, D>(d: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Bool(b) => Ok(b),
+        other => {
+            tracing::warn!("settings: {other} is not a switch; on");
+            Ok(true)
+        }
+    }
+}
+
+/// The frames a launch with no path opens: the `chosen` folder's, as
+/// `list` finds them, while it is a folder on the disk with frames in
+/// it, else the `last` folder's, the last file's; none when neither has
+/// any. Empty is no choice. A chosen folder gone (a drive unplugged, a
+/// shoot moved) or empty (a card's folder emptied after each import)
+/// is said in the log and the last folder opened, so the launch is
+/// neither an empty window nor the chooser over it.
+pub fn start_listing<T>(
+    chosen: &str,
+    last: Option<&std::path::Path>,
+    list: impl Fn(&std::path::Path) -> Option<Vec<T>>,
+) -> Option<Vec<T>> {
+    let listed = |dir: &std::path::Path| list(dir).filter(|frames| !frames.is_empty());
+    if !chosen.is_empty() {
+        let dir = std::path::Path::new(chosen);
+        if !dir.is_dir() {
+            tracing::info!("start folder {chosen} is not there; the last folder");
+        } else if let Some(frames) = listed(dir) {
+            return Some(frames);
+        } else {
+            tracing::info!("start folder {chosen} has no frames; the last folder");
+        }
+    }
+    last.and_then(listed)
 }
 
 /// The `keys` of a file edited by hand: each string kept, anything
@@ -374,6 +447,8 @@ impl Default for Settings {
             rawtherapee_answered: Vec::new(),
             last_file: String::new(),
             recent_folders: Vec::new(),
+            start_folder: String::new(),
+            filter_bar: true,
             folder_tree_subfolders: false,
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
             preview_cache_mb: greycard_library::thumbs::DEFAULT_PREVIEW_CAP / (1024 * 1024),
@@ -563,6 +638,8 @@ mod tests {
             export_last_folder: "/home/x/Pictures/out".into(),
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
+            start_folder: "~/Pictures/start".into(),
+            filter_bar: false,
             folder_tree_subfolders: true,
             thumb_cache_mb: 1024,
             preview_cache_mb: 20000,
@@ -731,6 +808,90 @@ mod tests {
         }
         assert_eq!(category_named("Editing"), "Editing");
         assert_eq!(category_named("keys"), "Interface");
+    }
+
+    /// The start folder and the filter bar's switch: a file without
+    /// them is the last folder and the bar shown; a value of the wrong
+    /// kind reads as the same and costs the rest of the file nothing.
+    #[test]
+    fn the_start_folder_and_the_filter_bar_are_read_leniently() {
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(read.start_folder, "");
+        assert!(read.filter_bar);
+        let read: Settings =
+            serde_json::from_str(r#"{"start_folder": "/p/start", "filter_bar": false}"#).unwrap();
+        assert_eq!(read.start_folder, "/p/start");
+        assert!(!read.filter_bar);
+        for text in [
+            r#"{"ui_scale": 150, "start_folder": 3, "filter_bar": "no"}"#,
+            r#"{"ui_scale": 150, "start_folder": null, "filter_bar": null}"#,
+            r#"{"ui_scale": 150, "start_folder": ["/p"], "filter_bar": 0}"#,
+        ] {
+            let read: Settings = serde_json::from_str(text).expect(text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert_eq!(read.start_folder, "", "{text}");
+            assert!(read.filter_bar, "{text}");
+        }
+    }
+
+    /// The frames a launch opens: the chosen folder's while it is
+    /// there with frames in it, else the last folder's; no choice is
+    /// the last, and neither is nothing.
+    #[test]
+    fn the_start_folder_falls_back_to_the_last_one() {
+        let dir = std::env::temp_dir().join(format!("greycard-start-{}", std::process::id()));
+        let chosen = dir.join("chosen");
+        std::fs::create_dir_all(&chosen).unwrap();
+        let last = std::path::Path::new("/p/last");
+        // A folder's frames by its name, the chosen one's set per case.
+        let frames = |chosen_has: bool| {
+            let chosen = chosen.clone();
+            move |d: &std::path::Path| -> Option<Vec<PathBuf>> {
+                if d == chosen {
+                    Some(if chosen_has {
+                        vec![d.join("a.CR3")]
+                    } else {
+                        Vec::new()
+                    })
+                } else if d == std::path::Path::new("/p/last") {
+                    Some(vec![d.join("b.CR3")])
+                } else {
+                    None
+                }
+            }
+        };
+        let in_chosen = Some(vec![chosen.join("a.CR3")]);
+        let in_last = Some(vec![last.join("b.CR3")]);
+        let chosen_text = chosen.to_string_lossy();
+        assert_eq!(
+            start_listing(&chosen_text, Some(last), frames(true)),
+            in_chosen
+        );
+        assert_eq!(start_listing(&chosen_text, None, frames(true)), in_chosen);
+        assert_eq!(start_listing("", Some(last), frames(true)), in_last);
+        assert_eq!(start_listing("", None, frames(true)), None);
+        // There, but no frames in it: the last folder, or nothing.
+        assert_eq!(
+            start_listing(&chosen_text, Some(last), frames(false)),
+            in_last
+        );
+        assert_eq!(start_listing(&chosen_text, None, frames(false)), None);
+        // A file is no folder to open.
+        let file = dir.join("a.CR3");
+        std::fs::write(&file, b"raw").unwrap();
+        assert_eq!(
+            start_listing(&file.to_string_lossy(), Some(last), frames(true)),
+            in_last
+        );
+        // Gone from the disk: the last folder, or nothing.
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            start_listing(&chosen_text, Some(last), frames(true)),
+            in_last
+        );
+        assert_eq!(start_listing(&chosen_text, None, frames(true)), None);
+        // A `~` is not made a home: taken as written, and not there.
+        assert_eq!(start_listing("~", Some(last), frames(true)), in_last);
     }
 
     #[test]

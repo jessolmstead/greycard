@@ -27,6 +27,9 @@ export component CullSection inherits Section {
     in-out property <int> filter-total;
     in-out property <bool> filter-on;
     in-out property <bool> filter-focus;
+    /// Whether the filter bar is shown here; off, the filter set
+    /// still applies.
+    in property <bool> filter-bar: true;
     in property <[FacetRow]> filter-facets;
     in property <string> filter-facet-note;
     callback filter-facet-toggled(int, string);
@@ -110,13 +113,13 @@ export component CullSection inherits Section {
     // a group of chips to a row: the panel is
     // 320px wide and the header's one row
     // would not fit in it.
-    Text {
+    if root.filter-bar: Text {
         text: "Show";
         color: Theme.text;
         font-size: Theme.font-sm;
         vertical-alignment: center;
     }
-    FilterBar {
+    if root.filter-bar: FilterBar {
         stacked: true;
         takes-focus: !root.grid-open;
         wanted <=> root.filter-focus;

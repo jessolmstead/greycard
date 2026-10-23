@@ -137,6 +137,61 @@ component FacetChips inherits Rectangle {
     }
 }
 
+// The Sort button and its menu: at the end of the filter bar, and on
+// the grid's top row while the bar is put away. The button says what
+// the list is by and which way up, and opens the menu.
+export component SortButton inherits PanelButton {
+    in property <SortMenu> sort;
+    /// Raised from Rust, for a snapshot of the menu open: the button
+    /// on screen opens it and puts this back.
+    in-out property <bool> sort-shown;
+    in property <bool> takes-focus: true;
+    callback picked(int);
+    callback turned(bool);
+    callback released();
+    property <bool> want: root.sort-shown && root.takes-focus;
+    changed want => {
+        if (self.want) {
+            root.sort-shown = false;
+            sort-menu.show({ x: 0, y: self.height });
+        }
+    }
+    // A picture and no words, so the header's row keeps its chips at
+    // the editor's default width: the arrows say which way up, the tip
+    // at the pointer what by, and the menu checks both.
+    words: root.sort.tip;
+    icon: root.sort.ways.length == 0 ? @image-url("../icons/arrow-up-down.svg")
+        : root.sort.descending ? @image-url("../icons/arrow-down-wide-narrow.svg")
+        : @image-url("../icons/arrow-up-narrow-wide.svg");
+    width: Theme.control-height;
+    accessible-role: button;
+    accessible-label: root.sort.tip;
+    clicked => {
+        root.released();
+        sort-menu.show({ x: 0, y: self.height });
+    }
+    sort-menu := ContextMenuArea {
+        width: 0px;
+        height: 0px;
+        enabled: false;
+        Menu {
+            for name[i] in root.sort.entries: MenuItem {
+                title: name;
+                checkable: true;
+                checked: i == root.sort.checked;
+                activated => { root.picked(i); }
+            }
+            if root.sort.ways.length > 0: MenuSeparator { }
+            for way[i] in root.sort.ways: MenuItem {
+                title: way;
+                checkable: true;
+                checked: (i == 1) == root.sort.descending;
+                activated => { root.turned(i == 1); }
+            }
+        }
+    }
+}
+
 // The browser's filter: the rating chips and how they read, the flag
 // chips, the label chips, the facets (the EXIF's, the keyword and
 // the file's kind), and words or terms looked for. In the grid's
@@ -412,49 +467,13 @@ export component FilterBar inherits Rectangle {
             }
             // The order, last on the row: the button says what the
             // list is by and which way up, and opens the menu.
-            sort-button := PanelButton {
-                property <bool> want: root.sort-shown && root.takes-focus;
-                changed want => {
-                    if (self.want) {
-                        root.sort-shown = false;
-                        sort-menu.show({ x: 0, y: self.height });
-                    }
-                }
-                // A picture and no words, so the header's row keeps its
-                // chips at the editor's default width: the arrows say
-                // which way up, the tip at the pointer what by, and the
-                // menu checks both.
-                words: root.sort.tip;
-                icon: root.sort.ways.length == 0 ? @image-url("../icons/arrow-up-down.svg")
-                    : root.sort.descending ? @image-url("../icons/arrow-down-wide-narrow.svg")
-                    : @image-url("../icons/arrow-up-narrow-wide.svg");
-                width: Theme.control-height;
-                accessible-role: button;
-                accessible-label: root.sort.tip;
-                clicked => {
-                    root.released();
-                    sort-menu.show({ x: 0, y: self.height });
-                }
-                sort-menu := ContextMenuArea {
-                    width: 0px;
-                    height: 0px;
-                    enabled: false;
-                    Menu {
-                        for name[i] in root.sort.entries: MenuItem {
-                            title: name;
-                            checkable: true;
-                            checked: i == root.sort.checked;
-                            activated => { root.sort-picked(i); }
-                        }
-                        if root.sort.ways.length > 0: MenuSeparator { }
-                        for way[i] in root.sort.ways: MenuItem {
-                            title: way;
-                            checkable: true;
-                            checked: (i == 1) == root.sort.descending;
-                            activated => { root.sort-turned(i == 1); }
-                        }
-                    }
-                }
+            SortButton {
+                sort: root.sort;
+                sort-shown <=> root.sort-shown;
+                takes-focus: root.takes-focus;
+                picked(i) => { root.sort-picked(i); }
+                turned(d) => { root.sort-turned(d); }
+                released => { root.released(); }
             }
         }
         // The first row also carries the note, before its chips: the

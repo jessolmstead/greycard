@@ -2668,6 +2668,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // opened over it. Every other tab goes to the grid,
             // whose header always has the chips; and when the grid
             // is already up, its bar is the one that answers.
+            // The bar put away in the Settings sheet: no field to
+            // send the key to, and an ask left standing would take the
+            // focus the moment the bar came back.
+            if !app.get_filter_bar() {
+                tracing::info!("filter key: the filter bar is hidden");
+                return;
+            }
             if !app.get_grid_open() {
                 if app.get_panel_tab() == CULL_TAB {
                     app.set_collapsed_culling(false);

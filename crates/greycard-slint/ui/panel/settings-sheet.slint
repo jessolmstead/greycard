@@ -2,7 +2,8 @@
 // a picture, over everything until closed, in five categories down its
 // left side, one shown at a time. Interface: the scale, which applies
 // at the next start, and whether opening a panel section folds the
-// rest. Library: where the sidecars go and whether an XMP goes beside
+// rest. Library: the folder a launch opens and whether the filter bar
+// shows; where the sidecars go and whether an XMP goes beside
 // them; with frames open, the move that puts their sidecars where the
 // setting says now, since flipping it moves nothing by itself; whether
 // the camera's JPEG beside a raw is a frame of its own; the thumbnail
@@ -30,6 +31,16 @@ export component SettingsSheet inherits Rectangle {
     /// Opening one of the panel's sections folds the others.
     in-out property <bool> one-section;
     callback one-section-changed();
+    /// Where a launch opens: "Last folder" or "Chosen folder", as the
+    /// row spells it, and the chosen folder as shown. The host sets
+    /// the choice once the chooser answers: a click on "Chosen folder"
+    /// asks for one, again whenever it is clicked.
+    in-out property <string> start-choice;
+    in property <string> start-folder;
+    callback start-picked(string);
+    /// Whether the filter bar is shown, over the grid and in culling.
+    in-out property <bool> filter-bar;
+    callback filter-bar-changed();
     /// "Beside the raw" or "Hidden folder", as the row spells it.
     in-out property <string> sidecar-placement;
     in-out property <bool> xmp-sidecars;
@@ -369,6 +380,34 @@ export component SettingsSheet inherits Rectangle {
                             padding-right: Theme.space-5 + Theme.scrollbar-band;
                             padding-bottom: Theme.space-2;
                             spacing: Theme.space-3;
+                            Text {
+                                text: "LIBRARY";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Start in"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Segmented {
+                                    options: ["Last folder", "Chosen folder"];
+                                    current: root.start-choice;
+                                    picks: false;
+                                    selected(c) => { root.start-picked(c); }
+                                }
+                            }
+                            if root.start-choice == "Chosen folder": Text {
+                                text: root.start-folder;
+                                font-size: Theme.font-xs;
+                                color: Theme.text-secondary;
+                                wrap: word-wrap;
+                            }
+                            Toggle {
+                                label: "Show the filter bar";
+                                checked <=> root.filter-bar;
+                                toggled => { root.filter-bar-changed(); }
+                            }
+                            Rectangle { height: Theme.space-1; }
                             Text {
                                 text: "SIDECARS";
                                 font-size: Theme.font-xs;

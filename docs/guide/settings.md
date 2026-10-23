@@ -46,6 +46,27 @@ next section opens.
 
 ## Library
 
+### Start in
+
+Where greycard opens when you start it without naming a folder.
+
+| Choice | Opens |
+|---|---|
+| **Last folder** (default) | The folder of the frame you last had open |
+| **Chosen folder** | The folder you pick in the chooser it opens, shown under the row |
+
+Click **Chosen folder** again to pick another. If that folder is gone,
+say on a drive that is unplugged, or holds no raws, greycard opens the
+last folder instead.
+
+### Show the filter bar
+
+On by default. Turn it off and the filter bar leaves the grid's header
+and the Cull tab, and the grid takes its room. A filter you set stays
+on, so the grid may show fewer frames than the folder holds; turn the
+bar back on to see or clear it. **Sort** moves to the grid's top row
+while the bar is off.
+
 ### Sidecars
 
 #### Edits go

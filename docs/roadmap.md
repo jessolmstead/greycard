@@ -917,9 +917,8 @@ clears or a tester asks for it.
       app (export format, canvas grey, color spaces) listed there too;
       the sheet has its categories since §401 (pixls, 2026-10-22)
 - [ ] Scroll bars that stay, and a size for them (pixls, 2026-10-22)
-- [ ] The folder to open at start, instead of the last one; a tighter
-      grid; the cell size as a number and the wheel resize off; hide
-      the filter bar (pixls, 2026-10-22)
+- [ ] A tighter grid; the cell size as a number and the wheel resize
+      off (pixls, 2026-10-22)
 - [ ] The export queue shown and edited: its sets listed, one removed
       (pixls, 2026-10-22)
 

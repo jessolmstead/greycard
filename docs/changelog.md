@@ -32,6 +32,10 @@ design note behind it.
 
 ### Library
 
+- Settings can name the folder to open at start instead of the last
+  one, and hide the filter bar; Sort moves to the grid's header
+  while it is hidden
+  ([§403](https://github.com/jessolmstead/greycard/blob/master/docs/notes/403-a-start-folder-and-the-bar-hidden.md)).
 - A Lightroom catalog import reads about one fiftieth of what it did
   from each raw (1.6 MB of a 45 MB CR3), writes four sidecars at a
   time, shows a bar in its sheet, says how far it is on the command

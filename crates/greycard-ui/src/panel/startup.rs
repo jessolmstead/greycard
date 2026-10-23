@@ -132,12 +132,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         None if cli.all_roots || !cli.roots.is_empty() => {
             (Vec::new(), crate::roots::Select::Row(0))
         }
+        // The folder the Settings sheet names to start in while it is
+        // there with frames in it, else the last file's.
         None => {
-            let from_last = last_file
-                .as_deref()
-                .and_then(Path::parent)
-                .and_then(|dir| files::list_files(dir, remembered.jpegs_apart).ok())
-                .filter(|files| !files.is_empty());
+            let last_dir = last_file.as_deref().and_then(Path::parent);
+            let from_last = settings::start_listing(&remembered.start_folder, last_dir, |dir| {
+                files::list_files(dir, remembered.jpegs_apart).ok()
+            });
             match from_last {
                 Some(files) => (files, crate::roots::Select::Last(last_file.clone())),
                 None => (Vec::new(), crate::roots::Select::Row(0)),
@@ -384,6 +385,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     };
     app.set_canvas_choice(render::canvas_choice(&remembered.canvas_color));
     app.set_one_section(remembered.one_section);
+    app.set_filter_bar(remembered.filter_bar);
     if remembered.curve_mode == PARAMETRIC {
         app.set_curve_mode(PARAMETRIC.into());
     }
@@ -1676,6 +1678,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         let kept = settings::Settings::load();
         settings.last_file = kept.last_file;
         settings.recent_folders = kept.recent_folders;
+        settings.start_folder = kept.start_folder;
+        settings.filter_bar = kept.filter_bar;
         settings.folder_tree_subfolders = kept.folder_tree_subfolders;
         settings.xmp_sidecars = kept.xmp_sidecars;
         settings.sidecars_in_folder = kept.sidecars_in_folder;
@@ -2214,6 +2218,9 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         last_file: String::new(),
         // Written as each folder opens.
         recent_folders: Vec::new(),
+        // Written as the Settings sheet's rows are chosen.
+        start_folder: String::new(),
+        filter_bar: true,
         // Written as the tree's switch is flipped.
         folder_tree_subfolders: false,
         // Not the panel's either: the settings file is where it is set.
