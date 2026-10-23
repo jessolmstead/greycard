@@ -153,7 +153,7 @@ export component LightroomSheet inherits Rectangle {
                 text: root.lr-note;
                 wrap: word-wrap;
                 font-size: Theme.font-sm;
-                color: Theme.label-red;
+                color: Theme.warn-red;
             }
             // The one thing that can lose work, over the summary.
             if root.lr-step > 0 && root.lr-warning != "": VerticalLayout {
@@ -162,7 +162,7 @@ export component LightroomSheet inherits Rectangle {
                     text: root.lr-warning;
                     wrap: word-wrap;
                     font-size: Theme.font-sm;
-                    color: Theme.label-red;
+                    color: Theme.warn-red;
                 }
                 Text {
                     text: root.lr-remedy;
@@ -218,7 +218,7 @@ export component LightroomSheet inherits Rectangle {
                                         }
                                         Text {
                                             text: r.state;
-                                            color: r.taken ? Theme.text-secondary : Theme.label-red;
+                                            color: r.taken ? Theme.text-secondary : Theme.warn-red;
                                             font-size: Theme.font-sm;
                                             overflow: elide;
                                             horizontal-stretch: 1;

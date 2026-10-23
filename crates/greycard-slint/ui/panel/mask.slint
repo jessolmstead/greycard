@@ -353,7 +353,7 @@ export component AdjustmentsSection inherits Section {
                                 accessible-label: "Invert this shape";
                                 Image {
                                     source: @image-url("../icons/contrast.svg");
-                                    colorize: inverted ? Theme.accent : (invert-hit.has-hover || invert-focus.has-focus ? Theme.text : Theme.text-secondary);
+                                    colorize: inverted ? Theme.accent-text : (invert-hit.has-hover || invert-focus.has-focus ? Theme.text : Theme.text-secondary);
                                     width: Theme.icon;
                                     height: Theme.icon;
                                     x: (parent.width - self.width) / 2;

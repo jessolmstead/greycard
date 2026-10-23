@@ -1,52 +1,157 @@
 // Design tokens: the palette, the type and spacing scales, the radii.
 // Everything in the panels reads from here and nowhere else.
 //
-// Contrast on the panel surface (#1e1e1e): text 12:1, text-secondary
-// 6.8:1, text-muted 3.6:1 (labels of disabled controls only), accent
-// 7:1. Layers step up in lightness as they come forward.
+// The surfaces and the text come in three palettes, one family each,
+// stepped the same way: Charcoal (the default), Grey, and Light, by
+// `name`. Contrast on Charcoal's panel surface (#1e1e1e): text 12:1,
+// text-secondary 6.8:1, text-muted 3.6:1 (labels of disabled controls
+// only), accent 7:1. Grey keeps text-muted at 3.5:1 on its surface;
+// Light, whose hover and pressed step darker rather than lighter as
+// a light window's do, keeps it at 3.9:1, and darkens red, yellow,
+// green, and the accent where they are words, and the selection's
+// fill and the focus ring, which would not show there. The
+// accent's fills are the one blue in all three, and the picture's
+// surround is the viewport's own setting, not the theme's.
+
+struct Tones {
+    canvas: color,
+    base: color,
+    surface: color,
+    raised: color,
+    hover: color,
+    hover-veil: color,
+    pressed: color,
+    border: color,
+    border-strong: color,
+    sheet: color,
+    text: color,
+    text-secondary: color,
+    text-muted: color,
+    text-strong: color,
+    accent-text: color,
+    selection: color,
+    focus-ring: color,
+    warn-red: color,
+    warn-yellow: color,
+    ok-green: color,
+    scrollbar-thumb: color,
+    scrollbar-thumb-hover: color,
+    scrollbar-track: color,
+}
 
 export global Theme {
+    /// The palette by name: "Charcoal", "Grey", or "Light"; any other
+    /// reads as Charcoal. Set from the Settings sheet's Theme row.
+    in-out property <string> name: "Charcoal";
+    out property <bool> light: name == "Light";
+
+    property <Tones> charcoal: {
+        canvas: #0f0f0f, base: #171717, surface: #1e1e1e, raised: #262626,
+        hover: #2e2e2e, hover-veil: #ffffff0d, pressed: #353535,
+        border: #303030, border-strong: #3d3d3d, sheet: #232323,
+        text: #ececec, text-secondary: #a9a9a9, text-muted: #737373,
+        text-strong: #ffffff, accent-text: #6ea8ff,
+        selection: #6ea8ff26, focus-ring: #6ea8ff99,
+        warn-red: #e0645c, warn-yellow: #dcb63c, ok-green: #55b46e,
+        scrollbar-thumb: #8a8a8a, scrollbar-thumb-hover: #b4b4b4, scrollbar-track: #2c2c2c,
+    };
+    property <Tones> grey: {
+        canvas: #2a2a2a, base: #333333, surface: #3b3b3b, raised: #444444,
+        hover: #4c4c4c, hover-veil: #ffffff10, pressed: #555555,
+        border: #4e4e4e, border-strong: #5c5c5c, sheet: #404040,
+        text: #f2f2f2, text-secondary: #c2c2c2, text-muted: #909090,
+        text-strong: #ffffff, accent-text: #6ea8ff,
+        selection: #6ea8ff26, focus-ring: #6ea8ff99,
+        warn-red: #e0645c, warn-yellow: #dcb63c, ok-green: #55b46e,
+        scrollbar-thumb: #9a9a9a, scrollbar-thumb-hover: #c4c4c4, scrollbar-track: #474747,
+    };
+    property <Tones> light-palette: {
+        canvas: #b0b0b0, base: #c4c4c4, surface: #d4d4d4, raised: #e2e2e2,
+        hover: #c8c8c8, hover-veil: #00000010, pressed: #bcbcbc,
+        border: #bababa, border-strong: #a4a4a4, sheet: #cbcbcb,
+        text: #161616, text-secondary: #444444, text-muted: #666666,
+        text-strong: #000000, accent-text: #174a96,
+        selection: #1f5fbf38, focus-ring: #174a96,
+        warn-red: #a12a22, warn-yellow: #6e5600, ok-green: #1f6531,
+        scrollbar-thumb: #7a7a7a, scrollbar-thumb-hover: #5a5a5a, scrollbar-track: #bdbdbd,
+    };
+    property <Tones> now: name == "Light" ? light-palette
+        : name == "Grey" ? grey
+        : charcoal;
+
     // Surfaces, back to front.
-    out property <color> canvas: #0f0f0f;
-    out property <color> base: #171717;
-    out property <color> surface: #1e1e1e;
-    out property <color> raised: #262626;
-    out property <color> hover: #2e2e2e;
+    out property <color> canvas: now.canvas;
+    out property <color> base: now.base;
+    out property <color> surface: now.surface;
+    out property <color> raised: now.raised;
+    out property <color> hover: now.hover;
     // `hover`, as a veil rather than a flat fill: over the plain
-    // plate it composites to the same `hover` grey, but over a
+    // plate it composites to about the `hover` grey, but over a
     // labeled cell's tinted plate it lets the tint show through,
     // where `hover` itself (opaque) would hide it. Grid cells only.
-    out property <color> hover-veil: #ffffff0d;
-    out property <color> pressed: #353535;
-    out property <color> border: #303030;
-    out property <color> border-strong: #3d3d3d;
+    out property <color> hover-veil: now.hover-veil;
+    out property <color> pressed: now.pressed;
+    out property <color> border: now.border;
+    out property <color> border-strong: now.border-strong;
     // The grid's sheet, behind the thumbnails: a grey between the
     // panels and a control, so the contact sheet reads as part of the
-    // window rather than a hole in it, and still dark enough that a
-    // frame is judged against a quiet neutral. A cell's hover and its
-    // selection still step up from it.
-    out property <color> sheet: #232323;
+    // window rather than a hole in it, and still quiet enough that a
+    // frame is judged against a neutral. A cell's hover and its
+    // selection still step from it.
+    out property <color> sheet: now.sheet;
+    // The lightbox's surround: pictures alone, so the same near black
+    // whatever the theme.
+    out property <color> lightbox: #0f0f0f;
 
     // Text.
-    out property <color> text: #ececec;
-    out property <color> text-secondary: #a9a9a9;
-    out property <color> text-muted: #737373;
+    out property <color> text: now.text;
+    out property <color> text-secondary: now.text-secondary;
+    out property <color> text-muted: now.text-muted;
+    // A step past `text`: a slider's handle held down.
+    out property <color> text-strong: now.text-strong;
+    // Words, and a bar's track, on a dark plate over the picture (the
+    // status, a thumbnail's badges, and the viewport's edge arrows):
+    // the plate is the same in every theme, so they are too.
+    out property <color> over-text: #ececec;
+    out property <color> over-text-secondary: #a9a9a9;
+    out property <color> over-track: #3d3d3d;
+    // Charcoal's muted words and marks, on grounds dark in every theme
+    // (the histogram's, the lightbox's), and the clipping marks' ink.
+    out property <color> dark-muted: #737373;
+    out property <color> scope-ink: #0f0f0f;
 
     // Accent.
     out property <color> accent: #6ea8ff;
     out property <color> accent-hover: #8dbbff;
     out property <color> accent-pressed: #5b95ec;
     out property <color> accent-muted: #6ea8ff40;
-    out property <color> selection: #6ea8ff26;
-    out property <color> focus-ring: #6ea8ff99;
+    // A chosen row's fill and the keyboard's focus: the blue on the
+    // dark themes, darker on Light, where it would not show.
+    out property <color> selection: now.selection;
+    out property <color> focus-ring: now.focus-ring;
+    // The accent as words, darker on Light where the blue itself
+    // would not read.
+    out property <color> accent-text: now.accent-text;
+    // Ink over an accent fill (a primary button's words, a tick),
+    // and a switch's knob: the same in every theme, as the accent is.
+    out property <color> on-accent: #101010;
+    out property <color> knob: #ffffff;
 
     // The color labels a frame can carry, in the browser's badges.
     // Lightroom's five names, at this panel's lightness: saturated
     // enough to tell apart over a thumbnail, dim enough that a shelf
-    // of them is not a fairground. Red is also the reject flag's.
+    // of them is not a fairground. Red is also the reject flag's. The
+    // same in every theme: they are swatches, on thumbnails and on the
+    // dark plates over them.
     out property <color> label-red: #e0645c;
     out property <color> label-yellow: #dcb63c;
     out property <color> label-green: #55b46e;
+    // Red, yellow, and green as words (a warning, a missing file, a
+    // match): the labels' colors on the dark themes, darker on Light
+    // to read on its surfaces.
+    out property <color> warn-red: now.warn-red;
+    out property <color> warn-yellow: now.warn-yellow;
+    out property <color> ok-green: now.ok-green;
     out property <color> label-blue: #5b9ce6;
     out property <color> label-purple: #a179dd;
 
@@ -114,7 +219,8 @@ export global Theme {
     // and on a bright picture (about 5.6:1 on #1f1f1f, 3.5:1 on white), lighter
     // when it widens under the pointer, and the track shown then, the
     // fluent-dark alternate background.
-    out property <color> scrollbar-thumb: #8a8a8a;
-    out property <color> scrollbar-thumb-hover: #b4b4b4;
-    out property <color> scrollbar-track: #2c2c2c;
+    // (Light's darker, to read on its sheet.)
+    out property <color> scrollbar-thumb: now.scrollbar-thumb;
+    out property <color> scrollbar-thumb-hover: now.scrollbar-thumb-hover;
+    out property <color> scrollbar-track: now.scrollbar-track;
 }

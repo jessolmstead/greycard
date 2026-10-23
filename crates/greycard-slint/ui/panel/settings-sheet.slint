@@ -1,13 +1,13 @@
-// The settings sheet: what belongs to the installation rather than to
-// a picture, over everything until closed, in five categories down its
+// The settings sheet: what belongs to the installation rather than to a
+// picture, over everything until closed, in five categories down its
 // left side, one shown at a time. Interface: the scale, which applies
-// at the next start, and whether opening a panel section folds the
-// rest. Library: the folder a launch opens and whether the filter bar
-// shows; where the sidecars go and whether an XMP goes beside
-// them; with frames open, the move that puts their sidecars where the
-// setting says now, since flipping it moves nothing by itself; whether
-// the camera's JPEG beside a raw is a frame of its own; the thumbnail
-// cache; and the network folders' rescan. Editing:
+// at the next start, the theme, and whether opening a panel section
+// folds the rest. Library: the folder a launch opens and whether the
+// filter bar shows; where the sidecars go and whether an XMP goes
+// beside them; with frames open, the move that puts their sidecars
+// where the setting says now, since flipping it moves nothing by
+// itself; whether the camera's JPEG beside a raw is a frame of its
+// own; the thumbnail cache; and the network folders' rescan. Editing:
 // the aspect an uncropped frame's crop opens at, and the shipped
 // presets put back. Keys: each rebindable action of the key table
 // (`keys.rs`), a click on its chord to press a new one, Escape to keep
@@ -28,6 +28,9 @@ export component SettingsSheet inherits Rectangle {
     in property <string> ui-scale-started;
     in property <bool> ui-scale-by-hand;
     callback ui-scale-changed();
+    /// The palette: "Charcoal", "Grey", or "Light" (`Theme`).
+    in-out property <string> theme;
+    callback theme-changed();
     /// Opening one of the panel's sections folds the others.
     in-out property <bool> one-section;
     callback one-section-changed();
@@ -363,6 +366,15 @@ export component SettingsSheet inherits Rectangle {
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
                                 wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Theme"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Segmented {
+                                    options: ["Charcoal", "Grey", "Light"];
+                                    current <=> root.theme;
+                                    selected => { root.theme-changed(); }
+                                }
                             }
                             Toggle {
                                 label: "One section open at a time";
@@ -702,7 +714,7 @@ export component SettingsSheet inherits Rectangle {
                                         border-radius: Theme.radius-md;
                                         border-width: 1px;
                                         border-color: self.on ? Theme.focus-ring
-                                            : row.also != "" ? Theme.label-red : Theme.border-strong;
+                                            : row.also != "" ? Theme.warn-red : Theme.border-strong;
                                         background: chip.pressed ? Theme.pressed : chip.has-hover ? Theme.hover : Theme.raised;
                                         accessible-role: button;
                                         accessible-label: row.does;
@@ -726,7 +738,7 @@ export component SettingsSheet inherits Rectangle {
                                 if !row.heading && row.also != "": Text {
                                     text: row.also;
                                     font-size: Theme.font-xs;
-                                    color: Theme.label-red;
+                                    color: Theme.warn-red;
                                     wrap: word-wrap;
                                 }
                             }

@@ -525,14 +525,14 @@ export component GradingSection inherits Section {
                     spacing: Theme.space-1;
                     Text {
                         text: name;
-                        color: root.grade-range == i ? Theme.accent : Theme.text-secondary;
+                        color: root.grade-range == i ? Theme.accent-text : Theme.text-secondary;
                         font-size: Theme.font-xs;
                         font-weight: root.grade-range == i ? Theme.weight-medium : Theme.weight-regular;
                         vertical-alignment: center;
                     }
                     Image {
                         source: @image-url("../icons/maximize.svg");
-                        colorize: root.grade-big == i ? Theme.accent : Theme.text-muted;
+                        colorize: root.grade-big == i ? Theme.accent-text : Theme.text-muted;
                         width: 10px;
                         height: 10px;
                         y: (parent.height - self.height) / 2;

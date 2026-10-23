@@ -902,8 +902,6 @@ clears or a tester asks for it.
       the look stage rather than over it, as darktable advises. Waits
       on darktable's module shipping and on the licenses of
       spektrafilm and its data pack
-- [ ] UI Theme control (mid and lighter grey for example, maybe
-      different accent color(s))
 - [ ] HEIC/HEIF as pictures: HEVC is patent-encumbered, so nothing of
       ours ships a decoder; macOS through ImageIO, Linux and Windows
       through a libheif found at runtime and loaded by name as ONNX

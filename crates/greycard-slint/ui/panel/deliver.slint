@@ -323,7 +323,7 @@ export component ExportSheet inherits Rectangle {
                     Text {
                         text: root.sub-name != "" ? "Saved in " + root.sub-name + " beside each original."
                             : root.sub-problem != "" ? root.sub-problem : " ";
-                        color: root.sub-problem != "" ? Theme.label-yellow : Theme.text-secondary;
+                        color: root.sub-problem != "" ? Theme.warn-yellow : Theme.text-secondary;
                         font-size: Theme.font-sm;
                         // Any character may break, so a long run
                         // without a space never widens the sheet.

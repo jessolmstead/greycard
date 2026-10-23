@@ -7,6 +7,9 @@ design note behind it.
 
 ### The window
 
+- A Theme setting under Interface: Charcoal, Grey, or Light; the
+  picture's surround keeps its own setting
+  ([§404](https://github.com/jessolmstead/greycard/blob/master/docs/notes/404-three-themes.md)).
 - A menu on the Fit button, from its chevron or a right-click: Fit,
   50%, 100%, 200%, and 400%
   ([§402](https://github.com/jessolmstead/greycard/blob/master/docs/notes/402-a-zoom-menu-on-fit.md)).

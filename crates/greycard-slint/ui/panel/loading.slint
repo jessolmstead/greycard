@@ -13,7 +13,7 @@ export component LoadingCard inherits Rectangle {
     /// The dark plate under the bar and its words; off where the card
     /// sits in a sheet that has its own ground.
     in property <bool> plate: true;
-    in property <color> words-color: Theme.text-secondary;
+    in property <color> words-color: root.plate ? Theme.over-text-secondary : Theme.text-secondary;
     in property <length> words-size: Theme.font-xs;
     in property <TextHorizontalAlignment> words-align: center;
     /// Wrap the words rather than cut them at the end.
@@ -39,7 +39,7 @@ export component LoadingCard inherits Rectangle {
         width: parent.width - 2 * root.side;
         height: 3px;
         border-radius: 1.5px;
-        background: Theme.border-strong;
+        background: root.plate ? Theme.over-track : Theme.border-strong;
         clip: true;
         Rectangle {
             x: 0;

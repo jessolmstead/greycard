@@ -34,6 +34,13 @@ capture taken with `--snapshot` or `--screenshot` is drawn at the
 system's scale whatever the setting, so it looks the same on every
 machine; set `SLINT_SCALE_FACTOR` for one at another size.
 
+### Theme
+
+The window's panels and text in **Charcoal** (default), a mid
+**Grey**, or **Light**, changed at once; the blue accent is the same
+in all three. The picture's surround keeps its own **Canvas**
+setting, so the theme never changes what a picture is judged against.
+
 ### One section open at a time
 
 Off by default. On, opening a section of the develop panel folds every

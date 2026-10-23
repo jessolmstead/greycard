@@ -63,7 +63,7 @@ export component CameraSection inherits Section {
     }
     if root.raw-input && root.camera-profile-warning != "": Text {
         text: root.camera-profile-warning;
-        color: Theme.label-yellow;
+        color: Theme.warn-yellow;
         font-size: Theme.font-xs;
         wrap: word-wrap;
     }
@@ -186,7 +186,7 @@ export component LookSection inherits Section {
                     }
                     if row.own: Text {
                         text: "this camera";
-                        color: Theme.accent;
+                        color: Theme.accent-text;
                         font-size: Theme.font-xs;
                         vertical-alignment: center;
                     }
@@ -242,13 +242,13 @@ export component LookSection inherits Section {
     }
     if root.look-warning != "": Text {
         text: root.look-warning;
-        color: Theme.label-yellow;
+        color: Theme.warn-yellow;
         font-size: Theme.font-xs;
         wrap: word-wrap;
     }
     if root.look-mismatch != "": Text {
         text: root.look-mismatch;
-        color: Theme.label-yellow;
+        color: Theme.warn-yellow;
         font-size: Theme.font-xs;
         wrap: word-wrap;
     }

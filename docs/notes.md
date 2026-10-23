@@ -416,3 +416,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§401. Settings in five categories](notes/401-settings-in-five-categories.md) (2026-10-23)
 - [§402. A zoom menu on Fit](notes/402-a-zoom-menu-on-fit.md) (2026-10-23)
 - [§403. A start folder, and the filter bar hidden](notes/403-a-start-folder-and-the-bar-hidden.md) (2026-10-23)
+- [§404. Three themes](notes/404-three-themes.md) (2026-10-23)

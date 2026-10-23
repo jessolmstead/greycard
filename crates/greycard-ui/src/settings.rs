@@ -216,6 +216,10 @@ pub struct Settings {
     /// chosen; anything else in the file reads as the first.
     #[serde(deserialize_with = "category_leniently")]
     pub settings_category: String,
+    /// The interface's palette, one of [`THEMES`]. Written as it is
+    /// chosen; anything else in the file reads as the first.
+    #[serde(deserialize_with = "theme_leniently")]
+    pub theme: String,
 }
 
 /// The Settings sheet's categories, top to bottom, by the names the
@@ -231,6 +235,19 @@ pub fn category_named(name: &str) -> &'static str {
         .unwrap_or(CATEGORIES[0])
 }
 
+/// The interface's palettes, by the names the Settings sheet shows;
+/// the first is the default.
+pub const THEMES: [&str; 3] = ["Charcoal", "Grey", "Light"];
+
+/// The theme `name` names, or the first for a name that is none.
+pub fn theme_named(name: &str) -> &'static str {
+    THEMES
+        .iter()
+        .find(|t| **t == name)
+        .copied()
+        .unwrap_or(THEMES[0])
+}
+
 /// The `settings_category` of a file edited by hand: one of the
 /// categories, the first for any other value, so a bad one never costs
 /// the rest of the file its settings.
@@ -238,14 +255,31 @@ fn category_leniently<'de, D>(d: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
+    one_of(d, &CATEGORIES, "settings_category")
+}
+
+/// The `theme` of a file edited by hand, as leniently.
+fn theme_leniently<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    one_of(d, &THEMES, "theme")
+}
+
+/// One of `names` read from a file edited by hand, the first for any
+/// other value, logged under `field`.
+fn one_of<'de, D>(d: D, names: &[&str], field: &str) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
     let value = serde_json::Value::deserialize(d)?;
     if let serde_json::Value::String(name) = &value
-        && CATEGORIES.contains(&name.as_str())
+        && names.contains(&name.as_str())
     {
         return Ok(name.clone());
     }
-    tracing::warn!("settings: settings_category is {value}, not a category; the first");
-    Ok(CATEGORIES[0].into())
+    tracing::warn!("settings: {field} is {value}, not one of {names:?}; the first");
+    Ok(names[0].into())
 }
 
 fn on() -> bool {
@@ -465,6 +499,7 @@ impl Default for Settings {
             ui_scale_system: 0.0,
             keys: std::collections::BTreeMap::new(),
             settings_category: CATEGORIES[0].into(),
+            theme: THEMES[0].into(),
         }
     }
 }
@@ -692,6 +727,7 @@ mod tests {
                 .into_iter()
                 .collect(),
             settings_category: "Keys".into(),
+            theme: "Light".into(),
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);
@@ -892,6 +928,33 @@ mod tests {
         assert_eq!(start_listing(&chosen_text, None, frames(true)), None);
         // A `~` is not made a home: taken as written, and not there.
         assert_eq!(start_listing("~", Some(last), frames(true)), in_last);
+    }
+
+    /// The theme: a file without one, or with a name that is no
+    /// theme, reads as Charcoal and costs the rest of the file nothing.
+    #[test]
+    fn the_theme_is_read_leniently() {
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(read.theme, "Charcoal");
+        for name in THEMES {
+            let text = format!(r#"{{"theme": "{name}"}}"#);
+            let read: Settings = serde_json::from_str(&text).unwrap();
+            assert_eq!(read.theme, name);
+            let back: Settings =
+                serde_json::from_str(&serde_json::to_string(&read).unwrap()).unwrap();
+            assert_eq!(back.theme, name);
+        }
+        for text in [
+            r#"{"ui_scale": 150, "theme": "light"}"#,
+            r#"{"ui_scale": 150, "theme": 2}"#,
+            r#"{"ui_scale": 150, "theme": null}"#,
+        ] {
+            let read: Settings = serde_json::from_str(text).expect(text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert_eq!(read.theme, "Charcoal", "{text}");
+        }
+        assert_eq!(theme_named("Grey"), "Grey");
+        assert_eq!(theme_named("Gray"), "Charcoal");
     }
 
     #[test]

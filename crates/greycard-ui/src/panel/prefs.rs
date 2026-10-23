@@ -541,6 +541,20 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             keep(&state.borrow(), |s| s.settings_category = name.into());
         });
     }
+    // The palette, in force as the row is clicked: the name put back
+    // as the settings read it, and kept.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_theme_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let name = settings::theme_named(&app.get_theme());
+            app.set_theme(name.into());
+            keep(&state.borrow(), |s| s.theme = name.into());
+            tracing::info!("theme {name}");
+        });
+    }
     // Clear the thumbnail cache: every folder's thumbnails are made
     // again the next time it opens.
     {
@@ -1109,6 +1123,57 @@ mod tests {
         app.invoke_filter_asked();
         assert!(!app.get_grid_open());
         drop(state);
+    }
+
+    /// The theme row: a click puts its palette in force at once, the
+    /// window's `Theme` with it, and a name the settings do not know
+    /// goes back to Charcoal.
+    #[test]
+    fn the_theme_row_sets_the_palette() {
+        let app = crate::testing::window(0);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.invoke_settings_asked();
+        assert_eq!(app.global::<crate::Theme>().get_name(), "Charcoal");
+        use i_slint_backend_testing::ElementHandle;
+        let charcoal = app.global::<crate::Theme>().get_surface();
+        let chosen = |t: &crate::Theme| (t.get_selection(), t.get_focus_ring());
+        let charcoal_chosen = chosen(&app.global::<crate::Theme>());
+        assert_eq!(crate::testing::count_labeled(&app, "Theme"), 1);
+        let row_y = ElementHandle::find_by_accessible_label(&app, "Theme")
+            .next()
+            .unwrap()
+            .absolute_position()
+            .y;
+        // The row's segment, not a panel section's header of the same
+        // word under the sheet.
+        let click_on = |label: &str| {
+            crate::testing::count_labeled(&app, label);
+            let segment = ElementHandle::find_by_accessible_label(&app, label)
+                .min_by(|a, b| {
+                    let off = |e: &ElementHandle| (e.absolute_position().y - row_y).abs();
+                    off(a).total_cmp(&off(b))
+                })
+                .unwrap_or_else(|| panic!("{label:?} on the sheet"));
+            let (at, size) = (segment.absolute_position(), segment.size());
+            crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        };
+        click_on("Light");
+        assert_eq!(app.get_theme(), "Light");
+        let theme = app.global::<crate::Theme>();
+        assert_eq!(theme.get_name(), "Light");
+        assert!(theme.get_light());
+        assert_ne!(theme.get_surface(), charcoal);
+        // A chosen row and the focus show on Light's grounds too.
+        let light_chosen = chosen(&theme);
+        assert_ne!(light_chosen.0, charcoal_chosen.0);
+        assert_ne!(light_chosen.1, charcoal_chosen.1);
+        click_on("Grey");
+        assert_eq!(app.global::<crate::Theme>().get_name(), "Grey");
+        click_on("Charcoal");
+        assert_eq!(app.global::<crate::Theme>().get_surface(), charcoal);
+        app.set_theme("Mauve".into());
+        app.invoke_theme_changed();
+        assert_eq!(app.global::<crate::Theme>().get_name(), "Charcoal");
     }
 
     /// About: the version, and the folders the run keeps its files in,

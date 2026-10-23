@@ -80,7 +80,7 @@ export component Switch inherits Rectangle {
         width: 12px;
         height: 12px;
         border-radius: 6px;
-        background: root.enabled ? #ffffff : Theme.text-muted;
+        background: root.enabled ? Theme.knob : Theme.text-muted;
         animate x { duration: 120ms; easing: ease-out; }
     }
     fs := FocusScope {
@@ -805,7 +805,7 @@ export component EditSlider inherits Rectangle {
         width: size;
         height: size;
         border-radius: self.width / 2;
-        background: !root.enabled ? Theme.text-muted : ta.pressed ? #ffffff : Theme.text;
+        background: !root.enabled ? Theme.text-muted : ta.pressed ? Theme.text-strong : Theme.text;
         border-width: fs.has-focus ? 2px : 0;
         border-color: Theme.focus-ring;
         animate width, height { duration: Theme.quick; }
@@ -991,7 +991,7 @@ export component Toggle inherits Rectangle {
             width: 14px;
             height: 14px;
             border-radius: 7px;
-            background: root.enabled ? #ffffff : Theme.text-muted;
+            background: root.enabled ? Theme.knob : Theme.text-muted;
             animate x { duration: 120ms; easing: ease-out; }
         }
     }
@@ -1051,14 +1051,14 @@ export component PanelButton inherits Rectangle {
         padding-right: root.text == "" ? 0 : root.has-menu ? root.chevron-w : Theme.space-3;
         if root.icon.width > 0: Image {
             source: root.icon;
-            colorize: !root.enabled ? Theme.text-muted : root.primary ? #101010 : Theme.text;
+            colorize: !root.enabled ? Theme.text-muted : root.primary ? Theme.on-accent : Theme.text;
             width: Theme.icon;
             height: Theme.icon;
             y: (parent.height - self.height) / 2;
         }
         if root.text != "": Text {
             text: root.text;
-            color: !root.enabled ? Theme.text-muted : root.primary ? #101010 : Theme.text;
+            color: !root.enabled ? Theme.text-muted : root.primary ? Theme.on-accent : Theme.text;
             font-size: Theme.font-sm;
             font-weight: Theme.weight-medium;
             vertical-alignment: center;
@@ -1293,7 +1293,7 @@ export component ClipMark inherits Rectangle {
         border-radius: 2px;
         background: root.lit ? root.mark : transparent;
         border-width: 1px;
-        border-color: root.on ? Theme.canvas : (root.lit ? root.mark : Theme.text-muted);
+        border-color: root.on ? Theme.scope-ink : (root.lit ? root.mark : Theme.dark-muted);
     }
     ta := TouchArea {
         clicked => { root.clicked(); }
@@ -1344,13 +1344,13 @@ export component ThumbBadges inherits Rectangle {
         alignment: center;
         if root.flag > 0: Image {
             source: root.flag == 2 ? @image-url("icons/x.svg") : @image-url("icons/flag.svg");
-            colorize: root.flag == 2 ? Theme.label-red : Theme.text;
+            colorize: root.flag == 2 ? Theme.label-red : Theme.over-text;
             width: root.glyph;
             height: root.glyph;
         }
         for s in min(root.rating, root.stars): Image {
             source: @image-url("icons/star.svg");
-            colorize: Theme.text;
+            colorize: Theme.over-text;
             width: root.glyph;
             height: root.glyph;
         }
@@ -1391,7 +1391,7 @@ export component ThumbMarks inherits Rectangle {
         alignment: center;
         if root.edited: Image {
             source: @image-url("icons/pencil.svg");
-            colorize: Theme.text-secondary;
+            colorize: Theme.over-text-secondary;
             width: root.glyph;
             height: root.glyph;
             accessible-role: image;
@@ -1399,7 +1399,7 @@ export component ThumbMarks inherits Rectangle {
         }
         if root.exported: Image {
             source: @image-url("icons/image-down.svg");
-            colorize: Theme.text-secondary;
+            colorize: Theme.over-text-secondary;
             width: root.glyph;
             height: root.glyph;
             accessible-role: image;
@@ -1407,7 +1407,7 @@ export component ThumbMarks inherits Rectangle {
         }
         if root.collected: Image {
             source: @image-url("icons/bookmark.svg");
-            colorize: Theme.text-secondary;
+            colorize: Theme.over-text-secondary;
             width: root.glyph;
             height: root.glyph;
             accessible-role: image;
@@ -1415,7 +1415,7 @@ export component ThumbMarks inherits Rectangle {
         }
         if root.paired: Text {
             text: "+JPEG";
-            color: Theme.text-secondary;
+            color: Theme.over-text-secondary;
             font-size: root.glyph;
             font-weight: Theme.weight-medium;
             vertical-alignment: center;
@@ -1454,13 +1454,13 @@ export component ThumbStack inherits Rectangle {
         alignment: center;
         Image {
             source: @image-url("icons/layers.svg");
-            colorize: touch.has-hover ? Theme.text : Theme.text-secondary;
+            colorize: touch.has-hover ? Theme.over-text : Theme.over-text-secondary;
             width: root.glyph;
             height: root.glyph;
         }
         Text {
             text: root.open ? root.place + "/" + root.count : root.count;
-            color: touch.has-hover ? Theme.text : Theme.text-secondary;
+            color: touch.has-hover ? Theme.over-text : Theme.over-text-secondary;
             font-size: root.glyph;
             font-weight: Theme.weight-medium;
             vertical-alignment: center;
@@ -1491,7 +1491,7 @@ export component ThumbTag inherits Rectangle {
         x: root.glyph / 3;
         width: parent.width - root.glyph * 2 / 3;
         text: root.name;
-        color: Theme.text-secondary;
+        color: Theme.over-text-secondary;
         font-size: root.glyph + 1px;
         vertical-alignment: center;
         overflow: elide;
@@ -1525,7 +1525,7 @@ export component EdgeArrow inherits Rectangle {
             width: 14px;
             height: 14px;
             source: root.icon;
-            colorize: touch.has-hover ? Theme.text : Theme.text-secondary;
+            colorize: touch.has-hover ? Theme.over-text : Theme.over-text-secondary;
         }
     }
 }

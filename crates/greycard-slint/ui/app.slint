@@ -5,8 +5,10 @@
 // sections, bars and sheets are in panel/, one file a section, each
 // bound to the properties and callbacks below that it uses.
 
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+// The theme's name is read on the Rust side's tests.
+export { Theme } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
@@ -1988,6 +1990,13 @@ export component App inherits Window {
     in property <string> ui-scale-started: "System";
     in property <bool> ui-scale-by-hand: false;
     callback ui-scale-changed();
+    // The Settings sheet's theme row: the palette by name (`Theme`),
+    // in force at once, and the std widgets' own scheme to match it.
+    in-out property <string> theme <=> Theme.name;
+    callback theme-changed();
+    changed theme => {
+        Palette.color-scheme = Theme.light ? ColorScheme.light : ColorScheme.dark;
+    }
     in property <int> sidecars-elsewhere: 0;
     /// How many frames are open, which the count and the move run
     /// over; and whether this run writes sidecars at all.
@@ -4567,6 +4576,8 @@ export component App inherits Window {
         ui-scale-started: root.ui-scale-started;
         ui-scale-by-hand: root.ui-scale-by-hand;
         ui-scale-changed => { root.ui-scale-changed(); }
+        theme <=> root.theme;
+        theme-changed => { root.theme-changed(); }
         one-section <=> root.one-section;
         one-section-changed => { root.one-section-changed(); }
         start-choice <=> root.start-choice;

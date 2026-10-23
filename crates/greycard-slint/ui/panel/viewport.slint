@@ -470,7 +470,7 @@ export component Viewport inherits Rectangle {
         background: #00000099;
         placeholder-word := Text {
             text: "camera preview";
-            color: Theme.text;
+            color: Theme.over-text;
             font-size: Theme.font-xs;
             vertical-alignment: center;
         }
@@ -503,7 +503,7 @@ export component Viewport inherits Rectangle {
         accessible-label: root.proof-badge;
         proof-word := Text {
             text: root.proof-badge;
-            color: Theme.text;
+            color: Theme.over-text;
             font-size: Theme.font-xs;
             vertical-alignment: center;
             horizontal-alignment: center;
@@ -532,7 +532,7 @@ export component Viewport inherits Rectangle {
             background: #00000099;
             tile-name := Text {
                 text: t.name;
-                color: t.on ? Theme.text : Theme.text-secondary;
+                color: t.on ? Theme.over-text : Theme.over-text-secondary;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
             }
@@ -564,7 +564,7 @@ export component Viewport inherits Rectangle {
         animate opacity { duration: 250ms; easing: ease-out; }
         notice-word := Text {
             text: root.notice;
-            color: Theme.text;
+            color: Theme.over-text;
             font-size: 20px;
             font-weight: 600;
             vertical-alignment: center;
@@ -1060,7 +1060,7 @@ export component Viewport inherits Rectangle {
             width: 60px;
             height: 3px;
             border-radius: 1.5px;
-            background: Theme.border-strong;
+            background: Theme.over-track;
             clip: true;
             Rectangle {
                 x: (parent.width + 24px) * plate.phase - 24px;
@@ -1072,7 +1072,7 @@ export component Viewport inherits Rectangle {
         }
         status-text := Text {
             text: root.placeholder && root.placeholder-status != "" ? root.placeholder-status : root.status;
-            color: Theme.text-secondary;
+            color: Theme.over-text-secondary;
             font-size: Theme.font-xs;
             vertical-alignment: center;
             x: Theme.space-3 + (root.busy ? 72px : 0);
@@ -1081,7 +1081,7 @@ export component Viewport inherits Rectangle {
         sync-text := Text {
             visible: root.sync-note != "";
             text: root.sync-note;
-            color: Theme.text-secondary;
+            color: Theme.over-text-secondary;
             font-size: Theme.font-xs;
             vertical-alignment: center;
             x: status-text.x + status-text.width + Theme.space-3;

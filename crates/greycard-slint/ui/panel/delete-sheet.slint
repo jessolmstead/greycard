@@ -22,7 +22,7 @@ export component DangerButton inherits Rectangle {
     height: Theme.control-height;
     border-radius: Theme.radius-md;
     border-width: 1px;
-    border-color: Theme.label-red;
+    border-color: Theme.warn-red;
     background: ta.pressed ? Theme.pressed : ta.has-hover ? Theme.hover : Theme.raised;
     animate background { duration: Theme.quick; }
     HorizontalLayout {
@@ -32,14 +32,14 @@ export component DangerButton inherits Rectangle {
         padding-right: Theme.space-3;
         Image {
             source: root.icon;
-            colorize: Theme.label-red;
+            colorize: Theme.warn-red;
             width: Theme.icon;
             height: Theme.icon;
             y: (parent.height - self.height) / 2;
         }
         Text {
             text: root.text;
-            color: Theme.label-red;
+            color: Theme.warn-red;
             font-size: Theme.font-sm;
             font-weight: Theme.weight-medium;
             vertical-alignment: center;
@@ -122,7 +122,7 @@ export component DeleteSheet inherits Rectangle {
                 Text {
                     text: root.delete-note;
                     font-size: Theme.font-sm;
-                    color: root.delete-trash ? Theme.text-secondary : Theme.label-red;
+                    color: root.delete-trash ? Theme.text-secondary : Theme.warn-red;
                     wrap: word-wrap;
                 }
                 Rectangle { height: Theme.space-2; }

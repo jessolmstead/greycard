@@ -153,7 +153,7 @@ export component MatchSheet inherits Rectangle {
                                         viewbox-width: 14;
                                         viewbox-height: 14;
                                         commands: "M 3 7.5 L 6 10.5 L 11 3.5";
-                                        stroke: #101010;
+                                        stroke: Theme.on-accent;
                                         stroke-width: 2px;
                                         stroke-line-cap: round;
                                         stroke-line-join: round;
@@ -194,7 +194,7 @@ export component MatchSheet inherits Rectangle {
             if root.match-fit-note != "": Text {
                 text: root.match-fit-note;
                 font-size: Theme.font-xs;
-                color: Theme.label-yellow;
+                color: Theme.warn-yellow;
                 wrap: word-wrap;
             }
             if root.match-summary != "": Text {
