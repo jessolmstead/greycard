@@ -29,6 +29,11 @@ design note behind it.
 
 ### Fixes
 
+- An unedited ORF shows in the lightbox: the decoder reads the
+  preview an ORF carries, a raw with no preview gets a quick develop
+  there, and a raw+JPEG pair shows its JPEG in the lightbox as it
+  does in the loupe
+  ([§393](https://github.com/jessolmstead/greycard/blob/master/docs/notes/393-the-lightbox-shows-every-raw.md))
 - On a laptop with two GPUs the window and the develop take the
   discrete one; `WGPU_POWER_PREF=low` keeps the other. The clipping
   toggles on the RGB scope show plainly when they are on

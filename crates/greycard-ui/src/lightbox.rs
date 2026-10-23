@@ -386,6 +386,32 @@ pub(crate) fn refresh(st: &mut State, app: &App) {
     want(st);
 }
 
+/// A tile's want of frame `frame` (cell `f`) at `size`, by its `plan`:
+/// the local preview alone, or the file, the camera's JPEG beside the
+/// raw (`picture`) read in place of the raw's own preview as the loupe
+/// reads it; none for a frame out of reach.
+fn tile_want(
+    f: usize,
+    frame: &crate::versions::Key,
+    size: u32,
+    plan: cull::Plan,
+    picture: Option<std::path::PathBuf>,
+) -> Option<Want> {
+    let want = match plan {
+        cull::Plan {
+            preview: Some(key),
+            file: false,
+        } => Want::local(f, frame.path.clone(), size, key),
+        cull::Plan { file: false, .. } => return None,
+        _ => Want::of_file(f, frame.path.clone(), size).with_picture(picture),
+    };
+    Some(Want {
+        lightbox: true,
+        develop: true,
+        ..want.of_version(frame.version.clone())
+    })
+}
+
 /// Ask for the pictures the tiles do not have at the size they want:
 /// the rows on screen first, then the rows of the margin. Only the
 /// window's rows, so nothing about the screen is read here.
@@ -416,20 +442,11 @@ fn want(st: &mut State) {
             continue;
         }
         let plan = crate::panel::cull::loupe_plan(st, f);
-        let want = match plan {
-            cull::Plan {
-                preview: Some(key), ..
-            } if !plan.file => Want::local(f, frame.path.clone(), lb.size, key),
-            cull::Plan { file: false, .. } => {
-                out_of_reach.push(frame);
-                continue;
-            }
-            _ => Want::of_file(f, frame.path.clone(), lb.size),
-        };
-        wants.push(Want {
-            lightbox: true,
-            ..want.of_version(frame.version.clone())
-        });
+        let picture = crate::panel::cull::companion_picture(&st.views.companions, &frame.path);
+        match tile_want(f, &frame, lb.size, plan, picture) {
+            Some(want) => wants.push(want),
+            None => out_of_reach.push(frame),
+        }
     }
     if let Some(lb) = st.culling.lightbox.as_mut() {
         lb.failed.extend(out_of_reach);
@@ -567,6 +584,52 @@ pub(crate) fn install(
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// A raw with the camera's JPEG beside it takes its tile from the
+    /// JPEG, as the loupe does, though the raw carries no preview: no
+    /// develop is made of it. The local preview's want reads no file,
+    /// so it names no JPEG.
+    #[test]
+    fn a_pair_s_tile_is_the_jpeg_beside_the_raw() {
+        let dir = crate::testing::scratch_dir("lightbox-pair");
+        let raw = dir.join("P1.dng");
+        crate::testing::linear_dng(&raw, 96, 64, "Greycard", "Test Body");
+        let jpeg = dir.join("P1.JPG");
+        image::RgbImage::from_pixel(96, 64, image::Rgb([200, 120, 40]))
+            .save(&jpeg)
+            .unwrap();
+        let frame = crate::versions::Key {
+            path: raw.clone(),
+            version: None,
+            name: None,
+        };
+        let file = cull::Plan {
+            preview: None,
+            file: true,
+        };
+        let want = tile_want(0, &frame, 512, file, Some(jpeg.clone())).unwrap();
+        assert_eq!(want.picture.as_deref(), Some(jpeg.as_path()));
+        let got = std::cell::RefCell::new(Vec::new());
+        fetch(&want, None, &|l| got.borrow_mut().push(l));
+        let [Loaded::Ok { preview, .. }] = &got.into_inner()[..] else {
+            panic!("the tile's picture");
+        };
+        assert!(preview.companion && !preview.developed);
+        assert!(
+            !cull::DEVELOPS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(&raw),
+            "no develop of the raw"
+        );
+        let local = cull::Plan {
+            preview: Some(("ab".repeat(32), 7)),
+            file: false,
+        };
+        let want = tile_want(0, &frame, 512, local, Some(jpeg)).unwrap();
+        assert!(want.picture.is_none());
+        crate::testing::remove_dir_retry(&dir);
+    }
 
     #[test]
     fn the_tiles_go_across_as_asked_and_fill_the_sheet() {

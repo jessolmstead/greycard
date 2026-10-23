@@ -112,6 +112,10 @@ pub struct Preview {
     /// the edit's, whether or not one is kept. A picture asked the other
     /// way is the edit's where one is kept and the camera's where not.
     pub camera_only: bool,
+    /// Made by a quick develop of a raw that carries no camera picture
+    /// to read, as its local preview is made. Named as the local
+    /// preview is, never as the camera's JPEG, and its own every pixel.
+    pub developed: bool,
     /// How long the decode took, for the log.
     pub seconds: f64,
 }
@@ -131,6 +135,7 @@ impl Preview {
             edited: false,
             companion: false,
             camera_only: false,
+            developed: false,
             seconds: 0.0,
         }
     }
@@ -160,7 +165,7 @@ impl Preview {
     pub fn origin(&self) -> Origin {
         if self.edited {
             Origin::Edit
-        } else if self.local {
+        } else if self.local || self.developed {
             Origin::Local
         } else if self.companion {
             Origin::Companion
@@ -192,9 +197,13 @@ impl Preview {
     }
 
     /// The preview is smaller than a camera's full frame would be. A
-    /// local preview is small by design and says so in its own words.
+    /// local preview, or a develop made as one is, is small by design
+    /// and says so in its own words.
     pub fn small(&self) -> bool {
-        !self.local && !self.edited && self.source.0.max(self.source.1) < SMALL_LONG_EDGE
+        !self.local
+            && !self.edited
+            && !self.developed
+            && self.source.0.max(self.source.1) < SMALL_LONG_EDGE
     }
 
     /// This copy is the JPEG's every pixel: 1:1 needs no other.
@@ -454,6 +463,11 @@ pub struct Want {
     /// camera's finished picture, where the raw's own preview may be a
     /// small one.
     pub picture: Option<PathBuf>,
+    /// A raw with no camera picture in it is developed quickly for
+    /// this want ([`developed_picture`]): the culling loupe's and the
+    /// lightbox's. The develop view's stand-in is not: the develop it
+    /// stands in for is on its way.
+    pub develop: bool,
 }
 
 impl Want {
@@ -469,6 +483,7 @@ impl Want {
             lightbox: false,
             camera: false,
             picture: None,
+            develop: false,
         }
     }
 
@@ -501,6 +516,7 @@ impl Want {
     pub fn for_loupe(file: usize, path: PathBuf, size: u32) -> Self {
         Self {
             make_preview: true,
+            develop: true,
             ..Self::of_file(file, path, size)
         }
     }
@@ -524,6 +540,19 @@ impl Want {
             && self.lightbox == other.lightbox
             && self.camera == other.camera
             && self.picture == other.picture
+            && self.develop == other.develop
+    }
+
+    /// Whether a thread on `in_flight` will deliver what this want
+    /// asks for, so this one is not begun: the same want, or the same
+    /// but for a develop of a raw with no camera picture, which the
+    /// one in flight makes and this one would not. One way only: a
+    /// want that would develop is begun beside one that would not.
+    fn covered_by(&self, in_flight: &Want) -> bool {
+        self.same(&Want {
+            develop: self.develop,
+            ..in_flight.clone()
+        }) && (in_flight.develop || !self.develop)
     }
 }
 
@@ -639,7 +668,7 @@ impl Prefetcher {
         let mut q = lock.lock().expect("cull queue");
         q.wanted = list
             .into_iter()
-            .filter(|w| !q.in_flight.iter().any(|f| f.same(w)))
+            .filter(|w| !q.in_flight.iter().any(|f| w.covered_by(f)))
             .collect();
         cv.notify_all();
     }
@@ -649,7 +678,7 @@ impl Prefetcher {
     pub fn push_front(&self, want: Want) {
         let (lock, cv) = &*self.queue;
         let mut q = lock.lock().expect("cull queue");
-        if q.in_flight.iter().any(|f| f.same(&want)) {
+        if q.in_flight.iter().any(|f| want.covered_by(f)) {
             return;
         }
         q.wanted.retain(|w| !w.same(&want));
@@ -758,9 +787,14 @@ pub(crate) fn fetch(
         });
         return;
     }
+    let fallback = if want.develop {
+        Fallback::Develop(previews)
+    } else {
+        Fallback::Nothing
+    };
     let decoded = match &want.picture {
-        Some(jpeg) => decode_paired(&want.path, jpeg, want.size),
-        None => decode_keeping(&want.path, want.size).map(|d| (d, false)),
+        Some(jpeg) => decode_paired(&want.path, jpeg, want.size, fallback),
+        None => decode_keeping(&want.path, want.size, fallback).map(|d| (d, false)),
     };
     match decoded {
         Ok(((mut preview, picture, orientation), companion)) => {
@@ -809,15 +843,117 @@ pub(crate) fn fetch(
 /// picture itself) at `size` on its long edge, zero for its own,
 /// turned as its orientation tag says; and the camera's picture it was
 /// made from with that orientation, for a local preview to be made
-/// from.
+/// from. A raw with no camera picture in it is developed quickly
+/// instead ([`developed_picture`]).
 fn decode_keeping(
     path: &Path,
     size: u32,
+    fallback: Fallback,
 ) -> anyhow::Result<(Preview, image::RgbImage, Orientation)> {
     let started = Instant::now();
-    let (image, orientation) = camera_picture(path)?;
-    Ok(shaped(image, orientation, size, started))
+    match camera_picture(path) {
+        Ok((image, orientation)) => Ok(shaped(image, orientation, size, started)),
+        Err(e) => develop_instead(path, e, fallback, size, started),
+    }
 }
+
+/// What `fallback` makes of a raw whose camera picture would not read
+/// (`why`): its quick develop at `size`, or `why` itself. A picture
+/// file is never developed: it is its own picture, and one that does
+/// not read is broken.
+fn develop_instead(
+    path: &Path,
+    why: anyhow::Error,
+    fallback: Fallback,
+    size: u32,
+    started: Instant,
+) -> anyhow::Result<(Preview, image::RgbImage, Orientation)> {
+    let Fallback::Develop(previews) = fallback else {
+        return Err(why);
+    };
+    if greycard_core::picture::is_picture_path(path) {
+        return Err(why);
+    }
+    let (image, orientation) = developed_picture(path, &why, previews)?;
+    let (mut preview, image, orientation) = shaped(image, orientation, size, started);
+    preview.developed = true;
+    Ok((preview, image, orientation))
+}
+
+/// What a want shows of a raw with no camera picture in it.
+#[derive(Clone, Copy)]
+enum Fallback<'a> {
+    /// Nothing: the decode fails.
+    Nothing,
+    /// A quick develop, or the local preview kept of one.
+    Develop(Option<&'a Arc<crate::previews::Previews>>),
+}
+
+/// A raw with no camera picture to read (`why`), developed quickly at
+/// the local preview's size the way its local preview is made, already
+/// turned as the camera says: the local preview itself when one is
+/// kept, which is that develop made before. A raw that will not decode
+/// at all is the develop's failure.
+fn developed_picture(
+    path: &Path,
+    why: &anyhow::Error,
+    previews: Option<&Arc<crate::previews::Previews>>,
+) -> anyhow::Result<(image::RgbImage, Orientation)> {
+    let kept = previews.and_then(|p| {
+        let (hash, stamp) = crate::worker::thumb_key(path)?;
+        p.get(&hash, stamp)
+    });
+    if let Some(thumb) = kept
+        && let Some(image) = image::RgbImage::from_raw(thumb.width, thumb.height, thumb.rgb)
+    {
+        tracing::debug!("preview {}: {why:#}; its local preview", path.display());
+        return Ok((image, Orientation::Normal));
+    }
+    // The local preview owed, taken before the develop, so the
+    // previews' pool does not make the same develop beside this one.
+    let owed = previews.and_then(|p| Some((p.clone(), p.take(path)?)));
+    let started = Instant::now();
+    #[cfg(test)]
+    DEVELOPS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(path.to_path_buf());
+    let (width, height, rgb) =
+        crate::worker::thumbnail(path, crate::previews::SIZE).inspect_err(|_| {
+            tracing::debug!("preview {}: {why:#}; no develop either", path.display());
+        })?;
+    tracing::info!(
+        "preview {}: {why:#}; a quick develop, {width}x{height} in {:.0} ms",
+        path.display(),
+        started.elapsed().as_secs_f64() * 1e3
+    );
+    let image = image::RgbImage::from_raw(width, height, rgb)
+        .ok_or_else(|| anyhow::anyhow!("the develop's picture is not {width}x{height}"))?;
+    if let Some((previews, owed)) = owed {
+        // Kept on another thread, as the loupe's are, so the picture
+        // goes up first.
+        let (path, picture) = (path.to_path_buf(), image.clone());
+        rayon::spawn(move || {
+            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                previews.make_taken(&path, &owed, &picture, Orientation::Normal);
+            }));
+            if let Err(payload) = made {
+                tracing::warn!(
+                    "preview {}: the making panicked: {}",
+                    path.display(),
+                    crate::worker::panic_message(payload.as_ref())
+                );
+            }
+        });
+    }
+    Ok((image, Orientation::Normal))
+}
+
+/// The raws developed for want of a camera picture, for the tests that
+/// say a kept local preview is read instead: by path, since the tests
+/// run beside each other.
+#[cfg(test)]
+pub(crate) static DEVELOPS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// [`decode_keeping`] for a raw with the camera's JPEG beside it, and
 /// whether the picture is the JPEG's: the JPEG, the camera's finished
@@ -830,6 +966,7 @@ fn decode_paired(
     raw: &Path,
     jpeg: &Path,
     size: u32,
+    fallback: Fallback,
 ) -> anyhow::Result<((Preview, image::RgbImage, Orientation), bool)> {
     let started = Instant::now();
     let read = image::image_dimensions(jpeg)
@@ -840,7 +977,7 @@ fn decode_paired(
             "{}: will not read, or is not all there; the raw's own preview",
             jpeg.display()
         );
-        return decode_keeping(raw, size).map(|d| (d, false));
+        return decode_keeping(raw, size, fallback).map(|d| (d, false));
     };
     let long = jw.max(jh);
     let frame = greycard_core::decode::stance_path(raw)
@@ -850,7 +987,7 @@ fn decode_paired(
     // Within a few percent: a sensor's frame runs a little past the
     // camera's JPEG of it.
     if frame.is_some_and(|f| u64::from(long) * 100 >= u64::from(f) * 95)
-        && let Ok(d) = decode_keeping(jpeg, size)
+        && let Ok(d) = decode_keeping(jpeg, size, Fallback::Nothing)
     {
         return Ok((d, true));
     }
@@ -861,11 +998,14 @@ fn decode_paired(
         let (image, orientation) = own?;
         return Ok((shaped(image, orientation, size, started), false));
     }
-    match decode_keeping(jpeg, size) {
+    match decode_keeping(jpeg, size, Fallback::Nothing) {
         Ok(d) => Ok((d, true)),
         Err(e) => match own {
             Ok((image, orientation)) => Ok((shaped(image, orientation, size, started), false)),
-            Err(_) => Err(e),
+            // Neither reads: the raw developed, if it decodes.
+            Err(own) => develop_instead(raw, own, fallback, size, started)
+                .map(|d| (d, false))
+                .map_err(|_| e),
         },
     }
 }
@@ -1611,7 +1751,24 @@ mod tests {
         let a = Want::of_file(3, PathBuf::from("/s/a.CR3"), 1024);
         let b = Want::local(3, PathBuf::from("/s/a.CR3"), 1024, ("ab".repeat(32), 7));
         assert!(!a.same(&b));
-        assert!(a.same(&Want::for_loupe(3, PathBuf::from("/s/a.CR3"), 1024)));
+        assert!(a.same(&Want {
+            make_preview: true,
+            ..a.clone()
+        }));
+        // The loupe's develops a raw with no camera picture, which the
+        // develop view's stand-in does not. The loupe's in flight
+        // delivers what the stand-in asks, so the stand-in is not begun
+        // beside it; the stand-in's in flight would not develop, so the
+        // loupe's is begun.
+        let loupe = Want::for_loupe(3, PathBuf::from("/s/a.CR3"), 1024);
+        assert!(!a.same(&loupe));
+        assert!(a.covered_by(&loupe), "the stand-in waits on the loupe's");
+        assert!(!loupe.covered_by(&a), "the loupe's does not wait on it");
+        assert!(a.covered_by(&a) && loupe.covered_by(&loupe));
+        assert!(!a.covered_by(&Want {
+            size: 0,
+            ..loupe.clone()
+        }));
         assert!(!a.same(&Want {
             size: 0,
             ..a.clone()
@@ -2394,6 +2551,123 @@ mod tests {
         // Without it the raw's own preview is asked for, and there is none.
         let got = run(&Want::for_loupe(0, raw.clone(), 0));
         assert!(matches!(&got[..], [Loaded::Failed { .. }]));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A raw with no camera picture in it is developed quickly for the
+    /// loupe and the lightbox, named as the local preview is and never
+    /// as the camera's JPEG, and keeps the local preview it is owed,
+    /// which the next want reads. The
+    /// develop view's stand-in does not develop, and a file that will
+    /// not decode still fails.
+    #[test]
+    fn a_raw_with_no_camera_picture_is_developed_for_the_loupe_and_the_lightbox() {
+        let dir = crate::testing::scratch_dir("cull-developed");
+        let raw = dir.join("frame.dng");
+        crate::testing::linear_dng(&raw, 96, 64, "Greycard", "Test Body");
+        assert!(
+            matches!(greycard_core::decode::preview_path(&raw), Ok(None)),
+            "no camera picture in it"
+        );
+        let mut thumbs =
+            greycard_library::Thumbs::at(dir.join("thumbs"), greycard_library::thumbs::DEFAULT_CAP)
+                .with_previews(
+                    crate::previews::SIZE,
+                    greycard_library::thumbs::DEFAULT_PREVIEW_CAP,
+                );
+        thumbs.seed_split(Default::default());
+        let cache: crate::worker::ThumbCache = Arc::new(Mutex::new(Some(thumbs)));
+        let previews = Arc::new(crate::previews::Previews::new(cache));
+        previews.set_roots(vec![dir.clone()]);
+        let (hash, stamp) = crate::previews::Previews::key_of(&raw).unwrap();
+        previews.note(&raw, crate::worker::file_stat(&raw).unwrap(), &hash);
+        let run = |want: &Want| {
+            let got = std::cell::RefCell::new(Vec::new());
+            fetch(want, Some(&previews), &|l| got.borrow_mut().push(l));
+            got.into_inner()
+        };
+
+        // The develop view's stand-in: nothing, as before.
+        let got = run(&Want::of_file(0, raw.clone(), 1000));
+        assert!(matches!(&got[..], [Loaded::Failed { .. }]));
+        assert!(previews.owes(&raw));
+
+        // The lightbox's tile: a develop, not the camera's JPEG.
+        let tile = Want {
+            lightbox: true,
+            develop: true,
+            ..Want::of_file(0, raw.clone(), 1000)
+        };
+        let got = run(&tile);
+        let [Loaded::Ok { preview, .. }] = &got[..] else {
+            panic!("a develop of the raw");
+        };
+        assert!(preview.developed && !preview.local && !preview.edited);
+        assert_eq!((preview.width, preview.height), (96, 64));
+        assert_eq!(preview.origin(), Origin::Local);
+        assert!(!preview.small() && preview.own_size());
+        assert_eq!(
+            crate::panel::cull::picture_words(preview.source, preview.small(), preview.origin()),
+            "the local preview, 96 \u{d7} 64"
+        );
+        // Its local preview, kept from the develop off the thread.
+        let started = Instant::now();
+        while previews.get(&hash, stamp).is_none() {
+            assert!(started.elapsed().as_secs() < 10, "kept from the develop");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        // The loupe's: the local preview kept, which is that develop,
+        // read rather than developed again.
+        let developed = || {
+            DEVELOPS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .filter(|p| **p == raw)
+                .count()
+        };
+        assert_eq!(developed(), 1, "the lightbox's develop");
+        let got = run(&Want::for_loupe(0, raw.clone(), 1000));
+        let [Loaded::Ok { preview, .. }] = &got[..] else {
+            panic!("the local preview of the develop");
+        };
+        assert!(preview.developed);
+        assert_eq!(preview.origin(), Origin::Local);
+        assert_eq!(developed(), 1, "not developed again");
+
+        // A raw that will not decode at all still fails.
+        let broken = dir.join("broken.orf");
+        std::fs::write(&broken, b"no raw in here").unwrap();
+        let got = run(&Want::for_loupe(1, broken, 1000));
+        assert!(matches!(&got[..], [Loaded::Failed { .. }]));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A picture file that will not read is broken, not a raw without a
+    /// camera picture: the loupe says it failed and develops nothing.
+    #[test]
+    fn a_broken_picture_is_not_developed() {
+        let dir = crate::testing::scratch_dir("cull-broken-picture");
+        for name in ["broken.jpg", "broken.tif"] {
+            let path = dir.join(name);
+            std::fs::write(&path, b"no picture in here").unwrap();
+            let got = std::cell::RefCell::new(Vec::new());
+            fetch(&Want::for_loupe(0, path.clone(), 1000), None, &|l| {
+                got.borrow_mut().push(l)
+            });
+            assert!(
+                matches!(&got.into_inner()[..], [Loaded::Failed { .. }]),
+                "{name}"
+            );
+            assert!(
+                !DEVELOPS
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .contains(&path),
+                "{name} developed"
+            );
+        }
         crate::testing::remove_dir_retry(&dir);
     }
 

@@ -1106,6 +1106,12 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
                 if cull.failed.remove(&file).is_some() {
                     cull.file_failed.insert(file);
                 }
+            } else {
+                // The file's own picture, after a failure from another
+                // want of it (the develop view's stand-in, which does
+                // not develop a raw with no camera picture): the
+                // picture is what shows, with no failure said over it.
+                cull.failed.remove(&file);
             }
             cull.cache.insert(file, preview);
             true
@@ -2793,6 +2799,72 @@ mod tests {
         }
         cull_refresh(&mut st);
         assert!(!st.culling.prefetch.asked().iter().any(|w| w.file == 2));
+    }
+
+    /// A raw with no camera picture in it comes back developed: it is
+    /// up, no failure is said over it, the status line names it as the
+    /// local preview and not the camera's JPEG, and its file is not
+    /// asked for again, since a develop is what the file has to give.
+    #[test]
+    fn a_developed_picture_is_up_named_as_the_local_preview_and_not_asked_again() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(1);
+            enter_cull(&mut st, &app, 1);
+        }
+        let (w, h) = (64u32, 48u32);
+        let mut preview = cull::Preview::new(w, h, vec![0; (w * h * 4) as usize], (w, h), false);
+        preview.developed = true;
+        let loaded = cull::Loaded::Ok {
+            file: 1,
+            frame: state.borrow().key_of(1).unwrap(),
+            size: 1024,
+            preview: Arc::new(preview),
+        };
+        // The stand-in's failure for it first, as when culling is
+        // entered with the stand-in's decode still in flight.
+        let failed = cull::Loaded::Failed {
+            file: 1,
+            frame: state.borrow().key_of(1).unwrap(),
+            size: 1024,
+            message: "no camera preview in the file".into(),
+        };
+        deliver_preview(&app, failed);
+        assert!(
+            state
+                .borrow()
+                .culling
+                .cull
+                .as_ref()
+                .unwrap()
+                .failed
+                .contains_key(&1)
+        );
+        deliver_preview(&app, loaded);
+        let mut st = state.borrow_mut();
+        {
+            let cull = st.culling.cull.as_ref().unwrap();
+            assert!(!cull.file_failed.contains(&1), "the file gave its picture");
+            let shown = cull.cache.get(1).expect("up");
+            assert_eq!(shown.origin(), cull::Origin::Local);
+            assert!(!cull.failed.contains_key(&1), "no failure said over it");
+            let names = [Named {
+                file: 1,
+                size: (w, h),
+                small: shown.small(),
+                local: shown.origin(),
+                own: shown.own_size(),
+                version: None,
+            }];
+            assert_eq!(
+                cull_status(cull, 1, 0.0, true, &names),
+                "culling: the local preview, 64 \u{d7} 48, fitted; Enter develops"
+            );
+        }
+        cull_refresh(&mut st);
+        assert!(!st.culling.prefetch.asked().iter().any(|w| w.file == 1));
     }
 
     /// Culling left on another frame than the one opened before it: the

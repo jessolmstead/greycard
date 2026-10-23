@@ -1248,7 +1248,7 @@ checksum = "1839c82df8c23135a69c027587efada55602a7311af4b5849313062f831630ca"
 [[package]]
 name = "rawler"
 version = "0.8.0"
-source = "git+https://github.com/jessolmstead/dnglab?rev=7f4526a38924ac62228ffc3559c83a0ab7822ef6#7f4526a38924ac62228ffc3559c83a0ab7822ef6"
+source = "git+https://github.com/jessolmstead/dnglab?rev=1766caabda721bb58d4b129918bf051907920b3c#1766caabda721bb58d4b129918bf051907920b3c"
 dependencies = [
  "backtrace",
  "bitstream-io",
