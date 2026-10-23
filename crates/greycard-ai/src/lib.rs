@@ -16,6 +16,7 @@ pub mod landscape;
 pub mod matte;
 pub mod refine;
 pub mod registry;
+pub mod remove;
 pub mod runtime;
 pub mod sam;
 pub mod sam3;
@@ -30,9 +31,11 @@ pub use fill::Fill;
 pub use image::{Mask, Rgb8, Rgbf};
 pub use refine::refine;
 pub use registry::{
-    DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISERS, FILL, MODELS, Model, RETIRED, Retired,
-    Runtime, SAM, SAM3, SKY, SUBJECT, SUBJECT_WEBGPU, cpu_runtime, denoiser, model, tier_of,
+    DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISERS, FILL, MODELS, Model, REMOVE, RETIRED,
+    Retired, Runtime, SAM, SAM3, SKY, SUBJECT, SUBJECT_WEBGPU, cpu_runtime, denoiser, model,
+    tier_of,
 };
+pub use remove::Remove;
 pub use runtime::Provider;
 pub use sam::{Prompt, Sam};
 pub use sam3::{Encodings, Person, Piece, Presets, Route, Sam3, Signature};

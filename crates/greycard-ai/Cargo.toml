@@ -83,3 +83,7 @@ required-features = ["webgpu"]
 [[example]]
 name = "fill_bench"
 required-features = ["webgpu"]
+
+[[example]]
+name = "remove_bench"
+required-features = ["webgpu"]

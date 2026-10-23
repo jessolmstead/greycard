@@ -120,12 +120,22 @@ impl Provider {
         }
     }
 
-    fn dispatch(self) -> Option<ort::ep::ExecutionProviderDispatch> {
+    fn dispatch(self, buffers: Buffers) -> Option<ort::ep::ExecutionProviderDispatch> {
+        let _ = buffers;
         match self {
             #[cfg(feature = "cuda")]
             Provider::Cuda => Some(ort::ep::CUDA::default().build().error_on_failure()),
             #[cfg(feature = "webgpu")]
-            Provider::WebGpu => Some(ort::ep::WebGPU::default().build().error_on_failure()),
+            Provider::WebGpu => {
+                let ep = ort::ep::WebGPU::default();
+                let ep = match buffers {
+                    Buffers::Kept => ep,
+                    Buffers::Released => ep.with_storage_buffer_cache_mode(
+                        ort::ep::webgpu::BufferCacheMode::LazyRelease,
+                    ),
+                };
+                Some(ep.build().error_on_failure())
+            }
             Provider::Cpu => None,
             #[allow(unreachable_patterns)]
             _ => None,
@@ -268,6 +278,21 @@ pub enum Error {
     /// no library, or one that would not load.
     #[error("{0}")]
     Unavailable(Unavailable),
+    /// The model is not offered on these providers: one too slow on
+    /// the CPU to be worth running there, say.
+    #[error("{0}")]
+    Unsupported(&'static str),
+}
+
+/// What the WebGPU provider does with the storage buffers a run frees:
+/// keeps them in its cache for the next run (its default), or gives
+/// them back to the device once the session is dropped, for a model
+/// whose sessions are opened one after another and must not stack up.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Buffers {
+    #[default]
+    Kept,
+    Released,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -490,6 +515,19 @@ pub fn open(
     level: GraphOptimizationLevel,
     providers: &[Provider],
     remember: Option<Remembered<'_>>,
+    warm: impl FnMut(&mut Session) -> ort::Result<()>,
+) -> Result<Loaded> {
+    open_with(path, level, providers, remember, Buffers::Kept, warm)
+}
+
+/// [`open`], with the WebGPU provider keeping its buffers as `buffers`
+/// says.
+pub fn open_with(
+    path: &Path,
+    level: GraphOptimizationLevel,
+    providers: &[Provider],
+    remember: Option<Remembered<'_>>,
+    buffers: Buffers,
     mut warm: impl FnMut(&mut Session) -> ort::Result<()>,
 ) -> Result<Loaded> {
     if let Err(why) = init() {
@@ -534,7 +572,7 @@ pub fn open(
         }
         let skip_warm = skip_warm(last, provider);
 
-        let outcome = try_open(path, level, provider, skip_warm, &mut warm);
+        let outcome = try_open(path, level, provider, buffers, skip_warm, &mut warm);
         if let (Some(r), Some(adapter)) = (remember, &adapter) {
             let entries = entries.get_or_insert_with(|| record::read(r.store_root));
             let recorded = match &outcome {
@@ -649,11 +687,12 @@ fn try_open(
     path: &Path,
     level: GraphOptimizationLevel,
     provider: Provider,
+    buffers: Buffers,
     skip_warm: bool,
     warm: &mut impl FnMut(&mut Session) -> ort::Result<()>,
 ) -> ort::Result<Session> {
     let mut builder = Session::builder()?.with_optimization_level(level)?;
-    if let Some(ep) = provider.dispatch() {
+    if let Some(ep) = provider.dispatch(buffers) {
         builder = builder.with_execution_providers([ep])?;
     }
     let mut session = builder.commit_from_file(path)?;

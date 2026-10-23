@@ -1,6 +1,7 @@
 //! Where model files live and how they arrive: a cache directory, a
-//! download with a progress callback, and a hash check before the
-//! file is trusted.
+//! download with a progress callback, resumed for a large file whose
+//! last download failed partway, and a hash check before the file is
+//! trusted.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -156,7 +157,8 @@ impl Store {
 
     /// Fetch the model's files that are missing, checking each hash,
     /// and write the license note beside them. `progress` hears about
-    /// every chunk.
+    /// every chunk. A file over [`RESUMABLE`] whose download failed
+    /// partway is resumed from where it stopped.
     pub fn fetch(&self, model: &Model, mut progress: impl FnMut(Progress)) -> Result<()> {
         let dir = self.dir(model);
         std::fs::create_dir_all(&dir)?;
@@ -165,7 +167,7 @@ impl Store {
             if std::fs::metadata(&path).is_ok_and(|m| m.len() == file.bytes) {
                 continue;
             }
-            let part = path.with_extension("part");
+            let part = path.with_file_name(format!("{}.part", file.name));
             fetch_to(file, &part, &mut progress)?;
             std::fs::rename(&part, &path)?;
         }
@@ -257,52 +259,159 @@ impl Store {
     }
 }
 
-/// Download `file` to `part`, checking its hash. On any failure (the
-/// connection, a write, the hash) `part` is removed: a download is not
-/// resumed, and a file left half there would only mislead.
+/// Files over this size keep what a failed download brought, and the
+/// next fetch asks for the rest: a 5 GB model over a home connection
+/// should not start again at a dropped connection. Smaller ones start
+/// over, which costs little.
+pub const RESUMABLE: u64 = 256 << 20;
+
+/// Download `file` to `part`, checking its hash. On a failure of the
+/// connection or a write, `part` is kept when the file is over
+/// [`RESUMABLE`], for the next fetch to resume, and removed otherwise;
+/// on a hash that does not match it is removed either way, as what it
+/// holds is not the file.
 fn fetch_to(file: &File, part: &Path, progress: &mut impl FnMut(Progress)) -> Result<()> {
-    let result = download(file, part, progress);
-    if result.is_err() {
+    fetch_resuming(file, part, RESUMABLE, progress)
+}
+
+/// [`fetch_to`] with the size past which a part is kept as a
+/// parameter, for the tests.
+fn fetch_resuming(
+    file: &File,
+    part: &Path,
+    resumable_over: u64,
+    progress: &mut impl FnMut(Progress),
+) -> Result<()> {
+    let resumable = file.bytes > resumable_over;
+    let result = download(file, part, resumable, progress);
+    let keep = resumable && matches!(result, Err(Error::Http { .. } | Error::Io(_)));
+    if result.is_err() && !keep {
         let _ = std::fs::remove_file(part);
     }
     result
 }
 
-fn download(file: &File, part: &Path, progress: &mut impl FnMut(Progress)) -> Result<()> {
-    let mut response = ureq::get(file.url).call().map_err(|e| Error::Http {
-        url: file.url.to_string(),
+fn http(url: &str, e: impl std::fmt::Display) -> Error {
+    Error::Http {
+        url: url.to_string(),
         message: e.to_string(),
-    })?;
-    let total = response.body().content_length().unwrap_or(file.bytes);
-    let mut reader = response.body_mut().as_reader();
-    let mut out = std::fs::File::create(part)?;
+    }
+}
+
+/// Whether a 206 answer's `Content-Range` starts where the part ends.
+fn starts_at(response: &ureq::http::Response<ureq::Body>, offset: u64) -> bool {
+    response
+        .headers()
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("bytes "))
+        .and_then(|v| v.split('-').next())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        == Some(offset)
+}
+
+/// Fetch `file` into `part`. When `resumable` and a part is there
+/// from before, shorter than the file, the request asks for the rest
+/// (`Range: bytes=N-`) and a 206 from where the part ends is appended
+/// to it, the part read into the hash first so the whole file is
+/// checked; any other answer (a 200 from a server that ignores the
+/// range, a 206 from elsewhere, a 416) starts over from nothing.
+/// Progress starts at what is kept and counts to the whole file.
+fn download(
+    file: &File,
+    part: &Path,
+    resumable: bool,
+    progress: &mut impl FnMut(Progress),
+) -> Result<()> {
+    let kept = if resumable {
+        std::fs::metadata(part).map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+    let kept = if kept > file.bytes { 0 } else { kept };
     let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 1 << 20];
     let mut done = 0u64;
-    progress(Progress {
-        file: file.name,
-        done,
-        total,
-    });
-    loop {
-        let n = reader.read(&mut buf).map_err(|e| Error::Http {
-            url: file.url.to_string(),
-            message: e.to_string(),
-        })?;
-        if n == 0 {
-            break;
+    if kept == file.bytes && kept > 0 {
+        // All there: a fetch that stopped before its rename.
+        let mut f = std::fs::File::open(part)?;
+        std::io::copy(&mut f, &mut hasher)?;
+        done = kept;
+    } else {
+        let mut request = ureq::get(file.url);
+        if kept > 0 {
+            request = request.header("Range", format!("bytes={kept}-"));
         }
-        out.write_all(&buf[..n])?;
-        hasher.update(&buf[..n]);
-        done += n as u64;
+        let mut response = match request.call() {
+            Err(ureq::Error::StatusCode(416)) if kept > 0 => {
+                log::info!(
+                    "{}: the server would not resume at {kept} bytes; starting over",
+                    file.name
+                );
+                std::fs::remove_file(part)?;
+                return download(file, part, resumable, progress);
+            }
+            other => other.map_err(|e| http(file.url, e))?,
+        };
+        let resumed = kept > 0 && response.status() == 206 && starts_at(&response, kept);
+        if kept > 0 && response.status() == 206 && !resumed {
+            log::info!(
+                "{}: the server resumed somewhere other than {kept} bytes; starting over",
+                file.name
+            );
+            drop(response);
+            std::fs::remove_file(part)?;
+            return download(file, part, resumable, progress);
+        }
+        let mut out = if resumed {
+            log::info!("{}: resuming at {kept} of {} bytes", file.name, file.bytes);
+            let mut f = std::fs::File::open(part)?;
+            std::io::copy(&mut f, &mut hasher)?;
+            done = kept;
+            std::fs::OpenOptions::new().append(true).open(part)?
+        } else {
+            if kept > 0 {
+                log::info!(
+                    "{}: the server answered {} to a range; starting over",
+                    file.name,
+                    response.status()
+                );
+            }
+            std::fs::File::create(part)?
+        };
+        let total = if resumed {
+            file.bytes
+        } else {
+            response.body().content_length().unwrap_or(file.bytes)
+        };
+        let mut reader = response.body_mut().as_reader();
+        let mut buf = vec![0u8; 1 << 20];
         progress(Progress {
             file: file.name,
             done,
             total,
         });
+        loop {
+            let n = reader.read(&mut buf).map_err(|e| http(file.url, e))?;
+            if n == 0 {
+                break;
+            }
+            out.write_all(&buf[..n])?;
+            hasher.update(&buf[..n]);
+            done += n as u64;
+            progress(Progress {
+                file: file.name,
+                done,
+                total,
+            });
+        }
+        out.flush()?;
     }
-    out.flush()?;
-    drop(out);
+    if done != file.bytes {
+        return Err(http(
+            file.url,
+            format!("the download ended at {done} of {} bytes", file.bytes),
+        ));
+    }
     let got = hex(&hasher.finalize());
     if got != file.sha256 {
         return Err(Error::Hash {
@@ -443,8 +552,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// A download that fails partway leaves no part file: the archive
-    /// or model file is not resumed, and a part left would only
+    /// A small download that fails leaves no part file: under
+    /// [`RESUMABLE`] a file is not resumed, and a part left would only
     /// mislead.
     #[test]
     fn a_failed_download_leaves_no_part_file() {
@@ -464,6 +573,171 @@ mod tests {
             sha256: "0000000000000000000000000000000000000000000000000000000000000000",
         };
         assert!(fetch_to(&file, &part, &mut |_| {}).is_err());
+        assert!(!part.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A server on the loopback for one file's `body`: the first
+    /// connection is answered with a 200 and dropped halfway through
+    /// the body; after that a `Range: bytes=N-` is answered with a 206
+    /// from N when `ranges`, and everything with the whole body in a
+    /// 200 otherwise. Answers the file and the Range headers it saw.
+    fn serve(
+        body: &'static [u8],
+        ranges: bool,
+    ) -> (File, std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>>) {
+        use std::io::BufRead;
+        use std::sync::{Arc, Mutex};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url: &'static str = Box::leak(
+            format!("http://{}/model.bin", listener.local_addr().unwrap()).into_boxed_str(),
+        );
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for (n, stream) in listener.incoming().enumerate() {
+                let Ok(mut stream) = stream else { return };
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut range = None;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    let lower = line.to_ascii_lowercase();
+                    if let Some(v) = lower.strip_prefix("range:") {
+                        range = Some(v.trim().to_string());
+                    }
+                }
+                log.lock().unwrap().push(range.clone());
+                let from = range
+                    .as_deref()
+                    .filter(|_| ranges && n > 0)
+                    .and_then(|r| r.strip_prefix("bytes="))
+                    .and_then(|r| r.strip_suffix('-'))
+                    .and_then(|r| r.parse::<usize>().ok());
+                let len = body.len();
+                let head = match from {
+                    Some(f) => format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {f}-{}/{len}\r\nConnection: close\r\n\r\n",
+                        len - f,
+                        len - 1
+                    ),
+                    None => format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n"
+                    ),
+                };
+                let _ = stream.write_all(head.as_bytes());
+                let rest = &body[from.unwrap_or(0)..];
+                let rest = if n == 0 {
+                    &rest[..rest.len() / 2]
+                } else {
+                    rest
+                };
+                let _ = stream.write_all(rest);
+                let _ = stream.flush();
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
+        });
+        let sha: &'static str = Box::leak(hex(&Sha256::digest(body)).into_boxed_str());
+        let file = File {
+            name: "model.bin",
+            url,
+            bytes: body.len() as u64,
+            sha256: sha,
+        };
+        (file, seen)
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-store-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn body() -> &'static [u8] {
+        Box::leak(
+            (0..200_000u32)
+                .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+                .collect::<Vec<u8>>()
+                .into_boxed_slice(),
+        )
+    }
+
+    /// A large file whose download is dropped halfway keeps its part;
+    /// the next fetch asks for the rest, appends it, and the whole is
+    /// checked against the hash, the progress starting at what was
+    /// kept.
+    #[test]
+    fn a_large_download_dropped_halfway_resumes_from_its_part() {
+        let body = body();
+        let (file, seen) = serve(body, true);
+        let dir = scratch("resume");
+        let part = dir.join("model.bin.part");
+        let first = fetch_resuming(&file, &part, 1000, &mut |_| {});
+        assert!(matches!(first, Err(Error::Http { .. })), "{first:?}");
+        let kept = std::fs::metadata(&part).unwrap().len();
+        assert_eq!(kept, body.len() as u64 / 2);
+        let mut reports = Vec::new();
+        fetch_resuming(&file, &part, 1000, &mut |p| reports.push((p.done, p.total))).unwrap();
+        assert_eq!(std::fs::read(&part).unwrap(), body);
+        assert_eq!(reports.first(), Some(&(kept, body.len() as u64)));
+        assert_eq!(
+            reports.last(),
+            Some(&(body.len() as u64, body.len() as u64))
+        );
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![None, Some(format!("bytes={kept}-"))]
+        );
+        // Under the size, the same failure keeps nothing.
+        let (file, _) = serve(body, true);
+        let part = dir.join("small.part");
+        assert!(fetch_resuming(&file, &part, u64::MAX, &mut |_| {}).is_err());
+        assert!(!part.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A server that answers a range with the whole file in a 200:
+    /// the part is started over, not appended to, and the file still
+    /// arrives whole.
+    #[test]
+    fn a_server_that_ignores_the_range_starts_the_file_over() {
+        let body = body();
+        let (file, seen) = serve(body, false);
+        let dir = scratch("norange");
+        let part = dir.join("model.bin.part");
+        assert!(fetch_resuming(&file, &part, 1000, &mut |_| {}).is_err());
+        let kept = std::fs::metadata(&part).unwrap().len();
+        assert!(kept > 0);
+        let mut reports = Vec::new();
+        fetch_resuming(&file, &part, 1000, &mut |p| reports.push(p.done)).unwrap();
+        assert_eq!(std::fs::read(&part).unwrap(), body);
+        assert_eq!(reports.first(), Some(&0));
+        assert_eq!(seen.lock().unwrap()[1], Some(format!("bytes={kept}-")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A kept part whose whole does not hash to the file's is removed,
+    /// so the next fetch starts clean rather than append to it again.
+    #[test]
+    fn a_resumed_file_that_does_not_hash_is_removed() {
+        let body = body();
+        let (file, _) = serve(body, true);
+        let dir = scratch("badpart");
+        let part = dir.join("model.bin.part");
+        assert!(fetch_resuming(&file, &part, 1000, &mut |_| {}).is_err());
+        // The kept half, changed on disk.
+        let mut half = std::fs::read(&part).unwrap();
+        half[10] ^= 1;
+        std::fs::write(&part, &half).unwrap();
+        let resumed = fetch_resuming(&file, &part, 1000, &mut |_| {});
+        assert!(matches!(resumed, Err(Error::Hash { .. })), "{resumed:?}");
         assert!(!part.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }

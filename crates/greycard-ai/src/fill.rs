@@ -429,7 +429,7 @@ pub fn implausible(input: &Rgbf, hole: &[f32], out: &Rgbf) -> Option<String> {
 
 /// The index `i` of `0..len + pad` folded back into `0..len`, as a
 /// mirror at the far edge.
-fn mirror(i: usize, len: usize) -> usize {
+pub(crate) fn mirror(i: usize, len: usize) -> usize {
     if i < len {
         i
     } else if len < 2 {

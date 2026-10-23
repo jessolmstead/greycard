@@ -333,6 +333,99 @@ pub const FILL: Model = Model {
     }],
 };
 
+/// The notice that goes with every copy of RORem's weights: why the
+/// base's CreativeML Open RAIL++-M License carries through, the two
+/// training sets the paper names, and the license as Stability AI
+/// gives it.
+const ROREM_LICENSE: &str = include_str!("rorem_license.txt");
+
+/// RORem-mixed (Li et al.): SDXL inpainting fine-tuned on removal
+/// pairs, for the generative remove. greycard's ONNX export, all fp16:
+/// the UNet at a latent of 64 and of 128 (512 and 1024 pixels), two
+/// graphs over one data file, and the VAE's encoder and decoder at
+/// each size. The text encoders do not ship: the model takes the
+/// empty prompt, whose embeddings are here as raw little-endian fp16,
+/// `prompt_embeds.f16` [1, 77, 2048], `text_embeds.f16` [1, 1280], and
+/// `time_ids.f16` [1, 6] (the size conditioning at 1024: original
+/// height and width, crop top and left, target height and width). See
+/// `remove`.
+pub const REMOVE: Model = Model {
+    id: "rorem-mixed-fp16",
+    name: "RORem-mixed (Li et al.), fp16, ONNX export by greycard",
+    purpose: "the generative remove: what was behind what it removes, on the GPU",
+    source: "RORem (Li et al., CVPR 2025), https://github.com/leeruibin/RORem and https://huggingface.co/LetsThink/RORem (revision 22d02de), a fine-tune of https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1; exported by https://github.com/jessolmstead/greycard and published at https://huggingface.co/jessolmstead/greycard-rorem",
+    license: License {
+        name: "CreativeML Open RAIL++-M",
+        url: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+    },
+    modified: Some(Modified {
+        what: "the UNet traced in fp32 at opset 17 with fixed shapes and converted to fp16, Resize's scales put back to fp32 after the conversion, and conv_in padded from 9 input channels to 12 with zero weights (WebGPU's Conv answers wrong for 9); the VAE's encoder (to the latent mean) and decoder exported the same way at fixed 512 and 1024; and the empty prompt run once through the two text encoders, the embeddings kept as constants. The weights are otherwise untouched.",
+        notice: ROREM_LICENSE,
+    }),
+    files: &[
+        File {
+            name: "unet-1024.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/unet-1024.onnx",
+            bytes: 2_521_003,
+            sha256: "d81aed3cc00059e60e7c476be8aa679a9c78e3872cc73848bdd01b02c4b5fdf2",
+        },
+        File {
+            name: "unet-512.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/unet-512.onnx",
+            bytes: 2_520_999,
+            sha256: "0cfff605ed573a5695ccee47b91fec586b03464f421c8ceb37834db2218e9796",
+        },
+        File {
+            name: "unet.onnx_data",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/unet.onnx_data",
+            bytes: 5_134_931_840,
+            sha256: "3c883667b7e45d131d0d45d1339e28d38dfa3c210a3258f2afb637e58cfe50a5",
+        },
+        File {
+            name: "vae-encoder-512.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/vae-encoder-512.onnx",
+            bytes: 68_427_415,
+            sha256: "0d5368ce83a6a6a5cdcac5ffbb082f5102b9557441e7df8436949a0648290ca1",
+        },
+        File {
+            name: "vae-encoder-1024.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/vae-encoder-1024.onnx",
+            bytes: 68_427_415,
+            sha256: "8175c93cb33d553325ce940be504a61adca76ec0fbe1ed41c8e5bc46402044e6",
+        },
+        File {
+            name: "vae-decoder-512.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/vae-decoder-512.onnx",
+            bytes: 99_084_062,
+            sha256: "2acf1e075627ec41e68a243f048a5fd0bcee57548dc3b41eef4e5d101b2d8e6a",
+        },
+        File {
+            name: "vae-decoder-1024.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/vae-decoder-1024.onnx",
+            bytes: 99_084_064,
+            sha256: "25bcb399f90e732cac2fa8d28c15b61acf2872f095737c870df99160b34e1a7f",
+        },
+        File {
+            name: "prompt_embeds.f16",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/prompt_embeds.f16",
+            bytes: 315_392,
+            sha256: "739efee6b5c6deb2c4ecf3d1bf8908242e9e1a5b27ae8896d16fc904873b2eb0",
+        },
+        File {
+            name: "text_embeds.f16",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/text_embeds.f16",
+            bytes: 2_560,
+            sha256: "c2e5c4dff874db93dc53e5cc78d9c3fb3789f1342738729eb755c9fe5a2b82fa",
+        },
+        File {
+            name: "time_ids.f16",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/time_ids.f16",
+            bytes: 12,
+            sha256: "4c84e226abda27b53afd64b62938667278fc0d8b0babc9bbb0c384b49cde554c",
+        },
+    ],
+};
+
 /// A file a store once fetched for a model this build no longer
 /// uses, in that model's directory: the store removes it when opened,
 /// when its name, size, and hash are the ones listed.
@@ -436,8 +529,13 @@ pub fn denoiser(name: &str) -> Option<&'static Model> {
 
 /// The registered model with this id, if there is one.
 pub fn model(id: &str) -> Option<&'static Model> {
-    MODELS.iter().find(|m| m.id == id)
+    MODELS.iter().chain(UNLISTED).find(|m| m.id == id)
 }
+
+/// Models found by [`model`] but not in [`MODELS`], so not in what
+/// `greycard models --fetch all` brings: [`REMOVE`], 5.5 GB, until its
+/// files are published and the retouch uses it.
+pub const UNLISTED: &[Model] = &[REMOVE];
 
 /// ONNX Runtime as Microsoft publishes it, for a processor the one
 /// greycard ships cannot run on, or a platform greycard ships none
@@ -733,7 +831,7 @@ mod tests {
     #[test]
     fn the_registry_is_well_formed() {
         let mut ids = std::collections::HashSet::new();
-        for m in MODELS {
+        for m in MODELS.iter().chain(UNLISTED) {
             assert!(ids.insert(m.id), "duplicate id {}", m.id);
             assert!(!m.files.is_empty());
             for f in m.files {
@@ -832,6 +930,41 @@ mod tests {
         for f in SAM3.files {
             assert!(note.contains(f.sha256));
         }
+    }
+
+    /// RORem carries SDXL's RAIL++-M, not the Apache-2.0 its card
+    /// says: the note names it, holds its text with the use-based
+    /// restrictions, and says why, with the training sets the paper
+    /// names and every file the fetch brings.
+    #[test]
+    fn the_remove_note_names_rail_and_every_file() {
+        let note = REMOVE.license_note();
+        assert!(note.contains("License: CreativeML Open RAIL++-M"));
+        assert!(note.contains("CreativeML Open RAIL++-M License dated July 26, 2023"));
+        assert!(note.contains("Copyright (c) 2023 Stability AI"));
+        assert!(note.contains("Attachment A"));
+        assert!(note.contains("Use-based restrictions"));
+        assert!(note.contains("fine-tune of Stable Diffusion XL"));
+        assert!(note.contains("MuLAn (CC BY-NC-SA 4.0)"));
+        assert!(note.contains("DIV2K"));
+        assert!(note.contains("leeruibin/RORem"));
+        assert!(note.contains("jessolmstead/greycard-rorem"));
+        assert!(note.contains("conv_in padded"));
+        assert!(!note.contains("does not redistribute"));
+        for f in REMOVE.files {
+            assert!(
+                note.contains(f.name) && note.contains(f.sha256),
+                "{}",
+                f.name
+            );
+        }
+        // Two UNet graphs over the one data file, a VAE pair at each
+        // size, and the three constants: about 5.5 GB in all.
+        assert_eq!(REMOVE.files.len(), 10);
+        assert!((5.4e9..5.6e9).contains(&(REMOVE.bytes() as f64)));
+        // Found by its id, but not fetched with everything else.
+        assert_eq!(model("rorem-mixed-fp16"), Some(&REMOVE));
+        assert!(MODELS.iter().all(|m| m.id != REMOVE.id));
     }
 
     /// The CPU-only runtimes are Microsoft's own releases of the
