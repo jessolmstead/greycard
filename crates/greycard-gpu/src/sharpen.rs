@@ -36,6 +36,8 @@
 //! equality, so if either ever does, the suite says so.
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use greycard_core::develop::sharpen::{
     self as reference, Radius, SharpenOptions, SharpenStats, Threshold,
@@ -86,6 +88,105 @@ const ATLAS_BUDGET: u64 = 96 << 20;
 /// so an atlas made for a size fits any radius.
 const MAX_BORDER: u32 = 8;
 
+/// How long one submission of the sharpen's iterations is let run.
+/// A driver resets a GPU whose one submission runs too long: Windows'
+/// TDR after about 2 s, amdgpu's ring timeout after 10 s. An eighth of
+/// the shorter leaves room for a measurement that came in low, a GPU
+/// that slows as it warms, and the window's own frames queued behind;
+/// and a quarter of a second between the window's chances to draw
+/// keeps a slider drag live on a slow GPU.
+pub const SUBMIT_BUDGET: Duration = Duration::from_millis(250);
+
+/// The iterations of the first submission on a context that has
+/// timed none: one iteration over the first batch of tiles, a few
+/// milliseconds on a discrete GPU and well under a second on the
+/// slowest integrated one we know of.
+const PROBE_ITERATIONS: u32 = 1;
+
+/// How the sharpen's iterations are split into submissions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Batching {
+    /// As many as [`SUBMIT_BUDGET`] holds at the rate the context
+    /// last measured: the default.
+    #[default]
+    Paced,
+    /// This many iterations of a batch of tiles a submission, for the
+    /// tests: the planes must not depend on it.
+    Every(u32),
+    /// Every iteration in one submission, as before the budget: for
+    /// measuring what the budget costs.
+    Whole,
+}
+
+/// What the context has learned of its own speed, and how it splits.
+pub(crate) struct Pace {
+    batching: Mutex<Batching>,
+    /// Seconds per padded pixel per iteration, as last measured: the
+    /// next develop's first submission is sized from it.
+    rate: Mutex<Option<f64>>,
+    /// The pixel-iterations of the last submission timed: the next is
+    /// never more than twice it, so a rate read fast (a chunk whose
+    /// blocks had all stopped early, which skip the blurs) cannot
+    /// oversize it by more than that.
+    last: Mutex<Option<f64>>,
+    /// The last run's submissions of its iterations.
+    submits: AtomicU32,
+    /// The atlas's bytes a plane, [`ATLAS_BUDGET`] but for a test that
+    /// wants several batches of tiles from a small picture.
+    atlas: Mutex<u64>,
+}
+
+impl Default for Pace {
+    fn default() -> Self {
+        Self {
+            batching: Mutex::default(),
+            rate: Mutex::default(),
+            last: Mutex::default(),
+            submits: AtomicU32::default(),
+            atlas: Mutex::new(ATLAS_BUDGET),
+        }
+    }
+}
+
+/// The pixel-iterations a submission may hold: what the budget holds
+/// at `rate`, at most twice the `last` submission timed; with no rate
+/// yet, the `probe`.
+fn cap_of(rate: Option<f64>, last: Option<f64>, probe: f64) -> f64 {
+    match rate {
+        None => probe,
+        Some(r) => {
+            let cap = cap_for(r, SUBMIT_BUDGET);
+            last.map_or(cap, |l| cap.min(2.0 * l))
+        }
+    }
+}
+
+/// The pixel-iterations that fit [`SUBMIT_BUDGET`] at `rate` seconds
+/// a pixel-iteration.
+fn cap_for(rate: f64, budget: Duration) -> f64 {
+    budget.as_secs_f64() / rate.max(f64::MIN_POSITIVE)
+}
+
+/// The rate a submission of `queued` pixel-iterations that took
+/// `took` shows.
+fn rate_of(took: Duration, queued: f64) -> f64 {
+    took.as_secs_f64() / queued.max(1.0)
+}
+
+/// The iterations of a batch of `batch_px` padded pixels to record
+/// next, `left` of them to go, into a submission already holding
+/// `queued` pixel-iterations of a `cap`: as many as fit, and at least
+/// one, since an iteration is not split.
+fn chunk(cap: f64, queued: f64, batch_px: f64, left: u32) -> u32 {
+    let room = ((cap - queued) / batch_px.max(1.0)).floor();
+    let room = if room.is_finite() {
+        room.clamp(1.0, f64::from(u32::MAX)) as u32
+    } else {
+        u32::MAX
+    };
+    room.min(left)
+}
+
 /// The op's pipelines, built once per device, and the working
 /// textures kept between runs on a picture of the same size.
 pub(crate) struct Pipelines {
@@ -113,6 +214,7 @@ pub(crate) struct Pipelines {
     spare_full: wgpu::Texture,
     spare_mask: wgpu::Texture,
     work: Mutex<Option<Work>>,
+    pace: Pace,
 }
 
 impl Pipelines {
@@ -219,6 +321,7 @@ impl Pipelines {
             tiles_layout,
             apply_layout,
             work: Mutex::new(None),
+            pace: Pace::default(),
         }
     }
 
@@ -268,7 +371,13 @@ struct Work {
 }
 
 impl Work {
-    fn new(device: &wgpu::Device, max_dimension: u32, width: u32, height: u32) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        max_dimension: u32,
+        width: u32,
+        height: u32,
+        atlas_budget: u64,
+    ) -> Self {
         let plane = |label: &str, w: u32, h: u32| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -293,7 +402,7 @@ impl Work {
         let tiles_across = width.div_ceil(tile);
         let bands = height.div_ceil(tile);
         let cap_cols = tiles_across.min(max_dimension / full_cap).max(1);
-        let cap_tiles = (ATLAS_BUDGET / (u64::from(full_cap) * u64::from(full_cap) * 4)).max(1);
+        let cap_tiles = (atlas_budget / (u64::from(full_cap) * u64::from(full_cap) * 4)).max(1);
         let cap_rows = (cap_tiles / u64::from(cap_cols)) as u32;
         let cap_rows = cap_rows.clamp(1, bands.min(max_dimension / full_cap).max(1));
         let blocks = tile / reference::BLOCK as u32;
@@ -400,9 +509,39 @@ impl Context {
                 image.height
             )));
         }
-        crate::scoped(&self.device, "sharpening", || {
+        self.scoped("sharpening", || {
             self.sharpen_into(image, options, measured, clip_level, Output::Half(out))
         })
+    }
+
+    /// How the sharpen splits its iterations into submissions from
+    /// now on; [`Batching::Paced`] unless told otherwise.
+    pub fn set_sharpen_batching(&self, batching: Batching) {
+        *self
+            .sharpen
+            .pace
+            .batching
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = batching;
+    }
+
+    /// The bytes a plane of the sharpen's atlas of tiles takes, and so
+    /// how many tiles a batch holds: for a test that wants several
+    /// batches from a small picture. The working textures are let go,
+    /// to be made at the new size.
+    pub fn set_sharpen_atlas_budget(&self, bytes: u64) {
+        *self
+            .sharpen
+            .pace
+            .atlas
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = bytes.max(1);
+        self.sharpen.release();
+    }
+
+    /// The submissions the last sharpen's iterations took.
+    pub fn sharpen_submissions(&self) -> u32 {
+        self.sharpen.pace.submits.load(Ordering::Relaxed)
     }
 
     /// The reference's own signature: sharpen a working image in
@@ -433,7 +572,7 @@ impl Context {
                 view_formats: &[],
             })
         };
-        let (rgb, mask, stats) = crate::scoped(&self.device, "sharpening", || {
+        let (rgb, mask, stats) = self.scoped("sharpening", || {
             let rgb = make("sharpened, full floats", wgpu::TextureFormat::Rgba32Float);
             let mask = make("sharpen mask", wgpu::TextureFormat::R32Float);
             let stats = self.sharpen_into(
@@ -481,7 +620,8 @@ impl Context {
         let work = match guard.as_ref() {
             Some(work) if work.width == w && work.height == h => guard.as_ref().unwrap(),
             _ => {
-                *guard = Some(Work::new(&self.device, self.max_dimension, w, h));
+                let budget = *p.pace.atlas.lock().unwrap_or_else(|e| e.into_inner());
+                *guard = Some(Work::new(&self.device, self.max_dimension, w, h, budget));
                 guard.as_ref().unwrap()
             }
         };
@@ -754,8 +894,21 @@ impl Context {
             pass.set_bind_group(0, &planes_group, &[uniforms.push(&self.queue, &base)]);
             pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
         }
-        for &(c0, b0, cols, rows) in &batches {
+        // The iterations, batch by batch of tiles, in submissions of a
+        // bounded length (see `SUBMIT_BUDGET`): each submission is
+        // waited for and timed, and the time sizes the next.
+        let batching = *p.pace.batching.lock().unwrap_or_else(|e| e.into_inner());
+        let mut rate = *p.pace.rate.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last = *p.pace.last.lock().unwrap_or_else(|e| e.into_inner());
+        let mut submits = 1u32;
+        let mut longest = std::time::Duration::ZERO;
+        let iterations = options.iterations as u32;
+        let px = f64::from(full) * f64::from(full);
+        let mut queued = 0f64;
+        let last_batch = batches.len().saturating_sub(1);
+        for (i, &(c0, b0, cols, rows)) in batches.iter().enumerate() {
             let tiles = cols * rows;
+            let batch_px = px * f64::from(tiles);
             let slot = uniforms.push(
                 &self.queue,
                 &Params {
@@ -767,24 +920,69 @@ impl Context {
                 },
             );
             encoder.clear_buffer(&work.left, 0, None);
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_bind_group(0, &tiles_group, &[slot]);
-            pass.set_pipeline(&p.setup_blocks);
-            pass.dispatch_workgroups(blocks, blocks, tiles);
-            pass.set_pipeline(&p.fill_estimate);
-            pass.dispatch_workgroups(groups(full, 16), groups(full, 16), tiles);
-            for iteration in 0..options.iterations {
-                pass.set_pipeline(&p.blur_ratio);
-                pass.dispatch_workgroups(groups(full, 16), groups(full, 16), tiles);
-                pass.set_pipeline(&p.blur_multiply);
-                pass.dispatch_workgroups(groups(full, 16), groups(full, 16), tiles);
-                if options.stop_early && iteration + 1 < options.iterations {
-                    pass.set_pipeline(&p.check);
-                    pass.dispatch_workgroups(blocks, blocks, tiles);
+            let mut done = 0u32;
+            loop {
+                let k = match batching {
+                    Batching::Paced => {
+                        let probe = f64::from(PROBE_ITERATIONS) * batch_px;
+                        let cap = cap_of(rate, last, probe);
+                        chunk(cap, queued, batch_px, iterations - done)
+                    }
+                    Batching::Every(n) => n.max(1).min(iterations - done),
+                    Batching::Whole => iterations - done,
+                };
+                {
+                    let mut pass = encoder.begin_compute_pass(&Default::default());
+                    pass.set_bind_group(0, &tiles_group, &[slot]);
+                    if done == 0 {
+                        pass.set_pipeline(&p.setup_blocks);
+                        pass.dispatch_workgroups(blocks, blocks, tiles);
+                        pass.set_pipeline(&p.fill_estimate);
+                        pass.dispatch_workgroups(groups(full, 16), groups(full, 16), tiles);
+                    }
+                    for iteration in done..done + k {
+                        pass.set_pipeline(&p.blur_ratio);
+                        pass.dispatch_workgroups(groups(full, 16), groups(full, 16), tiles);
+                        pass.set_pipeline(&p.blur_multiply);
+                        pass.dispatch_workgroups(groups(full, 16), groups(full, 16), tiles);
+                        if options.stop_early && iteration + 1 < iterations {
+                            pass.set_pipeline(&p.check);
+                            pass.dispatch_workgroups(blocks, blocks, tiles);
+                        }
+                    }
+                    done += k;
+                    if done == iterations {
+                        pass.set_pipeline(&p.commit_rest);
+                        pass.dispatch_workgroups(tile / 16, tile / 16, tiles);
+                    }
+                }
+                queued += f64::from(k) * batch_px;
+                let end = i == last_batch && done == iterations;
+                let flush = match batching {
+                    Batching::Paced => {
+                        let probe = f64::from(PROBE_ITERATIONS) * batch_px;
+                        let cap = cap_of(rate, last, probe);
+                        queued + batch_px > cap
+                    }
+                    Batching::Every(_) => true,
+                    Batching::Whole => false,
+                };
+                if flush && !end {
+                    let started = std::time::Instant::now();
+                    let full_encoder = std::mem::replace(&mut encoder, self.encoder("sharpen"));
+                    self.queue.submit(Some(full_encoder.finish()));
+                    self.wait()?;
+                    let took = started.elapsed();
+                    longest = longest.max(took);
+                    submits += 1;
+                    rate = Some(rate_of(took, queued));
+                    last = Some(queued);
+                    queued = 0.0;
+                }
+                if done == iterations {
+                    break;
                 }
             }
-            pass.set_pipeline(&p.commit_rest);
-            pass.dispatch_workgroups(tile / 16, tile / 16, tiles);
         }
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -795,11 +993,35 @@ impl Context {
             pass.set_bind_group(0, &apply_group, &[]);
             pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
         }
+        let started = std::time::Instant::now();
         self.queue.submit(Some(encoder.finish()));
 
         // The stats: the row sums, totaled in double as the reference
         // totals its planes.
         let sums = self.read_buffer(&work.partials, 0, u64::from(2 * h) * 4)?;
+        // The last submission timed too, the read back's wait being
+        // its end, so that a GPU whose iterations all fit in one is
+        // still measured; but not a short tail, whose fixed costs (the
+        // apply, the read back) would overstate the rate.
+        if batching == Batching::Paced && queued > 0.0 {
+            let took = started.elapsed();
+            longest = longest.max(took);
+            let cap = cap_of(rate, last, 0.0);
+            if submits == 1 || queued * 2.0 >= cap {
+                rate = Some(rate_of(took, queued));
+                last = Some(queued);
+            }
+            *p.pace.rate.lock().unwrap_or_else(|e| e.into_inner()) = rate;
+            *p.pace.last.lock().unwrap_or_else(|e| e.into_inner()) = last;
+        }
+        if submits > 1 {
+            log::debug!(
+                "the sharpen's {iterations} iterations in {submits} submissions, \
+                 the longest {:.0} ms",
+                longest.as_secs_f64() * 1e3
+            );
+        }
+        p.pace.submits.store(submits, Ordering::Relaxed);
         let sums: &[f32] = bytemuck::cast_slice(&sums);
         let total = |rows: &[f32]| rows.iter().map(|&v| f64::from(v)).sum::<f64>();
         // Rounded as the reference rounds: the mean to single, then
@@ -994,6 +1216,63 @@ mod tests {
         assert_eq!(offset_of!(Params, floor_pedestal), 92);
         assert_eq!(offset_of!(Params, kernel), 96);
         assert_eq!(std::mem::size_of::<Params>(), 160);
+    }
+
+    /// The budget is well under the shortest watchdog we know of,
+    /// Windows' two seconds, and long enough that a fast GPU's whole
+    /// sharpen is one submission.
+    #[test]
+    fn the_budget_is_well_under_the_watchdogs() {
+        use super::SUBMIT_BUDGET;
+        use std::time::Duration;
+        assert!(SUBMIT_BUDGET * 4 <= Duration::from_secs(2));
+        assert!(SUBMIT_BUDGET >= Duration::from_millis(100));
+    }
+
+    /// A submission measured sizes the next to the budget: 10
+    /// iterations of a batch taking 100 ms is 10 ms an iteration, so
+    /// 25 fit in 250 ms.
+    #[test]
+    fn the_next_submission_is_sized_from_the_last_measured() {
+        use super::{cap_for, chunk, rate_of};
+        use std::time::Duration;
+        let batch = 4.0e6;
+        let rate = rate_of(Duration::from_millis(100), 10.0 * batch);
+        let cap = cap_for(rate, Duration::from_millis(250));
+        assert_eq!(chunk(cap, 0.0, batch, 50), 25);
+        // Fewer left than fit: what is left.
+        assert_eq!(chunk(cap, 0.0, batch, 7), 7);
+        // Part of the submission taken: the rest of the room.
+        assert_eq!(chunk(cap, 20.0 * batch, batch, 50), 5);
+        // No room, or one iteration over the budget: one all the
+        // same, since an iteration is not split.
+        assert_eq!(chunk(cap, cap, batch, 50), 1);
+        assert_eq!(
+            chunk(cap_for(rate, Duration::from_millis(5)), 0.0, batch, 50),
+            1
+        );
+        // A GPU so fast it measured nothing: everything at once.
+        assert_eq!(
+            chunk(cap_for(0.0, Duration::from_millis(250)), 0.0, batch, 50),
+            50
+        );
+        assert_eq!(chunk(cap, 0.0, batch, 0), 0);
+    }
+
+    /// A rate that reads fast grows the next submission to twice the
+    /// last at most; no rate yet is the probe.
+    #[test]
+    fn a_submission_grows_to_twice_the_last_at_most() {
+        use super::{SUBMIT_BUDGET, cap_for, cap_of};
+        let fast = 1e-12;
+        assert_eq!(cap_of(None, Some(5.0), 7.0), 7.0);
+        assert_eq!(cap_of(Some(fast), Some(1e6), 7.0), 2e6);
+        assert_eq!(cap_of(Some(fast), None, 7.0), cap_for(fast, SUBMIT_BUDGET));
+        let slow = 1e-3;
+        assert_eq!(
+            cap_of(Some(slow), Some(1e9), 7.0),
+            cap_for(slow, SUBMIT_BUDGET)
+        );
     }
 
     #[test]

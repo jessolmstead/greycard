@@ -161,7 +161,7 @@ impl Context {
                 .map(|_| correction.gain_at(0.0, 0.0, wf, hf)),
         };
         let params = Params::new(correction, w, h, scale);
-        let data = crate::scoped(&self.device, "correcting the lens", || {
+        let data = self.scoped("correcting the lens", || {
             self.correct_lens_unscoped(image, params, w, h, band_rows)
         })?;
         let out = WorkingImage::from_data(image.width, image.height, data)

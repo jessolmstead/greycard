@@ -331,7 +331,7 @@ impl Context {
             return Ok((samples.to_vec(), CaStats::default()));
         }
         let (w, h) = self.ca_fits(width, height)?;
-        crate::scoped(&self.device, "correcting chromatic aberration", || {
+        self.scoped("correcting chromatic aberration", || {
             self.correct_ca_unscoped(samples, w, h, pattern, options)
         })
     }
@@ -373,7 +373,7 @@ impl Context {
             )));
         }
         let (w, h) = self.ca_fits(width, height)?;
-        crate::scoped(&self.device, "measuring chromatic aberration", || {
+        self.scoped("measuring chromatic aberration", || {
             let work = Work::new(&self.device, w, h);
             self.upload_mosaic(&work.original, samples, w, h);
             let uniforms = Uniforms::new(&self.device, "ca params", 1);

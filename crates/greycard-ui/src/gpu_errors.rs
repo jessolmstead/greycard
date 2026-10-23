@@ -77,6 +77,10 @@ enum Class {
     /// A frame of the window's drawn on a surface such a configure
     /// left at the old size, before the configure again.
     StaleFrame,
+    /// Any error at all once the device is lost: whatever the call
+    /// made is invalid, and the quit the loss asked for is on its way
+    /// (`gpu_lost`).
+    AfterLoss,
     /// Anything else, which ends the process as wgpu's own handler
     /// would.
     Fatal,
@@ -91,7 +95,10 @@ enum Class {
 /// changed would bring the panic back with nothing to say so.
 /// `stale` is whether a failed configure is waiting to be done again,
 /// and the error was raised on the window's thread.
-fn classify(error: &wgpu::Error, stale: bool) -> Class {
+fn classify(error: &wgpu::Error, stale: bool, lost: bool) -> Class {
+    if lost {
+        return Class::AfterLoss;
+    }
     let wgpu::Error::Validation { source, .. } = error else {
         return Class::Fatal;
     };
@@ -150,12 +157,16 @@ fn classify(error: &wgpu::Error, stale: bool) -> Class {
 /// - An internal error (a shader the driver will not compile, a limit
 ///   of the system) panics: we know of no way to go on from one.
 ///
+/// - Once the device is lost, every error is let through at debug: the
+///   loss's callback has asked for the quit, and the resources the
+///   window still uses are invalid until then.
+///
 /// The panic carries wgpu's full text, and our panic hook writes it to
-/// the log with the backtrace. A lost device never comes here: wgpu
+/// the log with the backtrace. The loss itself never comes here: wgpu
 /// reports it to the device-lost callback instead.
 fn handle(error: wgpu::Error, retry: &Retry, on_window_thread: bool) {
     let stale = on_window_thread && retry.pending.load(Ordering::SeqCst);
-    match classify(&error, stale) {
+    match classify(&error, stale, crate::gpu_lost::lost()) {
         Class::ConfigureRaced => {
             tracing::warn!(
                 "the window's surface: {}; configuring it again",
@@ -168,6 +179,9 @@ fn handle(error: wgpu::Error, retry: &Retry, on_window_thread: bool) {
                 "a frame on the surface left at its old size: {}",
                 chain(&error)
             );
+        }
+        Class::AfterLoss => {
+            tracing::debug!("on the lost device: {}", chain(&error));
         }
         Class::Fatal => panic!("wgpu error: {}", full_text(&error)),
     }
@@ -355,10 +369,24 @@ mod tests {
     }
 
     #[test]
+    fn after_a_loss_nothing_is_fatal() {
+        let error = validation(
+            "Device::create_texture",
+            ConfigureSurfaceError::InvalidSurface,
+        );
+        assert_eq!(classify(&error, false, false), Class::Fatal);
+        assert_eq!(classify(&error, false, true), Class::AfterLoss);
+        assert_eq!(
+            classify(&mismatch("Queue::submit"), false, true),
+            Class::AfterLoss
+        );
+    }
+
+    #[test]
     fn a_configure_that_lost_the_race_is_recoverable() {
         let error = validation("Surface::configure", ConfigureSurfaceError::GpuWaitTimeout);
-        assert_eq!(classify(&error, false), Class::ConfigureRaced);
-        assert_eq!(classify(&error, true), Class::ConfigureRaced);
+        assert_eq!(classify(&error, false, false), Class::ConfigureRaced);
+        assert_eq!(classify(&error, true, false), Class::ConfigureRaced);
         assert_eq!(
             chain(&error),
             "In Surface::configure: Failed to wait for GPU to come idle before \
@@ -375,7 +403,7 @@ mod tests {
             ConfigureSurfaceError::Device(DeviceError::Lost),
         ] {
             let error = validation("Surface::configure", cause);
-            assert_eq!(classify(&error, true), Class::Fatal, "{error}");
+            assert_eq!(classify(&error, true, false), Class::Fatal, "{error}");
         }
     }
 
@@ -389,7 +417,7 @@ mod tests {
             })
         };
         let memory = wgpu::Error::OutOfMemory { source: source() };
-        assert_eq!(classify(&memory, true), Class::Fatal);
+        assert_eq!(classify(&memory, true, false), Class::Fatal);
         assert!(
             full_text(&memory).starts_with("Out of Memory: In Surface::configure: "),
             "{}",
@@ -399,7 +427,7 @@ mod tests {
             source: source(),
             description: "Internal error".into(),
         };
-        assert_eq!(classify(&internal, true), Class::Fatal);
+        assert_eq!(classify(&internal, true, false), Class::Fatal);
     }
 
     /// A frame's size mismatch as wgpu-core nests it, under the
@@ -449,8 +477,8 @@ mod tests {
         // and the frame's submit, which fails on the same encoder's
         // error, under "Queue::submit": what the window's log showed.
         for call in ["a CommandEncoder", "Queue::submit"] {
-            assert_eq!(classify(&mismatch(call), true), Class::StaleFrame);
-            assert_eq!(classify(&mismatch(call), false), Class::Fatal);
+            assert_eq!(classify(&mismatch(call), true, false), Class::StaleFrame);
+            assert_eq!(classify(&mismatch(call), false, false), Class::Fatal);
         }
     }
 

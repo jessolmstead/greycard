@@ -10,7 +10,7 @@ use greycard_core::develop::sharpen::{
     self as reference, Radius, SharpenOptions, SharpenStats, Threshold, sharpen_with_mask,
 };
 use greycard_core::image::WorkingImage;
-use greycard_gpu::Context;
+use greycard_gpu::{Batching, Context};
 
 fn context() -> Option<Context> {
     match Context::own() {
@@ -950,4 +950,94 @@ fn the_gpu_sharpen_is_the_reference_over_random_settings() {
             TOLERANCE,
         );
     });
+}
+
+/// The iterations split into submissions of one, of seven, paced, or
+/// all in one give the same picture, mask, and stats to the bit: a
+/// submission's boundary moves no dispatch and changes no state the
+/// next reads. With the early stop and without, at an iteration count
+/// that seven does not divide, and with the atlas made small enough
+/// that the picture's tiles go in several batches, each with its own
+/// uniform slot and its own count of blocks left, and a submission
+/// paced or whole holding more than one.
+#[test]
+fn the_iterations_split_into_submissions_give_the_same_planes() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let image = textured(320, 240, 1.2);
+    // One padded tile's bytes or less: a band of tiles a batch.
+    ctx.set_sharpen_atlas_budget(4);
+    for stop_early in [true, false] {
+        let options = SharpenOptions {
+            iterations: 30,
+            stop_early,
+            ..Default::default()
+        };
+        let mut runs = Vec::new();
+        for batching in [
+            Batching::Whole,
+            Batching::Every(1),
+            Batching::Every(7),
+            Batching::Paced,
+        ] {
+            ctx.set_sharpen_batching(batching);
+            let mut out = image.clone();
+            let (stats, mask) = ctx
+                .sharpen_image(&mut out, &options, Some(1.0), 2.0)
+                .expect("sharpens");
+            runs.push((batching, ctx.sharpen_submissions(), out, mask, stats));
+        }
+        ctx.set_sharpen_batching(Batching::Paced);
+        // Every(1) is a submission an iteration a batch.
+        let batches = runs[1].1 / 30;
+        assert!(batches > 1, "{batches} batches of tiles");
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        let (_, whole_submits, whole, whole_mask, whole_stats) = &runs[0];
+        assert_eq!(*whole_submits, 1);
+        for (batching, submits, out, mask, stats) in &runs[1..] {
+            assert_eq!(
+                bits(&out.data),
+                bits(&whole.data),
+                "{batching:?}, early stop {stop_early}"
+            );
+            assert_eq!(bits(mask), bits(whole_mask), "{batching:?}");
+            assert_eq!(
+                format!("{stats:?}"),
+                format!("{whole_stats:?}"),
+                "{batching:?}"
+            );
+            match batching {
+                Batching::Every(1) => assert_eq!(*submits, 30 * batches),
+                Batching::Every(7) => assert_eq!(*submits, 5 * batches, "30 in sevens"),
+                _ => {}
+            }
+        }
+    }
+    ctx.set_sharpen_atlas_budget(96 << 20);
+}
+
+/// A device lost under the context (destroyed here, as a driver's
+/// reset loses it) is an error and not a panic: the wait wgpu panics in
+/// is caught, the context says it is lost, and every op after says so
+/// without asking anything of the device.
+#[test]
+fn a_lost_device_is_an_error_not_a_panic() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let image = textured(96, 64, 1.0);
+    let uploaded = ctx.upload(&image).expect("uploads");
+    let out = ctx.viewport_texture(96, 64);
+    ctx.sharpen(&uploaded, &SharpenOptions::default(), Some(1.0), 2.0, &out)
+        .expect("sharpens before the loss");
+    ctx.device().destroy();
+    let err = ctx
+        .sharpen(&uploaded, &SharpenOptions::default(), Some(1.0), 2.0, &out)
+        .expect_err("a lost device fails the op");
+    println!("after the loss: {err}");
+    assert!(matches!(err, greycard_gpu::Error::Lost(_)), "{err}");
+    assert!(ctx.is_lost());
+    let again = ctx.upload(&image).err().expect("and the next op too");
+    assert!(matches!(again, greycard_gpu::Error::Lost(_)), "{again}");
 }

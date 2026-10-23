@@ -603,6 +603,20 @@ impl Worker {
         cv.notify_one();
     }
 
+    /// What tells the worker the window's device was lost, from
+    /// whichever thread found the loss (the device's lost callback
+    /// runs there): the engine's ops go to the CPU from then on, and
+    /// with `again` the develop on screen, made on the lost device, is
+    /// made again there.
+    pub fn gpu_lost_teller(&self) -> impl Fn(bool) + Send + Sync + use<> {
+        let queue = self.queue.clone();
+        move |again| {
+            let (lock, cv) = &*queue;
+            lock.lock().unwrap_or_else(|e| e.into_inner()).gpu_lost = Some(again);
+            cv.notify_one();
+        }
+    }
+
     /// A Subject model just arrived in the store: the worker's loaded
     /// one, if any, is dropped, so the next Subject mask loads
     /// whichever file `step` now picks rather than the one already

@@ -903,6 +903,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // on a resize can race its submits, which
                         // wgpu's own handler would make a panic.
                         crate::gpu_errors::install(device, app_weak.clone());
+                        // And a lost device's callback: the quit and the
+                        // start again (`gpu_lost`).
+                        let teller =
+                            WORKER.with(|w| w.borrow().as_ref().map(|w| w.gpu_lost_teller()));
+                        if let Some(teller) = teller {
+                            crate::gpu_lost::install(device, cpu_ops, teller);
+                        }
                         let mut st = state.borrow_mut();
                         if let Some(app) = app_weak.upgrade() {
                             let lines = drawing.lines(info.device_type, &info.name);
@@ -1000,6 +1007,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     }
                 }
                 slint::RenderingState::BeforeRendering => {
+                    // On a lost device the viewport draws nothing until
+                    // the quit the loss asked for.
+                    if crate::gpu_lost::lost() {
+                        return;
+                    }
                     let Some(app) = app_weak.upgrade() else {
                         return;
                     };
@@ -1633,7 +1645,17 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // logout, the shell crashing) still quits as a closed window does,
     // with every save below and the worker out of the driver, and the
     // error is the run's at the end.
-    let ran = app.run();
+    // A panic of Slint's drawing on a lost device ends the loop as a
+    // quit would, so the saves below and the start again still come.
+    let ran = match crate::gpu_lost::survive(|| app.run(), Ok(())) {
+        // The surface's error on the lost device is the loss's, said.
+        Err(e) if crate::gpu_lost::lost() => {
+            tracing::warn!("the window's event loop ended on the lost device: {e}");
+            Ok(())
+        }
+        ran => ran,
+    };
+    crate::gpu_lost::leaving();
     // An event loop that ended before any frame, on DX12 we chose, is
     // the device refused there (`gpu_marker`).
     crate::gpu_marker::run_ended();
@@ -1730,9 +1752,20 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         read_edit(&app, &st.develop.edit, st.develop.target)
     };
     save_at_quit(&mut state.borrow_mut(), edit, crate::sync::QUIT_WRITE_WAIT);
+    // A lost device's run starts again on the CPU's ops, now that its
+    // saves are written, on the file open now; a scripted run fails.
+    let open_now = {
+        let st = state.borrow();
+        st.current
+            .and_then(|c| st.file_at(c))
+            .and_then(|f| st.files.get(f).cloned())
+    };
+    let scripted = cli.snapshot.is_some() || cli.screenshot.is_some() || cli.keys.is_some();
+    let lost_scripted =
+        crate::gpu_lost::start_again(cli.path.as_deref(), open_now.as_deref(), scripted);
     // A batch run whose picture never developed is a failure a script
     // can see, as is a window lost under the run.
-    let failed = state.borrow().launch.failed || ran.is_err();
+    let failed = state.borrow().launch.failed || ran.is_err() || lost_scripted;
     // A worker still in a job (a develop of a large frame, a mask, the
     // learned denoiser, each of which can outlast `LEAVING`) may be
     // inside the GPU driver, waiting on a fence in `Device::poll`.

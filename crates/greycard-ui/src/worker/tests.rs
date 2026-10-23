@@ -3408,3 +3408,82 @@ fn a_prefetch_whose_edit_changes_under_it_gives_way_and_is_let_go() {
     worker.stop();
     crate::testing::remove_dir_retry(&dir);
 }
+
+/// A device lost under a develop's ops (destroyed here, as a driver's
+/// reset loses it) costs no panic: each op's error sends it to the
+/// CPU, the context goes, and the develop lands a picture made there.
+#[test]
+fn a_develop_on_a_lost_device_lands_on_the_cpu() {
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("the lost device's develop");
+        return;
+    };
+    ctx.device().destroy();
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let mut gpu = Some(ctx);
+    let mut base = None;
+    let (outcome, image) = develop_once(&frame, &mut base, &mut gpu);
+    assert!(
+        matches!(
+            outcome,
+            Outcome::Developed {
+                image: Developed::Halves(_),
+                ..
+            }
+        ),
+        "a picture from the CPU"
+    );
+    assert!(image.is_some());
+    assert!(gpu.is_none(), "the lost context let go");
+    assert!(!base.as_ref().unwrap().on_gpu);
+}
+
+/// A loss found after the develop landed (in a save's read back, by
+/// the window's callback): the context goes, and the develop whose
+/// texture is on the lost device is asked again, under its own
+/// generation, which then lands on the CPU. Told the editor starts
+/// again, nothing is asked again.
+#[test]
+fn a_loss_after_the_develop_develops_it_again_on_the_cpu() {
+    for again in [true, false] {
+        let Some(ctx) = greycard_gpu::Context::own().ok() else {
+            skipped("the develop again after a loss");
+            return;
+        };
+        let frame = Arc::new(aberrated_frame(400, 320));
+        let mut gpu = Some(ctx);
+        let mut base = None;
+        let (outcome, _) = develop_once(&frame, &mut base, &mut gpu);
+        let mut shown = ShownTexture::of(&Edit::default(), 0, &outcome, base.as_ref());
+        assert!(shown.is_some(), "the develop left a texture on the device");
+        gpu.as_ref().unwrap().device().destroy();
+        let mut last = None;
+        let redo = super::engine::lose_gpu(&mut gpu, &mut base, &mut shown, &mut last, again);
+        assert!(gpu.is_none() && shown.is_none());
+        let b = base.as_ref().unwrap();
+        assert!(b.uploaded.is_none() && b.pre.is_none());
+        if !again {
+            assert!(redo.is_none());
+            continue;
+        }
+        let Some(Job::Develop {
+            edit,
+            generation,
+            turn,
+        }) = redo
+        else {
+            panic!("the develop asked again");
+        };
+        assert_eq!((generation, turn), (1, 0));
+        assert!(edit == Edit::default());
+        let (outcome, _) = develop_once(&frame, &mut base, &mut gpu);
+        assert!(matches!(
+            outcome,
+            Outcome::Developed {
+                image: Developed::Halves(_),
+                generation: 1,
+                ..
+            }
+        ));
+    }
+}

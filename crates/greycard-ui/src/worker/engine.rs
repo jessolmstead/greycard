@@ -125,8 +125,31 @@ pub(super) fn run(
     // The generation of the last open whose develop landed: the
     // neighbors the window sent with that open are the ones prefetched.
     let mut landed: Option<u64> = None;
+    // The device was lost this session: the ops are the CPU's for the
+    // rest of it, and a device handed over again is not taken.
+    let mut gpu_gone = false;
+    // A job panicked with wgpu's words for a lost device.
+    let mut lost_seen = false;
     loop {
         let mut device = None;
+        // A lost device, found by the ops (a wait that failed, an op's
+        // error), by a panic, or by the window's device-lost callback:
+        // the context goes, and the develop on screen, a texture on
+        // the lost device, is made again on the CPU unless the editor
+        // is starting again.
+        let told = lock.lock().expect("worker queue").gpu_lost.take();
+        if !gpu_gone && (told.is_some() || lost_seen || gpu.as_ref().is_some_and(|c| c.is_lost())) {
+            gpu_gone = true;
+            let again = told.unwrap_or(true);
+            let redo = lose_gpu(&mut gpu, &mut base, &mut shown, &mut last, again);
+            if let Some(job) = redo {
+                lock.lock()
+                    .expect("worker queue")
+                    .develop
+                    .get_or_insert(job);
+            }
+        }
+        lost_seen = false;
         let job = {
             let mut q = lock.lock().expect("worker queue");
             loop {
@@ -142,7 +165,9 @@ pub(super) fn run(
                     edited.set_lenses(crate::edited::lens_database());
                     forget_bases(&mut base, &mut learned, &mut shelf, gpu.as_ref());
                 }
-                if let Some(d) = q.gpu.take() {
+                if let Some(d) = q.gpu.take()
+                    && !gpu_gone
+                {
                     device = Some(d);
                 }
                 for (path, now) in std::mem::take(&mut q.edits_changed) {
@@ -273,6 +298,7 @@ pub(super) fn run(
                             // Its base was not shelved, and the shelf's
                             // were finished before; the rest are let go.
                             Err(payload) => {
+                                lost_seen |= says_lost(&panic_message(payload.as_ref()));
                                 let line = format!(
                                     "the prefetch of {}: the worker panicked: {}; \
                                      the rest of the neighbors let go",
@@ -341,10 +367,9 @@ pub(super) fn run(
                 keep_open(keep, false, hand, &mut ai, &edited, &deliver)
             }));
             pending = held.unwrap_or_else(|payload| {
-                tracing::warn!(
-                    "the edit's pictures: the worker panicked: {}",
-                    panic_message(payload.as_ref())
-                );
+                let message = panic_message(payload.as_ref());
+                lost_seen |= says_lost(&message);
+                tracing::warn!("the edit's pictures: the worker panicked: {message}");
                 None
             });
             continue;
@@ -840,6 +865,7 @@ pub(super) fn run(
             }
         }));
         if let Err(payload) = held {
+            lost_seen |= says_lost(&panic_message(payload.as_ref()));
             // The base in hand is not trusted; the shelf's stay, as
             // after a panic in a set's frame.
             discard_base(&mut base, gpu.as_ref());
@@ -895,6 +921,49 @@ pub(super) fn file_label(path: &std::path::Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
+}
+
+/// The device is lost: the context goes, and with it everything the
+/// develop in hand kept on the device (the uploaded picture, the
+/// sharpen's input, the dehaze's reduced copy), and the texture on
+/// screen. The base's own picture is on the CPU and stays; one whose CA
+/// or lens ran on the device is made again by the next develop, as the
+/// export's would be. Said once. With `again`, the develop that left
+/// its picture on the lost device is returned, to be made again on the
+/// CPU under the same generation, so the window gets its picture back.
+pub(super) fn lose_gpu(
+    gpu: &mut Option<greycard_gpu::Context>,
+    base: &mut Option<Base>,
+    shown: &mut Option<ShownTexture>,
+    last: &mut Option<Last>,
+    again: bool,
+) -> Option<Job> {
+    if let Some(ctx) = gpu.take() {
+        ctx.mark_lost();
+    }
+    if let Some(b) = base.as_mut() {
+        b.pre = None;
+        b.uploaded = None;
+        b.haze = None;
+    }
+    let on_screen = shown.take();
+    let redo = on_screen.filter(|_| again).map(|s| Job::Develop {
+        edit: s.edit,
+        generation: s.generation,
+        turn: s.turn,
+    });
+    if redo.is_some() {
+        *last = None;
+    }
+    tracing::warn!(
+        "the GPU device was lost; the engine's ops on the CPU from now on{}",
+        if redo.is_some() {
+            ", the picture on screen developed again there"
+        } else {
+            ""
+        }
+    );
+    redo
 }
 
 /// Forget the base, and with it the ops' working textures on the GPU:

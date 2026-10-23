@@ -204,7 +204,7 @@ impl Renderer {
         let weigh_by = weigh_by.filter(|&k| k < v.locals.len().min(MAX_LOCALS));
         // Collect a finished read back, or let a lost one go and
         // analyze again ([`unmap_lost`]).
-        let _ = self.device.poll(gpu::PollType::Poll);
+        let _ = crate::gpu_lost::poll(&self.device, gpu::PollType::Poll);
         let bins = self.scopes.in_flight.as_ref().map(|rx| rx.try_recv());
         if let Some(Err(TryRecvError::Disconnected)) = bins {
             self.scopes.in_flight = None;

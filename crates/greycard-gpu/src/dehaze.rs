@@ -172,7 +172,7 @@ impl Context {
         let factor = reference::reduce_factor(w as usize, h as usize) as u32;
         let (gw, gh) = (w.div_ceil(factor), h.div_ceil(factor));
         let len = u64::from(gw) * u64::from(gh) * 3 * 4;
-        let sums = crate::scoped(&self.device, "the dehaze's block sums", || {
+        let sums = self.scoped("the dehaze's block sums", || {
             let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("dehaze block sums"),
                 size: len,
@@ -226,7 +226,7 @@ impl Context {
     /// gives. Waits for the GPU, for the stats.
     pub fn dehaze(&self, image: &Image, model: &Model) -> Result<(Image, DehazeStats)> {
         let (w, h) = (image.width, image.height);
-        crate::scoped(&self.device, "the dehaze", || {
+        self.scoped("the dehaze", || {
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("after the dehaze, full floats"),
                 size: wgpu::Extent3d {
@@ -274,7 +274,7 @@ impl Context {
                 image.height
             )));
         }
-        crate::scoped(&self.device, "the dehaze", || {
+        self.scoped("the dehaze", || {
             self.dehaze_into(image, model, Output::Half(out))
         })
     }

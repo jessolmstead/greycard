@@ -677,7 +677,7 @@ impl Context {
         clip_level: f32,
     ) -> Result<(Image, LocalContrastStats)> {
         let (w, h) = (image.width, image.height);
-        crate::scoped(&self.device, "the local contrast", || {
+        self.scoped("the local contrast", || {
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("after the local contrast, full floats"),
                 size: wgpu::Extent3d {
@@ -727,7 +727,7 @@ impl Context {
                 image.height
             )));
         }
-        crate::scoped(&self.device, "the local contrast", || {
+        self.scoped("the local contrast", || {
             self.local_contrast_into(image, options, clip_level, Output::Half(out))
         })
     }

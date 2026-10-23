@@ -18,7 +18,9 @@
 //! apply ([`Context::dehaze_reduced`], [`Context::dehaze`]), its fit
 //! staying the reference's on the CPU.
 
-use std::sync::{Mutex, OnceLock};
+use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use greycard_core::image::WorkingImage;
 
@@ -30,6 +32,8 @@ mod lens;
 mod local_contrast;
 mod plumbing;
 mod sharpen;
+
+pub use sharpen::{Batching, SUBMIT_BUDGET};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -50,6 +54,79 @@ pub enum Error {
     Unsupported(String),
     #[error("reading back from the GPU: {0}")]
     ReadBack(String),
+    /// The device is gone: a driver reset it (Windows' TDR after a
+    /// submission ran over its two seconds, amdgpu's ring timeout), or
+    /// it was destroyed. Nothing made on it works again; the caller
+    /// lets the context go.
+    #[error("the GPU device was lost: {0}")]
+    Lost(String),
+}
+
+thread_local! {
+    /// Whether this thread is inside a wait on the device: wgpu panics
+    /// there when the device is lost, the panic is caught and becomes
+    /// [`Error::Lost`], and a panic hook can say so without a
+    /// backtrace.
+    static WAITING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the calling thread is inside one of this crate's waits on
+/// the device, for a panic hook: a panic there is a lost device, and is
+/// caught.
+pub fn inside_wait() -> bool {
+    WAITING.with(Cell::get)
+}
+
+/// Whether a wgpu error, or any of its causes, is the device's loss.
+fn is_loss(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut cause = Some(error);
+    while let Some(e) = cause {
+        if matches!(
+            e.downcast_ref::<wgpu::wgc::device::DeviceError>(),
+            Some(wgpu::wgc::device::DeviceError::Lost)
+        ) {
+            return true;
+        }
+        cause = e.source();
+    }
+    false
+}
+
+/// Wait for everything submitted to `device` so far. wgpu panics in the
+/// wait when the device has been lost, rather than return an error, so
+/// the panic is caught here and comes back as [`Error::Lost`], and
+/// `lost` is set.
+fn wait_on(device: &wgpu::Device, lost: &AtomicBool) -> Result<()> {
+    if lost.load(Ordering::Acquire) {
+        return Err(Error::Lost("lost before this wait".into()));
+    }
+    struct Waiting;
+    impl Drop for Waiting {
+        fn drop(&mut self) {
+            WAITING.with(|w| w.set(false));
+        }
+    }
+    WAITING.with(|w| w.set(true));
+    let waiting = Waiting;
+    let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        device.poll(wgpu::PollType::wait_indefinitely())
+    }));
+    drop(waiting);
+    match polled {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(Error::ReadBack(format!("waiting for the device: {e}"))),
+        Err(payload) => {
+            lost.store(true, Ordering::Release);
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("wgpu panicked in its wait");
+            Err(Error::Lost(
+                message.lines().last().unwrap_or(message).trim().to_string(),
+            ))
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -116,6 +193,10 @@ pub struct Context {
     lens: lens::Pipelines,
     local_contrast: local_contrast::Pipelines,
     dehaze: dehaze::Pipelines,
+    /// Set once the device is found lost: by a wait that panicked, an
+    /// error naming the loss, or the device's lost callback on a device
+    /// of our own.
+    lost: Arc<AtomicBool>,
 }
 
 impl Context {
@@ -147,7 +228,15 @@ impl Context {
             ..Default::default()
         }))
         .map_err(|e| Error::Device(e.to_string()))?;
-        Self::build(device, queue, adapter.get_info())
+        let ctx = Self::build(device, queue, adapter.get_info())?;
+        // The device is ours, so its lost callback is too; on a device
+        // the caller lent, the callback is the caller's.
+        let lost = ctx.lost.clone();
+        ctx.device.set_device_lost_callback(move |reason, message| {
+            lost.store(true, Ordering::Release);
+            log::warn!("greycard-gpu: the device was lost ({reason:?}): {message}");
+        });
+        Ok(ctx)
     }
 
     fn build(device: wgpu::Device, queue: wgpu::Queue, info: wgpu::AdapterInfo) -> Result<Self> {
@@ -184,7 +273,20 @@ impl Context {
             lens,
             local_contrast,
             dehaze,
+            lost: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Whether the device has been found lost. Every op on a lost
+    /// context returns [`Error::Lost`].
+    pub fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::Acquire)
+    }
+
+    /// Mark the device lost, for a caller told by the device's own
+    /// lost callback, which is the caller's on a lent device.
+    pub fn mark_lost(&self) {
+        self.lost.store(true, Ordering::Release);
     }
 
     /// Let go of the working textures the ops keep between runs (the
@@ -266,7 +368,7 @@ impl Context {
     /// it there.
     pub fn upload(&self, image: &WorkingImage) -> Result<Image> {
         let (w, h) = self.fits(image.width, image.height)?;
-        scoped(&self.device, "uploading the picture", || {
+        self.scoped("uploading the picture", || {
             self.upload_unscoped(image, w, h)
         })
     }
@@ -400,10 +502,28 @@ impl Context {
 
     /// Wait for everything submitted so far.
     fn wait(&self) -> Result<()> {
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map(|_| ())
-            .map_err(|e| Error::ReadBack(format!("waiting for the device: {e}")))
+        wait_on(&self.device, &self.lost)
+    }
+
+    /// [`scoped`] on this context's device: a lost device is
+    /// [`Error::Lost`] before anything is asked of it, and after.
+    fn scoped<T>(&self, what: &'static str, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        if self.is_lost() {
+            return Err(Error::Lost(format!("lost before {what}")));
+        }
+        let out = match scoped(&self.device, what, f) {
+            // A lost device's errors mostly name what it made invalid
+            // and not the loss, which a wait then shows.
+            Err(Error::Gpu { what, error }) => match self.wait() {
+                Err(Error::Lost(why)) => Err(Error::Lost(format!("{what}: {why}"))),
+                _ => Err(Error::Gpu { what, error }),
+            },
+            out => out,
+        };
+        if matches!(out, Err(Error::Lost(_))) {
+            self.mark_lost();
+        }
+        out
     }
 
     /// `len` bytes of a buffer the GPU wrote, from `offset`, after
@@ -451,7 +571,7 @@ impl Context {
         height: u32,
         bytes: u32,
     ) -> Result<Vec<u8>> {
-        scoped(&self.device, "reading back", || {
+        self.scoped("reading back", || {
             self.read_texture_unscoped(texture, x, y, width, height, bytes)
         })
     }
@@ -550,6 +670,7 @@ fn scoped<T>(
     .flatten()
     .next();
     match (result, caught) {
+        (_, Some(error)) if is_loss(&error) => Err(Error::Lost(format!("{what}: {error}"))),
         (_, Some(error)) => Err(Error::Gpu {
             what,
             error: error.to_string(),

@@ -81,6 +81,11 @@ design note behind it.
 
 ### Fixes
 
+- A long sharpen no longer runs past the GPU driver's watchdog and
+  takes the device with it (a GTX 1060 on Windows at 50 iterations,
+  a Renoir iGPU); if a device is lost anyway greycard saves and
+  reopens the file with its ops on the CPU instead of crashing
+  ([§412](https://github.com/jessolmstead/greycard/blob/master/docs/notes/412-gpu-passes-under-the-watchdog.md)).
 - The click that closes a menu over the picture no longer zooms the
   picture, and a lone release no longer ends a straighten stroke or
   moves the tint ring

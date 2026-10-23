@@ -64,8 +64,8 @@ impl Renderer {
         slice.map_async(gpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        self.device
-            .poll(gpu::PollType::wait_indefinitely())
+        crate::gpu_lost::poll(&self.device, gpu::PollType::wait_indefinitely())
+            .map_err(anyhow::Error::msg)
             .context("waiting for the sample")?;
         rx.recv()
             .context("map callback")?
@@ -145,8 +145,8 @@ impl Renderer {
         slice.map_async(gpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        self.device
-            .poll(gpu::PollType::wait_indefinitely())
+        crate::gpu_lost::poll(&self.device, gpu::PollType::wait_indefinitely())
+            .map_err(anyhow::Error::msg)
             .context("waiting for the sample grid")?;
         rx.recv()
             .context("map callback")?

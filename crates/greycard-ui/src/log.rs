@@ -217,6 +217,12 @@ fn on_panic(info: &std::panic::PanicHookInfo<'_>) {
         tracing::debug!("the decoder panicked{at} on '{thread}': {message}; caught");
         return;
     }
+    // A wait of the engine's ops on a lost device: caught, and the
+    // op's error says the rest.
+    if greycard_gpu::inside_wait() {
+        tracing::warn!("a GPU wait{at} on '{thread}' met a lost device: {message}; caught");
+        return;
+    }
     let backtrace = std::backtrace::Backtrace::force_capture();
     tracing::error!("thread '{thread}' panicked{at}: {message}\n{backtrace}");
     if let Some(previous) = PREVIOUS.get() {

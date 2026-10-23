@@ -605,6 +605,11 @@ struct Queue {
     /// them, for the engine's GPU ops to run on: the picture they
     /// leave is then the viewport's without a copy.
     gpu: Option<(greycard_gpu::wgpu::Device, greycard_gpu::wgpu::Queue)>,
+    /// The window's device was lost (`Worker::gpu_lost_teller`): the engine's
+    /// ops go to the CPU, and with `Some(true)` the develop on screen is
+    /// made again there; `Some(false)` when the editor is about to
+    /// start again, which develops it anew.
+    gpu_lost: Option<bool>,
     /// The newest open or develop; an older one still queued is dropped.
     develop: Option<Job>,
     /// Masks wanted, the newest shape for a key replacing an older,
@@ -736,6 +741,8 @@ struct Keep {
 struct ShownTexture {
     edit: Edit,
     turn: u8,
+    /// The develop's generation, for a develop again of the same.
+    generation: u64,
     texture: greycard_gpu::wgpu::Texture,
     /// What the develop left out of what the edit asked for
     /// ([`left_out_of`]): a picture without it is not kept.
@@ -749,10 +756,12 @@ impl ShownTexture {
         match outcome {
             Outcome::Developed {
                 image: Developed::Texture(texture),
+                generation,
                 ..
             } => Some(Self {
                 edit: edit.clone(),
                 turn,
+                generation: *generation,
                 texture: texture.clone(),
                 left_out: left_out_of(outcome, base),
             }),
@@ -921,6 +930,12 @@ impl Blame {
 
 /// A panic's message, which is a `&str` or a `String` for every
 /// `panic!` with a text, and nothing readable otherwise.
+/// Whether a panic's message is wgpu's for a lost device: what it
+/// panics with when a wait, or a buffer it maps for itself, meets one.
+pub(crate) fn says_lost(message: &str) -> bool {
+    message.contains("device is lost")
+}
+
 pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()

@@ -1,11 +1,14 @@
 //! Time the sharpen, the local contrast and the CA correction both
 //! ways on a raw, and say how far apart they land.
 //!
-//!     cargo run --release -p greycard-gpu --example bench -- FILE.CR3 [runs]
+//!     cargo run --release -p greycard-gpu --example bench -- FILE.CR3 [runs] [iterations]
 //!
 //! The develop is the engine's default without its sharpen, as the
 //! editor makes its base; the sharpen is the editor's default: the
-//! measured radius, the automatic threshold, twenty iterations. The
+//! measured radius, the automatic threshold, twenty iterations unless
+//! `iterations` says otherwise. The sharpen is timed with its
+//! iterations in paced submissions, the default, and in one, as before
+//! the budget, and the two pictures are held to the bit. The
 //! CA correction runs on the balanced mosaic as `prepare` hands it
 //! to the correction, under the engine's defaults.
 
@@ -15,7 +18,7 @@ use greycard_core::develop::ca::{CaOptions, correct_ca};
 use greycard_core::develop::local_contrast::{LocalContrastOptions, local_contrast};
 use greycard_core::develop::sharpen::{SharpenOptions, sharpen_with_mask};
 use greycard_core::develop::{DevelopSettings, develop, prepare};
-use greycard_gpu::Context;
+use greycard_gpu::{Batching, Context};
 
 /// How far two planes are apart: the largest absolute and relative
 /// differences, the mean, and how many samples are over `step`
@@ -48,6 +51,7 @@ fn main() -> anyhow::Result<()> {
         .next()
         .ok_or_else(|| anyhow::anyhow!("a raw file's path"))?;
     let runs: usize = args.next().map(|s| s.parse()).transpose()?.unwrap_or(3);
+    let iterations: Option<usize> = args.next().map(|s| s.parse()).transpose()?;
     let frame = greycard_core::decode::decode_path(std::path::Path::new(&path))?;
     let settings = DevelopSettings {
         sharpen: None,
@@ -64,7 +68,11 @@ fn main() -> anyhow::Result<()> {
         developed.sharpen_radius,
         developed.clip_level
     );
-    let options = SharpenOptions::default();
+    let options = SharpenOptions {
+        iterations: iterations.unwrap_or(SharpenOptions::default().iterations),
+        ..Default::default()
+    };
+    println!("sharpen at {} iterations:", options.iterations);
     let (measured, clip) = (developed.sharpen_radius, developed.clip_level);
 
     let mut cpu = image.clone();
@@ -93,8 +101,9 @@ fn main() -> anyhow::Result<()> {
         let t = Instant::now();
         let stats = ctx.sharpen(&uploaded, &options, measured, clip, &out)?;
         println!(
-            "gpu run {run}: {:.3} s{}",
+            "gpu run {run}: {:.3} s, {} submissions{}",
             t.elapsed().as_secs_f64(),
+            ctx.sharpen_submissions(),
             if run == 0 {
                 " (with the threshold search)"
             } else {
@@ -104,6 +113,46 @@ fn main() -> anyhow::Result<()> {
         gpu_stats = Some(stats);
     }
     println!("cpu stats {cpu_stats:?}\ngpu stats {gpu_stats:?}");
+
+    // Paced against whole, each after a run to settle, the pictures
+    // compared to the bit; and a submission for every iteration of a
+    // batch of tiles, or every seven, for what a split costs where the
+    // GPU is slow enough to need one.
+    let mut pictures = Vec::new();
+    for batching in [
+        Batching::Whole,
+        Batching::Paced,
+        Batching::Every(7),
+        Batching::Every(1),
+    ] {
+        ctx.set_sharpen_batching(batching);
+        ctx.sharpen(&uploaded, &options, measured, clip, &out)?;
+        let mut times = Vec::new();
+        for _ in 0..runs.max(1) {
+            let t = Instant::now();
+            ctx.sharpen(&uploaded, &options, measured, clip, &out)?;
+            times.push(t.elapsed().as_secs_f64());
+        }
+        times.sort_by(f64::total_cmp);
+        println!(
+            "gpu {batching:?}: median {:.3} s of {} runs, {} submissions",
+            times[times.len() / 2],
+            times.len(),
+            ctx.sharpen_submissions()
+        );
+        let mut picture = image.clone();
+        ctx.sharpen_image(&mut picture, &options, measured, clip)?;
+        pictures.push(picture);
+    }
+    let same = pictures.iter().skip(1).all(|p| {
+        pictures[0]
+            .data
+            .iter()
+            .zip(&p.data)
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    });
+    println!("every split the same as whole to the bit: {same}");
+    ctx.set_sharpen_batching(Batching::Paced);
 
     // The full-float read back, against the CPU's picture.
     let mut gpu = image.clone();
