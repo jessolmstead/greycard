@@ -12,7 +12,7 @@ export { Theme } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, BindRow, KeywordChip } from "structs.slint";
+import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, BindRow, KeywordChip, QueueRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -1730,9 +1730,13 @@ export component App inherits Window {
     in property <int> export-queue-sets: 0;
     in property <string> export-queue-line: "";
     in property <bool> export-queue-running: false;
+    /// The queue's sets, one row each, listed on the sheet; a row's bin
+    /// removes its set by its place.
+    in property <[QueueRow]> export-queue-rows;
     callback export-queue-add();
     callback export-queue-run();
     callback export-queue-clear();
+    callback export-queue-remove(int);
     // Retouching: the tool in hand ("", "Heal" or "Clone"), the next
     // or chosen patch's size (of the picture's width), feather and
     // opacity, the patches by name, the chosen one, and its pins on the
@@ -4500,6 +4504,8 @@ export component App inherits Window {
         queue-add => { root.export-queue-add(); }
         queue-run => { root.export-queue-run(); }
         queue-clear => { root.export-queue-clear(); }
+        queue-rows: root.export-queue-rows;
+        queue-remove(i) => { root.export-queue-remove(i); }
         export-open <=> root.export-open;
         export-format <=> root.export-format;
         export-quality <=> root.export-quality;

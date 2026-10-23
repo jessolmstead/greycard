@@ -39,6 +39,9 @@ design note behind it.
 
 ### Library
 
+- The export sheet lists the queued sets, each with its preset or
+  format, frame count, and folder, and a bin that removes one
+  ([§409](https://github.com/jessolmstead/greycard/blob/master/docs/notes/409-the-export-queue-listed.md)).
 - Settings can name the folder to open at start instead of the last
   one, and hide the filter bar; Sort moves to the grid's header
   while it is hidden

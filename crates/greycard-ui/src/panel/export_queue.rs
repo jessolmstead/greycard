@@ -1,5 +1,6 @@
 //! The export queue in the window: Add to queue on the export sheet,
-//! the count at the sheet's foot, Export the queue and Clear.
+//! the sets listed and the count at the sheet's foot, a set's removal,
+//! Export the queue and Clear.
 //!
 //! An entry is what Export would have sent at the moment it was queued
 //! (the frames, each frame's edit, the sheet, the preset in use and the
@@ -131,11 +132,26 @@ fn mark_png(entry: &Entry) -> Option<PathBuf> {
     }
 }
 
-/// The count at the sheet's foot.
+/// The sets listed and the count at the sheet's foot: the set the
+/// queue is on marked, its bin off.
 pub(crate) fn show_queue(st: &State, app: &App) {
     app.set_export_queue_sets(st.work.export_queue.len() as i32);
     app.set_export_queue_line(export_queue::count_line(&st.work.export_queue).into());
     app.set_export_queue_running(st.work.queue_run.as_ref().is_some_and(|r| r.set.is_some()));
+    let on = st.work.queue_run.as_ref().map(|r| r.entry);
+    let rows: Vec<QueueRow> = st
+        .work
+        .export_queue
+        .iter()
+        .enumerate()
+        .map(|(i, e)| QueueRow {
+            name: export_queue::name(e).into(),
+            frames: queue::frames(e.frames.len()).into(),
+            folder: export_queue::place_shown(e).into(),
+            running: on == Some(i),
+        })
+        .collect();
+    app.set_export_queue_rows(ModelRc::new(VecModel::from(rows)));
 }
 
 /// Write the queue now, as it is: every change is kept at once. While
@@ -624,6 +640,34 @@ pub(crate) fn clear(st: &mut State, app: &App) {
     app.set_status(format!("export queue cleared ({})", export_queue::sets(n)).into());
 }
 
+/// Take set `index` out of the queue and the file at once. Not the set
+/// the queue is on, whose bin is off: a run reaches its next set by
+/// place, so one removed before the run's own moves the run up with
+/// it, and one after it is simply not there to begin.
+pub(crate) fn remove(st: &mut State, app: &App, index: usize) {
+    if index >= st.work.export_queue.len() {
+        return;
+    }
+    if st.work.queue_run.as_ref().is_some_and(|r| r.entry == index) {
+        tracing::info!("export queue: set {index} is running; not removed");
+        return;
+    }
+    let gone = st.work.export_queue.remove(index);
+    if let Some(run) = st.work.queue_run.as_mut()
+        && index < run.entry
+    {
+        run.entry -= 1;
+    }
+    keep(st);
+    show_queue(st, app);
+    tracing::info!(
+        "export queue: removed {} ({}); {}",
+        export_queue::name(&gone),
+        queue::frames(gone.frames.len()),
+        export_queue::count_line(&st.work.export_queue)
+    );
+}
+
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
     // Add to queue: the selection or the frame, as Export takes it.
     {
@@ -673,6 +717,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
         app.on_export_queue_clear(move || {
             if let Some(app) = app_weak.upgrade() {
                 clear(&mut state.borrow_mut(), &app);
+            }
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_export_queue_remove(move |index| {
+            if let Some(app) = app_weak.upgrade()
+                && let Ok(index) = usize::try_from(index)
+            {
+                remove(&mut state.borrow_mut(), &app, index);
             }
         });
     }
@@ -1579,6 +1633,203 @@ mod tests {
         );
         drop(st);
         finish(&app, &state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The sheet's rows, as (name, frames, folder, running).
+    fn rows(app: &App) -> Vec<(String, String, String, bool)> {
+        app.get_export_queue_rows()
+            .iter()
+            .map(|r| {
+                (
+                    r.name.to_string(),
+                    r.frames.to_string(),
+                    r.folder.to_string(),
+                    r.running,
+                )
+            })
+            .collect()
+    }
+
+    /// The presets of the entries in the file, in order.
+    fn presets_on_disk(dir: &Path) -> Vec<Option<String>> {
+        export_queue::load(&queue_file(dir))
+            .into_iter()
+            .map(|e| e.preset)
+            .collect()
+    }
+
+    /// The sheet lists the sets as the file holds them: the preset or
+    /// the format when there is none, the frames, and the folder with
+    /// home shortened, or the subfolder beside each file.
+    #[test]
+    fn the_rows_mirror_the_file() {
+        let (dir, files) = shoot("rows", 3);
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        let home = dirs::home_dir().unwrap_or_default().join("out");
+        {
+            let mut st = state.borrow_mut();
+            st.work.export_queue_file = Some(queue_file(&dir));
+            let a = Entry {
+                folder: Some(home.clone()),
+                ..entry(&st, &[0, 1], Some("Web"), "2048")
+            };
+            let mut b = entry(&st, &[2], None, "Full");
+            b.sheet.subfolder = "export".into();
+            add(&mut st, &app, a);
+            add(&mut st, &app, b);
+        }
+        let on_disk = export_queue::load(&queue_file(&dir));
+        assert_eq!(on_disk.len(), 2);
+        assert_eq!(
+            rows(&app),
+            vec![
+                (
+                    "Web".into(),
+                    "2 frames".into(),
+                    crate::report::path_shown(&home),
+                    false
+                ),
+                ("JPEG".into(), "1 frame".into(), "export".into(), false),
+            ]
+        );
+        if cfg!(unix) {
+            assert_eq!(rows(&app)[0].2, "~/out");
+        }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A set's bin takes it out of the sheet and the file at once, the
+    /// others left in their order; the last one out leaves no file.
+    #[test]
+    fn removing_the_middle_set_leaves_the_others_in_order() {
+        let (dir, files) = shoot("remove", 3);
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.work.export_queue_file = Some(queue_file(&dir));
+            for (i, name) in ["A", "B", "C"].into_iter().enumerate() {
+                let e = entry(&st, &[i], Some(name), "2048");
+                add(&mut st, &app, e);
+            }
+        }
+        app.invoke_export_queue_remove(1);
+        let names: Vec<String> = rows(&app).into_iter().map(|r| r.0).collect();
+        assert_eq!(names, ["A", "C"]);
+        assert_eq!(
+            presets_on_disk(&dir),
+            [Some("A".to_string()), Some("C".to_string())]
+        );
+        assert_eq!(app.get_export_queue_line(), "2 sets, 2 frames queued");
+        // Out of range is nothing.
+        app.invoke_export_queue_remove(7);
+        app.invoke_export_queue_remove(-1);
+        assert_eq!(rows(&app).len(), 2);
+        app.invoke_export_queue_remove(0);
+        app.invoke_export_queue_remove(0);
+        assert!(rows(&app).is_empty());
+        assert!(!queue_file(&dir).exists());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// While the queue runs, the set it is on is marked and cannot be
+    /// removed; a set after it removed is not begun, and one before it
+    /// (left queued, its file not there) moves the run up with it, so
+    /// the run goes on to the right set.
+    #[test]
+    fn a_set_removed_during_a_run_is_skipped() {
+        let (dir, files) = shoot("remove-run", 4);
+        let app = crate::testing::window(4);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.work.export_queue_file = Some(queue_file(&dir));
+            give_edits(&mut st);
+            for (i, name) in ["A", "B", "C", "D"].into_iter().enumerate() {
+                let e = entry(&st, &[i], Some(name), "2048");
+                add(&mut st, &app, e);
+            }
+        }
+        // A's file is gone: it stays queued and the run is on B.
+        std::fs::remove_file(&files[0]).unwrap();
+        app.invoke_export_queue_run();
+        let running = |app: &App| -> Vec<bool> { rows(app).into_iter().map(|r| r.3).collect() };
+        assert_eq!(running(&app), [false, true, false, false]);
+        // B is the run's: its bin does nothing.
+        app.invoke_export_queue_remove(1);
+        assert_eq!(rows(&app).len(), 4);
+        // C, after it, and A, before it.
+        app.invoke_export_queue_remove(2);
+        app.invoke_export_queue_remove(0);
+        assert_eq!(running(&app), [true, false]);
+        assert_eq!(
+            presets_on_disk(&dir),
+            [Some("B".to_string()), Some("D".to_string())]
+        );
+        assert_eq!(state.borrow().work.queue_run.as_ref().unwrap().entry, 0);
+        frame(&app, &state, 0, exported("/nowhere/out/IMG_0001.jpg"));
+        finish(&app, &state);
+        {
+            let st = state.borrow();
+            let set = st.work.exporting.as_ref().expect("the next set runs");
+            assert_eq!(set.preset.as_deref(), Some("D"), "C is not begun");
+        }
+        assert_eq!(rows(&app).len(), 1);
+        assert_eq!(running(&app), [true]);
+        frame(&app, &state, 0, exported("/nowhere/out/IMG_0003.jpg"));
+        finish(&app, &state);
+        let st = state.borrow();
+        assert!(st.work.export_queue.is_empty() && st.work.queue_run.is_none());
+        assert!(
+            st.sidecars[2].current_exports.is_empty(),
+            "C was not exported"
+        );
+        assert!(!queue_file(&dir).exists());
+        drop(st);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Past five rows the list scrolls in its own box: the sheet is as
+    /// tall with nine sets as with five, and taller than with one.
+    #[test]
+    fn the_sheet_does_not_grow_past_five_rows() {
+        use i_slint_backend_testing::ElementHandle;
+        let (dir, files) = shoot("rows-tall", 9);
+        let app = crate::testing::window(9);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 1400.0));
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        app.invoke_select(0);
+        app.set_export_open(true);
+        let height = |app: &App| {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(0.0, 0.0),
+                });
+            ElementHandle::find_by_element_id(app, "ExportSheet::card")
+                .next()
+                .expect("the sheet")
+                .size()
+                .height
+        };
+        let mut seen = Vec::new();
+        for i in 0..9 {
+            {
+                let mut st = state.borrow_mut();
+                let e = entry(&st, &[i], Some("Web"), "2048");
+                add(&mut st, &app, e);
+            }
+            seen.push(height(&app));
+        }
+        assert!(seen[0] < seen[4], "{seen:?}");
+        assert!(seen[3] < seen[4], "{seen:?}");
+        for h in &seen[5..] {
+            assert_eq!(*h, seen[4], "{seen:?}");
+        }
+        // Well inside the window: the room was there to grow.
+        assert!(seen[4] < 1400.0 - 200.0, "{seen:?}");
         crate::testing::remove_dir_retry(&dir);
     }
 }

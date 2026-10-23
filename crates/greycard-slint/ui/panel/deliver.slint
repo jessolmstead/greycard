@@ -6,6 +6,7 @@
 import { ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { EditSlider, Steps, Toggle, PanelButton, Segmented } from "../controls.slint";
+import { QueueRow } from "../structs.slint";
 
 // Nine places for a watermark, three by three, one chosen.
 component PositionGrid inherits Rectangle {
@@ -55,6 +56,12 @@ export component ExportSheet inherits Rectangle {
     callback queue-add();
     callback queue-run();
     callback queue-clear();
+    /// The sets queued, one row each, and the bin that takes one out.
+    in property <[QueueRow]> queue-rows;
+    callback queue-remove(int);
+    /// A row's height, and how many show before the list scrolls.
+    property <length> queue-row-height: Theme.control-height - 6px;
+    property <int> queue-rows-shown: 5;
     /// Clear was pressed and not yet confirmed.
     property <bool> confirm-clear: false;
     in-out property <bool> export-open;
@@ -141,7 +148,7 @@ export component ExportSheet inherits Rectangle {
 
     background: #000000a0;
     TouchArea { clicked => { root.export-open = false; } }
-    Rectangle {
+    card := Rectangle {
         width: root.sheet-width;
         // The header and the buttons always show; the choices between
         // them scroll when the window is too short for all of them.
@@ -529,6 +536,79 @@ export component ExportSheet inherits Rectangle {
                     primary: true;
                     enabled: root.sub-problem == "";
                     clicked => { root.export-open = false; root.export(); }
+                }
+                // The queue's sets, one row each, the bin at its end
+                // taking that set out at once; past five rows the list
+                // scrolls in its own box, so the sheet does not grow.
+                if root.queue-rows.length > 0: Rectangle {
+                    border-radius: Theme.radius-md;
+                    background: Theme.base;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    height: min(queue-list.preferred-height,
+                                root.queue-rows-shown * root.queue-row-height + (root.queue-rows-shown - 1) * 2px + 4px);
+                    ScrollView {
+                        queue-list := VerticalLayout {
+                            padding: 2px;
+                            spacing: 2px;
+                            for row[i] in root.queue-rows: Rectangle {
+                                height: root.queue-row-height;
+                                border-radius: Theme.radius-sm;
+                                background: row.running ? Theme.hover : transparent;
+                                HorizontalLayout {
+                                    padding-left: Theme.space-2;
+                                    // Clears the scroll bar, as the
+                                    // presets list does.
+                                    padding-right: Theme.space-1 + Theme.scrollbar-band;
+                                    spacing: Theme.space-2;
+                                    Text {
+                                        text: row.name;
+                                        width: 96px;
+                                        color: row.running ? Theme.text : Theme.text-secondary;
+                                        font-size: Theme.font-xs;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: row.running ? row.frames + ", running" : row.frames;
+                                        color: row.running ? Theme.text : Theme.text-secondary;
+                                        font-size: Theme.font-xs;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: row.folder;
+                                        color: Theme.text-secondary;
+                                        font-size: Theme.font-xs;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                    Rectangle {
+                                        width: root.queue-row-height;
+                                        accessible-role: button;
+                                        accessible-label: "Remove " + row.name;
+                                        accessible-enabled: !row.running;
+                                        accessible-action-default => { if (!row.running) { root.queue-remove(i); } }
+                                        Image {
+                                            source: @image-url("../icons/trash-2.svg");
+                                            colorize: row.running ? Theme.text-muted
+                                                : bin.has-hover ? Theme.text : Theme.text-muted;
+                                            opacity: row.running ? 0.4 : 1;
+                                            width: Theme.icon;
+                                            height: Theme.icon;
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                        }
+                                        bin := TouchArea {
+                                            enabled: !row.running;
+                                            mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+                                            clicked => { root.queue-remove(i); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 // The queue: its count, run it, or clear it after asking.
                 if root.queue-sets > 0 && !root.confirm-clear: HorizontalLayout {

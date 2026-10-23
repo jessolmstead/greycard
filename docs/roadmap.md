@@ -915,8 +915,6 @@ clears or a tester asks for it.
 - [ ] Scroll bars that stay, and a size for them (pixls, 2026-10-22)
 - [ ] A tighter grid; the cell size as a number and the wheel resize
       off (pixls, 2026-10-22)
-- [ ] The export queue shown and edited: its sets listed, one removed
-      (pixls, 2026-10-22)
 
 ## Blocked
 

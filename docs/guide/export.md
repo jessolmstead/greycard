@@ -214,9 +214,11 @@ What is kept for each set:
 - the sheet's choices and the preset's name
 - the destination
 
-The foot of the sheet counts what waits, such as "2 sets, 3 frames
-queued". The queue survives quitting and restarting, and never runs
-on its own.
+The foot of the sheet lists the sets, one row each with its preset
+(or format), its frame count, and its folder, above a count such as
+"2 sets, 3 frames queued". The bin at a row's end removes that set at
+once, without asking, except the set being exported. The queue
+survives quitting and restarting, and never runs on its own.
 
 When it runs:
 
@@ -231,8 +233,7 @@ When it runs:
 - It does not ask before replacing files: each set uses the **If it
   exists** choice it was queued with.
 
-**Clear** empties the whole queue after asking. The queue is counted,
-not listed, so you cannot remove one set on its own.
+**Clear** empties the whole queue after asking.
 
 ## An export in History
 

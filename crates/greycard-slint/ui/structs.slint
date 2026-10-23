@@ -347,3 +347,13 @@ export struct LookRow {
     /// A look under a heading, set in under its text.
     indented: bool,
 }
+
+/// One set of the export queue as the export sheet lists it: the
+/// preset it was queued under (the format when none), its frames, and
+/// where it goes; `running` while it is the set the queue is on.
+export struct QueueRow {
+    name: string,
+    frames: string,
+    folder: string,
+    running: bool,
+}

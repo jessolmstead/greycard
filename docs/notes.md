@@ -421,3 +421,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§406. The remove behind Fill](notes/406-remove-behind-fill.md) (2026-10-23)
 - [§407. The sticky choices listed in Settings](notes/407-the-sticky-choices-listed.md) (2026-10-23)
 - [§408. The decoder in tiles](notes/408-the-decoder-in-tiles.md) (2026-10-23)
+- [§409. The export queue listed](notes/409-the-export-queue-listed.md) (2026-10-23)

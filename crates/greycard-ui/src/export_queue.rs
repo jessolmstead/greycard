@@ -182,6 +182,25 @@ pub fn frame_count(entries: &[Entry]) -> usize {
     entries.iter().map(|e| e.frames.len()).sum()
 }
 
+/// The name a set is listed under: the preset it was queued with, or
+/// its format when it had none.
+pub fn name(entry: &Entry) -> String {
+    entry
+        .preset
+        .clone()
+        .unwrap_or_else(|| entry.sheet.format.clone())
+}
+
+/// Where a set goes, as a listed row says it: the folder with home as
+/// `~`, or the subfolder it goes into beside each file.
+pub fn place_shown(entry: &Entry) -> String {
+    match (&entry.folder, entry.sheet.subfolder().ok().flatten()) {
+        (Some(folder), _) => crate::report::path_shown(folder),
+        (None, Some(sub)) => sub.display().to_string(),
+        (None, None) => String::new(),
+    }
+}
+
 /// "1 set", "3 sets".
 pub fn sets(n: usize) -> String {
     format!("{n} set{}", if n == 1 { "" } else { "s" })
