@@ -279,9 +279,13 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       floor applied near the channel peaks only
 - [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
       Remove and through us, blind pairs, scored (§380)
-- [ ] Generative remove: RORem through ort on the GPU providers, three
-      variations, a grain pass; LaMa stays the CPU path (§380). After
-      the harness
+- [ ] Generative remove: RORem-mixed through ort on WebGPU, fp16, the
+      padded conv_in (§399); the fetch with resume; a tiled VAE for
+      8 GB cards; three variations by seed; LaMa stays the CPU path.
+      Waits on the license call and the harness
+- [ ] ONNX Runtime's WebGPU Conv is wrong for input channel counts
+      that are a multiple of 3 but not 12 (§399); report upstream with
+      the reproducer under target/rorem/ortbug
 
 ### Color
 

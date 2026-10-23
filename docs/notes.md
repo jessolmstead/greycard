@@ -411,3 +411,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§396. The click that closes a menu](notes/396-the-click-that-closes-a-menu.md) (2026-10-23)
 - [§397. Fine steps, a mat around the picture, one section open at a time](notes/397-fine-steps-a-mat-and-one-section-open.md) (2026-10-23)
 - [§398. The frame's grain under a fill, and a swept store](notes/398-the-frames-grain-under-a-fill.md) (2026-10-23)
+- [§399. RORem on WebGPU, measured](notes/399-rorem-on-webgpu-measured.md) (2026-10-23)
