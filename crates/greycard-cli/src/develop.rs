@@ -612,15 +612,23 @@ fn lens_database(lens: &greycard_edit::Lens) -> Result<Option<greycard_lens::Dat
 
 fn correct_lens(
     image: &mut WorkingImage,
-    (make, model, shot): (&str, &str, &greycard_core::raw::Shot),
+    (make, model, shot, raw): (&str, &str, &greycard_core::raw::Shot, bool),
     lens: &greycard_edit::Lens,
     db: Option<&greycard_lens::Database>,
 ) -> Result<()> {
     let profile = db.and_then(|db| {
-        let l = db.lookup_shot(make, model, shot);
+        let l = db.lookup_shot(make, model, shot, raw);
         match (l.lens, l.camera) {
             (Some(lens), camera) => {
-                tracing::info!("lens profile {}", lens.name());
+                tracing::info!(
+                    "lens profile {}{}",
+                    lens.name(),
+                    if l.from_body {
+                        ", the fixed lens, taken from the body"
+                    } else {
+                        ""
+                    }
+                );
                 let p = greycard_lens::Profile { lens, camera };
                 if p.measured_on_smaller_sensor() {
                     tracing::info!(
@@ -714,7 +722,7 @@ fn correct_lens(
 #[allow(clippy::too_many_arguments)]
 fn correct_and_sharpen(
     image: &mut WorkingImage,
-    identity: (&str, &str, &greycard_core::raw::Shot),
+    identity: (&str, &str, &greycard_core::raw::Shot, bool),
     lens: &greycard_edit::Lens,
     db: Option<&greycard_lens::Database>,
     detail: Option<LocalContrastOptions>,
@@ -936,7 +944,7 @@ fn run_develop(
     .with_context(|| format!("developing {}", file.display()))?;
     developed.sharpen = correct_and_sharpen(
         &mut developed.image,
-        (&frame.make, &frame.model, &frame.shot),
+        (&frame.make, &frame.model, &frame.shot, true),
         lens,
         db.as_ref(),
         detail,
@@ -1176,7 +1184,7 @@ fn run_develop_picture(
     let clip_level = p.clip_level();
     let stats = correct_and_sharpen(
         &mut p.image,
-        (&p.make, &p.model, &p.shot),
+        (&p.make, &p.model, &p.shot, false),
         lens,
         db.as_ref(),
         detail,
@@ -1435,7 +1443,7 @@ mod tests {
         let shot = Shot::default();
         let stats = correct_and_sharpen(
             &mut got,
-            ("Greycard", "Test", &shot),
+            ("Greycard", "Test", &shot, true),
             &edit,
             // No profile is asked for, so no database is wanted.
             None,
@@ -1500,7 +1508,7 @@ mod tests {
         let shot = Shot::default();
         correct_and_sharpen(
             &mut got,
-            ("Greycard", "Test", &shot),
+            ("Greycard", "Test", &shot, true),
             &edit,
             None,
             None,
@@ -1547,7 +1555,7 @@ mod tests {
         let shot = Shot::default();
         correct_and_sharpen(
             &mut got,
-            ("Greycard", "Test", &shot),
+            ("Greycard", "Test", &shot, true),
             &edit,
             None,
             None,

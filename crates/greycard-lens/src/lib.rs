@@ -72,28 +72,43 @@ impl Wanted {
 pub struct Lookup<'a> {
     pub camera: Option<&'a Camera>,
     pub lens: Option<&'a Lens>,
+    /// Whether the lens was taken from the body, a compact's fixed
+    /// lens for a file that names none.
+    pub from_body: bool,
 }
 
 impl Database {
     /// The file's camera and lens, as far as they are in the database.
     pub fn lookup(&self, frame: &RawFrame) -> Lookup<'_> {
-        self.lookup_shot(&frame.make, &frame.model, &frame.shot)
+        self.lookup_shot(&frame.make, &frame.model, &frame.shot, true)
     }
 
     /// The same for what a file says of its body and its lens, for a
-    /// picture that is not a raw.
-    pub fn lookup_shot(&self, make: &str, model: &str, shot: &Shot) -> Lookup<'_> {
+    /// raw or for a picture that is not one. `raw` says whether the
+    /// picture is the sensor's data or one the camera rendered, which
+    /// decides a compact's fixed lens (see [`Database::fixed_lens`]).
+    pub fn lookup_shot(&self, make: &str, model: &str, shot: &Shot, raw: bool) -> Lookup<'_> {
         let camera = self.camera(make, model);
-        let lens = shot
+        let named = shot
             .lens_model
             .as_deref()
             .and_then(|name| self.lens(camera, shot.lens_make.as_deref(), name, shot.focal_length));
+        // A file that names no lens may be a compact's, whose lens is
+        // its body's.
+        let fixed = shot
+            .lens_model
+            .is_none()
+            .then(|| camera.and_then(|c| self.fixed_lens(c, shot.focal_length, raw)))
+            .flatten();
+        let lens = named.or(fixed);
         // Debug, not info: a develop looks the lens up more than
         // once, and the editor says what it found once, on the open.
         match (lens, shot.lens_model.as_deref()) {
-            (Some(l), name) => log::debug!(
-                "lens {}: {}{}",
-                name.unwrap_or("?"),
+            (Some(l), None) => {
+                log::debug!("{make} {model}: no lens named, the body's {}", l.name())
+            }
+            (Some(l), Some(name)) => log::debug!(
+                "lens {name}: {}{}",
                 l.name(),
                 if camera.is_some() {
                     ""
@@ -104,18 +119,28 @@ impl Database {
             (None, Some(name)) => log::debug!("lens {name} on {make} {model}: no match"),
             (None, None) => log::debug!("{make} {model}: the file names no lens"),
         }
-        Lookup { camera, lens }
+        Lookup {
+            camera,
+            lens,
+            from_body: fixed.is_some(),
+        }
     }
 
     /// The profile for a file: its lens found, with its body when
     /// that was.
     pub fn profile(&self, frame: &RawFrame) -> Option<Profile<'_>> {
-        self.profile_for(&frame.make, &frame.model, &frame.shot)
+        self.profile_for(&frame.make, &frame.model, &frame.shot, true)
     }
 
     /// The profile for what a file says of its body and its lens.
-    pub fn profile_for(&self, make: &str, model: &str, shot: &Shot) -> Option<Profile<'_>> {
-        let l = self.lookup_shot(make, model, shot);
+    pub fn profile_for(
+        &self,
+        make: &str,
+        model: &str,
+        shot: &Shot,
+        raw: bool,
+    ) -> Option<Profile<'_>> {
+        let l = self.lookup_shot(make, model, shot, raw);
         l.lens.map(|lens| Profile {
             lens,
             camera: l.camera,
@@ -547,5 +572,261 @@ mod tests {
         f.shot.lens_model = None;
         assert!(db.profile(&f).is_none());
         assert!(db.lookup(&f).camera.is_some());
+    }
+
+    /// Compacts as lensfun has them: each body on a mount of its own
+    /// that no `<mount>` entry defines, its lenses on that mount.
+    const COMPACTS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<lensdatabase version="2">
+    <camera>
+        <maker>Canon</maker>
+        <model>Canon PowerShot SX710 HS</model>
+        <model lang="en">PowerShot SX710 HS</model>
+        <mount>canonSX710HS</mount>
+        <cropfactor>5.6</cropfactor>
+    </camera>
+    <lens>
+        <maker>Canon</maker>
+        <model>Canon PowerShot SX710 HS &amp; compatibles, with CHDK's DNG</model>
+        <model lang="en">fixed lens, with CHDK's DNG</model>
+        <mount>canonSX710HS</mount>
+        <cropfactor>5.6</cropfactor>
+        <aspect-ratio>4:3</aspect-ratio>
+        <calibration>
+            <distortion model="ptlens" focal="4.5" a="0.03396" b="-0.11175" c="-0.01779"/>
+            <distortion model="ptlens" focal="135.0" a="0.00333" b="-0.02616" c="0.03388"/>
+        </calibration>
+    </lens>
+    <camera>
+        <maker>Canon</maker>
+        <model>Canon PowerShot SX510 HS</model>
+        <model lang="en">PowerShot SX510 HS</model>
+        <mount>canonSX510HS</mount>
+        <cropfactor>5.6</cropfactor>
+    </camera>
+    <lens>
+        <maker>Canon</maker>
+        <model>Canon PowerShot SX510 HS &amp; compatibles</model>
+        <mount>canonSX510HS</mount>
+        <cropfactor>5.6</cropfactor>
+        <calibration>
+            <distortion model="poly3" focal="4.3" k1="-0.0068"/>
+            <distortion model="poly3" focal="129" k1="0"/>
+        </calibration>
+    </lens>
+    <lens>
+        <maker>Canon</maker>
+        <model>Canon PowerShot SX510 HS &amp; compatibles, with CHDK's DNG</model>
+        <mount>canonSX510HS</mount>
+        <cropfactor>5.6</cropfactor>
+        <calibration>
+            <distortion model="ptlens" focal="4.3" a="0.094" b="-0.309" c="0.163"/>
+            <distortion model="ptlens" focal="129" a="0" b="0" c="0"/>
+        </calibration>
+    </lens>
+    <camera>
+        <maker>Casio</maker>
+        <model>QV-3500EX</model>
+        <mount>casioQV3500</mount>
+        <cropfactor>4.9</cropfactor>
+    </camera>
+    <lens>
+        <maker>Casio</maker>
+        <model>QV-3500EX &amp; compatibles (Standard)</model>
+        <mount>casioQV3500</mount>
+        <cropfactor>4.9</cropfactor>
+        <calibration>
+            <distortion model="ptlens" focal="7" a="0.01" b="-0.03" c="0"/>
+            <distortion model="ptlens" focal="21" a="0" b="0" c="0"/>
+        </calibration>
+    </lens>
+    <lens>
+        <maker>Casio</maker>
+        <model>QV-3500EX &amp; compatibles, with Raynox 0.66x</model>
+        <mount>casioQV3500</mount>
+        <cropfactor>4.9</cropfactor>
+        <calibration>
+            <distortion model="ptlens" focal="7" a="0.05" b="-0.1" c="0"/>
+            <distortion model="ptlens" focal="10" a="0.04" b="-0.08" c="0"/>
+        </calibration>
+    </lens>
+    <camera>
+        <maker>Nikon</maker>
+        <model>E995</model>
+        <mount>nikon995</mount>
+        <cropfactor>4.8</cropfactor>
+    </camera>
+    <lens>
+        <maker>Nikon</maker>
+        <model>E995 &amp; compatibles, with WC-E63</model>
+        <mount>nikon995</mount>
+        <cropfactor>4.8</cropfactor>
+        <calibration>
+            <distortion model="ptlens" focal="8" a="0.02" b="-0.05" c="0"/>
+            <distortion model="ptlens" focal="10" a="0.01" b="-0.03" c="0"/>
+        </calibration>
+    </lens>
+    <lens>
+        <maker>Nikon</maker>
+        <model>E995 &amp; compatibles, with TC-E2</model>
+        <mount>nikon995</mount>
+        <cropfactor>4.8</cropfactor>
+        <calibration>
+            <distortion model="ptlens" focal="20" a="0.03" b="-0.06" c="0"/>
+            <distortion model="ptlens" focal="30" a="0.01" b="-0.02" c="0"/>
+        </calibration>
+    </lens>
+    <camera>
+        <maker>Canon</maker>
+        <model>Canon EOS Odd</model>
+        <mount>Canon Odd</mount>
+        <cropfactor>1.6</cropfactor>
+    </camera>
+    <lens>
+        <maker>Canon</maker>
+        <model>Canon Odd 18-55mm</model>
+        <mount>Canon Odd</mount>
+        <mount>Canon RF</mount>
+        <cropfactor>1.6</cropfactor>
+        <calibration>
+            <distortion model="poly3" focal="18" k1="-0.02"/>
+            <distortion model="poly3" focal="55" k1="0.01"/>
+        </calibration>
+    </lens>
+</lensdatabase>
+"#;
+
+    fn with_compacts() -> Database {
+        let mut db = db();
+        db.read_xml(COMPACTS).unwrap();
+        db
+    }
+
+    fn unnamed(focal: Option<f32>) -> Shot {
+        Shot {
+            focal_length: focal,
+            f_number: Some(4.0),
+            ..Default::default()
+        }
+    }
+
+    /// The name of the lens a raw (or a rendered picture) from a body
+    /// that names none is given.
+    fn fixed(
+        db: &Database,
+        make: &str,
+        model: &str,
+        focal: Option<f32>,
+        raw: bool,
+    ) -> Option<String> {
+        db.lookup_shot(make, model, &unnamed(focal), raw)
+            .lens
+            .map(|l| l.name().to_string())
+    }
+
+    #[test]
+    fn a_compact_with_one_lens_gets_it_with_no_lens_named() {
+        let db = with_compacts();
+        let l = db.lookup_shot(
+            "Canon",
+            "Canon PowerShot SX710 HS",
+            &unnamed(Some(5.5)),
+            true,
+        );
+        assert_eq!(
+            l.lens.unwrap().name(),
+            "Canon PowerShot SX710 HS & compatibles, with CHDK's DNG"
+        );
+        assert!(l.from_body && l.camera.is_some());
+        let mut f = frame("PowerShot SX710 HS", "", 5.5, 4.0);
+        f.shot.lens_model = None;
+        let p = db.profile(&f).unwrap();
+        assert_eq!(p.crop_factor(), 5.6);
+        assert!(
+            p.correction(4608, 3456, &f.shot, Wanted::ALL)
+                .distortion
+                .is_some()
+        );
+        // Without a focal length the one lens is still the one.
+        assert!(fixed(&db, "Canon", "PowerShot SX710 HS", None, true).is_some());
+        // Past what it was calibrated for it is not taken.
+        assert!(fixed(&db, "Canon", "PowerShot SX710 HS", Some(300.0), true).is_none());
+        // A JPEG from the body is corrected already: the CHDK profile
+        // is not for it.
+        assert!(fixed(&db, "Canon", "PowerShot SX710 HS", Some(5.5), false).is_none());
+    }
+
+    #[test]
+    fn a_raw_gets_the_chdk_profile_and_a_rendered_picture_the_plain_one() {
+        let db = with_compacts();
+        assert_eq!(
+            fixed(&db, "Canon", "PowerShot SX510 HS", Some(4.3), true).as_deref(),
+            Some("Canon PowerShot SX510 HS & compatibles, with CHDK's DNG")
+        );
+        assert_eq!(
+            fixed(&db, "Canon", "PowerShot SX510 HS", Some(4.3), false).as_deref(),
+            Some("Canon PowerShot SX510 HS & compatibles")
+        );
+        // A raw from a body with no CHDK entry gets the plain one.
+        assert_eq!(
+            fixed(&db, "Casio", "QV-3500EX", Some(14.0), true).as_deref(),
+            Some("QV-3500EX & compatibles (Standard)")
+        );
+    }
+
+    #[test]
+    fn an_interchangeable_body_with_no_lens_named_gets_none() {
+        let db = with_compacts();
+        assert!(!db.is_fixed_mount("Canon RF") && !db.is_fixed_mount("Canon EF"));
+        assert!(db.is_fixed_mount("canonSX710HS"));
+        let l = db.lookup_shot("Canon", "EOS R6", &unnamed(Some(50.0)), true);
+        assert!(l.camera.is_some() && l.lens.is_none() && !l.from_body);
+        // A mount with no entry of its own, but with a lens that sits
+        // on a defined mount too, is not a fixed lens's.
+        assert!(!db.is_fixed_mount("Canon Odd"));
+        assert!(fixed(&db, "Canon", "EOS Odd", Some(18.0), true).is_none());
+    }
+
+    #[test]
+    fn a_fixed_mount_with_two_lenses_picks_by_focal_length_then_the_plain_body() {
+        let db = with_compacts();
+        // The converter's range is inside the plain one's: where both
+        // fit, the plain body.
+        for f in [Some(8.0), None] {
+            assert_eq!(
+                fixed(&db, "Casio", "QV-3500EX", f, true).as_deref(),
+                Some("QV-3500EX & compatibles (Standard)")
+            );
+        }
+        // Two converters and no plain body: the focal length alone
+        // tells them apart, and where it cannot, no guess.
+        assert_eq!(
+            fixed(&db, "Nikon", "E995", Some(25.0), true).as_deref(),
+            Some("E995 & compatibles, with TC-E2")
+        );
+        assert_eq!(
+            fixed(&db, "Nikon", "E995", Some(9.0), true).as_deref(),
+            Some("E995 & compatibles, with WC-E63")
+        );
+        assert!(fixed(&db, "Nikon", "E995", None, true).is_none());
+    }
+
+    #[test]
+    fn a_named_lens_wins_over_the_body() {
+        let db = with_compacts();
+        // A lens named is matched by name, and a name that matches
+        // nothing is not replaced by the body's.
+        let mut shot = unnamed(Some(50.0));
+        shot.lens_model = Some("RF50mm F1.8 STM".into());
+        let l = db.lookup_shot("Canon", "PowerShot SX710 HS", &shot, true);
+        assert_eq!(l.lens.unwrap().name(), "Canon RF 50mm F1.8 STM");
+        assert!(!l.from_body);
+        shot.lens_model = Some("4.5-135.0 mm".into());
+        shot.focal_length = Some(5.5);
+        assert!(
+            db.lookup_shot("Canon", "PowerShot SX710 HS", &shot, true)
+                .lens
+                .is_none()
+        );
     }
 }

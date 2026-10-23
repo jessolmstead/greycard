@@ -969,6 +969,12 @@ enum Input {
 }
 
 impl Input {
+    /// Whether the file is the sensor's data rather than a rendered
+    /// picture.
+    fn is_raw(&self) -> bool {
+        matches!(self, Input::Raw(_))
+    }
+
     /// What the file says of its body and its lens.
     fn identity(&self) -> (&str, &str, &Shot) {
         match self {

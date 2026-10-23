@@ -290,7 +290,12 @@ pub(crate) fn develop(
                 d.clip_level,
                 crate::finish::Source::raw(&frame.make, &frame.model),
                 white,
-                (frame.make.clone(), frame.model.clone(), frame.shot.clone()),
+                (
+                    frame.make.clone(),
+                    frame.model.clone(),
+                    frame.shot.clone(),
+                    true,
+                ),
             )
         }
         Opened::Picture(picture) => {
@@ -319,6 +324,7 @@ pub(crate) fn develop(
                     picture.make.clone(),
                     picture.model.clone(),
                     picture.shot.clone(),
+                    false,
                 ),
             )
         }
@@ -327,9 +333,9 @@ pub(crate) fn develop(
     let started = Instant::now();
     // The lens and the defringe, as `develop_job` has them after the
     // base; the defringe's radius is in pixels and so is halved.
-    let (make, model, shot) = &identity;
+    let (make, model, shot, raw) = &identity;
     if !edit.lens.is_identity(lenses.is_some()) {
-        image = crate::worker::correct_lens_of(image, make, model, shot, edit, lenses);
+        image = crate::worker::correct_lens_of(image, (make, model, shot, *raw), edit, lenses);
     }
     if let Some(mut options) = edit.lens.defringe() {
         options.radius /= bin as f32;

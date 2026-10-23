@@ -81,6 +81,10 @@ design note behind it.
 
 ### Fixes
 
+- A fixed-lens compact, phone, or action camera gets its lens profile
+  from the body when the file names no lens (a PowerShot SX710 HS
+  shooting DNG through CHDK got none with lensfun installed)
+  ([§413](https://github.com/jessolmstead/greycard/blob/master/docs/notes/413-a-compacts-lens-from-the-body.md)).
 - A long sharpen no longer runs past the GPU driver's watchdog and
   takes the device with it (a GTX 1060 on Windows at 50 iterations,
   a Renoir iGPU); if a device is lost anyway greycard saves and

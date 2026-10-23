@@ -191,6 +191,89 @@ impl Database {
     }
 }
 
+impl Database {
+    /// The fixed lens of a body whose file names no lens: a lens on
+    /// the body's own mount when that mount is a compact's (see
+    /// [`Database::is_fixed_mount`]), drawing straight lines, and
+    /// covering `focal` when it is known.
+    ///
+    /// lensfun calibrates a compact twice where it can: on the camera's
+    /// own JPEGs, which the camera has already corrected, and on CHDK's
+    /// DNGs, the sensor as it is. Such a body shoots raw only through
+    /// CHDK, so for a `raw` the CHDK entry is taken when there is one,
+    /// and for a picture that is not a raw it never is: it would
+    /// correct a corrected picture twice.
+    ///
+    /// When several are still left, the one that is the plain body (no
+    /// converter, no macro distance) is taken if there is exactly one;
+    /// otherwise none, since a wrong profile is worse than no profile.
+    pub fn fixed_lens(&self, camera: &Camera, focal: Option<f32>, raw: bool) -> Option<&Lens> {
+        if !self.is_fixed_mount(&camera.mount) {
+            return None;
+        }
+        let fits: Vec<&Lens> = self
+            .lenses
+            .iter()
+            .filter(|l| l.kind == LensType::Rectilinear && l.mounts.contains(&camera.mount))
+            .filter(|l| match (focal, l.focal_range()) {
+                (Some(f), Some((lo, hi))) => f >= lo * 0.9 && f <= hi * 1.1,
+                _ => true,
+            })
+            .collect();
+        let take_chdk = raw && fits.iter().any(|l| is_chdk(l.name()));
+        let fits: Vec<&Lens> = fits
+            .into_iter()
+            .filter(|l| is_chdk(l.name()) == take_chdk)
+            .collect();
+        match fits[..] {
+            [] => None,
+            [one] => Some(one),
+            _ => {
+                let mut plain = fits.into_iter().filter(|l| is_plain(l.name()));
+                match (plain.next(), plain.next()) {
+                    (Some(one), None) => Some(one),
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// Whether a mount is a fixed lens's: lensfun gives a compact (or
+    /// a phone, an action camera, a bridge camera) a mount of its own
+    /// that it never defines, where every interchangeable mount has a
+    /// `<mount>` entry with the mounts it takes. So a mount that has
+    /// no entry, that no entry takes, and whose lenses sit on no
+    /// defined mount besides.
+    pub fn is_fixed_mount(&self, mount: &str) -> bool {
+        let defined = |m: &str| self.mounts.iter().any(|d| d.name == m);
+        !defined(mount)
+            && !self
+                .mounts
+                .iter()
+                .any(|d| d.compatible.iter().any(|c| c == mount))
+            && !self
+                .lenses
+                .iter()
+                .filter(|l| l.mounts.iter().any(|m| m == mount))
+                .any(|l| l.mounts.iter().any(|m| defined(m)))
+    }
+}
+
+/// Whether a compact's lens entry is calibrated on CHDK's DNGs.
+fn is_chdk(name: &str) -> bool {
+    name.to_lowercase().contains("chdk")
+}
+
+/// Whether a compact's lens entry is the body as it comes: "X &
+/// compatibles" or "X & compatibles (Standard)", where its siblings
+/// add a converter or a macro distance ("X & compatibles, with
+/// WC-E63").
+fn is_plain(name: &str) -> bool {
+    let n = name.trim().to_lowercase();
+    let n = n.strip_suffix("(standard)").unwrap_or(&n).trim_end();
+    n.ends_with("& compatibles")
+}
+
 /// Whether two maker names are the same maker: the first token
 /// agrees ("Canon" and "Canon Inc.", "NIKON CORPORATION" and "Nikon").
 fn same_maker(a: &str, b: &str) -> bool {

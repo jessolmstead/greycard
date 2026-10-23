@@ -87,18 +87,23 @@ pub(super) fn lens_report(db: Option<&greycard_lens::Database>, input: &Input) -
         return LensReport::NoDatabase;
     };
     let (make, model, shot) = input.identity();
-    let Some(name) = shot.lens_model.as_deref() else {
-        return LensReport::NoLensName;
-    };
-    match db.profile_for(make, model, shot) {
+    let named = shot.lens_model.as_deref();
+    match db.profile_for(make, model, shot, input.is_raw()) {
         Some(p) => {
             tracing::info!(
-                "lens {name}: {}{}{}",
+                "lens {}: {}{}{}{}",
+                named.unwrap_or("not recorded"),
                 p.name(),
                 if p.camera.is_some() {
                     ""
                 } else {
                     ", body not in the database"
+                },
+                // Without a name, only a compact's own lens is found.
+                if named.is_none() {
+                    ", the fixed lens of the body"
+                } else {
+                    ""
                 },
                 if p.measured_on_smaller_sensor() {
                     format!(
@@ -115,10 +120,13 @@ pub(super) fn lens_report(db: Option<&greycard_lens::Database>, input: &Input) -
                 smaller_sensor: p.measured_on_smaller_sensor(),
             }
         }
-        None => {
-            tracing::warn!("lens {name} on {make} {model}: not in the database");
-            LensReport::Unknown(name.to_string())
-        }
+        None => match named {
+            Some(name) => {
+                tracing::warn!("lens {name} on {make} {model}: not in the database");
+                LensReport::Unknown(name.to_string())
+            }
+            None => LensReport::NoLensName,
+        },
     }
 }
 
@@ -133,39 +141,36 @@ pub(super) fn lens_corrections(
     db: Option<&greycard_lens::Database>,
 ) -> Vec<LensCorrection> {
     let (make, model, shot) = input.identity();
-    lens_corrections_of(width, height, make, model, shot, edit, db)
+    lens_corrections_of(width, height, (make, model, shot, input.is_raw()), edit, db)
 }
 
-/// [`lens_corrections`] for a frame named by its body and its shot.
+/// [`lens_corrections`] for a frame named by its body, its shot, and
+/// whether it is a raw.
 fn lens_corrections_of(
     width: usize,
     height: usize,
-    make: &str,
-    model: &str,
-    shot: &Shot,
+    (make, model, shot, raw): (&str, &str, &Shot, bool),
     edit: &Edit,
     db: Option<&greycard_lens::Database>,
 ) -> Vec<LensCorrection> {
     let profile = db
-        .and_then(|db| db.profile_for(make, model, shot))
+        .and_then(|db| db.profile_for(make, model, shot, raw))
         .map(|p| p.correction(width, height, shot, greycard_lens::Wanted::ALL));
     edit.lens.corrections(profile)
 }
 
 /// The developed picture with the edit's lens corrections, on the
-/// CPU, for a frame named by its body and its shot: the reduced
-/// develop's, which has no `Input`. The picture itself when there is
-/// nothing to do.
+/// CPU, for a frame named by its body, its shot, and whether it is a
+/// raw: the reduced develop's, which has no `Input`. The picture
+/// itself when there is nothing to do.
 pub(crate) fn correct_lens_of(
     image: WorkingImage,
-    make: &str,
-    model: &str,
-    shot: &Shot,
+    identity: (&str, &str, &Shot, bool),
     edit: &Edit,
     db: Option<&greycard_lens::Database>,
 ) -> WorkingImage {
     let mut image = image;
-    for c in lens_corrections_of(image.width, image.height, make, model, shot, edit, db) {
+    for c in lens_corrections_of(image.width, image.height, identity, edit, db) {
         image = greycard_core::develop::lens::correct(&image, &c).0;
     }
     image

@@ -91,8 +91,13 @@ pub(crate) fn lenses(
     match l.lens {
         Some(lens) => {
             println!(
-                "profile       {} (crop {}, {}; {} distortion, {} CA, {} vignetting entries)",
+                "profile       {}{} (crop {}, {}; {} distortion, {} CA, {} vignetting entries)",
                 lens.name(),
+                if l.from_body {
+                    ", the fixed lens, taken from the body"
+                } else {
+                    ""
+                },
                 lens.crop_factor,
                 lens.mounts.join("/"),
                 lens.distortion.len(),
