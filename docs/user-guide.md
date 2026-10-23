@@ -93,9 +93,9 @@ those along with the raws to move a shoot.
 The window opens no taller than your screen, so on a 13 or 14 inch
 laptop the buttons of a sheet such as Export stay in reach.
 
-Text and controls too small? **Scale** at the top of the Settings
-sheet (**Ctrl+,**) makes them up to twice the size, from the next
-start ([Scale](guide/settings.md#scale)).
+Text and controls too small? **Scale**, under **Interface** in the
+Settings sheet (**Ctrl+,**), makes them up to twice the size, from the
+next start ([Scale](guide/settings.md#scale)).
 
 ## The chapters
 
@@ -133,7 +133,7 @@ is made from the table the editor reads its keys from, so it always
 matches the build you have. **Help** also opens this guide and the
 bug form.
 
-To change a key, open **Settings** (Ctrl+,) and scroll to **Keys**:
+To change a key, open **Settings** (Ctrl+,) and choose **Keys**:
 click an action's key, then press the new one, modifiers and all;
 **Esc** keeps the old. The grid's stack key follows the soft proof's
 (S). The lines with more than one key (the arrows, the ratings, flags,

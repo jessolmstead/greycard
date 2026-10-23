@@ -92,13 +92,15 @@ fn abbreviate(path: &Path, prefixes: &[(Option<PathBuf>, &str)]) -> String {
     path.display().to_string()
 }
 
-/// The log's path as the form shows it.
-fn log_shown(path: &Path) -> String {
+/// A path of ours as the form and the Settings sheet show it, the
+/// home folder short, so neither carries the account's name.
+pub(crate) fn path_shown(path: &Path) -> String {
     if cfg!(windows) {
         abbreviate(
             path,
             &[
                 (dirs::data_local_dir(), "%LOCALAPPDATA%"),
+                (dirs::config_dir(), "%APPDATA%"),
                 (dirs::home_dir(), "%USERPROFILE%"),
             ],
         )
@@ -329,7 +331,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
             gpu: state.borrow().develop.gpu.clone().unwrap_or_default(),
             log: log
                 .as_deref()
-                .map(|p| log_note(&log_shown(p)))
+                .map(|p| log_note(&path_shown(p)))
                 .unwrap_or_default(),
         };
         let url = issue_url(env!("CARGO_PKG_REPOSITORY"), &report);

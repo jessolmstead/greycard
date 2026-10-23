@@ -1,8 +1,12 @@
 # Settings
 
 The Settings sheet holds the choices that belong to your computer
-rather than to a picture. This chapter lists each one in the order the
-sheet shows it, then where greycard keeps its files.
+rather than to a picture, in five categories down its left side:
+Interface, Library, Editing, Keys, and About. Click one, or press the
+up and down arrows or Ctrl+Tab, to show it; Tab goes on into its
+rows. The sheet opens at the category you left it at. This chapter
+lists each choice in the order the sheet shows it, then where greycard
+keeps its files.
 
 Open it with **Settings...** at the bottom of the left panel, or press
 **Ctrl+,**. Close it with **Done**, Esc or a click outside. A number
@@ -40,9 +44,11 @@ Grading, Tint, and Detail) is folded or open on both at once. The left
 pane's sections are not touched. Turning it on folds nothing until the
 next section opens.
 
-## Sidecars
+## Library
 
-### Edits go
+### Sidecars
+
+#### Edits go
 
 Where a frame's edit file (its `.gcd`) is written.
 
@@ -60,13 +66,13 @@ Changing it moves nothing by itself. Each frame's edit moves to the
 new place the next time it is saved, so a folder tidies itself as you
 work through it.
 
-### Move the open frames' sidecars
+#### Move the open frames' sidecars
 
 Shown when frames are open. The sheet says how many of their edit
 files are in the other place. Click the button, then **Move 12
 sidecars** to confirm, and they all move at once.
 
-### Write XMP sidecars
+#### Write XMP sidecars
 
 Off by default. Turn it on to share ratings, labels and keywords with
 Lightroom or darktable: greycard then also writes a standard `.xmp`
@@ -74,9 +80,9 @@ beside each raw. An `.xmp` that is already there is read either way.
 
 Picks and rejects have no XMP field, so they stay in the `.gcd`.
 
-## RAW+JPEG
+### RAW+JPEG
 
-### Treat a JPEG beside its raw as a separate frame
+#### Treat a JPEG beside its raw as a separate frame
 
 Off by default: the camera's JPEG beside its raw (`IMG_0001.JPG`
 beside `IMG_0001.CR3`) goes with the raw as one frame, marked
@@ -85,9 +91,34 @@ own rating and its own sidecar, and moving or deleting the raw leaves
 it where it is. The open folder changes at once. See
 [A raw and its camera JPEG](library.md#a-raw-and-its-camera-jpeg).
 
-## Crop
+### Thumbnails
 
-### Aspect
+The first line says what the cache holds, such as "312 thumbnails
+kept, 2.5 MB of 300 MB."
+
+| Item | Default | What it does |
+|---|---|---|
+| **Clear** | | Empties the cache, the pictures of edited frames included. Each folder's thumbnails are made again when it next opens, and an edited frame's in the background. |
+| **Keep up to** | 300 MB | Room for the grid's and filmstrip's thumbnails, about thirty thousand frames at one size. When full, the ones used longest ago go. 0 turns the cache off. |
+| **Previews up to** | 8192 MB | Room for local previews of the frames in your library, about 0.5 MB a frame. They let you cull a shoot on a drive that is unplugged or on a slow network. 0 keeps none. |
+
+A folder you open again fills in at once from the cache, even after you
+move or rename it.
+
+### Network folders
+
+#### Rescan every
+
+10 minutes by default. A library folder on a network share can't be
+watched for changes, so greycard looks it over this often instead. 0
+means only when greycard starts. Folders on your own drives are
+watched and need no rescan.
+
+## Editing
+
+### Crop
+
+#### Aspect
 
 The aspect a frame's crop opens at when the frame has no crop of its
 own: as you press **Crop**, **Draw**, **Level**, **Verticals** or
@@ -107,37 +138,26 @@ move to while cropping is not cropped until you touch its crop. A
 frame you have already cropped keeps its crop and its aspect. See
 [Cropping](crop-and-retouch.md#cropping).
 
-## Thumbnails
-
-The first line says what the cache holds, such as "312 thumbnails
-kept, 2.5 MB of 300 MB."
-
-| Item | Default | What it does |
-|---|---|---|
-| **Clear** | | Empties the cache, the pictures of edited frames included. Each folder's thumbnails are made again when it next opens, and an edited frame's in the background. |
-| **Keep up to** | 300 MB | Room for the grid's and filmstrip's thumbnails, about thirty thousand frames at one size. When full, the ones used longest ago go. 0 turns the cache off. |
-| **Previews up to** | 8192 MB | Room for local previews of the frames in your library, about 0.5 MB a frame. They let you cull a shoot on a drive that is unplugged or on a slow network. 0 keeps none. |
-
-A folder you open again fills in at once from the cache, even after you
-move or rename it.
-
-## Network folders
-
-### Rescan every
-
-10 minutes by default. A library folder on a network share can't be
-watched for changes, so greycard looks it over this often instead. 0
-means only when greycard starts. Folders on your own drives are
-watched and need no rescan.
-
-## Presets
+### Presets
 
 Says whether any of the develop presets that come with greycard are
 missing from your list. **Restore** puts back the ones you removed.
 
-## Updates
+## Keys
 
-### Check for a new version at launch
+Every key you can move, under the heading of its group: click an
+action's key, then press the new one. See
+[Keys](../user-guide.md#keys).
+
+## About
+
+The version you are running, then the check for a newer one, then
+the folders greycard keeps its files in (see
+[Where greycard keeps its files](#where-greycard-keeps-its-files)).
+
+### Updates
+
+#### Check for a new version at launch
 
 On by default. At most once a day, greycard asks GitHub whether a newer
 release is out, sending only its version number. If there is one, a

@@ -413,3 +413,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§398. The frame's grain under a fill, and a swept store](notes/398-the-frames-grain-under-a-fill.md) (2026-10-23)
 - [§399. RORem on WebGPU, measured](notes/399-rorem-on-webgpu-measured.md) (2026-10-23)
 - [§400. A mask's white as an offset from the global](notes/400-a-masks-white-as-an-offset.md) (2026-10-23)
+- [§401. Settings in five categories](notes/401-settings-in-five-categories.md) (2026-10-23)

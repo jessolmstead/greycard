@@ -415,7 +415,48 @@ pub(crate) fn jpegs_apart_changed(
     }
 }
 
+/// The folders the About category names: the settings', the library
+/// index's, the caches' and the log's, each as `path_shown` writes it,
+/// empty for one this machine has no place for.
+pub(crate) fn about_dirs() -> [String; 4] {
+    let shown = |p: Option<PathBuf>| p.map(|p| crate::report::path_shown(&p)).unwrap_or_default();
+    let parent = |p: Option<PathBuf>| p.and_then(|p| p.parent().map(Path::to_path_buf));
+    let caches = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(dirs::cache_dir)
+        .map(|c| c.join("greycard"));
+    [
+        shown(parent(settings::path())),
+        shown(parent(greycard_library::Library::user_path())),
+        shown(caches),
+        shown(crate::log::dir()),
+    ]
+}
+
+/// The About category's words, which hold for the run.
+fn show_about(app: &App) {
+    app.set_about_version(crate::update::VERSION.into());
+    let [settings, library, caches, log] = about_dirs();
+    app.set_about_settings_dir(settings.into());
+    app.set_about_library_dir(library.into());
+    app.set_about_caches_dir(caches.into());
+    app.set_about_log_dir(log.into());
+}
+
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+    show_about(app);
+    // The category the sheet shows, kept for its next opening.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_settings_category_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let name = settings::category_named(&app.get_settings_category());
+            keep(&state.borrow(), |s| s.settings_category = name.into());
+        });
+    }
     // Clear the thumbnail cache: every folder's thumbnails are made
     // again the next time it opens.
     {
@@ -887,6 +928,37 @@ mod tests {
         click_on("125%");
         assert_eq!(crate::testing::count_labeled(&app, BY_HAND), 1);
         assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
+    }
+
+    /// About: the version, and the folders the run keeps its files in,
+    /// the home folder short.
+    #[test]
+    fn the_about_category_says_the_version_and_the_folders() {
+        let app = crate::testing::window(0);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_settings_category("About".into());
+        app.invoke_settings_asked();
+        assert_eq!(app.get_about_version(), crate::update::VERSION);
+        assert_eq!(
+            crate::testing::count_labeled(&app, crate::update::VERSION),
+            1
+        );
+        assert_eq!(crate::testing::count_labeled(&app, "Check now"), 1);
+        // Each folder greycard's own; on Windows the logs go in a
+        // folder of their own under the library's, and the library and
+        // the caches share `%LOCALAPPDATA%\greycard`, so a folder is
+        // said once for each row that names it.
+        let shown = about_dirs();
+        let [_, library, caches, log] = &shown;
+        for dir in [library, caches, log] {
+            let logs = cfg!(windows) && dir.ends_with(r"greycard\logs");
+            assert!(dir.ends_with("greycard") || logs, "{dir}");
+            let rows = shown.iter().filter(|d| *d == dir).count();
+            assert_eq!(crate::testing::count_labeled(&app, dir), rows, "{dir}");
+        }
+        if let Some(home) = dirs::home_dir() {
+            assert!(!log.contains(&*home.to_string_lossy()), "{log}");
+        }
     }
 
     #[test]

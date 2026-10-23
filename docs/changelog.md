@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- The Settings sheet is five categories down its left side: Interface,
+  Library, Editing, Keys, and About, which also shows the version and
+  where greycard keeps its files
+  ([§401](https://github.com/jessolmstead/greycard/blob/master/docs/notes/401-settings-in-five-categories.md)).
 - Ctrl on a focused slider's arrow or with the wheel moves a fine
   step, where the slider's number can show it. F puts a mat of the
   canvas color around the picture at Fit. A Settings switch opens one

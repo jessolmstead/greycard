@@ -1948,6 +1948,17 @@ export component App inherits Window {
     // the last move of them did. Ctrl+, or the gear opens it, through
     // Rust, which counts first.
     in-out property <bool> settings-open: false;
+    // The sheet's category shown, by its name, where the next opening
+    // starts; Rust keeps it in the settings file.
+    in-out property <string> settings-category: "Interface";
+    callback settings-category-changed();
+    // The sheet's About: the version and greycard's folders, as shown;
+    // set by Rust at the start.
+    in property <string> about-version;
+    in property <string> about-settings-dir;
+    in property <string> about-library-dir;
+    in property <string> about-caches-dir;
+    in property <string> about-log-dir;
     // However the sheet is closed — Done, Escape, a click outside — a
     // cap typed and not yet entered is taken; Rust ignores one that
     // did not change.
@@ -4489,6 +4500,13 @@ export component App inherits Window {
     // The settings sheet, over everything, until closed.
     if root.settings-open: SettingsSheet {
         settings-open <=> root.settings-open;
+        category <=> root.settings-category;
+        category-changed => { root.settings-category-changed(); }
+        version: root.about-version;
+        settings-dir: root.about-settings-dir;
+        library-dir: root.about-library-dir;
+        caches-dir: root.about-caches-dir;
+        log-dir: root.about-log-dir;
         sidecar-placement <=> root.sidecar-placement;
         xmp-sidecars <=> root.xmp-sidecars;
         jpegs-apart <=> root.jpegs-apart;
@@ -4531,10 +4549,7 @@ export component App inherits Window {
             return root.key-rebound(id, text, ctrl, shift, alt, meta);
         }
         keys-reset => { root.keys-reset(); }
-        listening-done => {
-            root.binding-held = true;
-            keys.focus();
-        }
+        listening-done => { root.binding-held = true; }
     }
 
     // The keys sheet, over everything, until closed.

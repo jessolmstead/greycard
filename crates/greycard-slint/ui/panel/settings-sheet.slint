@@ -1,14 +1,17 @@
 // The settings sheet: what belongs to the installation rather than to
-// a picture, over everything until closed. The interface's scale,
-// which applies at the next start. Where the sidecars go and
-// whether an XMP goes beside them; and, with frames open, the move
-// that puts their sidecars where the setting says now, since flipping
-// it moves nothing by itself. Whether the camera's JPEG beside a raw is
-// a frame of its own. The aspect an uncropped frame's crop opens at.
-// The check for a newer release. And the keys: each rebindable action
-// of the key table (`keys.rs`), a click on its chord to press a new
-// one, Escape to keep the old.
-
+// a picture, over everything until closed, in five categories down its
+// left side, one shown at a time. Interface: the scale, which applies
+// at the next start, and whether opening a panel section folds the
+// rest. Library: where the sidecars go and whether an XMP goes beside
+// them; with frames open, the move that puts their sidecars where the
+// setting says now, since flipping it moves nothing by itself; whether
+// the camera's JPEG beside a raw is a frame of its own; the thumbnail
+// cache; and the network folders' rescan. Editing:
+// the aspect an uncropped frame's crop opens at, and the shipped
+// presets put back. Keys: each rebindable action of the key table
+// (`keys.rs`), a click on its chord to press a new one, Escape to keep
+// the old. About: the check for a newer release, the version, and
+// where greycard keeps its files.
 import { Theme } from "../theme.slint";
 import { BindRow } from "../structs.slint";
 import { Toggle, PanelButton, Segmented } from "../controls.slint";
@@ -86,7 +89,7 @@ export component SettingsSheet inherits Rectangle {
     /// The keys: each action and its chord, under its group's heading;
     /// a press taken as the listening action's chord, true once the
     /// listening is over; every action back to its default; and the
-    /// keys handed back to the window as the listening ends.
+    /// window told as the listening ends.
     in property <[BindRow]> key-bindings;
     callback key-rebound(string, string, bool, bool, bool, bool) -> bool;
     callback keys-reset();
@@ -97,6 +100,17 @@ export component SettingsSheet inherits Rectangle {
         root.listening = id;
         catcher.focus();
     }
+    /// The listening over: the window told, and the focus back on the
+    /// column, so the keys step the categories again. The key just
+    /// bound may still be held; its repeats are nobody's until a fresh
+    /// press.
+    property <bool> held: false;
+    function listened() {
+        root.listening = "";
+        root.held = true;
+        root.listening-done();
+        names.focus();
+    }
     /// The move asked for and not yet confirmed.
     property <bool> confirming: false;
     property <string> elsewhere-words: root.sidecars-elsewhere == 1
@@ -105,14 +119,55 @@ export component SettingsSheet inherits Rectangle {
     property <string> frames-words: root.open-frames == 1
         ? "the open frame"
         : "the " + root.open-frames + " open frames";
+    /// The category shown, one of `categories`; kept between runs by
+    /// the host, which hears of a change.
+    in-out property <string> category: "Interface";
+    callback category-changed();
+    /// What the About category says: the version, and the folders
+    /// greycard keeps its files in, as shown; a row whose folder is
+    /// unknown is left out.
+    in property <string> version;
+    in property <string> settings-dir;
+    in property <string> library-dir;
+    in property <string> caches-dir;
+    in property <string> log-dir;
+    property <[string]> categories: ["Interface", "Library", "Editing", "Keys", "About"];
+    property <length> column-w: 132px;
+    property <length> pane-w: 440px;
+    /// The focus goes to the column: a row left focused in the category
+    /// hidden would take the next key and do nothing with it.
+    function choose(name: string) {
+        names.focus();
+        if (name == root.category) { return; }
+        root.category = name;
+        pane.content-y = 0;
+        root.category-changed();
+    }
+    /// The category `by` along from the one shown: held at the ends,
+    /// or round them with `wrap`.
+    function step(by: int, wrap: bool) {
+        let n = root.categories.length;
+        let at = root.category == "Library" ? 1
+            : root.category == "Editing" ? 2
+            : root.category == "Keys" ? 3
+            : root.category == "About" ? 4
+            : 0;
+        let next = wrap ? Math.mod(at + by + n, n) : Math.clamp(at + by, 0, n - 1);
+        root.choose(root.categories[next]);
+    }
 
     background: #000000a0;
     TouchArea { clicked => { root.settings-open = false; } }
     Rectangle {
-        width: 440px;
-        // As tall as it needs, up to the window less a margin; past
-        // that the sections scroll and Done stays in reach below them.
-        height: min(body.preferred-height + done-row.preferred-height, root.height - 2 * Theme.space-5);
+        width: root.column-w + root.pane-w;
+        // As tall as the tallest category, so the sheet keeps its size
+        // from one to the next, up to the window less a margin; past
+        // that the category scrolls and Done stays in reach below it.
+        height: min(
+            max(column.preferred-height, interface.preferred-height, library.preferred-height,
+                editing.preferred-height, keys.preferred-height, about.preferred-height)
+                + done-row.preferred-height,
+            root.height - 2 * Theme.space-5);
         background: Theme.surface;
         border-radius: Theme.radius-lg;
         border-width: 1px;
@@ -121,446 +176,643 @@ export component SettingsSheet inherits Rectangle {
         drop-shadow-color: #00000099;
         clip: true;
         TouchArea { }
-        // The press a chord is listened for by: every key while an
-        // action listens, Escape keeping its old chord.
-        catcher := FocusScope {
-            width: 0;
-            height: 0;
+        // A key goes up from whatever on the sheet has the focus and
+        // never reaches the window's: Escape is taken here, on the card.
+        // Never focused by a click, which would take the focus from the
+        // column or stop a chord listening. Ctrl+Tab steps the categories
+        // from anywhere on the card.
+        FocusScope {
+            focus-on-tab-navigation: false;
+            focus-on-click: false;
             key-pressed(e) => {
-                if (root.listening == "") { return reject; }
-                // A key held from before the click: not a new chord.
-                if (e.repeat) { return accept; }
                 if (e.text == Key.Escape) {
-                    root.listening = "";
-                    root.listening-done();
+                    root.settings-open = false;
                     return accept;
                 }
-                if (root.key-rebound(root.listening, e.text, e.modifiers.control,
-                    e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) {
-                    root.listening = "";
-                    root.listening-done();
+                if (e.modifiers.alt || e.modifiers.meta) { return reject; }
+                if (e.modifiers.control && e.text == Key.Backtab) {
+                    root.step(-1, true);
+                    return accept;
                 }
-                return accept;
+                if (e.modifiers.control && e.text == Key.Tab) {
+                    root.step(e.modifiers.shift ? -1 : 1, true);
+                    return accept;
+                }
+                return reject;
             }
-            focus-lost(reason) => { root.listening = ""; }
-        }
-        VerticalLayout {
-            ScrollView {
-                min-height: 80px;
-                vertical-stretch: 1;
-                body := VerticalLayout {
-                    padding: Theme.space-5;
-                    padding-right: Theme.space-5 + Theme.scrollbar-band;
-                    padding-bottom: Theme.space-2;
-                    spacing: Theme.space-3;
-                    Text {
-                        text: "Settings";
-                        font-size: Theme.font-lg;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text;
+            // The press a chord is listened for by: every key while an
+            // action listens, Escape keeping its old chord.
+            catcher := FocusScope {
+                width: 0;
+                height: 0;
+                // Reached by a click on a chord, never by Tab.
+                focus-on-tab-navigation: false;
+                key-pressed(e) => {
+                    if (root.listening == "") { return reject; }
+                    // A key held from before the click: not a new chord.
+                    if (e.repeat) { return accept; }
+                    if (e.text == Key.Escape) {
+                        root.listened();
+                        return accept;
                     }
-                    Rectangle { height: Theme.space-1; }
-                    Text {
-                        text: "INTERFACE";
-                        font-size: Theme.font-xs;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text-secondary;
+                    if (root.key-rebound(root.listening, e.text, e.modifiers.control,
+                        e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) {
+                        root.listened();
                     }
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Scale"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented {
-                            options: ["System", "125%", "150%", "175%", "200%"];
-                            current <=> root.ui-scale;
-                            selected => { root.ui-scale-changed(); }
-                        }
-                    }
-                    Text {
-                        text: "Type and controls, on top of the system's own scaling.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-muted;
-                        wrap: word-wrap;
-                    }
-                    if root.ui-scale-by-hand: Text {
-                        text: "SLINT_SCALE_FACTOR is set, and wins over this.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-secondary;
-                        wrap: word-wrap;
-                    }
-                    if !root.ui-scale-by-hand && root.ui-scale != root.ui-scale-started: Text {
-                        text: "Applies at the next start.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-secondary;
-                        wrap: word-wrap;
-                    }
-                    Toggle {
-                        label: "One section open at a time";
-                        checked <=> root.one-section;
-                        toggled => { root.one-section-changed(); }
-                    }
-                    Rectangle { height: Theme.space-1; }
-                    Text {
-                        text: "SIDECARS";
-                        font-size: Theme.font-xs;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text-secondary;
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Edits go"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented {
-                            options: ["Beside the raw", "Hidden folder"];
-                            current <=> root.sidecar-placement;
-                            selected => {
-                                root.confirming = false;
-                                root.placement-changed();
-                            }
-                        }
-                    }
-                    Text {
-                        text: root.sidecar-placement == "Hidden folder"
-                            ? "In a hidden .greycard folder."
-                            : "IMG_0001.CR3.gcd, beside the raw.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-secondary;
-                        wrap: word-wrap;
-                    }
-                    Text {
-                        text: "Sidecars move when next saved.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-muted;
-                        wrap: word-wrap;
-                    }
-                    if root.open-frames > 0: VerticalLayout {
-                        spacing: Theme.space-2;
+                    return accept;
+                }
+                focus-lost(reason) => { root.listening = ""; }
+            }
+            VerticalLayout {
+                HorizontalLayout {
+                    vertical-stretch: 1;
+                    column := VerticalLayout {
+                        width: root.column-w;
+                        padding: Theme.space-5;
+                        padding-right: 0;
+                        padding-bottom: Theme.space-2;
+                        spacing: Theme.space-3;
+                        alignment: start;
                         Text {
-                            text: !root.sidecars-written
-                                ? "Sidecars are not written this run (--no-sidecars), so none are moved."
-                                : root.sidecars-elsewhere < 0
-                                ? "Counting the sidecars of " + root.frames-words + "..."
-                                : root.sidecars-elsewhere == 0
-                                ? "Every sidecar of " + root.frames-words + " is in the chosen place."
-                                : root.elsewhere-words + " of " + root.frames-words + " "
-                                    + (root.sidecars-elsewhere == 1 ? "is" : "are") + " in the other place.";
-                            font-size: Theme.font-xs;
-                            color: Theme.text-secondary;
-                            wrap: word-wrap;
+                            text: "Settings";
+                            font-size: Theme.font-lg;
+                            font-weight: Theme.weight-medium;
+                            color: Theme.text;
                         }
-                        if !root.confirming: PanelButton {
-                            text: root.open-frames == 1 ? "Move the open frame's sidecar" : "Move the open frames' sidecars";
-                            icon: @image-url("../icons/folder-open.svg");
-                            enabled: root.sidecars-written && root.sidecars-elsewhere > 0;
-                            clicked => { root.confirming = true; }
-                        }
-                        if root.confirming: HorizontalLayout {
-                            spacing: Theme.space-2;
-                            PanelButton {
-                                text: "Cancel";
-                                clicked => { root.confirming = false; }
-                            }
-                            PanelButton {
-                                text: "Move " + root.elsewhere-words;
-                                primary: true;
-                                clicked => {
-                                    root.confirming = false;
-                                    root.sidecars-move();
+                        Rectangle { height: Theme.space-1; }
+                        // The categories, one shown at a time, marked as the
+                        // panel's tabs mark theirs. Up and Down step them while
+                        // the column has the focus, Ctrl+Tab from anywhere on
+                        // the card; Tab goes on into the category's rows.
+                        names := FocusScope {
+                            init => { self.focus(); }
+                            key-pressed(e) => {
+                                if (root.held) {
+                                    if (e.repeat) { return accept; }
+                                    root.held = false;
                                 }
-                            }
-                        }
-                    }
-                    if root.settings-note != "": Text {
-                        text: root.settings-note;
-                        font-size: Theme.font-xs;
-                        color: Theme.text-secondary;
-                        wrap: word-wrap;
-                    }
-                    Toggle {
-                        label: "Write XMP sidecars";
-                        checked <=> root.xmp-sidecars;
-                        toggled => { root.xmp-changed(); }
-                    }
-                    Text {
-                        text: "Rating, label and keywords, for Lightroom and darktable.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-muted;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { height: Theme.space-1; }
-                    Text {
-                        text: "RAW+JPEG";
-                        font-size: Theme.font-xs;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text-secondary;
-                    }
-                    Toggle {
-                        label: "Treat a JPEG beside its raw as a separate frame";
-                        checked <=> root.jpegs-apart;
-                        toggled => { root.jpegs-apart-changed(); }
-                    }
-                    Text {
-                        text: root.jpegs-apart
-                            ? "IMG_0001.JPG is a frame of its own, with its own rating."
-                            : "IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-muted;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { height: Theme.space-1; }
-                    Text {
-                        text: "CROP";
-                        font-size: Theme.font-xs;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text-secondary;
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Aspect"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented {
-                            options: ["Original", "Last used", "Free"];
-                            current <=> root.crop-start;
-                            selected => { root.crop-start-changed(); }
-                        }
-                    }
-                    Text {
-                        text: root.crop-start == "Last used"
-                            ? "An uncropped frame's crop opens at the aspect last picked."
-                            : root.crop-start == "Free"
-                            ? "An uncropped frame's crop opens free, any shape."
-                            : "An uncropped frame's crop opens at the frame's own shape.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-muted;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { height: Theme.space-1; }
-                    Text {
-                        text: "THUMBNAILS";
-                        font-size: Theme.font-xs;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text-secondary;
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text {
-                            text: root.thumb-cache-words;
-                            font-size: Theme.font-sm;
-                            color: Theme.text;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                        }
-                        if root.thumb-cache-entries > 0: PanelButton {
-                            text: "Clear";
-                            width: 96px;
-                            clicked => { root.thumb-cache-clear(); }
-                        }
-                    }
-                    if root.thumb-cache-on: HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Keep up to"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        LineEdit {
-                            width: 96px;
-                            text <=> root.thumb-cache-cap;
-                            placeholder-text: "300";
-                            input-type: number;
-                            accepted => { root.thumb-cache-cap-changed(); }
-                        }
-                        Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
-                    }
-                    if root.thumb-cache-on: HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Previews up to"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        LineEdit {
-                            width: 96px;
-                            text <=> root.preview-cache-cap;
-                            placeholder-text: "8192";
-                            input-type: number;
-                            accepted => { root.preview-cache-cap-changed(); }
-                        }
-                        Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
-                    }
-                    Text {
-                        text: "Previews let you cull offline drives; about 0.5 MB a frame.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-muted;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { height: Theme.space-1; }
-                    Text {
-                        text: "NETWORK FOLDERS";
-                        font-size: Theme.font-xs;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text-secondary;
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Rescan every"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        LineEdit {
-                            width: 96px;
-                            text <=> root.network-poll-minutes;
-                            placeholder-text: "10";
-                            input-type: number;
-                            accepted => { root.network-poll-changed(); }
-                        }
-                        Text { text: "minutes, 0 for never"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
-                    }
-                    Text {
-                        text: "Shares can't be watched, so they're rescanned.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-muted;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { height: Theme.space-1; }
-                    Text {
-                        text: "PRESETS";
-                        font-size: Theme.font-xs;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text-secondary;
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text {
-                            text: root.presets-missing-words;
-                            font-size: Theme.font-sm;
-                            color: Theme.text;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                        }
-                        if root.presets-missing > 0: PanelButton {
-                            text: "Restore";
-                            width: 96px;
-                            clicked => { root.presets-restore(); }
-                        }
-                    }
-                    Text {
-                        text: "Restores removed built-in presets.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-muted;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { height: Theme.space-1; }
-                    Text {
-                        text: "UPDATES";
-                        font-size: Theme.font-xs;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text-secondary;
-                    }
-                    Toggle {
-                        label: "Check for a new version at launch";
-                        checked <=> root.update-check;
-                        toggled => { root.update-check-changed(); }
-                    }
-                    Text {
-                        text: "Once a day; sends only the version number.";
-                        font-size: Theme.font-xs;
-                        color: Theme.text-muted;
-                        wrap: word-wrap;
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text {
-                            text: root.update-note;
-                            font-size: Theme.font-sm;
-                            color: Theme.text;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                        }
-                        PanelButton {
-                            text: "Check now";
-                            width: 96px;
-                            enabled: !root.update-checking;
-                            clicked => { root.update-check-now(); }
-                        }
-                    }
-                    Rectangle { height: Theme.space-1; }
-                    Text {
-                        text: "KEYS";
-                        font-size: Theme.font-xs;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text-secondary;
-                    }
-                    for row in root.key-bindings: VerticalLayout {
-                        spacing: 2px;
-                        padding-top: row.heading ? Theme.space-2 : 0;
-                        if row.heading: Text {
-                            text: row.does;
-                            font-size: Theme.font-xs;
-                            color: Theme.text-muted;
-                        }
-                        if !row.heading: HorizontalLayout {
-                            spacing: Theme.space-2;
-                            Text {
-                                text: row.does;
-                                font-size: Theme.font-sm;
-                                color: Theme.text;
-                                vertical-alignment: center;
-                                wrap: word-wrap;
-                                // Its own width, so a wrapped line counts in the
-                                // sheet's height and Reset to defaults stays in reach.
-                                width: 440px - 2 * Theme.space-5 - Theme.scrollbar-band - 112px - Theme.space-2;
+                                if (e.modifiers.alt || e.modifiers.meta) { return reject; }
+                                if (!e.modifiers.control && e.text == Key.UpArrow) {
+                                    root.step(-1, false);
+                                    return accept;
+                                }
+                                if (!e.modifiers.control && e.text == Key.DownArrow) {
+                                    root.step(1, false);
+                                    return accept;
+                                }
+                                return reject;
                             }
                             Rectangle {
-                                property <bool> on: root.listening == row.id;
-                                property <string> shown: self.on ? "Press a key" : row.keys;
-                                width: 112px;
-                                height: Theme.control-height;
                                 border-radius: Theme.radius-md;
+                                background: Theme.base;
                                 border-width: 1px;
-                                border-color: self.on ? Theme.focus-ring
-                                    : row.also != "" ? Theme.label-red : Theme.border-strong;
-                                background: chip.pressed ? Theme.pressed : chip.has-hover ? Theme.hover : Theme.raised;
-                                accessible-role: button;
-                                accessible-label: row.does;
-                                accessible-value: self.shown;
-                                accessible-action-default => { root.listen(row.id); }
-                                Text {
-                                    text: parent.shown;
-                                    font-size: Theme.font-sm;
-                                    font-weight: Theme.weight-medium;
-                                    color: parent.on ? Theme.text-secondary : Theme.text;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                                chip := TouchArea {
-                                    mouse-cursor: MouseCursor.pointer;
-                                    clicked => { root.listen(row.id); }
+                                border-color: names.has-focus ? Theme.focus-ring : Theme.border;
+                                VerticalLayout {
+                                    padding: 2px;
+                                    spacing: 2px;
+                                    for name in root.categories: Rectangle {
+                                        property <bool> on: name == root.category;
+                                        height: Theme.control-height;
+                                        border-radius: Theme.radius-sm;
+                                        background: self.on ? Theme.raised : (pick.has-hover ? Theme.hover : transparent);
+                                        animate background { duration: Theme.quick; }
+                                        accessible-role: tab;
+                                        accessible-label: name;
+                                        accessible-checked: self.on;
+                                        accessible-action-default => { root.choose(name); }
+                                        Text {
+                                            x: Theme.space-3;
+                                            width: parent.width - 2 * Theme.space-3;
+                                            text: name;
+                                            color: parent.on ? Theme.text : Theme.text-secondary;
+                                            font-size: Theme.font-sm;
+                                            font-weight: parent.on ? Theme.weight-medium : Theme.weight-regular;
+                                            vertical-alignment: center;
+                                        }
+                                        pick := TouchArea {
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => {
+                                                names.focus();
+                                                root.choose(name);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                        if !row.heading && row.also != "": Text {
-                            text: row.also;
-                            font-size: Theme.font-xs;
-                            color: Theme.label-red;
-                            wrap: word-wrap;
-                        }
                     }
-                    HorizontalLayout {
-                        alignment: end;
-                        PanelButton {
-                            text: "Reset to defaults";
-                            // The button's click takes the focus from a
-                            // row listening; the keys go back to the
-                            // window either way.
-                            clicked => {
-                                root.listening = "";
-                                root.keys-reset();
-                                root.listening-done();
+                    pane := ScrollView {
+                        width: root.pane-w;
+                        min-height: 80px;
+                        content-width: root.pane-w;
+                        content-height: root.category == "Library" ? library.preferred-height
+                            : root.category == "Editing" ? editing.preferred-height
+                            : root.category == "Keys" ? keys.preferred-height
+                            : root.category == "About" ? about.preferred-height
+                            : interface.preferred-height;
+                        interface := VerticalLayout {
+                            visible: root.category == "Interface";
+                            x: 0;
+                            y: 0;
+                            width: root.pane-w;
+                            height: self.preferred-height;
+                            padding: Theme.space-5;
+                            padding-right: Theme.space-5 + Theme.scrollbar-band;
+                            padding-bottom: Theme.space-2;
+                            spacing: Theme.space-3;
+                            Text {
+                                text: "INTERFACE";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Scale"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Segmented {
+                                    options: ["System", "125%", "150%", "175%", "200%"];
+                                    current <=> root.ui-scale;
+                                    selected => { root.ui-scale-changed(); }
+                                }
+                            }
+                            Text {
+                                text: "Type and controls, on top of the system's own scaling.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            if root.ui-scale-by-hand: Text {
+                                text: "SLINT_SCALE_FACTOR is set, and wins over this.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-secondary;
+                                wrap: word-wrap;
+                            }
+                            if !root.ui-scale-by-hand && root.ui-scale != root.ui-scale-started: Text {
+                                text: "Applies at the next start.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-secondary;
+                                wrap: word-wrap;
+                            }
+                            Toggle {
+                                label: "One section open at a time";
+                                checked <=> root.one-section;
+                                toggled => { root.one-section-changed(); }
+                            }
+                        }
+                        library := VerticalLayout {
+                            visible: root.category == "Library";
+                            x: 0;
+                            y: 0;
+                            width: root.pane-w;
+                            height: self.preferred-height;
+                            padding: Theme.space-5;
+                            padding-right: Theme.space-5 + Theme.scrollbar-band;
+                            padding-bottom: Theme.space-2;
+                            spacing: Theme.space-3;
+                            Text {
+                                text: "SIDECARS";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Edits go"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Segmented {
+                                    options: ["Beside the raw", "Hidden folder"];
+                                    current <=> root.sidecar-placement;
+                                    selected => {
+                                        root.confirming = false;
+                                        root.placement-changed();
+                                    }
+                                }
+                            }
+                            Text {
+                                text: root.sidecar-placement == "Hidden folder"
+                                    ? "In a hidden .greycard folder."
+                                    : "IMG_0001.CR3.gcd, beside the raw.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-secondary;
+                                wrap: word-wrap;
+                            }
+                            Text {
+                                text: "Sidecars move when next saved.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            if root.open-frames > 0: VerticalLayout {
+                                spacing: Theme.space-2;
+                                Text {
+                                    text: !root.sidecars-written
+                                        ? "Sidecars are not written this run (--no-sidecars), so none are moved."
+                                        : root.sidecars-elsewhere < 0
+                                        ? "Counting the sidecars of " + root.frames-words + "..."
+                                        : root.sidecars-elsewhere == 0
+                                        ? "Every sidecar of " + root.frames-words + " is in the chosen place."
+                                        : root.elsewhere-words + " of " + root.frames-words + " "
+                                            + (root.sidecars-elsewhere == 1 ? "is" : "are") + " in the other place.";
+                                    font-size: Theme.font-xs;
+                                    color: Theme.text-secondary;
+                                    wrap: word-wrap;
+                                }
+                                if !root.confirming: PanelButton {
+                                    text: root.open-frames == 1 ? "Move the open frame's sidecar" : "Move the open frames' sidecars";
+                                    icon: @image-url("../icons/folder-open.svg");
+                                    enabled: root.sidecars-written && root.sidecars-elsewhere > 0;
+                                    clicked => { root.confirming = true; }
+                                }
+                                if root.confirming: HorizontalLayout {
+                                    spacing: Theme.space-2;
+                                    PanelButton {
+                                        text: "Cancel";
+                                        clicked => { root.confirming = false; }
+                                    }
+                                    PanelButton {
+                                        text: "Move " + root.elsewhere-words;
+                                        primary: true;
+                                        clicked => {
+                                            root.confirming = false;
+                                            root.sidecars-move();
+                                        }
+                                    }
+                                }
+                            }
+                            if root.settings-note != "": Text {
+                                text: root.settings-note;
+                                font-size: Theme.font-xs;
+                                color: Theme.text-secondary;
+                                wrap: word-wrap;
+                            }
+                            Toggle {
+                                label: "Write XMP sidecars";
+                                checked <=> root.xmp-sidecars;
+                                toggled => { root.xmp-changed(); }
+                            }
+                            Text {
+                                text: "Rating, label and keywords, for Lightroom and darktable.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            Rectangle { height: Theme.space-1; }
+                            Text {
+                                text: "RAW+JPEG";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            Toggle {
+                                label: "Treat a JPEG beside its raw as a separate frame";
+                                checked <=> root.jpegs-apart;
+                                toggled => { root.jpegs-apart-changed(); }
+                            }
+                            Text {
+                                text: root.jpegs-apart
+                                    ? "IMG_0001.JPG is a frame of its own, with its own rating."
+                                    : "IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            Rectangle { height: Theme.space-1; }
+                            Text {
+                                text: "THUMBNAILS";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text {
+                                    text: root.thumb-cache-words;
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text;
+                                    vertical-alignment: center;
+                                    wrap: word-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                                if root.thumb-cache-entries > 0: PanelButton {
+                                    text: "Clear";
+                                    width: 96px;
+                                    clicked => { root.thumb-cache-clear(); }
+                                }
+                            }
+                            if root.thumb-cache-on: HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Keep up to"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                LineEdit {
+                                    width: 96px;
+                                    text <=> root.thumb-cache-cap;
+                                    placeholder-text: "300";
+                                    input-type: number;
+                                    accepted => { root.thumb-cache-cap-changed(); }
+                                }
+                                Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+                            }
+                            if root.thumb-cache-on: HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Previews up to"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                LineEdit {
+                                    width: 96px;
+                                    text <=> root.preview-cache-cap;
+                                    placeholder-text: "8192";
+                                    input-type: number;
+                                    accepted => { root.preview-cache-cap-changed(); }
+                                }
+                                Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+                            }
+                            Text {
+                                text: "Previews let you cull offline drives; about 0.5 MB a frame.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            Rectangle { height: Theme.space-1; }
+                            Text {
+                                text: "NETWORK FOLDERS";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Rescan every"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                LineEdit {
+                                    width: 96px;
+                                    text <=> root.network-poll-minutes;
+                                    placeholder-text: "10";
+                                    input-type: number;
+                                    accepted => { root.network-poll-changed(); }
+                                }
+                                Text { text: "minutes, 0 for never"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+                            }
+                            Text {
+                                text: "Shares can't be watched, so they're rescanned.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                        }
+                        editing := VerticalLayout {
+                            visible: root.category == "Editing";
+                            x: 0;
+                            y: 0;
+                            width: root.pane-w;
+                            height: self.preferred-height;
+                            padding: Theme.space-5;
+                            padding-right: Theme.space-5 + Theme.scrollbar-band;
+                            padding-bottom: Theme.space-2;
+                            spacing: Theme.space-3;
+                            Text {
+                                text: "CROP";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Aspect"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Segmented {
+                                    options: ["Original", "Last used", "Free"];
+                                    current <=> root.crop-start;
+                                    selected => { root.crop-start-changed(); }
+                                }
+                            }
+                            Text {
+                                text: root.crop-start == "Last used"
+                                    ? "An uncropped frame's crop opens at the aspect last picked."
+                                    : root.crop-start == "Free"
+                                    ? "An uncropped frame's crop opens free, any shape."
+                                    : "An uncropped frame's crop opens at the frame's own shape.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            Rectangle { height: Theme.space-1; }
+                            Text {
+                                text: "PRESETS";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text {
+                                    text: root.presets-missing-words;
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text;
+                                    vertical-alignment: center;
+                                    wrap: word-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                                if root.presets-missing > 0: PanelButton {
+                                    text: "Restore";
+                                    width: 96px;
+                                    clicked => { root.presets-restore(); }
+                                }
+                            }
+                            Text {
+                                text: "Restores removed built-in presets.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                        }
+                        keys := VerticalLayout {
+                            visible: root.category == "Keys";
+                            x: 0;
+                            y: 0;
+                            width: root.pane-w;
+                            height: self.preferred-height;
+                            padding: Theme.space-5;
+                            padding-right: Theme.space-5 + Theme.scrollbar-band;
+                            padding-bottom: Theme.space-2;
+                            spacing: Theme.space-3;
+                            Text {
+                                text: "KEYS";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            for row in root.key-bindings: VerticalLayout {
+                                spacing: 2px;
+                                padding-top: row.heading ? Theme.space-2 : 0;
+                                if row.heading: Text {
+                                    text: row.does;
+                                    font-size: Theme.font-xs;
+                                    color: Theme.text-muted;
+                                }
+                                if !row.heading: HorizontalLayout {
+                                    spacing: Theme.space-2;
+                                    Text {
+                                        text: row.does;
+                                        font-size: Theme.font-sm;
+                                        color: Theme.text;
+                                        vertical-alignment: center;
+                                        wrap: word-wrap;
+                                        // Its own width, so a wrapped line counts in the
+                                        // sheet's height and Reset to defaults stays in reach.
+                                        width: root.pane-w - 2 * Theme.space-5 - Theme.scrollbar-band - 112px - Theme.space-2;
+                                    }
+                                    Rectangle {
+                                        property <bool> on: root.listening == row.id;
+                                        property <string> shown: self.on ? "Press a key" : row.keys;
+                                        width: 112px;
+                                        height: Theme.control-height;
+                                        border-radius: Theme.radius-md;
+                                        border-width: 1px;
+                                        border-color: self.on ? Theme.focus-ring
+                                            : row.also != "" ? Theme.label-red : Theme.border-strong;
+                                        background: chip.pressed ? Theme.pressed : chip.has-hover ? Theme.hover : Theme.raised;
+                                        accessible-role: button;
+                                        accessible-label: row.does;
+                                        accessible-value: self.shown;
+                                        accessible-action-default => { root.listen(row.id); }
+                                        Text {
+                                            text: parent.shown;
+                                            font-size: Theme.font-sm;
+                                            font-weight: Theme.weight-medium;
+                                            color: parent.on ? Theme.text-secondary : Theme.text;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        chip := TouchArea {
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => { root.listen(row.id); }
+                                        }
+                                    }
+                                }
+                                if !row.heading && row.also != "": Text {
+                                    text: row.also;
+                                    font-size: Theme.font-xs;
+                                    color: Theme.label-red;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            HorizontalLayout {
+                                alignment: end;
+                                PanelButton {
+                                    text: "Reset to defaults";
+                                    // The button's click takes the focus from a
+                                    // row listening; the focus goes back to the
+                                    // column either way.
+                                    clicked => {
+                                        root.keys-reset();
+                                        root.listened();
+                                    }
+                                }
+                            }
+                        }
+                        about := VerticalLayout {
+                            visible: root.category == "About";
+                            x: 0;
+                            y: 0;
+                            width: root.pane-w;
+                            height: self.preferred-height;
+                            padding: Theme.space-5;
+                            padding-right: Theme.space-5 + Theme.scrollbar-band;
+                            padding-bottom: Theme.space-2;
+                            spacing: Theme.space-3;
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Version"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                Text { text: root.version; font-size: Theme.font-sm; color: Theme.text-secondary; horizontal-stretch: 1; }
+                            }
+                            Rectangle { height: Theme.space-1; }
+                            Text {
+                                text: "UPDATES";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            Toggle {
+                                label: "Check for a new version at launch";
+                                checked <=> root.update-check;
+                                toggled => { root.update-check-changed(); }
+                            }
+                            Text {
+                                text: "Once a day; sends only the version number.";
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text {
+                                    text: root.update-note;
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text;
+                                    vertical-alignment: center;
+                                    wrap: word-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                                PanelButton {
+                                    text: "Check now";
+                                    width: 96px;
+                                    enabled: !root.update-checking;
+                                    clicked => { root.update-check-now(); }
+                                }
+                            }
+                            Rectangle { height: Theme.space-1; }
+                            if root.settings-dir != "": HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Settings"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                Text {
+                                    text: root.settings-dir;
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text-secondary;
+                                    wrap: char-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                            if root.library-dir != "": HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Library"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                Text {
+                                    text: root.library-dir;
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text-secondary;
+                                    wrap: char-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                            if root.caches-dir != "": HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Caches"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                Text {
+                                    text: root.caches-dir;
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text-secondary;
+                                    wrap: char-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                            if root.log-dir != "": HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Log"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                Text {
+                                    text: root.log-dir;
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text-secondary;
+                                    wrap: char-wrap;
+                                    horizontal-stretch: 1;
+                                }
                             }
                         }
                     }
                 }
-            }
-            done-row := HorizontalLayout {
-                padding: Theme.space-5;
-                padding-top: Theme.space-2;
-                alignment: end;
-                PanelButton {
-                    text: "Done";
-                    primary: true;
-                    width: 96px;
-                    clicked => { root.settings-open = false; }
+                done-row := HorizontalLayout {
+                    padding: Theme.space-5;
+                    padding-top: Theme.space-2;
+                    alignment: end;
+                    PanelButton {
+                        text: "Done";
+                        primary: true;
+                        width: 96px;
+                        clicked => { root.settings-open = false; }
+                    }
                 }
             }
         }

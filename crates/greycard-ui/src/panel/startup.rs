@@ -283,6 +283,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             crate::window_fit::scale::Scale::ByHand(_)
         ));
     }
+    // The Settings sheet opens at the category it was left at.
+    app.set_settings_category(settings::category_named(&remembered.settings_category).into());
     // Which curve the panel shows at the start, for a dump of its
     // picture with `GREYCARD_UI_CURVE`.
     if let Ok(name) = std::env::var("GREYCARD_UI_CURVE_CHANNEL") {
@@ -1695,6 +1697,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.crop_last = kept.crop_last;
         settings.ui_scale = kept.ui_scale;
         settings.keys = kept.keys;
+        settings.settings_category = kept.settings_category;
         settings.ui_scale_system =
             crate::window_fit::scale::system_seen().unwrap_or(kept.ui_scale_system);
         // A run opened with `--hide-panels` was a look at the picture
@@ -2242,6 +2245,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         ui_scale_system: 0.0,
         // Written as a key is bound in the Settings sheet.
         keys: Default::default(),
+        // Written as the Settings sheet's category is chosen.
+        settings_category: String::new(),
     }
 }
 

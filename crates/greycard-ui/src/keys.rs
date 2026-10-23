@@ -1690,8 +1690,81 @@ mod tests {
         let (app, state, worker) = develop_window();
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 4000.0));
+        app.set_settings_category("Keys".into());
         app.set_settings_open(true);
         (app, state, worker)
+    }
+
+    /// The sheet's categories: it opens at the one last shown, with the
+    /// column holding the keys; Down and Up step it, held at the ends,
+    /// and Ctrl+Tab goes round; Escape there closes the sheet and the
+    /// keys are the window's again.
+    #[test]
+    fn the_settings_categories_step_by_the_keys() {
+        let (app, _state, _worker) = develop_window();
+        app.set_settings_category("Editing".into());
+        app.invoke_settings_asked();
+        assert_eq!(crate::testing::count_labeled(&app, "CROP"), 1);
+        assert_eq!(crate::testing::count_labeled(&app, "SIDECARS"), 0);
+        press(&app, Key::DownArrow);
+        assert_eq!(app.get_settings_category(), "Keys");
+        assert_eq!(crate::testing::count_labeled(&app, "CROP"), 0);
+        assert_eq!(crate::testing::count_labeled(&app, "KEYS"), 1);
+        press(&app, Key::DownArrow);
+        press(&app, Key::DownArrow);
+        assert_eq!(app.get_settings_category(), "About", "held at the foot");
+        let ctrl = |key: Key| {
+            app.window().dispatch_event(WindowEvent::KeyPressed {
+                text: Key::Control.into(),
+            });
+            press(&app, key);
+            app.window().dispatch_event(WindowEvent::KeyReleased {
+                text: Key::Control.into(),
+            });
+        };
+        ctrl(Key::Tab);
+        assert_eq!(app.get_settings_category(), "Interface", "round to the top");
+        press(&app, Key::UpArrow);
+        assert_eq!(app.get_settings_category(), "Interface", "held at the top");
+        assert_eq!(crate::testing::count_labeled(&app, "INTERFACE"), 1);
+        // A click on a name shows its category.
+        let tab = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Library")
+            .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Tab))
+            .expect("the Library tab");
+        tab.invoke_accessible_default_action();
+        assert_eq!(app.get_settings_category(), "Library");
+        assert_eq!(crate::testing::count_labeled(&app, "SIDECARS"), 1);
+        press(&app, Key::Escape);
+        assert!(!app.get_settings_open());
+        slint::platform::update_timers_and_animations();
+        press(&app, "g");
+        assert!(app.get_grid_open(), "G is the window's");
+        // Opened again, at the category left.
+        app.set_grid_open(false);
+        app.invoke_settings_asked();
+        assert_eq!(app.get_settings_category(), "Library");
+        assert_eq!(crate::testing::count_labeled(&app, "SIDECARS"), 1);
+    }
+
+    /// In the smallest window the fit allows, the sheet keeps Done in
+    /// the window and the keys table scrolls inside its category.
+    #[test]
+    fn the_keys_category_scrolls_in_a_small_window() {
+        use i_slint_backend_testing::ElementHandle;
+        let (app, _state, _worker) = develop_window();
+        app.window()
+            .set_size(slint::LogicalSize::new(1024.0, 640.0));
+        app.set_settings_category("Keys".into());
+        app.invoke_settings_asked();
+        // Every Done there is, the sheet's among them, in the window.
+        assert!(crate::testing::count_labeled(&app, "Done") > 0);
+        for done in ElementHandle::find_by_accessible_label(&app, "Done") {
+            let foot = done.absolute_position().y + done.size().height;
+            assert!(foot <= 640.0, "Done at {foot}, past the window");
+        }
+        // The table runs past the view: its foot is scrolled out.
+        assert_eq!(crate::testing::count_labeled(&app, "Reset to defaults"), 0);
+        assert!(crate::testing::count_labeled(&app, "Select every frame shown") > 0);
     }
 
     /// An action's chord button, not the words beside it, found
@@ -1735,7 +1808,7 @@ mod tests {
         press(&app, "k");
         assert_eq!(shown(&app), "K");
         // Escape while listening keeps K and the sheet; the next one
-        // is the window's again, and closes it.
+        // closes it, and the keys are the window's again.
         row(&app).invoke_accessible_default_action();
         press(&app, Key::Escape);
         assert_eq!(shown(&app), "K");
@@ -1780,8 +1853,8 @@ mod tests {
         assert!(app.get_grid_open(), "G is the window's");
     }
 
-    /// Reset to defaults clicked while a row listens: the keys go back
-    /// to the window, and Escape closes the sheet.
+    /// Reset to defaults clicked while a row listens: the listening
+    /// ends, and Escape closes the sheet.
     #[test]
     fn reset_while_a_row_listens_gives_the_keys_back() {
         let (app, _state, _worker) = settings_window();
@@ -1799,8 +1872,10 @@ mod tests {
         let (at, size) = (reset.absolute_position(), reset.size());
         crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         assert_eq!(shown(&app), "R");
+        press(&app, Key::DownArrow);
+        assert_eq!(app.get_settings_category(), "About", "the column's again");
         press(&app, Key::Escape);
-        assert!(!app.get_settings_open(), "Escape is the window's");
+        assert!(!app.get_settings_open());
         slint::platform::update_timers_and_animations();
         press(&app, "g");
         assert!(app.get_grid_open());
@@ -1811,8 +1886,7 @@ mod tests {
     #[test]
     fn a_held_key_binds_once_and_does_nothing_more() {
         let (app, _state, _worker) = settings_window();
-        // Open a folder is one of the keys the window answers under a
-        // sheet.
+        // Open a folder, a key the window answers whatever is open.
         let asked = std::rc::Rc::new(std::cell::Cell::new(0));
         {
             let asked = asked.clone();
@@ -1830,6 +1904,11 @@ mod tests {
         app.window()
             .dispatch_event(WindowEvent::KeyPressed { text: "k".into() });
         assert_eq!(open_folder(&app), "K");
+        // K still held as Escape closes the sheet: its repeats reach
+        // the window, which knows them for the chord just bound.
+        press(&app, Key::Escape);
+        assert!(!app.get_settings_open());
+        slint::platform::update_timers_and_animations();
         for _ in 0..3 {
             repeated(&app, "k");
         }
@@ -1838,6 +1917,88 @@ mod tests {
             .dispatch_event(WindowEvent::KeyReleased { text: "k".into() });
         press(&app, "k");
         assert_eq!(asked.get(), 1, "a fresh press opens one");
+    }
+
+    /// A chord bound, or Escape while listening: the focus is the
+    /// column's again, so Up and Down step the categories and Ctrl+Tab
+    /// goes round; a repeat of the chord just bound steps nothing.
+    #[test]
+    fn the_column_has_the_keys_once_a_chord_is_bound() {
+        let (app, _state, _worker) = settings_window();
+        let ctrl = |key: Key| {
+            app.window().dispatch_event(WindowEvent::KeyPressed {
+                text: Key::Control.into(),
+            });
+            press(&app, key);
+            app.window().dispatch_event(WindowEvent::KeyReleased {
+                text: Key::Control.into(),
+            });
+        };
+        row(&app).invoke_accessible_default_action();
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::DownArrow.into(),
+        });
+        assert_eq!(shown(&app), "↓");
+        for _ in 0..3 {
+            repeated(&app, &SharedString::from(Key::DownArrow));
+        }
+        assert_eq!(
+            app.get_settings_category(),
+            "Keys",
+            "the repeats step nothing"
+        );
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::DownArrow.into(),
+        });
+        press(&app, Key::DownArrow);
+        assert_eq!(app.get_settings_category(), "About");
+        press(&app, Key::UpArrow);
+        assert_eq!(app.get_settings_category(), "Keys");
+        row(&app).invoke_accessible_default_action();
+        press(&app, Key::Escape);
+        assert_eq!(shown(&app), "↓");
+        assert!(app.get_settings_open());
+        ctrl(Key::Tab);
+        assert_eq!(app.get_settings_category(), "About");
+    }
+
+    /// A click on the card's blank leaves a listening row listening,
+    /// and Ctrl+Tab from a category's rows steps the categories.
+    #[test]
+    fn a_click_on_the_card_keeps_the_listening() {
+        let (app, _state, _worker) = settings_window();
+        row(&app).invoke_accessible_default_action();
+        // Below the column's last name, on the card.
+        let about = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "About")
+            .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Tab))
+            .expect("the About tab");
+        let (at, size) = (about.absolute_position(), about.size());
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height + 40.0);
+        assert_eq!(shown(&app), "Press a key");
+        press(&app, "k");
+        assert_eq!(shown(&app), "K");
+        let ctrl = |key: Key, shift: bool| {
+            app.window().dispatch_event(WindowEvent::KeyPressed {
+                text: Key::Control.into(),
+            });
+            if shift {
+                shifted(&app, &SharedString::from(key));
+            } else {
+                press(&app, key);
+            }
+            app.window().dispatch_event(WindowEvent::KeyReleased {
+                text: Key::Control.into(),
+            });
+        };
+        // Tab from the column into the rows, then Ctrl+Shift+Tab.
+        press(&app, Key::Tab);
+        ctrl(Key::Tab, true);
+        assert_eq!(app.get_settings_category(), "Editing");
+        // The focus left the hidden row for the column: the keys go on.
+        ctrl(Key::Tab, false);
+        assert_eq!(app.get_settings_category(), "Keys");
+        press(&app, Key::Escape);
+        assert!(!app.get_settings_open());
     }
 
     /// Escape in the crop puts down what is in hand first, one thing a

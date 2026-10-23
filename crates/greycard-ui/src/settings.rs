@@ -198,6 +198,41 @@ pub struct Settings {
         deserialize_with = "keys_leniently"
     )]
     pub keys: std::collections::BTreeMap<String, String>,
+    /// The Settings sheet's category last shown, one of
+    /// [`CATEGORIES`], where the sheet next opens. Written as it is
+    /// chosen; anything else in the file reads as the first.
+    #[serde(deserialize_with = "category_leniently")]
+    pub settings_category: String,
+}
+
+/// The Settings sheet's categories, top to bottom, by the names the
+/// sheet shows.
+pub const CATEGORIES: [&str; 5] = ["Interface", "Library", "Editing", "Keys", "About"];
+
+/// The category `name` names, or the first for a name that is none.
+pub fn category_named(name: &str) -> &'static str {
+    CATEGORIES
+        .iter()
+        .find(|c| **c == name)
+        .copied()
+        .unwrap_or(CATEGORIES[0])
+}
+
+/// The `settings_category` of a file edited by hand: one of the
+/// categories, the first for any other value, so a bad one never costs
+/// the rest of the file its settings.
+fn category_leniently<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(d)?;
+    if let serde_json::Value::String(name) = &value
+        && CATEGORIES.contains(&name.as_str())
+    {
+        return Ok(name.clone());
+    }
+    tracing::warn!("settings: settings_category is {value}, not a category; the first");
+    Ok(CATEGORIES[0].into())
 }
 
 /// The `keys` of a file edited by hand: each string kept, anything
@@ -354,6 +389,7 @@ impl Default for Settings {
             ui_scale: 100,
             ui_scale_system: 0.0,
             keys: std::collections::BTreeMap::new(),
+            settings_category: CATEGORIES[0].into(),
         }
     }
 }
@@ -578,6 +614,7 @@ mod tests {
             keys: [("crop".to_string(), "Ctrl+R".to_string())]
                 .into_iter()
                 .collect(),
+            settings_category: "Keys".into(),
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);
@@ -672,6 +709,28 @@ mod tests {
             assert_eq!(read.ui_scale, 150, "{text}");
             assert!(read.keys.values().all(|c| c == "Ctrl+U"), "{text}");
         }
+    }
+
+    /// The sheet's category: a file without one opens at the first; a
+    /// name that is no category, or a value that is no string, reads
+    /// as the first and costs the rest of the file nothing.
+    #[test]
+    fn the_settings_category_is_read_leniently() {
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(read.settings_category, "Interface");
+        let read: Settings = serde_json::from_str(r#"{"settings_category": "About"}"#).unwrap();
+        assert_eq!(read.settings_category, "About");
+        for text in [
+            r#"{"ui_scale": 150, "settings_category": "Colours"}"#,
+            r#"{"ui_scale": 150, "settings_category": 3}"#,
+            r#"{"ui_scale": 150, "settings_category": null}"#,
+        ] {
+            let read: Settings = serde_json::from_str(text).expect(text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert_eq!(read.settings_category, "Interface", "{text}");
+        }
+        assert_eq!(category_named("Editing"), "Editing");
+        assert_eq!(category_named("keys"), "Interface");
     }
 
     #[test]
