@@ -37,7 +37,12 @@
 //! The sessions keep the provider's default buffer cache, as every
 //! session of the process does (`runtime`'s provider dispatch says
 //! why): in the editor, after the denoiser, a 1024 removal one at a
-//! time peaks 7.3 GB over what was there, 9.4 GB over the desktop.
+//! time with the decoder whole peaks 7.3 to 7.6 GB over what was
+//! there, 9.2 to 9.5 GB over the desktop. The decoder sets that peak,
+//! so at 1024 it runs as the 512 graph over nine overlapping tiles
+//! ([`Vae`], [`blend`]), and the UNet then sets it, 0.9 to 1.2 GB
+//! lower; `GREYCARD_REMOVE_TILED=0` runs it whole. Alone in a process
+//! the UNet sets the peak either way, 6.8 GB.
 
 use std::time::Instant;
 
@@ -57,6 +62,12 @@ pub const MAX: usize = 1024;
 
 /// The square sizes the graphs are exported at.
 pub const SIZES: [usize; 2] = [512, 1024];
+
+/// The side of the decoder's tiles at 1024, the smaller export's:
+/// three tiles a side, 256 pixels apart.
+pub const TILE: usize = 512;
+/// How far neighboring tiles overlap, where their weights cross.
+pub const OVERLAP: usize = 256;
 
 /// SDXL's VAE latent scaling factor.
 pub const SCALE: f32 = 0.13025;
@@ -118,11 +129,46 @@ impl Memory {
     }
 }
 
+/// How the VAE's decoder runs on a square larger than [`TILE`]. The
+/// encoder always runs whole: its peak at 1024 is under the UNet's,
+/// so tiles would save nothing, and they cost the hole 3.8 dB against
+/// the reference, since each tile's group norms see only the tile and
+/// the UNet carries the small change in the latents into other detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Vae {
+    /// The decoder exported at the square's size, whole: at 1024,
+    /// after the denoiser, it sets the removal's peak.
+    Whole,
+    /// The [`TILE`] decoder over overlapping tiles, blended across the
+    /// overlap by a linear ramp ([`starts`], [`blend`]): at 1024 the
+    /// UNet sets the peak, about 1 GB lower, for 0.6 s more, and the
+    /// answer is the whole decoder's to 45 dB.
+    Tiled,
+}
+
+impl Vae {
+    /// What `GREYCARD_REMOVE_TILED` asks for: tiled at `1`, whole at
+    /// `0`, and [`Vae::DEFAULT`] otherwise.
+    pub fn from_env(var: Option<&str>) -> Self {
+        match var {
+            Some("1") => Vae::Tiled,
+            Some("0") => Vae::Whole,
+            _ => Vae::DEFAULT,
+        }
+    }
+
+    /// Tiled: the same answer to 45 dB for a gigabyte less at the
+    /// peak, measured in the editor.
+    pub const DEFAULT: Vae = Vae::Tiled;
+}
+
 /// One removal's parts, in seconds.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Times {
     /// The square the window was run at.
     pub size: usize,
+    /// Whether the decoder ran over [`TILE`] tiles ([`Vae::Tiled`]).
+    pub tiled: bool,
     /// Opening sessions during the removal.
     pub loads: f64,
     /// The encoder's two runs, the image and the image with the hole
@@ -336,6 +382,112 @@ pub fn latent_mask(hole: &[bool], size: usize, pool: Pool) -> Vec<f32> {
         .collect()
 }
 
+/// Where tiles of `tile` start along a side of `len` so that
+/// neighbors overlap by at least `overlap`: evenly spaced from 0 to
+/// `len - tile`, on the latents' grid. One tile when it holds the side.
+pub fn starts(len: usize, tile: usize, overlap: usize) -> Vec<usize> {
+    debug_assert!(overlap < tile);
+    if len <= tile {
+        return vec![0];
+    }
+    let n = (len - overlap).div_ceil(tile - overlap);
+    let span = len - tile;
+    (0..n).map(|i| span * i / (n - 1) / 8 * 8).collect()
+}
+
+/// The weight of the `i`th sample of the `k`th of tiles of `tile`
+/// starting at `starts` along a side: rising linearly across its
+/// overlap with the tile before, falling across its overlap with the
+/// one after, 1 elsewhere. Where two tiles overlap their weights sum
+/// to 1, as long as a tile overlaps only its neighbors (`overlap` at
+/// most half of `tile`); [`blend`] divides by the total either way.
+fn ramp(starts: &[usize], k: usize, tile: usize, i: usize) -> f32 {
+    let mut w = 1.0f32;
+    if k > 0 {
+        let up = (starts[k - 1] + tile).saturating_sub(starts[k]);
+        if up > 0 {
+            w = w.min((i as f32 + 0.5) / up as f32);
+        }
+    }
+    if let Some(&next) = starts.get(k + 1) {
+        let down = (starts[k] + tile).saturating_sub(next);
+        if down > 0 {
+            w = w.min(((tile - i) as f32 - 0.5) / down as f32);
+        }
+    }
+    w
+}
+
+/// A `tile` square at (`x0`, `y0`) of planar `channels` × `side`
+/// squares.
+fn crop(
+    planes: &[f32],
+    channels: usize,
+    side: usize,
+    x0: usize,
+    y0: usize,
+    tile: usize,
+) -> Vec<f32> {
+    let mut out = Vec::with_capacity(channels * tile * tile);
+    for c in 0..channels {
+        for y in y0..y0 + tile {
+            let row = c * side * side + y * side + x0;
+            out.extend_from_slice(&planes[row..row + tile]);
+        }
+    }
+    out
+}
+
+/// A planar `channels` × `side` square made of `run`'s answers for
+/// the `tile` squares at `xs` × `ys` (in the answer's units), each
+/// `channels` × `tile` × `tile`, weighted by the product of their
+/// [`ramp`]s and divided by the weights' sum: the tiled VAE's blend,
+/// diffusers' (`AutoencoderKL`'s tiled decode) with each overlap
+/// ramped from both sides. Zero where no tile reaches.
+pub fn blend(
+    side: usize,
+    channels: usize,
+    tile: usize,
+    xs: &[usize],
+    ys: &[usize],
+    mut run: impl FnMut(usize, usize) -> Result<Vec<f32>>,
+) -> Result<Vec<f32>> {
+    let n = side * side;
+    let mut sum = vec![0.0f32; channels * n];
+    let mut weight = vec![0.0f32; n];
+    let ramps =
+        |starts: &[usize], k| -> Vec<f32> { (0..tile).map(|i| ramp(starts, k, tile, i)).collect() };
+    for (ky, &y0) in ys.iter().enumerate() {
+        let wy = ramps(ys, ky);
+        for (kx, &x0) in xs.iter().enumerate() {
+            let wx = ramps(xs, kx);
+            let t = run(x0, y0)?;
+            if t.len() != channels * tile * tile {
+                return Err(Error::Shape(format!(
+                    "{} values for a tile of {tile}",
+                    t.len()
+                )));
+            }
+            for y in 0..tile {
+                for x in 0..tile {
+                    let w = wy[y] * wx[x];
+                    let d = (y0 + y) * side + x0 + x;
+                    weight[d] += w;
+                    for c in 0..channels {
+                        sum[c * n + d] += w * t[c * tile * tile + y * tile + x];
+                    }
+                }
+            }
+        }
+    }
+    for (d, &w) in weight.iter().enumerate().filter(|(_, w)| **w > 0.0) {
+        for c in 0..channels {
+            sum[c * n + d] /= w;
+        }
+    }
+    Ok(sum)
+}
+
 /// The window mirrored out to a `size` square, as the model takes it:
 /// the picture in -1 to 1, the same with the hole blanked to 0, both
 /// planar, and the hole (any nonzero value), the hole mirrored too so
@@ -491,6 +643,7 @@ impl Resident {
 pub struct Remove {
     store: Store,
     memory: Memory,
+    vae: Vae,
     prompt: Vec<f16>,
     pooled: Vec<f16>,
     /// The size conditioning at 1024, as `time_ids.f16` holds it.
@@ -529,9 +682,18 @@ impl Remove {
                 "remove: one session at a time, about 7 GB of the card at 1024 (the adapter's memory is not known; GREYCARD_REMOVE_RESIDENT=1 keeps all three open)"
             ),
         }
+        let vae = Vae::from_env(std::env::var("GREYCARD_REMOVE_TILED").ok().as_deref());
+        log::info!(
+            "remove: the decoder {} at 1024 (GREYCARD_REMOVE_TILED=0 or 1 chooses)",
+            match vae {
+                Vae::Tiled => "in 512 tiles",
+                Vae::Whole => "whole",
+            }
+        );
         Ok(Self {
             store: store.clone(),
             memory,
+            vae,
             prompt,
             pooled,
             time_ids,
@@ -548,6 +710,19 @@ impl Remove {
     /// How the sessions share the card, as `load` chose.
     pub fn memory(&self) -> Memory {
         self.memory
+    }
+
+    /// How the decoder runs at 1024, as `load` chose.
+    pub fn vae(&self) -> Vae {
+        self.vae
+    }
+
+    /// Run the decoder `vae`'s way from the next removal on.
+    pub fn set_vae(&mut self, vae: Vae) {
+        if vae != self.vae {
+            self.vae = vae;
+            self.resident = None;
+        }
     }
 
     /// The last removal's parts.
@@ -582,14 +757,79 @@ impl Remove {
         self.run(image, hole, noise, Pool::TopLeft)
     }
 
+    /// The decoder's whole answer for [`Remove::remove_with_noise`],
+    /// the window before it is put under the hole: for comparing two
+    /// ways of running the decoder outside the hole too.
+    #[doc(hidden)]
+    pub fn decoded_with_noise(
+        &mut self,
+        image: &Rgbf,
+        hole: &[f32],
+        noise: &[f32],
+    ) -> Result<Rgbf> {
+        let size = self.check(image, hole)?;
+        if noise.len() != 4 * (size / 8) * (size / 8) {
+            return Err(Error::Shape(format!(
+                "{} noise values for {size}",
+                noise.len()
+            )));
+        }
+        let total = Instant::now();
+        let (decoded, mut times) = self.generate(image, hole, noise, Pool::TopLeft)?;
+        times.drift = drift(image, hole, &decoded);
+        times.total = total.elapsed().as_secs_f64();
+        self.times = times;
+        Ok(decoded)
+    }
+
     /// Latents ([1, 4, size / 8, size / 8], scaled) decoded to the
     /// `size` square, in 0 to 1: for comparing with a reference's.
     #[doc(hidden)]
     pub fn decode(&mut self, latents: &[f32], size: usize) -> Result<Rgbf> {
-        let l = size / 8;
         let unscaled: Vec<f32> = latents.iter().map(|v| v / SCALE).collect();
-        let (planes, _) = self.with(Part::Decoder, size, |s| run1(s, [1, 4, l, l], &unscaled))?;
+        let (planes, _) = self.decode_planes(&unscaled, size, size, size)?;
         cut(&planes, size, size, size)
+    }
+
+    /// Whether the decoder runs in tiles at `size`.
+    fn tiles(&self, size: usize) -> bool {
+        self.vae == Vae::Tiled && size > TILE
+    }
+
+    /// The size of the graph `part` runs on at `size`.
+    fn graph_size(&self, part: Part, size: usize) -> usize {
+        if part == Part::Decoder && self.tiles(size) {
+            TILE
+        } else {
+            size
+        }
+    }
+
+    /// The decoder's planar `size` square of the `unscaled` latents,
+    /// and the seconds spent opening it: in tiles only as far as the
+    /// `width` × `height` window the answer is cut back to.
+    fn decode_planes(
+        &mut self,
+        unscaled: &[f32],
+        size: usize,
+        width: usize,
+        height: usize,
+    ) -> Result<(Vec<f32>, f64)> {
+        let l = size / 8;
+        if !self.tiles(size) {
+            return self.with(Part::Decoder, size, |s| run1(s, [1, 4, l, l], unscaled));
+        }
+        let lt = TILE / 8;
+        let at = starts(size, TILE, OVERLAP);
+        let within =
+            |side: usize| -> Vec<usize> { at.iter().copied().filter(|&s| s < side).collect() };
+        let (xs, ys) = (within(width), within(height));
+        self.with(Part::Decoder, size, |s| {
+            blend(size, 3, TILE, &xs, &ys, |x, y| {
+                let tile = crop(unscaled, 4, l, x / 8, y / 8, lt);
+                run1(s, [1, 4, lt, lt], &tile)
+            })
+        })
     }
 
     fn check(&self, image: &Rgbf, hole: &[f32]) -> Result<usize> {
@@ -612,7 +852,9 @@ impl Remove {
     }
 
     fn open(&self, part: Part, size: usize) -> Result<Session> {
-        let path = self.store.path(&REMOVE, Self::graph(part, size));
+        let path = self
+            .store
+            .path(&REMOVE, Self::graph(part, self.graph_size(part, size)));
         // No warm-up: with WebGPU the only provider there is nothing
         // to fall through to, and a warm-up of the UNet is a step's
         // time on every open.
@@ -626,8 +868,9 @@ impl Remove {
         Ok(loaded.session)
     }
 
-    /// `f` on the session for `part` at `size`, and the seconds spent
-    /// opening it: the one kept open in resident mode (the others
+    /// `f` on the session for `part` at `size` (the [`TILE`] graph
+    /// for the decoder in tiles), and the seconds spent opening it: the
+    /// one kept open in resident mode (the others
     /// dropped when the size changes), else one opened for `f` and
     /// dropped after.
     fn with<T>(
@@ -666,11 +909,48 @@ impl Remove {
 
     fn run(&mut self, image: &Rgbf, hole: &[f32], noise: &[f32], pool: Pool) -> Result<Rgbf> {
         let (w, h) = (image.width, image.height);
+        let total = Instant::now();
+        let (decoded, mut times) = self.generate(image, hole, noise, pool)?;
+        times.drift = drift(image, hole, &decoded);
+        let out = composite(image, hole, &decoded);
+        times.total = total.elapsed().as_secs_f64();
+        self.times = times;
+        log::info!(
+            "remove {w}x{h} at {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?}, decoder {}); outside the hole off by {:.4} where its detail is {:.4}, correlation {}",
+            times.size,
+            times.loads,
+            times.encode,
+            times.unet_calls,
+            times.steps,
+            times.decode,
+            times.total,
+            self.memory,
+            if times.tiled { "in tiles" } else { "whole" },
+            times.drift.off,
+            times.drift.detail,
+            times
+                .drift
+                .correlation
+                .map_or("not asked (flat)".to_string(), |r| format!("{r:.3}"))
+        );
+        out
+    }
+
+    /// The decoder's answer for the window, and the parts' times but
+    /// the drift and the total.
+    fn generate(
+        &mut self,
+        image: &Rgbf,
+        hole: &[f32],
+        noise: &[f32],
+        pool: Pool,
+    ) -> Result<(Rgbf, Times)> {
+        let (w, h) = (image.width, image.height);
         let size = self.check(image, hole)?;
         let l = size / 8;
-        let total = Instant::now();
         let mut times = Times {
             size,
+            tiled: self.tiles(size),
             ..Times::default()
         };
         let (picture, masked, square) = squared(image, hole, size);
@@ -743,32 +1023,10 @@ impl Remove {
 
         let t = Instant::now();
         let unscaled: Vec<f32> = x.iter().map(|v| v / SCALE).collect();
-        let (planes, load) =
-            self.with(Part::Decoder, size, |s| run1(s, [1, 4, l, l], &unscaled))?;
+        let (planes, load) = self.decode_planes(&unscaled, size, w, h)?;
         times.loads += load;
         times.decode = t.elapsed().as_secs_f64() - load;
-        let decoded = cut(&planes, size, w, h)?;
-        times.drift = drift(image, hole, &decoded);
-        let out = composite(image, hole, &decoded);
-        times.total = total.elapsed().as_secs_f64();
-        self.times = times;
-        log::info!(
-            "remove {w}x{h} at {size}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?}); outside the hole off by {:.4} where its detail is {:.4}, correlation {}",
-            times.loads,
-            times.encode,
-            times.unet_calls,
-            times.steps,
-            times.decode,
-            times.total,
-            self.memory,
-            times.drift.off,
-            times.drift.detail,
-            times
-                .drift
-                .correlation
-                .map_or("not asked (flat)".to_string(), |r| format!("{r:.3}"))
-        );
-        out
+        Ok((cut(&planes, size, w, h)?, times))
     }
 }
 
@@ -1088,6 +1346,86 @@ mod tests {
             Remove::load(&store, &[Provider::WebGpu, Provider::Cpu]),
             Err(Error::Missing(_))
         ));
+    }
+
+    #[test]
+    fn the_tiles_cover_the_square_and_overlap() {
+        assert_eq!(starts(1024, TILE, OVERLAP), [0, 256, 512]);
+        assert_eq!(starts(1024, TILE, 0), [0, 512]);
+        assert_eq!(starts(1024, TILE, 384), [0, 128, 256, 384, 512]);
+        assert_eq!(starts(512, TILE, OVERLAP), [0]);
+        // On the latents' grid even where the spacing is not.
+        let at = starts(1000, 512, 100);
+        assert_eq!((at[0], *at.last().unwrap()), (0, 488));
+        assert!(at.iter().all(|s| s % 8 == 0));
+        assert!(at.windows(2).all(|p| p[0] + 512 - p[1] >= 100));
+    }
+
+    #[test]
+    fn the_ramps_sum_to_one_across_an_overlap() {
+        let at = starts(1024, TILE, OVERLAP);
+        for p in 0..1024 {
+            let sum: f32 = at
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| (**s..**s + TILE).contains(&p))
+                .map(|(k, s)| ramp(&at, k, TILE, p - s))
+                .sum();
+            assert!((sum - 1.0).abs() < 1e-6, "{p}: {sum}");
+        }
+        // Outside any overlap a tile is itself.
+        assert_eq!(ramp(&at, 0, TILE, 100), 1.0);
+        assert_eq!(ramp(&at, 2, TILE, 500), 1.0);
+    }
+
+    /// Tiles cut from a square and blended back give the square, to
+    /// rounding; tiles that each answer a constant of their own blend
+    /// with no step between them.
+    #[test]
+    fn the_blend_puts_tiles_back_together() {
+        let (side, tile, channels) = (64, 32, 2);
+        let square: Vec<f32> = (0..channels * side * side)
+            .map(|i| ((i * 37) % 101) as f32 / 100.0)
+            .collect();
+        let at = starts(side, tile, 16);
+        assert_eq!(at, [0, 16, 32]);
+        let back = blend(side, channels, tile, &at, &at, |x, y| {
+            Ok(crop(&square, channels, side, x, y, tile))
+        })
+        .unwrap();
+        for (a, b) in back.iter().zip(&square) {
+            assert!((a - b).abs() < 1e-5, "{a} against {b}");
+        }
+        let steps = blend(side, 1, tile, &at, &at, |x, y| {
+            Ok(vec![(x + y) as f32; tile * tile])
+        })
+        .unwrap();
+        for row in steps.chunks(side) {
+            assert!(row.windows(2).all(|p| (p[1] - p[0]).abs() <= 1.0 + 1e-4));
+        }
+        // Tiles kept only as far as a narrower window leave the rest
+        // empty and the window whole.
+        let back = blend(side, channels, tile, &at[..2], &at, |x, y| {
+            Ok(crop(&square, channels, side, x, y, tile))
+        })
+        .unwrap();
+        for y in 0..side {
+            for x in 0..side {
+                let i = y * side + x;
+                if x < 48 {
+                    assert!((back[i] - square[i]).abs() < 1e-5);
+                } else {
+                    assert_eq!(back[i], 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tiled_unless_asked_otherwise() {
+        assert_eq!(Vae::from_env(None), Vae::DEFAULT);
+        assert_eq!(Vae::from_env(Some("1")), Vae::Tiled);
+        assert_eq!(Vae::from_env(Some("0")), Vae::Whole);
     }
 
     #[test]

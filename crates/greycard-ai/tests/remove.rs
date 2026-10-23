@@ -5,11 +5,12 @@
 //! `runs/noise_{N}_1234.f32`, the seed's noise as raw f32, and
 //! `runs/latents_ref_torch32_{N}.npy`, the torch fp32 run's final
 //! latents, for N of 512 and 1024), and run with `--ignored
-//! --test-threads=1`: the two at once would not fit a card. Needs
+//! --test-threads=1`: two at once would not fit a card. Needs
 //! WebGPU.
 
 use std::path::Path;
 
+use greycard_ai::remove::{Vae, composite};
 use greycard_ai::{Provider, Remove, Rgbf, Store};
 
 fn read_f32(path: &Path) -> Vec<f32> {
@@ -50,13 +51,53 @@ fn psnr(a: &Rgbf, b: &Rgbf, inside: &[bool]) -> f64 {
     10.0 * (1.0 / (sum / n as f64)).log10()
 }
 
-/// At 1024, with the reference's own noise: under the hole the
-/// removal is the torch fp32 run's, decoded by the same decoder, to
-/// above 35 dB, and outside it the picture.
+/// At 1024, with the reference's own noise and the decoder whole: under
+/// the hole the removal is the torch fp32 run's, decoded by the same
+/// decoder, to above 35 dB, and outside it the picture.
 #[test]
 #[ignore]
 fn the_removal_at_1024_matches_the_reference() {
-    parity(1024, 35.0);
+    parity(1024, 35.0, Vae::Whole);
+}
+
+/// At 1024 with the decoder in 512 tiles: against the reference, as
+/// the whole decoder is held, and against the whole decoder's own
+/// answer, in the hole and outside it, where a seam would show. The
+/// tiles measured 38.3 dB against the reference (whole, 38.6) and 47.1
+/// dB in the hole and 45.1 outside against the whole decoder.
+#[test]
+#[ignore]
+fn the_removal_at_1024_in_tiles_matches_the_whole() {
+    let Some(case) = Case::load(1024) else {
+        return;
+    };
+    let mut remove = Remove::load(&case.store, &[Provider::WebGpu]).expect("load");
+    remove.set_vae(Vae::Whole);
+    let whole = remove
+        .decoded_with_noise(&case.image, &case.hole, &case.noise)
+        .expect("whole");
+    report(&remove);
+    remove.set_vae(Vae::Tiled);
+    let tiled = remove
+        .decoded_with_noise(&case.image, &case.hole, &case.noise)
+        .expect("tiled");
+    report(&remove);
+    assert!(remove.times().tiled);
+    let out = composite(&case.image, &case.hole, &tiled).expect("an honest answer");
+    remove.set_vae(Vae::Whole);
+    let want = remove.decode(&case.reference, 1024).expect("decode");
+    let outside: Vec<bool> = case.inside.iter().map(|m| !m).collect();
+    let (against_ref, hole, rest) = (
+        psnr(&out, &want, &case.inside),
+        psnr(&tiled, &whole, &case.inside),
+        psnr(&tiled, &whole, &outside),
+    );
+    println!(
+        "tiled: hole PSNR {against_ref:.2} dB against the reference's decode; against the whole decoder {hole:.2} dB in the hole, {rest:.2} dB outside"
+    );
+    assert!(against_ref > 35.0, "{against_ref:.2} dB");
+    assert!(hole > 42.0, "{hole:.2} dB");
+    assert!(rest > 42.0, "{rest:.2} dB");
 }
 
 /// The same at 512, the other size the graphs are exported at, to
@@ -68,45 +109,67 @@ fn the_removal_at_1024_matches_the_reference() {
 #[test]
 #[ignore]
 fn the_removal_at_512_matches_the_reference() {
-    parity(512, 33.0);
+    parity(512, 33.0, Vae::Whole);
 }
 
-fn parity(n: usize, floor: f64) {
-    let (Some(models), Some(dir)) = (
-        std::env::var_os("GREYCARD_MODELS"),
-        std::env::var_os("GREYCARD_REMOVE_PARITY"),
-    ) else {
-        eprintln!("skipped: GREYCARD_MODELS and GREYCARD_REMOVE_PARITY are not both set");
-        return;
-    };
-    let dir = Path::new(&dir);
-    let store = Store::at(models);
-    let rgb = image::open(dir.join(format!("photos/crop{n}.png")))
-        .expect("the crop")
-        .to_rgb8();
-    let mask = image::open(dir.join(format!("photos/mask{n}.png")))
-        .expect("the mask")
-        .to_luma8();
-    let image = Rgbf::new(
-        n,
-        n,
-        rgb.as_raw().iter().map(|&v| v as f32 / 255.0).collect(),
-    );
-    let inside: Vec<bool> = mask.as_raw().iter().map(|&v| v > 127).collect();
-    let hole: Vec<f32> = inside.iter().map(|&m| f32::from(u8::from(m))).collect();
-    let noise = read_f32(&dir.join(format!("runs/noise_{n}_1234.f32")));
-    let reference = read_npy_f32(&dir.join(format!("runs/latents_ref_torch32_{n}.npy")));
-    assert_eq!(reference.len(), 4 * (n / 8) * (n / 8));
+/// One reference case: the store, the crop and its hole, the noise,
+/// and the torch fp32 run's latents; `None`, said, without the two
+/// variables.
+struct Case {
+    store: Store,
+    dir: std::path::PathBuf,
+    image: Rgbf,
+    inside: Vec<bool>,
+    hole: Vec<f32>,
+    noise: Vec<f32>,
+    reference: Vec<f32>,
+}
 
-    let mut remove = Remove::load(&store, &[Provider::WebGpu]).expect("load");
-    let out = remove
-        .remove_with_noise(&image, &hole, &noise)
-        .expect("remove");
+impl Case {
+    fn load(n: usize) -> Option<Self> {
+        let (Some(models), Some(dir)) = (
+            std::env::var_os("GREYCARD_MODELS"),
+            std::env::var_os("GREYCARD_REMOVE_PARITY"),
+        ) else {
+            eprintln!("skipped: GREYCARD_MODELS and GREYCARD_REMOVE_PARITY are not both set");
+            return None;
+        };
+        let dir = Path::new(&dir).to_path_buf();
+        let rgb = image::open(dir.join(format!("photos/crop{n}.png")))
+            .expect("the crop")
+            .to_rgb8();
+        let mask = image::open(dir.join(format!("photos/mask{n}.png")))
+            .expect("the mask")
+            .to_luma8();
+        let image = Rgbf::new(
+            n,
+            n,
+            rgb.as_raw().iter().map(|&v| v as f32 / 255.0).collect(),
+        );
+        let inside: Vec<bool> = mask.as_raw().iter().map(|&v| v > 127).collect();
+        let hole = inside.iter().map(|&m| f32::from(u8::from(m))).collect();
+        let noise = read_f32(&dir.join(format!("runs/noise_{n}_1234.f32")));
+        let reference = read_npy_f32(&dir.join(format!("runs/latents_ref_torch32_{n}.npy")));
+        assert_eq!(reference.len(), 4 * (n / 8) * (n / 8));
+        Some(Self {
+            store: Store::at(models),
+            dir,
+            image,
+            inside,
+            hole,
+            noise,
+            reference,
+        })
+    }
+}
+
+fn report(remove: &Remove) {
     let t = remove.times();
     println!(
-        "{:?} at {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, total {:.2}s; outside the hole {:?}",
+        "{:?} at {}, decoder {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, total {:.2}s; outside the hole {:?}",
         remove.memory(),
         t.size,
+        if t.tiled { "in tiles" } else { "whole" },
         t.loads,
         t.encode,
         t.unet_calls,
@@ -115,6 +178,28 @@ fn parity(n: usize, floor: f64) {
         t.total,
         t.drift
     );
+}
+
+fn parity(n: usize, floor: f64, vae: Vae) {
+    let Some(Case {
+        store,
+        dir,
+        image,
+        inside,
+        hole,
+        noise,
+        reference,
+    }) = Case::load(n)
+    else {
+        return;
+    };
+    let mut remove = Remove::load(&store, &[Provider::WebGpu]).expect("load");
+    remove.set_vae(vae);
+    let out = remove
+        .remove_with_noise(&image, &hole, &noise)
+        .expect("remove");
+    report(&remove);
+    let t = remove.times();
     // An honest answer follows the picture outside the hole.
     assert!(
         t.drift.correlation.is_some_and(|r| r > 0.9),

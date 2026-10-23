@@ -6,16 +6,25 @@
 //! its size, the hole where it is over 127. Each of `RUNS` removals
 //! (default 2, seeds 1, 2, ...) prints its parts' times; in resident
 //! mode (`GREYCARD_REMOVE_RESIDENT=1`) the first run opens the
-//! sessions and the rest do not. Prints the peak GPU memory over what
-//! was in use before, from `nvidia-smi` sampled in a thread, and the
-//! process's peak resident memory; with `OUT.png` writes the last
-//! answer.
+//! sessions and the rest do not; `GREYCARD_REMOVE_TILED=0` or `1`
+//! runs the decoder whole or in tiles at 1024, and each run says which
+//! ran. Prints the peak GPU memory over what was in use before, from
+//! `nvidia-smi` sampled in a thread, and the process's peak resident
+//! memory; with `OUT.png` writes the last answer.
+//!
+//! With `GREYCARD_BENCH_DENOISER` naming a denoiser's `.onnx`, that
+//! model is opened on WebGPU first and run once on a 2048 mosaic, and
+//! kept open: the editor's case, where another model made the WebGPU
+//! context and its buffer cache holds what it freed.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
+use greycard_ai::denoise::{Denoiser, Tiling};
 use greycard_ai::{Provider, Remove, Rgbf, Store};
+use greycard_core::develop::noise::NoiseModel;
+use greycard_core::raw::CfaPattern;
 
 fn gpu_mb() -> Option<u64> {
     let out = std::process::Command::new("nvidia-smi")
@@ -80,15 +89,44 @@ fn main() {
         })
     };
 
+    let _denoiser = std::env::var_os("GREYCARD_BENCH_DENOISER").map(|path| {
+        let mut net =
+            Denoiser::load(std::path::Path::new(&path), &[Provider::WebGpu]).expect("the denoiser");
+        let side = 2048;
+        let mosaic: Vec<f32> = (0..side * side)
+            .map(|i| 0.1 + 0.3 * ((i % side + i / side) % 97) as f32 / 97.0)
+            .collect();
+        let model = NoiseModel {
+            a: [3e-4; 3],
+            b: [6e-8; 3],
+        };
+        let t = std::time::Instant::now();
+        net.run(
+            &mosaic,
+            side,
+            side,
+            &CfaPattern::rggb(),
+            &model,
+            Tiling::default(),
+        )
+        .expect("denoise");
+        println!(
+            "the denoiser first: {:.2}s, the card at {} MiB",
+            t.elapsed().as_secs_f64(),
+            gpu_mb().unwrap_or(0)
+        );
+        net
+    });
     let mut remove = Remove::load(&store, &[Provider::WebGpu]).expect("load");
-    println!("{w}x{h}, {:?}", remove.memory());
+    println!("{w}x{h}, {:?}, decoder {:?}", remove.memory(), remove.vae());
     let mut out = None;
     for seed in 1..=runs {
         let answer = remove.remove(&image, &hole, seed).expect("remove");
         let t = remove.times();
         println!(
-            "seed {seed} at {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, total {:.2}s; outside off by {:.4}, detail {:.4}",
+            "seed {seed} at {}, decoder {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, total {:.2}s; outside off by {:.4}, detail {:.4}",
             t.size,
+            if t.tiled { "in tiles" } else { "whole" },
             t.loads,
             t.encode,
             t.unet_calls,
