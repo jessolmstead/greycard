@@ -270,6 +270,14 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       floor applied near the channel peaks only
 - [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
       Remove and through us, blind pairs, scored (§380)
+- [ ] A 4-step remove. The authors' LCM LoRA fused onto RORem-mixed
+      runs in 3 s at 1024 on the RTX 5070 Ti against 10 but fills
+      worse (soft texture, hatching, a blue cast; the LoRA was
+      distilled from plain RORem at 512); measured on the `rorem-4s`
+      branch, which holds the LCM sampler and its tests. Next: the
+      LoRA on plain RORem at 512, then, if 1024 speed matters on the
+      Mac, distill our own LCM from RORem-mixed at 1024 with the
+      authors' training script (rank 64, 30K steps, a GPU-day or two)
 - [ ] ONNX Runtime's WebGPU Conv is wrong for input channel counts
       that are a multiple of 3 but not 12 (§399); report upstream with
       the reproducer under target/rorem/ortbug
