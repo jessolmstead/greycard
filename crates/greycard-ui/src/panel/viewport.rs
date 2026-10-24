@@ -66,7 +66,7 @@ pub(crate) fn picture_up(develop: &mut owners::Develop, landed: &crate::panel::d
 
 /// The turn the develop on the GPU lags the open frame by, when that
 /// develop is the open frame's own; none for another frame's.
-fn own_develop(st: &State) -> Option<u8> {
+pub(crate) fn own_develop(st: &State) -> Option<u8> {
     let shown = st
         .develop
         .shown_turn

@@ -302,6 +302,264 @@ pub(crate) fn refit_crop(app: &App, sw: f32, sh: f32, settled: bool) {
     app.set_crop_kept_area(kept);
 }
 
+/// Level the picture to a line at `drawn` degrees counter-clockwise
+/// on the screen, the level's way: the nearer of horizontal and
+/// vertical taken, the crop re-fit, the change recorded.
+fn level_by(state: &std::cell::RefCell<State>, app: &App, drawn: f32) {
+    let geometry = read_geometry(app);
+    app.set_geo_angle(geometry.leveled_by(drawn));
+    let (sw, sh, settled) = {
+        let st = state.borrow();
+        (
+            st.develop.source_size.0 as f32,
+            st.develop.source_size.1 as f32,
+            !st.develop.edit.needs_frame(),
+        )
+    };
+    refit_crop(app, sw, sh, settled);
+    app.invoke_view_changed();
+}
+
+/// The long edge of the grid Straighten asks the GPU for, before the
+/// texture's own width rounds it to a whole step: the detector shrinks
+/// it by a whole factor to [`LONG_EDGE`] or under, which averages the
+/// grid's points into pixels.
+///
+/// [`LONG_EDGE`]: greycard_core::horizon::LONG_EDGE
+const STRAIGHTEN_GRID: u32 = 2 * greycard_core::horizon::LONG_EDGE as u32;
+
+#[cfg(test)]
+thread_local! {
+    /// The picture Straighten reads in a test, which has no GPU: the
+    /// develop's working-space pixels and the width.
+    pub(crate) static STRAIGHTEN_PICTURE: std::cell::RefCell<Option<(Vec<[f32; 3]>, usize)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The step between the grid's points on the texture, in texels, as
+/// [`crate::render::Renderer::sample_grid`] takes it, and the width it
+/// is asked for.
+fn straighten_step(texture: (u32, u32)) -> (u32, u32) {
+    let (w, h) = texture;
+    let across = (u64::from(STRAIGHTEN_GRID) * u64::from(w) / u64::from(w.max(h).max(1))) as u32;
+    ((w / across.max(1)).max(1), across.max(1))
+}
+
+/// The open frame's develop, small, in the working space, and its
+/// width, as the GPU holds it: the source before the edit's turn.
+fn straighten_picture(st: &State) -> Option<(Vec<[f32; 3]>, usize)> {
+    #[cfg(test)]
+    if let Some(picture) = STRAIGHTEN_PICTURE.with(|p| p.borrow_mut().take()) {
+        return Some(picture);
+    }
+    let (_, across) = straighten_step(st.develop.shown_size);
+    match st.develop.renderer.as_ref()?.sample_grid(across) {
+        Ok(grid) => grid,
+        Err(e) => {
+            tracing::warn!("straighten: {e:#}");
+            None
+        }
+    }
+}
+
+/// A point of the texture (texels, continuous) on the picture as the
+/// edit is drawn on it: the texture may still be the develop at the
+/// turn before, `lag` quarter turns behind (`placeholder::texel_of`
+/// the other way).
+fn texture_to_source((x, y): (f32, f32), texture: (u32, u32), lag: u8) -> (f32, f32) {
+    let (w, h) = (texture.0 as f32, texture.1 as f32);
+    match lag % 4 {
+        1 => (h - y, x),
+        2 => (w - x, h - y),
+        3 => (y, w - x),
+        _ => (x, y),
+    }
+}
+
+/// The dominant line of what Straighten read: its luminance in the
+/// working space (Rec. 2020), to a perceptual scale so a horizon in
+/// shadow counts for what it looks like.
+fn straighten_find(read: &StraightenRead) -> Option<greycard_core::horizon::Line> {
+    let gray: Vec<f32> = read.picture[..read.w * read.h]
+        .iter()
+        .map(|p| {
+            (0.2627 * p[0] + 0.6780 * p[1] + 0.0593 * p[2])
+                .max(0.0)
+                .cbrt()
+        })
+        .collect();
+    greycard_core::horizon::horizon(&gray, read.w, read.h)
+}
+
+/// What Straighten read off the GPU, and what it needs to take a line
+/// found on it to the screen.
+struct StraightenRead {
+    /// The develop, a grid of it in the working space, and its width
+    /// and height.
+    picture: Vec<[f32; 3]>,
+    w: usize,
+    h: usize,
+    /// The texture's size, the quarter turns it lags the open frame
+    /// by, and the develop it was: a line found on it is applied only
+    /// while that develop is the one shown.
+    texture: (u32, u32),
+    lag: u8,
+    shown: Option<(usize, u8)>,
+    started: std::time::Instant,
+}
+
+thread_local! {
+    /// A Straighten whose line is being found: a second press waits for it.
+    static STRAIGHTENING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Straighten's press: the develop read off the GPU here, its line
+/// found on a thread of its own (a few tens of milliseconds), and the
+/// level set back here, through the level's own path.
+fn straighten(state: &Rc<RefCell<State>>, app: &App) {
+    if STRAIGHTENING.get() {
+        return;
+    }
+    let Some(read) = straighten_read(&state.borrow()) else {
+        return;
+    };
+    #[cfg(test)]
+    {
+        let line = straighten_find(&read);
+        straighten_apply(state, app, read, line);
+    }
+    #[cfg(not(test))]
+    {
+        STRAIGHTENING.set(true);
+        let app_weak = app.as_weak();
+        let spawned = std::thread::Builder::new()
+            .name("straighten".into())
+            .spawn(move || {
+                let line = straighten_find(&read);
+                let _ = slint::invoke_from_event_loop(move || {
+                    STRAIGHTENING.set(false);
+                    let (Some(app), Some(state)) = (
+                        app_weak.upgrade(),
+                        crate::STATE.with(|s| s.borrow().clone()),
+                    ) else {
+                        return;
+                    };
+                    straighten_apply(&state, &app, read, line);
+                });
+            });
+        if let Err(e) = spawned {
+            STRAIGHTENING.set(false);
+            tracing::warn!("straighten: {e}");
+        }
+    }
+}
+
+/// The open frame's develop as Straighten reads it; `None`, logged,
+/// with no develop of this frame to read.
+fn straighten_read(st: &State) -> Option<StraightenRead> {
+    let lag = crate::panel::viewport::own_develop(st);
+    let Some(lag) = lag else {
+        tracing::info!("straighten: wait for the develop");
+        return None;
+    };
+    let started = std::time::Instant::now();
+    let (picture, w) = straighten_picture(st)?;
+    let h = picture.len() / w.max(1);
+    tracing::debug!(
+        "straighten: read {w}x{h} in {:.1} ms",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    Some(StraightenRead {
+        picture,
+        w,
+        h,
+        texture: st.develop.shown_size,
+        lag,
+        shown: st.develop.shown_turn,
+        started,
+    })
+}
+
+/// The line found on what [`straighten_read`] read, leveled the way
+/// the level levels a line drawn along it; nothing, logged, when there
+/// is no line, when the develop shown is no longer the one read, or
+/// when the frame is level already.
+///
+/// The line was found on the develop before the edit's turn, and is
+/// taken to the screen through the geometry in force where it lies (a
+/// keystone turns a line by where it is): so a frame Straighten has
+/// leveled reads level and a second press changes nothing.
+fn straighten_apply(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    read: StraightenRead,
+    line: Option<greycard_core::horizon::Line>,
+) {
+    let StraightenRead {
+        w,
+        h,
+        texture,
+        lag,
+        shown,
+        started,
+        ..
+    } = read;
+    tracing::debug!(
+        "straighten: done in {:.1} ms",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    let Some(line) = line else {
+        tracing::info!("straighten: no dominant line");
+        return;
+    };
+    let on_screen = {
+        let st = state.borrow();
+        if st.develop.shown_turn != shown || crate::panel::viewport::own_develop(&st) != Some(lag) {
+            tracing::info!("straighten: the picture changed while its line was found");
+            return;
+        }
+        let drawn = placeholder::turned_size(texture, lag);
+        let (sw, sh) = (
+            st.develop.source_size.0 as f32,
+            st.develop.source_size.1 as f32,
+        );
+        // A grid point's texel, then the source the edit is measured on.
+        let (step, _) = straighten_step(texture);
+        let to_source = |(x, y): (f32, f32)| {
+            let texel = (
+                (step / 2) as f32 + x * step as f32 + 0.5,
+                (step / 2) as f32 + y * step as f32 + 0.5,
+            );
+            let (u, v) = texture_to_source(texel, texture, lag);
+            (
+                u * sw / drawn.0.max(1) as f32,
+                v * sh / drawn.1.max(1) as f32,
+            )
+        };
+        // Two points along the line either side of where it lies, taken
+        // to the screen; y runs down.
+        let (s, c) = line.angle.to_radians().sin_cos();
+        let reach = 0.05 * w.max(h) as f32;
+        let (x, y) = line.at;
+        let a = to_source((x - reach * c, y + reach * s));
+        let b = to_source((x + reach * c, y - reach * s));
+        let geometry = read_geometry(app);
+        let (a, b) = (geometry.to_plane(a, sw, sh), geometry.to_plane(b, sw, sh));
+        let on_screen = (a.1 - b.1).atan2(b.0 - a.0).to_degrees();
+        let turn = geometry.leveled_by(on_screen) - geometry.angle;
+        tracing::info!(
+            "straighten: line at {:.2}° about ({x:.0}, {y:.0}) of the {w}x{h} grid, turning {turn:+.2}°",
+            line.angle
+        );
+        // Already level: the change is not one.
+        if turn.abs() < 0.01 {
+            return;
+        }
+        on_screen
+    };
+    level_by(state, app, on_screen);
+}
+
 /// The geometry as the panel shows it.
 pub(crate) fn read_geometry(app: &App) -> Geometry {
     Geometry {
@@ -580,18 +838,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             }
             // Counter-clockwise on the screen is positive; y runs down.
             let drawn = (-dy).atan2(dx).to_degrees();
-            let geometry = read_geometry(&app);
-            app.set_geo_angle(geometry.leveled_by(drawn));
-            let (sw, sh, settled) = {
-                let st = state.borrow();
-                (
-                    st.develop.source_size.0 as f32,
-                    st.develop.source_size.1 as f32,
-                    !st.develop.edit.needs_frame(),
-                )
+            level_by(&state, &app, drawn);
+        });
+    }
+    // Straighten: the picture's dominant line, leveled as if it had
+    // been drawn with the level.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_straightened(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
             };
-            refit_crop(&app, sw, sh, settled);
-            app.invoke_view_changed();
+            straighten(&state, &app);
         });
     }
     // The perspective guide. Each stroke goes to source pixels as it
@@ -1963,5 +2221,101 @@ mod tests {
             "a square: {c:?}"
         );
         assert_eq!(st.sidecars[1].history.len(), 1);
+    }
+
+    /// Straighten levels the frame through the level's own path: the
+    /// turn the found line asks, one step of history; a second press
+    /// on the leveled frame changes nothing, and undo takes it back.
+    #[test]
+    fn straighten_levels_the_dominant_line_once() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let (w, h) = (600usize, 400usize);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (w as u32, h as u32);
+            st.develop.shown_size = (w as u32, h as u32);
+            st.develop.shown_turn = Some((0, crate::panel::edit::current_turn(&st)));
+        }
+        // A horizon 3 degrees counter-clockwise, y down: dark below.
+        let (s, c) = 3.0f32.to_radians().sin_cos();
+        let picture: Vec<[f32; 3]> = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32 - 300.0, (i / w) as f32 - 200.0);
+                let v = 0.05 + 0.35 / (1.0 + (-(x * s + y * c) / 0.7).exp());
+                [v; 3]
+            })
+            .collect();
+        let wait = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ))
+        };
+        wait();
+        let steps = state.borrow().sidecars[0].history.len();
+        let press = || {
+            super::STRAIGHTEN_PICTURE.with(|p| *p.borrow_mut() = Some((picture.clone(), w)));
+            app.invoke_straightened();
+            wait();
+        };
+        press();
+        let first = app.get_geo_angle();
+        assert!((first + 3.0).abs() < 0.1, "{first}");
+        assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
+        press();
+        assert!((app.get_geo_angle() - first).abs() < 0.1);
+        assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
+        app.invoke_undo();
+        assert_eq!(app.get_geo_angle(), 0.0);
+        // A picture with no line in it: nothing moves.
+        super::STRAIGHTEN_PICTURE.with(|p| *p.borrow_mut() = Some((vec![[0.2; 3]; w * h], w)));
+        app.invoke_straightened();
+        wait();
+        assert_eq!(app.get_geo_angle(), 0.0);
+    }
+
+    /// Under a keystone a line's angle on the screen depends on where
+    /// it is: Straighten levels the line where it lies, a quarter of
+    /// the way down here, not a line through the middle.
+    #[test]
+    fn straighten_levels_the_line_where_it_lies() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let (w, h) = (600usize, 400usize);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (w as u32, h as u32);
+            st.develop.shown_size = (w as u32, h as u32);
+            st.develop.shown_turn = Some((0, crate::panel::edit::current_turn(&st)));
+        }
+        app.set_geo_horizontal(10.0);
+        // A horizon 2 degrees counter-clockwise a quarter of the way down.
+        let (s, c) = 2.0f32.to_radians().sin_cos();
+        let picture: Vec<[f32; 3]> = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32 - 300.0, (i / w) as f32 - 100.0);
+                let v = 0.05 + 0.35 / (1.0 + (-(x * s + y * c) / 0.7).exp());
+                [v; 3]
+            })
+            .collect();
+        let press = || {
+            super::STRAIGHTEN_PICTURE.with(|p| *p.borrow_mut() = Some((picture.clone(), w)));
+            app.invoke_straightened();
+        };
+        press();
+        let geometry = super::read_geometry(&app);
+        let at = |x: f32| geometry.to_plane((300.0 + x * c, 100.0 - x * s), w as f32, h as f32);
+        let (a, b) = (at(-150.0), at(150.0));
+        let shown = (a.1 - b.1).atan2(b.0 - a.0).to_degrees();
+        assert!(
+            shown.abs() < 0.1,
+            "{shown} on screen, at {}",
+            app.get_geo_angle()
+        );
+        let first = app.get_geo_angle();
+        press();
+        assert!((app.get_geo_angle() - first).abs() < 0.1);
     }
 }

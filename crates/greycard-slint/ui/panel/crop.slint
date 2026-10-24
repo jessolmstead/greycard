@@ -124,19 +124,29 @@ export component RotateSection inherits Section {
     callback crop-toggled();
     callback geometry-changed();
     callback guide-dropped();
+    callback straightened();
 
     title: "ROTATE";
     icon: @image-url("../icons/rotate-cw.svg");
     collapsed <=> root.collapsed-rotate;
-    PanelButton {
-        text: "Level";
-        icon: @image-url("../icons/ruler.svg");
-        primary: root.level-mode;
-        clicked => {
-            if (!root.crop-mode) { root.crop-mode = true; root.crop-toggled(); }
-            root.guide-mode = "";
-            root.guide-dropped();
-            root.level-mode = !root.level-mode;
+    // The level drawn by hand, and found: the picture's dominant line
+    // leveled as if it had been drawn.
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        PanelButton {
+            text: "Level";
+            icon: @image-url("../icons/ruler.svg");
+            primary: root.level-mode;
+            clicked => {
+                if (!root.crop-mode) { root.crop-mode = true; root.crop-toggled(); }
+                root.guide-mode = "";
+                root.guide-dropped();
+                root.level-mode = !root.level-mode;
+            }
+        }
+        PanelButton {
+            text: "Straighten";
+            clicked => { root.straightened(); }
         }
     }
     // Quarter turns and mirrors.

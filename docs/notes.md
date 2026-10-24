@@ -431,3 +431,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§416. The export queue in the grid](notes/416-the-export-queue-in-the-grid.md) (2026-10-24)
 - [§417. The grid's rows shaped to the pictures](notes/417-the-grids-rows-shaped-to-the-pictures.md) (2026-10-24)
 - [§418. The UI scale as any percentage](notes/418-the-ui-scale-as-any-percentage.md) (2026-10-24)
+- [§419. A one-click straighten](notes/419-a-one-click-straighten.md) (2026-10-24)

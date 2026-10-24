@@ -42,6 +42,7 @@ pub mod dng;
 pub mod error;
 pub mod exif;
 pub mod guided;
+pub mod horizon;
 pub mod image;
 pub mod lut;
 pub mod output;
