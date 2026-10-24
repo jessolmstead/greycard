@@ -270,9 +270,6 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       floor applied near the channel peaks only
 - [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
       Remove and through us, blind pairs, scored (§380)
-- [ ] The remove's files published and the entry listed (§406); an
-      8 GB card keeps the 512 window, since the UNet's 6.8 GB is the
-      floor at 1024 (§408)
 - [ ] ONNX Runtime's WebGPU Conv is wrong for input channel counts
       that are a multiple of 3 but not 12 (§399); report upstream with
       the reproducer under target/rorem/ortbug

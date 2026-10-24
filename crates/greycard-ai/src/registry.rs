@@ -513,6 +513,7 @@ pub const MODELS: &[Model] = &[
     DENOISE_FAST,
     DENOISE_BALANCED,
     DENOISE_BEST,
+    REMOVE,
 ];
 
 /// The denoiser's tiers by the names an edit and the CLI use.
@@ -529,13 +530,8 @@ pub fn denoiser(name: &str) -> Option<&'static Model> {
 
 /// The registered model with this id, if there is one.
 pub fn model(id: &str) -> Option<&'static Model> {
-    MODELS.iter().chain(UNLISTED).find(|m| m.id == id)
+    MODELS.iter().find(|m| m.id == id)
 }
-
-/// Models found by [`model`] but not in [`MODELS`], so not in what
-/// `greycard models --fetch all` brings: [`REMOVE`], 5.5 GB, until its
-/// files are published and the retouch uses it.
-pub const UNLISTED: &[Model] = &[REMOVE];
 
 /// ONNX Runtime as Microsoft publishes it, for a processor the one
 /// greycard ships cannot run on, or a platform greycard ships none
@@ -831,7 +827,7 @@ mod tests {
     #[test]
     fn the_registry_is_well_formed() {
         let mut ids = std::collections::HashSet::new();
-        for m in MODELS.iter().chain(UNLISTED) {
+        for m in MODELS {
             assert!(ids.insert(m.id), "duplicate id {}", m.id);
             assert!(!m.files.is_empty());
             for f in m.files {
@@ -962,9 +958,10 @@ mod tests {
         // size, and the three constants: about 5.5 GB in all.
         assert_eq!(REMOVE.files.len(), 10);
         assert!((5.4e9..5.6e9).contains(&(REMOVE.bytes() as f64)));
-        // Found by its id, but not fetched with everything else.
+        // Listed since its files were published, so `--fetch all`
+        // brings it: the largest fetch by far.
         assert_eq!(model("rorem-mixed-fp16"), Some(&REMOVE));
-        assert!(MODELS.iter().all(|m| m.id != REMOVE.id));
+        assert!(MODELS.iter().any(|m| m.id == REMOVE.id));
     }
 
     /// The CPU-only runtimes are Microsoft's own releases of the

@@ -62,8 +62,9 @@ enum Command {
     /// what it costs to fetch one
     Models {
         /// Fetch a denoiser tier (fast, balanced, best), a model by
-        /// its id, or `all`, into the user's model store. Each
-        /// model's license is printed before it is fetched, and the
+        /// its id, or `all` (about 7 GB, 5.5 of it the generative
+        /// remove's), into the user's model store. Each model's
+        /// license is printed before it is fetched, and the
         /// published hash is checked when it arrives. `onnxruntime`
         /// fetches Microsoft's ONNX Runtime for the CPU, which runs the
         /// models, slower, on a processor greycard's own cannot run on
