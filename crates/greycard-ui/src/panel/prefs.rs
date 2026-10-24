@@ -255,6 +255,23 @@ pub(crate) fn grid_cell_typed_changed(app: &App) {
     show_grid_cell(app);
 }
 
+/// The scale as the Settings row shows it, and the setting it holds.
+pub(crate) fn show_ui_scale(app: &App, percent: u32) {
+    let percent = crate::window_fit::scale::held(percent);
+    app.set_ui_scale_percent(percent as i32);
+    app.set_ui_scale(crate::window_fit::scale::name(percent).into());
+}
+
+/// The scale as typed in the sheet: held to its range and taken, for
+/// the next start; anything but a number puts the field back. The
+/// percentage taken, when it changed.
+pub(crate) fn ui_scale_typed(app: &App) -> Option<u32> {
+    let was = u32::try_from(app.get_ui_scale_percent()).unwrap_or(100);
+    let now = crate::window_fit::scale::named(&app.get_ui_scale()).unwrap_or(was);
+    show_ui_scale(app, now);
+    (now != was).then_some(now)
+}
+
 /// Ctrl and the wheel sizing the grid's cells, or only scrolling:
 /// kept as flipped.
 pub(crate) fn wheel_resizes_changed(st: &State, app: &App) {
@@ -835,7 +852,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             crate::panel::crop::start_chosen(&mut state.borrow_mut(), &app.get_crop_start());
         });
     }
-    // The interface's scale: kept as chosen, for the next start, which
+    // The interface's scale: kept as typed, for the next start, which
     // is when it applies; the sheet says so while it differs from the
     // one this window started at.
     {
@@ -844,7 +861,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let percent = crate::window_fit::scale::named(&app.get_ui_scale());
+            let Some(percent) = ui_scale_typed(&app) else {
+                return;
+            };
             keep(&state.borrow(), |s| s.ui_scale = percent);
             tracing::info!("interface scale {percent}%, from the next start");
         });
@@ -1082,44 +1101,49 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
-    /// The scale row: on the sheet with the five choices at the one the
-    /// window started at; a click on another says it waits for the next
-    /// start, and the start's own again takes the line away. A factor
+    /// The scale row: on the sheet at the percentage the window
+    /// started at; one typed is taken on Enter, held to 50 to 300, and
+    /// one that differs from the start's says it waits for the next
+    /// start; text that is not a number puts the field back. A factor
     /// set by hand says it wins instead.
     #[test]
-    fn the_scale_row_says_a_change_waits_for_the_next_start() {
-        use i_slint_backend_testing::ElementHandle;
+    fn the_scale_row_takes_any_percentage_for_the_next_start() {
         const NEXT: &str = "Applies at the next start.";
         const BY_HAND: &str = "SLINT_SCALE_FACTOR is set, and wins over this.";
         let app = crate::testing::window(0);
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
-        app.set_ui_scale("150%".into());
-        app.set_ui_scale_started("150%".into());
+        show_ui_scale(&app, 150);
+        app.set_ui_scale_started(150);
         app.invoke_settings_asked();
         assert!(app.get_settings_open());
         assert_eq!(crate::testing::count_labeled(&app, "INTERFACE"), 1);
-        for choice in ["125%", "150%", "175%", "200%"] {
-            assert_eq!(crate::testing::count_labeled(&app, choice), 1, "{choice}");
-        }
+        assert_eq!(app.get_ui_scale(), "150");
         assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
-        let click_on = |label: &str| {
-            crate::testing::count_labeled(&app, label);
-            let segment = ElementHandle::find_by_accessible_label(&app, label)
-                .next()
-                .unwrap_or_else(|| panic!("{label:?} on the sheet"));
-            let (at, size) = (segment.absolute_position(), segment.size());
-            crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let typed = |text: &str| {
+            app.set_ui_scale(text.into());
+            app.invoke_ui_scale_changed();
+            (app.get_ui_scale().to_string(), app.get_ui_scale_percent())
         };
-        click_on("200%");
-        assert_eq!(app.get_ui_scale(), "200%");
+        assert_eq!(typed("137"), ("137".into(), 137));
         assert_eq!(crate::testing::count_labeled(&app, NEXT), 1);
-        assert_eq!(crate::window_fit::scale::named(&app.get_ui_scale()), 200);
-        click_on("150%");
-        assert_eq!(app.get_ui_scale(), "150%");
+        assert_eq!(typed("20"), ("50".into(), 50));
+        assert_eq!(typed("400"), ("300".into(), 300));
+        assert_eq!(typed("abc"), ("300".into(), 300), "put back");
+        assert_eq!(typed(""), ("300".into(), 300), "put back");
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), 1);
+        assert_eq!(typed("150"), ("150".into(), 150));
         assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
+        // Typed and not entered: taken as the sheet closes.
+        app.set_ui_scale("112".into());
+        app.set_settings_open(false);
+        // Slint runs the changed handlers with the next event.
+        crate::testing::press(&app, slint::platform::Key::Shift);
+        assert_eq!(app.get_ui_scale_percent(), 112);
+        app.invoke_settings_asked();
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), 1);
         // By hand: the variable's line, and not the next start's.
         app.set_ui_scale_by_hand(true);
-        click_on("125%");
+        assert_eq!(typed("125"), ("125".into(), 125));
         assert_eq!(crate::testing::count_labeled(&app, BY_HAND), 1);
         assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
     }

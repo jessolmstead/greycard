@@ -273,12 +273,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         app.set_asked_height(h);
     }
     *fit_slot.borrow_mut() = Some(app.as_weak());
-    // The Settings sheet's scale row: the choice, and the one this
+    // The Settings sheet's scale row: the setting, and the one this
     // window started at, which a change is told it waits for.
     {
-        let chosen = crate::window_fit::scale::name(remembered.ui_scale);
-        app.set_ui_scale(chosen.as_str().into());
-        app.set_ui_scale_started(chosen.as_str().into());
+        let chosen = crate::window_fit::scale::held(remembered.ui_scale);
+        crate::panel::prefs::show_ui_scale(&app, chosen);
+        app.set_ui_scale_started(chosen as i32);
         app.set_ui_scale_by_hand(matches!(
             ui_scale,
             crate::window_fit::scale::Scale::ByHand(_)

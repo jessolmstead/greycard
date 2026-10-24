@@ -201,13 +201,13 @@ pub struct Settings {
     /// `panel::crop::aspect_key` spells it ("3:2", "Custom 7:5"):
     /// what "Last used" opens under. Written as it is picked.
     pub crop_last: String,
-    /// The interface's scale, percent of the system's own: 100, 125,
-    /// 150, 175, or 200 (`window_fit::scale`), held to the nearest when
-    /// read. Applied at the next start; written as it is chosen.
+    /// The interface's scale, percent of the system's own: 50 to 300
+    /// (`window_fit::scale`), clamped when read. Applied at the next
+    /// start; written as it is typed.
     pub ui_scale: u32,
     /// The system's own scale the window last opened under, as winit
     /// reported it, written at the close: the next start's guess of
-    /// it, which a scale over 100 % multiplies. Zero for none seen.
+    /// it, which the scale multiplies. Zero for none seen.
     pub ui_scale_system: f64,
     /// The keys rebound from the Settings sheet, each action's name
     /// (`keys::TABLE`) to its chord ("crop": "Ctrl+R"); an action at

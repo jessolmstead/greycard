@@ -905,8 +905,6 @@ clears or a tester asks for it.
 - [ ] An Auto starting point: exposure and tone set from the picture
       with one press, beside "Fit this camera's look" (pixls,
       2026-10-24)
-- [ ] The UI scale as any percentage, not steps: 100% too small and
-      125% too large on one monitor (pixls, 2026-10-22)
 - [ ] A toolbar of common actions, the set the user's, with the
       menu bar (pixls, 2026-10-22)
 

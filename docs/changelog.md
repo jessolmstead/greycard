@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- Settings > Interface > Scale takes any whole percentage from 50 to
+  300, typed, in place of five fixed steps; it still applies at the
+  next start
+  ([§418](https://github.com/jessolmstead/greycard/blob/master/docs/notes/418-the-ui-scale-as-any-percentage.md)).
 - Scroll bars read: a brighter thumb everywhere, and Settings >
   Interface can make them stay and pick Thin, Medium, or Wide
   ([§411](https://github.com/jessolmstead/greycard/blob/master/docs/notes/411-scroll-bars-of-our-own.md)).

@@ -2038,6 +2038,7 @@ export component App inherits Window {
             root.preview-cache-cap-changed();
             root.network-poll-changed();
             root.grid-cell-typed-changed();
+            root.ui-scale-changed();
         }
         // A row listening for a chord had the keys: the window's again.
         if (!root.settings-open && !root.sheet-open()) { keys.focus(); }
@@ -2051,10 +2052,12 @@ export component App inherits Window {
     in-out property <string> crop-start: "Original";
     callback crop-start-changed();
     // The Settings sheet's scale row (`window_fit::scale`): the
-    // interface's scale as chosen, the one this window started at, and
-    // whether SLINT_SCALE_FACTOR, set by hand, overrides it.
-    in-out property <string> ui-scale: "System";
-    in property <string> ui-scale-started: "System";
+    // interface's scale as typed and as taken, the one this window
+    // started at, and whether SLINT_SCALE_FACTOR, set by hand,
+    // overrides it.
+    in-out property <string> ui-scale: "100";
+    in-out property <int> ui-scale-percent: 100;
+    in property <int> ui-scale-started: 100;
     in property <bool> ui-scale-by-hand: false;
     callback ui-scale-changed();
     // The Settings sheet's theme row: the palette by name (`Theme`),
@@ -4686,6 +4689,7 @@ export component App inherits Window {
         export-format <=> root.export-format;
         export-space <=> root.export-space;
         ui-scale <=> root.ui-scale;
+        ui-scale-percent: root.ui-scale-percent;
         ui-scale-started: root.ui-scale-started;
         ui-scale-by-hand: root.ui-scale-by-hand;
         ui-scale-changed => { root.ui-scale-changed(); }

@@ -33,8 +33,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use slint::winit_030::winit;
 
-/// The setting's choices, percent of the system's scale.
-pub(crate) const CHOICES: [u32; 5] = [100, 125, 150, 175, 200];
+/// The setting's range, percent of the system's scale.
+pub(crate) const LEAST: u32 = 50;
+pub(crate) const MOST: u32 = 300;
 
 /// The variable Slint's winit backend reads for the window's scale.
 pub(crate) const SLINT_SCALE_FACTOR: &str = "SLINT_SCALE_FACTOR";
@@ -56,31 +57,24 @@ thread_local! {
     static SYSTEM: Cell<Option<f64>> = const { Cell::new(None) };
 }
 
-/// The setting held to one of [`CHOICES`], the nearest, so a
-/// hand-edited file opens at a size the row shows.
+/// The setting held to its range, so a hand-edited file opens at a
+/// size the row shows.
 pub(crate) fn held(percent: u32) -> u32 {
-    CHOICES
-        .iter()
-        .copied()
-        .min_by_key(|c| c.abs_diff(percent))
-        .unwrap_or(100)
+    percent.clamp(LEAST, MOST)
 }
 
-/// The row's word for a choice.
+/// The row's text for a setting: the percentage, held.
 pub(crate) fn name(percent: u32) -> String {
-    match held(percent) {
-        100 => "System".into(),
-        p => format!("{p}%"),
-    }
+    held(percent).to_string()
 }
 
-/// The choice the row's word names; the system's for one it does not.
-pub(crate) fn named(name: &str) -> u32 {
-    CHOICES
-        .iter()
-        .copied()
-        .find(|&p| self::name(p) == name)
-        .unwrap_or(100)
+/// The setting the row's text names, rounded to a whole percentage
+/// and held; none for text that is not a number, which leaves the
+/// setting as it was.
+pub(crate) fn named(text: &str) -> Option<u32> {
+    let text = text.trim().trim_end_matches('%').trim_end();
+    let n = text.parse::<f64>().ok().filter(|n| n.is_finite())?;
+    Some(held(n.round().clamp(0.0, f64::from(u32::MAX)) as u32))
 }
 
 /// How the window's scale is set this run.
@@ -265,8 +259,8 @@ pub(crate) fn wanted(scale: Scale, own: f64, now: f32) -> Option<f32> {
 }
 
 /// Follows winit's scale for each window: notes it for the next
-/// start, and under a setting over 100 % sets Slint's factor to it
-/// times the setting.
+/// start, and under a setting other than 100 % sets Slint's factor
+/// to it times the setting.
 pub(crate) struct Follow {
     scale: Scale,
     met: HashSet<winit::window::WindowId>,
@@ -368,21 +362,25 @@ mod tests {
     }
 
     #[test]
-    fn the_setting_is_held_to_a_choice_and_named() {
+    fn the_setting_is_held_to_its_range_and_named() {
         assert_eq!(held(100), 100);
-        assert_eq!(held(150), 150);
-        assert_eq!(held(0), 100);
-        assert_eq!(held(130), 125);
-        assert_eq!(held(140), 150);
-        assert_eq!(held(137), 125);
-        assert_eq!(held(138), 150);
-        assert_eq!(held(1000), 200);
-        let names: Vec<_> = CHOICES.iter().map(|&p| name(p)).collect();
-        assert_eq!(names, ["System", "125%", "150%", "175%", "200%"]);
-        for p in CHOICES {
-            assert_eq!(named(&name(p)), p);
+        assert_eq!(held(137), 137);
+        assert_eq!(held(0), 50);
+        assert_eq!(held(20), 50);
+        assert_eq!(held(400), 300);
+        assert_eq!(name(137), "137");
+        assert_eq!(name(100), "100");
+        assert_eq!(name(1000), "300");
+        assert_eq!(named("137"), Some(137));
+        assert_eq!(named(" 112% "), Some(112));
+        assert_eq!(named("20"), Some(50));
+        assert_eq!(named("-5"), Some(50));
+        assert_eq!(named("400"), Some(300));
+        assert_eq!(named("99999999999"), Some(300));
+        assert_eq!(named("137.6"), Some(138));
+        for bad in ["abc", "", "System", "NaN", "inf"] {
+            assert_eq!(named(bad), None, "{bad:?}");
         }
-        assert_eq!(named("huge"), 100);
         assert_eq!(factor_text(0.8 * 1.5), "1.2");
         assert_eq!(factor_text(2.0), "2");
         assert_eq!(factor_text(1.25 * 1.75), "2.1875");
@@ -412,10 +410,19 @@ mod tests {
             decide(175, f64::NAN, env(&[])),
             (Scale::Times(1.75), Env::Set(1.75))
         );
-        // A hand-edited value, held.
+        // Any percentage, under 100 too; a hand-edited one out of
+        // range, held.
         assert_eq!(
-            decide(160, 1.0, env(&[])),
-            (Scale::Times(1.5), Env::Set(1.5))
+            decide(137, 1.0, env(&[])),
+            (Scale::Times(1.37), Env::Set(1.37))
+        );
+        assert_eq!(
+            decide(80, 2.0, env(&[])),
+            (Scale::Times(0.8), Env::Set(1.6))
+        );
+        assert_eq!(
+            decide(1000, 1.0, env(&[])),
+            (Scale::Times(3.0), Env::Set(3.0))
         );
     }
 

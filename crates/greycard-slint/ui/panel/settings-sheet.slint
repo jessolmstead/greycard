@@ -24,12 +24,14 @@ import { LineEdit } from "std-widgets.slint";
 
 export component SettingsSheet inherits Rectangle {
     in-out property <bool> settings-open;
-    /// The interface's scale over the system's: "System", "125%",
-    /// "150%", "175%", or "200%"; the one this window started at, which
-    /// a different choice waits for the next start to replace; and
-    /// whether SLINT_SCALE_FACTOR, set by hand, wins over both.
+    /// The interface's scale, percent of the system's: as typed, taken
+    /// on Enter or Done; as taken, 50 to 300; the one this window
+    /// started at, which a different one waits for the next start to
+    /// replace; and whether SLINT_SCALE_FACTOR, set by hand, wins over
+    /// all of them.
     in-out property <string> ui-scale;
-    in property <string> ui-scale-started;
+    in property <int> ui-scale-percent;
+    in property <int> ui-scale-started;
     in property <bool> ui-scale-by-hand;
     callback ui-scale-changed();
     /// The palette: "Charcoal", "Grey", or "Light" (`Theme`).
@@ -397,11 +399,13 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 Text { text: "Scale"; width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                                Segmented {
-                                    options: ["System", "125%", "150%", "175%", "200%"];
-                                    current <=> root.ui-scale;
-                                    selected => { root.ui-scale-changed(); }
+                                LineEdit {
+                                    width: 96px;
+                                    text <=> root.ui-scale;
+                                    input-type: number;
+                                    accepted => { root.ui-scale-changed(); }
                                 }
+                                Text { text: "%"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                             }
                             Text {
                                 text: "Type and controls, on top of the system's own scaling.";
@@ -415,7 +419,7 @@ export component SettingsSheet inherits Rectangle {
                                 color: Theme.text-secondary;
                                 wrap: word-wrap;
                             }
-                            if !root.ui-scale-by-hand && root.ui-scale != root.ui-scale-started: Text {
+                            if !root.ui-scale-by-hand && root.ui-scale-percent != root.ui-scale-started: Text {
                                 text: "Applies at the next start.";
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
@@ -1015,8 +1019,9 @@ export component SettingsSheet inherits Rectangle {
                             Rectangle { height: Theme.space-1; }
                             if root.settings-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
+                                min-height: settings-path.preferred-height;
                                 Text { text: "Settings"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
-                                Text {
+                                settings-path := Text {
                                     text: root.settings-dir;
                                     font-size: Theme.font-sm;
                                     color: Theme.text-secondary;
@@ -1026,8 +1031,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             if root.library-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
+                                min-height: library-path.preferred-height;
                                 Text { text: "Library"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
-                                Text {
+                                library-path := Text {
                                     text: root.library-dir;
                                     font-size: Theme.font-sm;
                                     color: Theme.text-secondary;
@@ -1037,8 +1043,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             if root.caches-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
+                                min-height: caches-path.preferred-height;
                                 Text { text: "Caches"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
-                                Text {
+                                caches-path := Text {
                                     text: root.caches-dir;
                                     font-size: Theme.font-sm;
                                     color: Theme.text-secondary;
@@ -1048,8 +1055,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             if root.log-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
+                                min-height: log-path.preferred-height;
                                 Text { text: "Log"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
-                                Text {
+                                log-path := Text {
                                     text: root.log-dir;
                                     font-size: Theme.font-sm;
                                     color: Theme.text-secondary;
