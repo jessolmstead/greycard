@@ -127,6 +127,11 @@ export struct Thumb {
     stack: int,
     stack-place: int,
     stack-open: bool,
+    /// In the export queue's view while it runs: the frame's export is
+    /// written (the exported mark), or it is the one being written (the
+    /// status plate's running bar, on the tile).
+    queue-done: bool,
+    queue-busy: bool,
 }
 
 /// One of the strip's or the grid's cells: the browser's row it
@@ -135,6 +140,23 @@ export struct Thumb {
 export struct ThumbCell {
     row: int,
     thumb: Thumb,
+}
+
+/// A heading of the grid: a row of its own, full width, above the
+/// frames it heads. `row` is the first of them, by the list's number;
+/// `count` is said at its right, as a root's row says its count.
+export struct GridHead {
+    text: string,
+    count: int,
+    row: int,
+}
+
+/// Where a frame sits on the grid under its headings: its column, its
+/// row over the whole sheet, and how many headings are above it.
+export struct GridPlace {
+    col: int,
+    line: int,
+    heads: int,
 }
 
 /// A box drawn for an object, on the view, logical pixels.

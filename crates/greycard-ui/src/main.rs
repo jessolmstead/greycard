@@ -863,6 +863,7 @@ impl State {
                 export_queue_file: None,
                 queue_run: None,
                 queue_probes: 0,
+                queue_busy: None,
                 export_presets: Vec::new(),
                 export_last_folder: None,
                 sync: sync::Sync::default(),
@@ -897,6 +898,11 @@ impl State {
                 companions: HashMap::new(),
                 jpegs_apart: false,
                 collection_frames: None,
+                queue_listed: None,
+                grid_heads: Vec::new(),
+                queued_open: None,
+                queue_relist_due: false,
+                queue_cell_ids: Vec::new(),
                 cells_by_file: None,
                 stacks_listed: Vec::new(),
                 stacks: stacks::Store::default(),
@@ -1080,6 +1086,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::viewport::install(app, &state, &worker);
     panel::deliver::install(app, &state, &worker);
     panel::export_queue::install(app, &state, &worker);
+    panel::queue_view::install(app, &state, &worker);
     panel::edit::install(app, &state, &worker);
     panel::assets::install(app, &state, &worker);
     panel::crop::install(app, &state, &worker);

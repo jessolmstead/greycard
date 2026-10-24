@@ -7,6 +7,8 @@ import { Section, PanelButton, Segmented, Toggle } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 
 export component CullSection inherits Section {
+    /// The export queue's view: no rejects folder to delete.
+    in property <bool> queue-view;
     /// Drawn developed rather than from the camera's JPEG, and the
     /// switch between the two.
     in property <bool> developed;
@@ -190,6 +192,7 @@ export component CullSection inherits Section {
     PanelButton {
         text: "Delete rejects folder...";
         icon: @image-url("../icons/trash-2.svg");
+        enabled: !root.queue-view;
         clicked => { root.delete-asked("rejects"); }
     }
     // The rejects' copies on an archive, found by hash: moved into a

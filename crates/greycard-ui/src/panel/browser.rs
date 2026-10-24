@@ -398,6 +398,8 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta, marks: (bool, bool)) -> Thumb 
         name: file_name(path).into(),
         image: slint::Image::default(),
         big: slint::Image::default(),
+        queue_done: false,
+        queue_busy: false,
         pending: false,
         rating: meta.rating.min(meta::STARS) as i32,
         flag: meta.flag.code(),
@@ -1094,6 +1096,9 @@ pub(crate) fn frame_aspect(st: &mut State, cell: usize) -> Option<f32> {
 /// time; the alternative is guessing which way up it is, and a guess
 /// here re-crops the picture.
 pub(crate) fn migrate_frame(st: &mut State, c: usize) {
+    if crate::panel::queue_view::refused(st, "a sidecar's migration") {
+        return;
+    }
     if !st.sidecar_at(c).is_some_and(Sidecar::needs_frame) {
         return;
     }
@@ -1186,6 +1191,37 @@ pub(crate) fn reject_count(st: &State) -> usize {
         .count()
 }
 
+/// The grid's layout under its headings, asked of the arithmetic in
+/// `grid`: where each frame sits, how far the sheet scrolls, and the
+/// scroll that shows a frame.
+///
+/// The headings come with each call, as the window has them, so a
+/// binding that asks follows them when they change.
+pub(crate) fn grid_layout(app: &App) {
+    fn heads(m: &ModelRc<i32>) -> Vec<i32> {
+        m.iter().collect()
+    }
+    app.on_grid_place(|i, cols, h| {
+        let (col, line, heads) = grid::place(i, cols, &heads(&h));
+        GridPlace { col, line, heads }
+    });
+    app.on_grid_max_scroll(|height, cell, cols, count, top, h| {
+        grid::max_scroll_in(height, cell, cols, count, top, &heads(&h))
+    });
+    app.on_grid_reveal_to(|offset, height, cell, cols, count, selected, top, h| {
+        grid::reveal_in(offset, height, cell, cols, count, selected, top, &heads(&h))
+    });
+}
+
+/// Where the grid's headings stand, by row: none in the lightbox, which
+/// lays the frames out as they come.
+pub(crate) fn grid_breaks(st: &State, app: &App) -> Vec<i32> {
+    if app.get_lightbox() {
+        return Vec::new();
+    }
+    st.views.grid_heads.iter().map(|h| h.row as i32).collect()
+}
+
 /// The browser's list again: the filter over the flags, the strip's
 /// and the grid's rows made afresh, their cells' pictures put on from
 /// those already made, and the selection kept on its row, or put on
@@ -1244,6 +1280,9 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     st.views.pictured = [(0, 0); 2];
     cells::set_rows(app, thumbs);
     settle_pictures(st, app);
+    // The export queue's view: its headings over the rows, and its
+    // tiles' marks while it runs.
+    crate::panel::queue_view::show(st, app);
 
     app.set_reject_count(reject_count(st) as i32);
     // A smart collection is lit while the bar says its filter.
@@ -1514,6 +1553,19 @@ pub(crate) fn open_paths(
 /// left.
 ///
 /// No picture yet, nothing to hold: the next frame opens fitted.
+/// The frame on screen's edit saved as a list replaces it, under the
+/// view it is on now: run before the view changes, so a frame left for
+/// the export queue's view is kept, and one of the queue left for
+/// another view, whose panel holds its queued edit, is not
+/// (`queue_view::frozen`). Nothing in culling, where the panel is no
+/// frame's.
+pub(crate) fn save_leaving(st: &mut State, app: &App) {
+    if st.current.is_some() && st.culling.cull.is_none() && st.views.queued_open.is_none() {
+        let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
+        save_edit(st, outgoing);
+    }
+}
+
 fn hold_outgoing(st: &mut State, outgoing: &Edit) {
     if st.develop.base_white.is_none() {
         st.develop.zoom = 0.0;
@@ -1545,8 +1597,14 @@ pub(crate) fn open_loaded(
     if st.current.is_some() && st.culling.cull.is_none() {
         let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
         hold_outgoing(&mut st, &outgoing);
-        save_edit(&mut st, outgoing);
+        // The panel under a queued edit is never the frame's to keep,
+        // and the view the list is leaving is no longer there to say
+        // so.
+        if st.views.queued_open.is_none() {
+            save_edit(&mut st, outgoing);
+        }
     }
+    st.views.queued_open = None;
     if let Some(cull) = st.culling.cull.as_mut() {
         cull.cache.clear();
         cull.textures.clear();
@@ -2037,9 +2095,15 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         st.launch.show_mask = None;
         st.launch.show_patch = None;
     }
-    // In culling nothing is developed: the frame's JPEG shows.
+    // In culling nothing is developed: the frame's JPEG shows. A frame
+    // of the export queue's view takes its queued edit onto the panel
+    // all the same, read-only, for the scopes and the way out.
     if st.culling.cull.is_some() {
         crate::rows::pick_over(st, app);
+        if let Some(edit) = crate::panel::queue_view::open_under(st, i) {
+            show_edit(st, &edit, app, None);
+            st.develop.edit = edit;
+        }
         cull_select(st, app, i);
         show_set(st, app);
         return;
@@ -2068,8 +2132,13 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         // The panel shows the frame's default edit, the one standing
         // in, and not the last frame's: a sync, a copy or a preset
         // from here would otherwise take another frame's edit for this
-        // one's, and every one of them refuses an unloaded source.
-        let edit = st.line(i).map(|l| l.current.clone()).unwrap_or_default();
+        // one's, and every one of them refuses an unloaded source. A
+        // frame of the export queue's view stands in under its queued
+        // edit and turn, as it opens when it is online.
+        let edit = match crate::panel::queue_view::open_under(st, i) {
+            Some(queued) => queued,
+            None => st.line(i).map(|l| l.current.clone()).unwrap_or_default(),
+        };
         st.develop.target = None;
         st.develop.placing = None;
         app.set_placing("".into());
@@ -2088,18 +2157,33 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         show_set(st, app);
         return;
     }
-    // Before the edit reaches the panel, and so before any
-    // refit can run on it: a sidecar from an older build
-    // does not know which way up its Original crop goes
-    // until the frame does.
-    migrate_frame(st, i);
+    // A frame of the export queue, opened from its view: the edit it
+    // was queued under, which is what will be exported, and nothing
+    // the panel does is kept. Its sidecar is not touched, not even to
+    // migrate it.
+    let queued = crate::panel::queue_view::open_under(st, i);
+    if crate::panel::queue_view::frozen(st) {
+        // No tool in hand over a frame that is not to be edited.
+        if app.get_crop_mode() {
+            app.set_crop_mode(false);
+            app.invoke_crop_toggled();
+        }
+        app.set_level_mode(false);
+        app.set_guide_mode("".into());
+    } else {
+        // Before the edit reaches the panel, and so before any
+        // refit can run on it: a sidecar from an older build
+        // does not know which way up its Original crop goes
+        // until the frame does.
+        migrate_frame(st, i);
+    }
     // The cell's own line: a version gone from the sidecar since the
     // cells were made has nothing to open, and the list follows.
     let Some(line) = st.line(i) else {
         tracing::warn!("{}: no such version to open", file_name(&file));
         return;
     };
-    let mut edit = line.current.clone();
+    let mut edit = queued.unwrap_or_else(|| line.current.clone());
     // The frame the command line's overrides were on is left, or
     // opened again: they are done with (`panel_state`).
     st.launch.overridden = None;
@@ -2204,8 +2288,14 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
         version: st.cells[i].version.clone(),
         edit,
         generation: st.develop.generation,
-        seed_blend: crate::rows::wants_seed(st, i),
-        turn: st.sidecars[file].turn,
+        seed_blend: match st.views.queued_open {
+            Some(f) => f.seed,
+            None => crate::rows::wants_seed(st, i),
+        },
+        turn: match st.views.queued_open {
+            Some(f) => f.turn,
+            None => st.sidecars[file].turn,
+        },
         stance_known: known_mosaic(st, i) != OpenMosaic::Unknown,
     }
 }
@@ -2252,6 +2342,17 @@ fn neighbors_said(st: &State, i: usize, say: bool) -> Vec<crate::worker::Neighbo
                 left_out("its sidecar is not read, and its row says it holds an edit or versions");
                 return None;
             };
+            // In the export queue's view, a neighbor as its Loupe will
+            // open it: under its queued edit.
+            if let Some(q) = crate::panel::queue_view::frame_of(st, c) {
+                return Some(crate::worker::Neighbor {
+                    edit: q.edit.clone(),
+                    path,
+                    turn: q.turn,
+                    seed_blend: q.seed_blend,
+                    side,
+                });
+            }
             Some(crate::worker::Neighbor {
                 edit: st.line(c)?.current.clone(),
                 path,
@@ -2755,6 +2856,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            if crate::panel::queue_view::refused(&state.borrow(), "a turn") {
+                return;
+            }
             // The whole selection, as the meta keys have it: a request
             // for its sidecars, and the turn over exactly those frames
             // once they are in.
@@ -2913,8 +3017,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     // the numbers are tested rather than left in a binding.
     app.on_grid_columns(grid::columns);
     app.on_grid_slack(grid::slack);
-    app.on_grid_max_scroll(grid::max_scroll);
-    app.on_grid_reveal_to(grid::reveal);
+    grid_layout(app);
     app.on_grid_tiles_top(grid::tiles_top);
     app.on_bar_length(grid::bar_length);
     app.on_bar_offset(grid::bar_offset);
@@ -2985,7 +3088,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let count = state.borrow().views.shown.len() as i32;
-            let next = grid::step(app.get_selected(), dx, dy, columns, count);
+            let heads = grid_breaks(&state.borrow(), &app);
+            let next = grid::step_in(app.get_selected(), dx, dy, columns, count, &heads);
             if next >= 0 {
                 step_to(
                     &state,
@@ -3026,12 +3130,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let cell = app.get_tile_cell();
             let mut st = state.borrow_mut();
             let count = st.views.shown.len() as i32;
+            let heads = grid_breaks(&st, &app);
             // The grid's cells follow, and the pictures with them.
-            let (at, wanted) = grid::window(scroll, height, cell, columns, count, top);
+            let (at, wanted) = grid::window_in(scroll, height, cell, columns, count, top, &heads);
             if cells::show(&app, cells::View::Grid, at, wanted) {
                 settle_pictures(&mut st, &app);
             }
-            let Some((first, last)) = grid::visible(scroll, height, cell, columns, count, top)
+            let Some((first, last)) =
+                grid::visible_in(scroll, height, cell, columns, count, top, &heads)
             else {
                 return;
             };

@@ -12,7 +12,7 @@ export { Theme, ScrollBars } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds, ScrollPane } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, BindRow, KeywordChip, QueueRow } from "structs.slint";
+import { GridHead, GridPlace, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, BindRow, KeywordChip, QueueRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -327,8 +327,16 @@ export component App inherits Window {
     /// How far the sheet can be scrolled, and the scroll that brings
     /// the selected cell into view: asked of the same arithmetic the
     /// Rust side tests, rather than written out again here.
-    pure callback grid-max-scroll(length, length, int, int, length) -> length;
-    pure callback grid-reveal-to(length, length, length, int, int, int, length) -> length;
+    pure callback grid-max-scroll(length, length, int, int, length, [int]) -> length;
+    pure callback grid-reveal-to(length, length, length, int, int, int, length, [int]) -> length;
+    /// The grid's headings (`GridSheet::grid-heads`), and where each
+    /// stands, by the list's number; none in the lightbox, which lays
+    /// the frames out as they come.
+    in property <[GridHead]> grid-heads: [];
+    in property <[int]> grid-head-rows: [];
+    in property <length> grid-head-h: 28px;
+    property <[int]> grid-head-at: root.lightbox ? [] : root.grid-head-rows;
+    pure callback grid-place(int, int, [int]) -> GridPlace;
     property <int> grid-cols: root.grid-columns(root.grid-w, root.tile-cell);
     /// How far the folder tiles push the cells down: none without
     /// tiles.
@@ -337,7 +345,7 @@ export component App inherits Window {
         : root.grid-tiles-top(root.grid-tiles.length, root.tile-cell, root.grid-cols);
     property <length> grid-max:
         root.grid-max-scroll(root.grid-h, root.tile-cell, root.grid-cols, root.thumbs.length,
-            root.grid-top);
+            root.grid-top, root.grid-head-at);
     /// The scroll bars' thumbs, the grid's and the strip's, their
     /// length and their place along the bar, and the scroll a drag of
     /// one comes to: the same arithmetic.
@@ -522,7 +530,7 @@ export component App inherits Window {
         if (root.selected >= 0) {
             root.grid-scroll = root.grid-reveal-to(
                 root.grid-scroll, root.grid-h, root.tile-cell,
-                root.grid-cols, root.thumbs.length, root.selected, root.grid-top);
+                root.grid-cols, root.thumbs.length, root.selected, root.grid-top, root.grid-head-at);
         }
         root.grid-report();
     }
@@ -679,6 +687,11 @@ export component App inherits Window {
     in property <string> library-note: "";
     /// A root chosen by its path, or every root for an empty one.
     callback library-root-picked(string);
+    /// The export queue's row under the roots: how many frames it
+    /// holds, whether its view is open, and a press opening it.
+    in property <int> queue-view-count: 0;
+    in property <bool> queue-view-on: false;
+    callback queue-view-picked();
     callback library-root-removed(string);
     callback library-root-add();
     callback library-root-add-open();
@@ -956,6 +969,19 @@ export component App inherits Window {
     in-out property <int> target: 0;
     // Which tab the panel shows: Develop, Crop, Masks or Retouch.
     in-out property <string> panel-tab: "Develop";
+    /// The export queue's view, whose frames are not to be edited: the
+    /// four develop tabs, the presets, the snapshots, and the history
+    /// are not shown, and the Develop view's tools (R, W, M) are not
+    /// taken up. Every other edit is refused in Rust, at one gate.
+    in property <bool> frozen: false;
+    /// The export queue's view is writing a frame: one running bar for
+    /// its tile, as the status plate's.
+    in property <bool> queue-busy: false;
+    /// The frame menu's Remove from queue..., in the queue's view.
+    callback queue-menu-remove();
+    /// The tab whose sections the panel shows: none of the develop
+    /// tabs' over a frozen frame, Cull's as ever.
+    property <string> shown-tab: root.frozen && root.panel-tab != "Cull" ? "" : root.panel-tab;
     // A tab chosen, by the bar or by a tool's key.
     function tab-chosen(t: string) {
         root.panel-tab = t;
@@ -2683,7 +2709,7 @@ export component App inherits Window {
             // with a Radial, the next drag placing it. Each brings its
             // tab, and puts down whatever else was in hand. Held, one
             // press; with no frame open, nothing.
-            if (!root.grid-open && !root.cull-mode
+            if (!root.grid-open && !root.cull-mode && !root.frozen
                 && (chord == "R" || chord == "W" || chord == "M" || chord == "Shift+M")) {
                 if (e.repeat || root.selected < 0) { return accept; }
                 if (chord == "R") {
@@ -2882,8 +2908,8 @@ export component App inherits Window {
                     warn-shadows <=> root.warn-shadows;
                     warn-highlights <=> root.warn-highlights;
                     warn-changed => { root.warn-changed(); }
-                    can-undo: root.can-undo;
-                    can-redo: root.can-redo;
+                    can-undo: root.can-undo && !root.frozen;
+                    can-redo: root.can-redo && !root.frozen;
                     undo => { root.undo(); }
                     redo => { root.redo(); }
                     set-count: root.set-count;
@@ -2921,7 +2947,7 @@ export component App inherits Window {
                             root.cull-asked();
                         }
                     }
-                    Segmented {
+                    if !root.frozen: Segmented {
                         options: ["Develop", "Crop", "Masks", "Retouch"];
                         current <=> root.panel-tab;
                         selected(t) => { root.tab-chosen(t); }
@@ -2932,7 +2958,7 @@ export component App inherits Window {
                 // another mask is one click away. The sections scroll
                 // under it, and the scroll counts from its foot, so
                 // the list's own height never moves what they show.
-                if root.panel-tab == "Masks": VerticalLayout {
+                if root.shown-tab == "Masks": VerticalLayout {
                     padding-left: Theme.space-4;
                     padding-right: Theme.space-4;
                     padding-top: Theme.space-2;
@@ -2989,7 +3015,7 @@ export component App inherits Window {
                     // gives up the rest of its room (the pane's own floor
                     // is 50 px) before the footer is pushed under the
                     // strip.
-                    min-height: root.panel-tab == "Masks" ? 0px : 50px;
+                    min-height: root.shown-tab == "Masks" ? 0px : 50px;
                     panel-sections := VerticalLayout {
                         alignment: start;
                         padding: Theme.space-4;
@@ -3000,7 +3026,8 @@ export component App inherits Window {
                         // Culling: what the mode is, the browser's
                         // filter, the compare view, and the two ways
                         // out of it, one of them for the rejects.
-                        if root.panel-tab == "Cull": CullSection {
+                        if root.shown-tab == "Cull": CullSection {
+                            queue-view: root.frozen;
                             one-of-panel: !root.grid-open;
                             developed: root.cull-developed;
                             source-asked(d) => { root.cull-source-asked(d); }
@@ -3047,7 +3074,7 @@ export component App inherits Window {
                         // The selection's title and keywords, under
                         // CULLING, whose keys and buttons keep their
                         // place at the top.
-                        if root.panel-tab == "Cull": MetaSection {
+                        if root.shown-tab == "Cull": MetaSection {
                             one-of-panel: !root.grid-open;
                             frame-meta-on: root.frame-meta-on;
                             frame-title: root.frame-title;
@@ -3067,7 +3094,7 @@ export component App inherits Window {
                             keyword-focused => { root.keyword-focused(); }
                             focus-keys => { keys.focus(); }
                         }
-                        if root.panel-tab == "Masks" && root.target > 0: AdjustmentsSection {
+                        if root.shown-tab == "Masks" && root.target > 0: AdjustmentsSection {
                             one-of-panel: !root.grid-open;
                             adjustment-names <=> root.adjustment-names;
                             target <=> root.target;
@@ -3122,7 +3149,7 @@ export component App inherits Window {
                             renamed => { root.renamed(); }
                             view-changed => { root.view-changed(); }
                         }
-                        if root.panel-tab == "Develop": LookSection {
+                        if root.shown-tab == "Develop": LookSection {
                             one-of-panel: !root.grid-open;
                             collapsed-look <=> root.collapsed-look;
                             look-name <=> root.look-name;
@@ -3144,7 +3171,7 @@ export component App inherits Window {
                             match-asked => { root.match-asked(); }
                             view-changed => { root.view-changed(); }
                         }
-                        if root.panel-tab == "Develop": WhiteBalanceSection {
+                        if root.shown-tab == "Develop": WhiteBalanceSection {
                             one-of-panel: !root.grid-open;
                             as-shot <=> root.as-shot;
                             collapsed-wb <=> root.collapsed-wb;
@@ -3161,7 +3188,7 @@ export component App inherits Window {
                         // The chosen mask's own white balance: the light
                         // under it, where that is not the light under the
                         // rest. Off until switched on.
-                        if root.panel-tab == "Masks" && root.target > 0: WhiteBalanceSection {
+                        if root.shown-tab == "Masks" && root.target > 0: WhiteBalanceSection {
                             one-of-panel: !root.grid-open;
                             local: true;
                             owner: root.target-name;
@@ -3179,7 +3206,7 @@ export component App inherits Window {
                             raw-input: root.raw-input;
                             develop-changed => { root.view-changed(); }
                         }
-                        if root.panel-tab == "Develop": CameraSection {
+                        if root.shown-tab == "Develop": CameraSection {
                             one-of-panel: !root.grid-open;
                             collapsed-camera <=> root.collapsed-camera;
                             raw-input: root.raw-input;
@@ -3191,7 +3218,7 @@ export component App inherits Window {
                             camera-profile-warning: root.camera-profile-warning;
                             camera-profile-picked => { root.camera-profile-picked(); }
                         }
-                        if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): LightSection {
+                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): LightSection {
                             one-of-panel: !root.grid-open;
                             exposure <=> root.exposure;
                             contrast <=> root.contrast;
@@ -3206,7 +3233,7 @@ export component App inherits Window {
                             target-name <=> root.target-name;
                             view-changed => { root.view-changed(); }
                         }
-                        if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): ColorSection {
+                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): ColorSection {
                             one-of-panel: !root.grid-open;
                             color-enabled <=> root.color-enabled;
                             saturation <=> root.saturation;
@@ -3217,7 +3244,7 @@ export component App inherits Window {
                             dull: root.dull;
                             view-changed => { root.view-changed(); }
                         }
-                        if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): CurvesSection {
+                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): CurvesSection {
                             one-of-panel: !root.grid-open;
                             curves-enabled <=> root.curves-enabled;
                             curve-mode <=> root.curve-mode;
@@ -3245,7 +3272,7 @@ export component App inherits Window {
                             parametric-changed => { root.parametric-changed(); }
                             view-changed => { root.view-changed(); }
                         }
-                        if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): MixerSection {
+                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): MixerSection {
                             one-of-panel: !root.grid-open;
                             collapsed-mixer <=> root.collapsed-mixer;
                             picking <=> root.picking;
@@ -3267,7 +3294,7 @@ export component App inherits Window {
                         // Global only: a mask carries a look, and a
                         // picture is mono or it is not, so this one
                         // is not offered on the Masks tab.
-                        if root.panel-tab == "Develop": BlackWhiteSection {
+                        if root.shown-tab == "Develop": BlackWhiteSection {
                             one-of-panel: !root.grid-open;
                             collapsed-bw <=> root.collapsed-bw;
                             band-colors: root.band-colors;
@@ -3283,7 +3310,7 @@ export component App inherits Window {
                             bw-reset => { root.bw-reset(); }
                             view-changed => { root.view-changed(); }
                         }
-                        if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): GradingSection {
+                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): GradingSection {
                             one-of-panel: !root.grid-open;
                             collapsed-grading <=> root.collapsed-grading;
                             target-name <=> root.target-name;
@@ -3308,7 +3335,7 @@ export component App inherits Window {
                         // and a look's, so the global picture and
                         // every mask can carry one, each with its
                         // switch.
-                        if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): TintSection {
+                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): TintSection {
                             one-of-panel: !root.grid-open;
                             collapsed-tint <=> root.collapsed-tint;
                             target-name <=> root.target-name;
@@ -3330,7 +3357,7 @@ export component App inherits Window {
                         // Dehaze: a look control, put on at the finish
                         // from the bands the develop keeps beside the
                         // picture.
-                        if root.panel-tab == "Masks" && root.target > 0: DetailSection {
+                        if root.shown-tab == "Masks" && root.target > 0: DetailSection {
                             one-of-panel: !root.grid-open;
                             collapsed-detail <=> root.collapsed-detail;
                             target-name <=> root.target-name;
@@ -3340,7 +3367,7 @@ export component App inherits Window {
                             detail-dehaze <=> root.local-dehaze;
                             develop-changed => { root.view-changed(); }
                         }
-                        if root.panel-tab == "Develop": NoiseSection {
+                        if root.shown-tab == "Develop": NoiseSection {
                             one-of-panel: !root.grid-open;
                             noise-enabled <=> root.noise-enabled;
                             collapsed-noise <=> root.collapsed-noise;
@@ -3353,7 +3380,7 @@ export component App inherits Window {
                             learned-unavailable: root.learned-unavailable;
                             develop-changed => { root.develop-changed(); }
                         }
-                        if root.panel-tab == "Develop": LensSection {
+                        if root.shown-tab == "Develop": LensSection {
                             one-of-panel: !root.grid-open;
                             lens-enabled <=> root.lens-enabled;
                             collapsed-lens <=> root.collapsed-lens;
@@ -3388,7 +3415,7 @@ export component App inherits Window {
                         // engine's guided filter: a develop op, so the
                         // worker runs it, after the retouch and before
                         // the sharpen.
-                        if root.panel-tab == "Develop": DetailSection {
+                        if root.shown-tab == "Develop": DetailSection {
                             one-of-panel: !root.grid-open;
                             collapsed-detail <=> root.collapsed-detail;
                             detail-enabled <=> root.detail-enabled;
@@ -3397,7 +3424,7 @@ export component App inherits Window {
                             detail-dehaze <=> root.detail-dehaze;
                             develop-changed => { root.develop-changed(); }
                         }
-                        if root.panel-tab == "Develop": SharpenSection {
+                        if root.shown-tab == "Develop": SharpenSection {
                             one-of-panel: !root.grid-open;
                             collapsed-sharpen <=> root.collapsed-sharpen;
                             show-sharpen-mask <=> root.show-sharpen-mask;
@@ -3412,7 +3439,7 @@ export component App inherits Window {
                             view-changed => { root.view-changed(); }
                             develop-changed => { root.develop-changed(); }
                         }
-                        if root.panel-tab == "Develop": VignetteSection {
+                        if root.shown-tab == "Develop": VignetteSection {
                             one-of-panel: !root.grid-open;
                             vignette-enabled <=> root.vignette-enabled;
                             collapsed-vignette <=> root.collapsed-vignette;
@@ -3422,7 +3449,7 @@ export component App inherits Window {
                             vignette-roundness <=> root.vignette-roundness;
                             view-changed => { root.view-changed(); }
                         }
-                        if root.panel-tab == "Develop": GrainSection {
+                        if root.shown-tab == "Develop": GrainSection {
                             one-of-panel: !root.grid-open;
                             grain-enabled <=> root.grain-enabled;
                             collapsed-grain <=> root.collapsed-grain;
@@ -3431,7 +3458,7 @@ export component App inherits Window {
                             grain-kind <=> root.grain-kind;
                             view-changed => { root.view-changed(); }
                         }
-                        if root.panel-tab == "Develop": ProofSection {
+                        if root.shown-tab == "Develop": ProofSection {
                             one-of-panel: !root.grid-open;
                             collapsed-proof <=> root.collapsed-proof;
                             proofing <=> root.proofing;
@@ -3442,7 +3469,7 @@ export component App inherits Window {
                             proof-changed => { root.proof-changed(); }
                             choose-proof-file => { root.choose-proof-file(); }
                         }
-                        if root.panel-tab == "Develop": MonitorSection {
+                        if root.shown-tab == "Develop": MonitorSection {
                             one-of-panel: !root.grid-open;
                             collapsed-monitor <=> root.collapsed-monitor;
                             display-profile <=> root.display-profile;
@@ -3461,7 +3488,7 @@ export component App inherits Window {
                         // them all until the guide's buttons arrived and
                         // the perspective's own heading began to read as
                         // a second section inside the first.
-                        if root.panel-tab == "Crop": CropSection {
+                        if root.shown-tab == "Crop": CropSection {
                             one-of-panel: !root.grid-open;
                             crop-mode <=> root.crop-mode;
                             level-mode <=> root.level-mode;
@@ -3478,7 +3505,7 @@ export component App inherits Window {
                             geometry-changed => { root.geometry-changed(); }
                             guide-dropped => { root.guide-dropped(); }
                         }
-                        if root.panel-tab == "Crop": RotateSection {
+                        if root.shown-tab == "Crop": RotateSection {
                             one-of-panel: !root.grid-open;
                             frame-turned(a) => { root.frame-turned(a); }
                             crop-mode <=> root.crop-mode;
@@ -3495,7 +3522,7 @@ export component App inherits Window {
                         // The keystone: the camera's tilt, up or to the
                         // right positive, for a lens whose focal length
                         // is the frame's half side.
-                        if root.panel-tab == "Crop": PerspectiveSection {
+                        if root.shown-tab == "Crop": PerspectiveSection {
                             one-of-panel: !root.grid-open;
                             crop-mode <=> root.crop-mode;
                             level-mode <=> root.level-mode;
@@ -3508,7 +3535,7 @@ export component App inherits Window {
                             geometry-reset => { root.geometry-reset(); }
                             guide-dropped => { root.guide-dropped(); }
                         }
-                        if root.panel-tab == "Develop": DemosaicSection {
+                        if root.shown-tab == "Develop": DemosaicSection {
                             one-of-panel: !root.grid-open;
                             collapsed-demosaic <=> root.collapsed-demosaic;
                             raw-input: root.raw-input;
@@ -3521,7 +3548,7 @@ export component App inherits Window {
                         // The selection's title and keywords, last on
                         // the Develop tab: not part of the develop, but
                         // within reach of the frame being worked on.
-                        if root.panel-tab == "Develop": MetaSection {
+                        if root.shown-tab == "Develop": MetaSection {
                             one-of-panel: !root.grid-open;
                             frame-meta-on: root.frame-meta-on;
                             frame-title: root.frame-title;
@@ -3541,7 +3568,7 @@ export component App inherits Window {
                             keyword-focused => { root.keyword-focused(); }
                             focus-keys => { keys.focus(); }
                         }
-                        if root.panel-tab == "Retouch": RetouchSection {
+                        if root.shown-tab == "Retouch": RetouchSection {
                             one-of-panel: !root.grid-open;
                             retouch-enabled <=> root.retouch-enabled;
                             collapsed-retouch <=> root.collapsed-retouch;
@@ -3743,6 +3770,12 @@ export component App inherits Window {
         grid-cols: root.grid-cols;
         grid-max: root.grid-max;
         grid-top: root.grid-top;
+        grid-heads: root.lightbox ? [] : root.grid-heads;
+        queue-busy: root.queue-busy;
+        queue-view: root.frozen;
+        grid-head-rows: root.grid-head-at;
+        grid-head-h: root.grid-head-h;
+        grid-place(a, b, c) => { return root.grid-place(a, b, c); }
         // No folder tiles in the lightbox: frames alone.
         tiles: root.lightbox ? [] : root.grid-tiles;
         tile-picked(i) => { root.commit-title(); root.grid-tile-picked(i); }
@@ -4017,6 +4050,9 @@ export component App inherits Window {
                     roots: root.library-roots;
                     all-on: root.library-all-on;
                     all-count: root.library-all-count;
+                    queue-count: root.queue-view-count;
+                    queue-on: root.queue-view-on;
+                    queue-picked => { root.commit-title(); root.queue-view-picked(); }
                     can-add-open: root.library-can-add-open;
                     empty-note: root.library-note;
                     ctrl-click-menu: root.ctrl-click-menu;
@@ -4087,7 +4123,7 @@ export component App inherits Window {
                 // bin removes it, and the edit is saved or a
                 // Lightroom preset brought in below the list. Not
                 // in culling, as the snapshots and the history.
-                if !root.cull-mode && !root.grid-open: PresetsSection {
+                if !root.cull-mode && !root.grid-open && !root.frozen: PresetsSection {
                     selected <=> root.selected;
                     collapsed-presets <=> root.collapsed-presets;
                     preset-names <=> root.preset-names;
@@ -4104,7 +4140,7 @@ export component App inherits Window {
                 // renames it; the bin removes it.
                 // Not in culling, where the panel is not the
                 // frame's and a step is the way out of the mode.
-                if !root.cull-mode && !root.grid-open: SnapshotsSection {
+                if !root.cull-mode && !root.grid-open && !root.frozen: SnapshotsSection {
                     selected <=> root.selected;
                     snapshot-names <=> root.snapshot-names;
                     snapshot-editing <=> root.snapshot-editing;
@@ -4119,7 +4155,7 @@ export component App inherits Window {
                 // current one lit and the undone ones muted. A
                 // click makes a step current; what lies past it
                 // stays until the next change.
-                if !root.cull-mode && !root.grid-open: HistorySection {
+                if !root.cull-mode && !root.grid-open && !root.frozen: HistorySection {
                     history-rows <=> root.history-rows;
                     hint: root.history-version;
                     history-current <=> root.history-current;
@@ -4745,7 +4781,9 @@ export component App inherits Window {
             root.menu-done();
         }
         version: root.menu-version;
-        can-version: root.selected >= 0 && !root.culling;
+        can-version: root.selected >= 0 && !root.culling && !root.frozen;
+        queue: root.frozen;
+        queue-remove => { root.queue-menu-remove(); }
         // A new version's name sheet takes the focus itself: no
         // `menu-done`, whose timer would take it back.
         new-version => { root.version-new-asked(false, true); }

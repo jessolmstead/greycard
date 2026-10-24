@@ -416,7 +416,10 @@ pub(crate) fn file_is_loaded(st: &State, file: usize) -> bool {
 /// recorded on the frame: the frame is loaded, and the panel is not
 /// still the stand-in's it showed while the sidecar was on its way.
 pub(crate) fn panel_is_frames(st: &State, c: usize) -> bool {
-    is_loaded(st, c)
+    // A frame of the export queue's view holds its queued edit, which
+    // is not the frame's own to record.
+    !crate::panel::queue_view::frozen(st)
+        && is_loaded(st, c)
         && (st.views.panel_stand_in.is_none()
             || st.views.panel_stand_in.as_deref() != st.path_at(c).map(PathBuf::as_path))
 }
@@ -435,6 +438,11 @@ pub(crate) fn not_kept(st: &State, i: usize) -> Option<String> {
 /// [`not_kept`]'s reason, ending in `what` was refused ("nothing is
 /// exported") rather than a change.
 pub(crate) fn refused(st: &State, c: usize, what: &str) -> Option<String> {
+    // The export queue's view refuses its own way, in the log alone
+    // (`queue_view::refused`), at whatever asked: nothing to say here.
+    if crate::panel::queue_view::frozen(st) {
+        return None;
+    }
     if panel_is_frames(st, c) {
         return None;
     }

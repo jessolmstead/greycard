@@ -1847,6 +1847,7 @@ mod tests {
                     turn: 0,
                     seed_blend: false,
                     version: None,
+                    id: crate::export_queue::fresh_id(),
                 }],
             }];
             show_looks(&st, &st.develop.edit.look_lut, &app);

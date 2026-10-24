@@ -534,7 +534,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_version_new_asked(move |from_original, from_menu| {
-            if let Some(app) = app_weak.upgrade() {
+            if let Some(app) = app_weak.upgrade()
+                && !crate::panel::queue_view::refused(&state.borrow(), "a new version")
+            {
                 new_version(&state, &app, &worker, from_original, from_menu);
             }
         });
@@ -542,7 +544,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_version_rename_asked(move || {
-            if let Some(app) = app_weak.upgrade() {
+            if let Some(app) = app_weak.upgrade()
+                && !crate::panel::queue_view::refused(&state.borrow(), "a version's name")
+            {
                 ask_rename(&mut state.borrow_mut(), &app, true);
             }
         });
@@ -550,7 +554,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_version_swap_asked(move || {
-            if let Some(app) = app_weak.upgrade() {
+            if let Some(app) = app_weak.upgrade()
+                && !crate::panel::queue_view::refused(&state.borrow(), "a version's swap")
+            {
                 swap(&mut state.borrow_mut(), &app, &worker, true);
             }
         });
@@ -562,6 +568,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
         app.on_version_delete_asked(move || {
             if let Some(app) = app_weak.upgrade() {
                 let mut st = state.borrow_mut();
+                if st.views.view == crate::roots::View::Queue {
+                    crate::panel::queue_view::ask_out(&mut st, &app);
+                    return;
+                }
                 if st.sheets.deleting.is_some() {
                     app.set_status("a delete is still under way".into());
                     return;

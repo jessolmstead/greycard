@@ -56,7 +56,9 @@ pub(crate) fn opened(st: &mut State, app: &App) {
         // the folders under it; the index's spelling is canonical, and
         // an offline root's folder is recorded without a look at it.
         crate::roots::View::Branch { folder, .. } => Some(folder.clone()),
-        crate::roots::View::Roots(_) | crate::roots::View::Collection { .. } => None,
+        crate::roots::View::Roots(_)
+        | crate::roots::View::Collection { .. }
+        | crate::roots::View::Queue => None,
     };
     // A folder under no root opened again has its own folders read
     // again for its tiles: nothing watches it.
@@ -118,6 +120,7 @@ pub(crate) fn show(st: &State, app: &App) {
             String::new(),
             String::new(),
         ),
+        (crate::roots::View::Queue, _) => ("Export queue".into(), String::new(), String::new()),
         (crate::roots::View::Folder | crate::roots::View::Branch { .. }, None) => {
             Default::default()
         }

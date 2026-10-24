@@ -72,6 +72,8 @@ pub(crate) enum Slot {
     Roots,
     /// A collection, by its id.
     Collection(String),
+    /// The export queue, always in its own order.
+    Queue,
 }
 
 impl Slot {
@@ -80,6 +82,7 @@ impl Slot {
             View::Folder | View::Branch { deep: false, .. } => Slot::Folder,
             View::Roots(_) | View::Branch { deep: true, .. } => Slot::Roots,
             View::Collection { id } => Slot::Collection(id.clone()),
+            View::Queue => Slot::Queue,
         }
     }
 
@@ -88,7 +91,7 @@ impl Slot {
         match self {
             Slot::Folder => Choice::By(Order::NAME),
             Slot::Roots => Choice::By(Order::TAKEN),
-            Slot::Collection(_) => Choice::Hand,
+            Slot::Collection(_) | Slot::Queue => Choice::Hand,
         }
     }
 }
@@ -116,6 +119,7 @@ impl Kept {
             Slot::Folder => self.folder.as_ref(),
             Slot::Roots => self.roots.as_ref(),
             Slot::Collection(id) => self.collections.get(id),
+            Slot::Queue => None,
         }
     }
 
@@ -140,6 +144,8 @@ impl Kept {
             Slot::Collection(id) => {
                 self.collections.insert(id, key);
             }
+            // The queue's order is the order it runs in.
+            Slot::Queue => {}
         }
     }
 
@@ -162,6 +168,10 @@ impl Kept {
 /// The Sort menu's entries, in order: "Hand order" first in a
 /// collection's, then each order. What the menu's index means.
 pub(crate) fn entries(view: &View) -> Vec<Option<SortBy>> {
+    // The queue's order is the order it runs in, and nothing else.
+    if Slot::of(view) == Slot::Queue {
+        return vec![None];
+    }
     let hand = matches!(Slot::of(view), Slot::Collection(_)).then_some(None);
     hand.into_iter()
         .chain(SortBy::ALL.into_iter().map(Some))

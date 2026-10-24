@@ -345,7 +345,7 @@ pub(crate) fn background_done(
             changed || under_current || failed || over_unreadable || !report.unreadable.is_empty();
         match st.views.view.clone() {
             // A collection's frames can be under any root.
-            View::Roots(None) | View::Collection { .. } => worth,
+            View::Roots(None) | View::Collection { .. } | View::Queue => worth,
             View::Roots(Some(r)) => worth && (path.starts_with(&r) || r.starts_with(path)),
             // A folder's own list changes only by a pass over it or over
             // a folder above it; with those under it, by one under it too.

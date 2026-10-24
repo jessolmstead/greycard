@@ -344,6 +344,267 @@ pub fn clamp_cell(cell: f32) -> f32 {
     }
 }
 
+/// A heading row's height, logical pixels: a line of small text and
+/// room round it, full width above the frames it heads.
+pub const HEAD: f32 = 28.0;
+
+/// A run of the list under one heading, or before the first: where it
+/// starts, how many frames, whether a heading stands above it, the
+/// grid rows before it, and the headings above it, its own included.
+#[derive(Debug, Clone, Copy)]
+struct Run {
+    start: i32,
+    len: i32,
+    head: bool,
+    line: i32,
+    heads: i32,
+}
+
+impl Run {
+    /// Its top, from the padding and the tiles: the rows above it and
+    /// the headings above it, its own included.
+    fn top(&self, pitch: f32) -> f32 {
+        self.line as f32 * pitch + self.heads as f32 * HEAD
+    }
+}
+
+/// The runs `heads` cut `count` frames into: each heading starts a row
+/// of its own, its frames on the rows under it. A heading at a frame
+/// past the list, or twice at one, is none.
+fn runs(count: i32, columns: i32, heads: &[i32]) -> Vec<Run> {
+    let mut starts: Vec<i32> = heads
+        .iter()
+        .copied()
+        .filter(|&h| h >= 0 && h < count)
+        .collect();
+    starts.sort_unstable();
+    starts.dedup();
+    let mut out = Vec::with_capacity(starts.len() + 1);
+    let (mut line, mut seen) = (0, 0);
+    let first = starts.first().copied().unwrap_or(count);
+    if first > 0 {
+        out.push(Run {
+            start: 0,
+            len: first,
+            head: false,
+            line,
+            heads: 0,
+        });
+        line += rows(first, columns);
+    }
+    for (k, &s) in starts.iter().enumerate() {
+        let end = starts.get(k + 1).copied().unwrap_or(count);
+        seen += 1;
+        out.push(Run {
+            start: s,
+            len: end - s,
+            head: true,
+            line,
+            heads: seen,
+        });
+        line += rows(end - s, columns);
+    }
+    out
+}
+
+/// The run frame `i` is in.
+fn run_of(runs: &[Run], i: i32) -> Option<&Run> {
+    let k = runs.partition_point(|r| r.start <= i);
+    runs.get(k.checked_sub(1)?)
+}
+
+/// Where frame `i` sits under `heads`: its column, its grid row
+/// counted over the whole sheet, and how many headings are above it.
+/// The cell's top is the padding, the tiles, the rows above at a row's
+/// pitch, and the headings above at [`HEAD`]. Without headings, the
+/// plain grid's place.
+pub fn place(i: i32, columns: i32, heads: &[i32]) -> (i32, i32, i32) {
+    let columns = columns.max(1);
+    if heads.is_empty() || i < 0 {
+        return (i.max(0) % columns, i.max(0) / columns, 0);
+    }
+    let count = i + 1 + heads.iter().copied().max().unwrap_or(0).max(0);
+    let runs = runs(count, columns, heads);
+    match run_of(&runs, i) {
+        Some(r) => {
+            let local = i - r.start;
+            (local % columns, r.line + local / columns, r.heads)
+        }
+        None => (i % columns, i / columns, 0),
+    }
+}
+
+/// The grid rows `count` frames take under `heads`.
+fn lines(runs: &[Run], columns: i32) -> i32 {
+    runs.last().map_or(0, |r| r.line + rows(r.len, columns))
+}
+
+/// The run grid row `line` is in.
+fn run_of_line(runs: &[Run], columns: i32, line: i32) -> Option<&Run> {
+    runs.iter()
+        .find(|r| line < r.line + rows(r.len, columns))
+        .or(runs.last())
+}
+
+/// The frame on grid row `line` at column `col`, held to the row's
+/// last frame: a run's last row is usually short.
+fn frame_on(runs: &[Run], columns: i32, line: i32, col: i32) -> i32 {
+    let Some(r) = run_of_line(runs, columns, line) else {
+        return -1;
+    };
+    let row = (line - r.line).clamp(0, rows(r.len, columns) - 1);
+    r.start + (row * columns + col.clamp(0, columns - 1)).min(r.len - 1)
+}
+
+/// The grid row at `y`, from the padding and the tiles: the row whose
+/// band takes it, a heading counting as part of the row under it, held
+/// to the sheet.
+fn line_at(runs: &[Run], columns: i32, pitch: f32, y: f32) -> i32 {
+    let mut found = 0;
+    for r in runs {
+        let n = rows(r.len, columns);
+        let top = r.top(pitch);
+        if y < top + n as f32 * pitch {
+            return r.line + (((y - top) / pitch).floor() as i32).clamp(0, n - 1);
+        }
+        found = r.line + n - 1;
+    }
+    found
+}
+
+/// [`step`] under `heads`: along the list as ever, or by grid rows with
+/// the column kept, over the headings, which no arrow lands on.
+pub fn step_in(selected: i32, dx: i32, dy: i32, columns: i32, count: i32, heads: &[i32]) -> i32 {
+    if heads.is_empty() || dy == 0 {
+        return step(selected, dx, dy, columns, count);
+    }
+    if count <= 0 || columns <= 0 {
+        return -1;
+    }
+    let runs = runs(count, columns, heads);
+    let (col, line, _) = place(selected.clamp(0, count - 1), columns, heads);
+    let to = (line + dy).clamp(0, lines(&runs, columns) - 1);
+    frame_on(&runs, columns, to, col)
+}
+
+/// [`visible`] under `heads`.
+pub fn visible_in(
+    offset: f32,
+    height: f32,
+    cell: f32,
+    columns: i32,
+    count: i32,
+    top: f32,
+    heads: &[i32],
+) -> Option<(i32, i32)> {
+    if heads.is_empty() {
+        return visible(offset, height, cell, columns, count, top);
+    }
+    let pitch = row_pitch(cell);
+    if count <= 0 || columns <= 0 || height <= 0.0 || pitch <= 0.0 || !pitch.is_finite() {
+        return None;
+    }
+    let runs = runs(count, columns, heads);
+    let first = line_at(&runs, columns, pitch, offset - PAD - top);
+    let last = line_at(&runs, columns, pitch, offset + height - PAD - top).max(first);
+    Some((
+        frame_on(&runs, columns, first, 0),
+        frame_on(&runs, columns, last, columns - 1),
+    ))
+}
+
+/// [`window`] under `heads`: the rows on screen and [`MARGIN_ROWS`]
+/// either side, as the first frame and how many.
+pub fn window_in(
+    offset: f32,
+    height: f32,
+    cell: f32,
+    columns: i32,
+    count: i32,
+    top: f32,
+    heads: &[i32],
+) -> (usize, usize) {
+    if heads.is_empty() {
+        return window(offset, height, cell, columns, count, top);
+    }
+    let pitch = row_pitch(cell);
+    if count <= 0 || columns <= 0 || height <= 0.0 || pitch <= 0.0 || !pitch.is_finite() {
+        return (0, 0);
+    }
+    let runs = runs(count, columns, heads);
+    let last_line = lines(&runs, columns) - 1;
+    let first = (line_at(&runs, columns, pitch, offset - PAD - top) - MARGIN_ROWS).max(0);
+    let last =
+        (line_at(&runs, columns, pitch, offset + height - PAD - top) + MARGIN_ROWS).min(last_line);
+    let a = frame_on(&runs, columns, first, 0);
+    let b = frame_on(&runs, columns, last, columns - 1);
+    (a as usize, (b - a + 1).max(0) as usize)
+}
+
+/// [`max_scroll`] under `heads`: the headings lengthen the sheet.
+pub fn max_scroll_in(
+    height: f32,
+    cell: f32,
+    columns: i32,
+    count: i32,
+    top: f32,
+    heads: &[i32],
+) -> f32 {
+    if heads.is_empty() {
+        return max_scroll(height, cell, columns, count, top);
+    }
+    let runs = runs(count, columns.max(1), heads);
+    let n = runs.iter().filter(|r| r.head).count();
+    let body = top + lines(&runs, columns.max(1)) as f32 * row_pitch(cell) + n as f32 * HEAD;
+    if body <= 0.0 {
+        return 0.0;
+    }
+    (2.0 * PAD + body - GAP - height).max(0.0)
+}
+
+/// [`reveal`] under `heads`: a frame on its run's first row brings its
+/// heading into view with it.
+#[allow(clippy::too_many_arguments)]
+pub fn reveal_in(
+    offset: f32,
+    height: f32,
+    cell: f32,
+    columns: i32,
+    count: i32,
+    selected: i32,
+    top: f32,
+    heads: &[i32],
+) -> f32 {
+    if heads.is_empty() {
+        return reveal(offset, height, cell, columns, count, selected, top);
+    }
+    if count <= 0 || columns <= 0 || selected < 0 || height <= 0.0 {
+        return 0.0;
+    }
+    let runs = runs(count, columns, heads);
+    let selected = selected.clamp(0, count - 1);
+    let (_, line, above) = place(selected, columns, heads);
+    let pitch = row_pitch(cell);
+    let y = PAD + top + line as f32 * pitch + above as f32 * HEAD;
+    let bottom = y + cell + LABEL;
+    let first_row = run_of(&runs, selected).is_some_and(|r| r.head && line == r.line);
+    let lead = if line == 0 && bottom + PAD <= height {
+        0.0
+    } else if first_row {
+        y - HEAD - PAD
+    } else {
+        y - PAD
+    };
+    let wanted = if lead < offset {
+        lead
+    } else if bottom + PAD > offset + height {
+        bottom + PAD - height
+    } else {
+        offset
+    };
+    wanted.clamp(0.0, max_scroll_in(height, cell, columns, count, top, heads))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -709,5 +970,67 @@ mod tests {
                 "{by}: {to}"
             );
         }
+    }
+    /// Two runs under headings, 5 frames and 3, in 4 columns: the
+    /// second heading starts a row of its own, the frames under it on
+    /// the rows below, and the arrows go over it.
+    #[test]
+    fn headings_break_the_rows_and_the_arrows_go_over_them() {
+        let (cols, count, heads) = (4, 8, [0, 5]);
+        assert_eq!(place(0, cols, &heads), (0, 0, 1));
+        assert_eq!(place(4, cols, &heads), (0, 1, 1));
+        // The second heading's first frame: column 0, the third row,
+        // two headings above it.
+        assert_eq!(place(5, cols, &heads), (0, 2, 2));
+        assert_eq!(place(7, cols, &heads), (2, 2, 2));
+        // Without headings, the plain grid.
+        assert_eq!(place(5, cols, &[]), (1, 1, 0));
+        // Down from the last frame above a heading lands on the first
+        // below it; up comes back.
+        assert_eq!(step_in(4, 0, 1, cols, count, &heads), 5);
+        assert_eq!(step_in(5, 0, -1, cols, count, &heads), 4);
+        // Down from column 3 of the first row: column 0 of the second,
+        // the short row's one frame.
+        assert_eq!(step_in(3, 0, 1, cols, count, &heads), 4);
+        assert_eq!(step_in(1, 0, 1, cols, count, &heads), 4);
+        // Along the list, as ever, and held at the ends.
+        assert_eq!(step_in(4, 1, 0, cols, count, &heads), 5);
+        assert_eq!(step_in(7, 0, 1, cols, count, &heads), 7);
+        assert_eq!(step_in(0, 0, -1, cols, count, &heads), 0);
+        // The sheet is two headings and three rows long.
+        let cell = 176.0;
+        let pitch = row_pitch(cell);
+        assert_eq!(
+            max_scroll_in(100.0, cell, cols, count, 0.0, &heads),
+            2.0 * PAD + 3.0 * pitch + 2.0 * HEAD - GAP - 100.0
+        );
+        assert_eq!(
+            max_scroll_in(100.0, cell, cols, count, 0.0, &[]),
+            max_scroll(100.0, cell, cols, count, 0.0)
+        );
+        // At the top a tall sheet shows every frame; scrolled to the
+        // third row, the second run alone.
+        assert_eq!(
+            visible_in(0.0, 2000.0, cell, cols, count, 0.0, &heads),
+            Some((0, 7))
+        );
+        let third = PAD + 2.0 * pitch + 2.0 * HEAD;
+        assert_eq!(
+            visible_in(third, 100.0, cell, cols, count, 0.0, &heads),
+            Some((5, 7))
+        );
+        // The cells cover the screen's rows and one either side.
+        assert_eq!(
+            window_in(third, 100.0, cell, cols, count, 0.0, &heads),
+            (4, 4)
+        );
+        // Revealing the second run's first frame from the foot brings
+        // its heading in above it.
+        let max = max_scroll_in(250.0, cell, cols, count, 0.0, &heads);
+        let to = reveal_in(max, 250.0, cell, cols, count, 5, 0.0, &heads);
+        assert_eq!(to, third - HEAD - PAD);
+        // A frame below the fold comes up against the foot.
+        let down = reveal_in(0.0, 250.0, cell, cols, count, 7, 0.0, &heads);
+        assert_eq!(down, (third + cell + LABEL + PAD - 250.0).min(max));
     }
 }

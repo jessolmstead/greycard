@@ -816,6 +816,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            if crate::panel::queue_view::refused(&state.borrow(), "the camera match") {
+                return;
+            }
             open(&mut state.borrow_mut(), &app, None);
         });
     }

@@ -181,6 +181,17 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
         app.set_status("a delete is still under way".into());
         return;
     }
+    // In the export queue's view, Delete takes the chosen frames out of
+    // the queue, never their files.
+    if st.views.view == crate::roots::View::Queue {
+        // Rejects folders are a folder's, and the queue's view is none.
+        if matches!(which, Which::Selection) {
+            crate::panel::queue_view::ask_out(st, app);
+        } else {
+            tracing::debug!("the export queue's view has no rejects folder to delete");
+        }
+        return;
+    }
     let over = match which {
         Which::Selection => {
             let chosen = chosen_frames(st);

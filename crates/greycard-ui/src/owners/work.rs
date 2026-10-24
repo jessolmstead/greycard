@@ -37,6 +37,9 @@ pub(crate) struct Work {
     pub(crate) queue_run: Option<crate::panel::export_queue::Run>,
     /// How many looks for an entry's files the queue has begun.
     pub(crate) queue_probes: u64,
+    /// The queued frame the worker said it began and has not finished,
+    /// by its id: its tile's running bar in the queue's view.
+    pub(crate) queue_busy: Option<u64>,
     /// The export presets, as the settings file keeps them.
     pub(crate) export_presets: Vec<sheet::ExportPreset>,
     /// The folder an export's chooser last answered with, where the

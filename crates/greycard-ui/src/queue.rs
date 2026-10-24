@@ -428,7 +428,11 @@ pub fn finished_line(tally: &Tally, total: usize, place: &str, seconds: f64) -> 
     } else {
         format!("exported {}", frames(tally.exported))
     };
-    s.push_str(&format!(" {place} in {seconds:.1} s"));
+    if !place.is_empty() {
+        s.push(' ');
+        s.push_str(place);
+    }
+    s.push_str(&format!(" in {seconds:.1} s"));
     if tally.skipped > 0 {
         s.push_str(&format!(", {} skipped (there already)", tally.skipped));
     }

@@ -136,6 +136,10 @@ pub(crate) fn file_writable(st: &State, file: usize) -> bool {
 /// the turn is beside the edit on the sidecar, not in it, so every
 /// develop has to carry it.
 pub(crate) fn current_turn(st: &State) -> u8 {
+    // A frame of the export queue turns as it was queued.
+    if let Some(f) = st.views.queued_open {
+        return f.turn;
+    }
     st.current
         .and_then(|c| st.sidecar_at(c))
         .map_or(0, |s| s.turn)
@@ -409,6 +413,10 @@ pub(crate) fn take_sources(st: &mut State, sources: &[greycard_edit::retouch::Pa
     let Some(c) = st.current else {
         return false;
     };
+    // The export queue's frame keeps its sidecar as it is.
+    if crate::panel::queue_view::frozen(st) {
+        return false;
+    }
     if !st.line_mut(c).is_some_and(|l| l.take_sources(sources)) {
         return false;
     }

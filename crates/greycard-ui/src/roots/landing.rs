@@ -26,6 +26,7 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
         seconds,
         collection,
         frames,
+        queue,
         companions,
         order,
     } = found;
@@ -48,6 +49,7 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
         let mut st = state.borrow_mut();
         if st.views.view_generation == generation && files.is_some() {
             st.views.collection_frames = frames;
+            st.views.queue_listed = queue;
         }
     }
     // The camera's JPEGs beside the list's raws, as the same read found
@@ -190,6 +192,10 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
             }
             {
                 let mut st = state.borrow_mut();
+                // The frame on screen is saved under the view it was on,
+                // before the view changes: whether its edit may be
+                // written is that view's question, not the new one's.
+                crate::panel::browser::save_leaving(&mut st, app);
                 st.views.view = view;
                 loading_done(&mut st.views.library, app);
             }
@@ -309,8 +315,10 @@ fn take_empty(
     missing: usize,
 ) {
     let collection = view.collection().is_some();
+    let queue = view == View::Queue;
     let passing = {
         let mut st = state.borrow_mut();
+        crate::panel::browser::save_leaving(&mut st, app);
         st.views.view = view;
         st.views.library.launch_left > 0 || st.views.library.starting
     };
@@ -320,7 +328,11 @@ fn take_empty(
     st.views.library.painted = Some((asked, "the view asked for"));
     crate::tree::want(&mut st, app);
     show(&st, app);
-    if collection {
+    if queue {
+        // Nothing queued: said as the export sheet says it.
+        app.set_status("nothing queued".into());
+        st.views.library.awaiting = false;
+    } else if collection {
         // Nothing in it, or nothing of it to be found: said, and a
         // capture waiting on it ends as an empty folder's would.
         let words = crate::panel::collections::opened_words(&st, missing).unwrap_or_default();

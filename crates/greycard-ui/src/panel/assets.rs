@@ -1099,6 +1099,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            if crate::panel::queue_view::refused(&state.borrow(), "a preset") {
+                return;
+            }
             // Another row clicked is the question left unanswered.
             app.set_preset_confirm_remove(-1);
             let Some(preset) = state

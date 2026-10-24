@@ -235,6 +235,37 @@ When it runs:
 
 **Clear** empties the whole queue after asking.
 
+While the queue runs, the status line counts across the whole run,
+such as "exporting 3 of 12", and the line at the end counts every
+frame it sent.
+
+### The queue in the grid
+
+Click **Export queue** under the roots in the grid's left pane to see
+every queued frame as a tile. The tiles are grouped under a heading
+for each destination, such as "JPEG quality 92, long edge 2048, sRGB,
+to edited beside each original", with how many frames go there. Sets
+whose choices and folder read the same share a heading. A frame
+queued twice shows twice.
+
+- **Delete**, or **Remove from queue...** in the frame menu, takes
+  the chosen frames out of the queue after asking. Their files are
+  not touched. A set left with no frames goes. The frames of the set
+  being exported stay.
+- While the queue runs, a frame already written shows the exported
+  mark, and the one being written shows a running bar.
+- Double-click a tile, or press **E**, to open the frame as it will
+  export: under the edit it was queued with, not its edit now. The
+  filmstrip shows the queued frames in the grid's order, without the
+  headings. **G** goes back to the queue's grid.
+- Editing is off in the queue's view, in the grid and the Loupe alike.
+  The develop tabs, the presets, the history, and the snapshots are
+  hidden. Undo, paste, sync, versions, turns, and presets do nothing,
+  and the frame menu dims them. Zoom, Fit, the scopes, soft
+  proof, and the rating, flag, and label keys still work, as does
+  Cull. **Export** is for the queue's run here: an export of the
+  chosen frames does nothing.
+
 ## An export in History
 
 Each export adds a line to the frame's **HISTORY**, such as

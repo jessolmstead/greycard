@@ -129,6 +129,10 @@ pub(crate) fn shift_modes(app: &App) -> SyncShift {
 /// when the panel is the frame's (outside culling), its sidecar's
 /// otherwise.
 fn edit_shown(st: &State, app: &App, c: usize) -> Edit {
+    // A frame of the export queue's view is its queued edit.
+    if let Some(q) = crate::panel::queue_view::frame_of(st, c) {
+        return q.edit.clone();
+    }
     if st.current == Some(c) && st.culling.cull.is_none() && crate::rows::panel_is_frames(st, c) {
         read_edit(app, &st.develop.edit, st.develop.target)
     } else {
@@ -1260,7 +1264,11 @@ pub(crate) fn copy_settings_of(st: &mut State, app: &App, cell: usize) {
         crate::rows::say_offline_for(st, app, cell, ": nothing to copy");
         return;
     }
-    let edit = if st.culling.cull.is_none() && st.current == Some(cell) {
+    // A frame of the export queue's view is its queued edit.
+    let queued = crate::panel::queue_view::frame_of(st, cell).map(|q| q.edit.clone());
+    let edit = if let Some(queued) = queued {
+        queued
+    } else if st.culling.cull.is_none() && st.current == Some(cell) {
         read_edit(app, &st.develop.edit, st.develop.target)
     } else {
         migrate_frame(st, cell);
@@ -1498,7 +1506,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_paste_asked(move || {
-            if let Some(app) = app_weak.upgrade() {
+            if let Some(app) = app_weak.upgrade()
+                && !crate::panel::queue_view::refused(&state.borrow(), "a paste")
+            {
                 paste_open(&mut state.borrow_mut(), &app);
             }
         });
@@ -1511,6 +1521,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
+            if crate::panel::queue_view::refused(&st, "a sync") {
+                return;
+            }
             if tool_in_hand(&app) {
                 app.set_status("put the tool down first (Esc), then sync".into());
                 return;

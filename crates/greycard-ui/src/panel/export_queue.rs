@@ -32,6 +32,10 @@ pub(crate) struct Run {
     /// The frames of this run's earlier entries, and of this one, that
     /// were not there to send and were left queued.
     pub(crate) left_behind: usize,
+    /// The run so far, across its entries: what the status line counts
+    /// in, since a queue built a frame at a time is a set of one an
+    /// entry.
+    pub(crate) whole: Whole,
     /// Which look for the files this is, so a late answer to one the
     /// queue has since let go of is not taken for the current one.
     pub(crate) probe: u64,
@@ -39,6 +43,74 @@ pub(crate) struct Run {
     /// back as the worker would.
     #[cfg(test)]
     pub(crate) sent: Vec<PathBuf>,
+}
+
+/// A run of the queue across its entries: the frames sent in the sets
+/// before this one, what they came to, when it began, and where they
+/// went.
+#[derive(Clone)]
+pub(crate) struct Whole {
+    pub(crate) before: usize,
+    pub(crate) tally: queue::Tally,
+    pub(crate) started: std::time::Instant,
+    pub(crate) places: Vec<String>,
+}
+
+impl Whole {
+    pub(crate) fn new() -> Self {
+        Self {
+            before: 0,
+            tally: queue::Tally::default(),
+            started: std::time::Instant::now(),
+            places: Vec::new(),
+        }
+    }
+
+    /// `set`'s tally added in, the set done with.
+    fn add(&mut self, set: &queue::Set, tally: &queue::Tally) {
+        self.before += set.total;
+        self.tally.exported += tally.exported;
+        self.tally.skipped += tally.skipped;
+        self.tally.canceled += tally.canceled;
+        self.tally.failed.extend(tally.failed.iter().cloned());
+        self.tally.parts.0 += tally.parts.0;
+        self.tally.parts.1 += tally.parts.1;
+        let place = set.place();
+        if !self.places.contains(&place) {
+            self.places.push(place);
+        }
+    }
+}
+
+/// The frames the queue's run is to send in all, while `set` is its
+/// running set: those sent before it, its own, and every frame of the
+/// entries after it. A frame later found not there, or taken out of the
+/// queue, leaves the count as it is found.
+fn run_total(st: &State, run: &Run, set: &queue::Set) -> usize {
+    let after: usize = st
+        .work
+        .export_queue
+        .iter()
+        .skip(run.entry + 1)
+        .map(|e| e.frames.len())
+        .sum();
+    run.whole.before + set.total + after
+}
+
+/// The id of frame `index` of `set`, when the set is the queue run's.
+pub(crate) fn id_in_run(st: &State, set: &Arc<queue::Set>, index: usize) -> Option<u64> {
+    let run = st.work.queue_run.as_ref().filter(|r| r.is(set))?;
+    let at = *run.at.get(index)?;
+    Some(st.work.export_queue.get(run.entry)?.frames.get(at)?.id)
+}
+
+/// The status line while frame `index` of `set` is written: counted
+/// across the queue's run when the set is the run's, else in the set.
+pub(crate) fn progress_line(st: &State, set: &Arc<queue::Set>, index: usize, name: &str) -> String {
+    match st.work.queue_run.as_ref().filter(|r| r.is(set)) {
+        Some(run) => queue::progress_line(run.whole.before + index, run_total(st, run, set), name),
+        None => queue::progress_line(index, set.total, name),
+    }
 }
 
 impl Run {
@@ -152,6 +224,9 @@ pub(crate) fn show_queue(st: &State, app: &App) {
         })
         .collect();
     app.set_export_queue_rows(ModelRc::new(VecModel::from(rows)));
+    // The queue's view: its count, and its tiles' marks as the run goes.
+    crate::panel::queue_view::show_count(st, app);
+    crate::panel::queue_view::marks(st, app);
 }
 
 /// Write the queue now, as it is: every change is kept at once. While
@@ -274,6 +349,7 @@ fn entry_of(frames: SetFrames, sheet: crate::sheet::Sheet, preset: Option<String
                 turn,
                 seed_blend,
                 version,
+                id: export_queue::fresh_id(),
             })
             .collect(),
     }
@@ -293,6 +369,7 @@ pub(crate) fn add(st: &mut State, app: &App, entry: Entry) {
         entry.sheet.settings().describe()
     );
     st.work.export_queue.push(entry);
+    crate::panel::queue_view::changed(st, app);
     keep(st);
     show_queue(st, app);
     app.set_status(
@@ -315,14 +392,14 @@ pub(crate) fn run(st: &mut State, app: &App) {
         app.set_status("nothing queued".into());
         return;
     }
-    begin_at(st, app, 0, 0);
+    begin_at(st, app, 0, 0, Whole::new());
 }
 
 /// Look for the files of entry `index` (off the window's thread) and,
 /// once they are found, send it as a set; past the last entry, the
 /// run is over. `left_behind` counts the frames earlier entries left
 /// queued for not being there.
-fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize) {
+fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize, whole: Whole) {
     let Some(entry) = st.work.export_queue.get(index) else {
         st.work.queue_run = None;
         show_queue(st, app);
@@ -354,6 +431,7 @@ fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize) {
         at: Vec::new(),
         done: vec![false; checks.len()],
         left_behind,
+        whole,
         probe,
         #[cfg(test)]
         sent: Vec::new(),
@@ -506,6 +584,7 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
         if let Some(run) = st.work.queue_run.as_mut() {
             run.done = vec![false; run.done.len() - deleted.len()];
         }
+        crate::panel::queue_view::changed(st, app);
         keep(st);
     }
     let deleted_said = match deleted_names.as_slice() {
@@ -528,7 +607,18 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
         app.set_status(said.into());
         // The next entry: at this place when this one went with its
         // deleted versions, after it otherwise.
-        begin_at(st, app, if emptied { index } else { index + 1 }, left);
+        let whole = st
+            .work
+            .queue_run
+            .as_ref()
+            .map_or_else(Whole::new, |r| r.whole.clone());
+        begin_at(
+            st,
+            app,
+            if emptied { index } else { index + 1 },
+            left,
+            whole,
+        );
         return;
     }
     let count = frames.len();
@@ -575,15 +665,41 @@ pub(crate) fn frame_done(st: &mut State, set: &Arc<queue::Set>, index: usize, ra
         *d = true;
         keep(st);
     }
+    if st.work.queue_busy.is_some() && st.work.queue_busy == id_in_run(st, set, index) {
+        st.work.queue_busy = None;
+    }
 }
 
 /// `set` is finished, its finished line `line`: when it was the
 /// queue's, what is left of its entry stays queued, and the next entry
 /// goes unless the set was stopped.
-pub(crate) fn set_done(st: &mut State, app: &App, set: &Arc<queue::Set>, line: &str) {
-    let Some(run) = st.work.queue_run.take_if(|r| r.is(set)) else {
+pub(crate) fn set_done(
+    st: &mut State,
+    app: &App,
+    set: &Arc<queue::Set>,
+    tally: &queue::Tally,
+    line: &str,
+) {
+    let Some(run) = st.work.queue_run.as_ref().filter(|r| r.is(set)) else {
         return;
     };
+    // The finished line counts the whole run, as its progress did.
+    let total = run_total(st, run, set);
+    let Some(mut run) = st.work.queue_run.take() else {
+        return;
+    };
+    tracing::debug!("export queue: set of entry {} done: {line}", run.entry);
+    run.whole.add(set, tally);
+    let place = match run.whole.places.as_slice() {
+        [one] => one.clone(),
+        _ => String::new(),
+    };
+    let line = &queue::finished_line(
+        &run.whole.tally,
+        total,
+        &place,
+        run.whole.started.elapsed().as_secs_f64(),
+    );
     let mut next = run.entry + 1;
     if let Some(entry) = st.work.export_queue.get_mut(run.entry) {
         let mut done = run.done.iter();
@@ -595,6 +711,7 @@ pub(crate) fn set_done(st: &mut State, app: &App, set: &Arc<queue::Set>, line: &
             next = run.entry;
         }
     }
+    crate::panel::queue_view::changed(st, app);
     keep(st);
     show_queue(st, app);
     let behind = left_behind(run.left_behind);
@@ -621,7 +738,7 @@ pub(crate) fn set_done(st: &mut State, app: &App, set: &Arc<queue::Set>, line: &
         app.set_status(format!("{line}{behind}; {end}").into());
         return;
     }
-    begin_at(st, app, next, run.left_behind);
+    begin_at(st, app, next, run.left_behind, run.whole);
 }
 
 /// Clear: every entry and the file. Not while an entry is being
@@ -635,6 +752,7 @@ pub(crate) fn clear(st: &mut State, app: &App) {
     let n = st.work.export_queue.len();
     st.work.queue_run = None;
     st.work.export_queue.clear();
+    crate::panel::queue_view::changed(st, app);
     keep(st);
     show_queue(st, app);
     app.set_status(format!("export queue cleared ({})", export_queue::sets(n)).into());
@@ -658,6 +776,7 @@ pub(crate) fn remove(st: &mut State, app: &App, index: usize) {
     {
         run.entry -= 1;
     }
+    crate::panel::queue_view::changed(st, app);
     keep(st);
     show_queue(st, app);
     tracing::info!(
@@ -1006,6 +1125,70 @@ mod tests {
             );
         }
         drop(st);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The status line counts across the whole run, not within each
+    /// entry's set: two entries of two and one frames say "3 of 3" on
+    /// the last, and the finished line counts all three.
+    #[test]
+    fn the_progress_counts_across_the_whole_run() {
+        let (dir, files) = shoot("whole", 3);
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.work.export_queue_file = Some(queue_file(&dir));
+            give_edits(&mut st);
+            let a = entry(&st, &[0, 1], Some("Web"), "2048");
+            let b = entry(&st, &[2], Some("Web"), "2048");
+            add(&mut st, &app, a);
+            add(&mut st, &app, b);
+        }
+        app.invoke_export_queue_run();
+        let started = |index: usize, name: &str| {
+            let set = state.borrow().work.exporting.clone().unwrap();
+            crate::panel::deliver::deliver(
+                &app,
+                Outcome::SetFrameStarted {
+                    set,
+                    index,
+                    name: name.to_string(),
+                },
+            );
+            app.get_status().to_string()
+        };
+        assert_eq!(started(0, "IMG_0000.jpg"), "exporting 1 of 3: IMG_0000.jpg");
+        frame(&app, &state, 0, exported("/nowhere/out/IMG_0000.jpg"));
+        assert_eq!(started(1, "IMG_0001.jpg"), "exporting 2 of 3: IMG_0001.jpg");
+        frame(&app, &state, 1, exported("/nowhere/out/IMG_0001.jpg"));
+        finish(&app, &state);
+        assert_eq!(started(0, "IMG_0002.jpg"), "exporting 3 of 3: IMG_0002.jpg");
+        frame(&app, &state, 0, exported("/nowhere/out/IMG_0002.jpg"));
+        finish(&app, &state);
+        // The finished line is the whole run's: the worker's own threads
+        // fail these empty files at their pace, so only its shape is
+        // fixed here, and the sum is checked below.
+        let status = app.get_status().to_string();
+        assert!(
+            status.starts_with("exported ") && status.ends_with("; the queue is done"),
+            "{status}"
+        );
+        let mut whole = Whole::new();
+        let one = |n| queue::Tally {
+            exported: n,
+            failed: vec![("x".into(), "why".into())],
+            ..queue::Tally::default()
+        };
+        let set = |n| queue::Set::new(n, None, Default::default(), Default::default());
+        whole.add(&set(2), &one(1));
+        whole.add(&set(1), &one(1));
+        assert_eq!(
+            (whole.before, whole.tally.exported, whole.tally.failed.len()),
+            (3, 2, 2)
+        );
+        assert_eq!(whole.places, ["beside their files"]);
+        drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -1542,6 +1725,7 @@ mod tests {
                     id: id.clone(),
                     name: "Warm".into(),
                 }),
+                id: export_queue::fresh_id(),
             });
             add(&mut st, &app, e);
         }

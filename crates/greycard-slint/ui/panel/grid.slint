@@ -3,7 +3,7 @@
 // a row of tiles for the folders in the folder open.
 
 import { Theme } from "../theme.slint";
-import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile, SortMenu } from "../structs.slint";
+import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile, SortMenu, GridHead, GridPlace } from "../structs.slint";
 import { PanelButton, ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
 import { FilterBar, SortButton } from "filter.slint";
 import { LoadingCard } from "loading.slint";
@@ -48,11 +48,12 @@ export component GridSheet inherits Rectangle {
     in property <int> menu-at: -1;
     changed menu-at => {
         if (self.menu-at >= 0 && self.menu-at < self.thumbs.length) {
+            let p = self.grid-place(self.menu-at, self.grid-cols, self.grid-head-rows);
             self.frame-menu(self.menu-at,
                 grid-sheet.absolute-position.x + self.grid-left
-                    + mod(self.menu-at, self.grid-cols) * self.grid-pitch + self.grid-cell / 2,
+                    + p.col * self.grid-pitch + self.grid-cell / 2,
                 grid-sheet.absolute-position.y - self.grid-scroll + self.grid-pad + self.grid-top
-                    + floor(self.menu-at / self.grid-cols) * self.grid-row + self.grid-cell / 2);
+                    + p.line * self.grid-row + p.heads * self.grid-head-h + self.grid-cell / 2);
         }
     }
     /// The lightbox: the sheet alone on the canvas's dark, no header,
@@ -107,6 +108,28 @@ export component GridSheet inherits Rectangle {
     /// online.
     in property <[FolderTile]> tiles;
     in property <length> grid-top;
+    /// The headings: each a row of its own above the frames it heads,
+    /// which start a new row under it. `grid-head-rows` is where each
+    /// stands, by the list's number, for the arithmetic; empty for a
+    /// grid with none (every view but the export queue's, and the
+    /// lightbox, which ignores them).
+    in property <[GridHead]> grid-heads;
+    in property <[int]> grid-head-rows;
+    in property <length> grid-head-h;
+    /// A tile's export is being written: the running bar's one phase,
+    /// as the status plate runs its own.
+    in property <bool> queue-busy;
+    property <float> busy-phase: 0;
+    Timer {
+        interval: 16ms;
+        running: root.queue-busy;
+        triggered => { root.busy-phase = mod(root.busy-phase + 0.015, 1); }
+    }
+    /// The export queue's view: no rejects folder to delete.
+    in property <bool> queue-view;
+    /// Where a frame sits under the headings, asked of the arithmetic
+    /// the Rust side tests.
+    pure callback grid-place(int, int, [int]) -> GridPlace;
     callback tile-picked(int);
     callback tile-reveal(int);
     /// After a pick from the tiles' menu: the keys take the focus back.
@@ -367,6 +390,7 @@ export component GridSheet inherits Rectangle {
                                 // a sub-menu, and this menu has none.
                                 MenuItem {
                                     title: "Delete rejects folder...";
+                                    enabled: !root.queue-view;
                                     activated => { root.delete-asked("rejects"); }
                                 }
                                 if root.archive-rejects-choices.length > 0: MenuSeparator { }
@@ -524,15 +548,52 @@ export component GridSheet inherits Rectangle {
                         }
                     }
                 }
+                // The headings, full width over the rows they head: the
+                // words at the left, the count at the right, muted, as
+                // a root's row says its count.
+                for h in root.grid-heads: Rectangle {
+                    property <GridPlace> p: root.grid-place(h.row, root.grid-cols, root.grid-head-rows);
+                    x: root.grid-left;
+                    y: root.grid-pad + root.grid-top + self.p.line * root.grid-row
+                        + (self.p.heads - 1) * root.grid-head-h;
+                    width: root.grid-cols * root.grid-pitch - root.grid-gap;
+                    height: root.grid-head-h;
+                    accessible-role: text;
+                    accessible-label: h.text;
+                    accessible-value: h.count;
+                    Rectangle { y: parent.height - 1px; height: 1px; width: 100%; background: Theme.border; }
+                    HorizontalLayout {
+                        padding-left: Theme.space-1;
+                        padding-right: Theme.space-1;
+                        spacing: Theme.space-2;
+                        Text {
+                            text: h.text;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            font-weight: Theme.weight-medium;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: h.count;
+                            color: Theme.text-muted;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
                 for c in root.cells: cell := Rectangle {
                     property <int> i: c.row;
                     property <Thumb> t: c.thumb;
+                    property <GridPlace> p: root.grid-place(i, root.grid-cols, root.grid-head-rows);
                     // As the strip has it: the set on the
                     // selection's ground, the current frame ringed.
                     property <bool> on: i == root.selected;
                     property <bool> in-set: on || t.chosen;
-                    x: root.grid-left + mod(i, root.grid-cols) * root.grid-pitch;
-                    y: root.grid-pad + root.grid-top + floor(i / root.grid-cols) * root.grid-row;
+                    x: root.grid-left + self.p.col * root.grid-pitch;
+                    y: root.grid-pad + root.grid-top + self.p.line * root.grid-row
+                        + self.p.heads * root.grid-head-h;
                     width: root.grid-cell;
                     height: root.grid-cell + root.grid-label;
                     border-radius: Theme.radius-md;
@@ -705,10 +766,29 @@ export component GridSheet inherits Rectangle {
                             Theme.space-1,
                             max(Theme.space-1, Theme.space-1 + parent.box - self.height));
                         edited: t.edited;
-                        exported: t.exported;
+                        exported: t.exported || t.queue-done;
                         collected: t.collected;
                         paired: t.paired;
                         glyph: clamp(root.grid-cell / 16, 9px, 18px);
+                    }
+                    // The frame the export queue is writing now: the
+                    // status plate's running bar, along the foot of
+                    // its picture, on the sheet's one phase.
+                    if !root.lightbox && t.queue-busy: Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: root.grid-cell - Theme.space-1 - 3px - Theme.space-2;
+                        width: min(60px, parent.width - 4 * Theme.space-1);
+                        height: 3px;
+                        border-radius: 1.5px;
+                        background: Theme.over-track;
+                        clip: true;
+                        Rectangle {
+                            x: (parent.width + 24px) * root.busy-phase - 24px;
+                            width: 24px;
+                            height: 100%;
+                            border-radius: 1.5px;
+                            background: Theme.accent;
+                        }
                     }
                     // A version's name on the picture's top left, held
                     // inside the cell as the marks are.

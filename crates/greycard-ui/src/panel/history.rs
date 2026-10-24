@@ -412,7 +412,8 @@ pub(crate) fn take_current(st: &mut State, app: &App, worker: &Worker) {
 /// preset over a set whose write of the frame's file already carried
 /// the state made current has nothing more to write.
 pub(crate) fn take_current_with(st: &mut State, app: &App, worker: &Worker, save: bool) {
-    if st.current.is_none() {
+    // The export queue's frame keeps its queued edit on the panel.
+    if st.current.is_none() || crate::panel::queue_view::refused(st, "a state made current") {
         return;
     }
     // The panel is the sidecar's again: the command line's overrides,
@@ -531,6 +532,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 );
                 return;
             }
+            if crate::panel::queue_view::refused(&st, if back { "an undo" } else { "a redo" }) {
+                return;
+            }
             // Whatever the panel holds is a state first.
             record_panel(&mut st, &app);
             let Some(line) = st.line_mut(c) else {
@@ -557,6 +561,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
+            if crate::panel::queue_view::refused(&st, "a history step") {
+                return;
+            }
             let Some(c) = st.current else {
                 return;
             };
@@ -649,6 +656,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
+            if crate::panel::queue_view::refused(&st, "a snapshot") {
+                return;
+            }
             let Some(c) = st.current else {
                 return;
             };
@@ -681,6 +691,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
+            if crate::panel::queue_view::refused(&st, "a snapshot") {
+                return;
+            }
             let Some(c) = st.current else {
                 return;
             };
@@ -755,6 +768,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
+            if crate::panel::queue_view::refused(&st, "a snapshot") {
+                return;
+            }
             let Some(c) = st.current else {
                 return;
             };
@@ -777,6 +793,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
+            if crate::panel::queue_view::refused(&st, "a snapshot") {
+                return;
+            }
             let Some(c) = st.current else {
                 return;
             };

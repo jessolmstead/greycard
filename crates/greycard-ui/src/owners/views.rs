@@ -22,6 +22,20 @@ pub(crate) struct Views {
     /// file is listed and whose version its sidecar has, rather than
     /// every file's own and all its versions. None for any other list.
     pub(crate) collection_frames: Option<Vec<versions::Key>>,
+    /// The export queue's view: where each of `collection_frames` is in
+    /// the queue, as it was listed. None for any other list.
+    pub(crate) queue_listed: Option<crate::panel::queue_view::Listed>,
+    /// The id of the queued frame each cell is, in the export queue's
+    /// view, as the cells were last made (`queue_view::cell_ids_made`).
+    pub(crate) queue_cell_ids: Vec<Option<u64>>,
+    /// The grid's headings as the list shows them (the export queue's
+    /// destinations), each at the row of the first frame it heads.
+    pub(crate) grid_heads: Vec<crate::panel::queue_view::Head>,
+    /// The panel holds a frame of the export queue under its queued
+    /// edit, opened from the queue's view: its turn and its seed.
+    pub(crate) queued_open: Option<crate::panel::queue_view::QueuedOpen>,
+    /// A listing of the queue's view is asked for, by the event loop.
+    pub(crate) queue_relist_due: bool,
     /// Each file's cells, by file, while the cells do not stand as
     /// `versions::cells_of` makes them (each file's together, its own
     /// first, the files in order): an open stack gathers its members

@@ -20,7 +20,7 @@ pub const FILE: &str = "export-queue.json";
 const VERSION: u32 = 1;
 
 /// One frame of an entry: the file and the edit it was queued under.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueuedFrame {
     pub source: PathBuf,
     /// The edit at queue time, as the sidecar writes one: the export
@@ -42,6 +42,29 @@ pub struct QueuedFrame {
     /// export is recorded on. Left out of the file for the file's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<crate::queue::Version>,
+    /// Which queued frame this is, for this run of the editor alone:
+    /// what the queue's view follows a frame by while the entries
+    /// around it change. Never written; each read takes a fresh one.
+    #[serde(skip, default = "fresh_id")]
+    pub id: u64,
+}
+
+/// Two queued frames are the same when they would export the same:
+/// the id is the window's, not the queue's.
+impl PartialEq for QueuedFrame {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+            && self.edit == other.edit
+            && self.turn == other.turn
+            && self.seed_blend == other.seed_blend
+            && self.version == other.version
+    }
+}
+
+/// An id no other queued frame of this run has.
+pub fn fresh_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// One set waiting: what Export would have written, held until the
@@ -244,6 +267,7 @@ mod tests {
                         turn: (i % 4) as u8,
                         seed_blend: i == 0,
                         version: None,
+                        id: fresh_id(),
                     }
                 })
                 .collect(),

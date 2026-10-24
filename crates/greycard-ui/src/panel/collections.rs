@@ -50,6 +50,15 @@ pub(crate) enum Asked {
     /// A name for version `id` of the file at `path`: the sheet lent to
     /// the versions (`panel::versions`), which have no sets.
     Version { path: PathBuf, id: String },
+    /// Whether to take these queued frames (by id) out of the export
+    /// queue: the sheet lent to the queue's view.
+    QueueOut { out: Vec<u64> },
+}
+
+/// Ask whether to take the queued frames `out` (by id) out of the
+/// export queue, on the sheet a collection's delete asks on.
+pub(crate) fn ask_queue_out(st: &mut State, app: &App, out: Vec<u64>) {
+    ask(st, app, Asked::QueueOut { out });
 }
 
 /// "Cover picks", or "Clients/2026/Cover picks" for one in sets.
@@ -605,6 +614,13 @@ fn ask(st: &mut State, app: &App, asked: Asked) {
             "Delete",
             String::new(),
         ),
+        Asked::QueueOut { out, .. } => (
+            format!("Take {} out of the queue?", crate::queue::frames(out.len())),
+            String::new(),
+            false,
+            "Remove",
+            String::new(),
+        ),
         // Asked by `panel::versions`, which fills the sheet itself.
         Asked::Version { .. } => return,
     };
@@ -640,13 +656,14 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
         crate::panel::versions::renamed(&mut st, app, &path, &id, &typed);
         return;
     }
-    if !named && !matches!(asked, Asked::Delete(_)) {
+    if !named && !matches!(asked, Asked::Delete(_) | Asked::QueueOut { .. }) {
         // Nothing typed: the sheet stays, as it was.
         st.views.collections.asked = Some(asked);
         return;
     }
     app.set_collection_sheet_open(false);
     let mut reopen = None;
+    let mut relist_queue = false;
     match asked {
         Asked::New { add } => {
             let mut c = Collection::new(&typed);
@@ -696,6 +713,10 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
         }
         // Taken before the match.
         Asked::Version { .. } => {}
+        Asked::QueueOut { out } => {
+            crate::panel::queue_view::take_out(&mut st, app, &out);
+            relist_queue = true;
+        }
         Asked::Delete(id) => {
             let name = name_of(&st, &id);
             if st.views.collections.delete(&id) {
@@ -714,6 +735,9 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
     drop(st);
     if let Some(view) = reopen {
         crate::roots::open_view(state, app, worker, view);
+    }
+    if relist_queue {
+        crate::panel::queue_view::relist(state, app, worker);
     }
 }
 
@@ -993,6 +1017,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 View::Roots(r) => r.clone(),
                 View::Branch { folder, .. } => Some(folder.clone()),
                 View::Folder => None,
+                // The queue's list is its file's: nothing to keep a
+                // filter over.
+                View::Queue => {
+                    tracing::info!("a smart collection is not saved over the export queue");
+                    return;
+                }
                 View::Collection { .. } => {
                     app.set_status(
                         "a smart collection is saved from a root's view, not a collection's".into(),

@@ -29,7 +29,25 @@ impl Look {
         // is: each picture once already, so nothing is hidden.
         let mut collection = None;
         let mut frames = None;
+        let mut queue = None;
         let source = match self.source {
+            // The queue's files, once each in the order first met, as
+            // files given; its frames, a file twice when it is queued
+            // twice, for the cells.
+            Source::Queue {
+                frames: keys,
+                listed,
+            } => {
+                let mut seen: HashSet<&PathBuf> = HashSet::new();
+                let files: Vec<PathBuf> = keys
+                    .iter()
+                    .filter(|k| seen.insert(&k.path))
+                    .map(|k| k.path.clone())
+                    .collect();
+                frames = Some(keys);
+                queue = Some(listed);
+                Source::Files(files)
+            }
             Source::Collection {
                 id,
                 refs,
@@ -82,8 +100,8 @@ impl Look {
         };
         let from_disk_list = matches!(source, Source::Folder(_) | Source::Files(_));
         let files = match source {
-            // Listed as rows above; nothing comes this way.
-            Source::Collection { .. } => None,
+            // Listed as rows or files above; nothing comes this way.
+            Source::Collection { .. } | Source::Queue { .. } => None,
             Source::Folder(dir) => {
                 // Looked at first, with the roots' wait: a folder on a
                 // share that has gone away does not answer at all, and
@@ -366,6 +384,7 @@ impl Look {
             seconds,
             collection,
             frames,
+            queue,
             companions,
             order: self.order,
         }

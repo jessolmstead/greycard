@@ -112,6 +112,10 @@ pub(crate) enum View {
     /// once, in the collection's own order, or in the order chosen for
     /// it (`sort`).
     Collection { id: String },
+    /// The export queue: every frame of every entry, each under its
+    /// destination's heading, in the queue's order. A frame queued
+    /// twice is listed twice: each is an export.
+    Queue,
 }
 
 impl View {
@@ -129,7 +133,7 @@ impl View {
             View::Roots(None) => (all.to_vec(), false),
             View::Roots(Some(r)) => (vec![r.clone()], false),
             View::Branch { folder, deep, .. } => (vec![folder.clone()], !deep),
-            View::Collection { .. } => (Vec::new(), false),
+            View::Collection { .. } | View::Queue => (Vec::new(), false),
         }
     }
 
@@ -376,6 +380,14 @@ enum Source {
     /// has no path to the index and found them itself. What the read
     /// found moved or rewritten, and how many are missing, come back
     /// with it for the collection's file and the status line.
+    /// The export queue's frames, each file and version, in the view's
+    /// order, with where each is in the queue: listed as files given
+    /// are, their sidecars read on the pool or standing in from their
+    /// rows.
+    Queue {
+        frames: Vec<crate::versions::Key>,
+        listed: crate::panel::queue_view::Listed,
+    },
     Collection {
         /// The collection's id: what the read finds is put into this
         /// one, whatever view is open when it lands.
@@ -526,6 +538,8 @@ pub(crate) struct Found {
     /// A collection's read: the frames it shows, each file and version,
     /// in its order.
     frames: Option<Vec<crate::versions::Key>>,
+    /// The export queue's read: where each of `frames` is in the queue.
+    queue: Option<crate::panel::queue_view::Listed>,
     /// The camera's JPEGs beside the listed raws, raw by raw: from the
     /// folder's listing, or from the index's rows for a view of it.
     companions: Vec<(PathBuf, Vec<PathBuf>)>,

@@ -78,6 +78,10 @@ export component FrameMenu inherits Rectangle {
     callback rename-version();
     callback swap-version();
     callback delete-version();
+    /// The export queue's view: what would write an edit is off, and
+    /// the frames are taken out of the queue rather than deleted.
+    in property <bool> queue;
+    callback queue-remove();
     /// Whether the frame right-clicked is a file with versions or a
     /// version of one: Compare versions is offered on it.
     in property <bool> can-compare;
@@ -127,10 +131,11 @@ export component FrameMenu inherits Rectangle {
                     : root.paste-count < 1 ? "Paste settings from " + root.paste-from
                     : "Paste settings from " + root.paste-from + " onto " + root.paste-count
                         + (root.paste-count == 1 ? " frame..." : " frames...");
-                enabled: root.paste-from != "";
+                enabled: root.paste-from != "" && !root.queue;
                 activated => { root.paste(); }
             }
             if root.count > 1: MenuItem {
+                enabled: !root.queue;
                 title: "Sync " + (root.count - 1) + (root.count == 2 ? " frame to " : " frames to ")
                     + (root.current == "" ? "this one" : root.current) + "...";
                 activated => { root.sync(); }
@@ -148,13 +153,15 @@ export component FrameMenu inherits Rectangle {
             }
             if root.version != "": MenuItem {
                 title: "Rename version...";
+                enabled: !root.queue;
                 activated => { root.rename-version(); }
             }
             if root.version != "": MenuItem {
                 title: "Swap with the original";
+                enabled: !root.queue;
                 activated => { root.swap-version(); }
             }
-            if root.version != "": MenuItem {
+            if root.version != "" && !root.queue: MenuItem {
                 title: "Delete version...";
                 activated => { root.delete-version(); }
             }
@@ -259,6 +266,10 @@ export component FrameMenu inherits Rectangle {
                 title: (root.count > 1 ? "Remove " + root.count + " frames from " : "Remove from ")
                     + root.collection-open;
                 activated => { root.collection-remove(); }
+            }
+            if root.queue: MenuItem {
+                title: "Remove from queue...";
+                activated => { root.queue-remove(); }
             }
             MenuSeparator { }
             MenuItem {

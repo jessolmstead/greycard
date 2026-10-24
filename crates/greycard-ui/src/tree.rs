@@ -209,7 +209,7 @@ pub(crate) fn tiles_for(st: &State) -> Vec<&Node> {
     let deep = match &st.views.view {
         View::Branch { deep, .. } => *deep,
         View::Roots(_) => st.views.tree.subfolders,
-        View::Folder | View::Collection { .. } => false,
+        View::Folder | View::Collection { .. } | View::Queue => false,
     };
     if deep {
         return Vec::new();
@@ -261,7 +261,7 @@ pub(crate) fn shown_for(st: &State) -> Option<(&Path, &Path)> {
     match &st.views.view {
         View::Branch { root, folder, .. } => Some((root, folder)),
         View::Roots(Some(r)) => Some((r, r)),
-        View::Roots(None) | View::Collection { .. } => None,
+        View::Roots(None) | View::Collection { .. } | View::Queue => None,
         View::Folder => {
             let dir = st.views.recent.open.as_deref()?;
             let root = st.views.library.roots.root_of(dir)?;

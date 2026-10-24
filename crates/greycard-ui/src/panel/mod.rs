@@ -23,6 +23,7 @@ pub(crate) mod menu;
 pub(crate) mod parts;
 pub(crate) mod parts_all;
 pub(crate) mod prefs;
+pub(crate) mod queue_view;
 pub(crate) mod rawtherapee;
 pub(crate) mod recent;
 pub(crate) mod retouch;

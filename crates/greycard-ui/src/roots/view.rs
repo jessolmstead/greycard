@@ -9,7 +9,9 @@ pub(crate) use greycard_library::grouped;
 fn roots_of(st: &State, view: &View) -> Vec<PathBuf> {
     match view {
         View::Folder => Vec::new(),
-        View::Roots(None) | View::Collection { .. } => st.views.library.roots.list().to_vec(),
+        View::Roots(None) | View::Collection { .. } | View::Queue => {
+            st.views.library.roots.list().to_vec()
+        }
         View::Roots(Some(r)) | View::Branch { root: r, .. } => vec![r.clone()],
     }
 }
@@ -56,6 +58,8 @@ fn listed_order(st: &State, view: &View) -> greycard_library::Order {
 pub(super) fn read_order(st: &State, view: &View) -> Option<greycard_library::Order> {
     match view {
         View::Collection { .. } => order_of(st, view),
+        // The queue's own order, always.
+        View::Queue => None,
         view => Some(listed_order(st, view)),
     }
 }
@@ -68,6 +72,16 @@ pub(super) fn read_order(st: &State, view: &View) -> Option<greycard_library::Or
 /// is looked at again.
 pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>, view: View) {
     let mut st = state.borrow_mut();
+    // The export queue's frames are its file's, not the index's: listed
+    // as files given are, with or without an index.
+    if view == View::Queue {
+        let (frames, listed) = crate::panel::queue_view::listing(&st);
+        let count = frames.len();
+        let source = Source::Queue { frames, listed };
+        drop(st);
+        send_view(state, app, view, source, count, Instant::now(), None, None);
+        return;
+    }
     let Some(lib) = &st.views.index_reader else {
         // Asked before the indexer has opened the library: done when
         // it has.
@@ -474,6 +488,13 @@ pub(super) fn ask(st: &State) -> Option<Look> {
                 every_root(st, &st.views.view),
             )
         }
+        View::Queue => {
+            let (frames, listed) = crate::panel::queue_view::listing(st);
+            (
+                Source::Queue { frames, listed },
+                every_root(st, &st.views.view),
+            )
+        }
         View::Collection { id } => {
             let lib = st.views.index_reader.as_ref()?;
             let refs = st.views.collections.collection(id)?.refs.clone();
@@ -504,7 +525,7 @@ pub(super) fn ask(st: &State) -> Option<Look> {
     };
     let known = match source {
         Source::Roots { .. } | Source::Collection { .. } => st.views.library.readable.clone(),
-        Source::Folder(_) | Source::Files(_) => HashSet::new(),
+        Source::Folder(_) | Source::Files(_) | Source::Queue { .. } => HashSet::new(),
     };
     Some(Look {
         purpose: Purpose::Merge,

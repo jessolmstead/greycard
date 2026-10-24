@@ -145,15 +145,18 @@ pub(crate) fn cells_of(sidecars: &[Sidecar]) -> Vec<Cell> {
 }
 
 /// The cells a collection's frames make over `files` and their
-/// `sidecars`, in the collection's order: each frame whose file is
-/// listed and whose version the sidecar has, each once. A file may have
-/// no cell (its one frame a version gone since), and its cells need not
-/// stand together or start with its own.
-pub(crate) fn cells_of_frames(
+/// `sidecars`, in the collection's order, each with the place in
+/// `frames` it came from: each frame whose file is listed and whose
+/// version the sidecar has, each once, or with `once` false each as
+/// often as it is named (the export queue's, where each is an export of
+/// its own). A file may have no cell (its one frame a version gone
+/// since), and its cells need not stand together or start with its own.
+pub(crate) fn frames_kept(
     files: &[PathBuf],
     sidecars: &[Sidecar],
     frames: &[Key],
-) -> Vec<Cell> {
+    once: bool,
+) -> Vec<(Cell, usize)> {
     let at: HashMap<&Path, usize> = files
         .iter()
         .enumerate()
@@ -161,7 +164,7 @@ pub(crate) fn cells_of_frames(
         .collect();
     let mut seen: std::collections::HashSet<Cell> = std::collections::HashSet::new();
     let mut cells = Vec::with_capacity(frames.len());
-    for k in frames {
+    for (n, k) in frames.iter().enumerate() {
         let Some(&file) = at.get(k.path.as_path()) else {
             continue;
         };
@@ -174,8 +177,8 @@ pub(crate) fn cells_of_frames(
             file,
             version: k.version.clone(),
         };
-        if seen.insert(cell.clone()) {
-            cells.push(cell);
+        if !once || seen.insert(cell.clone()) {
+            cells.push((cell, n));
         }
     }
     cells
@@ -218,7 +221,15 @@ impl State {
     /// shows them.
     fn wanted_cells_with(&self, listed: &[crate::stacks::Listed]) -> Vec<Cell> {
         match &self.views.collection_frames {
-            Some(frames) => cells_of_frames(&self.files, &self.sidecars, frames),
+            Some(frames) => frames_kept(
+                &self.files,
+                &self.sidecars,
+                frames,
+                self.views.view != crate::roots::View::Queue,
+            )
+            .into_iter()
+            .map(|(cell, _)| cell)
+            .collect(),
             None => crate::stacks::arrange(cells_of(&self.sidecars), listed),
         }
     }
@@ -316,7 +327,13 @@ impl State {
         self.sidecars.get(cell.file)?.line(cell.version.as_deref())
     }
 
+    /// In the export queue's view no line of the list is to be written
+    /// (`queue_view::frozen`): none. An export's record is made on its
+    /// sidecar's line directly, and is not asked.
     pub(crate) fn line_mut(&mut self, c: usize) -> Option<&mut Line> {
+        if crate::panel::queue_view::refused(self, "a line of the edit") {
+            return None;
+        }
         let cell = self.cells.get(c)?.clone();
         self.sidecars
             .get_mut(cell.file)?
@@ -571,11 +588,15 @@ pub(crate) fn relist(
     _worker: &Worker,
     to_new_file: &dyn Fn(usize) -> Option<usize>,
 ) -> bool {
-    let old = std::mem::take(&mut st.cells);
+    // The export queue's cells carry by the queued frame each is.
+    if let Some((cells, from)) = crate::panel::queue_view::by_id(st) {
+        return carry(st, app, _worker, cells, &from);
+    }
     let listed = crate::stacks::listed(st);
     let cells = st.wanted_cells_with(&listed);
     st.views.stacks_listed = listed;
-    let at: HashMap<Cell, usize> = old
+    let at: HashMap<Cell, usize> = st
+        .cells
         .iter()
         .enumerate()
         .filter_map(|(i, c)| {
@@ -589,15 +610,32 @@ pub(crate) fn relist(
         })
         .collect();
     let from: Vec<Option<usize>> = cells.iter().map(|c| at.get(c).copied()).collect();
-    let renumbered =
-        old.len() != cells.len() || from.iter().enumerate().any(|(i, f)| *f != Some(i));
+    carry(st, app, _worker, cells, &from)
+}
+
+/// The cells `cells` put in place of the list's, each new cell taking
+/// what the old cell `from` names held (its picture, its sizes, its
+/// place in the selection, the frame on screen), none for a cell new to
+/// the list: [`relist`]'s second half, for a list that knows its cells'
+/// old numbers by something else than their file and version (the
+/// export queue's, a file queued twice being two cells). True when the
+/// numbering moved.
+pub(crate) fn carry(
+    st: &mut State,
+    app: &App,
+    _worker: &Worker,
+    cells: Vec<Cell>,
+    from: &[Option<usize>],
+) -> bool {
+    let old_len = std::mem::take(&mut st.cells).len();
+    let renumbered = old_len != cells.len() || from.iter().enumerate().any(|(i, f)| *f != Some(i));
     let count = cells.len();
     let mut thumb_base = Vec::with_capacity(count);
     let mut thumb_shown = Vec::with_capacity(count);
     let mut thumb_made = Vec::with_capacity(count);
     let mut thumb_asked = Vec::with_capacity(count);
     let mut thumb_failed = Vec::with_capacity(count);
-    for f in &from {
+    for f in from {
         match *f {
             Some(i) => {
                 thumb_base.push(st.views.thumb_base.get_mut(i).and_then(Option::take));
@@ -621,7 +659,7 @@ pub(crate) fn relist(
             }
         }
     }
-    let mut new_of: Vec<Option<usize>> = vec![None; old.len()];
+    let mut new_of: Vec<Option<usize>> = vec![None; old_len];
     for (at, f) in from.iter().enumerate() {
         if let Some(i) = *f {
             new_of[i] = Some(at);
@@ -644,7 +682,7 @@ pub(crate) fn relist(
         st.culling.hold = None;
         st.culling.prefetch.want(Vec::new());
         if let Some(run) = st.views.thumb_run.as_mut() {
-            run.renumber(&from);
+            run.renumber(from);
         }
     }
     st.current = st.current.and_then(to_new);
@@ -661,6 +699,7 @@ pub(crate) fn relist(
     st.views.thumb_failed = thumb_failed;
     st.views.cells_by_file = crate::stacks::by_file(&cells, st.files.len());
     st.cells = cells;
+    st.views.queue_cell_ids = crate::panel::queue_view::cell_ids_made(st);
     renumbered
 }
 
@@ -671,6 +710,7 @@ pub(crate) fn list(st: &mut State) {
     st.cells = st.wanted_cells_with(&listed);
     st.views.stacks_listed = listed;
     st.views.cells_by_file = crate::stacks::by_file(&st.cells, st.files.len());
+    st.views.queue_cell_ids = crate::panel::queue_view::cell_ids_made(st);
     let count = st.cells.len();
     st.views.thumb_base = vec![None; count];
     st.views.thumb_shown = vec![None; count];

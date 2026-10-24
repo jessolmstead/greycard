@@ -356,9 +356,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // its own strength keeps it, one still at the default waits
             // for its own open), the edit under develop and the panel,
             // once.
+            // A frame of the export queue's view takes it on its queued
+            // edit alone, its sidecar left as it is (`State::line_mut`
+            // refuses it there).
+            let frozen = crate::panel::queue_view::frozen(&st);
             if let Some(b) = blend
                 && let Some(i) = st.current
-                && crate::rows::seed_landed(&mut st, i, b)
+                && (frozen || crate::rows::seed_landed(&mut st, i, b))
             {
                 // The overrides' edit is the panel's, seed and all.
                 let file = st.path_at(i).cloned();
@@ -1031,9 +1035,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             app.set_status(format!("the lens profiles could not be fetched: {message}").into());
         }
         Outcome::SetFrameStarted { set, index, name } => {
-            if exporting(&state.borrow(), &set) {
-                app.set_status(queue::progress_line(index, set.total, &name).into());
+            let mut st = state.borrow_mut();
+            if exporting(&st, &set) {
+                let line = crate::panel::export_queue::progress_line(&st, &set, index, &name);
+                app.set_status(line.into());
             }
+            crate::panel::queue_view::began(&mut st, app, &set, index);
         }
         Outcome::SetFrameDone {
             set,
@@ -1091,6 +1098,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 queue::Done::Canceled => {}
             }
             crate::panel::export_queue::frame_done(&mut state.borrow_mut(), &set, index, ran);
+            crate::panel::queue_view::marks(&state.borrow(), app);
         }
         Outcome::SetDone { set, tally } => {
             let mut st = state.borrow_mut();
@@ -1122,7 +1130,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             }
             // The queue's entry: what is left of it kept, and the next
             // begun unless the set was stopped.
-            crate::panel::export_queue::set_done(&mut st, app, &set, &line);
+            crate::panel::export_queue::set_done(&mut st, app, &set, &tally, &line);
         }
     }
 }
@@ -1922,6 +1930,12 @@ pub(crate) fn pressed_frames(
 ) -> Option<(PathBuf, Edit, SetFrames, bool)> {
     {
         let mut st = state.borrow_mut();
+        // The export queue's view exports by its own run: a frame of it
+        // pressed again would go out under its sidecar's edit, or its
+        // queued one, and neither is what was asked of the view.
+        if crate::panel::queue_view::refused(&st, "an export") {
+            return None;
+        }
         // Gone from the list: the request says so.
         let p = st.find_cell(pressed)?;
         // On screen is the panel's frame: never in culling, where an

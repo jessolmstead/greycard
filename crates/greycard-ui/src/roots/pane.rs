@@ -27,7 +27,7 @@ pub(crate) fn show(st: &State, app: &App) {
     let on = match &st.views.view {
         View::Roots(r) => Some(r.clone()),
         View::Branch { root, .. } => Some(Some(root.clone())),
-        View::Folder | View::Collection { .. } => None,
+        View::Folder | View::Collection { .. } | View::Queue => None,
     };
     let chips: Vec<RootChip> = roots
         .iter()
@@ -511,7 +511,7 @@ fn remove_listed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir
             st.views.view = View::Roots(None);
             true
         }
-        View::Roots(_) | View::Branch { .. } | View::Collection { .. } => true,
+        View::Roots(_) | View::Branch { .. } | View::Collection { .. } | View::Queue => true,
         View::Folder => false,
     };
     crate::tree::want(&mut st, app);

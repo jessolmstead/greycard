@@ -277,7 +277,12 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     if !crate::rows::load_frame(st, app, c) {
         st.views.panel_stand_in = Some(st.path_of(c).clone());
     }
-    let edit = with.unwrap_or_else(|| st.line(c).map(|l| l.current.clone()).unwrap_or_default());
+    // A frame of the export queue's view lands under its queued edit,
+    // whatever was moved meanwhile: it is not to be edited.
+    let edit = match crate::panel::queue_view::open_under(st, c) {
+        Some(queued) => queued,
+        None => with.unwrap_or_else(|| st.line(c).map(|l| l.current.clone()).unwrap_or_default()),
+    };
     st.develop.target = None;
     // The tool is put down. Left onto another frame than the one open
     // before the mode, its people are not that frame's either; left on

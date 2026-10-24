@@ -42,6 +42,13 @@ design note behind it.
 
 ### Library
 
+- The export queue shows in the grid: an "Export queue" row in the
+  roots pane lists every queued frame under a heading a destination;
+  select and Delete, or "Remove from queue..." in the frame menu, to
+  take frames out. A queued frame opens as it will export and is not
+  editable there. While the queue runs the status counts the whole
+  run, not each set
+  ([§416](https://github.com/jessolmstead/greycard/blob/master/docs/notes/416-the-export-queue-in-the-grid.md)).
 - The grid's cells sit closer; Settings > Library takes the cell size
   as a number and can turn the wheel resize off
   ([§410](https://github.com/jessolmstead/greycard/blob/master/docs/notes/410-the-grids-cell-by-number.md)).

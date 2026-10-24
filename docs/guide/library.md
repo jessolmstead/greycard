@@ -135,6 +135,9 @@ The roots are in the left pane while the grid is up, under **ROOTS**:
 - **All roots** lists every frame in the library, with the total.
 - Below it is a row for each root with its count. Click a row to see
   every frame under that root.
+- **Export queue**, always last, shows the frames waiting in the
+  export queue, with their count. See
+  [The queue in the grid](export.md#the-queue-in-the-grid).
 
 To add a root, click **+ Add a root...** at the foot of the section
 and choose a folder. When the open folder is in no root,
