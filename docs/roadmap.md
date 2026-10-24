@@ -899,6 +899,12 @@ clears or a tester asks for it.
       through a libheif found at runtime and loaded by name as ONNX
       Runtime is, a file skipped with a log line where none is; AVIF
       beside it from a pure-Rust decoder
+- [ ] A one-click straighten: the horizon found in the picture and the
+      frame leveled to it, with the line still there to drag (pixls,
+      2026-10-24)
+- [ ] An Auto starting point: exposure and tone set from the picture
+      with one press, beside "Fit this camera's look" (pixls,
+      2026-10-24)
 - [ ] The UI scale as any percentage, not steps: 100% too small and
       125% too large on one monitor (pixls, 2026-10-22)
 - [ ] A toolbar of common actions, the set the user's, with the
