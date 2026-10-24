@@ -152,11 +152,15 @@ export struct GridHead {
 }
 
 /// Where a frame sits on the grid under its headings: its column, its
-/// row over the whole sheet, and how many headings are above it.
+/// row over the whole sheet, how many headings are above it, its row's
+/// top from the padding and the folder tiles, and its own picture's
+/// room, the cell's height above the name.
 export struct GridPlace {
     col: int,
     line: int,
     heads: int,
+    y: length,
+    pic: length,
 }
 
 /// A box drawn for an object, on the view, logical pixels.

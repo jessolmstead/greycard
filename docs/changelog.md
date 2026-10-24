@@ -42,6 +42,10 @@ design note behind it.
 
 ### Library
 
+- The grid's rows take the height of their pictures: a row of
+  landscapes loses the empty band above and below each picture, and a
+  portrait makes only its own row tall.
+  ([§417](https://github.com/jessolmstead/greycard/blob/master/docs/notes/417-the-grids-rows-shaped-to-the-pictures.md))
 - The export queue shows in the grid: an "Export queue" row in the
   roots pane lists every queued frame under a heading a destination;
   select and Delete, or "Remove from queue..." in the frame menu, to

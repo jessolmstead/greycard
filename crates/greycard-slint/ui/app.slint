@@ -319,7 +319,11 @@ export component App inherits Window {
     /// How far down the sheet is scrolled, logical pixels. Out for
     /// the tests.
     out property <length> grid-scroll: 0px;
-    property <length> grid-row: root.tile-cell + root.grid-label + root.grid-gap;
+    /// The pitch a wheel's notch is a third of: a row of 3:2 frames,
+    /// the grid's common row, or the lightbox's square tiles' row.
+    pure callback grid-common-pitch(length) -> length;
+    property <length> grid-row: root.lightbox ? root.tile-cell + root.grid-label + root.grid-gap
+        : root.grid-common-pitch(root.tile-cell);
     pure callback grid-columns(length, length) -> int;
     /// What is left over beside a full row, halved: the cells sit in
     /// the middle of the window rather than against its left edge.
@@ -327,8 +331,8 @@ export component App inherits Window {
     /// How far the sheet can be scrolled, and the scroll that brings
     /// the selected cell into view: asked of the same arithmetic the
     /// Rust side tests, rather than written out again here.
-    pure callback grid-max-scroll(length, length, int, int, length, [int]) -> length;
-    pure callback grid-reveal-to(length, length, length, int, int, int, length, [int]) -> length;
+    pure callback grid-max-scroll(length, length, int, int, length, [int], int) -> length;
+    pure callback grid-reveal-to(length, length, length, int, int, int, length, [int], int) -> length;
     /// The grid's headings (`GridSheet::grid-heads`), and where each
     /// stands, by the list's number; none in the lightbox, which lays
     /// the frames out as they come.
@@ -336,7 +340,19 @@ export component App inherits Window {
     in property <[int]> grid-head-rows: [];
     in property <length> grid-head-h: 28px;
     property <[int]> grid-head-at: root.lightbox ? [] : root.grid-head-rows;
-    pure callback grid-place(int, int, [int]) -> GridPlace;
+    /// The rows' shapes' layout, by number: Rust moves it on when a
+    /// picture's shape comes in, and every question of the layout
+    /// passes it so its binding asks again. -1 in the lightbox, whose
+    /// tiles are square.
+    in property <int> grid-shape: 0;
+    property <int> grid-shape-at: root.lightbox ? -1 : root.grid-shape;
+    /// Where a frame sits: its column, its row, the headings above it,
+    /// its row's top, and its picture's room; asked with the cell, the
+    /// columns, the headings, and the layout's number.
+    pure callback grid-place(int, length, int, [int], int) -> GridPlace;
+    /// The first frame of the row at a height of the sheet, below the
+    /// padding and the tiles; asked as `grid-place` is, with the count.
+    pure callback grid-row-at(length, length, int, int, [int], int) -> int;
     property <int> grid-cols: root.grid-columns(root.grid-w, root.tile-cell);
     /// How far the folder tiles push the cells down: none without
     /// tiles.
@@ -345,7 +361,7 @@ export component App inherits Window {
         : root.grid-tiles-top(root.grid-tiles.length, root.tile-cell, root.grid-cols);
     property <length> grid-max:
         root.grid-max-scroll(root.grid-h, root.tile-cell, root.grid-cols, root.thumbs.length,
-            root.grid-top, root.grid-head-at);
+            root.grid-top, root.grid-head-at, root.grid-shape-at);
     /// The scroll bars' thumbs, the grid's and the strip's, their
     /// length and their place along the bar, and the scroll a drag of
     /// one comes to: the same arithmetic.
@@ -530,7 +546,8 @@ export component App inherits Window {
         if (root.selected >= 0) {
             root.grid-scroll = root.grid-reveal-to(
                 root.grid-scroll, root.grid-h, root.tile-cell,
-                root.grid-cols, root.thumbs.length, root.selected, root.grid-top, root.grid-head-at);
+                root.grid-cols, root.thumbs.length, root.selected, root.grid-top, root.grid-head-at,
+                root.grid-shape-at);
         }
         root.grid-report();
     }
@@ -3765,7 +3782,6 @@ export component App inherits Window {
         grid-h <=> root.grid-h;
         grid-scroll: root.grid-scroll;
         grid-gap: root.grid-gap;
-        grid-row: root.grid-row;
         grid-slack(a, b, c) => { return root.grid-slack(a, b, c); }
         grid-cols: root.grid-cols;
         grid-max: root.grid-max;
@@ -3775,7 +3791,9 @@ export component App inherits Window {
         queue-view: root.frozen;
         grid-head-rows: root.grid-head-at;
         grid-head-h: root.grid-head-h;
-        grid-place(a, b, c) => { return root.grid-place(a, b, c); }
+        grid-shape: root.grid-shape-at;
+        grid-place(a, b, c, d, e) => { return root.grid-place(a, b, c, d, e); }
+        grid-row-at(a, b, c, d, e, f) => { return root.grid-row-at(a, b, c, d, e, f); }
         // No folder tiles in the lightbox: frames alone.
         tiles: root.lightbox ? [] : root.grid-tiles;
         tile-picked(i) => { root.commit-title(); root.grid-tile-picked(i); }

@@ -429,3 +429,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§414. The remove past 1024, and level-matched](notes/414-the-remove-past-1024-and-level-matched.md) (2026-10-24)
 - [§415. A four-step remove, measured](notes/415-a-four-step-remove-measured.md) (2026-10-24)
 - [§416. The export queue in the grid](notes/416-the-export-queue-in-the-grid.md) (2026-10-24)
+- [§417. The grid's rows shaped to the pictures](notes/417-the-grids-rows-shaped-to-the-pictures.md) (2026-10-24)

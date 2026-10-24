@@ -1797,14 +1797,15 @@ mod tests {
             app.on_grid_range(move |scroll, height, cols, top| {
                 seen.borrow_mut().push((scroll, height, cols, top));
                 if let Some(app) = app_weak.upgrade() {
-                    let (at, n) = crate::grid::window(
-                        scroll,
-                        height,
+                    let (at, n) = crate::cells::layout(
+                        &app,
                         app.get_grid_cell(),
                         cols,
                         app.get_thumbs().row_count() as i32,
-                        top,
-                    );
+                        &[],
+                        crate::panel::browser::grid_shape(&app),
+                    )
+                    .window(scroll, height, top);
                     crate::cells::show(&app, crate::cells::View::Grid, at, n);
                 }
             });

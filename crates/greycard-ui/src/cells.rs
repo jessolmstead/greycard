@@ -30,7 +30,7 @@ use std::rc::Rc;
 
 use slint::{Model, ModelNotify, ModelRc, ModelTracker};
 
-use crate::{App, Thumb, ThumbCell};
+use crate::{App, Thumb, ThumbCell, grid};
 
 /// The views that draw the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,7 +75,36 @@ impl Window {
 struct Shared {
     rows: RefCell<Vec<Thumb>>,
     views: [Window; 2],
+    shape: RefCell<Shape>,
 }
+
+/// The rows' shapes, for the grid's layout: each row's picture's
+/// height over its width as the cell shows it, zero where no picture
+/// has come; what has come since the last layout, waiting to be laid
+/// out in one pass; the layout's number, which the window passes back
+/// with every question so a binding asks again when it moves; and the
+/// layout last asked for, kept for the next question.
+#[derive(Default)]
+struct Shape {
+    aspects: Vec<f32>,
+    pending: Vec<(usize, f32)>,
+    serial: i32,
+    cache: Option<(Key, Rc<grid::Layout>)>,
+}
+
+/// What a layout is made from.
+#[derive(PartialEq)]
+struct Key {
+    cell: u32,
+    columns: i32,
+    count: i32,
+    heads: Vec<i32>,
+    shape: i32,
+}
+
+/// The `shape` a question passes for every frame a square: the
+/// lightbox's, whose tiles fill their cells.
+pub(crate) const SQUARE: i32 = -1;
 
 /// Every row of the browser's list: the window's `thumbs`.
 pub(crate) struct Rows {
@@ -183,6 +212,7 @@ pub(crate) fn set_rows(app: &App, thumbs: Vec<Thumb>) {
     let shared = shared(app);
     let count = thumbs.len();
     *shared.rows.borrow_mut() = thumbs;
+    put_aspects(app, &shared, vec![0.0; count]);
     for view in &shared.views {
         view.fit(count);
         view.notify.reset();
@@ -261,6 +291,123 @@ pub(crate) fn window(app: &App, view: View) -> (usize, usize) {
     let shared = shared(app);
     let window = &shared.views[view as usize];
     (window.first.get(), window.slots.get())
+}
+
+/// Put `aspects` in as the rows' shapes, one a row, and lay out anew.
+fn put_aspects(app: &App, shared: &Shared, aspects: Vec<f32>) {
+    let serial = {
+        let mut shape = shared.shape.borrow_mut();
+        shape.aspects = aspects;
+        shape.pending.clear();
+        shape.serial = shape.serial.wrapping_add(1).max(0);
+        shape.serial
+    };
+    app.set_grid_shape(serial);
+}
+
+/// The rows' shapes, one a row, as a new list has them: laid out at
+/// once, with nothing kept from before.
+pub(crate) fn set_aspects(app: &App, aspects: Vec<f32>) {
+    let shared = shared(app);
+    let count = shared.rows.borrow().len();
+    let mut aspects = aspects;
+    aspects.resize(count, 0.0);
+    put_aspects(app, &shared, aspects);
+}
+
+/// Row `row`'s picture has come, or turned, at `aspect`: kept for the
+/// next layout. Says whether it is the first since the last, which is
+/// the caller's cue to ask for one.
+pub(crate) fn note_aspect(app: &App, row: usize, aspect: f32) -> bool {
+    let shared = shared(app);
+    let mut shape = shared.shape.borrow_mut();
+    let had = shape.pending.iter().rev().find(|(r, _)| *r == row);
+    let now = had.map_or_else(|| shape.aspects.get(row).copied(), |&(_, a)| Some(a));
+    if now.is_none_or(|a| a == aspect) {
+        return false;
+    }
+    let first = shape.pending.is_empty();
+    shape.pending.push((row, aspect));
+    first
+}
+
+/// The shapes noted since the last layout put in, and the layout's
+/// number moved on. Says whether any were.
+pub(crate) fn take_aspects(app: &App) -> bool {
+    let shared = shared(app);
+    let serial = {
+        let mut shape = shared.shape.borrow_mut();
+        if shape.pending.is_empty() {
+            return false;
+        }
+        for (row, aspect) in std::mem::take(&mut shape.pending) {
+            if let Some(a) = shape.aspects.get_mut(row) {
+                *a = aspect;
+            }
+        }
+        shape.serial = shape.serial.wrapping_add(1).max(0);
+        shape.serial
+    };
+    app.set_grid_shape(serial);
+    true
+}
+
+/// The grid's layout of `count` rows in `columns` columns of `cell`
+/// under `heads`, at layout `shape` ([`SQUARE`] for every frame a
+/// square): the one last made when nothing has changed, else made now.
+pub(crate) fn layout(
+    app: &App,
+    cell: f32,
+    columns: i32,
+    count: i32,
+    heads: &[i32],
+    shape: i32,
+) -> Rc<grid::Layout> {
+    let shared = shared(app);
+    let mut store = shared.shape.borrow_mut();
+    let key = Key {
+        cell: cell.to_bits(),
+        columns,
+        count,
+        heads: heads.to_vec(),
+        shape: if shape == SQUARE {
+            SQUARE
+        } else {
+            store.serial
+        },
+    };
+    if let Some((k, l)) = &store.cache
+        && *k == key
+    {
+        return l.clone();
+    }
+    let started = std::time::Instant::now();
+    let made = Rc::new(if key.shape == SQUARE {
+        grid::Layout::square(cell, columns, count, heads)
+    } else {
+        let aspects = &store.aspects;
+        grid::Layout::new(cell, columns, count, heads, |i| {
+            aspects.get(i as usize).copied().unwrap_or(0.0)
+        })
+    });
+    tracing::trace!(
+        "grid layout: {count} frames, {} rows in {:.2} ms",
+        made.lines(),
+        started.elapsed().as_secs_f64() * 1e3
+    );
+    store.cache = Some((key, made.clone()));
+    made
+}
+
+/// Row `row`'s shape as the layout has it, zero for not known.
+pub(crate) fn aspect(app: &App, row: usize) -> f32 {
+    shared(app)
+        .shape
+        .borrow()
+        .aspects
+        .get(row)
+        .copied()
+        .unwrap_or(0.0)
 }
 
 /// Whether either view has a cell for `row`.

@@ -62,9 +62,11 @@ pub fn wants_bigger(made: u32, want: u32) -> bool {
     want * 4 >= made * 5
 }
 
-/// A row's pitch: its picture, its name, and the gap below it.
-pub fn row_pitch(cell: f32) -> f32 {
-    cell + LABEL + GAP
+/// A row's pitch: its picture room (the cell, for a row with a
+/// square picture in it; [`picture_room`] for a shaped one), its name,
+/// and the gap below it.
+pub fn row_pitch(room: f32) -> f32 {
+    room + LABEL + GAP
 }
 
 /// A folder tile's height: half a cell's picture, whatever the cell.
@@ -146,11 +148,11 @@ pub fn end(end: bool, count: i32) -> i32 {
     }
 }
 
-/// The frames on screen at `offset`, first and last, the partly shown
-/// rows at either edge included. `None` when there is nothing to
-/// show. This is what the grid reports so the worker makes those
-/// pictures before the folder's others; a shoot of hundreds must not
-/// be rendered up front, the same property the strip has.
+/// The frames on screen at `offset`, first and last, over cells all
+/// square: [`Layout::visible`] over [`Layout::square`], the grid as it
+/// was before its rows took the pictures' shape, which the tests keep
+/// as the reference the shaped rows reduce to.
+#[cfg(test)]
 pub fn visible(
     offset: f32,
     height: f32,
@@ -159,25 +161,7 @@ pub fn visible(
     count: i32,
     top: f32,
 ) -> Option<(i32, i32)> {
-    let rows = rows(count, columns);
-    if rows == 0 || height <= 0.0 {
-        return None;
-    }
-    let pitch = row_pitch(cell);
-    if pitch <= 0.0 || !pitch.is_finite() {
-        return None;
-    }
-    let row_at = |y: f32| {
-        ((y - PAD - top) / pitch)
-            .floor()
-            .clamp(0.0, (rows - 1) as f32) as i32
-    };
-    let first = row_at(offset);
-    let last = row_at(offset + height).max(first);
-    Some((
-        at(first, 0, columns, count),
-        at(last, columns - 1, columns, count),
-    ))
+    Layout::square(cell, columns, count, &[]).visible(offset, height, top)
 }
 
 /// The rows the grid has cells for past those on screen, above and
@@ -185,12 +169,8 @@ pub fn visible(
 /// is enough for the rows that come into view in a frame.
 pub const MARGIN_ROWS: i32 = 1;
 
-/// The frames the grid has cells for at `offset`, as the first and
-/// how many: the rows on screen, the partly shown ones at either edge
-/// included, and [`MARGIN_ROWS`] either side. How many follows the
-/// sheet's height and the cell alone, not the offset, so a scroll
-/// moves the window without changing its size. What is past the last
-/// frame is the caller's to hold it to.
+/// [`Layout::window`] over square cells.
+#[cfg(test)]
 pub fn window(
     offset: f32,
     height: f32,
@@ -199,21 +179,11 @@ pub fn window(
     count: i32,
     top: f32,
 ) -> (usize, usize) {
-    let pitch = row_pitch(cell);
-    if count <= 0 || columns <= 0 || height <= 0.0 || pitch <= 0.0 || !pitch.is_finite() {
-        return (0, 0);
-    }
-    let first_row = (((offset - PAD - top) / pitch).floor() as i32 - MARGIN_ROWS).max(0);
-    let rows = (height / pitch).ceil() as i32 + 1 + 2 * MARGIN_ROWS;
-    ((first_row * columns) as usize, (rows * columns) as usize)
+    Layout::square(cell, columns, count, &[]).window(offset, height, top)
 }
 
-/// The scroll that shows the selected cell with the least movement,
-/// its padding beside it, or what we have when it is already on
-/// screen. A cell of the first row brings the folder tiles above it
-/// with it, when the two fit on the sheet together; when the tiles
-/// are taller than that, the cell is shown as any other. Everything
-/// past the ends is clamped away.
+/// [`Layout::reveal`] over square cells.
+#[cfg(test)]
 pub fn reveal(
     offset: f32,
     height: f32,
@@ -223,27 +193,7 @@ pub fn reveal(
     selected: i32,
     top: f32,
 ) -> f32 {
-    let rows = rows(count, columns);
-    if rows == 0 || selected < 0 || height <= 0.0 {
-        return 0.0;
-    }
-    let pitch = row_pitch(cell);
-    let row = selected.clamp(0, count - 1) / columns;
-    let y = PAD + top + row as f32 * pitch;
-    let bottom = y + cell + LABEL;
-    let lead = if row == 0 && PAD + top + cell + LABEL + PAD <= height {
-        0.0
-    } else {
-        y - PAD
-    };
-    let wanted = if lead < offset {
-        lead
-    } else if bottom + PAD > offset + height {
-        bottom + PAD - height
-    } else {
-        offset
-    };
-    wanted.clamp(0.0, max_scroll(height, cell, columns, count, top))
+    Layout::square(cell, columns, count, &[]).reveal(offset, height, selected, top)
 }
 
 /// The empty half-width beside a full row, so the cells sit in the
@@ -254,15 +204,10 @@ pub fn slack(width: f32, cell: f32, columns: i32) -> f32 {
     ((width - row) / 2.0).max(0.0)
 }
 
-/// How far the grid can be scrolled: the whole sheet, the folder
-/// tiles' rows and the cells', less what is on screen, never below
-/// nothing.
+/// [`Layout::max_scroll`] over square cells.
+#[cfg(test)]
 pub fn max_scroll(height: f32, cell: f32, columns: i32, count: i32, top: f32) -> f32 {
-    let body = top + rows(count, columns) as f32 * row_pitch(cell);
-    if body <= 0.0 {
-        return 0.0;
-    }
-    (2.0 * PAD + body - GAP - height).max(0.0)
+    Layout::square(cell, columns, count, &[]).max_scroll(height, top)
 }
 
 /// The scroll bar's thumb keeps this far from the ends of its band,
@@ -360,14 +305,6 @@ struct Run {
     heads: i32,
 }
 
-impl Run {
-    /// Its top, from the padding and the tiles: the rows above it and
-    /// the headings above it, its own included.
-    fn top(&self, pitch: f32) -> f32 {
-        self.line as f32 * pitch + self.heads as f32 * HEAD
-    }
-}
-
 /// The runs `heads` cut `count` frames into: each heading starts a row
 /// of its own, its frames on the rows under it. A heading at a frame
 /// past the list, or twice at one, is none.
@@ -456,22 +393,6 @@ fn frame_on(runs: &[Run], columns: i32, line: i32, col: i32) -> i32 {
     r.start + (row * columns + col.clamp(0, columns - 1)).min(r.len - 1)
 }
 
-/// The grid row at `y`, from the padding and the tiles: the row whose
-/// band takes it, a heading counting as part of the row under it, held
-/// to the sheet.
-fn line_at(runs: &[Run], columns: i32, pitch: f32, y: f32) -> i32 {
-    let mut found = 0;
-    for r in runs {
-        let n = rows(r.len, columns);
-        let top = r.top(pitch);
-        if y < top + n as f32 * pitch {
-            return r.line + (((y - top) / pitch).floor() as i32).clamp(0, n - 1);
-        }
-        found = r.line + n - 1;
-    }
-    found
-}
-
 /// [`step`] under `heads`: along the list as ever, or by grid rows with
 /// the column kept, over the headings, which no arrow lands on.
 pub fn step_in(selected: i32, dx: i32, dy: i32, columns: i32, count: i32, heads: &[i32]) -> i32 {
@@ -487,7 +408,8 @@ pub fn step_in(selected: i32, dx: i32, dy: i32, columns: i32, count: i32, heads:
     frame_on(&runs, columns, to, col)
 }
 
-/// [`visible`] under `heads`.
+/// [`visible`] under `heads`, over square cells.
+#[cfg(test)]
 pub fn visible_in(
     offset: f32,
     height: f32,
@@ -497,24 +419,11 @@ pub fn visible_in(
     top: f32,
     heads: &[i32],
 ) -> Option<(i32, i32)> {
-    if heads.is_empty() {
-        return visible(offset, height, cell, columns, count, top);
-    }
-    let pitch = row_pitch(cell);
-    if count <= 0 || columns <= 0 || height <= 0.0 || pitch <= 0.0 || !pitch.is_finite() {
-        return None;
-    }
-    let runs = runs(count, columns, heads);
-    let first = line_at(&runs, columns, pitch, offset - PAD - top);
-    let last = line_at(&runs, columns, pitch, offset + height - PAD - top).max(first);
-    Some((
-        frame_on(&runs, columns, first, 0),
-        frame_on(&runs, columns, last, columns - 1),
-    ))
+    Layout::square(cell, columns, count, heads).visible(offset, height, top)
 }
 
-/// [`window`] under `heads`: the rows on screen and [`MARGIN_ROWS`]
-/// either side, as the first frame and how many.
+/// [`window`] under `heads`, over square cells.
+#[cfg(test)]
 pub fn window_in(
     offset: f32,
     height: f32,
@@ -524,24 +433,11 @@ pub fn window_in(
     top: f32,
     heads: &[i32],
 ) -> (usize, usize) {
-    if heads.is_empty() {
-        return window(offset, height, cell, columns, count, top);
-    }
-    let pitch = row_pitch(cell);
-    if count <= 0 || columns <= 0 || height <= 0.0 || pitch <= 0.0 || !pitch.is_finite() {
-        return (0, 0);
-    }
-    let runs = runs(count, columns, heads);
-    let last_line = lines(&runs, columns) - 1;
-    let first = (line_at(&runs, columns, pitch, offset - PAD - top) - MARGIN_ROWS).max(0);
-    let last =
-        (line_at(&runs, columns, pitch, offset + height - PAD - top) + MARGIN_ROWS).min(last_line);
-    let a = frame_on(&runs, columns, first, 0);
-    let b = frame_on(&runs, columns, last, columns - 1);
-    (a as usize, (b - a + 1).max(0) as usize)
+    Layout::square(cell, columns, count, heads).window(offset, height, top)
 }
 
-/// [`max_scroll`] under `heads`: the headings lengthen the sheet.
+/// [`max_scroll`] under `heads`, over square cells.
+#[cfg(test)]
 pub fn max_scroll_in(
     height: f32,
     cell: f32,
@@ -550,20 +446,11 @@ pub fn max_scroll_in(
     top: f32,
     heads: &[i32],
 ) -> f32 {
-    if heads.is_empty() {
-        return max_scroll(height, cell, columns, count, top);
-    }
-    let runs = runs(count, columns.max(1), heads);
-    let n = runs.iter().filter(|r| r.head).count();
-    let body = top + lines(&runs, columns.max(1)) as f32 * row_pitch(cell) + n as f32 * HEAD;
-    if body <= 0.0 {
-        return 0.0;
-    }
-    (2.0 * PAD + body - GAP - height).max(0.0)
+    Layout::square(cell, columns, count, heads).max_scroll(height, top)
 }
 
-/// [`reveal`] under `heads`: a frame on its run's first row brings its
-/// heading into view with it.
+/// [`reveal`] under `heads`, over square cells.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn reveal_in(
     offset: f32,
@@ -575,34 +462,279 @@ pub fn reveal_in(
     top: f32,
     heads: &[i32],
 ) -> f32 {
-    if heads.is_empty() {
-        return reveal(offset, height, cell, columns, count, selected, top);
-    }
-    if count <= 0 || columns <= 0 || selected < 0 || height <= 0.0 {
-        return 0.0;
-    }
-    let runs = runs(count, columns, heads);
-    let selected = selected.clamp(0, count - 1);
-    let (_, line, above) = place(selected, columns, heads);
-    let pitch = row_pitch(cell);
-    let y = PAD + top + line as f32 * pitch + above as f32 * HEAD;
-    let bottom = y + cell + LABEL;
-    let first_row = run_of(&runs, selected).is_some_and(|r| r.head && line == r.line);
-    let lead = if line == 0 && bottom + PAD <= height {
-        0.0
-    } else if first_row {
-        y - HEAD - PAD
+    Layout::square(cell, columns, count, heads).reveal(offset, height, selected, top)
+}
+
+/// How far a cell's picture is inset from the cell's edges, logical
+/// pixels: the theme's `space-1`, which the `.slint` file insets it by.
+pub const INSET: f32 = 4.0;
+
+/// The shape, height over width, a frame is laid out at before its
+/// picture says otherwise: most cameras' 3:2, on its side.
+pub const UNKNOWN_ASPECT: f32 = 2.0 / 3.0;
+
+/// The room a picture of `aspect` (height over width; nothing known
+/// for zero or less) takes in a cell `cell` wide: its height at the
+/// cell's width, inside the inset, and never more than the square cell
+/// it used to have. A portrait is held to that square, as before, since
+/// its thumbnail is made at the cell's long edge and no larger.
+pub fn picture_room(cell: f32, aspect: f32) -> f32 {
+    let aspect = if aspect.is_finite() && aspect > 0.0 {
+        aspect
     } else {
-        y - PAD
+        UNKNOWN_ASPECT
     };
-    let wanted = if lead < offset {
-        lead
-    } else if bottom + PAD > offset + height {
-        bottom + PAD - height
-    } else {
-        offset
-    };
-    wanted.clamp(0.0, max_scroll_in(height, cell, columns, count, top, heads))
+    let inner = (cell - 2.0 * INSET).max(0.0);
+    (2.0 * INSET + inner * aspect).round().min(cell).max(0.0)
+}
+
+/// The pitch of a row of 3:2 frames, the common row, which a wheel's
+/// notch is a third of.
+pub fn common_pitch(cell: f32) -> f32 {
+    row_pitch(picture_room(cell, UNKNOWN_ASPECT))
+}
+
+/// Where a frame sits on the shaped grid: its column, its grid row,
+/// the headings above it with its own, and its row's top from the
+/// padding and the folder tiles.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Place {
+    pub col: i32,
+    pub line: i32,
+    pub heads: i32,
+    pub y: f32,
+}
+
+/// The grid's rows laid out once: each row's first frame, its top, and
+/// its picture room, the tallest picture in it at the cell's width; a
+/// row's pitch is that room, the name's, and the gap. The tops are a
+/// prefix sum, so where a frame sits and which rows a scroll shows are
+/// a lookup and a binary search, not a walk over the folder.
+///
+/// Headings (`heads`, each at the first frame it heads) break the rows
+/// as [`place`] has them, each a [`HEAD`] above its first row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Layout {
+    columns: i32,
+    count: i32,
+    /// Each row's first frame.
+    starts: Vec<i32>,
+    /// Each row's top, from the padding and the tiles.
+    tops: Vec<f32>,
+    /// Where each row's band begins: its top, or its heading's.
+    bands: Vec<f32>,
+    /// Each row's picture room.
+    rooms: Vec<f32>,
+    /// Whether a heading stands right above each row.
+    headed: Vec<bool>,
+    /// The headings above each row, its own included.
+    heads: Vec<i32>,
+    /// The rows' and headings' whole height, the last row's gap in.
+    body: f32,
+    /// The shortest row's pitch.
+    least: f32,
+}
+
+impl Layout {
+    /// `count` frames in `columns` columns of `cell`, frame `i` of
+    /// shape `aspect(i)` (height over width; zero or less for not
+    /// known, laid out as [`UNKNOWN_ASPECT`]).
+    pub fn new(
+        cell: f32,
+        columns: i32,
+        count: i32,
+        heads: &[i32],
+        aspect: impl Fn(i32) -> f32,
+    ) -> Self {
+        let mut out = Self {
+            columns: columns.max(1),
+            count: 0,
+            starts: Vec::new(),
+            tops: Vec::new(),
+            bands: Vec::new(),
+            rooms: Vec::new(),
+            headed: Vec::new(),
+            heads: Vec::new(),
+            body: 0.0,
+            least: 0.0,
+        };
+        if count <= 0 || columns <= 0 || !cell.is_finite() || cell <= 0.0 {
+            return out;
+        }
+        out.count = count;
+        let lines = (count / columns + 1) as usize;
+        out.starts.reserve(lines);
+        out.tops.reserve(lines);
+        out.rooms.reserve(lines);
+        let (mut y, mut seen) = (0.0f32, 0);
+        let mut least = f32::INFINITY;
+        for run in runs(count, columns, heads) {
+            if run.head {
+                seen += 1;
+            }
+            for row in 0..rows(run.len, columns) {
+                let first = run.start + row * columns;
+                let last = (first + columns).min(run.start + run.len);
+                let headed = run.head && row == 0;
+                let band = y;
+                if headed {
+                    y += HEAD;
+                }
+                let room = (first..last)
+                    .map(|i| picture_room(cell, aspect(i)))
+                    .fold(0.0, f32::max);
+                let pitch = row_pitch(room);
+                least = least.min(pitch);
+                out.starts.push(first);
+                out.tops.push(y);
+                out.bands.push(band);
+                out.rooms.push(room);
+                out.headed.push(headed);
+                out.heads.push(seen);
+                y += pitch;
+            }
+        }
+        out.body = y;
+        out.least = least;
+        out
+    }
+
+    /// Every frame a square, as the grid was before its rows took the
+    /// pictures' shape, and as the lightbox, which fills its tiles,
+    /// still is.
+    pub fn square(cell: f32, columns: i32, count: i32, heads: &[i32]) -> Self {
+        Self::new(cell, columns, count, heads, |_| 1.0)
+    }
+
+    /// How many rows.
+    pub fn lines(&self) -> usize {
+        self.starts.len()
+    }
+
+    /// Row `line`'s top and its picture room.
+    #[cfg(test)]
+    pub fn line(&self, line: usize) -> Option<(f32, f32)> {
+        Some((*self.tops.get(line)?, *self.rooms.get(line)?))
+    }
+
+    /// The row frame `i` is on, held to the list.
+    fn line_of(&self, i: i32) -> usize {
+        self.starts.partition_point(|&s| s <= i).saturating_sub(1)
+    }
+
+    /// Where frame `i` sits, held to the list; `None` for an empty one.
+    pub fn place(&self, i: i32) -> Option<Place> {
+        if self.starts.is_empty() {
+            return None;
+        }
+        let i = i.clamp(0, self.count - 1);
+        let line = self.line_of(i);
+        Some(Place {
+            col: i - self.starts[line],
+            line: line as i32,
+            heads: self.heads[line],
+            y: self.tops[line],
+        })
+    }
+
+    /// The row whose band takes `y`, from the padding and the tiles, a
+    /// heading counting as part of the row under it, held to the sheet.
+    fn line_at(&self, y: f32) -> usize {
+        self.bands
+            .partition_point(|&b| b <= y)
+            .saturating_sub(1)
+            .min(self.lines().saturating_sub(1))
+    }
+
+    /// The first frame of the row whose band takes `y`; -1 for none.
+    pub fn start_at(&self, y: f32) -> i32 {
+        if self.starts.is_empty() {
+            return -1;
+        }
+        self.starts[self.line_at(y)]
+    }
+
+    /// The last frame of row `line`.
+    fn end_of(&self, line: usize) -> i32 {
+        self.starts.get(line + 1).copied().unwrap_or(self.count) - 1
+    }
+
+    /// The frames on screen at `offset` on a sheet `height` tall, first
+    /// and last, the partly shown rows at either edge included; the
+    /// cells start `top` below the padding. `None` when there is nothing
+    /// to show. This is what the grid reports so the worker makes those
+    /// pictures before the folder's others; a shoot of hundreds must not
+    /// be rendered up front, the same property the strip has.
+    pub fn visible(&self, offset: f32, height: f32, top: f32) -> Option<(i32, i32)> {
+        if self.starts.is_empty() || height <= 0.0 {
+            return None;
+        }
+        let first = self.line_at(offset - PAD - top);
+        let last = self.line_at(offset + height - PAD - top).max(first);
+        Some((self.starts[first], self.end_of(last)))
+    }
+
+    /// The frames the grid has cells for at `offset`, as the first and
+    /// how many: the rows on screen, the partly shown ones at either
+    /// edge included, and [`MARGIN_ROWS`] either side. The rows counted
+    /// are as many as the shortest row's pitch fits on the sheet, so a
+    /// scroll moves the window without changing its size but where the
+    /// list runs out.
+    pub fn window(&self, offset: f32, height: f32, top: f32) -> (usize, usize) {
+        if self.starts.is_empty() || height <= 0.0 || self.least <= 0.0 {
+            return (0, 0);
+        }
+        let first = self
+            .line_at(offset - PAD - top)
+            .saturating_sub(MARGIN_ROWS as usize);
+        let rows = (height / self.least).ceil() as usize + 1 + 2 * MARGIN_ROWS as usize;
+        let end = self.starts.get(first + rows).copied().unwrap_or(self.count);
+        let at = self.starts[first];
+        (at as usize, (end - at) as usize)
+    }
+
+    /// How far the sheet can be scrolled: the padding, the folder tiles'
+    /// `top`, and the rows, less what is on screen, never below nothing.
+    pub fn max_scroll(&self, height: f32, top: f32) -> f32 {
+        let body = top + self.body;
+        if body <= 0.0 {
+            return 0.0;
+        }
+        (2.0 * PAD + body - GAP - height).max(0.0)
+    }
+
+    /// The scroll that shows the selected frame's row with the least
+    /// movement, its padding beside it, or `offset` when it is already
+    /// on screen. A frame of the first row brings the folder tiles
+    /// above it with it, and one of a heading's first row the heading,
+    /// when the two fit on the sheet together; otherwise it is shown as
+    /// any other. Everything past the ends is clamped away.
+    pub fn reveal(&self, offset: f32, height: f32, selected: i32, top: f32) -> f32 {
+        if selected < 0 || height <= 0.0 {
+            return 0.0;
+        }
+        let Some(p) = self.place(selected) else {
+            return 0.0;
+        };
+        let line = p.line as usize;
+        let y = PAD + top + p.y;
+        let bottom = y + self.rooms[line] + LABEL;
+        let lead = if line == 0 && bottom + PAD <= height {
+            0.0
+        } else if self.headed[line] {
+            y - HEAD - PAD
+        } else {
+            y - PAD
+        };
+        let wanted = if lead < offset {
+            lead
+        } else if bottom + PAD > offset + height {
+            bottom + PAD - height
+        } else {
+            offset
+        };
+        wanted.clamp(0.0, self.max_scroll(height, top))
+    }
 }
 
 #[cfg(test)]
@@ -1032,5 +1164,222 @@ mod tests {
         // A frame below the fold comes up against the foot.
         let down = reveal_in(0.0, 250.0, cell, cols, count, 7, 0.0, &heads);
         assert_eq!(down, (third + cell + LABEL + PAD - 250.0).min(max));
+    }
+
+    /// A row of 3:2 frames: the square cell less the plate above and
+    /// below the picture, 56 px at the 176 cell, and the same for a
+    /// frame whose shape is not known yet, laid out as 3:2.
+    #[test]
+    fn a_row_of_landscapes_loses_the_plate() {
+        let cell = 176.0;
+        assert_eq!(picture_room(cell, 1.0), cell);
+        assert_eq!(picture_room(cell, 2.0 / 3.0), 120.0);
+        assert_eq!(picture_room(cell, 0.0), 120.0);
+        // The wheel's notch is a third of that row.
+        assert_eq!(common_pitch(cell), 146.0);
+        // A camera's thumbnail, 176 by 117, rounds to the same room.
+        assert_eq!(picture_room(cell, 117.0 / 176.0), 120.0);
+        // A portrait is held to the square it had.
+        assert_eq!(picture_room(cell, 1.5), cell);
+        for aspect in [2.0 / 3.0, 0.0] {
+            let l = Layout::new(cell, 4, 8, &[], |_| aspect);
+            assert_eq!(l.line(0), Some((0.0, 120.0)));
+            assert_eq!(l.line(1), Some((146.0, 120.0)));
+            assert_eq!(row_pitch(120.0), row_pitch(cell) - 56.0);
+        }
+        // The sheet is two of those rows long.
+        let l = Layout::new(cell, 4, 8, &[], |_| 0.0);
+        assert_eq!(
+            l.max_scroll(100.0, 0.0),
+            2.0 * PAD + 2.0 * 146.0 - GAP - 100.0
+        );
+    }
+
+    /// A portrait among landscapes makes its row as tall as the square
+    /// it had; the rows either side keep theirs, and the ones under it
+    /// move down by the difference.
+    #[test]
+    fn a_portrait_raises_its_row_only() {
+        let cell = 176.0;
+        let aspect = |i: i32| if i == 5 { 1.5 } else { 2.0 / 3.0 };
+        let l = Layout::new(cell, 4, 12, &[], aspect);
+        assert_eq!(l.line(0), Some((0.0, 120.0)));
+        assert_eq!(l.line(1), Some((146.0, cell)));
+        assert_eq!(l.line(2), Some((146.0 + 202.0, 120.0)));
+        // Every frame of the row is at its top.
+        for i in 4..8 {
+            assert_eq!(l.place(i).unwrap().y, 146.0, "{i}");
+        }
+        assert_eq!(l.place(8).unwrap().y, 348.0);
+        assert_eq!(
+            l.place(9),
+            Some(Place {
+                col: 1,
+                line: 2,
+                heads: 0,
+                y: 348.0
+            })
+        );
+        // The frame two rows under it, revealed from the top, comes up
+        // against the foot by the tall row's height.
+        let r = l.reveal(0.0, 300.0, 9, 0.0);
+        assert_eq!(r, PAD + 348.0 + 120.0 + LABEL + PAD - 300.0);
+    }
+
+    /// A list of shapes that repeats on no short period: landscapes,
+    /// portraits, squares, panoramas, and frames with none yet.
+    fn shapes(seed: u32) -> impl Fn(i32) -> f32 {
+        move |i: i32| {
+            let h = (i as u32 ^ seed).wrapping_mul(2_654_435_761) >> 27;
+            [2.0 / 3.0, 1.5, 1.0, 0.25, 0.0, 0.75, 2.0 / 3.0, 0.5][(h % 8) as usize]
+        }
+    }
+
+    /// The rows by a walk over every frame: each frame's row, the rows'
+    /// first frames, bands, tops, and rooms.
+    struct Walk {
+        line_of: Vec<usize>,
+        firsts: Vec<i32>,
+        bands: Vec<f32>,
+        tops: Vec<f32>,
+        rooms: Vec<f32>,
+        headed: Vec<bool>,
+        body: f32,
+    }
+
+    fn walk(
+        cell: f32,
+        columns: i32,
+        count: i32,
+        heads: &[i32],
+        aspect: &dyn Fn(i32) -> f32,
+    ) -> Walk {
+        let mut w = Walk {
+            line_of: Vec::new(),
+            firsts: Vec::new(),
+            bands: Vec::new(),
+            tops: Vec::new(),
+            rooms: Vec::new(),
+            headed: Vec::new(),
+            body: 0.0,
+        };
+        let (mut y, mut col) = (0.0, columns);
+        for i in 0..count {
+            let head = heads.contains(&i);
+            if head || col == columns {
+                if let Some(room) = w.rooms.last() {
+                    y += room + LABEL + GAP;
+                }
+                w.bands.push(y);
+                if head {
+                    y += HEAD;
+                }
+                w.firsts.push(i);
+                w.tops.push(y);
+                w.rooms.push(0.0);
+                w.headed.push(head);
+                col = 0;
+            }
+            let room = w.rooms.last_mut().unwrap();
+            *room = room.max(picture_room(cell, aspect(i)));
+            w.line_of.push(w.firsts.len() - 1);
+            col += 1;
+        }
+        w.body = w.rooms.last().map_or(0.0, |r| y + r + LABEL + GAP);
+        w
+    }
+
+    /// Every question of a layout of mixed shapes, with headings and
+    /// without, against a walk over every frame and a scan over its
+    /// rows.
+    #[test]
+    fn the_layout_agrees_with_a_walk_over_every_frame() {
+        let cell = 176.0;
+        let top = 92.0;
+        for (seed, columns, count, heads) in [
+            (1, 4, 37, vec![]),
+            (2, 1, 9, vec![]),
+            (3, 6, 100, vec![0, 13, 14, 50]),
+            (4, 5, 41, vec![7, 30]),
+            (5, 8, 8, vec![]),
+        ] {
+            let aspect = shapes(seed);
+            let l = Layout::new(cell, columns, count, &heads, &aspect);
+            let w = walk(cell, columns, count, &heads, &aspect);
+            assert_eq!(l.lines(), w.firsts.len());
+            assert_eq!(l.starts, w.firsts);
+            assert_eq!(l.tops, w.tops);
+            assert_eq!(l.bands, w.bands);
+            assert_eq!(l.rooms, w.rooms);
+            for i in 0..count {
+                let line = w.line_of[i as usize];
+                let p = l.place(i).unwrap();
+                assert_eq!(p.line as usize, line);
+                assert_eq!(p.col, i - w.firsts[line]);
+                assert_eq!(p.y, w.tops[line]);
+                // The headings' arithmetic and the layout's agree.
+                assert_eq!(place(i, columns, &heads), (p.col, p.line, p.heads));
+            }
+            let height = 400.0;
+            let max = 2.0 * PAD + top + w.body - GAP - height;
+            assert_eq!(l.max_scroll(height, top), max.max(0.0));
+            // The row a height is in, by a scan.
+            let scan = |y: f32| {
+                (0..w.bands.len())
+                    .rev()
+                    .find(|&k| w.bands[k] <= y)
+                    .unwrap_or(0)
+            };
+            let mut offset = -30.0;
+            while offset < max + 300.0 {
+                let a = scan(offset - PAD - top);
+                let b = scan(offset + height - PAD - top).max(a);
+                let end = w.firsts.get(b + 1).copied().unwrap_or(count) - 1;
+                assert_eq!(
+                    l.visible(offset, height, top),
+                    Some((w.firsts[a], end)),
+                    "{seed} {offset}"
+                );
+                let (at, n) = l.window(offset, height, top);
+                assert!(
+                    at as i32 <= w.firsts[a] && end < (at + n) as i32,
+                    "{seed} {offset}"
+                );
+                offset += 37.0;
+            }
+            // Every frame revealed from either end is on screen with its
+            // padding, or as far as the sheet goes, and one on screen
+            // stays put.
+            for i in 0..count {
+                let line = w.line_of[i as usize];
+                let y = PAD + top + w.tops[line];
+                let bottom = y + w.rooms[line] + LABEL;
+                for from in [0.0, max.max(0.0)] {
+                    let r = l.reveal(from, height, i, top);
+                    assert!((0.0..=max.max(0.0)).contains(&r), "{seed} {i}");
+                    assert!(
+                        (y - PAD >= r || r == 0.0) && (bottom + PAD <= r + height || r == max),
+                        "{seed} {i} from {from}: {r}"
+                    );
+                    if w.headed[line] && line > 0 && r < from {
+                        assert_eq!(r, y - HEAD - PAD, "{seed} {i}");
+                    }
+                    assert_eq!(l.reveal(r, height, i, top), r, "{seed} {i}");
+                }
+            }
+        }
+    }
+
+    /// Over twenty thousand frames the layout is a prefix sum: made
+    /// well inside a frame's time.
+    #[test]
+    fn a_layout_of_twenty_thousand_is_quick() {
+        let aspect = shapes(7);
+        let started = std::time::Instant::now();
+        let l = Layout::new(176.0, 8, 20_000, &[], &aspect);
+        let took = started.elapsed();
+        assert_eq!(l.lines(), 2500);
+        println!("layout of 20000 frames: {:.3} ms", took.as_secs_f64() * 1e3);
+        assert!(took.as_secs_f64() < 0.05, "{took:?}");
     }
 }

@@ -790,6 +790,9 @@ pub(crate) fn show_thumb(st: &mut State, app: &App, i: usize, turns: u8, flip: b
     let Some(row) = row_of(st, i) else {
         return;
     };
+    // The grid lays its rows out by the pictures' shapes, those off
+    // screen included.
+    note_shape(app, row, aspect_of(st, i, turns));
     // Nor does a row neither view has a cell for: it takes its
     // picture when one comes to it (`settle_pictures`), turned as the
     // frame is turned then.
@@ -1201,16 +1204,149 @@ pub(crate) fn grid_layout(app: &App) {
     fn heads(m: &ModelRc<i32>) -> Vec<i32> {
         m.iter().collect()
     }
-    app.on_grid_place(|i, cols, h| {
-        let (col, line, heads) = grid::place(i, cols, &heads(&h));
-        GridPlace { col, line, heads }
+    let weak = app.as_weak();
+    app.on_grid_place(move |i, cell, cols, h, shape| {
+        let Some(app) = weak.upgrade() else {
+            return GridPlace::default();
+        };
+        let count = app.get_thumbs().row_count() as i32;
+        let layout = cells::layout(&app, cell, cols, count, &heads(&h), shape);
+        let Some(p) = layout.place(i) else {
+            return GridPlace {
+                pic: cell,
+                ..GridPlace::default()
+            };
+        };
+        let aspect = if shape == cells::SQUARE {
+            1.0
+        } else {
+            cells::aspect(&app, i.max(0) as usize)
+        };
+        GridPlace {
+            col: p.col,
+            line: p.line,
+            heads: p.heads,
+            y: p.y,
+            pic: grid::picture_room(cell, aspect),
+        }
     });
-    app.on_grid_max_scroll(|height, cell, cols, count, top, h| {
-        grid::max_scroll_in(height, cell, cols, count, top, &heads(&h))
+    let weak = app.as_weak();
+    app.on_grid_row_at(move |y, cell, cols, count, h, shape| {
+        weak.upgrade().map_or(-1, |app| {
+            cells::layout(&app, cell, cols, count, &heads(&h), shape).start_at(y)
+        })
     });
-    app.on_grid_reveal_to(|offset, height, cell, cols, count, selected, top, h| {
-        grid::reveal_in(offset, height, cell, cols, count, selected, top, &heads(&h))
+    let weak = app.as_weak();
+    app.on_grid_max_scroll(move |height, cell, cols, count, top, h, shape| {
+        weak.upgrade().map_or(0.0, |app| {
+            cells::layout(&app, cell, cols, count, &heads(&h), shape).max_scroll(height, top)
+        })
     });
+    let weak = app.as_weak();
+    app.on_grid_reveal_to(
+        move |offset, height, cell, cols, count, selected, top, h, shape| {
+            weak.upgrade().map_or(0.0, |app| {
+                cells::layout(&app, cell, cols, count, &heads(&h), shape)
+                    .reveal(offset, height, selected, top)
+            })
+        },
+    );
+}
+
+/// The `shape` the window passes the layout's questions now: the
+/// layout's number, or square in the lightbox.
+pub(crate) fn grid_shape(app: &App) -> i32 {
+    if app.get_lightbox() {
+        cells::SQUARE
+    } else {
+        app.get_grid_shape()
+    }
+}
+
+/// Frame `c`'s picture's shape as its cell shows it, height over
+/// width, turned as `turns` turns it; zero while it has none.
+fn aspect_of(st: &State, c: usize, turns: u8) -> f32 {
+    match st.views.thumb_base.get(c) {
+        Some(Some((w, h, _))) if *w > 0 && *h > 0 => {
+            if turns % 2 == 1 {
+                *w as f32 / *h as f32
+            } else {
+                *h as f32 / *w as f32
+            }
+        }
+        _ => 0.0,
+    }
+}
+
+/// Row `row`'s picture has come, or turned, at `aspect`: the grid lays
+/// out again for it, once for whatever else comes in the same turn of
+/// the event loop.
+fn note_shape(app: &App, row: usize, aspect: f32) {
+    if cells::note_aspect(app, row, aspect) {
+        let weak = app.as_weak();
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            if let Some(app) = weak.upgrade() {
+                reshape(&app);
+            }
+        });
+    }
+}
+
+/// The shapes noted since the last layout laid out: the rows move, and
+/// the sheet's scroll moves with them so what was on screen stays. A
+/// sheet scrolled to its end stays at its end, as near it as shows the
+/// selected frame whole when that was on screen; short of the end, the
+/// selected frame on screen is the row held in place and is shown whole
+/// again if its row grew; else the first row on screen is held.
+pub(crate) fn reshape(app: &App) {
+    let seen = STATE.with(|s| {
+        let state = s.borrow().clone()?;
+        let st = state.try_borrow().ok()?;
+        Some((st.views.grid_shown, grid_breaks(&st, app)))
+    });
+    let (shown, heads) = seen.unwrap_or((None, Vec::new()));
+    let cell = app.get_tile_cell();
+    let cols = grid::columns(app.get_grid_w(), cell);
+    let count = app.get_thumbs().row_count() as i32;
+    let height = app.get_grid_h();
+    let top = grid::tiles_top(app.get_grid_tiles().row_count() as i32, cell, cols);
+    let selected = app.get_selected();
+    let on_screen = shown.is_some_and(|(f, l)| (f..=l).contains(&selected));
+    let anchor = if on_screen {
+        Some(selected)
+    } else {
+        shown.map(|(first, _)| first)
+    };
+    let laid = |shape: i32| cells::layout(app, cell, cols, count, &heads, shape);
+    let before = laid(grid_shape(app));
+    if !cells::take_aspects(app) {
+        return;
+    }
+    if !app.get_grid_open() || app.get_lightbox() {
+        return;
+    }
+    let after = laid(grid_shape(app));
+    let scroll = app.get_grid_scroll();
+    let at_end = scroll > 0.0 && scroll >= before.max_scroll(height, top) - 0.5;
+    let to = if at_end && on_screen {
+        after.reveal(after.max_scroll(height, top), height, selected, top)
+    } else if at_end {
+        after.max_scroll(height, top)
+    } else {
+        let y = |l: &grid::Layout| anchor.and_then(|a| l.place(a)).map(|p| p.y);
+        let moved = match (y(&before), y(&after)) {
+            (Some(was), Some(now)) if scroll > 0.0 => scroll + now - was,
+            _ => scroll,
+        };
+        if on_screen {
+            after.reveal(moved, height, selected, top)
+        } else {
+            moved
+        }
+    };
+    // The window's scroll, held to the new range, and what the grid
+    // shows said again: shorter rows bring more of them on screen.
+    app.invoke_scroll_by(to - scroll);
 }
 
 /// Where the grid's headings stand, by row: none in the lightbox, which
@@ -1279,6 +1415,20 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     st.views.thumb_shown.iter_mut().for_each(|s| *s = None);
     st.views.pictured = [(0, 0); 2];
     cells::set_rows(app, thumbs);
+    // The rows' shapes, from the pictures in hand.
+    let aspects = st
+        .views
+        .shown
+        .iter()
+        .map(|&c| {
+            if st.views.thumb_base[c].is_some() {
+                aspect_of(st, c, thumb_turns(st, app, c).0)
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    cells::set_aspects(app, aspects);
     settle_pictures(st, app);
     // The export queue's view: its headings over the rows, and its
     // tiles' marks while it runs.
@@ -3019,6 +3169,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     app.on_grid_slack(grid::slack);
     grid_layout(app);
     app.on_grid_tiles_top(grid::tiles_top);
+    app.on_grid_common_pitch(grid::common_pitch);
     app.on_bar_length(grid::bar_length);
     app.on_bar_offset(grid::bar_offset);
     app.on_bar_drag(grid::bar_drag);
@@ -3131,14 +3282,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let mut st = state.borrow_mut();
             let count = st.views.shown.len() as i32;
             let heads = grid_breaks(&st, &app);
+            let layout = cells::layout(&app, cell, columns, count, &heads, grid_shape(&app));
             // The grid's cells follow, and the pictures with them.
-            let (at, wanted) = grid::window_in(scroll, height, cell, columns, count, top, &heads);
+            let (at, wanted) = layout.window(scroll, height, top);
             if cells::show(&app, cells::View::Grid, at, wanted) {
                 settle_pictures(&mut st, &app);
             }
-            let Some((first, last)) =
-                grid::visible_in(scroll, height, cell, columns, count, top, &heads)
-            else {
+            let Some((first, last)) = layout.visible(scroll, height, top) else {
                 return;
             };
             st.views.grid_shown = Some((first, last));
@@ -3502,14 +3652,32 @@ mod tests {
     }
 
     /// A two-pixel picture for file `index`, as the pool delivers one.
+    /// A picture for frame `index`, square, so a row of them is laid
+    /// out as the square cells were and the scroll arithmetic below
+    /// reads as it did.
     fn picture_for(files: &[PathBuf], index: usize) -> crate::worker::Outcome {
+        picture_shaped(files, index, 2, 2)
+    }
+
+    /// A portrait picture, 2:3, for frame `index`.
+    fn portrait_for(files: &[PathBuf], index: usize) -> crate::worker::Outcome {
+        picture_shaped(files, index, 2, 3)
+    }
+
+    /// A picture `width` by `height` for frame `index`.
+    fn picture_shaped(
+        files: &[PathBuf],
+        index: usize,
+        width: u32,
+        height: u32,
+    ) -> crate::worker::Outcome {
         crate::worker::Outcome::Thumbnail {
             index,
             frame: crate::versions::Key::file(files[index].clone()),
             size: 176,
-            width: 2,
-            height: 1,
-            rgb: vec![0; 6],
+            width,
+            height,
+            rgb: vec![0; (width * height * 3) as usize],
             cached: false,
             seconds: 0.0,
         }
@@ -3588,10 +3756,11 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         let pictured = |row: usize| app.get_thumbs().row_data(row).unwrap().image.size().width;
         app.set_grid_open(true);
-        // Eight columns, four rows and a part on screen: cells for
-        // rows 0 to 6, frames 0 to 55.
+        // Eight columns of frames with no picture yet, laid out as
+        // 3:2, 146 apart: five rows and a part on screen, cells for rows
+        // 0 to 8, frames 0 to 71.
         app.invoke_grid_range(0.0, 773.0, 8, 0.0);
-        assert_eq!(cells::window(&app, cells::View::Grid), (0, 56));
+        assert_eq!(cells::window(&app, cells::View::Grid), (0, 72));
         deliver(
             &app,
             Outcome::Thumbnails(crate::thumbpool::Batch::of(
@@ -3610,7 +3779,7 @@ mod tests {
         assert_eq!(pictured(300), 0, "no cell: kept for later");
         assert_eq!(pictured(900), 0);
         // The grid scrolled to 900's screenful: on, and 5 off.
-        app.invoke_grid_range(grid::PAD + 111.0 * grid::row_pitch(176.0), 773.0, 8, 0.0);
+        app.invoke_grid_range(row_top(&app, 8, 888), 773.0, 8, 0.0);
         assert_eq!(pictured(900), 2);
         assert_eq!(pictured(5), 0);
         assert!(state.borrow().views.thumb_shown[5].is_none());
@@ -3641,7 +3810,7 @@ mod tests {
             },
         );
         assert_eq!(pictured(900), 0);
-        app.invoke_grid_range(grid::PAD + 111.0 * grid::row_pitch(176.0), 773.0, 8, 0.0);
+        app.invoke_grid_range(row_top(&app, 8, 888), 773.0, 8, 0.0);
         assert_eq!(pictured(900), 4);
     }
 
@@ -3677,7 +3846,7 @@ mod tests {
         }
         assert_eq!(pictured(5), 2, "a cell: made again on its row");
         assert_eq!(pictured(900), 0, "no cell: kept for later");
-        app.invoke_grid_range(grid::PAD + 111.0 * grid::row_pitch(176.0), 773.0, 8, 0.0);
+        app.invoke_grid_range(row_top(&app, 8, 888), 773.0, 8, 0.0);
         assert_eq!(pictured(900), 2);
     }
 
@@ -3706,6 +3875,20 @@ mod tests {
     /// Every cell a view's model holds is made, a `for` outside a
     /// `ListView` making one for each row, so the model's count is the
     /// count made.
+    /// The grid of the tests' window, six 176 cells across, over
+    /// `count` frames with no picture yet, each laid out as 3:2.
+    fn shaped(count: i32) -> grid::Layout {
+        grid::Layout::new(176.0, 6, count, &[], |_| 0.0)
+    }
+
+    /// The top of the grid row frame `frame` is on, from the sheet's
+    /// top, as the window lays the rows out now in `cols` columns.
+    fn row_top(app: &App, cols: i32, frame: i32) -> f32 {
+        let count = app.get_thumbs().row_count() as i32;
+        let layout = cells::layout(app, app.get_tile_cell(), cols, count, &[], grid_shape(app));
+        grid::PAD + layout.place(frame).expect("a frame").y
+    }
+
     fn cells_on_screen(app: &App, id: &str) -> usize {
         // A cell a model change has just brought in is built on the
         // next event: a pointer move at the corner, where nothing is.
@@ -3749,7 +3932,150 @@ mod tests {
             slint::platform::update_timers_and_animations();
         }
         assert!(state.borrow().views.thumb_base.iter().all(Option::is_some));
+        // The rows laid out by the pictures' shapes, a turn after the
+        // last came in.
+        slint::platform::update_timers_and_animations();
         (app, state, files)
+    }
+
+    /// The pictures' shapes lay the grid's rows out: landscapes close
+    /// the rows up by the plate a square cell had, a portrait raises its
+    /// row alone, its neighbors at the row's top, and a shape that comes
+    /// in above the screen moves the scroll with it, so what is on
+    /// screen stays where it was.
+    #[test]
+    fn the_rows_take_the_pictures_shapes_and_the_screen_stays_put() {
+        use crate::panel::deliver::deliver;
+        let app = window(120);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let files = crate::testing::folder(120);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        state.borrow_mut().current = Some(0);
+        app.set_selected(0);
+        press(&app, "g");
+        assert_eq!(grid::columns(app.get_grid_w(), 176.0), 6);
+        deliver(
+            &app,
+            crate::worker::Outcome::Thumbnails(crate::thumbpool::Batch::of(
+                (0..120)
+                    .map(|i| match i {
+                        8 => portrait_for(&files, i),
+                        _ => picture_shaped(&files, i, 3, 2),
+                    })
+                    .collect(),
+            )),
+        );
+        for _ in 0..10 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+            slint::platform::update_timers_and_animations();
+        }
+        let place =
+            |i: i32| app.invoke_grid_place(i, 176.0, 6, ModelRc::default(), app.get_grid_shape());
+        // A row of landscapes: 120 of picture where the square was 176.
+        assert_eq!((place(0).y, place(0).pic), (0.0, 120.0));
+        // The portrait's row: its picture the square, its neighbor's
+        // the landscape's, both at the row's top, 146 down.
+        assert_eq!((place(8).y, place(8).pic), (146.0, 176.0));
+        assert_eq!((place(7).y, place(7).pic), (146.0, 120.0));
+        // The row under it, a square row's pitch further.
+        assert_eq!(place(12).y, 146.0 + 202.0);
+        // The last row: eighteen rows of 146 and one of 202 above it.
+        assert_eq!(row_top(&app, 6, 114), grid::PAD + 18.0 * 146.0 + 202.0);
+        // Scrolled to the eleventh row, a portrait comes for the first
+        // frame: the first row grows by the plate, and the scroll with
+        // it.
+        let to = row_top(&app, 6, 60);
+        app.invoke_scroll_by(to - app.get_grid_scroll());
+        let was = app.get_grid_scroll();
+        assert_eq!(state.borrow().views.grid_shown.map(|s| s.0), Some(60));
+        deliver(&app, portrait_for(&files, 0));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(place(0).pic, 176.0);
+        assert_eq!(app.get_grid_scroll(), was + 56.0);
+        assert_eq!(state.borrow().views.grid_shown.map(|s| s.0), Some(60));
+    }
+
+    /// Rows that grow under a selected frame on screen keep it on
+    /// screen, whole; and a sheet at its end stays at its end.
+    #[test]
+    fn shapes_that_come_later_keep_the_selection_and_the_end_in_view() {
+        use crate::panel::deliver::deliver;
+        let app = window(120);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let files = crate::testing::folder(120);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        state.borrow_mut().current = Some(0);
+        app.set_selected(0);
+        press(&app, "g");
+        let settle = || {
+            for _ in 0..10 {
+                i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+                slint::platform::update_timers_and_animations();
+            }
+        };
+        let batch = |which: &dyn Fn(usize) -> bool, portrait: bool| {
+            let pictures = (0..120)
+                .filter(|&i| which(i))
+                .map(|i| match portrait {
+                    true => portrait_for(&files, i),
+                    false => picture_shaped(&files, i, 3, 2),
+                })
+                .collect();
+            deliver(
+                &app,
+                crate::worker::Outcome::Thumbnails(crate::thumbpool::Batch::of(pictures)),
+            );
+            settle();
+        };
+        // Whole on screen: its row's top and its name's foot inside the
+        // sheet.
+        let whole = |i: i32| {
+            let p = app.invoke_grid_place(i, 176.0, 6, ModelRc::default(), app.get_grid_shape());
+            let (y, h, s) = (grid::PAD + p.y, app.get_grid_h(), app.get_grid_scroll());
+            assert!(
+                s <= y && y + p.pic + grid::LABEL <= s + h,
+                "frame {i} at {y} to {}, the sheet {s} to {}",
+                y + p.pic + grid::LABEL,
+                s + h
+            );
+        };
+        let max = || {
+            let count = app.get_thumbs().row_count() as i32;
+            cells::layout(&app, 176.0, 6, count, &[], grid_shape(&app))
+                .max_scroll(app.get_grid_h(), 0.0)
+        };
+        batch(&|_| true, false);
+        // Frame 60 chosen and revealed among landscapes, then every
+        // third frame turns out a portrait: rows above and its own grow.
+        app.set_selected(60);
+        press(&app, Key::Shift);
+        whole(60);
+        batch(&|i| i % 3 == 0, true);
+        whole(60);
+        // End, then more portraits: still at the end, the last frame
+        // whole.
+        press(&app, Key::End);
+        assert_eq!(app.get_selected(), 119);
+        assert_eq!(app.get_grid_scroll(), max());
+        batch(&|i| i % 3 == 1, true);
+        assert_eq!(app.get_grid_scroll(), max());
+        whole(119);
+        // The last four rows landscapes again, End, and up three rows
+        // to the first of them, the sheet still at its end; then those
+        // rows turn portrait, its own and the three under it growing.
+        // The end moves down, and the frame stays whole on screen.
+        batch(&|i| i >= 96, false);
+        press(&app, Key::End);
+        for _ in 0..3 {
+            press(&app, Key::UpArrow);
+        }
+        assert_eq!(app.get_selected(), 101);
+        assert_eq!(app.get_grid_scroll(), max());
+        whole(101);
+        batch(&|i| i >= 96 && i % 3 == 0, true);
+        whole(101);
     }
 
     /// The strip and the grid make cells for the rows on screen and a
@@ -4149,14 +4475,15 @@ mod tests {
         press(&app, "g");
         press(&app, Key::DownArrow);
         // Six 176 cells across the 1,260 the left pane leaves of
-        // 1500, rows 202 apart: under a header of the selection's
-        // line, the filter's chips with its words, and its facets on
-        // two rows the sheet is 805 tall and shows three rows and most
-        // of a fourth, so the first twenty-four frames are what the
-        // worker is told to make first.
+        // 1500, rows of frames with no picture yet laid out as 3:2,
+        // 146 apart: under a header of the selection's line, the
+        // filter's chips with its words, and its facets on two rows
+        // the sheet is 805 tall and shows five rows and part of a
+        // sixth, so the first thirty-six frames are what the worker is
+        // told to make first.
         assert_eq!(*steps.borrow(), 6);
         assert_eq!(*seen.borrow(), vec![(0.0, 805.0, 6)]);
-        assert_eq!(grid::visible(0.0, 805.0, 176.0, 6, 120, 0.0), Some((0, 23)));
+        assert_eq!(shaped(120).visible(0.0, 805.0, 0.0), Some((0, 35)));
         // A frame at the foot of the sheet scrolls it there, and what
         // it says it shows follows the scroll.
         seen.borrow_mut().clear();
@@ -4164,13 +4491,10 @@ mod tests {
         // Slint runs the changed handlers with the next event, which
         // in a window is the next frame.
         press(&app, Key::Shift);
-        let scrolled = grid::reveal(0.0, 805.0, 176.0, 6, 120, 119, 0.0);
-        assert_eq!(scrolled, grid::max_scroll(805.0, 176.0, 6, 120, 0.0));
+        let scrolled = shaped(120).reveal(0.0, 805.0, 119, 0.0);
+        assert_eq!(scrolled, shaped(120).max_scroll(805.0, 0.0));
         assert_eq!(*seen.borrow(), vec![(scrolled, 805.0, 6)]);
-        assert_eq!(
-            grid::visible(scrolled, 805.0, 176.0, 6, 120, 0.0),
-            Some((96, 119))
-        );
+        assert_eq!(shaped(120).visible(scrolled, 805.0, 0.0), Some((84, 119)));
         // The pane put away, by F7 as in the loupe: the sheet takes
         // the whole width and eight cells a row, as before the pane.
         seen.borrow_mut().clear();
@@ -4476,7 +4800,15 @@ mod tests {
             reports.borrow_mut().push((scroll, height, cols));
             let app = app_weak.upgrade().unwrap();
             let count = app.get_thumbs().row_count() as i32;
-            let (at, wanted) = grid::window(scroll, height, app.get_grid_cell(), cols, count, top);
+            let layout = cells::layout(
+                &app,
+                app.get_grid_cell(),
+                cols,
+                count,
+                &[],
+                grid_shape(&app),
+            );
+            let (at, wanted) = layout.window(scroll, height, top);
             cells::show(&app, cells::View::Grid, at, wanted);
         });
         seen
@@ -4497,7 +4829,7 @@ mod tests {
     #[test]
     fn the_scroll_bar_sits_at_the_sheets_edge_and_its_thumb_drags() {
         let (app, seen) = grid_with_reports(120);
-        let max = grid::max_scroll(805.0, 176.0, 6, 120, 0.0);
+        let max = shaped(120).max_scroll(805.0, 0.0);
         let (at, size) = crate::testing::labeled(&app, "Grid scroll");
         // The band down the sheet's right edge, under the header.
         assert_eq!((at.x, size.width), (1500.0 - 14.0, 14.0));
@@ -4541,7 +4873,7 @@ mod tests {
         assert_eq!(seen.borrow().len(), 3, "{:?}", seen.borrow());
         let to = grid::bar_drag(805.0, max, to, 60.0);
         assert!((last_scroll(&seen) - to).abs() < 0.01);
-        let (first, last) = grid::visible(to, 805.0, 176.0, 6, 120, 0.0).unwrap();
+        let (first, last) = shaped(120).visible(to, 805.0, 0.0).unwrap();
         let held: Vec<i32> = app.get_grid_cells().iter().map(|c| c.row).collect();
         assert!(
             held.contains(&first) && held.contains(&last),
@@ -4556,7 +4888,7 @@ mod tests {
     #[test]
     fn a_press_in_the_track_pages_and_the_wheel_over_the_bar_scrolls() {
         let (app, seen) = grid_with_reports(120);
-        let max = grid::max_scroll(805.0, 176.0, 6, 120, 0.0);
+        let max = shaped(120).max_scroll(805.0, 0.0);
         let (at, _) = crate::testing::labeled(&app, "Grid scroll");
         let x = at.x + 7.0;
         // Below the thumb: a sheet's height down.
@@ -4663,7 +4995,7 @@ mod tests {
     #[test]
     fn no_bar_when_the_folder_fits() {
         let (app, seen) = grid_with_reports(12);
-        assert_eq!(grid::max_scroll(805.0, 176.0, 6, 12, 0.0), 0.0);
+        assert_eq!(shaped(12).max_scroll(805.0, 0.0), 0.0);
         let visible = |app: &App| {
             use i_slint_backend_testing::ElementHandle;
             press(app, Key::Shift);
@@ -4688,7 +5020,7 @@ mod tests {
     #[test]
     fn a_thumb_dragged_past_the_end_and_back_follows_without_a_jump() {
         let (app, seen) = grid_with_reports(120);
-        let max = grid::max_scroll(805.0, 176.0, 6, 120, 0.0);
+        let max = shaped(120).max_scroll(805.0, 0.0);
         let (at, _) = crate::testing::labeled(&app, "Grid scroll");
         let x = at.x + 7.0;
         let grab = at.y + grid::bar_offset(805.0, max, 0.0) + 10.0;
@@ -5154,7 +5486,7 @@ mod tests {
         let seen = cells_from_reports(&app);
         app.invoke_select(0);
         press(&app, "g");
-        let max = grid::max_scroll(805.0, 176.0, 6, 120, 0.0);
+        let max = shaped(120).max_scroll(805.0, 0.0);
         press(&app, Key::End);
         assert_eq!(app.get_selected(), 119);
         assert_eq!(last_scroll(&seen), max);
