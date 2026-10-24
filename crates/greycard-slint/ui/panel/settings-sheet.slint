@@ -215,14 +215,27 @@ export component SettingsSheet inherits Rectangle {
     TouchArea { clicked => { root.settings-open = false; } }
     Rectangle {
         width: root.column-w + root.pane-w;
-        // As tall as the tallest category, so the sheet keeps its size
-        // from one to the next, up to the window less a margin; past
-        // that the category scrolls and Done stays in reach below it.
-        height: min(
+        // As tall as the category shown, the column at the least, up
+        // to the window less a margin; past that the category scrolls
+        // and Done stays in reach below it. The long categories, Keys
+        // and Library, would otherwise hand the short ones a sheet
+        // that is mostly blank. The top sits where the tallest
+        // category's sheet would be centered, so a switch moves the
+        // bottom edge only and the column stays under the pointer.
+        property <length> tallest: min(
             max(column.preferred-height, interface.preferred-height, library.preferred-height,
                 editing.preferred-height, keys.preferred-height, about.preferred-height)
                 + done-row.preferred-height,
             root.height - 2 * Theme.space-5);
+        height: min(
+            max(column.preferred-height, root.category == "Library" ? library.preferred-height
+                : root.category == "Editing" ? editing.preferred-height
+                : root.category == "Keys" ? keys.preferred-height
+                : root.category == "About" ? about.preferred-height
+                : interface.preferred-height)
+                + done-row.preferred-height,
+            self.tallest);
+        y: (root.height - self.tallest) / 2;
         background: Theme.surface;
         border-radius: Theme.radius-lg;
         border-width: 1px;
