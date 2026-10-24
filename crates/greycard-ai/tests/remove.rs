@@ -53,7 +53,9 @@ fn psnr(a: &Rgbf, b: &Rgbf, inside: &[bool]) -> f64 {
 
 /// At 1024, with the reference's own noise and the decoder whole: under
 /// the hole the removal is the torch fp32 run's, decoded by the same
-/// decoder, to above 35 dB, and outside it the picture.
+/// decoder, to above 35 dB, and outside it the picture. The removal is
+/// matched to the picture's level round the hole and the reference's
+/// decode is not: 38.58 dB, against 38.6 before the match.
 #[test]
 #[ignore]
 fn the_removal_at_1024_matches_the_reference() {
@@ -63,8 +65,10 @@ fn the_removal_at_1024_matches_the_reference() {
 /// At 1024 with the decoder in 512 tiles: against the reference, as
 /// the whole decoder is held, and against the whole decoder's own
 /// answer, in the hole and outside it, where a seam would show. The
-/// tiles measured 38.3 dB against the reference (whole, 38.6) and 47.1
-/// dB in the hole and 45.1 outside against the whole decoder.
+/// tiles measured 38.22 dB against the reference (the removal matched
+/// to the picture's level, the reference's decode not; 38.3 before the
+/// match), and 47.11 dB in the hole and 45.05 outside against the whole
+/// decoder, both unmatched decodes.
 #[test]
 #[ignore]
 fn the_removal_at_1024_in_tiles_matches_the_whole() {
@@ -104,8 +108,10 @@ fn the_removal_at_1024_in_tiles_matches_the_whole() {
 /// above 33 dB: fp16 drifts further from fp32 at 512 on any provider
 /// (CUDA's fp16 gives 38.7 dB here against 44.8 at 1024), and WebGPU's
 /// further still, 34.3 dB, as the `rorem` branch's own example
-/// measured before this engine. The difference map is glints and grain
-/// with no structure, and a slight darkening.
+/// measured before this engine; 33.96 dB here with the removal matched
+/// to the picture's level and the reference's decode not. The
+/// difference map is glints and grain with no structure, and a slight
+/// darkening.
 #[test]
 #[ignore]
 fn the_removal_at_512_matches_the_reference() {

@@ -20,9 +20,15 @@
 //! Box-Muller ([`normals`]), so a seed makes the same fill each time
 //! and three seeds make three variations.
 //!
+//! A window past [`MAX`], up to [`FACTOR`] times it, is taken down to
+//! [`MAX`], run, and its fill brought back up ([`scaled`],
+//! [`Remove::remove_window`]).
+//!
 //! The answer is the window under the hole alone, weighted by the
-//! hole's own values ([`composite`]): the retouch's blend feathers it
-//! with the coverage's edge, as it does LaMa's. The decoder gives back
+//! hole's own values ([`composite`]), brought first to the picture's
+//! level in a ring round the hole ([`level`]): the retouch's blend
+//! feathers it with the coverage's edge, as it does LaMa's. The
+//! decoder gives back
 //! the whole window, and how far it strays from the picture outside
 //! the hole is the check on the WebGPU provider, which answers a
 //! device out of memory with finite garbage rather than an error.
@@ -56,6 +62,9 @@ use crate::image::Rgbf;
 use crate::registry::{File, REMOVE};
 use crate::runtime::{self, Error, Provider, Result};
 use crate::store::Store;
+
+mod scale;
+pub use scale::{FACTOR, factor_for, scaled, scaled_size};
 
 /// The longest side of a window, the larger VAE export's.
 pub const MAX: usize = 1024;
@@ -167,6 +176,9 @@ impl Vae {
 pub struct Times {
     /// The square the window was run at.
     pub size: usize,
+    /// How far the window was taken down to be run ([`factor_for`]):
+    /// 1 at its own pixels.
+    pub factor: f32,
     /// Whether the decoder ran over [`TILE`] tiles ([`Vae::Tiled`]).
     pub tiled: bool,
     /// Opening sessions during the removal.
@@ -184,6 +196,9 @@ pub struct Times {
     /// How far the decoder's answer outside the hole was from the
     /// picture, and the picture's own detail there ([`Drift`]).
     pub drift: Drift,
+    /// What the answer was matched to the picture's level by
+    /// ([`level`]).
+    pub level: Level,
 }
 
 /// The decoder's answer outside the hole against the picture: the
@@ -540,11 +555,19 @@ fn cut(planes: &[f32], size: usize, width: usize, height: usize) -> Result<Rgbf>
 /// `image` with `decoded` put in under `hole`, weighted by its values
 /// (in 0 to 1; the retouch's hole is 0 or 1 and its blend feathers),
 /// the rest the picture clamped to 0 to 1 as [`implausible`] reads it.
+/// The decoder's answer is first brought to the picture's level round
+/// the hole ([`level`]), so the fill does not sit darker than its
+/// surround where the blend feathers it in.
 /// [`Error::Implausible`] when the decoder's answer outside the hole
 /// strays from the picture by more than [`bound`] allows for its
 /// detail ([`drift`]), correlates with it under [`CORRELATION`], or is
 /// not finite: what a card out of memory gives.
 pub fn composite(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<Rgbf> {
+    leveled(image, hole, decoded).map(|(out, _)| out)
+}
+
+/// [`composite`], and the [`Level`] it matched the answer by.
+fn leveled(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<(Rgbf, Level)> {
     if decoded.data.iter().any(|v| !v.is_finite()) {
         return Err(Error::Implausible("the removal is not finite".into()));
     }
@@ -560,6 +583,8 @@ pub fn composite(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<Rgbf> {
             "the picture outside the hole came back as something else (a correlation of {r:.3} with it)"
         )));
     }
+    let matched = level(image, hole, decoded);
+    let decoded = matched.apply(decoded);
     let mut data = Vec::with_capacity(image.data.len());
     for (i, &m) in hole.iter().enumerate() {
         let a = m.clamp(0.0, 1.0);
@@ -575,7 +600,205 @@ pub fn composite(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<Rgbf> {
     if let Some(why) = implausible(image, hole, &out) {
         return Err(Error::Implausible(why));
     }
-    Ok(out)
+    Ok((out, matched))
+}
+
+/// How wide the ring round the hole is that the decoder's answer is
+/// matched to the picture in ([`level`]), in the run's pixels.
+pub const RING: usize = 24;
+
+/// The radius of the box blur both are low-passed with before the
+/// match, so the grain and the model's own texture stay out of it.
+const LOWPASS: usize = 8;
+
+/// The least spread (standard deviation) of the answer's low-passed
+/// values in the ring, per channel, for a gain to be fitted; under it
+/// only an offset is. The fp16 decoder's error is an offset, and on a
+/// ring of little tonal range the slope is the model's texture: on
+/// three real windows a gain fitted on each half of the ring agreed
+/// within 0.01 where the half's spread was 0.11 or more and drifted
+/// 0.03 apart at 0.07. Where the ring spans a range the red gain came
+/// out 1.03 to 1.04 on all three, the decoder flattening red a little.
+const SPREAD: f64 = 0.1;
+
+/// The least ring, in boxes of the low-pass ([`LOWPASS`], 17 a side,
+/// about one independent sample each), for a gain to be fitted: a
+/// slope from a dozen samples is noise.
+const SAMPLES: usize = 16;
+
+/// The gains a fit may give; one past them is taken for a bad fit and
+/// the channel matched by its offset alone. The fitted gains on real
+/// windows were 0.99 to 1.06.
+const GAINS: (f64, f64) = (0.9, 1.1);
+
+/// A per-channel gain and offset that takes the decoder's answer to
+/// the picture's level: `picture ≈ gain × answer + offset`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Level {
+    pub gain: [f32; 3],
+    pub offset: [f32; 3],
+}
+
+impl Default for Level {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+impl Level {
+    /// No change.
+    pub const NONE: Level = Level {
+        gain: [1.0; 3],
+        offset: [0.0; 3],
+    };
+
+    /// `image` taken through the gain and offset, clamped to 0 to 1.
+    pub fn apply(&self, image: &Rgbf) -> Rgbf {
+        if *self == Self::NONE {
+            return image.clone();
+        }
+        let data = image
+            .data
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (v * self.gain[i % 3] + self.offset[i % 3]).clamp(0.0, 1.0))
+            .collect();
+        Rgbf::new(image.width, image.height, data)
+    }
+}
+
+/// The pixels outside `hole` (nonzero is in it) within `r` of it, a
+/// square's reach, in a `width` × `height` window.
+pub fn ring(hole: &[f32], width: usize, height: usize, r: usize) -> Vec<bool> {
+    // Dilate by a square: along rows, then along columns, each by the
+    // nearest hole pixel's distance in a forward and a backward sweep.
+    let reach = |len: usize, at: &dyn Fn(usize) -> bool| -> Vec<bool> {
+        let mut near = vec![usize::MAX; len];
+        let mut last = None;
+        for (i, n) in near.iter_mut().enumerate() {
+            if at(i) {
+                last = Some(i);
+            }
+            if let Some(l) = last {
+                *n = i - l;
+            }
+        }
+        last = None;
+        for i in (0..len).rev() {
+            if at(i) {
+                last = Some(i);
+            }
+            if let Some(l) = last {
+                near[i] = near[i].min(l - i);
+            }
+        }
+        near.iter().map(|&d| d <= r).collect()
+    };
+    let mut rows = vec![false; width * height];
+    for y in 0..height {
+        let row = reach(width, &|x| hole[y * width + x] > 0.0);
+        rows[y * width..(y + 1) * width].copy_from_slice(&row);
+    }
+    let mut out = vec![false; width * height];
+    for x in 0..width {
+        let col = reach(height, &|y| rows[y * width + x]);
+        for (y, &c) in col.iter().enumerate() {
+            out[y * width + x] = c && hole[y * width + x] <= 0.0;
+        }
+    }
+    out
+}
+
+/// `image`'s channels box-blurred by `radius` over the pixels `known`
+/// marks, each the mean of the known pixels round it (0 where none is).
+fn known_blur(image: &Rgbf, known: &[bool], radius: usize) -> Vec<[f64; 3]> {
+    let (w, h) = (image.width, image.height);
+    // A summed-area table of the values and of the count, one wider and
+    // taller than the window.
+    let stride = w + 1;
+    let mut table = vec![[0.0f64; 4]; stride * (h + 1)];
+    for y in 0..h {
+        let mut row = [0.0f64; 4];
+        for x in 0..w {
+            let i = y * w + x;
+            if known[i] {
+                for (r, v) in row.iter_mut().zip(&image.data[i * 3..i * 3 + 3]) {
+                    *r += f64::from(v.clamp(0.0, 1.0));
+                }
+                row[3] += 1.0;
+            }
+            let above = table[y * stride + x + 1];
+            table[(y + 1) * stride + x + 1] = std::array::from_fn(|k| above[k] + row[k]);
+        }
+    }
+    let mut out = vec![[0.0f64; 3]; w * h];
+    for y in 0..h {
+        let (y0, y1) = (y.saturating_sub(radius), (y + radius + 1).min(h));
+        for x in 0..w {
+            let (x0, x1) = (x.saturating_sub(radius), (x + radius + 1).min(w));
+            let s: [f64; 4] = std::array::from_fn(|k| {
+                table[y1 * stride + x1][k] - table[y0 * stride + x1][k] - table[y1 * stride + x0][k]
+                    + table[y0 * stride + x0][k]
+            });
+            if s[3] > 0.0 {
+                out[y * w + x] = [s[0] / s[3], s[1] / s[3], s[2] / s[3]];
+            }
+        }
+    }
+    out
+}
+
+/// The gain and offset that take `decoded` to `image`'s level, fitted
+/// by least squares per channel over the [`RING`] round `hole`, both
+/// low-passed over the known pixels alone ([`LOWPASS`]): the fp16 VAE
+/// gives the window back a little darker than it went in, and the
+/// blend would show that as a dark rim round the fill and the fill
+/// itself low. An offset alone by default, the mean difference over the
+/// ring; a gain and offset by least squares only where the ring spans
+/// a wide range ([`SPREAD`]) over enough samples ([`SAMPLES`]), and
+/// where that gain falls outside [`GAINS`], logged, the offset alone
+/// again. [`Level::NONE`] with no ring (no hole, or no known pixel
+/// round it).
+pub fn level(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Level {
+    let (w, h) = (image.width, image.height);
+    let ring = ring(hole, w, h, RING);
+    let n = ring.iter().filter(|&&r| r).count();
+    if n == 0 || decoded.width != w || decoded.height != h {
+        return Level::NONE;
+    }
+    let known: Vec<bool> = hole.iter().map(|&m| m <= 0.0).collect();
+    let (a, b) = (
+        known_blur(decoded, &known, LOWPASS),
+        known_blur(image, &known, LOWPASS),
+    );
+    let mut level = Level::NONE;
+    for c in 0..3 {
+        let (mut sx, mut sy, mut sxx, mut sxy) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for (i, _) in ring.iter().enumerate().filter(|(_, r)| **r) {
+            let (x, y) = (a[i][c], b[i][c]);
+            sx += x;
+            sy += y;
+            sxx += x * x;
+            sxy += x * y;
+        }
+        let k = n as f64;
+        let (mx, my) = (sx / k, sy / k);
+        let var = sxx / k - mx * mx;
+        let wide = var >= SPREAD * SPREAD && n >= SAMPLES * (2 * LOWPASS + 1).pow(2);
+        let fitted = if wide { (sxy / k - mx * my) / var } else { 1.0 };
+        let gain = if (GAINS.0..=GAINS.1).contains(&fitted) {
+            fitted
+        } else {
+            log::info!(
+                "remove: a gain of {fitted:.3} on channel {c} round the hole is past {:?}; matched by the offset alone",
+                GAINS
+            );
+            1.0
+        };
+        level.gain[c] = gain as f32;
+        level.offset[c] = (my - gain * mx) as f32;
+    }
+    level
 }
 
 fn read_f16(path: &std::path::Path, len: usize) -> Result<Vec<f16>> {
@@ -740,6 +963,31 @@ impl Remove {
         let l = size / 8;
         let noise = normals(4 * l * l, seed);
         self.run(image, hole, &noise, Pool::Any)
+    }
+
+    /// [`Remove::remove`] for a window of a side up to [`FACTOR`] times
+    /// [`MAX`]: one past [`MAX`] is taken down until its longer side is
+    /// [`MAX`], run, and its fill brought back up under the hole alone
+    /// ([`scaled`]); the drift and correlation checks are the run's, at
+    /// the size it ran at, and [`Times::factor`] says how far.
+    pub fn remove_window(&mut self, image: &Rgbf, hole: &[f32], seed: u64) -> Result<Rgbf> {
+        let (w, h) = (image.width, image.height);
+        match factor_for(w, h) {
+            Some(f) if f > 1.0 => {
+                let total = Instant::now();
+                let out = scaled(image, hole, MAX, |small, small_hole| {
+                    self.remove(small, small_hole, seed)
+                });
+                self.times.factor = f;
+                self.times.total = total.elapsed().as_secs_f64();
+                out
+            }
+            Some(_) => self.remove(image, hole, seed),
+            None => Err(Error::Shape(format!(
+                "remove wants a side of 1 to {}, got {w}x{h}",
+                FACTOR * MAX
+            ))),
+        }
     }
 
     /// [`Remove::remove`] on given noise, [1, 4, size / 8, size / 8],
@@ -912,11 +1160,14 @@ impl Remove {
         let total = Instant::now();
         let (decoded, mut times) = self.generate(image, hole, noise, pool)?;
         times.drift = drift(image, hole, &decoded);
-        let out = composite(image, hole, &decoded);
+        let out = leveled(image, hole, &decoded).map(|(out, level)| {
+            times.level = level;
+            out
+        });
         times.total = total.elapsed().as_secs_f64();
         self.times = times;
         log::info!(
-            "remove {w}x{h} at {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?}, decoder {}); outside the hole off by {:.4} where its detail is {:.4}, correlation {}",
+            "remove {w}x{h} at {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?}, decoder {}); outside the hole off by {:.4} where its detail is {:.4}, correlation {}; matched to the picture round the hole by gains {:.4?} and offsets {:.4?}",
             times.size,
             times.loads,
             times.encode,
@@ -931,7 +1182,9 @@ impl Remove {
             times
                 .drift
                 .correlation
-                .map_or("not asked (flat)".to_string(), |r| format!("{r:.3}"))
+                .map_or("not asked (flat)".to_string(), |r| format!("{r:.3}")),
+            times.level.gain,
+            times.level.offset
         );
         out
     }
@@ -950,6 +1203,7 @@ impl Remove {
         let l = size / 8;
         let mut times = Times {
             size,
+            factor: 1.0,
             tiled: self.tiles(size),
             ..Times::default()
         };
@@ -1182,22 +1436,22 @@ mod tests {
         let mut hole = vec![0.0; w * h];
         hole[5 * w + 5] = 1.0;
         hole[5 * w + 6] = 0.5;
-        // The decoder near the picture outside, 0.9 inside.
+        // The decoder the picture outside, 0.9 inside (one off by a
+        // level is matched first: the test above).
         let mut decoded = image.clone();
-        for v in &mut decoded.data {
-            *v = (*v + 0.01).min(1.0);
-        }
         for c in 0..3 {
             decoded.data[(5 * w + 5) * 3 + c] = 0.9;
             decoded.data[(5 * w + 6) * 3 + c] = 0.9;
         }
         let out = composite(&image, &hole, &decoded).unwrap();
         assert_eq!(out.at(0, 0), image.at(0, 0));
-        assert_eq!(out.at(5, 5), [0.9; 3]);
+        for v in out.at(5, 5) {
+            assert!((v - 0.9).abs() < 1e-5, "{v}");
+        }
         // Half way where the hole is half.
         let p = image.at(6, 5);
         for (got, p) in out.at(6, 5).iter().zip(p) {
-            assert!((got - (p + 0.9) / 2.0).abs() < 1e-6);
+            assert!((got - (p + 0.9) / 2.0).abs() < 1e-5);
         }
         // Past 1 outside: clamped, as the fill gives it.
         let bright = flat(w, h, 1.5);
@@ -1419,6 +1673,130 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A `w` × `h` picture of `f` at each pixel's place, the same in
+    /// every channel, a hole of radius 40 in its middle, and the
+    /// decoder's answer the picture times `gain` plus `offset`.
+    fn leveled_case(
+        f: impl Fn(f32, f32, usize) -> f32,
+        gain: f32,
+        offset: f32,
+    ) -> (Rgbf, Vec<f32>, Rgbf) {
+        let (w, h) = (256, 192);
+        let image = Rgbf::new(
+            w,
+            h,
+            (0..w * h)
+                .flat_map(|i| [f((i % w) as f32, (i / w) as f32, i); 3])
+                .collect(),
+        );
+        let hole = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32 - 120.0, (i / w) as f32 - 90.0);
+                f32::from(u8::from(x * x + y * y < 40.0 * 40.0))
+            })
+            .collect();
+        let decoded = Rgbf::new(
+            w,
+            h,
+            image.data.iter().map(|&v| v * gain + offset).collect(),
+        );
+        (image, hole, decoded)
+    }
+
+    /// The mean of `d` less `image` over the ring round `hole`.
+    fn ring_off(image: &Rgbf, hole: &[f32], d: &Rgbf) -> [f64; 3] {
+        let ring = ring(hole, image.width, image.height, RING);
+        let n = ring.iter().filter(|&&r| r).count() as f64;
+        let mut s = [0.0f64; 3];
+        for (i, _) in ring.iter().enumerate().filter(|(_, r)| **r) {
+            for (c, v) in s.iter_mut().enumerate() {
+                *v += f64::from(d.data[i * 3 + c] - image.data[i * 3 + c]) / n;
+            }
+        }
+        s
+    }
+
+    /// The composite of `decoded` is the picture to the bit outside
+    /// the hole and within `inside` of it under the hole.
+    fn composite_within(image: &Rgbf, hole: &[f32], decoded: &Rgbf, inside: f32) {
+        let out = composite(image, hole, decoded).expect("an honest answer");
+        for (i, &m) in hole.iter().enumerate() {
+            for c in 0..3 {
+                let (a, b) = (out.data[i * 3 + c], image.data[i * 3 + c]);
+                if m <= 0.0 {
+                    assert_eq!(a.to_bits(), b.to_bits());
+                } else {
+                    assert!((a - b).abs() < inside, "{a} against {b}");
+                }
+            }
+        }
+    }
+
+    /// A decoder's answer a little dark and flat, the picture times
+    /// 0.99 less 0.003, on a ring of grain round a flat grey: too
+    /// even for a gain, so the offset alone, which brings the ring's
+    /// mean back and leaves under the hole a hundredth of the grain.
+    #[test]
+    fn an_even_ring_is_matched_by_its_offset() {
+        let grain = |i: usize| ((i * 7919) % 101) as f32 / 101.0 * 0.04;
+        let (image, hole, decoded) = leveled_case(|_, _, i| 0.4 + grain(i), 0.99, -0.003);
+        assert!(
+            ring_off(&image, &hole, &decoded)
+                .iter()
+                .all(|v| *v < -0.006)
+        );
+        let l = level(&image, &hole, &decoded);
+        assert_eq!(l.gain, [1.0; 3]);
+        for o in l.offset {
+            assert!((o - (0.01 * 0.42 + 0.003)).abs() < 2e-4, "{o}");
+        }
+        for v in ring_off(&image, &hole, &l.apply(&decoded)) {
+            assert!(v.abs() < 1e-4, "{v}");
+        }
+        composite_within(&image, &hole, &decoded, 5e-4);
+        // No hole, or nothing round it: nothing to match by.
+        let (w, h) = (image.width, image.height);
+        assert_eq!(level(&image, &vec![0.0; w * h], &decoded), Level::NONE);
+        assert_eq!(level(&image, &vec![1.0; w * h], &decoded), Level::NONE);
+    }
+
+    /// The same answer on a ring of wide range, light and dark
+    /// patches: the gain is fitted, 1 / 0.99, and the ring and the hole
+    /// come back to the picture.
+    #[test]
+    fn a_wide_ring_is_matched_by_a_gain() {
+        let patches = |x: f32, y: f32, _| 0.5 + 0.4 * (x / 10.0).sin() * (y / 12.0).sin();
+        let (image, hole, decoded) = leveled_case(patches, 0.99, -0.003);
+        let l = level(&image, &hole, &decoded);
+        for (g, o) in l.gain.iter().zip(l.offset) {
+            assert!((g - 1.0 / 0.99).abs() < 1e-3, "{g}");
+            assert!((o - 0.003 / 0.99).abs() < 1e-3, "{o}");
+        }
+        for v in ring_off(&image, &hole, &l.apply(&decoded)) {
+            assert!(v.abs() < 1e-4, "{v}");
+        }
+        composite_within(&image, &hole, &decoded, 1e-4);
+        // A gain past what a decoder gives is a bad fit: the offset
+        // alone.
+        let (image, hole, decoded) = leveled_case(patches, 0.8, 0.0);
+        let l = level(&image, &hole, &decoded);
+        assert_eq!(l.gain, [1.0; 3]);
+        for v in ring_off(&image, &hole, &l.apply(&decoded)) {
+            assert!(v.abs() < 1e-3, "{v}");
+        }
+    }
+
+    #[test]
+    fn the_ring_is_the_band_round_the_hole() {
+        let (w, h) = (20, 10);
+        let hole: Vec<f32> = (0..w * h)
+            .map(|i| f32::from(u8::from(i % w == 5 && i / w == 5)))
+            .collect();
+        let r = ring(&hole, w, h, 2);
+        assert_eq!(r.iter().filter(|&&v| v).count(), 24);
+        assert!(!r[5 * w + 5] && r[3 * w + 3] && r[7 * w + 7] && !r[2 * w + 5]);
     }
 
     #[test]

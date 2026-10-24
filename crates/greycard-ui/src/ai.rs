@@ -664,7 +664,8 @@ pub enum Engine {
     /// LaMa, on any machine and any window, through its tiles.
     Lama,
     /// The generative remove, on WebGPU, a window up to
-    /// [`greycard_ai::remove::MAX`] a side.
+    /// [`greycard_ai::remove::FACTOR`] times
+    /// [`greycard_ai::remove::MAX`] a side, taken down to it past it.
     Remove,
 }
 
@@ -677,18 +678,19 @@ pub fn marks_remove(have_remove: bool, webgpu: bool) -> bool {
 
 /// The engine a Fill patch's `window`, at the picture's own pixels, is
 /// made by. A patch drawn for the remove ([`marks_remove`]) is made by
-/// it when the window fits it; a bigger one is LaMa's through its
-/// tiles. Where the remove cannot run (its model missing or declined,
-/// no WebGPU), its patch is left as it was rather than made by LaMa,
-/// so an export there is not another picture than the window's.
+/// it when the window fits it taken down by no more than
+/// [`greycard_ai::remove::FACTOR`] ([`greycard_ai::remove::factor_for`]);
+/// a bigger one is LaMa's through its tiles. Where the remove cannot
+/// run (its model missing or declined, no WebGPU), its patch is left
+/// as it was rather than made by LaMa, so an export there is not
+/// another picture than the window's.
 pub fn engine_for(
     marked: bool,
     have_remove: bool,
     providers: &[Provider],
     window: Window,
 ) -> Result<Engine, NoFill> {
-    let max = greycard_ai::remove::MAX;
-    if !marked || window.width > max || window.height > max {
+    if !marked || greycard_ai::remove::factor_for(window.width, window.height).is_none() {
         Ok(Engine::Lama)
     } else if !providers.contains(&Provider::WebGpu) {
         Err(NoFill::NoGpu)
@@ -1173,10 +1175,20 @@ impl Ai {
         let encoded: Vec<f32> = values.iter().map(|v| encode(v * gain)).collect();
         let input = Rgbf::new(ww, wh, encoded);
         let started = Instant::now();
-        // The scale the window was made at: the remove's is always its
-        // own pixels.
+        // The scale LaMa made the window at; the remove's answer is
+        // regrained at any factor it was taken down by, so it counts
+        // as its own pixels here.
         let (filled, scale) = match engine {
             Engine::Lama => {
+                if patch.remove {
+                    tracing::info!(
+                        "fill {}: a window of {ww}x{wh} is {:.2} times the remove's {}, past its {}; LaMa makes it",
+                        patch.name(),
+                        ww.max(wh) as f32 / greycard_ai::remove::MAX as f32,
+                        greycard_ai::remove::MAX,
+                        greycard_ai::remove::FACTOR
+                    );
+                }
                 let fill = self.fill.as_mut().expect("LaMa, loaded above");
                 let made = match fill.fill_window(&input, &hole, depth) {
                     Ok(f) => f,
@@ -1201,7 +1213,7 @@ impl Ai {
             }
             Engine::Remove => {
                 let remove = self.remove.as_mut().expect("the remove, loaded above");
-                let made = match remove.remove(&input, &hole, remove_seed(patch)) {
+                let made = match remove.remove_window(&input, &hole, remove_seed(patch)) {
                     Ok(f) => f,
                     Err(e) => {
                         tracing::debug!("remove: {e}");
@@ -1211,9 +1223,10 @@ impl Ai {
                 let remove = self.remove.as_ref().expect("the remove, loaded above");
                 let t = remove.times();
                 tracing::info!(
-                    "fill {}: the generative remove, seed {}, a window of {ww}x{wh} at {} on {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?})",
+                    "fill {}: the generative remove, seed {}, a window of {ww}x{wh} taken down by {:.2} to run at {} on {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?})",
                     patch.name(),
                     patch.seed,
+                    t.factor,
                     t.size,
                     remove.provider().name(),
                     t.loads,
@@ -3080,19 +3093,33 @@ mod tests {
             Ok(Engine::Remove)
         );
         assert_eq!(engine(true, true, &gpu, window(1, 1)), Ok(Engine::Remove));
+        // Past the remove's size it is taken down, up to four times.
         assert_eq!(
             engine(true, true, &gpu, window(1025, 600)),
+            Ok(Engine::Remove)
+        );
+        assert_eq!(
+            engine(true, true, &gpu, window(2000, 2000)),
+            Ok(Engine::Remove)
+        );
+        assert_eq!(
+            engine(true, true, &gpu, window(4096, 300)),
+            Ok(Engine::Remove)
+        );
+        assert_eq!(
+            engine(true, true, &gpu, window(5000, 5000)),
             Ok(Engine::Lama)
         );
         assert_eq!(
-            engine(true, true, &gpu, window(300, 1025)),
+            engine(true, true, &gpu, window(300, 4097)),
             Ok(Engine::Lama)
         );
+        assert_eq!(engine(true, true, &cpu, window(2000, 2000)), Err("no GPU"));
         assert_eq!(engine(true, true, &cpu, window(500, 500)), Err("no GPU"));
         assert_eq!(engine(true, false, &cpu, window(500, 500)), Err("no GPU"));
         assert_eq!(engine(true, false, &gpu, window(500, 500)), Err(REMOVE.id));
         assert_eq!(
-            engine(true, false, &cpu, window(2000, 500)),
+            engine(true, false, &cpu, window(5000, 500)),
             Ok(Engine::Lama)
         );
         for providers in [&gpu[..], &cpu[..]] {

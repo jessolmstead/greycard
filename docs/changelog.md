@@ -73,6 +73,10 @@ design note behind it.
   machine with a GPU (5.5 GB, under the CreativeML Open RAIL++-M
   license); "Another" on a fill's row makes a different one
   ([§406](https://github.com/jessolmstead/greycard/blob/master/docs/notes/406-remove-behind-fill.md)).
+  It takes a window up to four times its own size, scaled to it and
+  back, and its fill is matched to the picture around the hole so no
+  darker band shows at the edge
+  ([§414](https://github.com/jessolmstead/greycard/blob/master/docs/notes/414-the-remove-past-1024-and-level-matched.md)).
 - A deep fill comes back with the frame's grain, measured around the
   hole on the luma and chroma axes, so a removed object no longer
   leaves a smooth patch; the retired Carve model's 208 MB file is

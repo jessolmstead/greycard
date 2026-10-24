@@ -179,7 +179,8 @@ the model is downloaded, and the status line says so.
 There are two engines. LaMa fills on any machine and at any size. On a
 machine with a GPU, the generative remove makes up what was behind what
 you remove, working in a window around the area up to 1024 pixels
-a side; a bigger window is still LaMa's. A Fill drawn before the
+a side; a window up to four times that is scaled down to it and back,
+and a bigger one is still LaMa's. A Fill drawn before the
 second model arrived stays LaMa's until you draw it again.
 
 The generative remove is a second download, 5.5 GB under the CreativeML
