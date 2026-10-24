@@ -898,6 +898,11 @@ clears or a tester asks for it.
       125% too large on one monitor (pixls, 2026-10-22)
 - [ ] A toolbar of common actions, the set the user's, with the
       menu bar (pixls, 2026-10-22)
+- [ ] The export queue in the grid: one left-pane entry, every queued
+      frame as a tile grouped under a header a destination (format and
+      folder), selection and Delete to take frames out, progress on
+      the tiles while it runs, and the Loupe from a tile; the sets
+      stay underneath as they are and the sheet's count stays
 - [ ] Grid cells shaped to the picture rather than square, so a 3:2
       frame does not sit in 55 px of plate above and below (§410);
       what makes the grid read loose after the gap tightened
