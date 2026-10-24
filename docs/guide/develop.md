@@ -19,7 +19,8 @@ pan and zoom straight away.
 - A **click** on the picture zooms to 1:1 there, and another goes
   back to fit. **Space** does the same, and **Z** zooms to 3:1.
 - The **Fit** button at the panel's foot fits the picture; its chevron,
-  or a right-click on it, offers Fit, 50%, 100%, 200%, and 400%.
+  or a right-click on it, offers Fit, 25%, 33%, 50%, 100%, 200%, and
+  400%.
 - **Drag** to move the picture when you are zoomed in.
 - A **mouse wheel** zooms a step in or out about the pointer with each
   click. A tilted wheel moves the picture sideways.

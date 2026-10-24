@@ -3818,7 +3818,7 @@ mod tests {
             }
         };
         right_click();
-        pick(4);
+        pick(6);
         assert_eq!(zoom(), 2.0);
         assert_eq!(state.borrow().develop.center, (3000.0, 2000.0));
         // The ask from Rust opens the same menu, and Fit in it fits.
@@ -3827,7 +3827,7 @@ mod tests {
         assert!((zoom() - fitted).abs() < 1e-6);
         // Back at 2:1, a plain click on the button fits as before.
         app.set_zoom_menu_shown(true);
-        pick(4);
+        pick(6);
         assert_eq!(zoom(), 2.0);
         crate::testing::click(&app, button.0, button.1);
         assert!((zoom() - fitted).abs() < 1e-6);

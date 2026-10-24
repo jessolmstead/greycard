@@ -103,6 +103,10 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
             if let Some(app) = app {
                 let size = fit_window(&app, event_loop, self.follow.scale());
                 self.follow.planned(size);
+                if starts_maximized() {
+                    tracing::info!("window: opened maximized, as the shortcut asks");
+                    app.window().set_maximized(true);
+                }
             }
         }
         slint::winit_030::EventResult::Propagate
@@ -119,6 +123,31 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         self.follow.window_event(winit_window, slint_window, event);
         slint::winit_030::EventResult::Propagate
     }
+}
+
+/// Whether the process was started with the window asked to open
+/// maximized: on Windows a shortcut's Run setting, handed on in the
+/// startup info, which winit does not read. Elsewhere nothing asks.
+#[cfg(windows)]
+fn starts_maximized() -> bool {
+    use windows_sys::Win32::System::Threading::{
+        GetStartupInfoW, STARTF_USESHOWWINDOW, STARTUPINFOW,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED;
+    // SAFETY: GetStartupInfoW fills the struct given and cannot fail;
+    // a zeroed STARTUPINFOW is a valid one to fill.
+    let info = unsafe {
+        let mut info: STARTUPINFOW = std::mem::zeroed();
+        info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        GetStartupInfoW(&mut info);
+        info
+    };
+    info.dwFlags & STARTF_USESHOWWINDOW != 0 && i32::from(info.wShowWindow) == SW_SHOWMAXIMIZED
+}
+
+#[cfg(not(windows))]
+fn starts_maximized() -> bool {
+    false
 }
 
 /// What the fit decided, and what the log says of it.

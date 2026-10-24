@@ -3602,10 +3602,12 @@ export component App inherits Window {
                                         title: "Fit";
                                         activated => { root.reset-view(); root.menu-done(); }
                                     }
-                                    for level in [0.5, 1, 2, 4]: MenuItem {
-                                        title: (level * 100) + "%";
+                                    for z in [{ level: 0.25, title: "25%" }, { level: 1.0 / 3, title: "33%" },
+                                              { level: 0.5, title: "50%" }, { level: 1, title: "100%" },
+                                              { level: 2, title: "200%" }, { level: 4, title: "400%" }]: MenuItem {
+                                        title: z.title;
                                         activated => {
-                                            root.zoom-to(level, root.view-width * 1phx / 2, root.view-height * 1phx / 2);
+                                            root.zoom-to(z.level, root.view-width * 1phx / 2, root.view-height * 1phx / 2);
                                             root.menu-done();
                                         }
                                     }
