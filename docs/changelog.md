@@ -74,6 +74,14 @@ design note behind it.
   Mac sleeps fails the frame instead of crashing the editor
   ([§389](https://github.com/jessolmstead/greycard/blob/master/docs/notes/389-the-catalog-import-over-a-share.md))
 
+### Editing
+
+- **Auto** in the Look section sets Exposure, Highlights, Shadows, Whites,
+  and Blacks from the frame's own histogram, as one step of the history
+  you can drag from or undo. It never clips more than the default
+  develop does, and it keeps a night frame's lights under white
+  ([§420](https://github.com/jessolmstead/greycard/blob/master/docs/notes/420-an-auto-starting-point-for-the-light.md)).
+
 ### Crop
 
 - **Straighten** in the Crop tab's ROTATE section levels the picture in

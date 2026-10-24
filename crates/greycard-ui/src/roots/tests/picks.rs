@@ -462,6 +462,46 @@ fn an_export_of_a_stand_in_on_screen_is_refused() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// Auto on a frame on screen whose panel is the stand-in's (its
+/// sidecar could not be read) is refused and said, as a preset is:
+/// the stand-in's default edit with Auto over it is never recorded
+/// as the frame's state, even with the stand-in's develop up.
+#[test]
+fn auto_light_on_a_stand_in_on_screen_is_refused() {
+    let (dir, files, writer, app, state, worker) = rated_under_a_root("rows-auto-stand-in");
+    std::fs::write(Sidecar::path_for(&files[1]), b"{ not a sidecar").unwrap();
+    open_view(&state, &app, &worker, View::Roots(None));
+    land_all(&state, &app, &worker);
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
+    crate::rows::land_pending(&state, &app, &worker);
+    {
+        let mut st = state.borrow_mut();
+        assert_eq!(st.views.panel_stand_in.as_deref(), Some(files[1].as_path()));
+        // The stand-in's develop up, as a raw's, so only the guard
+        // stands between the press and a recorded state.
+        let turn = crate::panel::edit::current_turn(&st);
+        st.develop.shown_turn = Some((1, turn));
+        st.develop.drawn_kind = crate::finish::Source::SCENE;
+    }
+    let grid: Vec<[f32; 3]> = (0..4000)
+        .map(|i| [0.18 * 2f32.powf(-6.0 + 4.0 * i as f32 / 4000.0); 3])
+        .collect();
+    crate::panel::viewport::AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((grid, 40)));
+    app.invoke_light_auto();
+    crate::panel::viewport::AUTO_WHITE_GRID.with(|g| g.borrow_mut().take());
+    assert_eq!(
+        app.get_status(),
+        "y.tif's sidecar could not be read: the change is not kept"
+    );
+    assert!(state.borrow().sidecars[1].history.is_empty());
+    assert_eq!(
+        std::fs::read(Sidecar::path_for(&files[1])).unwrap(),
+        b"{ not a sidecar"
+    );
+    drop(writer);
+    crate::testing::remove_scratch(state, &dir);
+}
+
 /// The frame on screen followed to its new name keeps its panel's
 /// stand-in flag.
 #[test]

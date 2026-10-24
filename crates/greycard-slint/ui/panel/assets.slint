@@ -113,6 +113,9 @@ export component LookSection inherits Section {
     callback look-rename-asked();
     callback view-changed();
     callback match-asked();
+    /// The open frame is a raw, which Auto reads.
+    in property <bool> raw-input;
+    callback light-auto();
 
     title: "LOOK";
     icon: @image-url("../icons/film.svg");
@@ -293,6 +296,13 @@ export component LookSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;
+        // The Light section's exposure and tone
+        // sliders, from the frame's own histogram.
+        PanelButton {
+            text: "Auto";
+            enabled: root.raw-input;
+            clicked => { root.light-auto(); }
+        }
         // The camera match: a look fitted per body
         // and picture style from the raws' JPEGs.
         PanelButton {

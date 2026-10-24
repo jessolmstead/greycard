@@ -1183,6 +1183,7 @@ export component App inherits Window {
     callback pick-released();
     // The white balance read off the whole picture.
     callback wb-auto();
+    callback light-auto();
     // As shot switched on the panel (`panel::color`): on, the
     // sliders go back to the camera's white.
     callback as-shot-toggled();
@@ -3191,6 +3192,8 @@ export component App inherits Window {
                             look-renamable: root.look-renamable;
                             look-rename-asked => { root.look-rename-asked(); }
                             match-asked => { root.match-asked(); }
+                            light-auto => { root.light-auto(); }
+                            raw-input: root.raw-input;
                             view-changed => { root.view-changed(); }
                         }
                         if root.shown-tab == "Develop": WhiteBalanceSection {

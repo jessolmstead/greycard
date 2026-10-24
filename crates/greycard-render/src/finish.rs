@@ -1637,6 +1637,30 @@ mod tests {
     use super::*;
     use greycard_edit::{Curves, Tone};
 
+    /// Auto (`greycard_edit::auto`) aims through the finish's numbers,
+    /// copied there: they are these.
+    #[test]
+    fn autos_numbers_are_the_finishs() {
+        use greycard_edit::auto;
+        assert_eq!(auto::MID_GREY, MID_GREY);
+        assert_eq!(auto::LUMA, LUMA);
+        assert_eq!(auto::SCENE_WHITE, SCENE_WHITE_STOPS);
+        // Its lift cap: the display curve gives 0.8 of white, encoded,
+        // that many stops under display white.
+        let at = MID_GREY * 2f32.powf(DISPLAY_WHITE_STOPS - auto::P90_UNDER_WHITE);
+        assert!(
+            (encode(tone(at)) - 0.8).abs() < 0.005,
+            "{}",
+            encode(tone(at))
+        );
+        // Where the top of the highlights ramp eases to.
+        let top = highlights_weight(10.0, [0.0, 2.0]);
+        assert!((top - auto::HIGHLIGHTS_AT_TOP).abs() < 1e-6, "{top}");
+        assert_eq!(auto::HIGHLIGHTS_PEAK, HIGHLIGHTS_PEAK);
+        assert_eq!(auto::SPAN, HIGHLIGHTS_SPAN);
+        assert_eq!(auto::WHITES_PIVOT, WHITES_PIVOT);
+    }
+
     /// Two demosaic choices that run as one method on the frame's
     /// mosaic are the same picture; two that do not, are not.
     #[test]

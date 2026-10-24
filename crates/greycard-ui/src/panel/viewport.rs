@@ -189,7 +189,7 @@ thread_local! {
 
 /// The whole developed picture, small, in the working space at the
 /// white it was developed at, and how many points across: what the
-/// Auto white balance reads.
+/// Auto white balance and the Look section's Auto read.
 fn auto_white_grid(st: &State) -> Option<(Vec<[f32; 3]>, usize)> {
     #[cfg(test)]
     if let Some(grid) = AUTO_WHITE_GRID.with(|g| g.borrow_mut().take()) {
@@ -243,6 +243,68 @@ pub(crate) fn auto_white(mut st: std::cell::RefMut<'_, State>, app: &App) {
         Err(miss) => miss,
     };
     app.set_status(miss.said(true).into());
+}
+
+/// The Look section's Auto: the Light section's exposure and its four
+/// tone sliders set from the open frame's own histogram
+/// ([`greycard_edit::auto`]), read off the same grid of the developed
+/// picture the Auto white balance reads, so nothing is developed again.
+/// One step of the history, under the button's name; only those five
+/// sliders change, and pressing it again changes nothing. A raw's
+/// develop only, and only once it is up: a miss is logged, not said.
+pub(crate) fn auto_light(st: &mut State, app: &App, worker: &Worker) {
+    if crate::panel::queue_view::refused(st, "auto light") {
+        return;
+    }
+    let Some(c) = st.current else {
+        return;
+    };
+    // A panel still showing a stand-in is never recorded as a state,
+    // as a preset's is not.
+    if st.culling.cull.is_none()
+        && let Some(why) = crate::rows::not_kept(st, c)
+    {
+        app.set_status(why.into());
+        return;
+    }
+    if st.culling.cull.is_some() || own_develop(st).is_none() {
+        tracing::info!("auto light: the open frame's develop is not up yet");
+        return;
+    }
+    let kind = drawn_kind(st);
+    if !kind.is_scene() {
+        tracing::info!("auto light: not a raw");
+        return;
+    }
+    let Some((grid, _)) = auto_white_grid(st) else {
+        tracing::info!("auto light: the picture could not be read");
+        return;
+    };
+    let edit = read_edit(app, &st.develop.edit, st.develop.target);
+    let baseline = kind.baseline(&edit.light);
+    let histogram = greycard_edit::auto::Histogram::of_pixels(&grid);
+    let set = greycard_edit::auto::auto_light(&histogram, baseline);
+    tracing::info!(
+        "auto light: middle {:+.2}, 0.5/50/99.5% {:+.2} {:+.2} {:+.2} stops, baseline {baseline:.2}: {set:?}",
+        histogram.trimmed_mean(0.1, 0.9),
+        histogram.quantile(0.005),
+        histogram.quantile(0.5),
+        histogram.quantile(0.995),
+    );
+    let mut auto = edit.clone();
+    auto.light = set.applied(&edit.light);
+    if auto == edit {
+        return;
+    }
+    if let Some(edit) = crate::panel::edit::panel_state(st, edit)
+        && let Some(line) = st.line_mut(c)
+    {
+        line.record(edit);
+    }
+    if let Some(line) = st.line_mut(c) {
+        line.record_as(auto, Some(greycard_edit::history::AUTO_LIGHT.to_string()));
+    }
+    crate::panel::history::take_current(st, app, worker);
 }
 
 /// `source_size` brought to the size the open frame is drawn at, for
@@ -1724,6 +1786,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
         });
     }
+    // The Look section's Auto: the light sliders from the picture.
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_light_auto(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            auto_light(&mut state.borrow_mut(), &app, &worker);
+        });
+    }
     // The Auto white balance: the white read off the whole picture.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
@@ -3095,6 +3167,75 @@ mod tests {
             shot.temp_tint.cct
         );
         assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
+    }
+
+    /// The Look section's Auto sets the light sliders from the picture
+    /// through the history, as one step under its name: an undo takes
+    /// them back, and a second press changes nothing. Before the
+    /// frame's develop is up it does nothing.
+    #[test]
+    fn auto_light_sets_the_sliders_in_one_step() {
+        use greycard_edit::auto::MIDDLE;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let wait = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ))
+        };
+        wait();
+        // A frame a stop darker than Auto's middle, grey.
+        let grid = || -> Vec<[f32; 3]> {
+            (0..4000)
+                .map(|i| {
+                    let stops = MIDDLE - 3.0 + 4.0 * (i as f32 + 0.5) / 4000.0;
+                    [0.18 * 2f32.powf(stops); 3]
+                })
+                .collect()
+        };
+        let line = |state: &Rc<RefCell<State>>| {
+            let st = state.borrow();
+            let l = &st.sidecars[0];
+            (l.history.len(), l.current.light, l.current_label.clone())
+        };
+        let (steps, light, _) = line(&state);
+
+        // Not this frame's develop yet: nothing moves.
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((grid(), 40)));
+        app.invoke_light_auto();
+        wait();
+        assert_eq!(line(&state).0, steps);
+        assert_eq!(app.get_exposure(), 0.0);
+        AUTO_WHITE_GRID.with(|g| g.borrow_mut().take());
+        {
+            let mut st = state.borrow_mut();
+            st.develop.shown_turn = Some((0, current_turn(&st)));
+        }
+
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((grid(), 40)));
+        app.invoke_light_auto();
+        wait();
+        let (after, auto, label) = line(&state);
+        assert_eq!(after, steps + 1);
+        assert_eq!(label.as_deref(), Some(greycard_edit::history::AUTO_LIGHT));
+        assert_ne!(auto, light, "the first press moved the sliders");
+        assert!((auto.exposure - 1.0).abs() < 0.05, "{auto:?}");
+        assert_eq!(app.get_exposure(), auto.exposure);
+        assert_eq!(app.get_whites(), auto.tone.whites);
+        assert_eq!(auto.tone.contrast, light.tone.contrast);
+
+        // Again: the same picture gives the same sliders, no new step.
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((grid(), 40)));
+        app.invoke_light_auto();
+        wait();
+        assert_eq!(line(&state).0, steps + 1);
+        assert_eq!(line(&state).1, auto);
+
+        app.invoke_undo();
+        wait();
+        assert_eq!(line(&state).1, light);
+        assert_eq!(app.get_exposure(), light.exposure);
     }
 
     /// A picture held up while the next frame develops keeps its own

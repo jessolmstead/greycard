@@ -46,6 +46,9 @@ pub const ROW_CHARS: usize = 36;
 // it, and the preset's, snapshot's or frame's name after, so a name of
 // sixteen characters survives whole.
 
+/// The Look section's Auto: the light sliders set from the picture.
+pub const AUTO_LIGHT: &str = "Auto";
+
 /// A preset laid over the frame on its own.
 pub fn preset_label(name: &str) -> String {
     format!("Preset: {name}")

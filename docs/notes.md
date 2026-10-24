@@ -432,3 +432,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§417. The grid's rows shaped to the pictures](notes/417-the-grids-rows-shaped-to-the-pictures.md) (2026-10-24)
 - [§418. The UI scale as any percentage](notes/418-the-ui-scale-as-any-percentage.md) (2026-10-24)
 - [§419. A one-click straighten](notes/419-a-one-click-straighten.md) (2026-10-24)
+- [§420. An Auto starting point for the light](notes/420-an-auto-starting-point-for-the-light.md) (2026-10-24)

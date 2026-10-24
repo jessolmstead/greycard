@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod auto;
 pub mod baseline;
 pub mod brush;
 pub mod bw;
