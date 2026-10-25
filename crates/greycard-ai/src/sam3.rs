@@ -276,6 +276,12 @@ pub struct Sam3 {
     decoder: Loaded,
 }
 
+/// The providers SAM 3 is tried on, of those `given`: not Core ML,
+/// which would only add sessions and warm runs at every load.
+pub fn offered(given: &[Provider]) -> Vec<Provider> {
+    Provider::without_core_ml(given)
+}
+
 impl Sam3 {
     /// Both graphs from the store, each on the first provider that
     /// runs it, at `Level3` as the trial's bench ran them.
@@ -283,6 +289,7 @@ impl Sam3 {
         if !store.have(&SAM3) {
             return Err(runtime::Error::Missing(SAM3.name).into());
         }
+        let providers = &offered(providers);
         let level = GraphOptimizationLevel::Level3;
         let remembered = |file: usize| runtime::Remembered {
             store_root: store.root(),
@@ -2291,6 +2298,13 @@ pub fn choose(wanted: &Signature, at: [f32; 2], people: &[(Signature, [f32; 2])]
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sam3_is_never_tried_on_core_ml() {
+        use crate::Provider;
+        let all = [Provider::CoreMl, Provider::WebGpu, Provider::Cpu];
+        assert_eq!(super::offered(&all), [Provider::WebGpu, Provider::Cpu]);
+    }
+
     use super::*;
 
     #[test]

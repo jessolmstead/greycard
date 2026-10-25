@@ -69,9 +69,30 @@ impl Default for Tiling {
     }
 }
 
+/// The packed side of every tile at the default tiling, margins and
+/// edge tiles included (the mirror fills those to size): what the
+/// model's free `h` and `w` are fixed to on Core ML.
+pub const FIXED_SIDE: usize = (DEFAULT_TILE + 2 * DEFAULT_MARGIN) / 2;
+
+impl Tiling {
+    /// The tile and margin `run` uses: even, and not below 32 and 2.
+    fn even(self) -> (usize, usize) {
+        (self.tile.max(32) & !1, self.margin.max(2) & !1)
+    }
+
+    /// The packed side of every tile this tiling cuts.
+    pub fn packed_side(self) -> usize {
+        let (tile, margin) = self.even();
+        (tile + 2 * margin) / 2
+    }
+}
+
 pub struct Denoiser {
     loaded: Loaded,
     version: String,
+    /// The packed side the session takes, where it takes one only
+    /// (Core ML).
+    fixed: Option<usize>,
 }
 
 impl Denoiser {
@@ -79,32 +100,55 @@ impl Denoiser {
     /// Nothing here is registered, so no provider's answer for it is
     /// remembered; use [`Denoiser::from_store`] for that.
     pub fn load(path: &Path, providers: &[Provider]) -> Result<Self> {
-        Self::load_inner(path, providers, None)
+        Self::load_inner(path, providers, None, Tiling::default())
+    }
+
+    /// [`Denoiser::load`] for runs at `tiling` rather than the
+    /// default: on Core ML the session takes that tiling's tile only.
+    pub fn load_tiled(path: &Path, providers: &[Provider], tiling: Tiling) -> Result<Self> {
+        Self::load_inner(path, providers, None, tiling)
     }
 
     fn load_inner(
         path: &Path,
         providers: &[Provider],
         remember: Option<runtime::Remembered<'_>>,
+        tiling: Tiling,
     ) -> Result<Self> {
-        let loaded = runtime::open(
+        let packed = tiling.packed_side();
+        // With Core ML on offer every provider warms up on a whole
+        // tile, so the timing `open` makes between them is a tile's.
+        let warm = if providers.contains(&Provider::CoreMl) {
+            packed
+        } else {
+            32
+        };
+        let side = packed as i64;
+        let loaded = runtime::open_fixed(
             path,
             GraphOptimizationLevel::Level3,
             providers,
             remember,
+            &[("h", side), ("w", side)],
             |s| {
-                let zeros = Tensor::from_array(([1usize, 4, 32, 32], vec![0.0f32; 4 * 32 * 32]))?;
+                let zeros =
+                    Tensor::from_array(([1usize, 4, warm, warm], vec![0.0f32; 4 * warm * warm]))?;
                 s.run(ort::inputs!["packed" => zeros])?;
                 Ok(())
             },
         )?;
+        let fixed = (loaded.provider == Provider::CoreMl).then_some(packed);
         let version = loaded
             .session
             .metadata()
             .ok()
             .and_then(|m| m.custom("greycard.version"))
             .unwrap_or_default();
-        Ok(Self { loaded, version })
+        Ok(Self {
+            loaded,
+            version,
+            fixed,
+        })
     }
 
     /// A registered tier from the store; [`Error::Missing`] when it
@@ -122,6 +166,7 @@ impl Denoiser {
             &store.path(model, &model.files[0]),
             providers,
             Some(remember),
+            Tiling::default(),
         )
     }
 
@@ -159,8 +204,7 @@ impl Denoiser {
         if width < 4 || height < 4 {
             return Err(Error::Shape(format!("{width}x{height} is too small")));
         }
-        let tile = tiling.tile.max(32) & !1;
-        let margin = tiling.margin.max(2) & !1;
+        let (tile, margin) = tiling.even();
         // A silent channel (a = b = 0) has no transform; give it the
         // faintest read noise so the network sees a finite picture.
         let vst: [Vst; 3] = std::array::from_fn(|c| {
@@ -179,6 +223,12 @@ impl Denoiser {
         // samples on the near side of the origin.
         let side = tile + 2 * margin;
         let half = side / 2;
+        if let Some(fixed) = self.fixed.filter(|&f| f != half) {
+            return Err(Error::Shape(format!(
+                "a {half}x{half} tile on {}, whose session takes {fixed}x{fixed} only",
+                self.loaded.provider.name()
+            )));
+        }
         let mut ty = -2 * dy as isize;
         while ty < height as isize {
             let mut tx = -2 * dx as isize;
@@ -314,6 +364,23 @@ impl Mirror {
 mod tests {
     use super::*;
     use greycard_core::raw::CfaColor;
+
+    #[test]
+    fn the_default_tiling_gives_the_fixed_side() {
+        assert_eq!(Tiling::default().packed_side(), FIXED_SIDE);
+        assert_eq!(FIXED_SIDE, 608);
+        let small = Tiling {
+            tile: 512,
+            ..Default::default()
+        };
+        assert_eq!(small.packed_side(), 352);
+        // An odd tile is cut even, as `run` cuts it.
+        let odd = Tiling {
+            tile: 513,
+            margin: 7,
+        };
+        assert_eq!(odd.packed_side(), (512 + 12) / 2);
+    }
 
     #[test]
     fn mirror_keeps_the_phase() {

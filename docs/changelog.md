@@ -119,6 +119,13 @@ design note behind it.
   removed from the store
   ([§398](https://github.com/jessolmstead/greycard/blob/master/docs/notes/398-the-frames-grain-under-a-fill.md))
 
+### On a Mac
+
+- On Apple silicon the learned denoiser and the Sky and Subject masks
+  can run on Core ML, which reaches the Neural Engine; greycard times
+  it against WebGPU when a model loads and keeps the faster
+  ([§422](https://github.com/jessolmstead/greycard/blob/master/docs/notes/422-the-core-ml-provider-in.md)).
+
 ### Fixes
 
 - A fixed-lens compact, phone, or action camera gets its lens profile

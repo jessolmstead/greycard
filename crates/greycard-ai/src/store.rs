@@ -51,11 +51,7 @@ impl Store {
     /// directory: `~/.cache` on Linux, `~/Library/Caches` on macOS,
     /// `%LOCALAPPDATA%` on Windows.
     pub fn user() -> Result<Self> {
-        let base = std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .or_else(dirs::cache_dir)
-            .ok_or(Error::NoCacheDir)?;
+        let base = cache_home().ok_or(Error::NoCacheDir)?;
         Ok(Self::at(base.join("greycard").join("models")))
     }
 
@@ -264,6 +260,16 @@ impl Store {
 /// should not start again at a dropped connection. Smaller ones start
 /// over, which costs little.
 pub const RESUMABLE: u64 = 256 << 20;
+
+/// The user's cache directory: `$XDG_CACHE_HOME` when that is set and
+/// absolute, else the platform's (`~/.cache`, `~/Library/Caches`,
+/// `%LOCALAPPDATA%`). greycard's own things go under `greycard/` in it.
+pub(crate) fn cache_home() -> Option<PathBuf> {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(dirs::cache_dir)
+}
 
 /// Download `file` to `part`, checking its hash. On a failure of the
 /// connection or a write, `part` is kept when the file is over

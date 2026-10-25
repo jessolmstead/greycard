@@ -54,6 +54,10 @@ pub enum Provider {
     /// NVIDIA through CUDA and cuDNN; only in a build with the `cuda`
     /// feature, and only when the libraries are on the system.
     Cuda,
+    /// Apple's Core ML on macOS, which puts each op on the Neural
+    /// Engine, the GPU, or the CPU; only in a build with the `coreml`
+    /// feature, and only on macOS, where greycard's library carries it.
+    CoreMl,
     /// Any Vulkan, Metal or DX12 device through Dawn.
     WebGpu,
     Cpu,
@@ -65,6 +69,10 @@ impl Provider {
         [
             #[cfg(feature = "cuda")]
             Provider::Cuda,
+            // Before WebGPU, but not on trust: `open` times the two
+            // and keeps the faster.
+            #[cfg(all(feature = "coreml", target_os = "macos"))]
+            Provider::CoreMl,
             #[cfg(feature = "webgpu")]
             Provider::WebGpu,
             Provider::Cpu,
@@ -95,6 +103,19 @@ impl Provider {
         Self::all()
     }
 
+    /// `given` less Core ML, for a model that stays off it: Core ML is
+    /// for the denoiser, Sky, and Subject, whose shapes are fixed; the
+    /// others (LaMa's free size, SAM's prompts) would pay a second
+    /// session and two more warm runs at every load to lose the race,
+    /// or fall to the CPU under static shapes.
+    pub fn without_core_ml(given: &[Provider]) -> Vec<Provider> {
+        given
+            .iter()
+            .copied()
+            .filter(|p| *p != Provider::CoreMl)
+            .collect()
+    }
+
     pub fn is_available(self) -> bool {
         Self::available().contains(&self)
     }
@@ -102,6 +123,7 @@ impl Provider {
     pub fn name(self) -> &'static str {
         match self {
             Provider::Cuda => "CUDA",
+            Provider::CoreMl => "CoreML",
             Provider::WebGpu => "WebGPU",
             Provider::Cpu => "CPU",
         }
@@ -120,10 +142,22 @@ impl Provider {
         }
     }
 
-    fn dispatch(self) -> Option<ort::ep::ExecutionProviderDispatch> {
+    /// The provider's registration for a session of `path` whose free
+    /// dimensions `fixed` sets.
+    #[cfg_attr(
+        not(all(feature = "coreml", target_os = "macos")),
+        allow(unused_variables)
+    )]
+    fn dispatch(
+        self,
+        path: &Path,
+        fixed: &[(&str, i64)],
+    ) -> Option<ort::ep::ExecutionProviderDispatch> {
         match self {
             #[cfg(feature = "cuda")]
             Provider::Cuda => Some(ort::ep::CUDA::default().build().error_on_failure()),
+            #[cfg(all(feature = "coreml", target_os = "macos"))]
+            Provider::CoreMl => Some(coreml(coreml_cache(path, fixed).as_deref(), false)),
             #[cfg(feature = "webgpu")]
             // The storage buffer cache is ONNX Runtime's default for
             // every session, one mode for the process: it lives on the
@@ -159,6 +193,10 @@ impl Provider {
             Provider::Cuda => cuda_adapter_identity(),
             #[cfg(not(feature = "cuda"))]
             Provider::Cuda => None,
+            #[cfg(all(feature = "coreml", target_os = "macos"))]
+            Provider::CoreMl => coreml_machine_identity(),
+            #[cfg(not(all(feature = "coreml", target_os = "macos")))]
+            Provider::CoreMl => None,
             #[cfg(feature = "webgpu")]
             Provider::WebGpu => webgpu_adapter_identity(),
             #[cfg(not(feature = "webgpu"))]
@@ -166,6 +204,111 @@ impl Provider {
             Provider::Cpu => None,
         }
     }
+}
+
+/// Core ML as greycard asks for it: the ML Program format (the older
+/// NeuralNetwork format takes fewer ops and no fp16 program), every
+/// compute unit (Core ML picks the Neural Engine, the GPU, or the CPU
+/// per op), inputs of static shape only (the Neural Engine wants one;
+/// a model with free dimensions takes them fixed at load, `open_fixed`),
+/// and the compiled model kept in `cache`, since Core ML compiles the
+/// graph on a session's first load and that takes seconds.
+/// `profile` logs where each op went and its estimated cost (Core ML's
+/// compute plan, macOS 14.4 and up), to stderr through NSLog; for the
+/// probe, not the editor. Built wherever the feature is on, so a Linux
+/// build checks it, but registered only on macOS: no other library
+/// greycard loads carries the provider.
+#[cfg(feature = "coreml")]
+pub fn coreml(cache: Option<&Path>, profile: bool) -> ort::ep::ExecutionProviderDispatch {
+    use ort::ep::coreml::{ComputeUnits, ModelFormat};
+    let mut ep = ort::ep::CoreML::default()
+        .with_model_format(ModelFormat::MLProgram)
+        .with_compute_units(ComputeUnits::All)
+        .with_static_input_shapes(true)
+        .with_profile_compute_plan(profile);
+    if let Some(dir) = cache {
+        ep = ep.with_model_cache_dir(dir.display());
+    }
+    ep.build().error_on_failure()
+}
+
+/// Where Core ML keeps its compile of the model at `path` with the
+/// free dimensions `fixed`: `greycard/coreml/<key>` in the user's
+/// cache, made if need be. ONNX Runtime recompiles a cached model only
+/// when the graph's structure or metadata changes, not its weights, so
+/// each file gets a folder of its own, keyed by its path, size, and
+/// modification time and the dimensions fixed. `None`, and no cache,
+/// when there is nowhere to put it.
+#[cfg(all(feature = "coreml", target_os = "macos"))]
+fn coreml_cache(path: &Path, fixed: &[(&str, i64)]) -> Option<std::path::PathBuf> {
+    let key = coreml_cache_key(path, fixed);
+    let dir = crate::store::cache_home()?
+        .join("greycard")
+        .join("coreml")
+        .join(key);
+    match std::fs::create_dir_all(&dir) {
+        Ok(()) => Some(dir),
+        Err(e) => {
+            log::warn!(
+                "no Core ML cache at {}: {e}; it compiles at every load",
+                dir.display()
+            );
+            None
+        }
+    }
+}
+
+/// The folder name for [`coreml_cache`]: the file's stem and the first
+/// sixteen hex digits of a hash of what names that build of it.
+#[cfg_attr(not(all(feature = "coreml", target_os = "macos")), allow(dead_code))]
+fn coreml_cache_key(path: &Path, fixed: &[(&str, i64)]) -> String {
+    use sha2::{Digest, Sha256};
+    let meta = std::fs::metadata(path).ok();
+    let modified = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let mut h = Sha256::new();
+    h.update(path.to_string_lossy().as_bytes());
+    h.update(meta.map(|m| m.len()).unwrap_or_default().to_le_bytes());
+    h.update(modified.to_le_bytes());
+    for (name, size) in fixed {
+        h.update(name.as_bytes());
+        h.update(size.to_le_bytes());
+    }
+    let digest = h.finalize();
+    let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    format!("{stem}-{hex}")
+}
+
+/// What Core ML runs on, for the provider-outcome record: the chip and
+/// the macOS version, since a system update brings a new Core ML. Asked
+/// once a process.
+#[cfg(all(feature = "coreml", target_os = "macos"))]
+fn coreml_machine_identity() -> Option<String> {
+    static IDENTITY: OnceLock<Option<String>> = OnceLock::new();
+    IDENTITY
+        .get_or_init(|| {
+            let ask = |program: &str, args: &[&str]| {
+                let out = std::process::Command::new(program)
+                    .args(args)
+                    .output()
+                    .ok()?;
+                let text = String::from_utf8(out.stdout).ok()?;
+                let line = text.trim();
+                (out.status.success() && !line.is_empty()).then(|| line.to_string())
+            };
+            let chip = ask("sysctl", &["-n", "machdep.cpu.brand_string"])?;
+            let os = ask("sw_vers", &["-productVersion"])?;
+            Some(format!("{chip}|macOS {os}"))
+        })
+        .clone()
 }
 
 /// wgpu's own idea of the adapter it would hand a device: name,
@@ -538,11 +681,35 @@ pub struct Loaded {
 /// still warmed up fresh: skipping that would hand back a session
 /// that has not actually run the graph this launch, with nothing to
 /// fall through to and nothing written back if that turns out wrong.
+///
+/// Core ML is the one exception to "first that passes": a graph Core
+/// ML partly declines runs the rest on the CPU, with a copy at each
+/// cut, and it says so only in its compute plan. So where a GPU
+/// provider follows it in the list, both are opened, `warm` is run
+/// once more on each and timed, and the faster is kept; the other
+/// session is dropped. The CPU after them is not tried.
 pub fn open(
     path: &Path,
     level: GraphOptimizationLevel,
     providers: &[Provider],
     remember: Option<Remembered<'_>>,
+    warm: impl FnMut(&mut Session) -> ort::Result<()>,
+) -> Result<Loaded> {
+    open_fixed(path, level, providers, remember, &[], warm)
+}
+
+/// [`open`], with the model's free dimensions named in `fixed` set to
+/// their sizes on Core ML, which compiles a static graph for the
+/// Neural Engine only when every shape is known at load. The other
+/// providers keep the graph's free dimensions. `warm` should then run
+/// the fixed shape, on every provider, so the timing in `open` compares
+/// like with like.
+pub fn open_fixed(
+    path: &Path,
+    level: GraphOptimizationLevel,
+    providers: &[Provider],
+    remember: Option<Remembered<'_>>,
+    fixed: &[(&str, i64)],
     mut warm: impl FnMut(&mut Session) -> ort::Result<()>,
 ) -> Result<Loaded> {
     if let Err(why) = init() {
@@ -558,9 +725,17 @@ pub fn open(
     // (`remember` is set and the adapter could be named) touches
     // disk, and only once for the whole call.
     let mut entries: Option<Vec<record::Entry>> = None;
+    // Core ML's session and its timed run, held while the provider
+    // after it is timed against it.
+    let mut held: Option<(Loaded, f64)> = None;
 
     for (i, &provider) in providers.iter().enumerate() {
+        if held.is_some() && provider == Provider::Cpu {
+            break;
+        }
         let last = i + 1 == providers.len();
+        let racing = held.is_none() && races(provider, &providers[i + 1..]);
+        let timed = racing || held.is_some();
         // Started before the adapter probe (cached after its first
         // call a process, but the first call still costs something),
         // so the logged duration is honest about the whole cost of
@@ -587,7 +762,7 @@ pub fn open(
         }
         let skip_warm = skip_warm(last, provider);
 
-        let outcome = try_open(path, level, provider, skip_warm, &mut warm);
+        let outcome = try_open(path, level, provider, fixed, skip_warm, timed, &mut warm);
         if let (Some(r), Some(adapter)) = (remember, &adapter) {
             let entries = entries.get_or_insert_with(|| record::read(r.store_root));
             let recorded = match &outcome {
@@ -613,13 +788,34 @@ pub fn open(
             }
         }
         match outcome {
-            Ok(session) => {
+            Ok((session, run)) => {
                 log::info!(
                     "{name} on {} in {:.2}s",
                     provider.name(),
                     t.elapsed().as_secs_f64()
                 );
-                return Ok(Loaded { session, provider });
+                let loaded = Loaded { session, provider };
+                match (held.take(), run) {
+                    (None, Some(run)) if racing => {
+                        log::info!(
+                            "{name} on {}: a warm run in {run:.3}s, timed against the next",
+                            provider.name()
+                        );
+                        held = Some((loaded, run));
+                    }
+                    (Some((first, first_run)), Some(run)) => {
+                        let first_name = first.provider.name();
+                        let keep = if run < first_run { loaded } else { first };
+                        log::info!(
+                            "{name}: a warm run in {first_run:.3}s on {first_name} and {run:.3}s on {}; keeping {}",
+                            provider.name(),
+                            keep.provider.name()
+                        );
+                        return Ok(keep);
+                    }
+                    (Some((first, _)), None) => return Ok(first),
+                    (None, _) => return Ok(loaded),
+                }
             }
             Err(e) => {
                 let text = e.to_string();
@@ -628,6 +824,10 @@ pub fn open(
                 tried.push(format!("{}: {why}", provider.name()));
             }
         }
+    }
+    // What Core ML was timed against failed, or was the last: it stands.
+    if let Some((loaded, _)) = held {
+        return Ok(loaded);
     }
     // Each provider warned as it failed; the caller decides what the
     // whole means.
@@ -698,22 +898,46 @@ fn skip_warm(last: bool, provider: Provider) -> bool {
     last && provider == Provider::Cpu
 }
 
+/// Whether `provider` is timed against the next GPU provider in
+/// `rest` rather than kept on its warm run alone: Core ML only, which
+/// can pass and still run most of a graph on the CPU.
+fn races(provider: Provider, rest: &[Provider]) -> bool {
+    provider == Provider::CoreMl && rest.iter().any(|p| *p != Provider::Cpu)
+}
+
+/// A session on `provider`, warmed up unless `skip_warm`, and with
+/// `timed` the seconds of a second warm run: the first pays for
+/// compiling shaders or a Core ML specialization, which a tile does
+/// not.
 fn try_open(
     path: &Path,
     level: GraphOptimizationLevel,
     provider: Provider,
+    fixed: &[(&str, i64)],
     skip_warm: bool,
+    timed: bool,
     warm: &mut impl FnMut(&mut Session) -> ort::Result<()>,
-) -> ort::Result<Session> {
+) -> ort::Result<(Session, Option<f64>)> {
     let mut builder = Session::builder()?.with_optimization_level(level)?;
-    if let Some(ep) = provider.dispatch() {
+    if provider == Provider::CoreMl {
+        for &(name, size) in fixed {
+            builder = builder.with_dimension_override(name, size)?;
+        }
+    }
+    if let Some(ep) = provider.dispatch(path, fixed) {
         builder = builder.with_execution_providers([ep])?;
     }
     let mut session = builder.commit_from_file(path)?;
+    let mut run = None;
     if !skip_warm {
         warm(&mut session)?;
+        if timed {
+            let t = std::time::Instant::now();
+            warm(&mut session)?;
+            run = Some(t.elapsed().as_secs_f64());
+        }
     }
-    Ok(session)
+    Ok((session, run))
 }
 
 fn first_line(s: &str) -> &str {
@@ -776,6 +1000,67 @@ mod tests {
     #[test]
     fn cpu_still_warms_up_when_it_is_not_last() {
         assert!(!skip_warm(false, Provider::Cpu));
+    }
+
+    #[test]
+    fn core_ml_is_timed_against_a_gpu_provider_after_it_and_nothing_else() {
+        assert!(races(Provider::CoreMl, &[Provider::WebGpu, Provider::Cpu]));
+        assert!(!races(Provider::CoreMl, &[Provider::Cpu]));
+        assert!(!races(Provider::CoreMl, &[]));
+        assert!(!races(Provider::WebGpu, &[Provider::Cpu]));
+        assert!(!races(Provider::Cuda, &[Provider::WebGpu]));
+    }
+
+    #[test]
+    fn a_model_kept_off_core_ml_keeps_the_rest_in_order() {
+        let all = [Provider::CoreMl, Provider::WebGpu, Provider::Cpu];
+        assert_eq!(
+            Provider::without_core_ml(&all),
+            vec![Provider::WebGpu, Provider::Cpu]
+        );
+        assert_eq!(
+            Provider::without_core_ml(&[Provider::Cpu]),
+            vec![Provider::Cpu]
+        );
+    }
+
+    #[test]
+    fn core_ml_comes_before_webgpu_where_it_is_built() {
+        let all = Provider::all();
+        let at = |p| all.iter().position(|q| *q == p);
+        if cfg!(all(feature = "coreml", target_os = "macos")) {
+            assert!(at(Provider::CoreMl) < at(Provider::WebGpu));
+        } else {
+            assert_eq!(at(Provider::CoreMl), None);
+        }
+        assert_eq!(Provider::CoreMl.name(), "CoreML");
+    }
+
+    /// A file's Core ML compile is kept apart from another file's, and
+    /// from the same file's at other fixed sizes or after it changes.
+    #[test]
+    fn each_model_file_and_fixed_shape_has_a_core_ml_cache_of_its_own() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-runtime-coreml-key-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("denoise-fast.onnx");
+        let b = dir.join("denoise-best.onnx");
+        std::fs::write(&a, b"one").unwrap();
+        std::fs::write(&b, b"one").unwrap();
+        let fixed = [("h", 608), ("w", 608)];
+        let key = coreml_cache_key(&a, &fixed);
+        assert!(key.starts_with("denoise-fast-"), "{key}");
+        assert_eq!(key, coreml_cache_key(&a, &fixed));
+        assert_ne!(key, coreml_cache_key(&b, &fixed));
+        assert_ne!(key, coreml_cache_key(&a, &[("h", 304), ("w", 304)]));
+        assert_ne!(key, coreml_cache_key(&a, &[]));
+        std::fs::write(&a, b"other").unwrap();
+        assert_ne!(key, coreml_cache_key(&a, &fixed));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

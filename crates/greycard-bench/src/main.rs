@@ -217,7 +217,11 @@ fn main() -> Result<()> {
                 "cpu" => vec![greycard_ai::Provider::Cpu],
                 other => bail!("unknown provider {other}; auto, webgpu or cpu"),
             };
-            let d = greycard_ai::Denoiser::load(path, &providers)
+            let tiling = greycard_ai::denoise::Tiling {
+                tile: cli.tile,
+                ..Default::default()
+            };
+            let d = greycard_ai::Denoiser::load_tiled(path, &providers, tiling)
                 .with_context(|| format!("loading {}", path.display()))?;
             eprintln!(
                 "learned denoiser {} on {}",

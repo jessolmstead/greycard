@@ -9,7 +9,7 @@ authors.workspace = true
 repository.workspace = true
 
 [features]
-default = ["webgpu"]
+default = ["webgpu", "coreml"]
 # Which execution providers the build tries; the library that carries
 # them is made by scripts/ort-dylib.sh (WebGPU's) or named by
 # GREYCARD_ORT_DYLIB. WebGPU runs on any Vulkan, Metal or DX12 device
@@ -20,6 +20,12 @@ default = ["webgpu"]
 # off its own device), `nvidia-smi` at run time for CUDA, since
 # neither `ort` nor ONNX Runtime exposes the adapter it picked.
 webgpu = ["ort/webgpu", "dep:wgpu", "dep:pollster"]
+# Core ML on macOS, tried before WebGPU and timed against it. On by
+# default everywhere since a feature cannot default per target: it
+# only adds `ort`'s registration code (with `load-dynamic`, ort-sys
+# links and downloads nothing for it), and the provider is offered
+# only where `target_os = "macos"`, whose library carries it.
+coreml = ["ort/coreml"]
 cuda = ["ort/cuda"]
 
 [dependencies]

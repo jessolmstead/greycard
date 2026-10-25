@@ -445,11 +445,18 @@ pub struct Fill {
     loaded: Loaded,
 }
 
+/// The providers LaMa is tried on, of those `given`: not Core ML,
+/// whose static shapes LaMa's free size would send to the CPU.
+pub fn offered(given: &[Provider]) -> Vec<Provider> {
+    Provider::without_core_ml(given)
+}
+
 impl Fill {
     pub fn load(store: &Store, providers: &[Provider]) -> Result<Self> {
         if !store.have(&FILL) {
             return Err(Error::Missing(FILL.name));
         }
+        let providers = &offered(providers);
         let path = store.path(&FILL, &FILL.files[0]);
         let remember = runtime::Remembered {
             store_root: store.root(),
@@ -553,6 +560,13 @@ impl Fill {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lama_is_never_tried_on_core_ml() {
+        use crate::Provider;
+        let all = [Provider::CoreMl, Provider::WebGpu, Provider::Cpu];
+        assert_eq!(super::offered(&all), [Provider::WebGpu, Provider::Cpu]);
+    }
+
     use super::*;
 
     fn win(x: usize, y: usize, width: usize, height: usize) -> Window {

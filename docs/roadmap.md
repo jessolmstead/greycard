@@ -207,14 +207,11 @@ seconds.
 - [ ] The first open of a 45 MP frame: the demosaic (1.2 s) is most
       of a fresh base's 1.9 s on eight threads, now the lens is on the
       GPU (§378, §386)
-- [ ] The CoreML provider (the denoiser takes 15 s on an M5 under
-      WebGPU, 2026-10-24), so the learned denoiser runs on the Neural
-      Engine and the M5's GPU neural accelerators: ort's `coreml`
-      feature, a `Provider::CoreMl` with the ML Program format and a
-      model cache dir, the free dimensions fixed at 608x608 (every tile
-      is that size already), and the compute plan printed from the
-      probe before believing any timing, since a node the provider
-      declines runs on the CPU with a copy each way (§90; §380 wants it too)
+- [ ] Core ML on the Mac, confirmed: the compute plan all on the
+      Neural Engine or GPU, the race keeping Core ML well under the
+      15 s the denoiser takes on WebGPU on an M5, fp16 error small;
+      then the race's winner remembered so a load opens one session
+      (§422)
 - [ ] The non-local means' symmetric-offset halving, §128's leftover:
       the means are the larger half of the hybrid denoise again (about
       4.4 s of the 45 MP denoise at six threads against the chain's

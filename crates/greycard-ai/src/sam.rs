@@ -40,11 +40,18 @@ pub struct Sam {
     decoder: Loaded,
 }
 
+/// The providers SAM is tried on, of those `given`: not Core ML,
+/// which would only add sessions and warm runs at every load.
+pub fn offered(given: &[Provider]) -> Vec<Provider> {
+    Provider::without_core_ml(given)
+}
+
 impl Sam {
     pub fn load(store: &Store, providers: &[Provider]) -> Result<Self> {
         if !store.have(&SAM) {
             return Err(Error::Missing(SAM.name));
         }
+        let providers = &offered(providers);
         // Level1: ORT 1.28's transpose optimizer throws on this export
         // at higher levels.
         let level = GraphOptimizationLevel::Level1;
@@ -252,6 +259,13 @@ fn decoder_inputs(embedding: &Embedding, prompts: &[Prompt]) -> ort::Result<Feed
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sam_is_never_tried_on_core_ml() {
+        use crate::Provider;
+        let all = [Provider::CoreMl, Provider::WebGpu, Provider::Cpu];
+        assert_eq!(super::offered(&all), [Provider::WebGpu, Provider::Cpu]);
+    }
+
     use super::*;
 
     fn point(x: f32, y: f32, positive: bool) -> Prompt {
