@@ -53,6 +53,10 @@ export component PanelHead inherits VerticalLayout {
     in property <int> set-count;
     callback sync-asked();
 
+    // While the vectorscope shows, the shot's lines fold away to make
+    // room for its circle; the file's name and the undo buttons stay.
+    property <bool> shot-folded: !root.culling && root.scope == "Vector";
+
     padding-left: Theme.space-4;
     padding-right: Theme.space-4;
     padding-top: Theme.space-4;
@@ -64,7 +68,8 @@ export component PanelHead inherits VerticalLayout {
     // not fit the panel's width. Both lines keep
     // their height when the file says nothing, so
     // the panel below does not jump between one
-    // picture and the next.
+    // picture and the next. The vectorscope folds
+    // them away (`shot-folded`).
     VerticalLayout {
         spacing: 2px;
         HorizontalLayout {
@@ -98,35 +103,35 @@ export component PanelHead inherits VerticalLayout {
                 clicked => { root.redo(); }
             }
         }
-        Text {
+        if !root.shot-folded: Text {
             text: root.shot-camera;
             height: 16px;
             color: Theme.text-secondary;
             font-size: Theme.font-sm;
             overflow: elide;
         }
-        Text {
+        if !root.shot-folded: Text {
             text: root.shot-exposure;
             height: 16px;
             color: Theme.text-secondary;
             font-size: Theme.font-sm;
             overflow: elide;
         }
-        Text {
+        if !root.shot-folded: Text {
             text: root.shot-size;
             height: 16px;
             color: Theme.text-secondary;
             font-size: Theme.font-sm;
             overflow: elide;
         }
-        if root.shot-time != "": Text {
+        if !root.shot-folded && root.shot-time != "": Text {
             text: root.shot-time;
             height: 16px;
             color: Theme.text-secondary;
             font-size: Theme.font-sm;
             overflow: elide;
         }
-        if root.file-companion != "": Text {
+        if !root.shot-folded && root.file-companion != "": Text {
             text: root.file-companion;
             height: 16px;
             color: Theme.text-secondary;
@@ -151,76 +156,83 @@ export component PanelHead inherits VerticalLayout {
     // there is none, and they are not shown.
     if !root.culling: VerticalLayout {
         spacing: Theme.space-1;
-        Rectangle {
-            // The vectorscope is square, so its
-            // circle is round however wide the
-            // panel is. A waveform wants height to
-            // hold its trace apart; the histogram
-            // is low.
-            height: root.scope == "Vector" ? self.width
+        scope-box := Rectangle {
+            // A waveform wants height to hold its trace apart; the
+            // histogram is low. The vectorscope's circle sits square in
+            // the middle, 180 px across, with the shot's lines folded
+            // away to make room for it, so the panel below moves by
+            // tens of pixels when it is chosen rather than a hundred.
+            height: root.scope == "Vector" ? 180px
                 : (root.scope == "RGB" ? 84px : 144px);
             border-radius: Theme.radius-md;
             background: Theme.base;
             border-width: 1px;
             border-color: Theme.border;
             clip: true;
-            Image {
-                source: root.scope-picture;
-                width: parent.width - 2px;
-                height: parent.height - 2px;
-                image-fit: fill;
-                image-rendering: smooth;
-            }
-            // The color under the pointer in numbers, drawn before its
-            // marks so they lie over it: a mark at the top of the trace
-            // is never hidden.
-            if root.scope-readout != "": Rectangle {
-                y: 3px;
-                width: readout.preferred-width + 2 * Theme.space-2;
-                height: readout.preferred-height + 2px;
-                border-radius: Theme.radius-sm;
-                background: Theme.base.with-alpha(0.85);
-                readout := Text {
-                    text: root.scope-readout;
-                    color: root.scope-marks-outside ? Theme.text-secondary : Theme.text;
-                    font-size: Theme.font-xs;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+            // What the scope's picture fills, and its marks are placed
+            // on as fractions of.
+            scope-plot := Rectangle {
+                width: root.scope == "Vector" ? min(parent.height, parent.width) : parent.width;
+                height: parent.height;
+                Image {
+                    source: root.scope-picture;
+                    width: parent.width - 2px;
+                    height: parent.height - 2px;
+                    image-fit: fill;
+                    image-rendering: smooth;
                 }
-            }
-            // The color under the pointer: a line on the histogram
-            // through each channel's bar and the luma's level, a dot
-            // on the others where the pixel's cell is. Each has a dark
-            // edge, since it sits on the trace of its own color: the
-            // vectorscope's white ring a dark one just outside it.
-            for m in root.scope-marks: Rectangle {
-                property <length> cx: 1px + m.x * (parent.width - 2px);
-                property <length> cy: 1px + m.y * (parent.height - 2px);
-                property <bool> line: root.scope == "RGB";
-                property <length> size: self.line ? 3px : (m.channel == 3 ? 9px : 7px);
-                x: self.cx - self.size / 2;
-                y: self.line ? 1px : self.cy - self.size / 2;
-                width: self.size;
-                height: self.line ? parent.height - 2px : self.size;
-                border-radius: self.line ? 0 : self.size / 2;
-                background: self.line ? #000000a0 : (m.channel == 3 ? transparent : root.mark-tone(m.channel));
-                border-width: self.line ? 0 : (m.channel == 3 ? 2px : 1px);
-                border-color: m.channel == 3 ? root.mark-tone(3) : #000000c0;
-                opacity: root.scope-marks-outside ? 0.4 : 1;
-                animate x, y { duration: 120ms; easing: ease-out; }
-                if root.scope == "RGB": Rectangle {
-                    x: 1px;
-                    width: 1px;
-                    background: root.mark-tone(m.channel);
+                // The color under the pointer in numbers, drawn before
+                // its marks so they lie over it: a mark at the top of
+                // the trace is never hidden.
+                if root.scope-readout != "": Rectangle {
+                    y: 3px;
+                    width: readout.preferred-width + 2 * Theme.space-2;
+                    height: readout.preferred-height + 2px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.base.with-alpha(0.85);
+                    readout := Text {
+                        text: root.scope-readout;
+                        color: root.scope-marks-outside ? Theme.text-secondary : Theme.text;
+                        font-size: Theme.font-xs;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                 }
-                if root.scope == "Vector": Rectangle {
-                    x: -1px;
-                    y: -1px;
-                    width: parent.width + 2px;
-                    height: parent.height + 2px;
-                    border-radius: self.width / 2;
-                    border-width: 1px;
-                    border-color: #000000c0;
+                // The color under the pointer: a line on the histogram
+                // through each channel's bar and the luma's level, a
+                // dot on the others where the pixel's cell is. Each has
+                // a dark edge, since it sits on the trace of its own
+                // color: the vectorscope's white ring a dark one just
+                // outside it.
+                for m in root.scope-marks: Rectangle {
+                    property <length> cx: 1px + m.x * (parent.width - 2px);
+                    property <length> cy: 1px + m.y * (parent.height - 2px);
+                    property <bool> line: root.scope == "RGB";
+                    property <length> size: self.line ? 3px : (m.channel == 3 ? 9px : 7px);
+                    x: self.cx - self.size / 2;
+                    y: self.line ? 1px : self.cy - self.size / 2;
+                    width: self.size;
+                    height: self.line ? parent.height - 2px : self.size;
+                    border-radius: self.line ? 0 : self.size / 2;
+                    background: self.line ? #000000a0 : (m.channel == 3 ? transparent : root.mark-tone(m.channel));
+                    border-width: self.line ? 0 : (m.channel == 3 ? 2px : 1px);
+                    border-color: m.channel == 3 ? root.mark-tone(3) : #000000c0;
+                    opacity: root.scope-marks-outside ? 0.4 : 1;
+                    animate x, y { duration: 120ms; easing: ease-out; }
+                    if root.scope == "RGB": Rectangle {
+                        x: 1px;
+                        width: 1px;
+                        background: root.mark-tone(m.channel);
+                    }
+                    if root.scope == "Vector": Rectangle {
+                        x: -1px;
+                        y: -1px;
+                        width: parent.width + 2px;
+                        height: parent.height + 2px;
+                        border-radius: self.width / 2;
+                        border-width: 1px;
+                        border-color: #000000c0;
+                    }
                 }
             }
             if root.scope == "RGB": ClipMark {

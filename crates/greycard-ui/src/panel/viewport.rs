@@ -2284,6 +2284,63 @@ mod tests {
             });
     }
 
+    /// The vectorscope's circle sits square in the middle of its box,
+    /// and the shot's lines fold away while it shows, so the sections
+    /// below move only by what the two heights differ; switching back
+    /// brings the lines back and the sections to where they were.
+    #[test]
+    fn the_vectorscope_folds_the_shot_away_and_back() {
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        // The options, as the startup gives them, and a shot's lines.
+        let names: Vec<slint::SharedString> =
+            scope::Scope::ALL.iter().map(|s| s.name().into()).collect();
+        app.set_scopes(slint::ModelRc::new(slint::VecModel::from(names)));
+        app.set_shot_camera("Body and lens".into());
+        app.set_shot_exposure("1/250 s".into());
+        app.set_shot_size("6000 x 4000".into());
+        let bounds = |id: &str| {
+            let e = ElementHandle::find_by_element_id(&app, id)
+                .next()
+                .unwrap_or_else(|| panic!("no {id}"));
+            (e.absolute_position(), e.size())
+        };
+        let choose = |name: &str| {
+            crate::testing::count_labeled(&app, name);
+            let option = ElementHandle::find_by_accessible_label(&app, name)
+                .next()
+                .unwrap_or_else(|| panic!("no {name} option"));
+            let (at, size) = (option.absolute_position(), option.size());
+            click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+            assert_eq!(app.get_scope(), name, "the click chose {name}");
+        };
+        let shot = || crate::testing::count_labeled(&app, "1/250 s");
+        for from in ["RGB", "Wave"] {
+            choose(from);
+            let (_, before) = bounds("PanelHead::scope-box");
+            let top = bounds("App::panel-view").0.y;
+            assert_eq!(shot(), 1, "{from}: the shot's lines");
+
+            choose("Vector");
+            assert_eq!(shot(), 0, "folded under the vectorscope");
+            let (box_at, box_size) = bounds("PanelHead::scope-box");
+            let (plot_at, plot_size) = bounds("PanelHead::scope-plot");
+            assert_eq!(box_size.height, 180.0);
+            assert_eq!((plot_size.width, plot_size.height), (180.0, 180.0));
+            let left = plot_at.x - box_at.x;
+            let right = box_at.x + box_size.width - (plot_at.x + plot_size.width);
+            assert!((left - right).abs() <= 0.5, "centered: {left} and {right}");
+            // Three lines of 16 px and their spacing of 2 folded away.
+            let moved = bounds("App::panel-view").0.y - top;
+            assert_eq!(moved, 180.0 - before.height - 3.0 * 18.0, "from {from}");
+
+            choose(from);
+            assert_eq!(shot(), 1, "{from}: the lines back");
+            assert_eq!(bounds("App::panel-view").0.y, top, "{from}: back in place");
+        }
+    }
+
     #[test]
     fn the_proof_badge_is_hidden_with_the_proof_off() {
         let app = window(1);

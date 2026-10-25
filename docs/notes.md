@@ -438,3 +438,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§423. Camera profiles by the body's other names](notes/423-camera-profiles-by-the-bodys-other-names.md) (2026-10-24)
 - [§424. The slider's drag: no jump past the dead zone, and Shift for a fine drag](notes/424-the-sliders-drag-no-jump-and-shift-for-a-fine-drag.md) (2026-10-24)
 - [§425. Fills kept on disk](notes/425-fills-kept-on-disk.md) (2026-10-25)
+- [§426. The vectorscope folds the shot away](notes/426-the-vectorscope-folds-the-shot-away.md) (2026-10-25)

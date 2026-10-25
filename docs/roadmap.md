@@ -174,11 +174,13 @@ seconds.
 - [ ] The first open of a 45 MP frame: the demosaic (1.2 s) is most
       of a fresh base's 1.9 s on eight threads, now the lens is on the
       GPU (§378, §386)
-- [ ] Core ML on the Mac, confirmed: the compute plan all on the
-      Neural Engine or GPU, the race keeping Core ML well under the
-      15 s the denoiser takes on WebGPU on an M5, fp16 error small;
-      then the race's winner remembered so a load opens one session
-      (§422)
+- [ ] Core ML on the Mac: confirmed on an M5 (2026-10-25), the
+      denoisers all on the GPU at a third of WebGPU's time, the
+      develop keeping Core ML; the race's winner remembered so a load
+      opens one session (§422)
+- [ ] The denoisers exported at fp16 as well, so Core ML can place
+      them on the Neural Engine: at fp32 every op falls to the CPU
+      when the Neural Engine is asked for (M5, 2026-10-25)
 - [ ] The non-local means' symmetric-offset halving, §128's leftover:
       the means are the larger half of the hybrid denoise again (about
       4.4 s of the 45 MP denoise at six threads against the chain's
@@ -915,11 +917,6 @@ clears or a tester asks for it.
       (pixls, 2026-10-24)
 - [ ] Constrained mask drags: Shift holds a linear mask to the axes
       or 15-degree steps and a radial mask to a circle
-      (pixls, 2026-10-24)
-- [ ] The scopes at one height, so the panel holds still when the
-      scope changes: about 180 px for all three, the vectorscope a
-      circle centered in the box; if that circle reads too small,
-      the metadata folded away while the vectorscope shows instead
       (pixls, 2026-10-24)
 - [ ] The clipping warnings as a pair of plain buttons, with the
       toolbar (pixls, 2026-10-24)

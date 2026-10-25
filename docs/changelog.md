@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- Choosing the vectorscope no longer pushes the panel far down: its
+  circle is smaller and centered, and the shot's details fold away
+  while it shows
+  ([§426](https://github.com/jessolmstead/greycard/blob/master/docs/notes/426-the-vectorscope-folds-the-shot-away.md)).
 - Settings > Interface > Scale takes any whole percentage from 50 to
   300, typed, in place of five fixed steps; it still applies at the
   next start
