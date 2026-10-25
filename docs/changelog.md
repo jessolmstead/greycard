@@ -103,6 +103,10 @@ design note behind it.
 
 ### Retouch
 
+- A Fill made by the generative remove or LaMa is kept on disk, so
+  opening the frame again shows it at once rather than running the
+  model again
+  ([§425](https://github.com/jessolmstead/greycard/blob/master/docs/notes/425-fills-kept-on-disk.md)).
 - On a Mac or another machine whose GPU shares its memory, the
   generative remove keeps its largest model open between removals
   from 16 GB, decodes whole from 24 GB, and keeps all of it open from

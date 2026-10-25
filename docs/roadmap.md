@@ -15,11 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A frame with remove fills in its edit reruns every removal
-      when it is opened: the fill cache is in memory and cleared at
-      each open (§406), so an M5 spends 172 s on two fills before a
-      3 s develop (2026-10-24). Keep fills on disk beside the
-      thumbnail cache, keyed as the memory cache is
 - [ ] The Subject model's first run on an M5 under WebGPU on Metal
       sat for minutes with every thread of the app asleep, ONNX
       Runtime's pool and Dawn's workers idle, no line logged; killed,

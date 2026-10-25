@@ -4,7 +4,7 @@
 //! develop as it was then, since a subject does not move when the
 //! white balance does. Made rasters are also kept on disk, keyed by
 //! the file, the model and the shape, so opening a file again does not
-//! run the model again.
+//! run the model again; so are made fills, beside them.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -212,7 +212,9 @@ pub struct Ai {
     denoiser: Option<(&'static str, Denoiser)>,
     /// Fills made, by patch id and seed, with the patch, the window
     /// and the engine each was made for: a seed's fill is kept when
-    /// "Another" moves the patch on to the next, so undo is free.
+    /// "Another" moves the patch on to the next, so undo is free. Each
+    /// is kept on disk too (`fill_path`), so opening the file again
+    /// does not run the model again; a failure is kept here alone.
     fills: HashMap<(u64, u32), FillMade>,
     /// Fills whose model ran and failed or was refused, by patch id and
     /// seed, with the patch, the window and why: not run again for the
@@ -248,8 +250,8 @@ pub struct Ai {
     /// What has been made, by component and the base's turn, with the
     /// shape it was made for.
     cache: HashMap<(Key, u8), (Shape, Arc<Raster>)>,
-    /// Whether made rasters are kept on disk (`cached_path`); never for
-    /// a test that runs the models.
+    /// Whether made rasters and fills are kept on disk (`cached_path`,
+    /// `fill_path`); never for a test that runs the models.
     disk: bool,
     /// The Subject matte at the raster's size, of base develop
     /// `stamp`, and the provider that made it: run once and read by a
@@ -1043,9 +1045,124 @@ impl Ai {
     /// for it costs nothing.
     pub fn fill_kept(&mut self, patch: &Patch, region: &Region, image: &WorkingImage) -> bool {
         let (window, _) = self.window_of(patch, region, image);
+        self.fill_in_memory(patch, window).is_some()
+            || self.fill_from_disk(patch, region, image, window)
+    }
+
+    /// The patch's fill, as it is now, kept in memory.
+    fn fill_in_memory(&self, patch: &Patch, window: Window) -> Option<(Vec<f32>, Engine)> {
         self.fills
             .get(&(patch.id, patch.seed))
-            .is_some_and(|(p, w, _, _)| same_fill(p, patch) && *w == window)
+            .filter(|(p, w, _, _)| same_fill(p, patch) && *w == window)
+            .map(|(_, _, engine, data)| (data.clone(), *engine))
+    }
+
+    /// The patch's fill read from its slot on disk into memory, if it
+    /// is there as the patch and the picture round it are now.
+    fn fill_from_disk(
+        &mut self,
+        patch: &Patch,
+        region: &Region,
+        image: &WorkingImage,
+        window: Window,
+    ) -> bool {
+        let size = (image.width, image.height);
+        let Some(path) = self.fill_path(patch, region, image, window) else {
+            return false;
+        };
+        let Some((engine, data)) = read_fill(
+            &path,
+            FILL_VERSION,
+            size,
+            window,
+            (region.width, region.height),
+        ) else {
+            return false;
+        };
+        tracing::info!(
+            "fill {}: read from the fill cache, {}x{} made by {engine:?}",
+            patch.name(),
+            region.width,
+            region.height
+        );
+        self.fills.insert(
+            (patch.id, patch.seed),
+            (patch.clone(), window, engine, data),
+        );
+        true
+    }
+
+    /// Where the patch's fill on the open file lives on disk: beside
+    /// the made rasters, named by a hash of the file, the patch as
+    /// [`same_fill`] compares it, its seed, the picture's size, the
+    /// region, the window, both engines' models, and a print of the
+    /// window's known pixels ([`window_print`]): a fill made under
+    /// another white balance, lens, turn or virtual copy is another.
+    fn fill_path(
+        &self,
+        patch: &Patch,
+        region: &Region,
+        image: &WorkingImage,
+        window: Window,
+    ) -> Option<PathBuf> {
+        let size = (image.width, image.height);
+        if !self.disk {
+            return None;
+        }
+        let file = self.file.as_ref()?;
+        let root = self.store.as_ref()?.root().parent()?.join("masks");
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        file.hash(&mut h);
+        "fill".hash(&mut h);
+        patch.id.hash(&mut h);
+        patch.seed.hash(&mut h);
+        for p in &patch.points {
+            p.map(f32::to_bits).hash(&mut h);
+        }
+        patch.radius.to_bits().hash(&mut h);
+        patch.feather.to_bits().hash(&mut h);
+        std::mem::discriminant(&patch.method).hash(&mut h);
+        patch.remove.hash(&mut h);
+        size.hash(&mut h);
+        (region.x, region.y, region.width, region.height).hash(&mut h);
+        window.hash(&mut h);
+        greycard_ai::FILL.id.hash(&mut h);
+        REMOVE.id.hash(&mut h);
+        window_print(image, region, window).hash(&mut h);
+        Some(root.join(format!("{:016x}.fill", h.finish())))
+    }
+
+    /// The patch's fill made: kept in memory and on disk, at half
+    /// precision in both, so a fill read back is the one first shown.
+    fn keep_fill(
+        &mut self,
+        patch: &Patch,
+        region: &Region,
+        image: &WorkingImage,
+        window: Window,
+        engine: Engine,
+        mut data: Vec<f32>,
+    ) -> Vec<f32> {
+        for v in &mut data {
+            *v = half::f16::from_f32(v.clamp(-65504.0, 65504.0)).to_f32();
+        }
+        let size = (image.width, image.height);
+        if let Some(path) = self.fill_path(patch, region, image, window) {
+            write_fill(
+                &path,
+                FILL_VERSION,
+                engine,
+                size,
+                window,
+                (region.width, region.height),
+                &data,
+            );
+        }
+        self.fills.insert(
+            (patch.id, patch.seed),
+            (patch.clone(), window, engine, data.clone()),
+        );
+        data
     }
 
     /// The engine the patch's fill is made by here, or why it is left
@@ -1095,11 +1212,13 @@ impl Ai {
         image: &WorkingImage,
     ) -> Result<(Vec<f32>, Engine), NoFill> {
         let (window, depth) = self.window_of(patch, region, image);
-        if let Some((p, w, engine, data)) = self.fills.get(&(patch.id, patch.seed))
-            && same_fill(p, patch)
-            && *w == window
+        if let Some(kept) = self.fill_in_memory(patch, window) {
+            return Ok(kept);
+        }
+        if self.fill_from_disk(patch, region, image, window)
+            && let Some(kept) = self.fill_in_memory(patch, window)
         {
-            return Ok((data.clone(), *engine));
+            return Ok(kept);
         }
         if let Some(why) = self.failed_before(patch, region, image) {
             return Err(NoFill::Failed(why));
@@ -1318,10 +1437,7 @@ impl Ai {
                 r.after[1]
             );
         }
-        self.fills.insert(
-            (patch.id, patch.seed),
-            (patch.clone(), window, engine, out.clone()),
-        );
+        let out = self.keep_fill(patch, region, image, window, engine, out);
         Ok((out, engine))
     }
 
@@ -3038,6 +3154,172 @@ fn write_raster(path: &Path, height: usize, data: &[u8]) {
     }
 }
 
+/// The fills kept on disk's format: bumped when a change to either
+/// engine, or to how a fill is put together, makes another fill of the
+/// same patch, so the old ones are made again.
+const FILL_VERSION: u8 = 1;
+
+/// The first bytes of a fill kept on disk.
+const FILL_MAGIC: &[u8; 6] = b"GCFILL";
+
+/// A fill kept on disk's header: the magic, the version and engine
+/// bytes, and [`fill_numbers`] as u32s.
+const FILL_HEADER: usize = FILL_MAGIC.len() + 2 + 8 * 4;
+
+/// The side of the blocks [`window_print`] takes means over.
+const PRINT_BLOCK: usize = 16;
+
+/// A coarse print of the picture a fill is made from: the means of the
+/// window's pixels outside the hole over 16-pixel blocks, at half
+/// precision, a block with none of them marked empty. Whatever changes
+/// the base develop under the window (white balance, profile, lens,
+/// noise, a turn) changes it, and a fill made from another picture is
+/// not served for this one.
+fn window_print(image: &WorkingImage, region: &Region, window: Window) -> Vec<[u16; 3]> {
+    let covered = |px: usize, py: usize| {
+        px >= region.x
+            && px < region.x + region.width
+            && py >= region.y
+            && py < region.y + region.height
+            && region.cover[(py - region.y) * region.width + (px - region.x)] > 0.0
+    };
+    let (bw, bh) = (
+        window.width.div_ceil(PRINT_BLOCK),
+        window.height.div_ceil(PRINT_BLOCK),
+    );
+    let mut sums = vec![([0.0f64; 3], 0usize); bw * bh];
+    for y in 0..window.height {
+        let py = window.y + y;
+        for x in 0..window.width {
+            let px = window.x + x;
+            if covered(px, py) {
+                continue;
+            }
+            let i = (py * image.width + px) * 3;
+            let (sum, n) = &mut sums[(y / PRINT_BLOCK) * bw + x / PRINT_BLOCK];
+            for (s, v) in sum.iter_mut().zip(&image.data[i..i + 3]) {
+                *s += f64::from(*v);
+            }
+            *n += 1;
+        }
+    }
+    sums.iter()
+        .map(|(sum, n)| {
+            if *n == 0 {
+                return [u16::MAX; 3];
+            }
+            sum.map(|v| half::f16::from_f64(v / *n as f64).to_bits())
+        })
+        .collect()
+}
+
+/// A fill kept on disk: the magic, the version, the engine, then the
+/// picture's size, the window and the region's size as little-endian
+/// u32s, then the region's values as little-endian f16. Half precision
+/// halves a fill that can run to tens of megabytes; its step, under a
+/// part in two thousand, is below the grain put back over the fill.
+fn write_fill(
+    path: &Path,
+    version: u8,
+    engine: Engine,
+    size: (usize, usize),
+    window: Window,
+    region: (usize, usize),
+    data: &[f32],
+) {
+    use std::io::Write;
+    let write = || -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let part = path.with_extension("fill-part");
+        let mut out = std::io::BufWriter::new(std::fs::File::create(&part)?);
+        out.write_all(FILL_MAGIC)?;
+        out.write_all(&[version, engine_byte(engine)])?;
+        for n in fill_numbers(size, window, region) {
+            out.write_all(&u32::try_from(n)?.to_le_bytes())?;
+        }
+        for v in data {
+            out.write_all(&half::f16::from_f32(*v).to_le_bytes())?;
+        }
+        out.into_inner().map_err(|e| e.into_error())?.sync_all()?;
+        std::fs::rename(&part, path)?;
+        Ok(())
+    };
+    if let Err(e) = write() {
+        tracing::warn!("fill cache {}: {e}", path.display());
+    }
+}
+
+/// A fill kept on disk, if the file is there and was written at
+/// `version` for a picture of `size`, `window` and a region of
+/// `region`'s size: the engine that made it and the values.
+fn read_fill(
+    path: &Path,
+    version: u8,
+    size: (usize, usize),
+    window: Window,
+    region: (usize, usize),
+) -> Option<(Engine, Vec<f32>)> {
+    use std::io::Read;
+    // The header alone first: a slot of another version or picture is
+    // not read through on every develop.
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut header = [0u8; FILL_HEADER];
+    file.read_exact(&mut header).ok()?;
+    let (magic, rest) = header.split_at(FILL_MAGIC.len());
+    let (&[v, e], head) = rest.split_first_chunk::<2>()?;
+    if magic != FILL_MAGIC || v != version {
+        return None;
+    }
+    let engine = match e {
+        0 => Engine::Lama,
+        1 => Engine::Remove,
+        _ => return None,
+    };
+    let numbers = fill_numbers(size, window, region);
+    let same = head
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(numbers)
+        .all(|(b, n)| u32::from_le_bytes(*b) as usize == n);
+    let want = region.0 * region.1 * 3 * 2;
+    if !same || file.metadata().ok()?.len() != (FILL_HEADER + want) as u64 {
+        return None;
+    }
+    let mut values = vec![0u8; want];
+    file.read_exact(&mut values).ok()?;
+    let data = values
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| half::f16::from_le_bytes(*b).to_f32())
+        .collect();
+    Some((engine, data))
+}
+
+/// The numbers a fill kept on disk is checked by.
+fn fill_numbers(size: (usize, usize), window: Window, region: (usize, usize)) -> [usize; 8] {
+    [
+        size.0,
+        size.1,
+        window.x,
+        window.y,
+        window.width,
+        window.height,
+        region.0,
+        region.1,
+    ]
+}
+
+fn engine_byte(engine: Engine) -> u8 {
+    match engine {
+        Engine::Lama => 0,
+        Engine::Remove => 1,
+    }
+}
+
 fn mul(m: &[[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
     std::array::from_fn(|r| m[r][0] * v[0] + m[r][1] * v[1] + m[r][2] * v[2])
 }
@@ -3194,6 +3476,119 @@ mod tests {
         // And so is it on another file.
         ai.forget(None);
         assert!(ai.could_fill_more(&retouch(&patch), &image));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A fill made is read back from disk once the file is opened
+    /// again, with no model in the store, as it was first shown; a
+    /// changed patch, another picture size, or a fill of another
+    /// version is made again.
+    #[test]
+    fn a_fill_comes_back_from_disk() {
+        let dir = crate::testing::scratch_dir("fill-on-disk");
+        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
+        // Never probed: the engine asked is the CPU's, so no remove.
+        ai.providers = vec![Provider::Cpu];
+        let file = PathBuf::from("open.CR3");
+        ai.forget(Some(file.clone()));
+        let image = WorkingImage::new(200, 100);
+        let patch = Patch {
+            id: 7,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[0.5, 0.25]],
+            radius: 0.05,
+            remove: true,
+            seed: 2,
+            ..Default::default()
+        };
+        let region = patch.region(image.width, image.height).unwrap();
+        let (window, _) = ai.window_of(&patch, &region, &image);
+        let made: Vec<f32> = (0..region.width * region.height * 3)
+            .map(|i| i as f32 * 0.001 + 0.1)
+            .collect();
+        let kept = ai.keep_fill(
+            &patch,
+            &region,
+            &image,
+            window,
+            Engine::Remove,
+            made.clone(),
+        );
+        for (k, m) in kept.iter().zip(&made) {
+            assert!((k - m).abs() <= m * 1e-3, "{k} against {m}");
+        }
+        let path = ai
+            .fill_path(&patch, &region, &image, window)
+            .expect("a slot");
+        assert!(path.is_file());
+
+        // Opened again: memory is empty, the store has no model.
+        ai.forget(Some(file.clone()));
+        assert!(ai.fill_kept(&patch, &region, &image));
+        ai.forget(Some(file.clone()));
+        match ai.fill(&patch, &region, &image) {
+            Ok((data, engine)) => {
+                assert_eq!(engine, Engine::Remove);
+                assert_eq!(data, kept, "the fill first shown");
+            }
+            Err(e) => panic!("{e:?}"),
+        }
+
+        // A patch drawn bigger, or another seed, is another fill.
+        ai.forget(Some(file.clone()));
+        let mut bigger = patch.clone();
+        bigger.radius = 0.06;
+        let bigger_region = bigger.region(image.width, image.height).unwrap();
+        assert!(!ai.fill_kept(&bigger, &bigger_region, &image));
+        assert!(ai.fill(&bigger, &bigger_region, &image).is_err());
+        let mut varied = patch.clone();
+        varied.seed = 3;
+        assert!(!ai.fill_kept(&varied, &region, &image));
+        // So is the patch on the picture developed otherwise: another
+        // white balance, or a virtual copy's, under the window.
+        let mut warmer = image.clone();
+        for px in warmer.data.as_chunks_mut::<3>().0 {
+            px[0] = 0.3;
+        }
+        assert!(!ai.fill_kept(&patch, &region, &warmer));
+        assert!(ai.fill_kept(&patch, &region, &image));
+        // So is the patch on a picture of another size.
+        let other = WorkingImage::new(400, 200);
+        let other_region = patch.region(other.width, other.height).unwrap();
+        assert!(!ai.fill_kept(&patch, &other_region, &other));
+        // And on another file.
+        ai.forget(Some(PathBuf::from("other.CR3")));
+        assert!(!ai.fill_kept(&patch, &region, &image));
+
+        // The slot read with another version, or a header that does not
+        // match, is a miss.
+        let dims = (region.width, region.height);
+        let size = (image.width, image.height);
+        assert!(read_fill(&path, FILL_VERSION, size, window, dims).is_some());
+        assert!(read_fill(&path, FILL_VERSION + 1, size, window, dims).is_none());
+        assert!(read_fill(&path, FILL_VERSION, (201, 100), window, dims).is_none());
+        // Written at an old version, the slot misses where it stands.
+        write_fill(
+            &path,
+            FILL_VERSION - 1,
+            Engine::Remove,
+            size,
+            window,
+            dims,
+            &kept,
+        );
+        ai.forget(Some(file.clone()));
+        assert!(!ai.fill_kept(&patch, &region, &image));
+
+        // A failure is not kept on disk.
+        ai.remember_failure(&varied, window, "refused".into());
+        ai.forget(Some(file));
+        assert!(ai.failed_before(&varied, &region, &image).is_none());
+
+        // Off the disk, nothing is written.
+        let mut memory = Ai::for_test(Store::at(dir.join("models")), vec![Provider::Cpu]);
+        memory.forget(Some(PathBuf::from("open.CR3")));
+        assert!(memory.fill_path(&patch, &region, &image, window).is_none());
         crate::testing::remove_dir_retry(&dir);
     }
 
