@@ -1123,7 +1123,13 @@ impl Ai {
                 }
             },
             Engine::Remove if self.remove.is_none() => {
-                match Remove::load(&store, &self.providers) {
+                // The card's memory is the machine's on unified memory,
+                // and the remove keeps more open there.
+                let machine = greycard_ai::remove::Machine {
+                    memory: crate::ram::physical(),
+                    unified: greycard_ai::runtime::webgpu_unified(),
+                };
+                match Remove::load_on(&store, &self.providers, Some(machine)) {
                     Ok(r) => self.remove = Some(r),
                     Err(e) => {
                         tracing::debug!("remove model: {e}");

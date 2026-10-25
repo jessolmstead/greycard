@@ -433,3 +433,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§418. The UI scale as any percentage](notes/418-the-ui-scale-as-any-percentage.md) (2026-10-24)
 - [§419. A one-click straighten](notes/419-a-one-click-straighten.md) (2026-10-24)
 - [§420. An Auto starting point for the light](notes/420-an-auto-starting-point-for-the-light.md) (2026-10-24)
+- [§421. The remove's memory read from the machine](notes/421-the-removes-memory-read-from-the-machine.md) (2026-10-24)

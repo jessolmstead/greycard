@@ -37,8 +37,10 @@
 //! (decoder at 1024): all open at once is 12.2 GB of the card, one at
 //! a time about 7 GB for a few seconds more ([`Memory`]). Neither ONNX
 //! Runtime's WebGPU provider nor wgpu says how much memory the adapter
-//! has, so one at a time is the default and `GREYCARD_REMOVE_RESIDENT=1`
-//! keeps them open.
+//! has, but a GPU on unified memory has the machine's, so the choice
+//! is made from that ([`policy`]): one at a time on a discrete card
+//! or a small machine, more kept open on a large unified one, and
+//! `GREYCARD_REMOVE_RESIDENT` (`1`, `unet`, or `0`) over either.
 //!
 //! The sessions keep the provider's default buffer cache, as every
 //! session of the process does (`runtime`'s provider dispatch says
@@ -121,21 +123,134 @@ pub enum Memory {
     /// All three kept open for the size last used: 12.2 GB at 1024,
     /// about 11 s a removal.
     Resident,
+    /// The UNet kept open for the size last used, the VAE's two
+    /// opened for their part and dropped after: its 5.1 GB held, and
+    /// its load, all but a tenth of a second of the loads, paid once.
+    /// With the decoder whole the peak at 1024 is about 11 GB, so a
+    /// machine under 24 GB keeps it in tiles.
+    UnetResident,
     /// Each opened for its part and dropped after: about 7 GB at
     /// 1024, about 13 s a removal.
     OneAtATime,
 }
 
 impl Memory {
-    /// What `GREYCARD_REMOVE_RESIDENT` asks for: resident at `1`, one
-    /// at a time otherwise, since the adapter's memory is not known.
-    pub fn from_env(var: Option<&str>) -> Self {
-        if var == Some("1") {
-            Memory::Resident
-        } else {
-            Memory::OneAtATime
+    /// What `GREYCARD_REMOVE_RESIDENT` asks for: all three at `1`, the
+    /// UNet at `unet`, one at a time at `0`, and `None` otherwise, for
+    /// the machine to decide ([`policy`]).
+    pub fn from_env(var: Option<&str>) -> Option<Self> {
+        match var {
+            Some("1") => Some(Memory::Resident),
+            Some("unet") => Some(Memory::UnetResident),
+            Some("0") => Some(Memory::OneAtATime),
+            _ => None,
         }
     }
+
+    /// Whether `part`'s session stays open after its run.
+    fn keeps(self, part: Part) -> bool {
+        match self {
+            Memory::Resident => true,
+            Memory::UnetResident => part == Part::Unet,
+            Memory::OneAtATime => false,
+        }
+    }
+}
+
+/// What the remove knows of the machine it runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Machine {
+    /// The bytes of physical memory, or `None` when the system will
+    /// not say.
+    pub memory: Option<u64>,
+    /// Whether the GPU shares that memory ([`runtime::webgpu_unified`]),
+    /// or `None` when no GPU adapter answered.
+    pub unified: Option<bool>,
+}
+
+/// How the remove uses the card, and why, for the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Policy {
+    pub memory: Memory,
+    pub vae: Vae,
+    pub why: String,
+}
+
+/// Where a unified machine keeps the UNet open, where it runs the
+/// decoder whole as well, and where it keeps all three open, in GiB as
+/// the system reports them, to the nearest: a 16, 24, or 32 GB machine
+/// can report a little under, the kernel's and the firmware's share
+/// taken out, so the bounds sit a GiB or two below the sizes they
+/// stand for.
+const UNET_FROM: u64 = 15;
+const WHOLE_FROM: u64 = 23;
+const ALL_FROM: u64 = 30;
+
+/// How the remove uses the card on `machine`, with what the
+/// environment's `GREYCARD_REMOVE_RESIDENT` and `GREYCARD_REMOVE_TILED`
+/// ask for over it. On unified memory the card's memory is the
+/// machine's: from 16 GB the UNet stays open, from 24 GB the decoder
+/// runs whole as well (a 24 GB Mac decoded whole with all three open),
+/// and from 32 GB all three stay open. A discrete card's memory is
+/// not known, nor is a machine's that will not say, and they keep to
+/// one at a time with the decoder in tiles, about 7 GB at 1024.
+pub fn policy(machine: Option<Machine>, resident: Option<&str>, tiled: Option<&str>) -> Policy {
+    // In GiB to the nearest, which is how a machine's memory is sold.
+    let gib = machine
+        .and_then(|m| m.memory)
+        .map(|b| (b + (1 << 29)) >> 30);
+    let (memory, vae, mut why) = match (machine.map(|m| m.unified), gib) {
+        (Some(Some(true)), Some(g)) => {
+            let (memory, vae) = if g >= ALL_FROM {
+                (Memory::Resident, Vae::Whole)
+            } else if g >= WHOLE_FROM {
+                (Memory::UnetResident, Vae::Whole)
+            } else if g >= UNET_FROM {
+                (Memory::UnetResident, Vae::Tiled)
+            } else {
+                (Memory::OneAtATime, Vae::DEFAULT)
+            };
+            (memory, vae, format!("{g} GiB unified"))
+        }
+        (Some(Some(true)), None) => (
+            Memory::OneAtATime,
+            Vae::DEFAULT,
+            "unified, its memory not known".to_string(),
+        ),
+        (Some(Some(false)), _) => (
+            Memory::OneAtATime,
+            Vae::DEFAULT,
+            "a discrete card, its memory not known".to_string(),
+        ),
+        (Some(None), _) => (
+            Memory::OneAtATime,
+            Vae::DEFAULT,
+            "no GPU adapter named, its memory not known".to_string(),
+        ),
+        (None, _) => (
+            Memory::OneAtATime,
+            Vae::DEFAULT,
+            "the machine not asked".to_string(),
+        ),
+    };
+    let memory = match Memory::from_env(resident) {
+        Some(m) => {
+            why.push_str(&format!(
+                ", GREYCARD_REMOVE_RESIDENT={}",
+                resident.unwrap_or("")
+            ));
+            m
+        }
+        None => memory,
+    };
+    let vae = match Vae::from_env(tiled) {
+        Some(v) => {
+            why.push_str(&format!(", GREYCARD_REMOVE_TILED={}", tiled.unwrap_or("")));
+            v
+        }
+        None => vae,
+    };
+    Policy { memory, vae, why }
 }
 
 /// How the VAE's decoder runs on a square larger than [`TILE`]. The
@@ -157,17 +272,18 @@ pub enum Vae {
 
 impl Vae {
     /// What `GREYCARD_REMOVE_TILED` asks for: tiled at `1`, whole at
-    /// `0`, and [`Vae::DEFAULT`] otherwise.
-    pub fn from_env(var: Option<&str>) -> Self {
+    /// `0`, and `None` otherwise, for the machine to decide
+    /// ([`policy`]).
+    pub fn from_env(var: Option<&str>) -> Option<Self> {
         match var {
-            Some("1") => Vae::Tiled,
-            Some("0") => Vae::Whole,
-            _ => Vae::DEFAULT,
+            Some("1") => Some(Vae::Tiled),
+            Some("0") => Some(Vae::Whole),
+            _ => None,
         }
     }
 
-    /// Tiled: the same answer to 45 dB for a gigabyte less at the
-    /// peak, measured in the editor.
+    /// Tiled where the card's memory is not known: the same answer to
+    /// 45 dB for a gigabyte less at the peak, measured in the editor.
     pub const DEFAULT: Vae = Vae::Tiled;
 }
 
@@ -880,8 +996,20 @@ impl Remove {
     /// `providers` does not offer it, since on the CPU the eraser's
     /// LaMa is the tool. Reads the prompt's constants and decides the
     /// [`Memory`] mode, logged; no session is opened until the first
-    /// removal, and in resident mode they stay open after it.
+    /// removal, and in resident mode they stay open after it. The
+    /// machine is not asked: one at a time unless the environment
+    /// says otherwise ([`Remove::load_on`]).
     pub fn load(store: &Store, providers: &[Provider]) -> Result<Self> {
+        Self::load_on(store, providers, None)
+    }
+
+    /// [`Remove::load`], with the [`Memory`] mode and the decoder
+    /// chosen for `machine` ([`policy`]).
+    pub fn load_on(
+        store: &Store,
+        providers: &[Provider],
+        machine: Option<Machine>,
+    ) -> Result<Self> {
         if !providers.contains(&Provider::WebGpu) {
             return Err(Error::Unsupported(
                 "the generative remove runs on WebGPU only; the CPU keeps the eraser",
@@ -895,19 +1023,16 @@ impl Remove {
         let pooled = read_f16(&path("text_embeds.f16"), POOLED)?;
         let ids = read_f16(&path("time_ids.f16"), 6)?;
         let time_ids = std::array::from_fn(|i| ids[i].to_f32());
-        let asked = std::env::var("GREYCARD_REMOVE_RESIDENT").ok();
-        let memory = Memory::from_env(asked.as_deref());
-        match memory {
-            Memory::Resident => log::info!(
-                "remove: all three sessions kept open (GREYCARD_REMOVE_RESIDENT=1), about 12 GB of the card at 1024"
-            ),
-            Memory::OneAtATime => log::info!(
-                "remove: one session at a time, about 7 GB of the card at 1024 (the adapter's memory is not known; GREYCARD_REMOVE_RESIDENT=1 keeps all three open)"
-            ),
-        }
-        let vae = Vae::from_env(std::env::var("GREYCARD_REMOVE_TILED").ok().as_deref());
+        let resident = std::env::var("GREYCARD_REMOVE_RESIDENT").ok();
+        let tiled = std::env::var("GREYCARD_REMOVE_TILED").ok();
+        let Policy { memory, vae, why } = policy(machine, resident.as_deref(), tiled.as_deref());
         log::info!(
-            "remove: the decoder {} at 1024 (GREYCARD_REMOVE_TILED=0 or 1 chooses)",
+            "remove: {why}: {}, the decoder {} (GREYCARD_REMOVE_RESIDENT=1, unet, or 0 and GREYCARD_REMOVE_TILED=1 or 0 choose)",
+            match memory {
+                Memory::Resident => "all three sessions kept open, about 12 GB held at 1024",
+                Memory::UnetResident => "the UNet kept open, 5.1 GB held",
+                Memory::OneAtATime => "one session at a time, nothing held",
+            },
             match vae {
                 Vae::Tiled => "in 512 tiles",
                 Vae::Whole => "whole",
@@ -1118,29 +1243,29 @@ impl Remove {
 
     /// `f` on the session for `part` at `size` (the [`TILE`] graph
     /// for the decoder in tiles), and the seconds spent opening it: the
-    /// one kept open in resident mode (the others
-    /// dropped when the size changes), else one opened for `f` and
-    /// dropped after.
+    /// one kept open when the [`Memory`] mode keeps `part` (the kept
+    /// ones dropped when the size changes), else one opened for `f`
+    /// and dropped after.
     fn with<T>(
         &mut self,
         part: Part,
         size: usize,
         f: impl FnOnce(&mut Session) -> Result<T>,
     ) -> Result<(T, f64)> {
-        let kept = match self.memory {
-            Memory::Resident => {
-                if self.resident.as_ref().is_some_and(|r| r.size != size) {
-                    self.resident = None;
-                }
-                let r = self.resident.get_or_insert(Resident {
-                    size,
-                    encoder: None,
-                    unet: None,
-                    decoder: None,
-                });
-                r.slot(part).take()
+        let keep = self.memory.keeps(part);
+        let kept = if keep {
+            if self.resident.as_ref().is_some_and(|r| r.size != size) {
+                self.resident = None;
             }
-            Memory::OneAtATime => None,
+            let r = self.resident.get_or_insert(Resident {
+                size,
+                encoder: None,
+                unet: None,
+                decoder: None,
+            });
+            r.slot(part).take()
+        } else {
+            None
         };
         let t = Instant::now();
         let mut session = match kept {
@@ -1149,7 +1274,7 @@ impl Remove {
         };
         let load = t.elapsed().as_secs_f64();
         let out = f(&mut session);
-        if let Some(r) = self.resident.as_mut().filter(|r| r.size == size) {
+        if let Some(r) = self.resident.as_mut().filter(|r| keep && r.size == size) {
             *r.slot(part) = Some(session);
         }
         Ok((out?, load))
@@ -1799,18 +1924,107 @@ mod tests {
         assert!(!r[5 * w + 5] && r[3 * w + 3] && r[7 * w + 7] && !r[2 * w + 5]);
     }
 
-    #[test]
-    fn tiled_unless_asked_otherwise() {
-        assert_eq!(Vae::from_env(None), Vae::DEFAULT);
-        assert_eq!(Vae::from_env(Some("1")), Vae::Tiled);
-        assert_eq!(Vae::from_env(Some("0")), Vae::Whole);
+    /// A machine of `gib` GiB as the system reports it: a Mac's
+    /// `hw.memsize` is the GiB it is sold as, a Linux box's a little
+    /// under.
+    fn machine(gib: f64, unified: bool) -> Option<Machine> {
+        Some(Machine {
+            memory: Some((gib * (1u64 << 30) as f64) as u64),
+            unified: Some(unified),
+        })
+    }
+
+    fn chosen(machine: Option<Machine>) -> (Memory, Vae) {
+        let p = policy(machine, None, None);
+        (p.memory, p.vae)
     }
 
     #[test]
-    fn one_at_a_time_unless_asked() {
-        assert_eq!(Memory::from_env(None), Memory::OneAtATime);
-        assert_eq!(Memory::from_env(Some("0")), Memory::OneAtATime);
-        assert_eq!(Memory::from_env(Some("1")), Memory::Resident);
+    fn unified_memory_keeps_more_open_as_it_grows() {
+        let one = (Memory::OneAtATime, Vae::Tiled);
+        let unet = (Memory::UnetResident, Vae::Tiled);
+        let whole = (Memory::UnetResident, Vae::Whole);
+        let all = (Memory::Resident, Vae::Whole);
+        assert_eq!(chosen(machine(8.0, true)), one);
+        assert_eq!(chosen(machine(14.0, true)), one);
+        assert_eq!(chosen(machine(15.4, true)), unet);
+        assert_eq!(chosen(machine(16.0, true)), unet);
+        assert_eq!(chosen(machine(18.0, true)), unet);
+        assert_eq!(chosen(machine(22.4, true)), unet);
+        assert_eq!(chosen(machine(22.6, true)), whole);
+        assert_eq!(chosen(machine(24.0, true)), whole);
+        assert_eq!(chosen(machine(31.2, true)), all);
+        assert_eq!(chosen(machine(36.0, true)), all);
+        assert_eq!(chosen(machine(128.0, true)), all);
+    }
+
+    #[test]
+    fn a_discrete_card_or_an_unknown_machine_keeps_to_one_at_a_time() {
+        let one = (Memory::OneAtATime, Vae::DEFAULT);
+        assert_eq!(chosen(machine(64.0, false)), one);
+        assert_eq!(chosen(None), one);
+        let silent = Some(Machine {
+            memory: None,
+            unified: Some(true),
+        });
+        assert_eq!(chosen(silent), one);
+        let no_adapter = Some(Machine {
+            memory: Some(64 << 30),
+            unified: None,
+        });
+        assert_eq!(chosen(no_adapter), one);
+    }
+
+    #[test]
+    fn the_environment_wins_over_the_machine() {
+        let big = machine(64.0, true);
+        let small = machine(8.0, false);
+        let p = policy(big, Some("0"), None);
+        assert_eq!((p.memory, p.vae), (Memory::OneAtATime, Vae::Whole));
+        assert_eq!(policy(big, Some("unet"), None).memory, Memory::UnetResident);
+        assert_eq!(policy(big, None, Some("1")).vae, Vae::Tiled);
+        let p = policy(small, Some("1"), Some("0"));
+        assert_eq!((p.memory, p.vae), (Memory::Resident, Vae::Whole));
+        assert_eq!(
+            policy(small, Some("unet"), None).memory,
+            Memory::UnetResident
+        );
+        // Anything else leaves it to the machine.
+        assert_eq!(policy(big, Some("yes"), Some("")).memory, Memory::Resident);
+        assert_eq!(policy(big, Some("yes"), Some("")).vae, Vae::Whole);
+    }
+
+    #[test]
+    fn the_log_says_what_chose() {
+        assert_eq!(
+            policy(machine(24.0, true), None, None).why,
+            "24 GiB unified"
+        );
+        assert_eq!(
+            policy(machine(24.0, true), Some("1"), None).why,
+            "24 GiB unified, GREYCARD_REMOVE_RESIDENT=1"
+        );
+        assert_eq!(
+            policy(machine(16.0, false), None, Some("0")).why,
+            "a discrete card, its memory not known, GREYCARD_REMOVE_TILED=0"
+        );
+        let no_adapter = Some(Machine {
+            memory: Some(64 << 30),
+            unified: None,
+        });
+        assert_eq!(
+            policy(no_adapter, None, None).why,
+            "no GPU adapter named, its memory not known"
+        );
+    }
+
+    #[test]
+    fn each_mode_keeps_its_parts() {
+        let parts = [Part::Encoder, Part::Unet, Part::Decoder];
+        let kept = |m: Memory| parts.map(|p| m.keeps(p));
+        assert_eq!(kept(Memory::Resident), [true; 3]);
+        assert_eq!(kept(Memory::UnetResident), [false, true, false]);
+        assert_eq!(kept(Memory::OneAtATime), [false; 3]);
     }
 
     #[test]

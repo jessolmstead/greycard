@@ -100,6 +100,11 @@ design note behind it.
 
 ### Retouch
 
+- On a Mac or another machine whose GPU shares its memory, the
+  generative remove keeps its largest model open between removals
+  from 16 GB, decodes whole from 24 GB, and keeps all of it open from
+  32 GB, so a second removal starts without its 16 s load
+  ([§421](https://github.com/jessolmstead/greycard/blob/master/docs/notes/421-the-removes-memory-read-from-the-machine.md)).
 - Fill can use a second model trained for removal, offered once on a
   machine with a GPU (5.5 GB, under the CreativeML Open RAIL++-M
   license); "Another" on a fill's row makes a different one

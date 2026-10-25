@@ -185,8 +185,40 @@ impl Provider {
 /// does; greycard-gpu always asks high performance.
 #[cfg(feature = "webgpu")]
 fn webgpu_adapter_identity() -> Option<String> {
-    static IDENTITY: OnceLock<Option<String>> = OnceLock::new();
-    IDENTITY
+    webgpu_adapter().map(|a| a.0.clone())
+}
+
+/// Whether the WebGPU adapter shares the machine's memory: an
+/// integrated GPU as wgpu reports it, or any Apple silicon Mac, whose
+/// GPU is on the same memory however the backend names it; `false`
+/// for a discrete or virtual card. `None` when no adapter answers or
+/// the one that does is a CPU or of no known type. On a machine with
+/// two GPUs this follows wgpu's choice of adapter, which may not be
+/// ONNX Runtime's, the same guess the adapter's identity makes.
+pub fn webgpu_unified() -> Option<bool> {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        return Some(true);
+    }
+    #[cfg(feature = "webgpu")]
+    {
+        match webgpu_adapter()?.1 {
+            wgpu::DeviceType::IntegratedGpu => Some(true),
+            wgpu::DeviceType::DiscreteGpu | wgpu::DeviceType::VirtualGpu => Some(false),
+            wgpu::DeviceType::Cpu | wgpu::DeviceType::Other => None,
+        }
+    }
+    #[cfg(not(feature = "webgpu"))]
+    {
+        None
+    }
+}
+
+/// The adapter's identity (name, backend, and driver) and its type,
+/// asked once a process and kept.
+#[cfg(feature = "webgpu")]
+fn webgpu_adapter() -> Option<&'static (String, wgpu::DeviceType)> {
+    static ADAPTER: OnceLock<Option<(String, wgpu::DeviceType)>> = OnceLock::new();
+    ADAPTER
         .get_or_init(|| {
             use pollster::FutureExt as _;
             // What `WGPU_BACKEND` names, as the window's own instance
@@ -215,12 +247,15 @@ fn webgpu_adapter_identity() -> Option<String> {
                 .block_on()
                 .ok()?;
             let info = adapter.get_info();
-            Some(format!(
-                "{}|{:?}|{} {}",
-                info.name, info.backend, info.driver, info.driver_info
+            Some((
+                format!(
+                    "{}|{:?}|{} {}",
+                    info.name, info.backend, info.driver, info.driver_info
+                ),
+                info.device_type,
             ))
         })
-        .clone()
+        .as_ref()
 }
 
 /// `nvidia-smi` is what is actually on the machines CUDA runs on

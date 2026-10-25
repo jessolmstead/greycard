@@ -293,17 +293,11 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
 - [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
       Remove and through us, blind pairs, scored (§380)
 - [ ] A faster remove on Apple GPUs: an M5 with 24 GB takes 85 s
-      for a 1024 removal on WebGPU over Metal (2026-10-24): the
-      UNet's 24 calls 59 s at 2.5 s a call, its load 17 s, the
-      tiled decode 9.5 s. Two parts. Our own LCM distilled from
-      RORem-mixed at 1024 (the authors' LoRA was measured and not
-      taken, §415; the `rorem-4s` branch keeps the sampler) takes
-      the UNet to 4 calls. And the memory policy read from the
-      machine: on unified memory the UNet kept resident (its load
-      is the whole 17 s; the VAEs open in 0.05 s) and the decoder
-      whole (4.3 s against 9.5) from 16 GB, all three resident from
-      32; both measured to work at 24 GB with the overrides, the
-      second removal 71 s with no load
+      for a 1024 removal on WebGPU over Metal (2026-10-24), the
+      UNet's 24 calls 59 s of it at 2.5 s a call. Our own LCM
+      distilled from RORem-mixed at 1024 (the authors' LoRA was
+      measured and not taken, §415; the `rorem-4s` branch keeps the
+      sampler) takes the UNet to 4 calls; the memory policy is §421
 - [ ] ONNX Runtime's WebGPU Conv is wrong for input channel counts
       that are a multiple of 3 but not 12 (§399); report upstream with
       the reproducer under target/rorem/ortbug
