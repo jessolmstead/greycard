@@ -283,7 +283,7 @@ pub(crate) const TABLE: &[Group] = &[
             shown(
                 &[],
                 "↑ ↓ ← →, + −",
-                "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more, Ctrl on the slider for less",
+                "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more, Ctrl on the slider for less, and Shift on a drag for finer",
             ),
             shown(&[], ", .", "The previous or the next slider"),
             shown(

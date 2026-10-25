@@ -211,7 +211,7 @@ do.
 | W | White balance from a neutral patch: the pipette |
 | M | New mask with a Linear, placed by the next drag |
 | Shift+M | New mask with a Radial, placed by the next drag |
-| ↑ ↓ ← →, + − | Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more, Ctrl on the slider for less |
+| ↑ ↓ ← →, + − | Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more, Ctrl on the slider for less, and Shift on a drag for finer |
 | Wheel | Nudge the focused slider, any slider with Shift; Ctrl for finer steps |
 | , . | The previous or the next slider |
 | Tab, Shift+Tab | In a slider's typed value, the next or the previous one |

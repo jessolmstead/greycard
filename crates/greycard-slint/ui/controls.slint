@@ -582,9 +582,10 @@ export global Steps {
 // A slider: label, track with fill, handle, value. A click on the
 // track jumps the value there; a press on the handle grabs it without
 // moving it, then drags it once the pointer clears a small dead zone.
-// Double-click restores the default. A click on the value types one:
-// Enter sets it as a drag would, clamped to the range, and Escape
-// leaves the value alone.
+// Shift held on a drag moves it a tenth as far. Double-click
+// restores the default. A click on the value types one: Enter sets it
+// as a drag would, clamped to the range, and Escape leaves the value
+// alone.
 //
 // Focused, by a click or a key, it holds the keys until a click, Tab,
 // comma, period or Escape moves them on: the four arrows, and plus
@@ -654,24 +655,61 @@ export component EditSlider inherits Rectangle {
     // A press within the handle does not move it: a click to focus, or
     // to then use the wheel, must not nudge the value. A drag off the
     // handle starts moving it only past this dead zone (the same 4px
-    // the viewport uses to tell a click from a drag), and from there
-    // tracks the pointer with the offset it was grabbed at, so the
-    // handle does not jump under the finger.
+    // the viewport uses to tell a click from a drag), and from the
+    // zone's edge on, so the value leaves its press value smoothly
+    // rather than with the zone's 4px at once.
     property <length> drag-dead-zone: 4px;
     property <bool> handle-grabbed: false;
     // A press on the track but off the handle still jumps, and drags
-    // by jumping to wherever the pointer goes next, as it always has.
-    // A press on the label or the value text does neither: focus only.
+    // by following the pointer from there, as it always has. A press
+    // on the label or the value text does neither: focus only.
     property <bool> track-armed: false;
     property <bool> dragging: false;
     property <length> press-x;
-    property <length> grab-offset;
+    // A drag moves the track's fraction by the pointer's travel from
+    // an anchor: a point and the fraction there, unclamped so that a
+    // drag past an end and back comes back where it left. Shift held
+    // moves it a tenth as far; pressed or let go mid-drag, the anchor
+    // moves to the last point at the value shown there, so the value
+    // carries on from where it is.
+    property <length> anchor-x;
+    property <float> anchor-fraction;
+    property <length> last-x;
+    property <bool> fine-drag: false;
+    property <bool> fine-held: false;
 
-    function set-from(x: length) {
+    function set-fraction(f: float) {
         value = root.logarithmic
-            ? clamp(minimum * pow(maximum / minimum, clamp((x - track-left) / track-width, 0, 1)), minimum, maximum)
-            : clamp(minimum + (x - track-left) / track-width * (maximum - minimum), minimum, maximum);
+            ? clamp(minimum * pow(maximum / minimum, clamp(f, 0, 1)), minimum, maximum)
+            : clamp(minimum + clamp(f, 0, 1) * (maximum - minimum), minimum, maximum);
         changed(value);
+    }
+    function set-from(x: length) {
+        root.set-fraction((x - track-left) / track-width);
+    }
+    function drag-gain(fine: bool) -> float {
+        return fine ? 0.1 : 1;
+    }
+    function drag-fraction(x: length) -> float {
+        return root.anchor-fraction + (x - root.anchor-x) / track-width * root.drag-gain(root.fine-drag);
+    }
+    function begin-drag(x: length, fraction: float) {
+        root.dragging = true;
+        root.anchor-x = x;
+        root.anchor-fraction = fraction;
+        root.last-x = x;
+        root.fine-drag = root.fine-held;
+    }
+    function drag-to(x: length) {
+        if (root.fine-held != root.fine-drag) {
+            // Clamped here alone: fine-tuning back from past an end
+            // starts at the end, not ten times the overshoot away.
+            root.anchor-fraction = clamp(root.drag-fraction(root.last-x), 0, 1);
+            root.anchor-x = root.last-x;
+            root.fine-drag = root.fine-held;
+        }
+        root.last-x = x;
+        root.set-fraction(root.drag-fraction(x));
     }
     function nudge(by: float) {
         value = root.logarithmic
@@ -866,6 +904,9 @@ export component EditSlider inherits Rectangle {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         pointer-event(e) => {
+            // Shift as of this event, read by `moved` straight after a
+            // move's.
+            root.fine-held = e.modifiers.shift;
             if (e.button != PointerEventButton.left) { return; }
             if (e.kind == PointerEventKind.down) {
                 fs.focus();
@@ -874,12 +915,12 @@ export component EditSlider inherits Rectangle {
                 root.handle-grabbed = abs(self.mouse-x - root.handle-center-x) <= handle.size / 2;
                 root.track-armed = !root.handle-grabbed
                     && self.mouse-x >= track-left && self.mouse-x <= track-right;
-                if (root.handle-grabbed) {
-                    root.grab-offset = self.mouse-x - root.handle-center-x;
-                } else if (root.track-armed) {
+                if (root.track-armed) {
                     // Away from the handle, the track still jumps the
-                    // value straight to where the pointer went down.
+                    // value straight to where the pointer went down,
+                    // and a drag goes on from there.
                     root.set-from(self.mouse-x);
+                    root.begin-drag(self.mouse-x, (self.mouse-x - track-left) / track-width);
                 }
                 // A press on the label or the value text just focuses:
                 // no jump, no drag latch.
@@ -887,17 +928,16 @@ export component EditSlider inherits Rectangle {
         }
         moved => {
             if (!self.pressed) { return; }
-            if (root.handle-grabbed) {
-                if (!root.dragging) {
-                    if (abs(self.mouse-x - root.press-x) > root.drag-dead-zone) {
-                        root.dragging = true;
-                    } else {
-                        return;
-                    }
-                }
-                root.set-from(self.mouse-x - root.grab-offset);
-            } else if (root.track-armed) {
-                root.set-from(self.mouse-x);
+            if (root.handle-grabbed && !root.dragging) {
+                if (abs(self.mouse-x - root.press-x) <= root.drag-dead-zone) { return; }
+                // From the zone's edge on the pointer's side, at the
+                // value it was pressed at.
+                root.begin-drag(
+                    root.press-x + (self.mouse-x > root.press-x ? root.drag-dead-zone : -root.drag-dead-zone),
+                    root.fraction);
+            }
+            if (root.dragging) {
+                root.drag-to(self.mouse-x);
             }
         }
         double-clicked => {

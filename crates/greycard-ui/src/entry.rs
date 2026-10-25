@@ -562,6 +562,96 @@ mod tests {
         assert_eq!(app.get_exposure(), 5.0);
     }
 
+    /// A drag of the handle leaves its press value smoothly: inside
+    /// the dead zone nothing moves, and the first step past it moves
+    /// the value by the step's distance past the zone, not the zone's
+    /// width as well. Shift held moves it a tenth as far, and pressed
+    /// or let go mid-drag the value carries on from where it is.
+    #[test]
+    fn a_drag_starts_smoothly_and_shift_makes_it_fine() {
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+        let (app, _state, _worker) = exposure_focused();
+        let (at, size) = crate::testing::labeled(&app, "Exposure");
+        let y = std::cell::Cell::new(at.y + size.height / 2.0);
+        // On the track, well left of the handle at zero.
+        let x0 = at.x + size.width * 0.35;
+        let pointer = |kind: &str, x: f32| {
+            let position = slint::LogicalPosition::new(x, y.get());
+            let button = PointerEventButton::Left;
+            app.window().dispatch_event(match kind {
+                "down" => WindowEvent::PointerPressed { position, button },
+                "up" => WindowEvent::PointerReleased { position, button },
+                _ => WindowEvent::PointerMoved { position },
+            });
+        };
+        let shift = |down: bool| {
+            let text = Key::Shift.into();
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        // A click on the track jumps the handle there.
+        pointer("move", x0);
+        pointer("down", x0);
+        pointer("up", x0);
+        let v0 = app.get_exposure();
+        assert!(v0 < -0.5, "the click jumped the value: {v0}");
+        // Not a double click.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(2));
+        // The focus scrolled the panel: where the slider is now.
+        let (at, size) = crate::testing::labeled(&app, "Exposure");
+        y.set(at.y + size.height / 2.0);
+        pointer("move", x0);
+
+        // Grabbed where it now sits: a press and a move inside the
+        // zone move nothing.
+        pointer("down", x0);
+        pointer("move", x0 + 3.0);
+        assert_eq!(app.get_exposure(), v0, "inside the dead zone");
+        pointer("move", x0 + 5.0);
+        let v1 = app.get_exposure();
+        pointer("move", x0 + 25.0);
+        let v2 = app.get_exposure();
+        // A pixel of the track, in the value, from twenty of them.
+        let px = (v2 - v1) / 20.0;
+        assert!(px > 0.0, "the drag moved nothing");
+        assert!(
+            (v1 - v0 - px).abs() < 1e-4,
+            "the first step past the zone moved {} px",
+            (v1 - v0) / px
+        );
+        // Shift: a tenth as far, from where the value is.
+        shift(true);
+        pointer("move", x0 + 45.0);
+        let v3 = app.get_exposure();
+        assert!((v3 - v2 - 2.0 * px).abs() < 1e-4, "{}", (v3 - v2) / px);
+        // Let go: full speed again, from there.
+        shift(false);
+        pointer("move", x0 + 55.0);
+        let v4 = app.get_exposure();
+        assert!((v4 - v3 - 10.0 * px).abs() < 1e-4, "{}", (v4 - v3) / px);
+        // Past the end and back: where it left.
+        let past = at.x + size.width + 50.0;
+        pointer("move", past);
+        assert_eq!(app.get_exposure(), 5.0);
+        pointer("move", x0 + 55.0);
+        assert!(
+            (app.get_exposure() - v4).abs() < 1e-4,
+            "{}",
+            app.get_exposure()
+        );
+        // Past it again, then Shift: fine from the end, not pinned there.
+        pointer("move", past);
+        shift(true);
+        pointer("move", past - 10.0);
+        let v5 = app.get_exposure();
+        assert!((v5 - (5.0 - px)).abs() < 1e-4, "{}", (5.0 - v5) / px);
+        shift(false);
+        pointer("up", past - 10.0);
+    }
+
     /// Period focuses the next slider down, comma the one above; the
     /// arrows then move the one focused and no other.
     #[test]

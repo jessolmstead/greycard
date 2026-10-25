@@ -28,29 +28,6 @@ the reasoning lives in `docs/notes.md`.
       which runs in MTLCompilerService out of process and is cached
       after. Warm the cache when a model is fetched, or say
       "preparing" while it runs; a symbolized sample if it recurs
-- [ ] A slider dragged by its handle sticks for 4 px, then jumps:
-      the dead zone's first update applies the whole distance. Start
-      the value from the pointer's position at the zone's edge
-      (pixls, 2026-10-24)
-
-## Open Questions
-
-- Default exposure is 0.8 stops up across the board. Is that too much?
-  Having to bump the exposure on every single frame can be a bit annoying,
-  and it seems to *roughly* match Lightroom's default exposure. Decides
-  the feel track's baseline exposure item (§231)
-  §342 measured it against Lightroom's exports (the R5 Mark II within
-  a few hundredths, the GFX 100S II about 0.9 stops bright) and §348
-  against each body's own camera JPEG: every body opens brighter than
-  its JPEG, by a quarter stop (R5 Mark II) to half (R6 Mark II, GFX).
-  The GFX now opens at 0.52, anchored to the Canons; whether the
-  anchor should be the camera JPEG, and every body come down, is the
-  open call (§348's table)
-
-## Next: 0.9.0
-
-TBD.
-
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
 
@@ -935,9 +912,6 @@ clears or a tester asks for it.
       is one row (pixls, 2026-10-24)
 - [ ] A default preset applied to every frame on its first open, so
       the tools a user never wants start off (pixls, 2026-10-24)
-- [ ] Fine drag on a slider: Shift while dragging moves a fraction
-      of the pointer's distance, as RawTherapee's dwell does
-      (pixls, 2026-10-24)
 - [ ] Sharpen in a mask's Detail, beside Texture, Clarity, and
       Dehaze, so a gradient can sharpen the foreground more
       (pixls, 2026-10-24)

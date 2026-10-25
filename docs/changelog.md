@@ -76,6 +76,9 @@ design note behind it.
 
 ### Editing
 
+- A slider's drag no longer jumps as it starts, and Shift held while
+  dragging moves it a tenth as far
+  ([§424](https://github.com/jessolmstead/greycard/blob/master/docs/notes/424-the-sliders-drag-no-jump-and-shift-for-a-fine-drag.md)).
 - **Auto** in the Look section sets Exposure, Highlights, Shadows, Whites,
   and Blacks from the frame's own histogram, as one step of the history
   you can drag from or undo. It never clips more than the default
