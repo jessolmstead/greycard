@@ -15,7 +15,28 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-None open.
+- [ ] A camera profile made for a body's regional name is hidden:
+      the match folds the DCP's UniqueCameraModel against rawler's
+      clean model alone, so Adobe's "Canon EOS Rebel T8i" profiles
+      never fit an 850D. Match through rawler's model aliases too
+      (pixls, 2026-10-24)
+- [ ] A frame with remove fills in its edit reruns every removal
+      when it is opened: the fill cache is in memory and cleared at
+      each open (§406), so an M5 spends 172 s on two fills before a
+      3 s develop (2026-10-24). Keep fills on disk beside the
+      thumbnail cache, keyed as the memory cache is
+- [ ] The Subject model's first run on an M5 under WebGPU on Metal
+      sat for minutes with every thread of the app asleep, ONNX
+      Runtime's pool and Dawn's workers idle, no line logged; killed,
+      and the next launch found the subject at once (2026-10-24).
+      Either a race with Dawn or Metal's first-use shader compile,
+      which runs in MTLCompilerService out of process and is cached
+      after. Warm the cache when a model is fetched, or say
+      "preparing" while it runs; a symbolized sample if it recurs
+- [ ] A slider dragged by its handle sticks for 4 px, then jumps:
+      the dead zone's first update applies the whole distance. Start
+      the value from the pointer's position at the zone's edge
+      (pixls, 2026-10-24)
 
 ## Open Questions
 
@@ -186,7 +207,8 @@ seconds.
 - [ ] The first open of a 45 MP frame: the demosaic (1.2 s) is most
       of a fresh base's 1.9 s on eight threads, now the lens is on the
       GPU (§378, §386)
-- [ ] The CoreML provider, so the learned denoiser runs on the Neural
+- [ ] The CoreML provider (the denoiser takes 15 s on an M5 under
+      WebGPU, 2026-10-24), so the learned denoiser runs on the Neural
       Engine and the M5's GPU neural accelerators: ort's `coreml`
       feature, a `Provider::CoreMl` with the ML Program format and a
       model cache dir, the free dimensions fixed at 608x608 (every tile
@@ -270,11 +292,18 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       floor applied near the channel peaks only
 - [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
       Remove and through us, blind pairs, scored (§380)
-- [ ] A faster remove on Apple GPUs, if the Mac's timing of a 1024
-      removal says it is needed: our own LCM distilled from
-      RORem-mixed at 1024 with the authors' training script (a
-      GPU-day or two). The authors' LoRA was measured and not taken
-      (§415); the `rorem-4s` branch keeps the sampler
+- [ ] A faster remove on Apple GPUs: an M5 with 24 GB takes 85 s
+      for a 1024 removal on WebGPU over Metal (2026-10-24): the
+      UNet's 24 calls 59 s at 2.5 s a call, its load 17 s, the
+      tiled decode 9.5 s. Two parts. Our own LCM distilled from
+      RORem-mixed at 1024 (the authors' LoRA was measured and not
+      taken, §415; the `rorem-4s` branch keeps the sampler) takes
+      the UNet to 4 calls. And the memory policy read from the
+      machine: on unified memory the UNet kept resident (its load
+      is the whole 17 s; the VAEs open in 0.05 s) and the decoder
+      whole (4.3 s against 9.5) from 16 GB, all three resident from
+      32; both measured to work at 24 GB with the overrides, the
+      second removal 71 s with no load
 - [ ] ONNX Runtime's WebGPU Conv is wrong for input channel counts
       that are a multiple of 3 but not 12 (§399); report upstream with
       the reproducer under target/rorem/ortbug
@@ -901,6 +930,44 @@ clears or a tester asks for it.
       beside it from a pure-Rust decoder
 - [ ] A toolbar of common actions, the set the user's, with the
       menu bar (pixls, 2026-10-22)
+- [ ] Clear the card after an import, behind a confirmation and only
+      once every copy's hash has been checked (pixls, 2026-10-19)
+- [ ] The toolchain that rendered an export embedded in its metadata,
+      so opening the export can find the source and reapply the edit
+      (pixls, 2026-10-19)
+- [ ] The picture zoomed in steps from the keyboard, as the grid's
+      tiles are with plus and minus (pixls, 2026-10-22)
+- [ ] Full screen with F11 on Linux and Windows; the Mac's green
+      button already does it (pixls, 2026-10-24)
+- [ ] Saturation in the shadows or the highlights alone, with the
+      hue held (pixls, 2026-10-24)
+- [ ] A local contrast at a larger scale than Clarity, soft rather
+      than crunchy (pixls, 2026-10-24)
+- [ ] Color noise reduced on its own, the luminance noise left
+      (pixls, 2026-10-24)
+- [ ] A mask's adjustments nested under the mask, so a folded mask
+      is one row (pixls, 2026-10-24)
+- [ ] A default preset applied to every frame on its first open, so
+      the tools a user never wants start off (pixls, 2026-10-24)
+- [ ] Fine drag on a slider: Shift while dragging moves a fraction
+      of the pointer's distance, as RawTherapee's dwell does
+      (pixls, 2026-10-24)
+- [ ] Sharpen in a mask's Detail, beside Texture, Clarity, and
+      Dehaze, so a gradient can sharpen the foreground more
+      (pixls, 2026-10-24)
+- [ ] ART's `.arp` profiles read beside a raw as RawTherapee's
+      `.pp3` are: the same key file, found by its extension
+      (pixls, 2026-10-24)
+- [ ] Constrained mask drags: Shift holds a linear mask to the axes
+      or 15-degree steps and a radial mask to a circle
+      (pixls, 2026-10-24)
+- [ ] The scopes at one height, so the panel holds still when the
+      scope changes: about 180 px for all three, the vectorscope a
+      circle centered in the box; if that circle reads too small,
+      the metadata folded away while the vectorscope shows instead
+      (pixls, 2026-10-24)
+- [ ] The clipping warnings as a pair of plain buttons, with the
+      toolbar (pixls, 2026-10-24)
 
 ## Blocked
 
@@ -1009,9 +1076,10 @@ release when the wait clears.
       applied twice); greycard sets them through a config entry
       instead (§159). Fixed on ort's main in pykeio/ort@bc23566;
       drop the workaround when a release carries it
-- [ ] The GPU Subject model on Mac and Windows adapters: its remaining
+- [ ] The GPU Subject model on Windows adapters: its remaining
       Splits need nine storage buffers; an adapter allowing fewer
-      falls back to the CPU. Check on the machines (§159)
+      falls back to the CPU. Runs on WebGPU on an M5 Mac
+      (2026-10-24); check Windows (§159)
 - [ ] The camera's own vignetting correction is about half of
       lensfun's on the R6 II with the RF 50mm f/1.2: measured against
       the embedded JPEG by the camera match trial
