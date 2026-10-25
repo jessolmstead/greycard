@@ -435,3 +435,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§420. An Auto starting point for the light](notes/420-an-auto-starting-point-for-the-light.md) (2026-10-24)
 - [§421. The remove's memory read from the machine](notes/421-the-removes-memory-read-from-the-machine.md) (2026-10-24)
 - [§422. The Core ML provider, in](notes/422-the-core-ml-provider-in.md) (2026-10-24)
+- [§423. Camera profiles by the body's other names](notes/423-camera-profiles-by-the-bodys-other-names.md) (2026-10-24)

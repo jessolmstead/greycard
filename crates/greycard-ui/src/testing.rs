@@ -330,6 +330,7 @@ pub(crate) fn linear_dng(
     let frame = greycard_core::RawFrame {
         make: make.into(),
         model: model.into(),
+        other_names: Vec::new(),
         width,
         height,
         channels: 1,

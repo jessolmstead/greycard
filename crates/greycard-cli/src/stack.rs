@@ -480,6 +480,7 @@ mod tests {
         RawFrame {
             make: "Test".into(),
             model: "Cam".into(),
+            other_names: Vec::new(),
             width,
             height,
             channels: 1,

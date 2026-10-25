@@ -606,12 +606,18 @@ pub(crate) fn show_lens(report: &LensReport, app: &App) {
     );
 }
 
+/// The open file's camera, as a profile's fit reads it.
+fn body_of(st: &State) -> greycard_edit::camera::Body<'_> {
+    let d = &st.develop;
+    greycard_edit::camera::Body::new(&d.camera.0, &d.camera.1, &d.other_names)
+}
+
 /// What the CAMERA PROFILE section lists for the open file: the
 /// file's own calibrations first, then the profiles in the profile
 /// directory that were made for this camera, then the chosen one when
 /// it is neither.
 pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileChoice, app: &App) {
-    let (make, model) = (st.develop.camera.0.as_str(), st.develop.camera.1.as_str());
+    let body = body_of(st);
     let mut names = vec![slint::SharedString::from(greycard_edit::camera::EMBEDDED)];
     let mut labels = vec![slint::SharedString::from("Embedded")];
     let embedded = chosen.is_embedded();
@@ -619,7 +625,7 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
     let chosen = chosen_name.as_str();
     let mut hidden = 0;
     for e in &st.develop.profiles {
-        if e.fits(make, model) || e.name == chosen {
+        if e.fits(body) || e.name == chosen {
             names.push(e.name.as_str().into());
             labels.push(e.label().into());
         } else {
@@ -628,9 +634,10 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
             // spelling the maker and the decoder disagree on can be
             // told from one made for another camera.
             tracing::info!(
-                "camera profile {}: made for {:?}, not listed for {make} {model}",
+                "camera profile {}: made for {:?}, not listed for {:?}",
                 e.name,
-                e.unique_camera_model.as_deref().unwrap_or("no camera")
+                e.unique_camera_model.as_deref().unwrap_or("no camera"),
+                body.names()
             );
         }
     }
@@ -655,12 +662,8 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
         .into(),
     );
     app.set_camera_profile_warning(
-        greycard_edit::camera::warning(
-            &st.develop.profiles,
-            &st.develop.camera,
-            chosen_name.as_str(),
-        )
-        .into(),
+        greycard_edit::camera::warning(&st.develop.profiles, body_of(st), chosen_name.as_str())
+            .into(),
     );
 }
 

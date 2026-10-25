@@ -143,27 +143,63 @@ impl Entry {
         }
     }
 
-    /// Whether this profile was made for a camera named `make` and
-    /// `model`.
+    /// Whether this profile was made for `body`: its folded
+    /// `UniqueCameraModel` is one of the folded [`Body::names`].
     ///
     /// DCPs name their camera with DNG's `UniqueCameraModel`, which is
     /// the maker's name and the model together ("Canon EOS 6D Mark
     /// II"), while a decoded frame carries them apart and cleaned up,
     /// and some decoders leave the make on the front of the model.
     /// Both sides are folded to their letters and digits alone, and
-    /// the profile fits when the folded unique model is the frame's
-    /// make and model together or its model alone. Equality, not
-    /// containment: "CANON EOS R6" would otherwise fit an EOS R6 Mark
-    /// II. A profile that names no camera fits everything, since it
-    /// cannot say otherwise; one whose maker writes the model its own
-    /// way does not fit, and is shown with the warning rather than
-    /// hidden.
-    pub fn fits(&self, make: &str, model: &str) -> bool {
-        let Some(unique) = self.unique_camera_model.as_deref() else {
-            return true;
-        };
-        let unique = folded(unique);
-        unique.is_empty() || unique == folded(&format!("{make} {model}")) || unique == folded(model)
+    /// the profile fits when the folded unique model is any of the
+    /// body's names, its own or one it is sold under elsewhere.
+    /// Equality, not containment: "CANON EOS R6" would otherwise fit
+    /// an EOS R6 Mark II. A profile that names no camera fits
+    /// everything, since it cannot say otherwise; one whose maker
+    /// writes the model its own way does not fit, and is shown with
+    /// the warning rather than hidden.
+    pub fn fits(&self, body: Body) -> bool {
+        let unique = self.folded_unique();
+        unique.is_empty() || body.names().iter().any(|n| folded(n) == unique)
+    }
+
+    fn folded_unique(&self) -> String {
+        self.unique_camera_model
+            .as_deref()
+            .map(folded)
+            .unwrap_or_default()
+    }
+}
+
+/// A camera as a profile's fit reads it: its make and model, and the
+/// other names the same body is sold under (an EOS 850D is also an
+/// EOS Rebel T8i).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Body<'a> {
+    pub make: &'a str,
+    pub model: &'a str,
+    pub other_names: &'a [String],
+}
+
+impl<'a> Body<'a> {
+    pub fn new(make: &'a str, model: &'a str, other_names: &'a [String]) -> Body<'a> {
+        Body {
+            make,
+            model,
+            other_names,
+        }
+    }
+
+    /// The names a profile is matched against exactly, in order: the
+    /// make and model, the model, then the make and each other name,
+    /// and each other name.
+    pub fn names(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for m in std::iter::once(self.model).chain(self.other_names.iter().map(String::as_str)) {
+            out.push(format!("{} {m}", self.make));
+            out.push(m.to_string());
+        }
+        out
     }
 }
 
@@ -304,7 +340,7 @@ pub fn forget() {
 /// What is wrong with the chosen profile, if anything: that it is not
 /// there, or that it was made for another camera. The develop falls
 /// back to the file's own calibrations either way.
-pub fn warning(profiles: &[Entry], camera: &(String, String), chosen: &str) -> String {
+pub fn warning(profiles: &[Entry], camera: Body, chosen: &str) -> String {
     let name = chosen;
     if chosen == EMBEDDED {
         return String::new();
@@ -312,8 +348,8 @@ pub fn warning(profiles: &[Entry], camera: &(String, String), chosen: &str) -> S
     let Some(entry) = profiles.iter().find(|e| e.name == name) else {
         return format!("{name} is not in the profile directory; the file's own colors are used.");
     };
-    let (make, model) = (camera.0.as_str(), camera.1.as_str());
-    if make.is_empty() || entry.fits(make, model) {
+    let (make, model) = (camera.make, camera.model);
+    if make.is_empty() || entry.fits(camera) {
         return String::new();
     }
     let made_for = entry
@@ -332,7 +368,7 @@ mod tests {
     /// directory has not got, and a line for one made elsewhere.
     #[test]
     fn a_profile_that_does_not_fit_says_so_and_a_missing_one_says_so() {
-        let camera = ("Canon".to_string(), "EOS R5".to_string());
+        let camera = Body::new("Canon", "EOS R5", &[]);
         let mine = Entry {
             name: "mine".into(),
             path: std::path::PathBuf::new(),
@@ -347,23 +383,22 @@ mod tests {
         };
         let profiles = vec![mine.clone(), theirs.clone()];
         // The file's own colors: nothing to say.
-        assert!(warning(&profiles, &camera, EMBEDDED).is_empty());
+        assert!(warning(&profiles, camera, EMBEDDED).is_empty());
         // A profile for this camera: nothing to say.
-        assert!(warning(&profiles, &camera, "mine").is_empty());
+        assert!(warning(&profiles, camera, "mine").is_empty());
         // One made for another: the panel still shows it chosen, and
         // says what it was made for.
-        let said = warning(&profiles, &camera, "theirs");
+        let said = warning(&profiles, camera, "theirs");
         assert!(
             said.contains("NIKON Z 8") && said.contains("EOS R5"),
             "{said}"
         );
         // One the directory has not got at all: a sidecar or a preset
         // from another machine.
-        let said = warning(&profiles, &camera, "elsewhere");
+        let said = warning(&profiles, camera, "elsewhere");
         assert!(said.contains("not in the profile directory"), "{said}");
         // No camera named yet: nothing can be said about the fit.
-        let unknown = (String::new(), String::new());
-        assert!(warning(&profiles, &unknown, "theirs").is_empty());
+        assert!(warning(&profiles, Body::default(), "theirs").is_empty());
     }
 
     #[test]
@@ -395,24 +430,75 @@ mod tests {
         assert!(path_for("").is_none());
     }
 
-    #[test]
-    fn a_profile_fits_the_camera_it_names() {
-        let entry = |unique: Option<&str>| Entry {
+    fn entry(unique: Option<&str>) -> Entry {
+        Entry {
             name: "Some Profile".into(),
             path: PathBuf::new(),
             title: None,
             unique_camera_model: unique.map(str::to_string),
             copyright: None,
+        }
+    }
+
+    #[test]
+    fn a_profile_fits_the_camera_it_names() {
+        let fits = |unique: Option<&str>, make: &str, model: &str| {
+            entry(unique).fits(Body::new(make, model, &[]))
         };
-        assert!(entry(Some("CANON EOS R6")).fits("Canon", "EOS R6"));
-        assert!(entry(Some("Canon EOS 6D Mark II")).fits("Canon", "EOS 6D Mark II"));
+        assert!(fits(Some("CANON EOS R6"), "Canon", "EOS R6"));
+        assert!(fits(
+            Some("Canon EOS 6D Mark II"),
+            "Canon",
+            "EOS 6D Mark II"
+        ));
         // The frame's own make and model concatenated are the same
         // name whether or not the decoder repeats the make.
-        assert!(entry(Some("NIKON Z 6")).fits("Nikon", "NIKON Z 6"));
-        assert!(!entry(Some("Canon EOS R6")).fits("Canon", "EOS R6 Mark II"));
-        assert!(!entry(Some("Canon EOS R6")).fits("Nikon", "Z 6"));
+        assert!(fits(Some("NIKON Z 6"), "Nikon", "NIKON Z 6"));
+        assert!(!fits(Some("Canon EOS R6"), "Canon", "EOS R6 Mark II"));
+        assert!(!fits(Some("Canon EOS R6"), "Nikon", "Z 6"));
         // A profile that names no camera cannot be said to be wrong.
-        assert!(entry(None).fits("Canon", "EOS R6"));
+        assert!(fits(None, "Canon", "EOS R6"));
+    }
+
+    /// A body sold under other names fits a profile made under any of
+    /// them: Adobe names the EOS 850D's profiles for the Rebel T8i.
+    #[test]
+    fn a_profile_fits_the_body_by_any_of_its_names() {
+        let aliases = ["EOS Rebel T8i".to_string(), "EOS Kiss X10i".to_string()];
+        let body = Body::new("Canon", "EOS 850D", &aliases);
+        for unique in [
+            "Canon EOS 850D",
+            "Canon EOS Rebel T8i",
+            "EOS Rebel T8i",
+            "Canon EOS Kiss X10i",
+        ] {
+            let e = entry(Some(unique));
+            assert!(e.fits(body), "{unique}");
+        }
+        assert!(!entry(Some("Canon EOS Rebel T7i")).fits(body));
+        // Without the other names, the Rebel's profile is another body's.
+        let bare = Body::new("Canon", "EOS 850D", &[]);
+        assert!(!entry(Some("Canon EOS Rebel T8i")).fits(bare));
+        assert_eq!(
+            body.names(),
+            [
+                "Canon EOS 850D",
+                "EOS 850D",
+                "Canon EOS Rebel T8i",
+                "EOS Rebel T8i",
+                "Canon EOS Kiss X10i",
+                "EOS Kiss X10i",
+            ]
+        );
+    }
+
+    /// A short model never fits a longer one's profile.
+    #[test]
+    fn a_profile_for_a_longer_model_does_not_fit() {
+        let r5 = entry(Some("Canon EOS R5"));
+        assert!(!r5.fits(Body::new("Canon", "EOS R", &[])));
+        assert!(!r5.fits(Body::new("Canon", "Canon EOS R", &[])));
+        assert!(!entry(Some("Google Pixel 9 Pro")).fits(Body::new("Google", "Pixel 9", &[])));
     }
 
     #[test]

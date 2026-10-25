@@ -28,6 +28,7 @@ fn dng(path: &Path, width: usize, height: usize) {
     let frame = RawFrame {
         make: "Test".into(),
         model: "Cam".into(),
+        other_names: Vec::new(),
         width,
         height,
         channels: 1,

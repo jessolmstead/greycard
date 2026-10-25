@@ -128,6 +128,9 @@ design note behind it.
 
 ### Fixes
 
+- A camera profile made under another name for the same body, Adobe's
+  Rebel T8i profiles on an EOS 850D, is listed for it now
+  ([§423](https://github.com/jessolmstead/greycard/blob/master/docs/notes/423-camera-profiles-by-the-bodys-other-names.md)).
 - A fixed-lens compact, phone, or action camera gets its lens profile
   from the body when the file names no lens (a PowerShot SX710 HS
   shooting DNG through CHDK got none with lensfun installed)

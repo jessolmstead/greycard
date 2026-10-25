@@ -1205,6 +1205,7 @@ pub(crate) mod tests {
         RawFrame {
             make: "Test".into(),
             model: "Cam".into(),
+            other_names: Vec::new(),
             width: 4,
             height: 4,
             channels: 1,

@@ -15,11 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A camera profile made for a body's regional name is hidden:
-      the match folds the DCP's UniqueCameraModel against rawler's
-      clean model alone, so Adobe's "Canon EOS Rebel T8i" profiles
-      never fit an 850D. Match through rawler's model aliases too
-      (pixls, 2026-10-24)
 - [ ] A frame with remove fills in its edit reruns every removal
       when it is opened: the fill cache is in memory and cleared at
       each open (§406), so an M5 spends 172 s on two fills before a

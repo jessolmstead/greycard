@@ -2859,6 +2859,7 @@ mod tests {
         let exif = Exif::from_probe(&Probe {
             make: "Canon".into(),
             model: "Canon EOS R5".into(),
+            other_names: Vec::new(),
             lens_model: Some("RF35mm F1.4 L VCM".into()),
             focal_length: Some(35.0),
             iso: Some(100),

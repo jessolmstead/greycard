@@ -78,6 +78,87 @@ fn camera_names() -> &'static [(String, String)] {
     })
 }
 
+/// A body's names in the decoder's table of cameras: the make as the
+/// EXIF spells it and cleaned, and each model the same way, its own
+/// first and then the names it is sold under elsewhere.
+struct Names {
+    make: String,
+    clean_make: String,
+    models: Vec<(String, String)>,
+}
+
+/// The bodies with more than one name. rawler's `Camera` keeps no
+/// aliases (its loader makes each alias a camera of its own), so we
+/// read them from the table it is built from, which it publishes.
+fn aliased_bodies() -> &'static [Names] {
+    static BODIES: std::sync::OnceLock<Vec<Names>> = std::sync::OnceLock::new();
+    BODIES.get_or_init(|| {
+        let table = match ::rawler::decoders::CAMERAS_TOML.parse::<toml::Table>() {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("the decoder's table of cameras: {e}");
+                return Vec::new();
+            }
+        };
+        let text = |t: &toml::Table, k: &str| {
+            t.get(k)
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default()
+        };
+        let cameras = table.get("cameras").and_then(|c| c.as_array());
+        cameras
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c.as_table())
+            .filter_map(|c| {
+                let aliases = c.get("model_aliases")?.as_array()?;
+                let mut models = vec![(text(c, "model"), text(c, "clean_model"))];
+                models.extend(aliases.iter().filter_map(|a| {
+                    let a = a.as_array()?;
+                    let name = |i: usize| a.get(i)?.as_str().map(|s| s.trim().to_string());
+                    Some((name(0)?, name(1)?))
+                }));
+                (models.len() > 1).then(|| Names {
+                    make: text(c, "make"),
+                    clean_make: text(c, "clean_make"),
+                    models,
+                })
+            })
+            .collect()
+    })
+}
+
+/// The other names of the body `make` `model`, each spelled either
+/// way (as the EXIF has it or cleaned): the names the decoder's table
+/// gives the same camera, its own among them when `model` is one of
+/// the others, each both as the EXIF spells it and cleaned. Both, so
+/// a body named by its EXIF make ("NIKON CORPORATION") fits the same
+/// profiles as one named by its clean make: the EXIF model carries the
+/// make ("NIKON D800E") where the clean one does not. Empty for a body
+/// with one name, or one the table does not know.
+pub fn other_names(make: &str, model: &str) -> Vec<String> {
+    let same = |a: &str, b: &str| !b.is_empty() && a.trim().eq_ignore_ascii_case(b);
+    let Some(body) = aliased_bodies().iter().find(|b| {
+        (same(make, &b.make) || same(make, &b.clean_make))
+            && b.models
+                .iter()
+                .any(|(m, c)| same(model, m) || same(model, c))
+    }) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = body
+        .models
+        .iter()
+        .filter(|(m, c)| !same(model, m) && !same(model, c))
+        .flat_map(|(m, c)| [m.clone(), c.clone()])
+        .filter(|n| !n.is_empty())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The camera as the index names it for a model as its EXIF spells it;
 /// none for a model the decoder does not know. A model two makers share
 /// (none in the table as we read it) takes the first by name.
@@ -600,6 +681,7 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
     };
 
     let frame = RawFrame {
+        other_names: other_names(&clean_make, &clean_model),
         make: clean_make,
         model: clean_model,
         width,
@@ -680,6 +762,44 @@ fn as_shot(wb: [f32; 4]) -> Option<[f64; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_body_s_other_names_come_from_the_decoder_s_table() {
+        // Cleaned, as a decoded frame names it, and as the EXIF does.
+        for (make, model) in [("Canon", "EOS 850D"), ("Canon", "Canon EOS 850D")] {
+            assert_eq!(
+                other_names(make, model),
+                [
+                    "Canon EOS Kiss X10i",
+                    "Canon EOS Rebel T8i",
+                    "EOS Kiss X10i",
+                    "EOS Rebel T8i"
+                ],
+                "{make} {model}"
+            );
+        }
+        // An alias's other names are the body's own and the rest.
+        assert_eq!(
+            other_names("Canon", "EOS Rebel T8i"),
+            [
+                "Canon EOS 850D",
+                "Canon EOS Kiss X10i",
+                "EOS 850D",
+                "EOS Kiss X10i"
+            ]
+        );
+        // A body whose EXIF make is not its clean make, either way.
+        for (make, model) in [("Nikon", "D800"), ("NIKON CORPORATION", "NIKON D800")] {
+            assert_eq!(
+                other_names(make, model),
+                ["D800E", "NIKON D800E"],
+                "{make} {model}"
+            );
+        }
+        assert!(other_names("Canon", "EOS R5").is_empty());
+        assert!(other_names("Nikon", "EOS 850D").is_empty());
+        assert!(other_names("", "").is_empty());
+    }
 
     #[test]
     fn an_exif_model_cleans_to_the_index_s_camera_and_back() {
@@ -1565,6 +1685,8 @@ mod tests {
 pub struct Probe {
     pub make: String,
     pub model: String,
+    /// The body's other names; see [`RawFrame::other_names`].
+    pub other_names: Vec<String>,
     /// The lens's name as the camera wrote it, or as the decoder's
     /// lens table names it; see [`Shot::lens_model`].
     pub lens_model: Option<String>,
@@ -1605,9 +1727,11 @@ impl Probe {
                 .map(|r| f64::from(r.n) / f64::from(r.d))
                 .filter(|v| v.is_finite() && *v > 0.0)
         };
+        let (make, model) = (metadata.make.trim(), metadata.model.trim());
         Probe {
-            make: metadata.make.trim().to_string(),
-            model: metadata.model.trim().to_string(),
+            make: make.to_string(),
+            model: model.to_string(),
+            other_names: other_names(make, model),
             lens_model: shot.lens_model,
             focal_length: rational(&exif.focal_length),
             iso: shot.iso,

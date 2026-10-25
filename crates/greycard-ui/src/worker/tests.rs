@@ -9,6 +9,7 @@ fn the_learned_denoiser_on_x_trans_is_unavailable_and_said_so() {
     let mut frame = RawFrame {
         make: "Test".into(),
         model: "Cam".into(),
+        other_names: Vec::new(),
         width: 2,
         height: 2,
         channels: 1,
@@ -374,6 +375,7 @@ pub(super) fn aberrated_frame(width: usize, height: usize) -> RawFrame {
     RawFrame {
         make: "Test".into(),
         model: "Cam".into(),
+        other_names: Vec::new(),
         width,
         height,
         channels: 1,

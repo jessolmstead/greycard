@@ -44,6 +44,7 @@ pub(crate) fn lenses(
             let mut frame = greycard_core::RawFrame {
                 make: String::new(),
                 model: String::new(),
+                other_names: Vec::new(),
                 width: 6000,
                 height: 4000,
                 channels: 1,

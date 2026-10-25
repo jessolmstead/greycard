@@ -448,6 +448,7 @@ dependencies = [
  "rawler",
  "rayon",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

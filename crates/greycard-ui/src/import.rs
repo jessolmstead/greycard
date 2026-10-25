@@ -260,9 +260,9 @@ pub fn fields_of(file: &Path, seq: usize) -> Fields {
     probe_file(file, seq).0
 }
 
-/// [`fields_of`], and the body (make and model) when the file says,
-/// for the preset's camera-profile check.
-pub fn probe_file(file: &Path, seq: usize) -> (Fields, Option<(String, String)>) {
+/// [`fields_of`], and the probe when the file reads, for the preset's
+/// camera-profile check.
+pub fn probe_file(file: &Path, seq: usize) -> (Fields, Option<greycard_core::decode::Probe>) {
     let probed = std::panic::catch_unwind(|| {
         if greycard_core::picture::is_picture_path(file) {
             greycard_core::picture::probe_path(file)
@@ -274,7 +274,7 @@ pub fn probe_file(file: &Path, seq: usize) -> (Fields, Option<(String, String)>)
         Ok(Ok(p)) => (
             p.taken.as_deref().and_then(Day::from_exif),
             greycard_core::raw::camera_name(&p.make, &p.model),
-            Some((p.make, p.model)),
+            Some(p),
         ),
         _ => (None, String::new(), None),
     };

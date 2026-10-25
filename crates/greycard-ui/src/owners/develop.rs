@@ -199,6 +199,8 @@ pub(crate) struct Develop {
     /// file's camera, for the panel's list and its warning.
     pub(crate) profiles: Vec<greycard_edit::camera::Entry>,
     pub(crate) camera: (String, String),
+    /// The other names the open file's camera is sold under.
+    pub(crate) other_names: Vec<String>,
     /// The look tables the look directory holds, for the panel's list.
     pub(crate) looks: Vec<greycard_edit::look::Entry>,
     /// The look the viewport draws through, and the section it was

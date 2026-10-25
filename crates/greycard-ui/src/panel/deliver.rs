@@ -383,6 +383,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .as_ref()
                 .map(|(f, _)| (f.make.clone(), f.model.clone()))
                 .unwrap_or_default();
+            st.develop.other_names = st
+                .develop
+                .frame
+                .as_ref()
+                .map(|(f, _)| f.other_names.clone())
+                .unwrap_or_default();
             st.develop.profiles = greycard_edit::camera::list();
             st.develop.looks = greycard_edit::look::list();
             // Read on each open, so a look or a profile changed by hand

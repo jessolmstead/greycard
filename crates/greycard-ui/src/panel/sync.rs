@@ -215,7 +215,7 @@ pub(crate) fn as_source(mut edit: Edit, mosaic: Option<Mosaic>) -> Edit {
 /// camera, cannot be checked and goes, as it would in a preset; one
 /// made for a camera goes only to that camera's frames, and a frame
 /// that cannot say what took it does not get it.
-pub(crate) fn profile_fits(entry: Option<&camera::Entry>, body: Option<(&str, &str)>) -> bool {
+pub(crate) fn profile_fits(entry: Option<&camera::Entry>, body: Option<camera::Body>) -> bool {
     let Some(entry) = entry else {
         return true;
     };
@@ -226,7 +226,12 @@ pub(crate) fn profile_fits(entry: Option<&camera::Entry>, body: Option<(&str, &s
     {
         return true;
     }
-    body.is_some_and(|(make, model)| entry.fits(make, model))
+    body.is_some_and(|body| entry.fits(body))
+}
+
+/// A probed file's camera, as a profile's fit reads it.
+pub(crate) fn probed_body(p: &greycard_core::decode::Probe) -> camera::Body<'_> {
+    camera::Body::new(&p.make, &p.model, &p.other_names)
 }
 
 /// `preset` as it reaches `file`: itself, when it carries no named
@@ -242,9 +247,7 @@ pub(crate) fn preset_for_body(
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> (Preset, bool) {
-    preset_fitted(preset, profiles, || {
-        probe(st, file).map(|p| (p.make, p.model))
-    })
+    preset_fitted(preset, profiles, || probe(st, file))
 }
 
 /// [`preset_for_body`] with no state: `body` says what took the frame
@@ -253,7 +256,7 @@ pub(crate) fn preset_for_body(
 pub(crate) fn preset_fitted(
     preset: &Preset,
     profiles: &[camera::Entry],
-    body: impl FnOnce() -> Option<(String, String)>,
+    body: impl FnOnce() -> Option<greycard_core::decode::Probe>,
 ) -> (Preset, bool) {
     let named = match &preset.edit.camera.profile {
         ProfileChoice::Named(name) if preset.sections.contains(&Section::Camera) => {
@@ -265,11 +268,7 @@ pub(crate) fn preset_fitted(
         return (preset.clone(), false);
     };
     let body = body();
-    if profile_fits(
-        Some(entry),
-        body.as_ref()
-            .map(|(make, model)| (make.as_str(), model.as_str())),
-    ) {
+    if profile_fits(Some(entry), body.as_ref().map(probed_body)) {
         (preset.clone(), false)
     } else {
         let mut without = preset.clone();
@@ -402,12 +401,7 @@ fn lay_shifted_over_targets(
             seeded.push(f);
         }
         match named {
-            Some(entry)
-                if !profile_fits(
-                    entry,
-                    probed.as_ref().map(|p| (p.make.as_str(), p.model.as_str())),
-                ) =>
-            {
+            Some(entry) if !profile_fits(entry, probed.as_ref().map(probed_body)) => {
                 left_off.push(f)
             }
             _ => fits.push(f),
@@ -1958,6 +1952,7 @@ mod tests {
         greycard_core::decode::Probe {
             make: make.into(),
             model: model.into(),
+            other_names: Vec::new(),
             iso: Some(iso),
             exposure_time: None,
             fnumber: None,
@@ -1968,15 +1963,57 @@ mod tests {
     #[test]
     fn a_profile_fits_only_the_body_it_was_made_for() {
         let r5 = entry("r5", Some("Canon EOS R5"));
-        assert!(profile_fits(Some(&r5), Some(("Canon", "EOS R5"))));
-        assert!(!profile_fits(Some(&r5), Some(("Fujifilm", "X-T5"))));
+        let fits = |e: Option<&camera::Entry>, body: Option<(&str, &str)>| {
+            profile_fits(
+                e,
+                body.map(|(make, model)| camera::Body::new(make, model, &[])),
+            )
+        };
+        assert!(fits(Some(&r5), Some(("Canon", "EOS R5"))));
+        assert!(!fits(Some(&r5), Some(("Fujifilm", "X-T5"))));
         // A frame that cannot say what took it does not get it.
-        assert!(!profile_fits(Some(&r5), None));
+        assert!(!fits(Some(&r5), None));
         // A profile that names no camera, or one the directory has
         // not got, cannot be checked, and goes as a preset's would.
-        assert!(profile_fits(Some(&entry("any", None)), None));
-        assert!(profile_fits(Some(&entry("any", Some(" "))), None));
-        assert!(profile_fits(None, Some(("Fujifilm", "X-T5"))));
+        assert!(fits(Some(&entry("any", None)), None));
+        assert!(fits(Some(&entry("any", Some(" "))), None));
+        assert!(fits(None, Some(("Fujifilm", "X-T5"))));
+    }
+
+    /// A preset's profile made under a body's other name goes to the
+    /// body's frames: the probe carries the names the decoder gives.
+    #[test]
+    fn a_preset_s_profile_fits_a_body_by_its_other_name() {
+        let mut edit = Edit::default();
+        edit.camera.profile = ProfileChoice::Named("t8i".into());
+        let preset = Preset::from_edit("Rebel", &edit, &[Section::Camera]);
+        let profiles = [entry("t8i", Some("Canon EOS Rebel T8i"))];
+        let mut probe = body("Canon", "Canon EOS 850D", 100);
+        probe.other_names =
+            greycard_core::decode::rawler_backend::other_names("Canon", "Canon EOS 850D");
+        let (_, left_off) = preset_fitted(&preset, &profiles, || Some(probe.clone()));
+        assert!(!left_off);
+        probe.other_names.clear();
+        let (_, left_off) = preset_fitted(&preset, &profiles, || Some(probe));
+        assert!(left_off);
+    }
+
+    /// A body whose EXIF make is not its clean make: the open frame's
+    /// names (clean) and a probe's (as the EXIF spells them) fit the
+    /// same profile under the body's other name.
+    #[test]
+    fn a_body_fits_by_its_other_name_whichever_make_names_it() {
+        use greycard_core::decode::rawler_backend::other_names;
+        let d800e = entry("d800e", Some("Nikon D800E"));
+        for (make, model) in [("Nikon", "D800"), ("NIKON CORPORATION", "NIKON D800")] {
+            let mut probe = body(make, model, 100);
+            probe.other_names = other_names(make, model);
+            assert!(
+                profile_fits(Some(&d800e), Some(probed_body(&probe))),
+                "{make} {model}"
+            );
+            assert!(d800e.fits(probed_body(&probe)), "{make} {model}");
+        }
     }
 
     /// A Canon DCP synced over a Canon frame and a Fuji frame lands
@@ -3740,6 +3777,7 @@ mod tests {
         let frame = greycard_core::raw::RawFrame {
             make: "Test".into(),
             model: "Cam".into(),
+            other_names: Vec::new(),
             width,
             height,
             channels: 3,

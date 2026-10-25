@@ -392,6 +392,10 @@ impl Samples {
 pub struct RawFrame {
     pub make: String,
     pub model: String,
+    /// The other names the same body is sold under (an EOS 850D is
+    /// also an EOS Rebel T8i and an EOS Kiss X10i), as the decoder's
+    /// table of cameras gives them; empty for a body with one name.
+    pub other_names: Vec<String>,
     /// Full sensor dimensions of `samples`.
     pub width: usize,
     pub height: usize,
@@ -888,6 +892,7 @@ mod tests {
         RawFrame {
             make: "Test".into(),
             model: "Cam".into(),
+            other_names: Vec::new(),
             width: 200,
             height: 200,
             channels: 1,

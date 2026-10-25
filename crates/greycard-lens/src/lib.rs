@@ -418,6 +418,7 @@ mod tests {
         RawFrame {
             make: "Canon".into(),
             model: model.into(),
+            other_names: Vec::new(),
             width: 60,
             height: 40,
             channels: 1,

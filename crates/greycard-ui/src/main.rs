@@ -1013,6 +1013,7 @@ impl State {
                 lens: LensReport::NoDatabase,
                 profiles: Vec::new(),
                 camera: (String::new(), String::new()),
+                other_names: Vec::new(),
                 looks: Vec::new(),
                 look: None,
                 look_for: None,
