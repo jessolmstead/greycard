@@ -65,9 +65,13 @@ serde_json.workspace = true
 wgpu = { version = "30", optional = true }
 pollster = { version = "0.4", optional = true }
 
-# `runtime::leave`'s `_exit`. Already in the tree.
+# `runtime::leave`'s `_exit` and `ram`'s `sysconf`. Already in the tree.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# `ram`'s `GlobalMemoryStatusEx`. Already in the tree.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation"] }
 
 [dev-dependencies]
 image.workspace = true
@@ -92,4 +96,8 @@ required-features = ["webgpu"]
 
 [[example]]
 name = "remove_bench"
+required-features = ["webgpu"]
+
+[[example]]
+name = "denoise_tiles"
 required-features = ["webgpu"]

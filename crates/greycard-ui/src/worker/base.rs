@@ -283,7 +283,7 @@ fn run_learned(
     let noise = prepared
         .noise_model()
         .context("the learned denoiser needs the frame's noise model")?;
-    let tiling = greycard_ai::denoise::Tiling::default();
+    let tiling = denoiser.tiling();
     let start = Instant::now();
     let key = cache.map(|c| (c, greycard_ai::DenoiseCache::key(model, tiling, &prepared)));
     let (rgb, report) = match key.and_then(|(c, k)| c.read(k, &prepared)) {

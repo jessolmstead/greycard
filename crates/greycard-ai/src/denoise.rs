@@ -36,6 +36,23 @@ use crate::store::Store;
 /// to compute.
 pub const DEFAULT_TILE: usize = 1024;
 
+/// The tile a WebGPU adapter with less memory is given: with the
+/// margin, 704 samples a side against the default's 1216, about a
+/// third of its working memory, at the price of more margin to
+/// compute.
+pub const SMALL_TILE: usize = 512;
+
+/// The bytes a discrete card needs for [`DEFAULT_TILE`]: 6 GiB, less
+/// the little a 6 GB card reports under its sticker. The best tier
+/// peaks at 4.2 GB at 1024 and a card has other tenants.
+const CARD_FROM: u64 = 11 << 29;
+
+/// The bytes a machine on unified memory needs for [`DEFAULT_TILE`]:
+/// 16 GB, which a system can report a GiB under, as the remove's
+/// bounds allow for; under that the tile's working memory takes the
+/// machine into swap.
+const UNIFIED_FROM: u64 = 15 << 30;
+
 /// A tile's answer is checked against its input: in the stabilized
 /// space the noise is unit variance, so a denoised sample sits within a
 /// unit or so of the noisy one (measured: 0.2 to 0.7 on average over a
@@ -87,24 +104,89 @@ impl Tiling {
     }
 }
 
+/// The tile the denoiser runs at on `provider`, and why, for the log:
+/// what [`Denoiser::load`] and [`Denoiser::from_store`] choose, from
+/// what this machine says ([`crate::ram::physical`] and the WebGPU
+/// probe); [`Denoiser::load_tiled`] runs the tiling it is handed.
+/// Only WebGPU's is chosen: from the card's own memory (`card`) on a
+/// discrete adapter, from the machine's (`machine`) on unified memory
+/// ([`runtime::webgpu_unified`]), [`DEFAULT_TILE`] where the memory
+/// is not known, as before there was a choice. `env` is
+/// `GREYCARD_DENOISE_TILE`, a tile in mosaic samples, over the choice
+/// on any provider but Core ML, whose session takes the default's
+/// shape only.
+pub fn choose_tile(
+    provider: Provider,
+    unified: Option<bool>,
+    card: Option<u64>,
+    machine: Option<u64>,
+    env: Option<&str>,
+) -> (usize, String) {
+    const GIB: f64 = (1u64 << 30) as f64;
+    if provider == Provider::CoreMl {
+        return (
+            DEFAULT_TILE,
+            "Core ML, whose session takes this tile only".to_string(),
+        );
+    }
+    let asked = env.map(|v| (v, v.trim().parse::<usize>().ok().filter(|&t| t > 0)));
+    if let Some((v, Some(tile))) = asked {
+        return (tile, format!("GREYCARD_DENOISE_TILE={v}"));
+    }
+    let (tile, mut why) = if provider != Provider::WebGpu {
+        (DEFAULT_TILE, format!("on {}", provider.label()))
+    } else {
+        match (unified, card, machine) {
+            (Some(true), _, Some(m)) => {
+                let tile = if m >= UNIFIED_FROM {
+                    DEFAULT_TILE
+                } else {
+                    SMALL_TILE
+                };
+                // To the nearest GiB, as a machine's memory is sold.
+                (tile, format!("{} GiB unified", (m + (1 << 29)) >> 30))
+            }
+            (Some(true), _, None) => (DEFAULT_TILE, "unified, its memory not known".to_string()),
+            (_, Some(c), _) => {
+                let tile = if c >= CARD_FROM {
+                    DEFAULT_TILE
+                } else {
+                    SMALL_TILE
+                };
+                (tile, format!("the card's {:.1} GiB", c as f64 / GIB))
+            }
+            (_, None, _) => (DEFAULT_TILE, "the card's memory not known".to_string()),
+        }
+    };
+    if let Some((v, None)) = asked {
+        why.push_str(&format!(", GREYCARD_DENOISE_TILE={v} not a tile"));
+    }
+    (tile, why)
+}
+
 pub struct Denoiser {
     loaded: Loaded,
     version: String,
+    /// The tiling chosen for the provider the model settled on.
+    tiling: Tiling,
     /// The packed side the session takes, where it takes one only
     /// (Core ML).
     fixed: Option<usize>,
 }
 
 impl Denoiser {
-    /// Load the model at `path` on the first provider that runs it.
-    /// Nothing here is registered, so no provider's answer for it is
-    /// remembered; use [`Denoiser::from_store`] for that.
+    /// Load the model at `path` on the first provider that runs it,
+    /// its [`Denoiser::tiling`] chosen for that provider
+    /// ([`choose_tile`]) and logged. Nothing here is registered, so no
+    /// provider's answer for it is remembered; use
+    /// [`Denoiser::from_store`] for that.
     pub fn load(path: &Path, providers: &[Provider]) -> Result<Self> {
-        Self::load_inner(path, providers, None, Tiling::default())
+        Self::load_inner(path, providers, None, Tiling::default()).map(Self::choose)
     }
 
-    /// [`Denoiser::load`] for runs at `tiling` rather than the
-    /// default: on Core ML the session takes that tiling's tile only.
+    /// [`Denoiser::load`] for runs at `tiling`, as given: nothing is
+    /// chosen, and on Core ML the session takes that tiling's tile
+    /// only. For a caller measuring one tiling against another.
     pub fn load_tiled(path: &Path, providers: &[Provider], tiling: Tiling) -> Result<Self> {
         Self::load_inner(path, providers, None, tiling)
     }
@@ -148,11 +230,13 @@ impl Denoiser {
             loaded,
             version,
             fixed,
+            tiling,
         })
     }
 
     /// A registered tier from the store; [`Error::Missing`] when it
-    /// has not been fetched.
+    /// has not been fetched. Its tiling is chosen as
+    /// [`Denoiser::load`]'s is.
     pub fn from_store(store: &Store, model: &Model, providers: &[Provider]) -> Result<Self> {
         if !store.have(model) {
             return Err(Error::Missing(model.name));
@@ -168,10 +252,38 @@ impl Denoiser {
             Some(remember),
             Tiling::default(),
         )
+        .map(Self::choose)
+    }
+
+    /// The tile chosen for the provider the session settled on, and
+    /// logged. The session was opened at the default tiling, the shape
+    /// Core ML is fixed to; another provider runs whatever tile it is
+    /// handed.
+    fn choose(mut self) -> Self {
+        let provider = self.provider();
+        let webgpu = provider == Provider::WebGpu;
+        let unified = webgpu.then(runtime::webgpu_unified).flatten();
+        let env = std::env::var("GREYCARD_DENOISE_TILE").ok();
+        let (tile, why) = choose_tile(
+            provider,
+            unified,
+            webgpu.then(runtime::webgpu_memory).flatten(),
+            (unified == Some(true)).then(crate::ram::physical).flatten(),
+            env.as_deref(),
+        );
+        log::info!("denoiser tile {tile}: {why}");
+        self.tiling.tile = tile;
+        self
     }
 
     pub fn provider(&self) -> Provider {
         self.loaded.provider
+    }
+
+    /// The tiling to [`Denoiser::run`] at: chosen for its provider, or
+    /// the one [`Denoiser::load_tiled`] was handed.
+    pub fn tiling(&self) -> Tiling {
+        self.tiling
     }
 
     /// The version the model file declares, for the edit's record.
@@ -380,6 +492,75 @@ mod tests {
             margin: 7,
         };
         assert_eq!(odd.packed_side(), (512 + 12) / 2);
+    }
+
+    const GIB: u64 = 1 << 30;
+
+    fn webgpu(unified: Option<bool>, card: Option<u64>, machine: Option<u64>) -> usize {
+        choose_tile(Provider::WebGpu, unified, card, machine, None).0
+    }
+
+    #[test]
+    fn a_discrete_card_under_six_gib_gets_the_small_tile() {
+        let d = Some(false);
+        assert_eq!(webgpu(d, Some(4 * GIB), None), SMALL_TILE);
+        assert_eq!(webgpu(d, Some(CARD_FROM - 1), None), SMALL_TILE);
+        assert_eq!(webgpu(d, Some(CARD_FROM), None), DEFAULT_TILE);
+        assert_eq!(webgpu(d, Some(6 * GIB), None), DEFAULT_TILE);
+        assert_eq!(webgpu(d, Some(16 * GIB), Some(8 * GIB)), DEFAULT_TILE);
+        // A card's memory not known keeps the tile it always had, and
+        // so does an adapter of no known type.
+        assert_eq!(webgpu(d, None, Some(8 * GIB)), DEFAULT_TILE);
+        assert_eq!(webgpu(None, None, None), DEFAULT_TILE);
+        assert_eq!(webgpu(None, Some(4 * GIB), None), SMALL_TILE);
+        let (_, why) = choose_tile(Provider::WebGpu, d, Some(4 * GIB), None, None);
+        assert_eq!(why, "the card's 4.0 GiB");
+        let (_, why) = choose_tile(Provider::WebGpu, d, None, None, None);
+        assert_eq!(why, "the card's memory not known");
+    }
+
+    #[test]
+    fn unified_memory_under_sixteen_gb_gets_the_small_tile() {
+        let u = Some(true);
+        // The machine's memory decides, not the share the driver sets
+        // aside for the integrated GPU.
+        assert_eq!(webgpu(u, Some(GIB), Some(8 * GIB)), SMALL_TILE);
+        assert_eq!(webgpu(u, None, Some(UNIFIED_FROM - 1)), SMALL_TILE);
+        assert_eq!(webgpu(u, None, Some(UNIFIED_FROM)), DEFAULT_TILE);
+        assert_eq!(webgpu(u, Some(GIB), Some(16 * GIB)), DEFAULT_TILE);
+        assert_eq!(webgpu(u, Some(GIB), None), DEFAULT_TILE);
+        let (_, why) = choose_tile(Provider::WebGpu, u, None, Some(16 * GIB), None);
+        assert_eq!(why, "16 GiB unified");
+    }
+
+    #[test]
+    fn only_webgpu_has_its_tile_chosen() {
+        for p in [Provider::Cpu, Provider::Cuda, Provider::CoreMl] {
+            assert_eq!(
+                choose_tile(p, Some(false), Some(2 * GIB), Some(4 * GIB), None).0,
+                DEFAULT_TILE,
+                "{p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_environment_overrides_the_choice_but_not_core_ml() {
+        let env = |p, v| choose_tile(p, Some(false), Some(4 * GIB), None, Some(v));
+        assert_eq!(
+            env(Provider::WebGpu, "1024"),
+            (1024, "GREYCARD_DENOISE_TILE=1024".to_string())
+        );
+        assert_eq!(env(Provider::Cpu, "768").0, 768);
+        assert_eq!(env(Provider::Cuda, "768").0, 768);
+        assert_eq!(env(Provider::WebGpu, " 512 ").0, 512);
+        assert_eq!(env(Provider::CoreMl, "512").0, DEFAULT_TILE);
+        // What is not a tile is said and passed over.
+        for v in ["", "0", "big", "-512"] {
+            let (tile, why) = env(Provider::WebGpu, v);
+            assert_eq!(tile, SMALL_TILE, "{v:?}");
+            assert!(why.ends_with("not a tile"), "{why}");
+        }
     }
 
     #[test]

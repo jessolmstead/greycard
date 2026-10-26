@@ -328,7 +328,7 @@ fn coreml_machine_identity() -> Option<String> {
 /// does; greycard-gpu always asks high performance.
 #[cfg(feature = "webgpu")]
 fn webgpu_adapter_identity() -> Option<String> {
-    webgpu_adapter().map(|a| a.0.clone())
+    webgpu_adapter().map(|a| a.identity.clone())
 }
 
 /// Whether the WebGPU adapter shares the machine's memory: an
@@ -344,7 +344,7 @@ pub fn webgpu_unified() -> Option<bool> {
     }
     #[cfg(feature = "webgpu")]
     {
-        match webgpu_adapter()?.1 {
+        match webgpu_adapter()?.device_type {
             wgpu::DeviceType::IntegratedGpu => Some(true),
             wgpu::DeviceType::DiscreteGpu | wgpu::DeviceType::VirtualGpu => Some(false),
             wgpu::DeviceType::Cpu | wgpu::DeviceType::Other => None,
@@ -356,11 +356,84 @@ pub fn webgpu_unified() -> Option<bool> {
     }
 }
 
-/// The adapter's identity (name, backend, and driver) and its type,
-/// asked once a process and kept.
+/// The bytes of the WebGPU adapter's own memory: the sum of its
+/// device-local heaps on Vulkan, its dedicated video memory on DX12.
+/// `None` when no adapter answers, on Metal (a Mac's GPU has the
+/// machine's memory, which the caller reads), and on any backend that
+/// will not say. On an integrated GPU it is the share the driver sets
+/// aside, not what the GPU can reach; [`webgpu_unified`] says when to
+/// read the machine's memory instead. Same adapter, and same guess,
+/// as [`webgpu_unified`].
+pub fn webgpu_memory() -> Option<u64> {
+    #[cfg(feature = "webgpu")]
+    {
+        webgpu_adapter()?.memory
+    }
+    #[cfg(not(feature = "webgpu"))]
+    {
+        None
+    }
+}
+
+/// What the WebGPU probe learned of the adapter.
 #[cfg(feature = "webgpu")]
-fn webgpu_adapter() -> Option<&'static (String, wgpu::DeviceType)> {
-    static ADAPTER: OnceLock<Option<(String, wgpu::DeviceType)>> = OnceLock::new();
+struct Adapter {
+    /// Name, backend, and driver.
+    identity: String,
+    device_type: wgpu::DeviceType,
+    /// The bytes of its own memory ([`webgpu_memory`]).
+    memory: Option<u64>,
+}
+
+/// The bytes of `adapter`'s own memory, asked of the backend under
+/// wgpu, which keeps it to itself.
+#[cfg(feature = "webgpu")]
+fn adapter_memory(adapter: &wgpu::Adapter) -> Option<u64> {
+    // Where wgpu builds its Vulkan backend: not on a Mac, where Metal
+    // is the backend and the memory the machine's.
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+    {
+        // VK_MEMORY_HEAP_DEVICE_LOCAL_BIT.
+        const DEVICE_LOCAL: u32 = 0x1;
+        // SAFETY: the guard is only read, the adapter outlives it, and
+        // nothing is created or destroyed through it.
+        if let Some(vk) = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() } {
+            // SAFETY: the physical device is the live one the adapter
+            // wraps, on the instance that enumerated it.
+            let props = unsafe {
+                vk.shared_instance()
+                    .raw_instance()
+                    .get_physical_device_memory_properties(vk.raw_physical_device())
+            };
+            let count = (props.memory_heap_count as usize).min(props.memory_heaps.len());
+            let bytes: u64 = props.memory_heaps[..count]
+                .iter()
+                .filter(|h| h.flags.as_raw() & DEVICE_LOCAL != 0)
+                .map(|h| h.size)
+                .sum();
+            return (bytes > 0).then_some(bytes);
+        }
+    }
+    #[cfg(windows)]
+    {
+        // SAFETY: as above; the DXGI adapter is only described.
+        if let Some(dx) = unsafe { adapter.as_hal::<wgpu::hal::api::Dx12>() } {
+            // SAFETY: `GetDesc1` reads the adapter's description and
+            // has no preconditions on a live adapter.
+            let desc = unsafe { dx.raw_adapter().GetDesc1() }.ok()?;
+            let bytes = desc.DedicatedVideoMemory as u64;
+            return (bytes > 0).then_some(bytes);
+        }
+    }
+    let _ = adapter;
+    None
+}
+
+/// The adapter's identity, type, and memory, asked once a process and
+/// kept.
+#[cfg(feature = "webgpu")]
+fn webgpu_adapter() -> Option<&'static Adapter> {
+    static ADAPTER: OnceLock<Option<Adapter>> = OnceLock::new();
     ADAPTER
         .get_or_init(|| {
             use pollster::FutureExt as _;
@@ -390,13 +463,14 @@ fn webgpu_adapter() -> Option<&'static (String, wgpu::DeviceType)> {
                 .block_on()
                 .ok()?;
             let info = adapter.get_info();
-            Some((
-                format!(
+            Some(Adapter {
+                identity: format!(
                     "{}|{:?}|{} {}",
                     info.name, info.backend, info.driver, info.driver_info
                 ),
-                info.device_type,
-            ))
+                device_type: info.device_type,
+                memory: adapter_memory(&adapter),
+            })
         })
         .as_ref()
 }

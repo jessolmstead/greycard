@@ -14,6 +14,7 @@ pub mod fill;
 pub mod image;
 pub mod landscape;
 pub mod matte;
+pub mod ram;
 pub mod refine;
 pub mod registry;
 pub mod remove;

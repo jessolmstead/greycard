@@ -63,7 +63,7 @@ impl Budget {
     /// makes the shelf.
     pub(super) fn user() -> Self {
         let setting = std::env::var("GREYCARD_SHELF_MB").ok();
-        Self::from_setting(setting.as_deref(), crate::ram::physical())
+        Self::from_setting(setting.as_deref(), greycard_ai::ram::physical())
     }
 
     /// The budget for a machine of `ram` bytes, unless `setting` (the

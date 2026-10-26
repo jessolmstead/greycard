@@ -155,6 +155,9 @@ design note behind it.
 
 ### Fixes
 
+- The learned denoiser runs in smaller tiles on a card under 6 GB or
+  a unified-memory machine under 16 GB, so a 4 GB card no longer
+  crashes on it; the tiles' seams stay inside their margin ([§431](https://github.com/jessolmstead/greycard/blob/master/docs/notes/431-the-denoisers-tile-from-the-cards-memory.md)).
 - A camera profile made under another name for the same body, Adobe's
   Rebel T8i profiles on an EOS 850D, is listed for it now
   ([§423](https://github.com/jessolmstead/greycard/blob/master/docs/notes/423-camera-profiles-by-the-bodys-other-names.md)).

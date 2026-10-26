@@ -27,13 +27,6 @@ the reasoning lives in `docs/notes.md`.
       at launch, or say "preparing" while it runs
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
-- [ ] The learned denoiser crashes a 4 GB card (issue #35,
-      2026-10-26): the quality tier's 1024 tile asks 2 to 5 GB, Dawn's
-      allocation fails, and ONNX Runtime frees the buffer twice on the
-      way out, which nothing of ours can catch (§90). Size the tile
-      from the card's memory, read through wgpu's hal on Vulkan and
-      Direct3D (a Mac's is the machine's): 512 under 6 GiB. Was the
-      Blocked line that waited on ort
 
 ## Tracks
 

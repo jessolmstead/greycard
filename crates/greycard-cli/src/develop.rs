@@ -519,7 +519,7 @@ fn develop_learned(
     let noise = prepared
         .noise_model()
         .context("the learned denoiser needs the frame's noise model")?;
-    let tiling = greycard_ai::denoise::Tiling::default();
+    let tiling = denoiser.tiling();
     let cache = model.and_then(|m| match greycard_ai::DenoiseCache::user() {
         Ok(cache) => Some((cache, greycard_ai::DenoiseCache::key(m, tiling, &prepared))),
         Err(e) => {

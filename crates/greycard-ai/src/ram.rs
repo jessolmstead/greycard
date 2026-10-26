@@ -1,4 +1,5 @@
-//! The machine's physical memory, for what the worker may keep in it.
+//! The machine's physical memory, for what a model or the editor's
+//! worker may keep in it.
 //!
 //! Asked of the system once per call: `sysconf` on Linux, the Mac, and
 //! the other Unixes, `GlobalMemoryStatusEx` on Windows. `None` where
@@ -7,7 +8,7 @@
 
 /// The bytes of physical memory the machine has, or `None` when the
 /// system will not say.
-pub(crate) fn physical() -> Option<u64> {
+pub fn physical() -> Option<u64> {
     let bytes = query()?;
     (bytes > 0).then_some(bytes)
 }

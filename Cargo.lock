@@ -1970,6 +1970,7 @@ dependencies = [
  "thiserror 2.0.20",
  "ureq",
  "wgpu",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
