@@ -650,6 +650,7 @@ export component EditSlider inherits Rectangle {
         : (value - minimum) / (maximum - minimum);
     property <bool> active: enabled && (ta.has-hover || ta.pressed || fs.has-focus);
     property <float> scroll-acc: 0;
+    property <length> scroll-delta;
     property <float> notch: 40;
     property <length> handle-center-x: track-left + root.fraction * track-width;
     // A press within the handle does not move it: a click to focus, or
@@ -954,15 +955,19 @@ export component EditSlider inherits Rectangle {
         // one step: one event of a notch or more, whatever the
         // platform makes a click in pixels (60 on one, 15 on another),
         // so clicks never add up to two steps and never to none. A
-        // touchpad's small deltas add up to steps.
+        // touchpad's small deltas add up to steps. A Mac turns a
+        // vertical scroll with Shift held into a horizontal one,
+        // leftward for up, so a sideways delta under Shift is read
+        // as the vertical it was.
         scroll-event(e) => {
             if (!root.enabled || !(e.modifiers.shift || fs.has-focus)) { return reject; }
-            if (abs(e.delta-y != 0 ? e.delta-y : e.delta-x) >= root.notch * 1px) {
+            root.scroll-delta = e.delta-y != 0 ? e.delta-y : (e.modifiers.shift ? -e.delta-x : e.delta-x);
+            if (abs(root.scroll-delta) >= root.notch * 1px) {
                 root.scroll-acc = 0;
-                root.nudge(((e.delta-y != 0 ? e.delta-y : e.delta-x) > 0 ? 1 : -1) * root.wheel-step(e.modifiers.control));
+                root.nudge((root.scroll-delta > 0 ? 1 : -1) * root.wheel-step(e.modifiers.control));
                 return accept;
             }
-            root.scroll-acc += (e.delta-y != 0 ? e.delta-y : e.delta-x) / 1px;
+            root.scroll-acc += root.scroll-delta / 1px;
             if (abs(root.scroll-acc) >= root.notch) {
                 root.nudge((root.scroll-acc > 0 ? 1 : -1) * root.wheel-step(e.modifiers.control));
                 root.scroll-acc = 0;

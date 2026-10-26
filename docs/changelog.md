@@ -80,6 +80,9 @@ design note behind it.
 
 ### Editing
 
+- On a Mac, Shift with a trackpad scroll over a slider moves it the
+  way the fingers went
+  ([§427](https://github.com/jessolmstead/greycard/blob/master/docs/notes/427-shift-and-the-wheel-on-a-mac.md)).
 - A slider's drag no longer jumps as it starts, and Shift held while
   dragging moves it a tenth as far
   ([§424](https://github.com/jessolmstead/greycard/blob/master/docs/notes/424-the-sliders-drag-no-jump-and-shift-for-a-fine-drag.md)).

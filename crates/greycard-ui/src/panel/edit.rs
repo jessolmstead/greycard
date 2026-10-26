@@ -1299,4 +1299,50 @@ mod tests {
         scroll(15.0);
         assert_eq!(exposure(), 0.30);
     }
+
+    /// A Mac turns a vertical scroll with Shift held into a horizontal
+    /// one, leftward for up: a sideways delta under Shift moves the
+    /// slider the way the fingers went, and the same delta without
+    /// Shift, a real sideways scroll, keeps right as up.
+    #[test]
+    fn shift_with_a_sideways_wheel_reads_as_the_vertical_it_was() {
+        use crate::testing;
+        use slint::platform::{Key, WindowEvent};
+
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        app.set_exposure(0.0);
+        let (at, size) = testing::labeled(&app, "Exposure");
+        let center = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+        testing::click(&app, center.0, center.1);
+        let sideways = |delta_x: f32| {
+            app.window().dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(center.0, center.1),
+                delta_x,
+                delta_y: 0.0,
+            });
+        };
+        let shift = |down: bool| {
+            let text = Key::Shift.into();
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        let exposure = || (app.get_exposure() * 100.0).round() / 100.0;
+
+        shift(true);
+        sideways(-60.0);
+        assert_eq!(exposure(), 0.05, "Shift and a leftward delta is an up");
+        sideways(60.0);
+        assert_eq!(exposure(), 0.0, "Shift and a rightward delta is a down");
+        shift(false);
+        sideways(60.0);
+        assert_eq!(exposure(), 0.05, "a real sideways scroll keeps right as up");
+    }
 }
