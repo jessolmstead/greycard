@@ -303,6 +303,11 @@ export struct TypedNumber {
 // column puts itself forward if it is nearer than the best so far; in
 // the second, the one left takes the focus or opens its field.
 export global SliderKeys {
+    // Whether the system scrolls naturally, content following the
+    // fingers, as a Mac does by default: a swipe up then comes as a
+    // scroll down, and a slider turns it back so it moves the way
+    // the fingers went. Set from the system's setting at the start.
+    in-out property <bool> natural: false;
     // The slider with the keys, by its number, or 0. The picture does
     // not take the keys at the pointer's crossing while one has them.
     in-out property <int> holder: 0;
@@ -955,13 +960,19 @@ export component EditSlider inherits Rectangle {
         // one step: one event of a notch or more, whatever the
         // platform makes a click in pixels (60 on one, 15 on another),
         // so clicks never add up to two steps and never to none. A
-        // touchpad's small deltas add up to steps. A Mac turns a
-        // vertical scroll with Shift held into a horizontal one,
-        // leftward for up, so a sideways delta under Shift is read
-        // as the vertical it was.
+        // touchpad's small deltas add up to steps. A positive delta
+        // moves content right or down. A Mac turns a wheel's
+        // vertical scroll with Shift held into a horizontal one of
+        // the same sign, so a sideways delta under Shift is read as
+        // the vertical it was; a negative sideways delta without
+        // Shift, content moving left, is a move right, read as up. Under
+        // natural scrolling the delta is the content's way, against
+        // the fingers, so it is turned back: a slider follows the
+        // swipe, not the content.
         scroll-event(e) => {
             if (!root.enabled || !(e.modifiers.shift || fs.has-focus)) { return reject; }
-            root.scroll-delta = e.delta-y != 0 ? e.delta-y : (e.modifiers.shift ? -e.delta-x : e.delta-x);
+            let d = e.delta-y != 0 ? e.delta-y : (e.modifiers.shift ? e.delta-x : -e.delta-x);
+            root.scroll-delta = SliderKeys.natural ? -d : d;
             if (abs(root.scroll-delta) >= root.notch * 1px) {
                 root.scroll-acc = 0;
                 root.nudge((root.scroll-delta > 0 ? 1 : -1) * root.wheel-step(e.modifiers.control));

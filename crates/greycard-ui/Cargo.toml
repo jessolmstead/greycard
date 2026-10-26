@@ -137,6 +137,6 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSString", "NSURL", "NSValue"] }
 # The displays' profiles from ColorSync (CoreGraphics), and their names
 # (NSScreen). winit already carries all three on the Mac.
-objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFData"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFData", "CFPreferences", "CFString"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGColorSpace", "CGDirectDisplay", "CGDisplayConfiguration", "CGError"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSGraphics", "NSScreen"] }

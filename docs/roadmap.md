@@ -46,6 +46,9 @@ another; the feel track's measured items come first within it.
 
 ### The feel
 
+- [ ] A slider under a Windows precision touchpad or a GNOME touchpad
+      set to natural scrolling moves against the fingers, as it did on
+      a Mac before §432: read those settings too
 The default develop matches the camera JPEG's brightness and the
 sliders feel like the ones people learned on.
 

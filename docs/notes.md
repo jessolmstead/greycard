@@ -444,3 +444,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§429. Patch, Fast, or Best for a Fill](notes/429-patch-fast-or-best-for-a-fill.md) (2026-10-25)
 - [§430. The export queue's view, polished](notes/430-the-export-queues-view-polished.md) (2026-10-25)
 - [§431. The denoiser's tile from the card's memory](notes/431-the-denoisers-tile-from-the-cards-memory.md) (2026-10-26)
+- [§432. The slider and natural scrolling on a Mac](notes/432-the-slider-and-natural-scrolling-on-a-mac.md) (2026-10-26)

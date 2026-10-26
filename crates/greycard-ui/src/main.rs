@@ -59,6 +59,7 @@ mod report;
 mod roots;
 mod rows;
 mod scope;
+mod scrolling;
 mod selection;
 mod settings;
 mod sheet;

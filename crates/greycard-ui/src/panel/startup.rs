@@ -273,6 +273,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         app.set_asked_height(h);
     }
     *fit_slot.borrow_mut() = Some(app.as_weak());
+    // A slider turns the wheel back under natural scrolling.
+    app.global::<crate::SliderKeys>()
+        .set_natural(crate::scrolling::natural());
     // The Settings sheet's scale row: the setting, and the one this
     // window started at, which a change is told it waits for.
     {
