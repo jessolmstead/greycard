@@ -177,6 +177,12 @@ seconds.
       denoisers all on the GPU at a third of WebGPU's time, the
       develop keeping Core ML; the race's winner remembered so a load
       opens one session (§422)
+- [ ] The Subject model on Core ML: the ML Program compile fails on
+      an atrous conv ("Required param 'pad' is missing", ONNX Runtime
+      1.28's Core ML builder on a dilated Conv), so it falls to WebGPU
+      in 1.8 s as the race intends (M5, 2026-10-25). Report to ORT, or
+      export that Conv with explicit pads; Sky and the denoisers win on
+      Core ML
 - [ ] The denoisers exported at fp16 as well, so Core ML can place
       them on the Neural Engine: at fp32 every op falls to the CPU
       when the Neural Engine is asked for (M5, 2026-10-25)
