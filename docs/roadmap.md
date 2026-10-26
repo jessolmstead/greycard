@@ -209,8 +209,6 @@ seconds.
 - [ ] Round the GPU ops' half-float stores to nearest: both NVIDIA
       and lavapipe round toward zero, a bias of up to 0.1% on every
       GPU output against the CPU's halves (§269)
-- [ ] The dehaze on Metal: its block sums may reassociate under fast
-      math, so check the viewport against the export on a Mac (§269)
 - [ ] An AVX2-and-FMA path for the wavelet chain's taps behind a
       feature check: about as much again on a desktop, nothing on the
       Mac; the first x86 assumption, declined twice (§128, §164)
