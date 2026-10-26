@@ -15,6 +15,15 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] On a Mac the "System" monitor profile is sRGB on a Display P3
+      panel, so the viewport reads more saturated than the export in
+      Preview; "Display P3" matches by eye (M5, 2026-10-25). Read the
+      display's profile from ColorSync so System means the display, as
+      colord does on Linux; WCS on Windows the same way
+- [ ] The export queue's view (§416): the Loupe over a queued frame
+      shows blank scopes and a lone Cull tab; the view has no way to
+      start the run, which only the export sheet's foot offers; and the
+      Export queue row sits among the library's roots (2026-10-25)
 - [ ] The Subject model's first run on an M5 is a compile: 43 s on
       Core ML (§422) with every thread of the app asleep and no line
       logged, then 1 s on the next frame (2026-10-25); under WebGPU
