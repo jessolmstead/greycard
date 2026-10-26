@@ -915,8 +915,6 @@ clears or a tester asks for it.
       (pixls, 2026-10-19)
 - [ ] The picture zoomed in steps from the keyboard, as the grid's
       tiles are with plus and minus (pixls, 2026-10-22)
-- [ ] Full screen with F11 on Linux and Windows; the Mac's green
-      button already does it (pixls, 2026-10-24)
 - [ ] Saturation in the shadows or the highlights alone, with the
       hue held (pixls, 2026-10-24)
 - [ ] A local contrast at a larger scale than Clarity, soft rather

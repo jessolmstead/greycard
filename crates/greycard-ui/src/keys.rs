@@ -181,6 +181,8 @@ pub(crate) const TABLE: &[Group] = &[
                 "F6, F7, F8",
                 "The filmstrip, the left pane or the develop panel alone",
             ),
+            // Not on a Mac (`NOT_MAC`).
+            line(&["F11"], "Full screen, and back"),
             act("zoom-1to1", &["Space"], "Fit or 1:1"),
             act("zoom-3to1", &["Z"], "Fit or 3:1"),
             act(
@@ -318,10 +320,30 @@ pub(crate) const TABLE: &[Group] = &[
 /// Backspace, and elsewhere Backspace is nobody's.
 const MAC_ONLY: &[&str] = &["Backspace"];
 
+/// The chords bound everywhere but a Mac: F11, where its green button
+/// takes the window full screen and F11 shows the desktop. A line of
+/// these alone is not on a Mac's sheet.
+const NOT_MAC: &[&str] = &["F11"];
+
+/// Whether a chord is bound on this platform.
+fn here(chord: &str, mac: bool) -> bool {
+    if mac {
+        !NOT_MAC.contains(&chord)
+    } else {
+        !MAC_ONLY.contains(&chord)
+    }
+}
+
+/// Whether a line is on this platform's sheet: a line of keys bound
+/// elsewhere alone is not.
+fn shown_here(b: &Binding, mac: bool) -> bool {
+    b.chords.is_empty() || b.chords.iter().any(|c| here(c, mac))
+}
+
 /// Whether `name` is a chord the table holds on this platform, by
 /// the defaults.
 fn bound(name: &str, mac: bool) -> bool {
-    (mac || !MAC_ONLY.contains(&name))
+    here(name, mac)
         && TABLE
             .iter()
             .flat_map(|g| g.lines)
@@ -720,7 +742,7 @@ fn keys_of(b: &Binding, map: &Keymap, mac: bool) -> String {
         _ => b
             .chords
             .iter()
-            .filter(|c| mac || !MAC_ONLY.contains(c))
+            .filter(|c| here(c, mac))
             .map(|c| said(map.now(c), mac))
             .collect::<Vec<_>>()
             .join(", "),
@@ -747,6 +769,7 @@ fn rows_in(map: &Keymap, query: &str, mac: bool) -> Vec<KeyRow> {
         let lines: Vec<KeyRow> = g
             .lines
             .iter()
+            .filter(|b| shown_here(b, mac))
             .map(|b| (keys_of(b, map, mac), platform(b.does, mac)))
             .chain(pointer.iter().map(|b| {
                 let (keys, does) = b
@@ -1114,6 +1137,12 @@ mod tests {
         for mac in [false, true] {
             let sheet = rows("", mac);
             for b in TABLE.iter().flat_map(|g| g.lines) {
+                if !shown_here(b, mac) {
+                    for c in b.chords {
+                        assert!(!bound(c, mac), "{c} is bound where its line is not shown");
+                    }
+                    continue;
+                }
                 let keys = keys_of(b, &Keymap::default(), mac);
                 assert!(
                     sheet.iter().any(
@@ -1122,14 +1151,19 @@ mod tests {
                     "{keys} is not on the sheet"
                 );
                 for c in b.chords {
-                    if !mac && MAC_ONLY.contains(c) {
+                    if !here(c, mac) {
                         continue;
                     }
                     assert!(bound(c, mac), "{c}");
                 }
             }
             // The lines and the headings, and nothing else.
-            let lines = TABLE.iter().map(|g| g.lines.len()).sum::<usize>() + POINTER.len();
+            let lines = TABLE
+                .iter()
+                .flat_map(|g| g.lines)
+                .filter(|b| shown_here(b, mac))
+                .count()
+                + POINTER.len();
             assert_eq!(sheet.len(), lines + TABLE.len());
         }
     }
@@ -1189,6 +1223,25 @@ mod tests {
             chord_on(&back, false, false, false, false, true),
             "Backspace"
         );
+    }
+
+    /// F11 is full screen everywhere but a Mac, where the key is the
+    /// system's and its line is off the sheet; nothing else there
+    /// loses a line.
+    #[test]
+    fn f11_is_bound_everywhere_but_a_mac() {
+        KEYMAP.with(|m| m.borrow_mut().reset());
+        let f11 = SharedString::from(Key::F11);
+        assert_eq!(chord_on(&f11, false, false, false, false, false), "F11");
+        assert_eq!(chord_on(&f11, false, false, false, false, true), "");
+        let full = |mac| {
+            rows("full screen", mac)
+                .iter()
+                .any(|r| !r.heading && r.keys == "F11")
+        };
+        assert!(full(false));
+        assert!(!full(true));
+        assert_eq!(rows("", true).len() + 1, rows("", false).len());
     }
 
     #[test]
@@ -1586,7 +1639,7 @@ mod tests {
                 .find(|a| Some(a.id) == b.action)
                 .expect("each line's action");
             assert_eq!(a.default, b.chords[0], "{}: one default", a.id);
-            assert!(bindable(a.default) && !MAC_ONLY.contains(&a.default));
+            assert!(bindable(a.default) && here(a.default, false) && here(a.default, true));
         }
         let defaults: BTreeSet<&str> = actions().iter().map(|a| a.default).collect();
         assert_eq!(defaults.len(), actions().len(), "two actions, one default");

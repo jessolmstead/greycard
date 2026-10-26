@@ -1475,6 +1475,7 @@ pub(crate) fn schedule_snapshot(
                         "f6" => Key::F6.into(),
                         "f7" => Key::F7.into(),
                         "f8" => Key::F8.into(),
+                        "f11" => Key::F11.into(),
                         other => other.into(),
                     };
                     tracing::info!("keys: {key}");

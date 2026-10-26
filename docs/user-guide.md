@@ -138,7 +138,7 @@ click an action's key, then press the new one, modifiers and all;
 **Esc** keeps the old. The grid's stack key follows the soft proof's
 (S). The lines with more than one key (the arrows, the ratings, flags,
 and labels, + −, F6 to F8, Redo, and the filter's), **Enter**,
-**Tab**, and **Delete** cannot be moved, but an action can take one;
+**Tab**, **F11**, and **Delete** cannot be moved, but an action can take one;
 a focused slider keeps its own keys. **Esc** cannot be taken. A key
 that does two things says so in red; of two actions, the higher in
 the list gets the press. **Reset to defaults** puts every
@@ -174,6 +174,7 @@ frames as ← and → do.
 | + − | Bigger or smaller tiles in the grid; fewer or more across the lightbox |
 | Tab | Hide the panels and the filmstrip, and bring them back (in the grid, the left pane) |
 | F6, F7, F8 | The filmstrip, the left pane or the develop panel alone |
+| F11 | Full screen, and back (on a Mac, the window's green button) |
 | Space | Fit or 1:1 |
 | Z | Fit or 3:1 |
 | F | A mat of the canvas around the picture at Fit, or none |

@@ -74,7 +74,8 @@ In the grid:
 
 **F7** puts the left pane away, **F6** the filmstrip and **F8** the
 right panel. **Tab** hides all of them, or over the grid, the left
-pane alone.
+pane alone. **F11** takes the window full screen and back, in any
+view; on a Mac the window's green button does.
 
 ### Thumbnails show the edit
 

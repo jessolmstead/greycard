@@ -99,6 +99,8 @@ export component App inherits Window {
     in property <string> zoom-text: "Fit";
     /// Set to open the Fit button's menu of zooms, for a capture of it.
     in-out property <bool> zoom-menu-shown: false;
+    /// Full screen, or back to the window as it was (`window_fit`).
+    callback full-screen-toggled();
 
     // The filmstrip.
     in property <[Thumb]> thumbs;
@@ -2525,6 +2527,14 @@ export component App inherits Window {
                 if (chord == "F8") { root.right-hidden = !root.right-hidden; }
                 return accept;
             }
+            // F11 for full screen and back, in every view: outside a
+            // sheet, as the panes' keys, and over the grid too. Held,
+            // once. Unbound on a Mac (`keys.rs`), where the green
+            // button does it and F11 shows the desktop.
+            if (chord == "F11" && !root.sheet-open()) {
+                if (!e.repeat) { root.full-screen-toggled(); }
+                return accept;
+            }
             // G: a round trip, Library from the Loupe and back to the
             // Loupe in the mode it was left in. E: the Loupe in that
             // mode, as Lightroom has E for its loupe. D: Develop from
@@ -3682,6 +3692,13 @@ export component App inherits Window {
                                             root.zoom-to(z.level, root.view-width * 1phx / 2, root.view-height * 1phx / 2);
                                             root.menu-done();
                                         }
+                                    }
+                                    MenuSeparator { }
+                                    // The key beside it where there is one:
+                                    // a Mac's is the green button.
+                                    MenuItem {
+                                        title: Platform.os == OperatingSystemType.macos ? "Full screen" : "Full screen (F11)";
+                                        activated => { root.full-screen-toggled(); root.menu-done(); }
                                     }
                                 }
                             }

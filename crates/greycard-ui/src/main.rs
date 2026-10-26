@@ -1070,6 +1070,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     entry::install(app);
     keys::install(app);
     keys::install_sheet(app, &state);
+    window_fit::full_screen::install(app);
     panel::cull::install(app, &state, &worker);
     panel::delete::install(app, &state, &worker);
     panel::look_remove::install(app, &state);

@@ -13,6 +13,7 @@ use slint::ComponentHandle;
 
 use crate::App;
 
+pub(crate) mod full_screen;
 pub(crate) mod scale;
 
 use scale::Scale;
@@ -121,6 +122,11 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         event: &slint::winit_030::winit::event::WindowEvent,
     ) -> slint::winit_030::EventResult {
         self.follow.window_event(winit_window, slint_window, event);
+        if let (Some(w), slint::winit_030::winit::event::WindowEvent::Resized(_)) =
+            (winit_window, event)
+        {
+            full_screen::resized(w.fullscreen().is_some());
+        }
         slint::winit_030::EventResult::Propagate
     }
 }

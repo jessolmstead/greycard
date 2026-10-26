@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- F11 takes the window full screen and back, in any view, as does
+  Full screen on the Fit button's menu (on a Mac, the menu or the
+  green button)
+  ([§436](https://github.com/jessolmstead/greycard/blob/master/docs/notes/436-full-screen-on-f11.md)).
 - Choosing the vectorscope no longer pushes the panel far down: its
   circle is smaller and centered, and the shot's details fold away
   while it shows
