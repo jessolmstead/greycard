@@ -27,6 +27,12 @@ the reasoning lives in `docs/notes.md`.
       at launch, or say "preparing" while it runs
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
+- [ ] A RAF from an X-Trans 5 body refused as half-copied (issues #38
+      and #48, X-T5 and X-H2 on 0.8.1): the file's last 64 KB are
+      zeros, which no raw on hand ends with. Check a RAF by its header
+      instead, where the sensor data's offset and length say where a
+      finished file ends; a sample or the header's numbers from a
+      tester confirms what writes the tail
 - [ ] A fill on a denoised frame still gets more grain than its
       surround after §434 (1.3x at every distance on an overcast sky
       with the learned denoiser, the amount not the shape): the
