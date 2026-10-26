@@ -27,6 +27,17 @@ the reasoning lives in `docs/notes.md`.
       at launch, or say "preparing" while it runs
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
+- [ ] A fill on a learned-denoised frame is grainier than its
+      surround (2026-10-26, measured on an ISO 1000 sky at +4 EV: the
+      hole's high-pass spread 1.5x the surround's at the regrain's own
+      distance of two, 2.7x at one, where the profiled denoise and no
+      denoise match within 4 percent). §398 matches the variance at
+      distance two and draws white grain, but the learned denoiser's
+      residual is correlated streaks with its energy at coarser
+      scales, so the fill reads as speckle on a smooth field. Match
+      the surround's spectrum (measure at two distances and shape the
+      draw), or match at distance one and let the fill run smoother.
+      Harness in target/captures-2026-10-26/fill-grain
 
 ## Tracks
 
