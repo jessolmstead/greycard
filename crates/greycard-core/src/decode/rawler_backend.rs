@@ -204,10 +204,11 @@ fn is_nikon_high_efficiency(e: &::rawler::RawlerError) -> bool {
 /// state runs its bit pump off the end — and a panic on a caller's
 /// thread takes the editor with it when the caller is the UI. So the
 /// panic is caught here and becomes the file's decode error, the one
-/// every caller already handles. `tail` is the file's last bytes, or
-/// a way to read them, to say what went wrong when that is knowable.
+/// every caller already handles. `half_copy` says whether the file
+/// looks half-copied, and in what words (see [`half_copied`]), to say
+/// what went wrong when that is knowable.
 pub(crate) fn guarded<T>(
-    tail: impl FnOnce() -> Option<Vec<u8>>,
+    half_copy: impl FnOnce() -> Option<&'static str>,
     f: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
     let was = GUARDED.replace(true);
@@ -219,13 +220,10 @@ pub(crate) fn guarded<T>(
             .map(|s| s.to_string())
             .or_else(|| payload.downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "no message".into());
-        Err(Error::Decode(
-            if tail().is_some_and(|t| ends_in_zeros(&t)) {
-                format!("{HALF_COPIED} (the decoder gave up: {message})")
-            } else {
-                format!("the decoder gave up on this file: {message}")
-            },
-        ))
+        Err(Error::Decode(match half_copy() {
+            Some(why) => format!("{why} (the decoder gave up: {message})"),
+            None => format!("the decoder gave up on this file: {message}"),
+        }))
     })
 }
 
@@ -262,29 +260,118 @@ fn ends_in_zeros(tail: &[u8]) -> bool {
 const HALF_COPIED: &str = "the file ends in zeros where a finished one has data: \
      it looks half-copied, or still being copied";
 
-/// Refuse a file whose last [`TAIL`] bytes are zeros before its samples
-/// are decoded. rawler reads such a file without complaint when its
-/// format lets it: an ARW, and a CR3 once dnglab/dnglab#851 is released,
-/// decode the zeros past the copied part as samples, and the picture
-/// comes out blank below it. The bytes are already in memory (rawler
-/// maps the whole file, or was handed it), so this costs no read.
-fn refuse_a_half_copy(bytes: &[u8]) -> Result<()> {
-    if ends_in_zeros(&bytes[bytes.len().saturating_sub(TAIL)..]) {
-        return Err(Error::Decode(HALF_COPIED.into()));
-    }
-    Ok(())
+/// What a RAF whose header points past its end is told with.
+const RAF_HALF_COPIED: &str = "the file's header names data past its end: \
+     it looks half-copied, or still being copied";
+
+/// A RAF's first bytes.
+pub(crate) const RAF_MAGIC: &[u8] = b"FUJIFILMCCD-RAW ";
+
+/// How much of a RAF's head holds its header: the magic, then at
+/// 0x54 six big-endian u32s, the offset and length of the preview
+/// JPEG, of the metadata, and of the CFA data.
+const RAF_HEAD: usize = 0x6C;
+
+/// The big-endian u32 at `at` in `bytes`, widened.
+pub(crate) fn be_u32_at(bytes: &[u8], at: usize) -> u64 {
+    u64::from(u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap()))
 }
 
-/// The last [`TAIL`] bytes of the file at `path`.
-pub(crate) fn tail_of(path: &Path) -> Option<Vec<u8>> {
+/// What a RAF's header says of its sections: where the last of them
+/// ends, and where the CFA data ends and how long it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RafSections {
+    end: u64,
+    cfa_end: u64,
+    cfa_len: u64,
+}
+
+/// A RAF's sections, from its header; `None` when `head` is not a
+/// RAF's or is too short to hold the header.
+fn raf_sections(head: &[u8]) -> Option<RafSections> {
+    if head.len() < RAF_HEAD || !head.starts_with(RAF_MAGIC) {
+        return None;
+    }
+    let section_end = |at: usize| be_u32_at(head, at) + be_u32_at(head, at + 4);
+    let cfa_len = be_u32_at(head, 0x68);
+    Some(RafSections {
+        end: [0x54, 0x5C, 0x64].map(section_end).into_iter().max()?,
+        cfa_end: section_end(0x64),
+        cfa_len,
+    })
+}
+
+/// Whether a file of `len` bytes that starts with `head` and ends with
+/// `tail` looks half-copied, and the words to say so in. A RAF is
+/// judged by its header and its sensor data: one whose sections run
+/// past its end is half-copied, and so is one whose CFA data ends in
+/// [`TAIL`] bytes of zeros, as a copier that sets the length first
+/// leaves it; one that holds its sections and whose data does not end
+/// so is whole whatever follows them (some bodies' files carry a tail
+/// of zeros past the CFA data). `data_tail` reads the [`TAIL`] bytes
+/// that end at an offset. Every other file, and a RAF whose header
+/// cannot be read, is judged by [`ends_in_zeros`].
+fn half_copied(
+    head: &[u8],
+    len: u64,
+    tail: &[u8],
+    data_tail: impl FnOnce(u64) -> Option<Vec<u8>>,
+) -> Option<&'static str> {
+    match raf_sections(head) {
+        Some(raf) if raf.end > len => Some(RAF_HALF_COPIED),
+        Some(raf) => (raf.cfa_len >= TAIL as u64
+            && data_tail(raf.cfa_end).is_some_and(|t| ends_in_zeros(&t)))
+        .then_some(HALF_COPIED),
+        None => ends_in_zeros(tail).then_some(HALF_COPIED),
+    }
+}
+
+/// Refuse a file that [`half_copied`] names, before its samples are
+/// decoded. rawler reads a file whose last [`TAIL`] bytes are zeros
+/// without complaint when its format lets it: an ARW, and a CR3 once
+/// dnglab/dnglab#851 is released, decode the zeros past the copied
+/// part as samples, and the picture comes out blank below it; so does
+/// a RAF whose CFA data ends in zeros. The bytes are already in memory
+/// (rawler maps the whole file, or was handed it), so this costs no
+/// read.
+fn refuse_a_half_copy(bytes: &[u8]) -> Result<()> {
+    match half_copied_bytes(bytes) {
+        Some(why) => Err(Error::Decode(why.into())),
+        None => Ok(()),
+    }
+}
+
+/// [`half_copied`] for a file whose bytes are all at hand.
+fn half_copied_bytes(bytes: &[u8]) -> Option<&'static str> {
+    let tail = &bytes[bytes.len().saturating_sub(TAIL)..];
+    half_copied(bytes, bytes.len() as u64, tail, |end| {
+        let end = usize::try_from(end).ok()?;
+        Some(bytes.get(end.checked_sub(TAIL)?..end)?.to_vec())
+    })
+}
+
+/// [`half_copied`] for the file at `path`, reading its head, its last
+/// [`TAIL`] bytes, and for a RAF the last [`TAIL`] bytes of its CFA
+/// data; `None` when it cannot be read.
+pub(crate) fn half_copy_at(path: &Path) -> Option<&'static str> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(len.saturating_sub(TAIL as u64)))
-        .ok()?;
-    let mut tail = Vec::with_capacity(TAIL);
-    file.read_to_end(&mut tail).ok()?;
-    Some(tail)
+    // The bytes from `from` up to `to`, or to the end before it.
+    let mut span = |from: u64, to: u64| {
+        file.seek(SeekFrom::Start(from)).ok()?;
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(to.saturating_sub(from))
+            .read_to_end(&mut bytes)
+            .ok()?;
+        Some(bytes)
+    };
+    let head = span(0, RAF_HEAD as u64)?;
+    let tail = span(len.saturating_sub(TAIL as u64), len)?;
+    half_copied(&head, len, &tail, |end| {
+        span(end.checked_sub(TAIL as u64)?, end)
+    })
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -292,14 +379,17 @@ pub struct RawlerDecoder;
 
 impl Decoder for RawlerDecoder {
     fn decode_bytes(&self, bytes: &[u8]) -> Result<RawFrame> {
-        let tail = || Some(bytes[bytes.len().saturating_sub(TAIL)..].to_vec());
-        guarded(tail, || {
-            Ok(decode_source(&RawSource::new_from_slice(bytes))?.0)
-        })
+        guarded(
+            || half_copied_bytes(bytes),
+            || Ok(decode_source(&RawSource::new_from_slice(bytes))?.0),
+        )
     }
 
     fn decode_path(&self, path: &Path) -> Result<RawFrame> {
-        guarded(|| tail_of(path), || Ok(decode_source(&mapped(path)?)?.0))
+        guarded(
+            || half_copy_at(path),
+            || Ok(decode_source(&mapped(path)?)?.0),
+        )
     }
 }
 
@@ -307,7 +397,7 @@ impl RawlerDecoder {
     /// Decode a file and also return the metadata rawler reads from it, for
     /// passing on to an output that carries EXIF (see [`crate::dng`]).
     pub fn decode_path_with_metadata(&self, path: &Path) -> Result<(RawFrame, RawMetadata)> {
-        guarded(|| tail_of(path), || decode_source(&mapped(path)?))
+        guarded(|| half_copy_at(path), || decode_source(&mapped(path)?))
     }
 
     /// [`Decoder::decode_path`] from the whole file read into memory, not
@@ -316,7 +406,7 @@ impl RawlerDecoder {
     /// The same bytes a mapping reads, since rawler populates its map.
     pub fn decode_path_unmapped(&self, path: &Path) -> Result<RawFrame> {
         guarded(
-            || tail_of(path),
+            || half_copy_at(path),
             || Ok(decode_source(&read_whole(path)?.0)?.0),
         )
     }
@@ -367,7 +457,7 @@ fn preview_counted(path: &Path) -> Result<(Preview, u64)> {
         Err(e) => log::debug!("{}: its preview's ends: {e}; read whole", path.display()),
     }
     guarded(
-        || tail_of(path),
+        || half_copy_at(path),
         || {
             let (source, whole) = read_whole(path)?;
             preview_source(&source, true).map(|preview| (preview, tried + whole))
@@ -497,15 +587,7 @@ fn raf_jpeg_end(
     let mut header = [0u8; JPEG_AT + 8];
     file.seek(SeekFrom::Start(0))?;
     file.read_exact(&mut header)?;
-    let word = |at: usize| {
-        u64::from(u32::from_be_bytes([
-            header[at],
-            header[at + 1],
-            header[at + 2],
-            header[at + 3],
-        ]))
-    };
-    let end = word(JPEG_AT) + word(JPEG_AT + 4);
+    let end = be_u32_at(&header, JPEG_AT) + be_u32_at(&header, JPEG_AT + 4);
     Ok(Some(end).filter(|&end| end >= head && end <= len))
 }
 
@@ -888,8 +970,8 @@ mod tests {
     fn a_panic_in_the_decoder_is_an_error_that_names_a_half_copy() {
         let hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
-        let zeros = || Some(vec![0u8; TAIL]);
-        let data = || Some(vec![7u8; TAIL]);
+        let zeros = || half_copied(&[], TAIL as u64, &[0; TAIL], |_| None);
+        let data = || half_copied(&[], TAIL as u64, &[7; TAIL], |_| None);
         let seen = std::cell::Cell::new(false);
         let copying = guarded::<()>(zeros, || {
             seen.set(inside_decoder());
@@ -907,6 +989,124 @@ mod tests {
         assert!(other.contains("gave up"), "{other}");
         // No panic, nothing changed.
         assert_eq!(guarded(zeros, || Ok(3)).unwrap(), 3);
+    }
+
+    /// A RAF head: the magic, then the six words, the offset and the
+    /// length of the preview, the metadata, and the CFA data, then
+    /// filler to 0x400, where the CFA data of [`a_raf`] starts.
+    fn a_raf_head(words: [u32; 6]) -> Vec<u8> {
+        let mut head = b"FUJIFILMCCD-RAW 0201FF383501".to_vec();
+        head.resize(0x54, 0);
+        for v in words {
+            head.extend_from_slice(&u32::to_be_bytes(v));
+        }
+        head.resize(0x400, 0x55);
+        head
+    }
+
+    /// A RAF of `body` after the head, its header naming `cfa` bytes
+    /// of CFA data from 0x400.
+    fn a_raf(cfa: usize, body: &[u8]) -> Vec<u8> {
+        let words = [0x100, 0x200, 0x300, 0x100, 0x400, cfa as u32];
+        [a_raf_head(words), body.to_vec()].concat()
+    }
+
+    /// A folder of a test's own, removed when the test ends, passed or
+    /// not.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "greycard-{name}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A RAF is judged by its header and its sensor data, not its
+    /// tail: one that holds all its sections, its CFA data not ending
+    /// in zeros, is whole with a tail of zeros past them; one whose
+    /// sections run past its end, or whose CFA data ends in zeros, is
+    /// half-copied; one too short for a header falls back to the tail.
+    #[test]
+    fn a_raf_is_judged_by_its_header() {
+        let data = vec![0x33; 3 * TAIL];
+        let padded = [data.clone(), vec![0; TAIL]].concat();
+        let whole = a_raf(data.len(), &padded);
+        assert_eq!(half_copied_bytes(&whole), None);
+        assert!(refuse_a_half_copy(&whole).is_ok());
+
+        let past = a_raf(data.len() + 1, &data);
+        assert_eq!(half_copied_bytes(&past), Some(RAF_HALF_COPIED));
+        match refuse_a_half_copy(&past) {
+            Err(Error::Decode(text)) => assert_eq!(text, RAF_HALF_COPIED),
+            other => panic!("{other:?}"),
+        }
+
+        // Full size, as a copier that sets the length first leaves it,
+        // the CFA data's last 64 KiB zeros; one byte of data in them,
+        // and it is whole.
+        let preallocated = a_raf(padded.len(), &padded);
+        assert_eq!(half_copied_bytes(&preallocated), Some(HALF_COPIED));
+        let mut one = preallocated.clone();
+        one[0x400 + padded.len() - TAIL] = 1;
+        assert_eq!(half_copied_bytes(&one), None);
+        // CFA data shorter than the span: the header alone.
+        assert_eq!(half_copied_bytes(&a_raf(TAIL - 1, &[0; TAIL])), None);
+
+        // An offset at u32::MAX lies past the end, without overflow;
+        // a section of no length ends where it starts.
+        let far = [0x100, 0x200, u32::MAX, 0x100, 0x400, 0x100];
+        let far = [a_raf_head(far), vec![0x33; 0x100]].concat();
+        assert_eq!(half_copied_bytes(&far), Some(RAF_HALF_COPIED));
+        let empty = [0x100, 0, 0x300, 0, 0x400, 0x100];
+        let empty = [a_raf_head(empty), vec![0x33; 0x100]].concat();
+        assert_eq!(half_copied_bytes(&empty), None);
+
+        // Not a RAF: the tail rule.
+        let other = [b"II*\0".to_vec(), padded.clone()].concat();
+        assert_eq!(half_copied_bytes(&other), Some(HALF_COPIED));
+        let mut wrong = whole.clone();
+        wrong[0] = b'X';
+        assert_eq!(half_copied_bytes(&wrong), Some(HALF_COPIED));
+        // A head too short for a RAF's header: the tail rule too.
+        let short = &a_raf(0, &[])[..RAF_HEAD - 1];
+        let len = TAIL as u64;
+        let none = |_| None;
+        assert_eq!(half_copied(short, len, &[0; TAIL], none), Some(HALF_COPIED));
+        assert_eq!(half_copied(short, len, &[1; TAIL], none), None);
+        assert_eq!(half_copied_bytes(short), None, "too short to say");
+
+        // From a path, and in a panic's words.
+        let dir = Scratch::new("raf-head");
+        let read = |bytes: &[u8], name: &str| {
+            let path = dir.0.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            half_copy_at(&path)
+        };
+        assert_eq!(read(&whole, "whole.RAF"), None);
+        assert_eq!(read(&past, "past.RAF"), Some(RAF_HALF_COPIED));
+        assert_eq!(read(&preallocated, "copying.RAF"), Some(HALF_COPIED));
+        assert_eq!(read(&one, "one.RAF"), None);
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let gave_up = guarded::<()>(|| half_copied_bytes(&past), || panic!("off the end"));
+        std::panic::set_hook(hook);
+        let gave_up = gave_up.unwrap_err().to_string();
+        assert!(gave_up.contains(RAF_HALF_COPIED), "{gave_up}");
     }
 
     #[test]
@@ -1757,7 +1957,7 @@ impl Probe {
 pub type RawStance = (Orientation, Option<(u32, u32)>, Option<Mosaic>);
 
 pub fn stance_path(path: &Path) -> Result<RawStance> {
-    guarded(|| tail_of(path), || stance_unguarded(path))
+    guarded(|| half_copy_at(path), || stance_unguarded(path))
 }
 
 fn stance_unguarded(path: &Path) -> Result<RawStance> {
@@ -1794,7 +1994,7 @@ pub struct CameraWhite {
 /// not open needs for the kelvin its As shot means. The same answer
 /// [`frame_from_rawler`] gives the decoded frame.
 pub fn white_path(path: &Path) -> Result<CameraWhite> {
-    guarded(|| tail_of(path), || white_unguarded(path))
+    guarded(|| half_copy_at(path), || white_unguarded(path))
 }
 
 fn white_unguarded(path: &Path) -> Result<CameraWhite> {
@@ -1875,7 +2075,7 @@ fn probe_and_mosaic_with(path: &Path, ends: Ends) -> Result<(Probe, MosaicRead, 
         Err(e) => log::debug!("{}: its ends: {e}; read whole", path.display()),
     }
     guarded(
-        || tail_of(path),
+        || half_copy_at(path),
         || {
             let (source, whole) = read_whole(path)?;
             let (probe, described) = probe_and_mosaic_source(&source, path)?;
@@ -2065,7 +2265,7 @@ fn mosaic_with(path: &Path, ends: Ends) -> Result<(Option<Mosaic>, u64)> {
         Err(e) => log::debug!("{}: its ends: {e}; read whole", path.display()),
     }
     guarded(
-        || tail_of(path),
+        || half_copy_at(path),
         || {
             let (source, whole) = read_whole(path)?;
             mosaic_source(&source, path).map(|m| (m, tried + whole))
@@ -2140,7 +2340,7 @@ fn read_whole(path: &Path) -> Result<(RawSource, u64)> {
 }
 
 pub fn probe_path(path: &Path) -> Result<Probe> {
-    guarded(|| tail_of(path), || probe_unguarded(path))
+    guarded(|| half_copy_at(path), || probe_unguarded(path))
 }
 
 fn probe_unguarded(path: &Path) -> Result<Probe> {
@@ -2216,7 +2416,7 @@ fn probe_ends_with(path: &Path, ends: Ends) -> Result<(Probe, u64)> {
         Err(e) => log::debug!("{}: its ends: {e}; read whole", path.display()),
     }
     guarded(
-        || tail_of(path),
+        || half_copy_at(path),
         || {
             let (source, whole) = read_whole(path)?;
             probe_source(&source).map(|probe| (probe, tried + whole))
@@ -2296,7 +2496,7 @@ fn probe_and_stance_with(path: &Path, ends: Ends) -> Result<(Probe, RawStance, u
         Err(e) => log::debug!("{}: its ends: {e}; read whole", path.display()),
     }
     guarded(
-        || tail_of(path),
+        || half_copy_at(path),
         || {
             let (source, whole) = read_whole(path)?;
             probe_and_stance_source(&source, path)
@@ -2454,7 +2654,6 @@ fn raf_head(
     len: u64,
 ) -> std::io::Result<Option<u64>> {
     use std::io::SeekFrom;
-    const MAGIC: &[u8] = b"FUJIFILMCCD-RAW";
     // Where the header keeps the JPEG's offset, big-endian.
     const JPEG_AT: usize = 84;
     let mut header = [0u8; JPEG_AT + 4];
@@ -2463,15 +2662,10 @@ fn raf_head(
     }
     file.seek(SeekFrom::Start(0))?;
     file.read_exact(&mut header)?;
-    if !header.starts_with(MAGIC) {
+    if !header.starts_with(RAF_MAGIC) {
         return Ok(None);
     }
-    let jpeg = u64::from(u32::from_be_bytes([
-        header[JPEG_AT],
-        header[JPEG_AT + 1],
-        header[JPEG_AT + 2],
-        header[JPEG_AT + 3],
-    ]));
+    let jpeg = be_u32_at(&header, JPEG_AT);
     // The start of the image, then APP1 and its length, which counts
     // its own two bytes.
     let mut start = [0u8; 6];

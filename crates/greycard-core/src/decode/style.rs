@@ -60,7 +60,7 @@ use ::rawler::formats::bmff::{BmffError, FileBox};
 use ::rawler::formats::tiff::reader::TiffReader;
 use ::rawler::formats::tiff::{IFD, Value};
 
-use super::rawler_backend::{guarded, tail_of};
+use super::rawler_backend::{RAF_MAGIC, be_u32_at, guarded, half_copy_at};
 use crate::error::{Error, Result};
 
 /// Who made the camera, as far as the reader tells makers apart.
@@ -216,7 +216,7 @@ impl CameraStyle {
     /// TIFF (`II`/`MM`) and is not a valid one.
     pub fn read(path: &Path) -> Result<Option<CameraStyle>> {
         guarded(
-            || tail_of(path),
+            || half_copy_at(path),
             || read_stream(BufReader::new(File::open(path)?)),
         )
     }
@@ -258,7 +258,7 @@ fn read_stream(mut file: impl Read + Seek) -> Result<Option<CameraStyle>> {
     if head.len() >= 12 && &head[4..8] == b"ftyp" && &head[8..12] == b"crx " {
         return canon_cr3(file).map(Some);
     }
-    if head.starts_with(b"FUJIFILMCCD-RAW") {
+    if head.starts_with(RAF_MAGIC) {
         return fujifilm_raf(file).map(Some);
     }
     if head.starts_with(b"II") || head.starts_with(b"MM") {
@@ -742,8 +742,8 @@ fn fujifilm_mono_name(code: i64) -> Option<&'static str> {
 fn fujifilm_raf(mut file: impl Read + Seek) -> Result<CameraStyle> {
     let mut header = [0u8; 92];
     file.read_exact(&mut header)?;
-    let offset = u32::from_be_bytes(header[84..88].try_into().unwrap()) as u64;
-    let len = u32::from_be_bytes(header[88..92].try_into().unwrap()) as u64;
+    let offset = be_u32_at(&header, 84);
+    let len = be_u32_at(&header, 88);
     // The EXIF segment is the JPEG's first or second; a segment is at
     // most 64 KiB, so this much holds it.
     let mut head = vec![0u8; len.min(160 * 1024) as usize];

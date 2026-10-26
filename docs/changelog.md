@@ -156,6 +156,10 @@ design note behind it.
 
 ### Fixes
 
+- A RAF from an X-T5, an X-H2, or another X-Trans 5 body is no longer
+  refused as half-copied when it ends in a run of zeros past its
+  sensor data; a RAF is judged complete by its header now
+  ([§435](https://github.com/jessolmstead/greycard/blob/master/docs/notes/435-a-raf-is-judged-whole-by-its-header.md)).
 - The learned denoiser runs in smaller tiles on a card under 6 GB or
   a unified-memory machine under 16 GB, so a 4 GB card no longer
   crashes on it; the tiles' seams stay inside their margin ([§431](https://github.com/jessolmstead/greycard/blob/master/docs/notes/431-the-denoisers-tile-from-the-cards-memory.md)).
