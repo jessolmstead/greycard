@@ -912,6 +912,13 @@ clears or a tester asks for it.
 - [ ] Sharpen in a mask's Detail, beside Texture, Clarity, and
       Dehaze, so a gradient can sharpen the foreground more
       (pixls, 2026-10-24)
+- [ ] The sharpen's threshold to a higher top: the slider stops at
+      50% and a tester at 50% still wants flat areas left alone;
+      RawTherapee's runs to 200% (pixls, 2026-10-25)
+- [ ] The brush's Flow is what other apps call Opacity: one stroke
+      lays down at most its amount, and strokes build on each other.
+      Decide whether to rename it or add a Flow that builds within a
+      stroke (pixls, 2026-10-25)
 - [ ] ART's `.arp` profiles read beside a raw as RawTherapee's
       `.pp3` are: the same key file, found by its extension
       (pixls, 2026-10-24)
