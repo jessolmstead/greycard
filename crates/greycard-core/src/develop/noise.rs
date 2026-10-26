@@ -174,6 +174,148 @@ pub fn estimate_noise(
 pub struct PictureNoise {
     /// Per axis (luma, then the two chroma): variance at a mean level.
     pub axes: NoiseModel,
+    /// How coarse the grain is, on the luma and on the chroma, by
+    /// level.
+    pub shape: ShapeBins,
+}
+
+/// What a picture's [`GrainShape`] is read from: per level bin (the
+/// fit's bins), per group (luma, chroma), the summed residual variances
+/// at distance one and two of the blocks read for the shape, and how
+/// many blocks went in.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ShapeBins {
+    sums: [[[f64; 2]; 2]; BINS],
+    blocks: [[u32; 2]; BINS],
+}
+
+impl ShapeBins {
+    /// The grain's shape at `level`, where the amplitude and the
+    /// shortfall are read: pooled from the level's bin and its two
+    /// neighbors, or from every bin when fewer than
+    /// [`MIN_BLOCKS_PER_BIN`] of a group's blocks lie in those.
+    pub fn at(&self, level: f32) -> GrainShape {
+        let bin = level_bin(level);
+        let pool = |g: usize, bins: std::ops::RangeInclusive<usize>| {
+            bins.fold((0.0f64, 0.0f64, 0u32), |(n, f, c), b| {
+                let [bn, bf] = self.sums[b][g];
+                (n + bn, f + bf, c + self.blocks[b][g])
+            })
+        };
+        GrainShape {
+            ratio: std::array::from_fn(|g| {
+                let (mut n, mut f, c) = pool(g, bin.saturating_sub(1)..=(bin + 1).min(BINS - 1));
+                if (c as usize) < MIN_BLOCKS_PER_BIN {
+                    (n, f, _) = pool(g, 0..=BINS - 1);
+                }
+                if f > 0.0 { (n / f).sqrt() as f32 } else { 1.0 }
+            }),
+        }
+    }
+
+    /// The same `ratio` at every level, from enough blocks.
+    #[cfg(test)]
+    fn uniform(ratio: [f32; 2]) -> Self {
+        let r = ratio.map(|r| [f64::from(r * r), 1.0]);
+        ShapeBins {
+            sums: [r; BINS],
+            blocks: [[MIN_BLOCKS_PER_BIN as u32; 2]; BINS],
+        }
+    }
+}
+
+/// The bin of the fit a block or a pixel of `level` falls in: evenly in
+/// the square root of the level.
+fn level_bin(level: f32) -> usize {
+    ((level.max(0.0).sqrt() * BINS as f32) as usize).min(BINS - 1)
+}
+
+/// How coarse a picture's grain is, on its luma and on its chroma: the
+/// ratio of its residual spreads at distances one and two, 1 for white.
+/// A demosaic leaves grain coarser than white, and a learned denoise
+/// far coarser, its leftover in soft streaks; drawn white to the
+/// amplitude at distance two, the grain would be finer than the
+/// frame's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GrainShape {
+    /// The residual's spread at distance one over its spread at
+    /// distance two: luma, chroma.
+    pub ratio: [f32; 2],
+}
+
+impl Default for GrainShape {
+    fn default() -> Self {
+        GrainShape { ratio: [1.0; 2] }
+    }
+}
+
+/// The widest Gaussian a grain is smoothed by, in pixels.
+const MAX_GRAIN_WIDTH: f32 = 3.0;
+/// A block whose residual at distance two is past this many times the
+/// fit's at its level is taken for texture and left out of the shape.
+const SHAPE_CEILING: f32 = 1.5;
+
+/// The separable kernel of a grain of `width` ([`GrainShape`]): a
+/// sampled Gaussian out to three widths, scaled so its squared taps sum
+/// to one, so unit white noise through it along both axes keeps unit
+/// variance. A width of 0 is the single tap 1.
+pub fn grain_kernel(width: f32) -> Vec<f32> {
+    if width <= 0.0 {
+        return vec![1.0];
+    }
+    let r = (3.0 * width).ceil() as i32;
+    let k: Vec<f32> = (-r..=r)
+        .map(|x| (-((x * x) as f32) / (2.0 * width * width)).exp())
+        .collect();
+    let norm = k.iter().map(|v| v * v).sum::<f32>().sqrt();
+    k.into_iter().map(|v| v / norm).collect()
+}
+
+/// The variance of the residual at distance `d`, the pixel less the
+/// mean of its four neighbors `d` away, of unit white noise through
+/// `kernel` along both axes: [`RESIDUAL_GAIN`] for white. With the
+/// kernel's autocorrelation `a`, the field's correlation at (dx, dy)
+/// is a(dx)·a(dy), and the residual's variance is
+/// 1.25 − 2a(d) + a(2d)/4 + a(d)²/2.
+fn residual_gain(kernel: &[f32], d: usize) -> f32 {
+    let a = |lag: usize| -> f32 {
+        kernel
+            .iter()
+            .zip(kernel.iter().skip(lag))
+            .map(|(x, y)| x * y)
+            .sum()
+    };
+    let (near, far) = (a(d), a(2 * d));
+    RESIDUAL_GAIN - 2.0 * near + far / 4.0 + near * near / 2.0
+}
+
+/// The spread at distance one over distance two of white noise through
+/// the kernel of `width`: 1 at 0, falling as the width grows.
+fn shape_ratio(width: f32) -> f32 {
+    let k = grain_kernel(width);
+    (residual_gain(&k, 1) / residual_gain(&k, 2)).sqrt()
+}
+
+/// The width whose [`shape_ratio`] is `ratio`, by bisection. A ratio
+/// of 1 or more (white, or finer, as a sharpening leaves it) is drawn
+/// white.
+fn width_for(ratio: f32) -> f32 {
+    if ratio.is_nan() || ratio >= 1.0 {
+        return 0.0;
+    }
+    if ratio <= shape_ratio(MAX_GRAIN_WIDTH) {
+        return MAX_GRAIN_WIDTH;
+    }
+    let (mut lo, mut hi) = (0.0f32, MAX_GRAIN_WIDTH);
+    for _ in 0..24 {
+        let mid = (lo + hi) / 2.0;
+        if shape_ratio(mid) > ratio {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) / 2.0
 }
 
 impl PictureNoise {
@@ -194,10 +336,13 @@ impl PictureNoise {
 /// residual, and fit as [`estimate_noise`]; the neighbors are two
 /// pixels away, as a mosaic's same-color ones are, past most of the
 /// correlation a demosaic leaves between neighbors, so what is
-/// measured is the noise's variance at high frequency: noise drawn to
-/// it ([`add_picture_noise`]) matches the picture's there and is a
-/// little finer than the picture's own. A block is read when it and
-/// the two pixels round it are all known.
+/// measured is the noise's variance at high frequency. The residuals
+/// at distance one and two are read on the luminance and the chroma
+/// too, in the blocks whose residual at two is near the fit's at their
+/// level, and their ratio, kept per level bin ([`ShapeBins`]), is the
+/// grain's shape: noise drawn to the two ([`add_picture_noise`])
+/// matches the picture's at both distances. A block is read when it
+/// and the two pixels round it are all known.
 ///
 /// A picture has no one clip, and its highlights may be made up
 /// smooth (reconstructed past 1, or a clipped camera channel mixed
@@ -240,8 +385,17 @@ pub fn estimate_picture_noise(
     let near_peak = peak.map(|p| if p > 0.0 { p * PEAK_FRACTION } else { f32::MAX });
     let yuv = |i: usize| super::denoise::to_yuv([data[i * 3], data[i * 3 + 1], data[i * 3 + 2]]);
     let block_rows: Vec<usize> = (2..height - 2 - BLOCK + 1).step_by(BLOCK).collect();
-    // Per block: its mean level and each axis's variance.
-    let blocks: Vec<(f32, [f32; 3])> = block_rows
+    let lum = |i: usize| {
+        let p = &data[i * 3..i * 3 + 3];
+        super::sharpen::LUMA[0] * p[0]
+            + super::sharpen::LUMA[1] * p[1]
+            + super::sharpen::LUMA[2] * p[2]
+    };
+    // Per block: its mean level, each axis's variance from the residual
+    // at distance two and at distance one, and the luminance's at one
+    // and two.
+    type Block = (f32, [f32; 3], [f32; 3], [f32; 2]);
+    let blocks: Vec<Block> = block_rows
         .par_iter()
         .flat_map_iter(|&by| {
             let mut out = Vec::new();
@@ -251,6 +405,8 @@ pub fn estimate_picture_noise(
                 }
                 let mut sum = 0.0f64;
                 let mut sq = [0.0f64; 3];
+                let mut sq1 = [0.0f64; 3];
+                let mut sql = [0.0f64; 2];
                 for y in by..by + BLOCK {
                     for x in bx..bx + BLOCK {
                         let i = y * width + x;
@@ -266,14 +422,30 @@ pub fn estimate_picture_noise(
                             yuv(i - 2 * width),
                             yuv(i + 2 * width),
                         ];
+                        let m = [yuv(i - 1), yuv(i + 1), yuv(i - width), yuv(i + width)];
                         for k in 0..3 {
                             let r = v[k] - (n[0][k] + n[1][k] + n[2][k] + n[3][k]) * 0.25;
                             sq[k] += (r * r) as f64;
+                            let r = v[k] - (m[0][k] + m[1][k] + m[2][k] + m[3][k]) * 0.25;
+                            sq1[k] += (r * r) as f64;
+                        }
+                        let l = lum(i);
+                        for (d, s) in [1, 2].into_iter().zip(sql.iter_mut()) {
+                            let around =
+                                lum(i - d) + lum(i + d) + lum(i - d * width) + lum(i + d * width);
+                            let r = l - around * 0.25;
+                            *s += (r * r) as f64;
                         }
                     }
                 }
                 let n = (BLOCK * BLOCK) as f64;
-                out.push(((sum / n) as f32, sq.map(|s| (s / n) as f32 / RESIDUAL_GAIN)));
+                let var = |s: [f64; 3]| s.map(|s| (s / n) as f32 / RESIDUAL_GAIN);
+                out.push((
+                    (sum / n) as f32,
+                    var(sq),
+                    var(sq1),
+                    sql.map(|s| (s / n) as f32),
+                ));
             }
             out
         })
@@ -281,8 +453,8 @@ pub fn estimate_picture_noise(
     let fit = |keep: &dyn Fn(usize, f32, f32) -> bool| {
         let mut bins: Bins = std::array::from_fn(|_| vec![Vec::new(); BINS]);
         let mut counts = [0usize; 3];
-        for &(level, var) in &blocks {
-            let bin = ((level.max(0.0).sqrt() * BINS as f32) as usize).min(BINS - 1);
+        for &(level, var, ..) in &blocks {
+            let bin = level_bin(level);
             for k in 0..3 {
                 if var[k] > STILL && keep(k, level, var[k]) {
                     bins[k][bin].push((level, var[k], BLOCK * BLOCK));
@@ -294,7 +466,29 @@ pub fn estimate_picture_noise(
     };
     let first = fit(&|_, _, _| true);
     let axes = fit(&|k, level, var| var * QUIET_FLOOR >= first.variance(k, level.max(0.0)));
-    PictureNoise { axes }
+    // The shape from the blocks the second fit keeps that lie near
+    // it, since texture reads coarser than grain, binned by level as
+    // the fit is, so it is read where the hole is ([`ShapeBins::at`]):
+    // the luma's from the luminance, which leans on the green, finer
+    // than the red and the blue after a demosaic, as the eye does; the
+    // chroma's from its two axes together.
+    let mut shape = ShapeBins::default();
+    for &(level, far, near, luminance) in &blocks {
+        let bin = level_bin(level);
+        for k in 0..3 {
+            let l = level.max(0.0);
+            let fit = axes.variance(k, l);
+            let kept = far[k] * QUIET_FLOOR >= first.variance(k, l);
+            if fit > STILL && far[k] > STILL && kept && far[k] <= SHAPE_CEILING * fit {
+                let g = usize::from(k > 0);
+                let [n, f] = if k == 0 { luminance } else { [near[k], far[k]] };
+                shape.sums[bin][g][0] += n as f64;
+                shape.sums[bin][g][1] += f as f64;
+                shape.blocks[bin][g] += 1;
+            }
+        }
+    }
+    PictureNoise { axes, shape }
 }
 
 /// A block with a value this close to a channel's brightest is left
@@ -309,9 +503,16 @@ const STILL: f32 = 1e-14;
 /// wide whose top left lies at `origin` in the frame, where `mask` is
 /// nonzero: per axis of [`PictureNoise`], at the pixel's own mean
 /// level, the variance `model` gives less what `present` says it
-/// carries already, drawn on those axes and rotated back. Drawn from
-/// `seed` and the pixel's place in the frame alone, so the same call
-/// gives the same noise wherever its window lies.
+/// carries already, drawn on those axes and rotated back. The shortfall
+/// is taken at distances one and two alike ([`GrainShape`]), at the
+/// masked pixels' mean level, so grain added over a fill with coarse
+/// grain of its own is finer to make up the difference: each axis is
+/// drawn white, smoothed by the Gaussian whose ratio is the
+/// shortfall's, and scaled so its residual at distance two has the
+/// shortfall's variance; at a width of 0 the draw is the white one.
+/// Drawn from `seed` and the pixel's place in the frame alone, so the
+/// same call gives the same noise wherever its window lies. Returns
+/// the widths drawn, per axis.
 pub fn add_picture_noise(
     data: &mut [f32],
     width: usize,
@@ -320,24 +521,122 @@ pub fn add_picture_noise(
     model: &PictureNoise,
     present: &PictureNoise,
     seed: u64,
-) {
+) -> [f32; 3] {
+    let height = data.len() / 3 / width.max(1);
+    if width == 0 || height == 0 {
+        return [0.0; 3];
+    }
+    let widths = shortfall_widths(data, mask, model, present);
+    let kernels: [Vec<f32>; 3] = widths.map(grain_kernel);
+    // What a unit of the smoothed draw reads at distance two, against
+    // white's.
+    let gains: [f32; 3] = std::array::from_fn(|k| RESIDUAL_GAIN / residual_gain(&kernels[k], 2));
+    let pad = kernels.iter().map(|k| k.len() / 2).max().unwrap_or(0);
+    let (pw, ph) = (width + 2 * pad, height + 2 * pad);
+    let white: Vec<[f32; 3]> = (0..pw * ph)
+        .into_par_iter()
+        .map(|i| {
+            let x = origin.0 as i64 + (i % pw) as i64 - pad as i64;
+            let y = origin.1 as i64 + (i / pw) as i64 - pad as i64;
+            let (x, y) = (x as u32 as u64, y as u32 as u64);
+            let mut state = seed ^ (y << 32 | x).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            std::array::from_fn(|_| gauss(&mut state))
+        })
+        .collect();
+    let fields: Vec<Vec<f32>> = (0..3)
+        .map(|k| {
+            let kernel = &kernels[k];
+            let skip = pad - kernel.len() / 2;
+            // Along the rows, every padded row, then down the columns.
+            let mut across = vec![0.0f32; width * ph];
+            across
+                .par_chunks_mut(width)
+                .enumerate()
+                .for_each(|(y, row)| {
+                    let line = &white[y * pw + skip..];
+                    for (x, out) in row.iter_mut().enumerate() {
+                        *out = kernel
+                            .iter()
+                            .enumerate()
+                            .map(|(j, t)| t * line[x + j][k])
+                            .sum();
+                    }
+                });
+            let mut field = vec![0.0f32; width * height];
+            field
+                .par_chunks_mut(width)
+                .enumerate()
+                .for_each(|(y, row)| {
+                    for (j, t) in kernel.iter().enumerate() {
+                        let line = &across[(y + skip + j) * width..][..width];
+                        for (out, v) in row.iter_mut().zip(line) {
+                            *out += t * v;
+                        }
+                    }
+                });
+            field
+        })
+        .collect();
     for (i, px) in data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
         if mask[i] <= 0.0 {
             continue;
         }
-        let (x, y) = ((origin.0 + i % width) as u64, (origin.1 + i / width) as u64);
-        let mut state = seed ^ (y << 32 | x).wrapping_mul(0x9e37_79b9_7f4a_7c15);
         let level = ((px[0] + px[1] + px[2]) / 3.0).max(0.0);
         let draw: [f32; 3] = std::array::from_fn(|k| {
             let var = model.axes.variance(k, level) - present.axes.variance(k, level);
-            let g = gauss(&mut state);
-            if var > 0.0 { var.sqrt() * g } else { 0.0 }
+            if var > 0.0 {
+                (var * gains[k]).sqrt() * fields[k][i]
+            } else {
+                0.0
+            }
         });
         let add = super::denoise::from_yuv(draw);
         for c in 0..3 {
             px[c] += add[c];
         }
     }
+    widths
+}
+
+/// The width each axis's added grain is smoothed by: at the masked
+/// pixels' mean level, the variance `model` gives at distance two less
+/// what `present` carries, and the same at distance one through each's
+/// [`GrainShape`], their ratio solved for ([`width_for`]).
+fn shortfall_widths(
+    data: &[f32],
+    mask: &[f32],
+    model: &PictureNoise,
+    present: &PictureNoise,
+) -> [f32; 3] {
+    let (mut sum, mut n) = (0.0f64, 0usize);
+    for (px, &m) in data.as_chunks::<3>().0.iter().zip(mask) {
+        if m > 0.0 {
+            sum += f64::from(px[0] + px[1] + px[2]) / 3.0;
+            n += 1;
+        }
+    }
+    let level = if n > 0 {
+        (sum / n as f64).max(0.0) as f32
+    } else {
+        0.0
+    };
+    std::array::from_fn(|k| {
+        let g = usize::from(k > 0);
+        let (far_m, far_p) = (
+            model.axes.variance(k, level),
+            present.axes.variance(k, level),
+        );
+        let far = far_m - far_p;
+        if far <= 0.0 {
+            return 0.0;
+        }
+        let (frame, fill) = (model.shape.at(level), present.shape.at(level));
+        let near = far_m * frame.ratio[g].powi(2) - far_p * fill.ratio[g].powi(2);
+        // The fill finer than the frame already (near below 0): the
+        // widest draw. A shortfall finer than white (a ratio past 1):
+        // white, short at one, since a draw cannot be finer.
+        width_for((near.max(0.0) / far).sqrt())
+    })
 }
 
 /// One standard normal sample from `state`, moved on (splitmix64 and
@@ -702,6 +1001,7 @@ pub(crate) mod tests {
                 a: [9e-4, 1e-4, 2e-4],
                 b: [9e-6, 1e-6, 2e-6],
             },
+            ..Default::default()
         }
     }
 
@@ -802,12 +1102,14 @@ pub(crate) mod tests {
                 a: [0.0; 3],
                 b: [9e-4, 1e-4, 2e-4],
             },
+            ..Default::default()
         };
         let present = PictureNoise {
             axes: NoiseModel {
                 a: [0.0; 3],
                 b: [3e-4, 0.0, 5e-4],
             },
+            ..Default::default()
         };
         let mask: Vec<f32> = (0..w * h).map(|i| (i % w >= 100) as u8 as f32).collect();
         let mut data = vec![0.5f32; w * h * 3];
@@ -842,5 +1144,220 @@ pub(crate) mod tests {
                 assert_eq!(data[a..a + 3], half[b..b + 3]);
             }
         }
+    }
+
+    /// The width solved for a ratio gives that ratio back, and white
+    /// or finer than white is drawn white.
+    #[test]
+    fn a_grain_width_gives_its_ratio_back() {
+        for ratio in [0.95, 0.8, 0.6, 0.45, 0.35] {
+            let width = width_for(ratio);
+            assert!(
+                (shape_ratio(width) - ratio).abs() < 1e-3,
+                "{ratio}: width {width}"
+            );
+        }
+        assert_eq!(width_for(1.0), 0.0);
+        assert_eq!(width_for(1.3), 0.0);
+        assert_eq!(width_for(f32::NAN), 0.0);
+        let k = grain_kernel(1.2);
+        assert!((k.iter().map(|v| v * v).sum::<f32>() - 1.0).abs() < 1e-5);
+        assert_eq!(residual_gain(&grain_kernel(0.0), 2), RESIDUAL_GAIN);
+    }
+
+    /// Three unit axes of grain 360 square, white noise from `seed`
+    /// smoothed `passes` times by the binomial [1, 2, 1] / 4 along both
+    /// axes.
+    fn grain_axes(passes: usize, seed: u64) -> Vec<Vec<f32>> {
+        let (w, h) = (360usize, 360usize);
+        let mut g = Gauss(seed);
+        let mut axes: Vec<Vec<f32>> = (0..3)
+            .map(|_| (0..w * h).map(|_| g.next()).collect())
+            .collect();
+        for axis in axes.iter_mut() {
+            for _ in 0..passes {
+                for along in [1usize, w] {
+                    let src = axis.clone();
+                    for i in 0..w * h {
+                        let (x, y) = (i % w, i / w);
+                        let edge = if along == 1 {
+                            x == 0 || x == w - 1
+                        } else {
+                            y == 0 || y == h - 1
+                        };
+                        if !edge {
+                            axis[i] = (src[i - along] + 2.0 * src[i] + src[i + along]) / 4.0;
+                        }
+                    }
+                }
+            }
+            let n = axis.len() as f32;
+            let mean = axis.iter().sum::<f32>() / n;
+            let sd = (axis.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / n).sqrt();
+            axis.iter_mut().for_each(|v| *v = (*v - mean) / sd);
+        }
+        axes
+    }
+
+    /// A picture of grain at a level, three axes of `sigma`, smoothed
+    /// `passes` times ([`grain_axes`]), with a disc of radius 80 in the
+    /// middle holding grain of its own, `inside` (passes and a fraction
+    /// of `sigma`), as a fill's; and that disc.
+    fn grain_round_a_hole(
+        passes: usize,
+        sigma: [f32; 3],
+        inside: (usize, f32),
+    ) -> (Vec<f32>, Vec<bool>) {
+        let w = 360usize;
+        let (out, within) = (grain_axes(passes, 11), grain_axes(inside.0, 23));
+        let hole: Vec<bool> = (0..w * w)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32 - 180.0, (i / w) as f32 - 180.0);
+                x * x + y * y < 80.0 * 80.0
+            })
+            .collect();
+        let data = (0..w * w)
+            .flat_map(|i| {
+                let (axes, scale) = if hole[i] {
+                    (&within, inside.1)
+                } else {
+                    (&out, 1.0)
+                };
+                let n = std::array::from_fn(|k| scale * sigma[k] * axes[k][i]);
+                let add = super::super::denoise::from_yuv(n);
+                [0.3 + add[0], 0.3 + add[1], 0.3 + add[2]]
+            })
+            .collect();
+        (data, hole)
+    }
+
+    /// The residual's spread at distance `d` on each axis, over the
+    /// pixels `pick` names, of a picture 360 wide.
+    fn residual_spread(data: &[f32], d: usize, pick: impl Fn(f32) -> bool) -> [f32; 3] {
+        let w = 360usize;
+        let yuv = |i: usize| {
+            super::super::denoise::to_yuv([data[i * 3], data[i * 3 + 1], data[i * 3 + 2]])
+        };
+        let mut sq = [0.0f64; 3];
+        let mut n = 0usize;
+        for y in 8..w - 8 {
+            for x in 8..w - 8 {
+                let r = ((x as f32 - 180.0).powi(2) + (y as f32 - 180.0).powi(2)).sqrt();
+                if !pick(r) {
+                    continue;
+                }
+                let i = y * w + x;
+                let (v, a, b, c, e) = (
+                    yuv(i),
+                    yuv(i - d),
+                    yuv(i + d),
+                    yuv(i - d * w),
+                    yuv(i + d * w),
+                );
+                for k in 0..3 {
+                    let res = v[k] - (a[k] + b[k] + c[k] + e[k]) / 4.0;
+                    sq[k] += (res * res) as f64;
+                }
+                n += 1;
+            }
+        }
+        sq.map(|s| (s / n as f64).sqrt() as f32)
+    }
+
+    /// Grain drawn into the hole matches its surround's residual at the
+    /// distances `at`, on the luma and the chroma, within `tolerance`.
+    fn grain_in_the_hole_matches(
+        passes: usize,
+        inside: (usize, f32),
+        at: &[usize],
+        tolerance: f32,
+    ) {
+        let (mut data, hole) = grain_round_a_hole(passes, [0.02, 0.006, 0.008], inside);
+        let w = 360;
+        let known: Vec<bool> = hole.iter().map(|&h| !h).collect();
+        let model = estimate_picture_noise(&data, w, w, &known);
+        let present = estimate_picture_noise(&data, w, w, &hole);
+        let mask: Vec<f32> = hole.iter().map(|&h| f32::from(u8::from(h))).collect();
+        let widths = add_picture_noise(&mut data, w, (0, 0), &mask, &model, &present, 5);
+        for &d in at {
+            let inside = residual_spread(&data, d, |r| r < 72.0);
+            let outside = residual_spread(&data, d, |r| r > 90.0);
+            for k in 0..3 {
+                let ratio = inside[k] / outside[k];
+                assert!(
+                    (ratio - 1.0).abs() < tolerance,
+                    "{passes} passes, axis {k} at {d}: {ratio} ({inside:?} against {outside:?}); {:?} {widths:?}",
+                    model.shape.at(0.3)
+                );
+            }
+        }
+    }
+
+    /// Correlated grain round a smooth hole, as a learned denoise
+    /// leaves it, is drawn as coarse as it is.
+    #[test]
+    fn correlated_grain_is_drawn_as_coarse_as_its_surround() {
+        grain_in_the_hole_matches(2, (0, 0.0), &[1, 2, 4], 0.15);
+    }
+
+    /// White grain round a smooth hole is drawn white.
+    #[test]
+    fn white_grain_is_drawn_white() {
+        let (data, hole) = grain_round_a_hole(0, [0.02, 0.006, 0.008], (0, 0.0));
+        let known: Vec<bool> = hole.iter().map(|&h| !h).collect();
+        let shape = estimate_picture_noise(&data, 360, 360, &known)
+            .shape
+            .at(0.3);
+        assert!(shape.ratio.iter().all(|&r| r > 0.97), "{shape:?}");
+        grain_in_the_hole_matches(0, (0, 0.0), &[1, 2, 4], 0.15);
+    }
+
+    /// A fill carrying coarse grain of its own, as a model's answer
+    /// does, is given finer grain on top, so the sum matches its
+    /// surround at distances one and two within 8 percent. (Drawn to the
+    /// frame's own shape it measured 14 percent short at one.)
+    #[test]
+    fn grain_over_a_fills_coarse_grain_makes_up_the_fine_scale() {
+        grain_in_the_hole_matches(1, (4, 1.5), &[1, 2], 0.08);
+    }
+
+    /// The shortfall's two edges: a fill with more energy at distance
+    /// one than the frame has to spare is given the widest draw, and a
+    /// shortfall finer than white is drawn white.
+    #[test]
+    fn a_shortfall_past_either_edge_is_drawn_at_that_edge() {
+        let flat = |b: f32, ratio: f32| PictureNoise {
+            axes: NoiseModel {
+                a: [0.0; 3],
+                b: [b; 3],
+            },
+            shape: ShapeBins::uniform([ratio; 2]),
+        };
+        let data = vec![0.3f32; 3 * 16];
+        let mask = vec![1.0f32; 16];
+        // Frame 1 at two and 0.25 at one; the fill 0.5 at both.
+        let widths = shortfall_widths(&data, &mask, &flat(1e-4, 0.5), &flat(5e-5, 1.0));
+        assert_eq!(widths, [MAX_GRAIN_WIDTH; 3]);
+        // Frame 1 at both; the fill 0.5 at two and 0.125 at one: the
+        // shortfall's ratio is past 1.
+        let widths = shortfall_widths(&data, &mask, &flat(1e-4, 1.0), &flat(5e-5, 0.5));
+        assert_eq!(widths, [0.0; 3]);
+    }
+
+    /// The shape is read at the hole's level: a frame whose dark half
+    /// is coarse and bright half white gives each its own.
+    #[test]
+    fn the_shape_is_read_at_its_level() {
+        let mut bins = ShapeBins::uniform([1.0; 2]);
+        for b in 0..BINS / 2 {
+            bins.sums[b] = [[0.25, 1.0]; 2];
+        }
+        assert!((bins.at(0.02).ratio[0] - 0.5).abs() < 1e-6);
+        assert!((bins.at(0.8).ratio[0] - 1.0).abs() < 1e-6);
+        // Too few blocks near the level: every bin's, half coarse and
+        // half white.
+        bins.blocks = [[0; 2]; BINS];
+        bins.blocks[0] = [100; 2];
+        assert!((bins.at(0.8).ratio[0] - 0.625f32.sqrt()).abs() < 1e-6);
     }
 }

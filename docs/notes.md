@@ -446,3 +446,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§431. The denoiser's tile from the card's memory](notes/431-the-denoisers-tile-from-the-cards-memory.md) (2026-10-26)
 - [§432. The slider and natural scrolling on a Mac](notes/432-the-slider-and-natural-scrolling-on-a-mac.md) (2026-10-26)
 - [§433. The worker's, the cull's, and the keeper's threads end with their owners](notes/433-the-workers-the-culls-and-the-keepers-threads-end-with-their-owners.md) (2026-10-26)
+- [§434. The grain's shape under a fill](notes/434-the-grains-shape-under-a-fill.md) (2026-10-26)

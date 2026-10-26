@@ -824,12 +824,15 @@ fn same_fill(a: &Patch, b: &Patch) -> bool {
 
 /// What [`regrain`] measured at the hole's mean level, in the frame
 /// round it and in the fill before and after: the luma's and the
-/// chroma's standard deviations.
+/// chroma's standard deviations; the grain's shape round the hole and
+/// in the fill before, and the widths the grain added was drawn at.
 struct Regrained {
     level: f32,
     frame: [f32; 2],
     before: [f32; 2],
     after: [f32; 2],
+    shape: [noise::GrainShape; 2],
+    widths: [f32; 2],
 }
 
 /// The frame's own noise put under a fill the model made smooth:
@@ -838,10 +841,11 @@ struct Regrained {
 /// pixels, in the picture's values after the develop's own denoise, so
 /// a denoised frame is given back only what it kept, and on its luma
 /// and chroma axes, so its grain keeps the frame's color
-/// ([`noise::PictureNoise`]); it is added under
-/// the region's coverage less what the fill carries already, and the
-/// retouch's blend feathers it with the coverage's own edge. Seeded by
-/// `seed` and the place in the frame, so a fill made again is the
+/// ([`noise::PictureNoise`]), and drawn to make up the frame's grain at
+/// both distances ([`noise::GrainShape`]); it is added under the
+/// region's coverage less what the fill carries already, and the
+/// retouch's blend feathers it with the coverage's own edge. Seeded
+/// by `seed` and the place in the frame, so a fill made again is the
 /// same. `None` when the frame measures no noise.
 fn regrain(
     out: &mut [f32],
@@ -881,7 +885,8 @@ fn regrain(
         .collect();
     let present = noise::estimate_picture_noise(out, rw, rh, &hole);
     let mask: Vec<f32> = hole.iter().map(|&h| f32::from(u8::from(h))).collect();
-    noise::add_picture_noise(out, rw, (region.x, region.y), &mask, &frame, &present, seed);
+    let widths =
+        noise::add_picture_noise(out, rw, (region.x, region.y), &mask, &frame, &present, seed);
     let after = noise::estimate_picture_noise(out, rw, rh, &hole);
     let inside = hole.iter().filter(|&&h| h).count().max(1);
     let level = (0..rw * rh)
@@ -899,6 +904,8 @@ fn regrain(
         frame: at(&frame),
         before: at(&present),
         after: at(&after),
+        shape: [frame.shape.at(level), present.shape.at(level)],
+        widths: [widths[0], widths[1]],
     })
 }
 
@@ -1549,7 +1556,7 @@ impl Ai {
             )
         {
             tracing::info!(
-                "fill {}: the frame's noise put back, luma and chroma sigma at {:.2}: {:.5} and {:.5} round the hole, {:.5} and {:.5} in the fill before, {:.5} and {:.5} after",
+                "fill {}: the frame's noise put back, luma and chroma sigma at {:.2}: {:.5} and {:.5} round the hole, {:.5} and {:.5} in the fill before, {:.5} and {:.5} after; spread at one over two {:.2} and {:.2} round the hole, {:.2} and {:.2} in the fill before, drawn smoothed by {:.2} and {:.2} px",
                 patch.name(),
                 r.level,
                 r.frame[0],
@@ -1557,7 +1564,13 @@ impl Ai {
                 r.before[0],
                 r.before[1],
                 r.after[0],
-                r.after[1]
+                r.after[1],
+                r.shape[0].ratio[0],
+                r.shape[0].ratio[1],
+                r.shape[1].ratio[0],
+                r.shape[1].ratio[1],
+                r.widths[0],
+                r.widths[1]
             );
         }
         let out = self.keep_fill(patch, region, image, window, engine, out);
@@ -3280,7 +3293,7 @@ fn write_raster(path: &Path, height: usize, data: &[u8]) {
 /// The fills kept on disk's format: bumped when a change to either
 /// engine, or to how a fill is put together, makes another fill of the
 /// same patch, so the old ones are made again.
-const FILL_VERSION: u8 = 1;
+const FILL_VERSION: u8 = 2;
 
 /// The first bytes of a fill kept on disk.
 const FILL_MAGIC: &[u8; 6] = b"GCFILL";
