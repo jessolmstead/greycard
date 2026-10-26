@@ -15,14 +15,13 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] The Subject model's first run on an M5 under WebGPU on Metal
-      sat for minutes with every thread of the app asleep, ONNX
-      Runtime's pool and Dawn's workers idle, no line logged; killed,
-      and the next launch found the subject at once (2026-10-24).
-      Either a race with Dawn or Metal's first-use shader compile,
-      which runs in MTLCompilerService out of process and is cached
-      after. Warm the cache when a model is fetched, or say
-      "preparing" while it runs; a symbolized sample if it recurs
+- [ ] The Subject model's first run on an M5 is a compile: 43 s on
+      Core ML (§422) with every thread of the app asleep and no line
+      logged, then 1 s on the next frame (2026-10-25); under WebGPU
+      the day before it sat for minutes and the next launch was
+      instant. The compile runs out of process and is cached after.
+      Compile the models in the background when they are fetched or
+      at launch, or say "preparing" while it runs
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
 
