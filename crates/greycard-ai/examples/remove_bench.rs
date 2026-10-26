@@ -8,9 +8,11 @@
 //! mode (`GREYCARD_REMOVE_RESIDENT=1`) the first run opens the
 //! sessions and the rest do not; `GREYCARD_REMOVE_TILED=0` or `1`
 //! runs the decoder whole or in tiles at 1024, and each run says which
-//! ran. Prints the peak GPU memory over what was in use before, from
-//! `nvidia-smi` sampled in a thread, and the process's peak resident
-//! memory; with `OUT.png` writes the last answer.
+//! ran; `GREYCARD_REMOVE_STEPS=4` or `25` picks the sampler (25 when
+//! unset; 4 wants the 4-step UNet in the store). Prints the peak GPU
+//! memory over what was in use before, from `nvidia-smi` sampled in a
+//! thread, and the process's peak resident memory; with `OUT.png`
+//! writes the last answer.
 //!
 //! With `GREYCARD_BENCH_DENOISER` naming a denoiser's `.onnx`, that
 //! model is opened on WebGPU first and run once on a 2048 mosaic, and
@@ -22,6 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use greycard_ai::denoise::{Denoiser, Tiling};
+use greycard_ai::remove::Steps;
 use greycard_ai::{Provider, Remove, Rgbf, Store};
 use greycard_core::develop::noise::NoiseModel;
 use greycard_core::raw::CfaPattern;
@@ -118,7 +121,15 @@ fn main() {
         net
     });
     let mut remove = Remove::load(&store, &[Provider::WebGpu]).expect("load");
-    println!("{w}x{h}, {:?}, decoder {:?}", remove.memory(), remove.vae());
+    if let Some(steps) = Steps::from_env(std::env::var("GREYCARD_REMOVE_STEPS").ok().as_deref()) {
+        remove.set_steps(steps).expect("the steps' UNet");
+    }
+    println!(
+        "{w}x{h}, {:?}, decoder {:?}, {:?}",
+        remove.memory(),
+        remove.vae(),
+        remove.steps()
+    );
     let mut out = None;
     for seed in 1..=runs {
         let answer = remove.remove(&image, &hole, seed).expect("remove");

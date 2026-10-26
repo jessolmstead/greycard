@@ -89,6 +89,9 @@ export component SettingsSheet inherits Rectangle {
     /// "Original", "Last used" or "Free".
     in-out property <string> crop-start;
     callback crop-start-changed();
+    in-out property <string> fill-choice;
+    in property <[string]> fill-why-not;
+    callback fill-chosen(string);
     /// The canvas, by its index into `canvas-names`, which the row
     /// spells it by.
     in-out property <int> canvas-choice;
@@ -822,6 +825,27 @@ export component SettingsSheet inherits Rectangle {
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
+                            }
+                            Rectangle { height: Theme.space-1; }
+                            Text {
+                                text: "RETOUCH";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Fill"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                fill-row := Segmented {
+                                    options: ["Patch", "Fast", "Best"];
+                                    tips: ["From the picture around it, at once", "The remove in four steps: quicker, rougher on large areas", "The remove in full"];
+                                    why-not: root.fill-why-not;
+                                    current <=> root.fill-choice;
+                                    picks: false;
+                                    accessible-role: list;
+                                    accessible-value: self.current;
+                                    selected(c) => { root.fill-chosen(c); }
+                                }
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {

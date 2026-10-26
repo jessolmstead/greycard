@@ -80,7 +80,7 @@ pub(crate) fn take_settings(st: &mut State, kept: &settings::Settings) {
 /// close, so a session that never closes cleanly keeps it too; none
 /// written by a capture or a batch run, nor by a test that gave no
 /// file.
-fn keep_in_file(st: &State, change: impl FnOnce(&mut settings::Settings)) {
+pub(crate) fn keep_in_file(st: &State, change: impl FnOnce(&mut settings::Settings)) {
     if st.window.batch {
         return;
     }

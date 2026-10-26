@@ -24,6 +24,15 @@
 //! [`MAX`], run, and its fill brought back up ([`scaled`],
 //! [`Remove::remove_window`]).
 //!
+//! The four-step remove is the same UNet with our LCM LoRA beside its
+//! weights, distilled from it at 1024 on the same empty prompt
+//! ([`crate::registry::REMOVE_FAST`], in the same directory), run by
+//! LCM's sampler ([`Lcm`]) over 3 UNet calls. The caller picks the
+//! sampler a removal runs ([`Remove::set_steps`], [`Steps`]); one
+//! UNet is held at a time. The 4-step sampler takes fresh noise for
+//! each call but the last, drawn after the first latent's from the
+//! same seed.
+//!
 //! The answer is the window under the hole alone, weighted by the
 //! hole's own values ([`composite`]), brought first to the picture's
 //! level in a ring round the hole ([`level`]): the retouch's blend
@@ -61,7 +70,7 @@ use ort::value::{Tensor, TensorElementType};
 
 use crate::fill::{implausible, mirror};
 use crate::image::Rgbf;
-use crate::registry::{File, REMOVE};
+use crate::registry::{File, REMOVE, REMOVE_FAST};
 use crate::runtime::{self, Error, Provider, Result};
 use crate::store::Store;
 
@@ -87,6 +96,62 @@ pub const SCALE: f32 = 0.13025;
 /// at 0.99 the first step is skipped and 24 UNet calls are made.
 pub const STEPS: usize = 25;
 pub const STRENGTH: f64 = 0.99;
+
+/// The 4-step schedule's length (the UNet with the LCM LoRA), entered at the same [`STRENGTH`]: its first
+/// step is skipped too, so 3 UNet calls.
+pub const LCM_STEPS: usize = 4;
+
+/// The training schedule's length, from which both samplers pick.
+const TRAIN: usize = 1000;
+
+/// The LCM LoRA's distillation schedule (`original_inference_steps`),
+/// whose timesteps the 4 are picked from: every 20th.
+const LCM_ORIGINAL: usize = 50;
+
+/// How LCM's boundary scalings stretch a timestep (`timestep_scaling`),
+/// and the data's standard deviation they assume.
+const LCM_TIME_SCALE: f64 = 10.0;
+const LCM_SIGMA_DATA: f64 = 0.5;
+
+/// Which sampler and UNet a removal runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Steps {
+    /// Euler discrete over [`STEPS`], the RORem UNet: [`crate::REMOVE`].
+    Euler25,
+    /// LCM over [`LCM_STEPS`], the UNet with the LCM LoRA:
+    /// [`crate::registry::REMOVE_FAST`] beside [`crate::REMOVE`].
+    Lcm4,
+}
+
+impl Steps {
+    /// What `GREYCARD_REMOVE_STEPS` asks a bench or a test for: `4`
+    /// or `25`, else nothing.
+    pub fn from_env(var: Option<&str>) -> Option<Self> {
+        match var {
+            Some("4") => Some(Steps::Lcm4),
+            Some("25") => Some(Steps::Euler25),
+            _ => None,
+        }
+    }
+
+    /// The sampler in a log line's words.
+    pub fn words(self) -> &'static str {
+        match self {
+            Steps::Euler25 => "25 Euler steps",
+            Steps::Lcm4 => "4 LCM steps",
+        }
+    }
+
+    /// How many latents of noise a removal takes: Euler's one to
+    /// start from; LCM's that and one for each call but the last,
+    /// which re-noises to the next timestep.
+    pub fn noises(self) -> usize {
+        match self {
+            Steps::Euler25 => 1,
+            Steps::Lcm4 => Lcm::new(LCM_STEPS, STRENGTH).timesteps.len(),
+        }
+    }
+}
 
 /// How far, on average, the decoder's answer outside the hole may
 /// stray from the picture before it is taken for garbage, for a window
@@ -454,14 +519,7 @@ pub fn size_for(width: usize, height: usize) -> Option<usize> {
 /// offset 1), `steps` long and entered at `strength`: the timesteps
 /// run, and their sigmas with a final zero.
 pub fn schedule(steps: usize, strength: f64) -> (Vec<f32>, Vec<f32>) {
-    let (b0, b1, train) = (0.00085f64.sqrt(), 0.012f64.sqrt(), 1000usize);
-    let mut acp = Vec::with_capacity(train);
-    let mut prod = 1.0f64;
-    for i in 0..train {
-        let b = b0 + (b1 - b0) * i as f64 / (train - 1) as f64;
-        prod *= 1.0 - b * b;
-        acp.push(prod);
-    }
+    let (acp, train) = (alphas_cumprod(), TRAIN);
     let ratio = train / steps;
     let all: Vec<usize> = (0..steps).rev().map(|i| i * ratio + 1).collect();
     let start = steps - ((steps as f64 * strength) as usize).min(steps);
@@ -472,6 +530,149 @@ pub fn schedule(steps: usize, strength: f64) -> (Vec<f32>, Vec<f32>) {
         .collect();
     sigmas.push(0.0);
     (ts.iter().map(|&t| t as f32).collect(), sigmas)
+}
+
+/// The training schedule's cumulative products of the alphas: scaled
+/// linear betas from 0.00085 to 0.012 over [`TRAIN`] steps.
+fn alphas_cumprod() -> Vec<f64> {
+    let (b0, b1) = (0.00085f64.sqrt(), 0.012f64.sqrt());
+    let mut acp = Vec::with_capacity(TRAIN);
+    let mut prod = 1.0f64;
+    for i in 0..TRAIN {
+        let b = b0 + (b1 - b0) * i as f64 / (TRAIN - 1) as f64;
+        prod *= 1.0 - b * b;
+        acp.push(prod);
+    }
+    acp
+}
+
+/// diffusers' `LCMScheduler` (Luo et al., Latent Consistency Models,
+/// 2023) over the same training schedule, as the inpainting pipeline
+/// runs it: `steps` timesteps picked evenly from every 20th of the
+/// training steps, from 999 down ([`LCM_ORIGINAL`]), then cut at
+/// `strength` as [`schedule`] is. At 4 and 0.99 that is 999, 759, 499,
+/// and 259, the first skipped.
+pub struct Lcm {
+    /// The timesteps run.
+    pub timesteps: Vec<usize>,
+    acp: Vec<f64>,
+}
+
+impl Lcm {
+    pub fn new(steps: usize, strength: f64) -> Self {
+        let k = TRAIN / LCM_ORIGINAL;
+        // 19, 39, ..., 999, from the top.
+        let origin: Vec<usize> = (1..=LCM_ORIGINAL).rev().map(|i| i * k - 1).collect();
+        let all: Vec<usize> = (0..steps)
+            .map(|i| origin[i * origin.len() / steps])
+            .collect();
+        let start = steps - ((steps as f64 * strength) as usize).min(steps);
+        Self {
+            timesteps: all[start..].to_vec(),
+            acp: alphas_cumprod(),
+        }
+    }
+
+    /// The cumulative alpha at the `i`th timestep run.
+    pub fn alpha(&self, i: usize) -> f64 {
+        self.acp[self.timesteps[i]]
+    }
+
+    /// The image's latents noised to the first timestep, as
+    /// `add_noise` does: √ᾱ z + √(1 − ᾱ) ε.
+    pub fn start(&self, latents: &[f32], noise: &[f32]) -> Vec<f32> {
+        let a = self.alpha(0);
+        let (s, n) = (a.sqrt() as f32, (1.0 - a).sqrt() as f32);
+        latents
+            .iter()
+            .zip(noise)
+            .map(|(z, e)| s * z + n * e)
+            .collect()
+    }
+
+    /// The `i`th step: the clean latents predicted from the UNet's
+    /// noise `eps`, through the consistency boundary's scalings, then
+    /// noised again to the next timestep with `noise`; the last step
+    /// gives the prediction alone and takes no noise.
+    pub fn step(&self, i: usize, x: &mut [f32], eps: &[f32], noise: Option<&[f32]>) {
+        let a = self.alpha(i);
+        let t = self.timesteps[i] as f64 * LCM_TIME_SCALE;
+        let sd2 = LCM_SIGMA_DATA * LCM_SIGMA_DATA;
+        let c_skip = (sd2 / (t * t + sd2)) as f32;
+        let c_out = (t / (t * t + sd2).sqrt()) as f32;
+        let (sa, sb) = (a.sqrt() as f32, (1.0 - a).sqrt() as f32);
+        let next = (i + 1 < self.timesteps.len()).then(|| self.alpha(i + 1));
+        for (k, (v, e)) in x.iter_mut().zip(eps).enumerate() {
+            let x0 = (*v - sb * e) / sa;
+            let denoised = c_out * x0 + c_skip * *v;
+            *v = match (next, noise) {
+                (Some(an), Some(n)) => {
+                    an.sqrt() as f32 * denoised + (1.0 - an).sqrt() as f32 * n[k]
+                }
+                _ => denoised,
+            };
+        }
+    }
+}
+
+/// The sampler's loop, from the image's latents (scaled) and `noise`
+/// ([`Steps::noises`] latents of it, one after another) to the clean
+/// latents, with `unet` answering the noise for the model's input and
+/// a timestep.
+pub fn sample(
+    steps: Steps,
+    latents: &[f32],
+    noise: &[f32],
+    mut unet: impl FnMut(&[f32], f32) -> Result<Vec<f32>>,
+) -> Result<Vec<f32>> {
+    let n = latents.len();
+    if noise.len() != steps.noises() * n {
+        return Err(Error::Shape(format!(
+            "{} noise values for {} latents and {steps:?}",
+            noise.len(),
+            n
+        )));
+    }
+    let check = |eps: &[f32]| {
+        if eps.len() == n {
+            Ok(())
+        } else {
+            Err(Error::Shape(format!("{} values from the UNet", eps.len())))
+        }
+    };
+    match steps {
+        Steps::Euler25 => {
+            let (ts, sigmas) = schedule(STEPS, STRENGTH);
+            let mut x: Vec<f32> = latents
+                .iter()
+                .zip(noise)
+                .map(|(z, e)| z + e * sigmas[0])
+                .collect();
+            for i in 0..ts.len() {
+                let scale = 1.0 / (sigmas[i] * sigmas[i] + 1.0).sqrt();
+                let input: Vec<f32> = x.iter().map(|&v| v * scale).collect();
+                let eps = unet(&input, ts[i])?;
+                check(&eps)?;
+                let dt = sigmas[i + 1] - sigmas[i];
+                for (v, e) in x.iter_mut().zip(&eps) {
+                    *v += dt * e;
+                }
+            }
+            Ok(x)
+        }
+        Steps::Lcm4 => {
+            let lcm = Lcm::new(LCM_STEPS, STRENGTH);
+            let mut x = lcm.start(latents, &noise[..n]);
+            let calls = lcm.timesteps.len();
+            for i in 0..calls {
+                let eps = unet(&x, lcm.timesteps[i] as f32)?;
+                check(&eps)?;
+                let fresh = (i + 1 < calls).then(|| &noise[(i + 1) * n..(i + 2) * n]);
+                lcm.step(i, &mut x, &eps, fresh);
+            }
+            Ok(x)
+        }
+    }
 }
 
 /// `n` standard normals from `seed`: SplitMix64 (Steele, Lea, and
@@ -983,6 +1184,10 @@ pub struct Remove {
     store: Store,
     memory: Memory,
     vae: Vae,
+    steps: Steps,
+    /// Whether the store has the 4-step UNet's files.
+    fast: bool,
+    /// The empty prompt's embeddings, which both UNets take.
     prompt: Vec<f16>,
     pooled: Vec<f16>,
     /// The size conditioning at 1024, as `time_ids.f16` holds it.
@@ -1023,6 +1228,7 @@ impl Remove {
         let pooled = read_f16(&path("text_embeds.f16"), POOLED)?;
         let ids = read_f16(&path("time_ids.f16"), 6)?;
         let time_ids = std::array::from_fn(|i| ids[i].to_f32());
+        let fast = store.have(&REMOVE_FAST);
         let resident = std::env::var("GREYCARD_REMOVE_RESIDENT").ok();
         let tiled = std::env::var("GREYCARD_REMOVE_TILED").ok();
         let Policy { memory, vae, why } = policy(machine, resident.as_deref(), tiled.as_deref());
@@ -1042,12 +1248,50 @@ impl Remove {
             store: store.clone(),
             memory,
             vae,
+            steps: Steps::Euler25,
+            fast,
             prompt,
             pooled,
             time_ids,
             resident: None,
             times: Times::default(),
         })
+    }
+
+    /// Which sampler the next removal runs: 25 Euler steps until
+    /// [`Remove::set_steps`] says otherwise.
+    pub fn steps(&self) -> Steps {
+        self.steps
+    }
+
+    /// Whether the store had the 4-step UNet's files at the load.
+    pub fn has_fast(&self) -> bool {
+        self.fast
+    }
+
+    /// Run `steps` from the next removal on: [`Error::Missing`] for
+    /// the 4-step sampler when the store does not have its UNet. A UNet
+    /// held open for the other sampler is let go first, with a log
+    /// line, so two are never held at once; the VAE's stay.
+    pub fn set_steps(&mut self, steps: Steps) -> Result<()> {
+        if steps == Steps::Lcm4 && !self.fast {
+            return Err(Error::Missing(REMOVE_FAST.name));
+        }
+        if steps != self.steps {
+            let held = self.resident.as_mut().and_then(|r| r.unet.take()).is_some();
+            if held {
+                log::info!(
+                    "remove: {} from the next removal: the {} UNet let go, 5.1 GB",
+                    steps.words(),
+                    match self.steps {
+                        Steps::Euler25 => "25-step",
+                        Steps::Lcm4 => "4-step",
+                    }
+                );
+            }
+            self.steps = steps;
+        }
+        Ok(())
     }
 
     /// Where it runs: WebGPU, always.
@@ -1086,7 +1330,7 @@ impl Remove {
     pub fn remove(&mut self, image: &Rgbf, hole: &[f32], seed: u64) -> Result<Rgbf> {
         let size = self.check(image, hole)?;
         let l = size / 8;
-        let noise = normals(4 * l * l, seed);
+        let noise = normals(self.steps.noises() * 4 * l * l, seed);
         self.run(image, hole, &noise, Pool::Any)
     }
 
@@ -1115,13 +1359,14 @@ impl Remove {
         }
     }
 
-    /// [`Remove::remove`] on given noise, [1, 4, size / 8, size / 8],
-    /// with the hole taken to the latents as diffusers takes it
+    /// [`Remove::remove`] on given noise, [`Steps::noises`] latents of
+    /// [1, 4, size / 8, size / 8] one after another, with the hole
+    /// taken to the latents as diffusers takes it
     /// ([`Pool::TopLeft`]): for matching the reference pipeline.
     #[doc(hidden)]
     pub fn remove_with_noise(&mut self, image: &Rgbf, hole: &[f32], noise: &[f32]) -> Result<Rgbf> {
         let size = self.check(image, hole)?;
-        if noise.len() != 4 * (size / 8) * (size / 8) {
+        if noise.len() != self.steps.noises() * 4 * (size / 8) * (size / 8) {
             return Err(Error::Shape(format!(
                 "{} noise values for {size}",
                 noise.len()
@@ -1141,7 +1386,7 @@ impl Remove {
         noise: &[f32],
     ) -> Result<Rgbf> {
         let size = self.check(image, hole)?;
-        if noise.len() != 4 * (size / 8) * (size / 8) {
+        if noise.len() != self.steps.noises() * 4 * (size / 8) * (size / 8) {
             return Err(Error::Shape(format!(
                 "{} noise values for {size}",
                 noise.len()
@@ -1225,9 +1470,14 @@ impl Remove {
     }
 
     fn open(&self, part: Part, size: usize) -> Result<Session> {
-        let path = self
-            .store
-            .path(&REMOVE, Self::graph(part, self.graph_size(part, size)));
+        let path = if part == Part::Unet && self.steps == Steps::Lcm4 {
+            self.store
+                .dir(&REMOVE_FAST)
+                .join(format!("unet-lcm-{size}.onnx"))
+        } else {
+            self.store
+                .path(&REMOVE, Self::graph(part, self.graph_size(part, size)))
+        };
         // No warm-up: with WebGPU the only provider there is nothing
         // to fall through to, and a warm-up of the UNet is a step's
         // time on every open.
@@ -1349,12 +1599,6 @@ impl Remove {
             )));
         }
 
-        let (ts, sigmas) = schedule(STEPS, STRENGTH);
-        let mut x: Vec<f32> = image_lat
-            .iter()
-            .zip(noise)
-            .map(|(z, e)| z * SCALE + e * sigmas[0])
-            .collect();
         let mask16: Vec<f16> = mask.iter().map(|&v| f16::from_f32(v)).collect();
         let masked16: Vec<f16> = masked_lat
             .iter()
@@ -1367,35 +1611,31 @@ impl Remove {
             .map(|&v| f16::from_f32(v * px))
             .collect();
         let (prompt, pooled) = (self.prompt.clone(), self.pooled.clone());
+        let latents: Vec<f32> = image_lat.iter().map(|z| z * SCALE).collect();
+        let steps = self.steps;
+        let mut calls = 0;
         let t = Instant::now();
-        let (_, load) = self.with(Part::Unet, size, |s| {
-            for i in 0..ts.len() {
-                let scale = 1.0 / (sigmas[i] * sigmas[i] + 1.0).sqrt();
+        let (x, load) = self.with(Part::Unet, size, |s| {
+            sample(steps, &latents, noise, |input, timestep| {
+                calls += 1;
                 let mut sample: Vec<f16> = Vec::with_capacity(9 * l * l);
-                sample.extend(x.iter().map(|&v| f16::from_f32(v * scale)));
+                sample.extend(input.iter().map(|&v| f16::from_f32(v)));
                 sample.extend_from_slice(&mask16);
                 sample.extend_from_slice(&masked16);
                 let out = s.run(ort::inputs![
                     "sample" => Tensor::from_array(([1usize, 9, l, l], sample))?,
-                    "timestep" => Tensor::from_array(([1usize], vec![ts[i]]))?,
+                    "timestep" => Tensor::from_array(([1usize], vec![timestep]))?,
                     "encoder_hidden_states" => Tensor::from_array(([1usize, 77, 2048], prompt.clone()))?,
                     "text_embeds" => Tensor::from_array(([1usize, POOLED], pooled.clone()))?,
                     "time_ids" => Tensor::from_array(([1usize, 6], ids.clone()))?,
                 ])?;
                 let (_, eps) = out["out_sample"].try_extract_tensor::<f16>()?;
-                if eps.len() != x.len() {
-                    return Err(Error::Shape(format!("{} values from the UNet", eps.len())));
-                }
-                let dt = sigmas[i + 1] - sigmas[i];
-                for (v, e) in x.iter_mut().zip(eps) {
-                    *v += dt * e.to_f32();
-                }
-            }
-            Ok(())
+                Ok(eps.iter().map(|e| e.to_f32()).collect())
+            })
         })?;
         times.loads += load;
         times.steps = t.elapsed().as_secs_f64() - load;
-        times.unet_calls = ts.len();
+        times.unet_calls = calls;
         if x.iter().any(|v| !v.is_finite()) {
             return Err(Error::Implausible("the latents are not finite".into()));
         }
@@ -1471,6 +1711,189 @@ mod tests {
         }
         // At full strength the whole schedule runs.
         assert_eq!(schedule(STEPS, 1.0).0.len(), STEPS);
+    }
+
+    /// diffusers' `LCMScheduler` from RORem's Euler config,
+    /// `set_timesteps(4)` and the cut at strength 0.99 (diffusers
+    /// 0.41.0, float32): the timesteps and their cumulative alphas.
+    const LCM_ALL: [usize; 4] = [999, 759, 499, 259];
+    const LCM_ALPHAS: [f64; 4] = [
+        4.660_095_088e-3,
+        5.221_289_024e-2,
+        2.776_694_298e-1,
+        6.589_752_436e-1,
+    ];
+
+    #[test]
+    fn the_lcm_schedule_is_diffusers_own() {
+        let lcm = Lcm::new(LCM_STEPS, STRENGTH);
+        assert_eq!(lcm.timesteps, LCM_ALL[1..]);
+        assert_eq!(Lcm::new(LCM_STEPS, 1.0).timesteps, LCM_ALL);
+        let all = Lcm::new(LCM_STEPS, 1.0);
+        for (i, want) in LCM_ALPHAS.iter().enumerate() {
+            let got = all.alpha(i);
+            assert!(
+                (got - want).abs() <= 1e-6 * want,
+                "{i}: {got} against {want}"
+            );
+        }
+        assert_eq!(Steps::Lcm4.noises(), 3);
+        assert_eq!(Steps::Euler25.noises(), 1);
+    }
+
+    /// One LCM step on a known input, sin(0.7 i) for the latents and
+    /// cos(0.3 i) for the UNet's noise, i from 0 to 15, against
+    /// diffusers' `LCMScheduler.step`: at 759 with the noise its
+    /// generator drew (torch's seed 0), and at 259, the last, with none.
+    #[test]
+    fn an_lcm_step_is_diffusers_own() {
+        let sample: Vec<f32> = (0..16).map(|i| (i as f32 * 0.7).sin()).collect();
+        let eps: Vec<f32> = (0..16).map(|i| (i as f32 * 0.3).cos()).collect();
+        let noise = [
+            -1.125_839_8,
+            -1.152_360_2,
+            -0.250_578_58,
+            -0.433_878_8,
+            0.848_710_36,
+            0.692_009_15,
+            -0.316_012_77,
+            -2.115_219_4,
+            0.322_274_92,
+            -1.263_334_8,
+            0.349_983_2,
+            0.308_133_93,
+            0.119_841_51,
+            1.237_657_9,
+            1.116_777_2,
+            -0.247_278_15,
+        ];
+        let next = [
+            -3.201_925,
+            -1.638_571_9,
+            0.206_624_18,
+            0.226_319_94,
+            0.680_310_6,
+            -0.379_607_08,
+            -1.768_420_6,
+            -2.929_927_3,
+            0.473_650_7,
+            0.994_773_5,
+            4.035_123_3,
+            4.757_647,
+            4.085_919_4,
+            3.417_526_2,
+            1.204_688_2,
+            -1.765_562_3,
+        ];
+        let last = [
+            -0.719_38,
+            0.106_343_45,
+            0.620_217_56,
+            0.616_189_4,
+            0.151_989_56,
+            -0.483_006_83,
+            -0.910_224_6,
+            -0.847_079_16,
+            -0.247_173_19,
+            0.671_083_7,
+            1.521_503_9,
+            1.927_669_5,
+            1.697_866_4,
+            0.915_309_97,
+            -0.098_771_8,
+            -0.932_03,
+        ];
+        let lcm = Lcm::new(LCM_STEPS, STRENGTH);
+        for (i, noise, want) in [(0, Some(&noise[..]), next), (2, None, last)] {
+            let mut x = sample.clone();
+            lcm.step(i, &mut x, &eps, noise);
+            for (k, (a, b)) in x.iter().zip(want).enumerate() {
+                assert!(
+                    (a - b).abs() <= 1e-5 * b.abs().max(1.0),
+                    "step {i}, {k}: {a} against {b}"
+                );
+            }
+        }
+    }
+
+    /// Four steps on a stand-in UNet that answers its input as the
+    /// noise: the same seed makes the same latents, another seed others,
+    /// and every call sees one of the schedule's timesteps.
+    #[test]
+    fn four_steps_are_the_seeds() {
+        let n = 4 * 8 * 8;
+        let latents: Vec<f32> = (0..n).map(|i| (i as f32 * 0.37).sin()).collect();
+        let run = |seed| {
+            let mut seen = Vec::new();
+            let noise = normals(Steps::Lcm4.noises() * n, seed);
+            let x = sample(Steps::Lcm4, &latents, &noise, |input, t| {
+                seen.push(t);
+                Ok(input.to_vec())
+            })
+            .unwrap();
+            (x, seen)
+        };
+        let (a, seen) = run(7);
+        assert_eq!(seen, [759.0, 499.0, 259.0]);
+        assert!(a.iter().all(|v| v.is_finite()));
+        assert_eq!(a, run(7).0);
+        assert_ne!(a, run(8).0);
+        // Too little noise is refused.
+        assert!(matches!(
+            sample(Steps::Lcm4, &latents, &normals(n, 7), |i, _| Ok(i.to_vec())),
+            Err(Error::Shape(_))
+        ));
+    }
+
+    /// A load runs 25 steps whatever the store holds; four are taken
+    /// only with the four-step files beside the remove's, and refused
+    /// as missing otherwise. Nothing is opened: the files are blanks
+    /// of their published sizes.
+    #[test]
+    fn four_steps_are_asked_for_and_want_their_files() {
+        let root = std::env::temp_dir().join(format!(
+            "greycard-remove-steps-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let store = Store::at(&root);
+        let lay = |m: &crate::Model| {
+            for f in m.files {
+                let path = store.path(m, f);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::File::create(&path)
+                    .unwrap()
+                    .set_len(f.bytes)
+                    .unwrap();
+            }
+        };
+        lay(&REMOVE);
+        let mut remove = Remove::load(&store, &[Provider::WebGpu]).expect("load");
+        assert_eq!(remove.steps(), Steps::Euler25);
+        assert!(!remove.has_fast());
+        assert!(matches!(
+            remove.set_steps(Steps::Lcm4),
+            Err(Error::Missing(_))
+        ));
+        assert_eq!(remove.steps(), Steps::Euler25);
+        lay(&REMOVE_FAST);
+        let mut remove = Remove::load(&store, &[Provider::WebGpu]).expect("load");
+        assert_eq!(remove.steps(), Steps::Euler25, "not chosen by the store");
+        assert!(remove.has_fast());
+        remove.set_steps(Steps::Lcm4).expect("four steps");
+        assert_eq!(remove.steps(), Steps::Lcm4);
+        remove.set_steps(Steps::Euler25).expect("25 steps");
+        assert_eq!(remove.steps(), Steps::Euler25);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_steps_are_read_from_the_environment() {
+        assert_eq!(Steps::from_env(None), None);
+        assert_eq!(Steps::from_env(Some("4")), Some(Steps::Lcm4));
+        assert_eq!(Steps::from_env(Some("25")), Some(Steps::Euler25));
+        assert_eq!(Steps::from_env(Some("8")), None);
     }
 
     #[test]

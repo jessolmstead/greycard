@@ -983,6 +983,7 @@ impl State {
                 crop_start: Default::default(),
                 crop_last: "Free".into(),
                 crop_start_due: false,
+                fill_choice: None,
                 target: None,
                 fresh_mask: None,
                 placing: None,

@@ -1808,6 +1808,14 @@ export component App inherits Window {
     // Whether the chosen patch is a Fill the generative remove made,
     // whose row offers its next variation.
     in-out property <bool> patch-varies: false;
+    // The Fill's maker, Patch, Fast or Best: shown with the Fill in
+    // hand or a Fill chosen, the chosen one's or the next one's, and
+    // why each can never run here. The panel's row and the Settings
+    // sheet's bind the one property.
+    in property <bool> fill-shown: false;
+    in-out property <string> fill-choice: "Best";
+    in property <[string]> fill-why-not;
+    callback fill-chosen(string);
     in-out property <[Pt]> patch-handles: [];
     // The chosen patch's edge on the view, and where its feather
     // begins, as a Path's commands; empty when there is none to show.
@@ -3606,6 +3614,10 @@ export component App inherits Window {
                             patch-names <=> root.patch-names;
                             patch <=> root.patch;
                             patch-varies <=> root.patch-varies;
+                            fill-shown: root.fill-shown;
+                            fill-choice <=> root.fill-choice;
+                            fill-why-not: root.fill-why-not;
+                            fill-chosen(c) => { root.fill-chosen(c); }
                             retouch-toggled(a) => { root.retouch-toggled(a); }
                             patch-changed(a) => { root.patch-changed(a); }
                             delete-patch => { root.delete-patch(); }
@@ -4678,6 +4690,9 @@ export component App inherits Window {
         jpegs-apart-changed => { root.jpegs-apart-changed(); }
         crop-start <=> root.crop-start;
         crop-start-changed => { root.crop-start-changed(); }
+        fill-choice <=> root.fill-choice;
+        fill-why-not: root.fill-why-not;
+        fill-chosen(c) => { root.fill-chosen(c); }
         canvas-choice <=> root.canvas-choice;
         canvas-names: root.canvas-names;
         canvas-changed => { root.canvas-changed(); }

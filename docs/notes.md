@@ -441,3 +441,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§426. The vectorscope folds the shot away](notes/426-the-vectorscope-folds-the-shot-away.md) (2026-10-25)
 - [§427. Shift and the wheel on a Mac](notes/427-shift-and-the-wheel-on-a-mac.md) (2026-10-25)
 - [§428. The display's profile from ColorSync](notes/428-the-displays-profile-from-colorsync.md) (2026-10-25)
+- [§429. Patch, Fast, or Best for a Fill](notes/429-patch-fast-or-best-for-a-fill.md) (2026-10-25)

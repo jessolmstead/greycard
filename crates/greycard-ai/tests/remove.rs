@@ -6,11 +6,15 @@
 //! `runs/latents_ref_torch32_{N}.npy`, the torch fp32 run's final
 //! latents, for N of 512 and 1024), and run with `--ignored
 //! --test-threads=1`: two at once would not fit a card. Needs
-//! WebGPU.
+//! WebGPU. The 4-step tests want the store to hold the 4-step UNet
+//! too ([`greycard_ai::REMOVE_FAST`]) and the folder
+//! `runs/noise_lcm_{N}_1234.f32`, the noise of the three calls, and
+//! `runs/latents_ref_lcm_torch32_{N}.npy`, diffusers' 4-step pipeline
+//! in torch fp32 on that noise.
 
 use std::path::Path;
 
-use greycard_ai::remove::{Vae, composite};
+use greycard_ai::remove::{Steps, Vae, composite};
 use greycard_ai::{Provider, Remove, Rgbf, Store};
 
 fn read_f32(path: &Path) -> Vec<f32> {
@@ -59,7 +63,7 @@ fn psnr(a: &Rgbf, b: &Rgbf, inside: &[bool]) -> f64 {
 #[test]
 #[ignore]
 fn the_removal_at_1024_matches_the_reference() {
-    parity(1024, 35.0, Vae::Whole);
+    parity(1024, 35.0, Vae::Whole, Steps::Euler25);
 }
 
 /// At 1024 with the decoder in 512 tiles: against the reference, as
@@ -72,10 +76,11 @@ fn the_removal_at_1024_matches_the_reference() {
 #[test]
 #[ignore]
 fn the_removal_at_1024_in_tiles_matches_the_whole() {
-    let Some(case) = Case::load(1024) else {
+    let Some(case) = Case::load(1024, Steps::Euler25) else {
         return;
     };
     let mut remove = Remove::load(&case.store, &[Provider::WebGpu]).expect("load");
+    remove.set_steps(Steps::Euler25).expect("25 steps");
     remove.set_vae(Vae::Whole);
     let whole = remove
         .decoded_with_noise(&case.image, &case.hole, &case.noise)
@@ -115,7 +120,23 @@ fn the_removal_at_1024_in_tiles_matches_the_whole() {
 #[test]
 #[ignore]
 fn the_removal_at_512_matches_the_reference() {
-    parity(512, 33.0, Vae::Whole);
+    parity(512, 33.0, Vae::Whole, Steps::Euler25);
+}
+
+/// The 4-step UNet and sampler against diffusers' pipeline at 1024,
+/// held to the 25-step floor: measured 37.4 dB with the authors' LoRA
+/// and 38.2 with ours, against 38.6 for 25 steps.
+#[test]
+#[ignore]
+fn the_4_step_removal_at_1024_matches_the_reference() {
+    parity(1024, 35.0, Vae::Whole, Steps::Lcm4);
+}
+
+/// The same at 512, held to the 25-step floor there.
+#[test]
+#[ignore]
+fn the_4_step_removal_at_512_matches_the_reference() {
+    parity(512, 33.0, Vae::Whole, Steps::Lcm4);
 }
 
 /// One reference case: the store, the crop and its hole, the noise,
@@ -132,7 +153,7 @@ struct Case {
 }
 
 impl Case {
-    fn load(n: usize) -> Option<Self> {
+    fn load(n: usize, steps: Steps) -> Option<Self> {
         let (Some(models), Some(dir)) = (
             std::env::var_os("GREYCARD_MODELS"),
             std::env::var_os("GREYCARD_REMOVE_PARITY"),
@@ -154,8 +175,15 @@ impl Case {
         );
         let inside: Vec<bool> = mask.as_raw().iter().map(|&v| v > 127).collect();
         let hole = inside.iter().map(|&m| f32::from(u8::from(m))).collect();
-        let noise = read_f32(&dir.join(format!("runs/noise_{n}_1234.f32")));
-        let reference = read_npy_f32(&dir.join(format!("runs/latents_ref_torch32_{n}.npy")));
+        let lcm = if steps == Steps::Lcm4 { "_lcm" } else { "" };
+        let noise = dir.join(format!("runs/noise{lcm}_{n}_1234.f32"));
+        if !noise.is_file() {
+            eprintln!("skipped: no {}", noise.display());
+            return None;
+        }
+        let noise = read_f32(&noise);
+        let reference = read_npy_f32(&dir.join(format!("runs/latents_ref{lcm}_torch32_{n}.npy")));
+        assert_eq!(noise.len(), steps.noises() * 4 * (n / 8) * (n / 8));
         assert_eq!(reference.len(), 4 * (n / 8) * (n / 8));
         Some(Self {
             store: Store::at(models),
@@ -186,7 +214,7 @@ fn report(remove: &Remove) {
     );
 }
 
-fn parity(n: usize, floor: f64, vae: Vae) {
+fn parity(n: usize, floor: f64, vae: Vae, steps: Steps) {
     let Some(Case {
         store,
         dir,
@@ -195,11 +223,12 @@ fn parity(n: usize, floor: f64, vae: Vae) {
         hole,
         noise,
         reference,
-    }) = Case::load(n)
+    }) = Case::load(n, steps)
     else {
         return;
     };
     let mut remove = Remove::load(&store, &[Provider::WebGpu]).expect("load");
+    remove.set_steps(steps).expect("the steps' UNet");
     remove.set_vae(vae);
     let out = remove
         .remove_with_noise(&image, &hole, &noise)
@@ -219,7 +248,8 @@ fn parity(n: usize, floor: f64, vae: Vae) {
     println!(
         "hole PSNR {hole_psnr:.2} dB against the reference's decode; its outside {drift:.2} dB from the picture"
     );
-    if let Ok(png) = image::open(dir.join(format!("runs/ref_torch32_{n}.png"))) {
+    let lcm = if steps == Steps::Lcm4 { "_lcm" } else { "" };
+    if let Ok(png) = image::open(dir.join(format!("runs/ref{lcm}_torch32_{n}.png"))) {
         let png = Rgbf::new(
             n,
             n,

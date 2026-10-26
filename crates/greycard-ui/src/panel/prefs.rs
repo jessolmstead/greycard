@@ -743,6 +743,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_xmp_sidecars(st.window.xmp_sidecars);
             app.set_jpegs_apart(st.views.jpegs_apart);
             app.set_crop_start(st.develop.crop_start.name().into());
+            crate::panel::retouch::show_patches(&st, &st.develop.edit, &app);
             show_start(&app, &settings::Settings::load().start_folder);
             app.set_settings_note("".into());
             // A Check now still on its way keeps its "Checking...".

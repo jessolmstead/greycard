@@ -3,7 +3,7 @@
 // remove made has Another on its row, its next variation.
 
 import { Theme } from "../theme.slint";
-import { TipArea, Section, EditSlider, Steps, PanelButton } from "../controls.slint";
+import { TipArea, Section, EditSlider, Steps, PanelButton, Segmented } from "../controls.slint";
 
 export component RetouchSection inherits Section {
     in-out property <bool> retouch-enabled;
@@ -16,6 +16,13 @@ export component RetouchSection inherits Section {
     in-out property <[string]> patch-names;
     in-out property <int> patch;
     in-out property <bool> patch-varies;
+    // What makes a Fill: shown with the Fill in hand or a Fill chosen,
+    // the chosen one's or the next one's, and why each of Patch, Fast
+    // and Best cannot run here ("" when it can).
+    in property <bool> fill-shown;
+    in-out property <string> fill-choice;
+    in property <[string]> fill-why-not;
+    callback fill-chosen(string);
     callback retouch-toggled(string);
     callback patch-another();
     callback patch-changed(int);
@@ -87,6 +94,16 @@ export component RetouchSection inherits Section {
             text: round(root.patch-opacity * 100) + "%";
             changed(v) => { root.patch-edited(); }
         }
+    }
+    if root.fill-shown: Segmented {
+        options: ["Patch", "Fast", "Best"];
+        tips: ["From the picture around it, at once", "The remove in four steps: quicker, rougher on large areas", "The remove in full"];
+        why-not: root.fill-why-not;
+        current: root.fill-choice;
+        picks: false;
+        accessible-role: list;
+        accessible-value: self.current;
+        selected(c) => { root.fill-chosen(c); }
     }
     if root.patch-names.length > 0: Rectangle {
         border-radius: Theme.radius-md;

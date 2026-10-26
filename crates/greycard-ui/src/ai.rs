@@ -20,13 +20,14 @@ use greycard_ai::sky;
 #[cfg(test)]
 use greycard_ai::sky::Prior;
 use greycard_ai::{
-    Denoiser, Fill, Model, Prompt, Provider, REMOVE, Remove, Rgb8, Rgbf, SAM, SAM3, SKY, Sam, Sky,
-    Store, Subject, refine,
+    Denoiser, Fill, Model, Prompt, Provider, REMOVE, REMOVE_FAST, Remove, Rgb8, Rgbf, SAM, SAM3,
+    SKY, Sam, Sky, Store, Subject, refine,
 };
 use greycard_core::develop::noise;
 use greycard_core::develop::retouch::Region;
 use greycard_core::image::WorkingImage;
 use greycard_edit::Edit;
+use greycard_edit::retouch::FillChoice;
 // The learned rasters' stages, by version, in the disk cache's keys
 // below: the develop key takes the same in for an edit with such a
 // mask, so the pictures kept of it are made again too.
@@ -70,6 +71,28 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn set_test_webgpu(on: Option<bool>) {
     TEST_WEBGPU.with(|t| t.set(on));
+}
+
+/// Whether the GPU the models run on shares the machine's memory
+/// (`runtime::webgpu_unified`), false when it is not known.
+pub fn unified() -> bool {
+    #[cfg(test)]
+    if let Some(on) = TEST_UNIFIED.with(|t| t.get()) {
+        return on;
+    }
+    greycard_ai::runtime::webgpu_unified().unwrap_or(false)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_UNIFIED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// [`unified`]'s answer on this thread, for a test; `None` asks the
+/// adapter.
+#[cfg(test)]
+pub(crate) fn set_test_unified(on: Option<bool>) {
+    TEST_UNIFIED.with(|t| t.set(on));
 }
 
 /// Whether the Subject original is on record as having failed on
@@ -671,11 +694,89 @@ pub enum Engine {
     Remove,
 }
 
-/// Whether a Fill drawn now is the generative remove's
-/// ([`Patch::remove`]): the store has its model and the providers
-/// include WebGPU. A patch drawn before the model came keeps LaMa.
-pub fn marks_remove(have_remove: bool, webgpu: bool) -> bool {
-    have_remove && webgpu
+/// What a Fill's makers need, as this machine has it: LaMa, the
+/// remove, the four-step remove's own files, and WebGPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FillHaves {
+    pub fill: bool,
+    pub remove: bool,
+    pub fast: bool,
+    pub webgpu: bool,
+}
+
+impl FillHaves {
+    /// The store's models and this machine's providers.
+    pub fn of(store: Option<&Store>) -> Self {
+        let has = |m: &Model| store.is_some_and(|s| s.have(m));
+        Self {
+            fill: has(&greycard_ai::FILL),
+            remove: has(&REMOVE),
+            fast: has(&REMOVE_FAST),
+            webgpu: on_webgpu(),
+        }
+    }
+
+    /// Why `choice` can never make a Fill on this machine, or None:
+    /// both removes want WebGPU. A model not downloaded is not a
+    /// reason ([`FillHaves::missing`]): it can be fetched.
+    pub fn why_not(self, choice: FillChoice) -> Option<&'static str> {
+        match choice {
+            FillChoice::Patch => None,
+            _ if !self.webgpu => Some("Needs a GPU with WebGPU"),
+            _ => None,
+        }
+    }
+
+    /// The model `choice` waits for, the first to fetch: Patch wants
+    /// LaMa, Best the remove, Fast the remove and then its own files,
+    /// which sit beside the remove's.
+    pub fn missing(self, choice: FillChoice) -> Option<&'static Model> {
+        match choice {
+            FillChoice::Patch if !self.fill => Some(&greycard_ai::FILL),
+            FillChoice::Best | FillChoice::Fast if !self.remove => Some(&REMOVE),
+            FillChoice::Fast if !self.fast => Some(&REMOVE_FAST),
+            _ => None,
+        }
+    }
+
+    /// Whether `choice` can make a Fill here now.
+    pub fn runs(self, choice: FillChoice) -> bool {
+        self.why_not(choice).is_none() && self.missing(choice).is_none()
+    }
+
+    /// What a Fill drawn now is made by when `wanted` is asked: it, or
+    /// where it cannot run the other remove, or LaMa. A patch drawn
+    /// before a model came keeps what it was drawn with.
+    pub fn drawn(self, wanted: FillChoice) -> FillChoice {
+        let other = match wanted {
+            FillChoice::Fast => FillChoice::Best,
+            FillChoice::Best => FillChoice::Fast,
+            FillChoice::Patch => FillChoice::Patch,
+        };
+        [wanted, other]
+            .into_iter()
+            .find(|&c| self.runs(c))
+            .unwrap_or(FillChoice::Patch)
+    }
+
+    /// The choice before one is made: Fast where the GPU shares the
+    /// machine's memory and Fast can run, since the full remove is a
+    /// minute a fill there; Best otherwise.
+    pub fn default_choice(self, unified: bool) -> FillChoice {
+        if unified && self.runs(FillChoice::Fast) {
+            FillChoice::Fast
+        } else {
+            FillChoice::Best
+        }
+    }
+}
+
+/// The sampler a remove's Fill runs: four steps for a Fast one.
+pub fn steps_for(patch: &Patch) -> greycard_ai::remove::Steps {
+    match patch.fill_choice() {
+        FillChoice::Fast => greycard_ai::remove::Steps::Lcm4,
+        _ => greycard_ai::remove::Steps::Euler25,
+    }
 }
 
 /// The engine a Fill patch's `window`, at the picture's own pixels, is
@@ -718,6 +819,7 @@ fn same_fill(a: &Patch, b: &Patch) -> bool {
         && a.feather == b.feather
         && a.method == b.method
         && a.remove == b.remove
+        && a.fast == b.fast
 }
 
 /// What [`regrain`] measured at the hole's mean level, in the frame
@@ -1123,11 +1225,13 @@ impl Ai {
         patch.feather.to_bits().hash(&mut h);
         std::mem::discriminant(&patch.method).hash(&mut h);
         patch.remove.hash(&mut h);
+        patch.fast.hash(&mut h);
         size.hash(&mut h);
         (region.x, region.y, region.width, region.height).hash(&mut h);
         window.hash(&mut h);
         greycard_ai::FILL.id.hash(&mut h);
         REMOVE.id.hash(&mut h);
+        REMOVE_FAST.id.hash(&mut h);
         window_print(image, region, window).hash(&mut h);
         Some(root.join(format!("{:016x}.fill", h.finish())))
     }
@@ -1174,11 +1278,20 @@ impl Ai {
         image: &WorkingImage,
     ) -> Result<Engine, NoFill> {
         let (window, _) = self.window_of(patch, region, image);
-        let have = self.store.as_ref().is_some_and(|s| s.have(&REMOVE));
+        let has = |m: &Model| self.store.as_ref().is_some_and(|s| s.have(m));
+        // A Fast one wants its own files too, and names them missing.
+        let (have, needed) = match patch.fill_choice() {
+            FillChoice::Fast if has(&REMOVE) => (has(&REMOVE_FAST), &REMOVE_FAST),
+            _ => (has(&REMOVE), &REMOVE),
+        };
         if patch.remove && self.providers.is_empty() {
             self.providers = Provider::available();
         }
-        let engine = engine_for(patch.remove, have, &self.providers, window)?;
+        let engine =
+            engine_for(patch.remove, have, &self.providers, window).map_err(|e| match e {
+                NoFill::Missing(_) => NoFill::Missing(needed),
+                e => e,
+            })?;
         if engine == Engine::Lama && !self.fill_available() {
             return Err(NoFill::Missing(&greycard_ai::FILL));
         }
@@ -1241,7 +1354,13 @@ impl Ai {
                     return Err(NoFill::Failed(e.to_string()));
                 }
             },
-            Engine::Remove if self.remove.is_none() => {
+            // Loaded again for a Fast fill when its files came after.
+            Engine::Remove
+                if self
+                    .remove
+                    .as_ref()
+                    .is_none_or(|r| patch.fast && !r.has_fast()) =>
+            {
                 // The card's memory is the machine's on unified memory,
                 // and the remove keeps more open there.
                 let machine = greycard_ai::remove::Machine {
@@ -1338,6 +1457,9 @@ impl Ai {
             }
             Engine::Remove => {
                 let remove = self.remove.as_mut().expect("the remove, loaded above");
+                if let Err(e) = remove.set_steps(steps_for(patch)) {
+                    return Err(self.remember_failure(patch, window, e.to_string()));
+                }
                 let made = match remove.remove_window(&input, &hole, remove_seed(patch)) {
                     Ok(f) => f,
                     Err(e) => {
@@ -1348,8 +1470,9 @@ impl Ai {
                 let remove = self.remove.as_ref().expect("the remove, loaded above");
                 let t = remove.times();
                 tracing::info!(
-                    "fill {}: the generative remove, seed {}, a window of {ww}x{wh} taken down by {:.2} to run at {} on {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?})",
+                    "fill {}: the generative remove in {}, seed {}, a window of {ww}x{wh} taken down by {:.2} to run at {} on {}: loads {:.2}s, encode {:.2}s, {} UNet calls {:.2}s, decode {:.2}s, {:.2}s in all ({:?})",
                     patch.name(),
+                    remove.steps().words(),
                     patch.seed,
                     t.factor,
                     t.size,
@@ -3353,6 +3476,54 @@ fn decode(v: f32) -> f32 {
 mod tests {
     use super::*;
 
+    /// Each choice runs where what it needs is here, and says why not
+    /// otherwise; a patch drawn asks for the sticky choice and falls to
+    /// the other remove, then to LaMa; the default is Fast only on
+    /// unified memory with its files here.
+    #[test]
+    fn the_fill_choices_run_where_their_models_are() {
+        use FillChoice::{Best, Fast, Patch as Lama};
+        let all = FillHaves {
+            fill: true,
+            remove: true,
+            fast: true,
+            webgpu: true,
+        };
+        for c in FillChoice::ALL {
+            assert_eq!(all.why_not(c), None);
+            assert_eq!(all.missing(c), None);
+            assert_eq!(all.drawn(c), c);
+        }
+        let no_fast = FillHaves { fast: false, ..all };
+        assert_eq!(no_fast.why_not(Fast), None, "a download is not a reason");
+        assert_eq!(no_fast.missing(Fast), Some(&REMOVE_FAST));
+        assert_eq!(no_fast.missing(Best), None);
+        assert_eq!(no_fast.drawn(Fast), Best);
+        // Fast's files need the remove's beside them: that first.
+        let no_remove = FillHaves {
+            remove: false,
+            fast: false,
+            ..all
+        };
+        assert_eq!(no_remove.missing(Fast), Some(&REMOVE));
+        assert_eq!(no_remove.missing(Best), Some(&REMOVE));
+        assert_eq!(no_remove.drawn(Best), Lama);
+        let cpu = FillHaves {
+            webgpu: false,
+            ..all
+        };
+        assert_eq!(cpu.why_not(Best), Some("Needs a GPU with WebGPU"));
+        assert_eq!(cpu.why_not(Fast), Some("Needs a GPU with WebGPU"));
+        assert_eq!(cpu.why_not(Lama), None);
+        assert_eq!(cpu.drawn(Fast), Lama);
+        let no_lama = FillHaves { fill: false, ..all };
+        assert_eq!(no_lama.why_not(Lama), None);
+        assert_eq!(no_lama.missing(Lama), Some(&greycard_ai::FILL));
+        assert_eq!(all.default_choice(true), Fast);
+        assert_eq!(all.default_choice(false), Best);
+        assert_eq!(no_fast.default_choice(true), Best);
+    }
+
     /// The remove makes a Fill drawn for it when its window fits and
     /// it can run; a bigger window is LaMa's; where it cannot run, the
     /// patch is left as it was; a patch drawn for LaMa stays LaMa's.
@@ -3366,9 +3537,6 @@ mod tests {
         };
         let gpu = [Provider::WebGpu, Provider::Cpu];
         let cpu = [Provider::Cpu];
-        assert!(marks_remove(true, true));
-        assert!(!marks_remove(false, true));
-        assert!(!marks_remove(true, false));
         let engine = |marked, have, providers: &[Provider], w| {
             engine_for(marked, have, providers, w).map_err(|e| match e {
                 NoFill::Missing(m) => m.id,
@@ -3416,6 +3584,15 @@ mod tests {
                 Ok(Engine::Lama)
             );
         }
+        // A Fast patch runs four steps, a Best one 25.
+        let mut fill = Patch {
+            method: greycard_edit::retouch::Method::Fill,
+            ..Default::default()
+        };
+        fill.set_fill_choice(FillChoice::Fast);
+        assert_eq!(steps_for(&fill), greycard_ai::remove::Steps::Lcm4);
+        fill.set_fill_choice(FillChoice::Best);
+        assert_eq!(steps_for(&fill), greycard_ai::remove::Steps::Euler25);
         // The seed's noise is the patch's own.
         let p = |id, seed| Patch {
             id,
@@ -3544,6 +3721,22 @@ mod tests {
         let mut varied = patch.clone();
         varied.seed = 3;
         assert!(!ai.fill_kept(&varied, &region, &image));
+        // The same patch made in four steps is another fill, in
+        // another slot and in memory; made in full again, the first.
+        let mut fast = patch.clone();
+        fast.set_fill_choice(FillChoice::Fast);
+        assert_ne!(
+            ai.fill_path(&fast, &region, &image, window),
+            ai.fill_path(&patch, &region, &image, window)
+        );
+        assert!(!ai.fill_kept(&fast, &region, &image));
+        let mut lama = patch.clone();
+        lama.set_fill_choice(FillChoice::Patch);
+        assert!(!ai.fill_kept(&lama, &region, &image));
+        ai.forget(Some(file.clone()));
+        assert!(ai.fill_kept(&patch, &region, &image));
+        assert!(ai.fill_in_memory(&fast, window).is_none());
+        ai.forget(Some(file.clone()));
         // So is the patch on the picture developed otherwise: another
         // white balance, or a virtual copy's, under the window.
         let mut warmer = image.clone();

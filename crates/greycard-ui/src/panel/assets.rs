@@ -881,9 +881,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         );
                     }
                 }
-                // Declining the generative remove keeps LaMa: the Fill
-                // in hand goes on as it was, with its hint.
-                (Fetch::Model(model), false) if model.id == greycard_ai::REMOVE.id => {
+                // Declining the generative remove, or its four steps,
+                // keeps what the Fill had: the Fill in hand goes on as
+                // it was, with its hint.
+                (Fetch::Model(model), false)
+                    if model.id == greycard_ai::REMOVE.id
+                        || model.id == greycard_ai::REMOVE_FAST.id =>
+                {
                     st.sheets.declined.push(model.id);
                     if st.develop.retouching.is_some() {
                         app.set_status(crate::panel::retouch::RETOUCH_HINT.into());

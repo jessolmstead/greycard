@@ -265,12 +265,13 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       floor applied near the channel peaks only
 - [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
       Remove and through us, blind pairs, scored (§380)
-- [ ] A faster remove on Apple GPUs: an M5 with 24 GB takes 85 s
-      for a 1024 removal on WebGPU over Metal (2026-10-24), the
-      UNet's 24 calls 59 s of it at 2.5 s a call. Our own LCM
-      distilled from RORem-mixed at 1024 (the authors' LoRA was
-      measured and not taken, §415; the `rorem-4s` branch keeps the
-      sampler) takes the UNet to 4 calls; the memory policy is §421
+- [ ] The Fast fill's files uploaded to greycard-rorem-fast (the
+      registry already names them, §429), then its time on an M5,
+      where Best is 70 s a fill; and whether a choice made on a
+      selected patch should also set the default for the next
+- [ ] A removal harness run with Fast beside Best, and a longer
+      low-rate tail or a hole-mean term in the distillation's loss if
+      the shards on large holes are worth chasing (§429)
 - [ ] ONNX Runtime's WebGPU Conv is wrong for input channel counts
       that are a multiple of 3 but not 12 (§399); report upstream with
       the reproducer under target/rorem/ortbug

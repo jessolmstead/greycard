@@ -646,6 +646,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.develop.presets = presets;
         st.develop.preset_store = preset_store;
         crate::panel::crop::take_settings(&mut st, &remembered);
+        st.develop.fill_choice =
+            greycard_edit::retouch::FillChoice::from_name(&remembered.fill_choice);
         st
     }));
     app.set_compare_tiles(ModelRc::from(state.borrow().culling.compare_tiles.clone()));
@@ -1732,6 +1734,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.match_unchecked = kept.match_unchecked;
         settings.crop_start = kept.crop_start;
         settings.crop_last = kept.crop_last;
+        settings.fill_choice = kept.fill_choice;
         settings.ui_scale = kept.ui_scale;
         settings.keys = kept.keys;
         settings.settings_category = kept.settings_category;
@@ -2296,6 +2299,9 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // aspect is picked from the crop's list.
         crop_start: String::new(),
         crop_last: String::new(),
+        // Written as the Fill's choice is made, in the panel or the
+        // Settings sheet.
+        fill_choice: String::new(),
         // Written as the Settings sheet's row is chosen; the system's
         // own scale from what the window saw, by the caller.
         ui_scale: 100,

@@ -1156,6 +1156,12 @@ export component Segmented inherits Rectangle {
     /// Whether a click makes its option current itself; false for a
     /// row whose current the host sets once it has acted on the click.
     in property <bool> picks: true;
+    /// Each option's words at the pointer after a rest, by index; none
+    /// for an option past the list's end.
+    in property <[string]> tips;
+    /// Why each option cannot be chosen, by index: one with words is
+    /// greyed, takes no click, and says them in place of its tip.
+    in property <[string]> why-not;
     callback selected(string);
     height: Theme.control-height;
     border-radius: Theme.radius-md;
@@ -1166,23 +1172,26 @@ export component Segmented inherits Rectangle {
     HorizontalLayout {
         padding: 2px;
         spacing: 2px;
-        for option in root.options: Rectangle {
+        for option[i] in root.options: Rectangle {
             property <bool> on: option == root.current;
+            property <bool> usable: root.why-not[i] == "";
             border-radius: Theme.radius-sm;
-            background: on ? Theme.raised : (t.has-hover && root.enabled ? Theme.hover : transparent);
+            background: on ? Theme.raised : (t.has-hover && root.enabled && usable ? Theme.hover : transparent);
             animate background { duration: Theme.quick; }
             Text {
                 text: option;
-                color: on ? Theme.text : Theme.text-secondary;
+                color: !usable ? Theme.text-muted : on ? Theme.text : Theme.text-secondary;
                 font-size: Theme.font-xs;
                 font-weight: on ? Theme.weight-medium : Theme.weight-regular;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
-            t := TouchArea {
+            t := TipArea {
                 enabled: root.enabled;
-                mouse-cursor: MouseCursor.pointer;
+                words: usable ? root.tips[i] : root.why-not[i];
+                mouse-cursor: usable ? MouseCursor.pointer : MouseCursor.default;
                 clicked => {
+                    if (!usable) { return; }
                     Typing.close-all();
                     if (root.picks) { root.current = option; }
                     root.selected(option);

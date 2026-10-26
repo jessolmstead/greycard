@@ -34,6 +34,10 @@ pub struct Model {
     /// upstream one: what changed, and the upstream license's notice,
     /// both written into the note beside the files.
     pub modified: Option<Modified>,
+    /// The id of the model whose directory this one's files go in,
+    /// when its graphs name that one's data by file name; None for a
+    /// directory of its own ([`Model::dir`]).
+    pub beside: Option<&'static str>,
     pub files: &'static [File],
 }
 
@@ -50,6 +54,22 @@ pub struct Modified {
 }
 
 impl Model {
+    /// The store directory its files go in: its own id, or the id of
+    /// the model it sits [`beside`](Model::beside).
+    pub fn dir(&self) -> &'static str {
+        self.beside.unwrap_or(self.id)
+    }
+
+    /// The license note's file name in that directory: `LICENSE.txt`,
+    /// or named by the id for a model beside another, so the two notes
+    /// do not overwrite each other.
+    pub fn license_file(&self) -> String {
+        match self.beside {
+            None => "LICENSE.txt".into(),
+            Some(_) => format!("LICENSE-{}.txt", self.id),
+        }
+    }
+
     pub fn bytes(&self) -> u64 {
         self.files.iter().map(|f| f.bytes).sum()
     }
@@ -99,6 +119,7 @@ pub const SUBJECT: Model = Model {
         url: "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE",
     },
     modified: None,
+    beside: None,
     files: &[File {
         name: "model_fp16.onnx",
         url: "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model_fp16.onnx",
@@ -153,6 +174,7 @@ pub const SUBJECT_WEBGPU: Model = Model {
         what: "the decoder's Splits of more than fifteen outputs are Slices, the Sums are Adds, and the deformable convolutions' int64 coordinate arithmetic is fp16; the weights are untouched.",
         notice: BIREFNET_LICENSE,
     }),
+    beside: None,
     files: &[File {
         name: "model_fp16_webgpu.onnx",
         url: "https://huggingface.co/jessolmstead/BiRefNet_lite-ONNX-webgpu/resolve/main/model_fp16_webgpu.onnx",
@@ -173,6 +195,7 @@ pub const SAM: Model = Model {
         url: "https://github.com/facebookresearch/sam2/blob/main/LICENSE",
     },
     modified: None,
+    beside: None,
     files: &[
         File {
             name: "vision_encoder.onnx",
@@ -227,6 +250,7 @@ pub const SAM3: Model = Model {
         what: "converted to ONNX (with Kentaro Wada's traceable rotary encoding, wkentaro/sam3 at 812de8a), the image encoder converted to fp16, the decoder made to return the sixteen best queries with the presence score apart, and a fixed set of phrases run through the language encoder once and stored as a table; the weights are otherwise untouched.",
         notice: SAM_LICENSE,
     }),
+    beside: None,
     files: &[
         File {
             name: "sam3_image_encoder_fp16.onnx",
@@ -294,6 +318,7 @@ pub const SKY: Model = Model {
         what: "an ONNX export of the published weights (revision 10f5326) at a fixed 640 by 640 input, traced from the transformers port; the weights are untouched.",
         notice: EOMT_LICENSE,
     }),
+    beside: None,
     files: &[File {
         name: "eomt-s-coco-640.onnx",
         url: "https://huggingface.co/jessolmstead/greycard-sky/resolve/main/eomt-s-coco-640.onnx",
@@ -325,6 +350,7 @@ pub const FILL: Model = Model {
         what: "an ONNX export (opset 21, fp32) of the generator in big-lama's checkpoint with a dynamic height and width, its rfftn and irfftn written as the same transforms by matrix products, and LaMa's own masking and compositing around it; the weights are untouched.",
         notice: LAMA_LICENSE,
     }),
+    beside: None,
     files: &[File {
         name: "big-lama-dynamic-fp32.onnx",
         url: "https://huggingface.co/jessolmstead/greycard-lama/resolve/main/big-lama-dynamic-fp32.onnx",
@@ -362,6 +388,7 @@ pub const REMOVE: Model = Model {
         what: "the UNet traced in fp32 at opset 17 with fixed shapes and converted to fp16, Resize's scales put back to fp32 after the conversion, and conv_in padded from 9 input channels to 12 with zero weights (WebGPU's Conv answers wrong for 9); the VAE's encoder (to the latent mean) and decoder exported the same way at fixed 512 and 1024; and the empty prompt run once through the two text encoders, the embeddings kept as constants. The weights are otherwise untouched.",
         notice: ROREM_LICENSE,
     }),
+    beside: None,
     files: &[
         File {
             name: "unet-1024.onnx",
@@ -426,6 +453,50 @@ pub const REMOVE: Model = Model {
     ],
 };
 
+/// RORem-mixed distilled to four steps by greycard: an LCM LoRA
+/// (rank 64) trained from [`REMOVE`] at 1024 on the empty prompt, as
+/// low-rank branches beside the UNet's own weights rather than fused
+/// into them, so it adds 390 MB and not a second UNet. Its two graphs
+/// are [`REMOVE`]'s UNet with the branches added, over [`REMOVE`]'s
+/// `unet.onnx_data` and its own `unet-lora.onnx_data`, both named by
+/// file, so its files sit in [`REMOVE`]'s directory and it runs only
+/// beside it, with its prompt constants. See `remove::Steps`.
+pub const REMOVE_FAST: Model = Model {
+    id: "rorem-mixed-fast-fp16",
+    name: "RORem-mixed, distilled to four steps by greycard (LCM LoRA), fp16, ONNX export by greycard",
+    purpose: "the generative remove in four steps: quicker, rougher on large areas",
+    source: "an LCM LoRA distilled from RORem-mixed (Li et al., CVPR 2025, https://huggingface.co/LetsThink/RORem) by https://github.com/jessolmstead/greycard, after Latent Consistency Models (Luo et al., 2023); published at https://huggingface.co/jessolmstead/greycard-rorem-fast",
+    license: License {
+        name: "CreativeML Open RAIL++-M",
+        url: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+    },
+    modified: Some(Modified {
+        what: "a LoRA of rank 64 trained by latent consistency distillation from the RORem-mixed UNet at 1024 on the empty prompt, kept as fp16 low-rank branches added to the RORem UNet graphs of the greycard export (the same tracing, fixed shapes, and padded conv_in) at 512 and 1024; the base weights are untouched and not included.",
+        notice: ROREM_LICENSE,
+    }),
+    beside: Some(REMOVE.id),
+    files: &[
+        File {
+            name: "unet-lcm-1024.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem-fast/resolve/main/unet-lcm-1024.onnx",
+            bytes: 3_419_476,
+            sha256: "0b5320148e08fc354f2b4e6b1f2f1927d8fb3c8bf2f522188db193d3ad90f4f2",
+        },
+        File {
+            name: "unet-lcm-512.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem-fast/resolve/main/unet-lcm-512.onnx",
+            bytes: 3_419_472,
+            sha256: "c12747ce96160ec6ad0c89a941fc70452ad8784d563594183a18a5cb905bfc62",
+        },
+        File {
+            name: "unet-lora.onnx_data",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem-fast/resolve/main/unet-lora.onnx_data",
+            bytes: 393_502_720,
+            sha256: "2beaa20d700c59e191e51fd1d9a0698110a9354c6ec16b7c570ba96e7bff6d33",
+        },
+    ],
+};
+
 /// A file a store once fetched for a model this build no longer
 /// uses, in that model's directory: the store removes it when opened,
 /// when its name, size, and hash are the ones listed.
@@ -463,6 +534,7 @@ pub const DENOISE_FAST: Model = Model {
     source: DENOISE_SOURCE,
     license: DENOISE_LICENSE,
     modified: None,
+    beside: None,
     files: &[File {
         name: "denoise-v19.onnx",
         url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v19.onnx",
@@ -479,6 +551,7 @@ pub const DENOISE_BALANCED: Model = Model {
     source: DENOISE_SOURCE,
     license: DENOISE_LICENSE,
     modified: None,
+    beside: None,
     files: &[File {
         name: "denoise-v15.onnx",
         url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v15.onnx",
@@ -495,6 +568,7 @@ pub const DENOISE_BEST: Model = Model {
     source: DENOISE_SOURCE,
     license: DENOISE_LICENSE,
     modified: None,
+    beside: None,
     files: &[File {
         name: "denoise-v20.onnx",
         url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v20.onnx",
@@ -514,6 +588,7 @@ pub const MODELS: &[Model] = &[
     DENOISE_BALANCED,
     DENOISE_BEST,
     REMOVE,
+    REMOVE_FAST,
 ];
 
 /// The denoiser's tiers by the names an edit and the CLI use.
@@ -962,6 +1037,41 @@ mod tests {
         // brings it: the largest fetch by far.
         assert_eq!(model("rorem-mixed-fp16"), Some(&REMOVE));
         assert!(MODELS.iter().any(|m| m.id == REMOVE.id));
+    }
+
+    /// The four-step remove sits in the remove's directory, since its
+    /// graphs name `unet.onnx_data`, with a license note of its own
+    /// there, and is listed.
+    /// Its graphs add the LoRA's branches to the remove's own weights,
+    /// read by name from the remove's `unet.onnx_data`: the hash below
+    /// is the data file they were built on, so a re-export of the base
+    /// must rebuild them too rather than change their weights unseen.
+    #[test]
+    fn the_fast_remove_sits_beside_the_remove() {
+        assert_eq!(REMOVE_FAST.dir(), REMOVE.id);
+        assert_eq!(REMOVE.dir(), REMOVE.id);
+        assert_eq!(REMOVE.license_file(), "LICENSE.txt");
+        assert_eq!(
+            REMOVE_FAST.license_file(),
+            "LICENSE-rorem-mixed-fast-fp16.txt"
+        );
+        for f in REMOVE_FAST.files {
+            assert!(REMOVE.files.iter().all(|g| g.name != f.name), "{}", f.name);
+            assert!(f.url.contains("jessolmstead/greycard-rorem-fast/") && f.url.ends_with(f.name));
+        }
+        assert!((3.9e8..4.1e8).contains(&(REMOVE_FAST.bytes() as f64)));
+        let note = REMOVE_FAST.license_note();
+        assert!(note.contains("CreativeML Open RAIL++-M License dated July 26, 2023"));
+        assert_eq!(model(REMOVE_FAST.id), Some(&REMOVE_FAST));
+        let base = REMOVE
+            .files
+            .iter()
+            .find(|f| f.name == "unet.onnx_data")
+            .expect("the remove's UNet data");
+        assert_eq!(
+            base.sha256,
+            "3c883667b7e45d131d0d45d1339e28d38dfa3c210a3258f2afb637e58cfe50a5"
+        );
     }
 
     /// The CPU-only runtimes are Microsoft's own releases of the

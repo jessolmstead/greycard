@@ -75,6 +75,38 @@ pub struct Patch {
     /// Left out of the sidecar when false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub remove: bool,
+    /// A remove's Fill made in four steps rather than 25: quicker,
+    /// rougher on large areas. Only with `remove`; an older build
+    /// reads it as the full remove and makes it so. Left out of the
+    /// sidecar when false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fast: bool,
+}
+
+/// What makes a Fill: LaMa from the picture around it, or the
+/// generative remove in four steps or in full ([`Patch::remove`],
+/// [`Patch::fast`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FillChoice {
+    Patch,
+    Fast,
+    Best,
+}
+
+impl FillChoice {
+    pub const ALL: [FillChoice; 3] = [FillChoice::Patch, FillChoice::Fast, FillChoice::Best];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            FillChoice::Patch => "Patch",
+            FillChoice::Fast => "Fast",
+            FillChoice::Best => "Best",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.name() == name)
+    }
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -93,6 +125,7 @@ impl Default for Patch {
             source: None,
             seed: 0,
             remove: false,
+            fast: false,
         }
     }
 }
@@ -101,8 +134,29 @@ impl Default for Patch {
 const RING: f32 = 1.7;
 
 impl Patch {
+    /// Its name on the panel and in the history: "Fill 3", and
+    /// "Fill 3 (Fast)" for a four-step remove's.
     pub fn name(&self) -> String {
-        format!("{} {}", self.method.name(), self.id)
+        if self.method == Method::Fill && self.fill_choice() == FillChoice::Fast {
+            format!("{} {} (Fast)", self.method.name(), self.id)
+        } else {
+            format!("{} {}", self.method.name(), self.id)
+        }
+    }
+
+    /// What makes it, if it is a Fill: `fast` counts only with `remove`.
+    pub fn fill_choice(&self) -> FillChoice {
+        match (self.remove, self.fast) {
+            (false, _) => FillChoice::Patch,
+            (true, true) => FillChoice::Fast,
+            (true, false) => FillChoice::Best,
+        }
+    }
+
+    /// Made by `choice` from now on.
+    pub fn set_fill_choice(&mut self, choice: FillChoice) {
+        self.remove = choice != FillChoice::Patch;
+        self.fast = choice == FillChoice::Fast;
     }
 
     /// The patch carried round with a turned picture, so it heals
@@ -376,6 +430,54 @@ impl Retouch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `fast` is kept in the sidecar beside `remove`, left out when
+    /// false; a sidecar from before it reads as the full remove, and
+    /// a Patch-made fill writes neither.
+    #[test]
+    fn the_fill_choice_round_trips() {
+        let mut edit = crate::Edit::default();
+        let mut p = Patch {
+            id: 2,
+            method: Method::Fill,
+            points: vec![[0.5, 0.5]],
+            ..Default::default()
+        };
+        for choice in FillChoice::ALL {
+            p.set_fill_choice(choice);
+            assert_eq!(p.fill_choice(), choice);
+            assert_eq!(FillChoice::from_name(choice.name()), Some(choice));
+        }
+        p.set_fill_choice(FillChoice::Fast);
+        edit.retouch.patches.push(p);
+        let json = edit.to_json();
+        assert!(
+            json.contains("\"fast\"") && json.contains("\"remove\""),
+            "{json}"
+        );
+        let back = crate::Edit::from_json(&json).unwrap();
+        assert_eq!(back, edit);
+        assert_eq!(back.retouch.patches[0].fill_choice(), FillChoice::Fast);
+        assert_eq!(back.retouch.patches[0].name(), "Fill 2 (Fast)");
+        // As an older build reads it, and writes it back: the full remove.
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        v["retouch"]["patches"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("fast");
+        let old = crate::Edit::from_json(&v.to_string()).unwrap();
+        assert_eq!(old.retouch.patches[0].fill_choice(), FillChoice::Best);
+        assert_eq!(old.retouch.patches[0].name(), "Fill 2");
+        edit.retouch.patches[0].set_fill_choice(FillChoice::Patch);
+        let json = edit.to_json();
+        assert!(
+            !json.contains("\"fast\"") && !json.contains("\"remove\""),
+            "{json}"
+        );
+        // `fast` without `remove` is LaMa's.
+        edit.retouch.patches[0].fast = true;
+        assert_eq!(edit.retouch.patches[0].fill_choice(), FillChoice::Patch);
+    }
 
     #[test]
     fn a_spot_covers_a_disc_with_a_soft_edge_and_a_ring_outside() {

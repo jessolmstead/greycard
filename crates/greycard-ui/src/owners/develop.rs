@@ -109,6 +109,10 @@ pub(crate) struct Develop {
     /// A frame opened with crop mode on: the starting aspect is laid
     /// on it once, when its develop lands and its shape is known.
     pub(crate) crop_start_due: bool,
+    /// What a Fill drawn next asks to be made by, as last chosen
+    /// (`settings.fill_choice`); None until one is, for the machine's
+    /// default (`ai::FillHaves::default_choice`).
+    pub(crate) fill_choice: Option<greycard_edit::retouch::FillChoice>,
     /// Which look the panel edits: an adjustment by index, or the
     /// global one. The panel is the truth for that look; `edit` is
     /// for everything else, the other adjustments included.

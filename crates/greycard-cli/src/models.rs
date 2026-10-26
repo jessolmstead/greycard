@@ -354,6 +354,7 @@ mod tests {
                         url: "https://example.invalid/",
                     },
                     modified: None,
+                    beside: None,
                     files: &[greycard_ai::registry::File {
                         name: $file,
                         // Port 9 (discard) on the loopback: refused at once.

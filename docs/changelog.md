@@ -110,6 +110,11 @@ design note behind it.
 
 ### Retouch
 
+- A Fill offers Patch, Fast, and Best: from the picture around it,
+  the generative remove in four steps (quicker, rougher on large
+  areas), or in full. The choice sticks for the next Fill and is in
+  Settings. Fast is a 390 MB download beside the remove's own
+  ([§429](https://github.com/jessolmstead/greycard/blob/master/docs/notes/429-patch-fast-or-best-for-a-fill.md)).
 - A Fill made by the generative remove or LaMa is kept on disk, so
   opening the frame again shows it at once rather than running the
   model again

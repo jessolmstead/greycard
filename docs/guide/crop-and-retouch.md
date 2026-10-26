@@ -180,8 +180,24 @@ There are two engines. LaMa fills on any machine and at any size. On a
 machine with a GPU, the generative remove makes up what was behind what
 you remove, working in a window around the area up to 1024 pixels
 a side; a window up to four times that is scaled down to it and back,
-and a bigger one is still LaMa's. A Fill drawn before the
-second model arrived stays LaMa's until you draw it again.
+and a bigger one is still LaMa's.
+
+With **Fill** in hand, or a Fill chosen in the list, three buttons above
+the list say what makes it:
+
+- **Patch** fills from the picture around the area, at once, on any
+  machine.
+- **Fast** runs the generative remove in four steps: a few seconds, but
+  rougher on large areas. It is a further 390 MB beside the remove.
+- **Best** runs the generative remove in full, 25 steps.
+
+The choice changes the Fill chosen and is kept for the next one, and the
+Settings sheet's Editing category has it too. Before you choose, it is
+Best, or Fast on a machine whose GPU shares its memory, where Best takes
+about a minute. Choosing one whose model is not downloaded offers the
+download; choose it again once it is here. On a machine without a GPU
+the two removes are greyed, and the tooltip says why. A Fill drawn
+before a model arrived keeps what made it until you choose again.
 
 The generative remove is a second download, 5.5 GB under the CreativeML
 Open RAIL++-M license, offered once the first time you choose **Fill**

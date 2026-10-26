@@ -1077,17 +1077,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     opacity: app.get_patch_opacity().clamp(0.0, 1.0),
                     source: None,
                     seed: 0,
-                    // Drawn where the generative remove can run, a
-                    // Fill is its; LaMa's otherwise, for good.
-                    remove: method == RetouchMethod::Fill
-                        && crate::ai::marks_remove(
-                            st.develop
-                                .store
-                                .as_ref()
-                                .is_some_and(|s| s.have(&greycard_ai::REMOVE)),
-                            crate::ai::on_webgpu(),
-                        ),
+                    remove: false,
+                    fast: false,
                 };
+                // A Fill is made by the choice in hand where it can
+                // run, the other remove or LaMa otherwise, for good.
+                let mut patch = patch;
+                if method == RetouchMethod::Fill {
+                    patch.set_fill_choice(crate::panel::retouch::drawn_fill(&st));
+                }
                 st.develop.edit.retouch.patches.push(patch);
                 let i = st.develop.edit.retouch.patches.len() - 1;
                 st.develop.patch_stroke = Some(i);

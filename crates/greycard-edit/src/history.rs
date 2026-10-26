@@ -679,6 +679,22 @@ fn retouch(b: &Edit, a: &Edit) -> String {
                 {
                     format!("{} varied", one.name())
                 }
+                // What makes a Fill changed and nothing else.
+                [(was, one)]
+                    if **was
+                        == crate::retouch::Patch {
+                            remove: was.remove,
+                            fast: was.fast,
+                            ..(*one).clone()
+                        } =>
+                {
+                    format!(
+                        "{} {} to {}",
+                        one.method.name(),
+                        one.id,
+                        one.fill_choice().name()
+                    )
+                }
                 [(_, one)] => format!("{} moved", one.name()),
                 _ => "Retouch".to_string(),
             }
@@ -1094,6 +1110,14 @@ mod tests {
         assert_eq!(describe(&v, &w, &[]), "Fill 3 varied");
         w.retouch.patches[0].radius = 0.05;
         assert_eq!(describe(&v, &w, &[]), "Fill 3 moved");
+        // What makes it changed alone is named.
+        let mut f = v.clone();
+        f.retouch.patches[0].set_fill_choice(crate::retouch::FillChoice::Fast);
+        assert_eq!(describe(&v, &f, &[]), "Fill 3 to Fast");
+        assert_eq!(describe(&base, &f, &[]), "Fill 3 (Fast)");
+        let mut b = f.clone();
+        b.retouch.patches[0].set_fill_choice(crate::retouch::FillChoice::Best);
+        assert_eq!(describe(&f, &b, &[]), "Fill 3 to Best");
     }
 
     #[test]

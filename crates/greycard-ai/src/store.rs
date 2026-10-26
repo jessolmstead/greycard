@@ -133,9 +133,10 @@ impl Store {
         &self.root
     }
 
-    /// A model's directory: `<root>/<id>`.
+    /// A model's directory: `<root>/<id>`, or the directory of the
+    /// model it sits beside ([`Model::dir`]).
     pub fn dir(&self, model: &Model) -> PathBuf {
-        self.root.join(model.id)
+        self.root.join(model.dir())
     }
 
     /// One of a model's files.
@@ -167,7 +168,7 @@ impl Store {
             fetch_to(file, &part, &mut progress)?;
             std::fs::rename(&part, &path)?;
         }
-        std::fs::write(dir.join("LICENSE.txt"), model.license_note())?;
+        std::fs::write(dir.join(model.license_file()), model.license_note())?;
         Ok(())
     }
 
@@ -448,6 +449,20 @@ mod tests {
             Path::new("/tmp/x").join(m.id).join(m.files[0].name)
         );
         assert!(!store.have(m));
+    }
+
+    /// A model beside another has its files in that one's directory,
+    /// where its graphs look for the other's data.
+    #[test]
+    fn a_model_beside_another_sits_in_its_directory() {
+        use crate::registry::{REMOVE, REMOVE_FAST};
+        let store = Store::at("/tmp/x");
+        let dir = Path::new("/tmp/x").join(REMOVE.id);
+        assert_eq!(store.dir(&REMOVE_FAST), dir);
+        assert_eq!(
+            store.path(&REMOVE_FAST, &REMOVE_FAST.files[0]),
+            dir.join(REMOVE_FAST.files[0].name)
+        );
     }
 
     #[test]

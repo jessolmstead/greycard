@@ -202,6 +202,10 @@ pub struct Settings {
     /// `panel::crop::aspect_key` spells it ("3:2", "Custom 7:5"):
     /// what "Last used" opens under. Written as it is picked.
     pub crop_last: String,
+    /// What a Fill drawn next is made by, "Patch", "Fast" or "Best"
+    /// (`FillChoice`), as last chosen in the panel or the Settings
+    /// sheet; empty until one is, for the machine's default.
+    pub fill_choice: String,
     /// The interface's scale, percent of the system's own: 50 to 300
     /// (`window_fit::scale`), clamped when read. Applied at the next
     /// start; written as it is typed.
@@ -554,6 +558,7 @@ impl Default for Settings {
             sync_shift: SyncShift::default(),
             crop_start: "Original".into(),
             crop_last: "Free".into(),
+            fill_choice: String::new(),
             ui_scale: 100,
             ui_scale_system: 0.0,
             keys: std::collections::BTreeMap::new(),
@@ -783,6 +788,7 @@ mod tests {
             },
             crop_start: "Last used".into(),
             crop_last: "Custom 7:5".into(),
+            fill_choice: "Fast".into(),
             ui_scale: 150,
             ui_scale_system: 1.25,
             keys: [("crop".to_string(), "Ctrl+R".to_string())]

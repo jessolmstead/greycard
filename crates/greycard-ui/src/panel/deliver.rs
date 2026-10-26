@@ -639,12 +639,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     }
                 ));
                 // The first model waited on that can be had here: the
-                // generative remove not on a machine without WebGPU.
-                let model = fills
-                    .missing
-                    .iter()
-                    .map(|(_, m)| *m)
-                    .find(|m| m.id != greycard_ai::REMOVE.id || crate::ai::on_webgpu());
+                // generative remove, or its four steps, not on a
+                // machine without WebGPU.
+                let model = fills.missing.iter().map(|(_, m)| *m).find(|m| {
+                    (m.id != greycard_ai::REMOVE.id && m.id != greycard_ai::REMOVE_FAST.id)
+                        || crate::ai::on_webgpu()
+                });
                 if let Some(model) = model
                     && st.sheets.fetch.is_none()
                     && !st.sheets.fetching
@@ -1155,7 +1155,9 @@ fn develop_for(st: &mut State, app: &App, arrived: impl Fn(&greycard_ai::Model) 
         .is_some_and(&arrived);
     // Either fill model: a patch drawn for the remove is LaMa's where
     // its window is past the remove's.
-    let fill = (arrived(&greycard_ai::FILL) || arrived(&greycard_ai::REMOVE))
+    let fill = (arrived(&greycard_ai::FILL)
+        || arrived(&greycard_ai::REMOVE)
+        || arrived(&greycard_ai::REMOVE_FAST))
         && st.develop.edit.retouch.enabled
         && st
             .develop

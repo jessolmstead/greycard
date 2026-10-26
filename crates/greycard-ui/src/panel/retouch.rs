@@ -1,7 +1,9 @@
+use crate::ai::FillHaves;
 use crate::panel::assets::offer_model;
 use crate::panel::edit::develop_soon;
 use crate::panel::viewport::{ViewMap, source_to_view, view_to_source};
 use crate::*;
+use greycard_edit::retouch::FillChoice;
 
 /// What the status line says while a repair tool is in hand.
 pub(crate) const RETOUCH_HINT: &str =
@@ -77,6 +79,76 @@ pub(crate) fn show_patches(st: &State, edit: &Edit, app: &App) {
         app.set_patch_opacity(p.opacity);
     }
     app.set_patch_varies(chosen.is_some_and(|p| made_by_remove(st, p)));
+    show_fill(st, chosen, app);
+}
+
+/// What a Fill drawn next asks to be made by: the last chosen, else
+/// the machine's default.
+pub(crate) fn sticky_fill(st: &State, haves: FillHaves) -> FillChoice {
+    st.develop
+        .fill_choice
+        .unwrap_or_else(|| haves.default_choice(crate::ai::unified()))
+}
+
+/// What a Fill drawn now is made by, here.
+pub(crate) fn drawn_fill(st: &State) -> FillChoice {
+    let haves = FillHaves::of(st.develop.store.as_ref());
+    haves.drawn(sticky_fill(st, haves))
+}
+
+/// The Fill choice on the panel, with the Fill in hand or a Fill
+/// chosen: the chosen Fill's own, else what the next is made by, and
+/// for each option ([`FillChoice::ALL`]) why it can never run here,
+/// "" when it can or only waits for a download.
+fn show_fill(st: &State, chosen: Option<&Patch>, app: &App) {
+    let haves = FillHaves::of(st.develop.store.as_ref());
+    let chosen = chosen.filter(|p| p.method == RetouchMethod::Fill);
+    app.set_fill_shown(st.develop.retouching == Some(RetouchMethod::Fill) || chosen.is_some());
+    let current = chosen.map_or_else(|| haves.drawn(sticky_fill(st, haves)), |p| p.fill_choice());
+    app.set_fill_choice(current.name().into());
+    let why: Vec<slint::SharedString> = FillChoice::ALL
+        .iter()
+        .map(|&c| haves.why_not(c).unwrap_or("").into())
+        .collect();
+    app.set_fill_why_not(ModelRc::new(VecModel::from(why)));
+}
+
+/// `choice` taken: what a Fill drawn next is made by, this session and
+/// the next.
+pub(crate) fn choose_fill(st: &mut State, choice: FillChoice) {
+    st.develop.fill_choice = Some(choice);
+    crate::panel::crop::keep_in_file(st, |s| s.fill_choice = choice.name().into());
+}
+
+/// The choice made, in the panel or the Settings sheet: sticky for the
+/// next Fill, and the chosen Fill made by it, which is another fill;
+/// true when that patch changed. A choice that can never run here is
+/// not taken; one whose model is not downloaded offers it, as choosing
+/// Fill offers the remove, and is taken once it is chosen again.
+pub(crate) fn fill_chosen(st: &mut State, app: &App, name: &str) -> bool {
+    let Some(choice) = FillChoice::from_name(name) else {
+        return false;
+    };
+    let haves = FillHaves::of(st.develop.store.as_ref());
+    if haves.why_not(choice).is_some() {
+        return false;
+    }
+    if let Some(model) = haves.missing(choice) {
+        if !st.sheets.fetching {
+            offer_model(st, app, model, false);
+        }
+        return false;
+    }
+    choose_fill(st, choice);
+    let Some(p) = usize::try_from(app.get_patch())
+        .ok()
+        .and_then(|i| st.develop.edit.retouch.patches.get_mut(i))
+        .filter(|p| p.method == RetouchMethod::Fill && p.fill_choice() != choice)
+    else {
+        return false;
+    };
+    p.set_fill_choice(choice);
+    true
 }
 
 /// Whether `patch` is a Fill the generative remove made.
@@ -137,6 +209,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 st.develop.retouching = None;
                 app.set_retouch_mode("".into());
                 app.set_status("".into());
+                show_patches(&st, &st.develop.edit, &app);
                 return;
             }
             // A fill needs its model; offer it first.
@@ -163,9 +236,24 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_placing("".into());
             app.set_retouch_mode(kind);
             app.set_status(RETOUCH_HINT.into());
+            show_patches(&st, &st.develop.edit, &app);
             if offer {
                 st.sheets.remove_offered = true;
                 offer_model(&mut st, &app, &greycard_ai::REMOVE, false);
+            }
+        });
+    }
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_fill_chosen(move |name| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let changed = fill_chosen(&mut st, &app, &name);
+            show_patches(&st, &st.develop.edit, &app);
+            if changed {
+                develop_soon(&mut st, state.clone(), worker.clone(), app.as_weak());
             }
         });
     }
@@ -523,6 +611,146 @@ mod tests {
         app.invoke_retouch_toggled("Fill".into());
         assert!(!fill(&app), "offered once");
         crate::ai::set_test_webgpu(None);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The Fill's choice: shown with the Fill in hand, Best by default
+    /// off unified memory; a choice made changes the chosen Fill (its
+    /// name says Fast) and is what the next one drawn is made by; an
+    /// option whose files are not here is greyed with the reason and
+    /// takes no click; on unified memory the default is Fast.
+    #[test]
+    fn the_fill_choice_changes_the_patch_and_sticks_for_the_next() {
+        use greycard_edit::retouch::FillChoice;
+        let dir = crate::testing::scratch_dir("fill-choice");
+        let store = greycard_ai::Store::at(&dir);
+        let lay = |m: &greycard_ai::Model| {
+            for f in m.files {
+                let path = store.path(m, f);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::File::create(&path)
+                    .unwrap()
+                    .set_len(f.bytes)
+                    .unwrap();
+            }
+        };
+        lay(&greycard_ai::FILL);
+        lay(&greycard_ai::REMOVE);
+        lay(&greycard_ai::REMOVE_FAST);
+        crate::ai::set_test_webgpu(Some(true));
+        crate::ai::set_test_unified(Some(false));
+        let why = |app: &App| -> Vec<String> {
+            app.get_fill_why_not()
+                .iter()
+                .map(|w| w.to_string())
+                .collect()
+        };
+        let draw = |app: &App, x: f32| {
+            app.invoke_place_pressed(x, 10.0, false);
+            app.invoke_place_released();
+        };
+
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        state.borrow_mut().develop.store = Some(store.clone());
+        assert!(!app.get_fill_shown());
+        app.invoke_retouch_toggled("Fill".into());
+        assert!(app.get_fill_shown());
+        assert_eq!(app.get_fill_choice(), "Best");
+        assert_eq!(why(&app), ["", "", ""]);
+
+        draw(&app, 10.0);
+        let patch = |i: usize| state.borrow().develop.edit.retouch.patches[i].clone();
+        assert_eq!(patch(0).fill_choice(), FillChoice::Best);
+
+        // Chosen, and made Fast: another fill, and its name says so.
+        app.invoke_patch_changed(0);
+        app.invoke_fill_chosen("Fast".into());
+        assert_eq!(patch(0).fill_choice(), FillChoice::Fast);
+        assert_eq!(app.get_fill_choice(), "Fast");
+        assert_eq!(app.get_patch_names().row_data(0).unwrap(), "Fill 1 (Fast)");
+        // "Another" keeps it.
+        let id = patch(0).id;
+        state
+            .borrow_mut()
+            .develop
+            .fill_engines
+            .insert(id, crate::ai::Engine::Remove);
+        app.invoke_patch_another();
+        assert_eq!(patch(0).seed, 1);
+        assert_eq!(patch(0).fill_choice(), FillChoice::Fast);
+
+        // Sticky: the next one drawn is Fast too.
+        app.invoke_patch_changed(-1);
+        draw(&app, 30.0);
+        assert_eq!(patch(1).fill_choice(), FillChoice::Fast);
+
+        // Patch for a chosen one, and back to Best.
+        app.invoke_patch_changed(1);
+        app.invoke_fill_chosen("Patch".into());
+        assert_eq!(patch(1).fill_choice(), FillChoice::Patch);
+        app.invoke_fill_chosen("Best".into());
+        assert_eq!(patch(1).fill_choice(), FillChoice::Best);
+        assert_eq!(
+            patch(0).fill_choice(),
+            FillChoice::Fast,
+            "only the chosen one"
+        );
+
+        // Without Fast's files: not greyed, since they can be had; a
+        // click offers them and changes nothing yet.
+        std::fs::remove_file(store.path(
+            &greycard_ai::REMOVE_FAST,
+            &greycard_ai::REMOVE_FAST.files[2],
+        ))
+        .unwrap();
+        app.invoke_patch_changed(1);
+        assert_eq!(why(&app), ["", "", ""]);
+        app.invoke_fill_chosen("Fast".into());
+        assert_eq!(patch(1).fill_choice(), FillChoice::Best);
+        assert_eq!(app.get_fill_choice(), "Best");
+        if greycard_ai::runtime::status().is_ok() {
+            assert!(app.get_fetch_open());
+            assert_eq!(
+                state.borrow().sheets.fetch,
+                Some(crate::Fetch::Model(&greycard_ai::REMOVE_FAST))
+            );
+            app.invoke_fetch_answered(false);
+            assert_eq!(app.get_retouch_mode(), "Fill", "declining keeps the Fill");
+        }
+        // The next one asks for Best, the last taken.
+        app.invoke_patch_changed(-1);
+        draw(&app, 50.0);
+        assert_eq!(patch(2).fill_choice(), FillChoice::Best);
+        // No WebGPU: both removes greyed, and a Fill drawn is LaMa's.
+        crate::ai::set_test_webgpu(Some(false));
+        app.invoke_patch_changed(-1);
+        assert_eq!(
+            why(&app),
+            ["", "Needs a GPU with WebGPU", "Needs a GPU with WebGPU"]
+        );
+        assert_eq!(app.get_fill_choice(), "Patch");
+        draw(&app, 70.0);
+        assert_eq!(patch(3).fill_choice(), FillChoice::Patch);
+        crate::ai::set_test_webgpu(Some(true));
+
+        // On unified memory, before any choice, Fast where it can run.
+        lay(&greycard_ai::REMOVE_FAST);
+        crate::ai::set_test_unified(Some(true));
+        let app2 = window(1);
+        let (state2, _worker2) = retouch_state(&app2);
+        state2.borrow_mut().develop.store = Some(store.clone());
+        app2.invoke_retouch_toggled("Fill".into());
+        assert_eq!(app2.get_fill_choice(), "Fast");
+        // The Settings sheet's row is the same property and callback:
+        // with nothing chosen, it sets the next one's.
+        app2.invoke_fill_chosen("Patch".into());
+        assert_eq!(app2.get_fill_choice(), "Patch");
+        assert_eq!(state2.borrow().develop.fill_choice, Some(FillChoice::Patch));
+
+        crate::ai::set_test_webgpu(None);
+        crate::ai::set_test_unified(None);
+        drop(state2);
         crate::testing::remove_scratch(state, &dir);
     }
 
