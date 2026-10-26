@@ -27,6 +27,13 @@ the reasoning lives in `docs/notes.md`.
       at launch, or say "preparing" while it runs
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
+- [ ] The learned denoiser crashes a 4 GB card (issue #35,
+      2026-10-26): the quality tier's 1024 tile asks 2 to 5 GB, Dawn's
+      allocation fails, and ONNX Runtime frees the buffer twice on the
+      way out, which nothing of ours can catch (§90). Size the tile
+      from the card's memory, read through wgpu's hal on Vulkan and
+      Direct3D (a Mac's is the machine's): 512 under 6 GiB. Was the
+      Blocked line that waited on ort
 
 ## Tracks
 
@@ -1002,10 +1009,6 @@ release when the wait clears.
 
 #### Upstream
 
-- [ ] The Denoiser's tile sized from the device's memory, so a short
-      allocation on a discrete card is not a crash in Dawn and a
-      unified-memory Mac is not a swap storm (§90). Waits on ort
-      exposing the adapter's memory
 - [ ] The "request to hide window failed" line on every quit: Slint
       1.18.0's winit backend holds the window while it dispatches the
       close, so the check fires wrongly and the window stays
