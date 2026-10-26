@@ -17,6 +17,35 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
+/// The windows a test's thread has shown, hidden as the thread ends.
+/// A shown window is held by the backend, and with it every callback
+/// and the state and worker they hold, so none would drop: each
+/// test's worker and culling threads would then sleep on for the rest
+/// of the run, and macOS caps a process's threads well short of the
+/// suite's thousand and more workers.
+struct Shown(Vec<slint::Weak<App>>);
+
+impl Drop for Shown {
+    fn drop(&mut self) {
+        for weak in self.0.drain(..) {
+            // Run as the thread's locals are torn down, some of them
+            // perhaps gone already: a panic here, in the hide or in the
+            // drops of the App and all it holds, would abort the whole
+            // run rather than fail one test. So the App is upgraded and
+            // dropped inside the catch.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                if let Some(app) = weak.upgrade() {
+                    let _ = app.hide();
+                }
+            }));
+        }
+    }
+}
+
+thread_local! {
+    static SHOWN: RefCell<Shown> = const { RefCell::new(Shown(Vec::new())) };
+}
+
 /// An App with a folder of eleven frames on it, shown and
 /// focused, on a backend that opens no window.
 pub(crate) fn window(count: usize) -> App {
@@ -48,6 +77,7 @@ pub(crate) fn window(count: usize) -> App {
     app.on_bar_offset(grid::bar_offset);
     app.on_bar_drag(grid::bar_drag);
     app.show().expect("the window shows");
+    SHOWN.with(|s| s.borrow_mut().0.push(app.as_weak()));
     app.window()
         .dispatch_event(WindowEvent::WindowActiveChanged(true));
     app

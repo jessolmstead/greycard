@@ -3489,3 +3489,37 @@ fn a_loss_after_the_develop_develops_it_again_on_the_cpu() {
         ));
     }
 }
+
+/// A worker and a culling prefetcher dropped take their threads with
+/// them: each made and dropped in a test would otherwise leave threads
+/// asleep for the rest of the run, and macOS caps a process's threads
+/// well short of Linux. Counted per instance, by the queue each thread
+/// holds: the worker's is held by its thread and by each thread of the
+/// thumbnail pool (through the edit hooks), the prefetcher's by its
+/// threads, so the queue going means they have. The pool starts its
+/// threads on the first thumbnail asked, so one is asked for.
+#[test]
+fn a_dropped_worker_and_prefetcher_leave_no_threads() {
+    let worker = Worker::new(|_| {});
+    worker.send(Job::Thumbnail {
+        index: 0,
+        frame: Frame::file("/nonexistent/greycard-threads-exit.CR3"),
+    });
+    let prefetcher = crate::cull::Prefetcher::new(|_| {});
+    let worker_queue = Arc::downgrade(&worker.queue);
+    let prefetcher_gone = prefetcher.threads_gone();
+    assert!(
+        worker_queue.strong_count() > 1 && !prefetcher_gone(),
+        "the threads hold their queues"
+    );
+    drop(worker);
+    drop(prefetcher);
+    let asked = Instant::now();
+    while worker_queue.upgrade().is_some() || !prefetcher_gone() {
+        assert!(
+            asked.elapsed() < std::time::Duration::from_secs(2),
+            "two seconds after the drop, a thread still holds its queue"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}

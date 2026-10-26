@@ -546,8 +546,14 @@ impl Pool {
     }
 
     /// Stop the threads once each has finished what it has in hand.
+    ///
+    /// Poisoned or not, since it is the pool's and the worker's drop.
     pub(crate) fn stop(&self) {
-        self.lock().stopping = true;
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stopping = true;
         self.shared.cv.notify_all();
     }
 }

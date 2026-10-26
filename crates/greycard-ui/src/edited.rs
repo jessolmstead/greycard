@@ -832,6 +832,19 @@ struct Keeper {
 struct KeeperState {
     waiting: Option<Task>,
     started: bool,
+    /// The keeper was dropped: the thread ends at its next look.
+    closed: bool,
+}
+
+/// The keeper dropped (with its `Edited`, once the worker and the pool
+/// are gone) ends its thread. Nothing can be waiting, since a waiting
+/// task holds the `Edited`. Not joined: the thread ends on its own.
+impl Drop for Keeper {
+    fn drop(&mut self) {
+        let (lock, cv) = &*self.inner;
+        lock.lock().unwrap_or_else(|e| e.into_inner()).closed = true;
+        cv.notify_all();
+    }
 }
 
 impl Keeper {
@@ -850,6 +863,9 @@ impl Keeper {
                         let task = {
                             let mut state = lock.lock().expect("keeper");
                             loop {
+                                if state.closed {
+                                    return;
+                                }
                                 if let Some(task) = state.waiting.take() {
                                     break task;
                                 }

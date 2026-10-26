@@ -599,6 +599,8 @@ struct Queue {
     /// The decodes a thread has taken and not yet delivered: a list
     /// that names one again does not start it twice.
     in_flight: Vec<Want>,
+    /// The prefetcher was dropped: the threads end at their next look.
+    closed: bool,
 }
 
 type Deliver = Arc<dyn Fn(Loaded) + Send + Sync>;
@@ -644,6 +646,14 @@ impl Prefetcher {
         }
     }
 
+    /// Whether every thread has let go of the queue, asked at any time
+    /// after: true once they have ended.
+    #[cfg(test)]
+    pub(crate) fn threads_gone(&self) -> impl Fn() -> bool + 'static {
+        let queue = Arc::downgrade(&self.queue);
+        move || queue.upgrade().is_none()
+    }
+
     /// The last list wanted.
     #[cfg(test)]
     pub(crate) fn asked(&self) -> Vec<Want> {
@@ -687,12 +697,30 @@ impl Prefetcher {
     }
 }
 
+/// A prefetcher dropped closes its queue: each thread finishes the
+/// decode in hand and ends, and what was still wanted is dropped, since
+/// nobody is left to show it. Without it every prefetcher made leaves
+/// its threads asleep on the queue for the life of the process, and a
+/// run of tests that each make one meets the thread cap macOS sets per
+/// process. No join: a decode can take a second, and the window's
+/// thread is the one dropping it.
+impl Drop for Prefetcher {
+    fn drop(&mut self) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().unwrap_or_else(|e| e.into_inner()).closed = true;
+        cv.notify_all();
+    }
+}
+
 fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, previews: Previewed) {
     let (lock, cv) = &*queue;
     loop {
         let want = {
             let mut q = lock.lock().expect("cull queue");
             loop {
+                if q.closed {
+                    return;
+                }
                 if let Some(w) = q.wanted.pop_front() {
                     q.in_flight.push(w.clone());
                     break w;

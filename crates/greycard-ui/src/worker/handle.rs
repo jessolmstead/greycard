@@ -247,12 +247,7 @@ impl Worker {
 
     /// [`Worker::stop`], waiting `limit` rather than [`LEAVING`].
     pub(super) fn stop_within(&self, limit: std::time::Duration) -> bool {
-        self.pool.stop();
-        {
-            let (lock, cv) = &*self.queue;
-            lock.lock().expect("worker queue").stopping = true;
-            cv.notify_all();
-        }
+        self.close();
         let Some(thread) = self.thread.lock().expect("worker thread").take() else {
             return true;
         };
@@ -272,6 +267,17 @@ impl Worker {
             *self.thread.lock().expect("worker thread") = Some(thread);
             false
         }
+    }
+
+    /// Ask the worker's thread and the pool's to stop, and wait for
+    /// neither: what [`Drop`] does.
+    fn close(&self) {
+        self.pool.stop();
+        let (lock, cv) = &*self.queue;
+        // Poisoned or not: a drop while a panic unwinds aborts if it
+        // panics too.
+        lock.lock().unwrap_or_else(|e| e.into_inner()).stopping = true;
+        cv.notify_all();
     }
 
     /// Whether the worker's thread has ended: joined by
@@ -842,5 +848,18 @@ fn fetch_lenses(queue: &Arc<(Mutex<Queue>, Condvar)>, deliver: &dyn Fn(Outcome))
         Err(e) => deliver(Outcome::LensesFetchFailed {
             message: e.to_string(),
         }),
+    }
+}
+
+/// A worker dropped closes its queue, so its thread ends once out of
+/// the job in hand, and what was queued behind it is dropped: nobody is
+/// left to take the outcome. Without it every worker made leaves a
+/// thread asleep on the queue for the life of the process, and a run
+/// of tests that each make one meets the thread cap macOS sets per
+/// process. No join here: the window's thread would wait out a develop
+/// or a model run, and [`Worker::stop`] is the way out that waits.
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.close();
     }
 }
