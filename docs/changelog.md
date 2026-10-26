@@ -135,6 +135,10 @@ design note behind it.
 
 ### On a Mac
 
+- The MONITOR section's System uses the display's own profile from
+  ColorSync, so the viewport on a Display P3 screen matches the
+  export instead of looking more saturated
+  ([§428](https://github.com/jessolmstead/greycard/blob/master/docs/notes/428-the-displays-profile-from-colorsync.md)).
 - On Apple silicon the learned denoiser and the Sky and Subject masks
   can run on Core ML, which reaches the Neural Engine; greycard times
   it against WebGPU when a model loads and keeps the faster

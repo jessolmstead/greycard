@@ -347,7 +347,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         app.set_proofing(cli.proof.is_some());
     }
     // The monitor's profile, the flags' to open with over the
-    // remembered one, and the monitors colord offers for it.
+    // remembered one, and the monitors the system's color manager
+    // offers for it.
     let monitors = {
         let key = if cli.no_display_profile {
             display::MonitorProfile::Srgb.key()
@@ -369,8 +370,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         };
         app.set_display_profile(choice.as_str().into());
         app.set_display_file(file.as_str().into());
-        let monitors = display::colord_monitors().unwrap_or_else(|e| {
-            tracing::warn!("colord: {e:#}; no display profile from it");
+        let monitors = display::system_monitors().unwrap_or_else(|e| {
+            tracing::warn!(
+                "{}: {e:#}; no display profile from it",
+                display::SYSTEM_SOURCE
+            );
             Vec::new()
         });
         let known: Vec<slint::SharedString> = monitors
@@ -1894,9 +1898,6 @@ pub(crate) fn save_at_quit(
     followed
 }
 
-/// The monitor's profile as the panel has it, and where it is from,
-/// for the panel's note: colord's for the monitor named (the primary
-/// when none is, or the name is stale), a standard, or a file.
 /// `--preset`: lay `preset` over `file`'s edit as one step named for
 /// it, and write the sidecar where `placement` says (`None`: the run
 /// writes no sidecars). Written here and not left to the quit's
@@ -1948,6 +1949,10 @@ pub(crate) fn preset_at_start(
     }
 }
 
+/// The monitor's profile as the panel has it, and where it is from,
+/// for the panel's note: the color manager's for the monitor named
+/// (the primary when none is, or the name is stale), a standard, or
+/// a file.
 pub(crate) fn monitor_settings(
     app: &App,
     monitors: &[display::Monitor],
@@ -1965,11 +1970,11 @@ pub(crate) fn monitor_settings(
             match picked {
                 Some(m) => (
                     MonitorProfile::File(m.profile.clone().expect("filtered")),
-                    format!("{}'s profile from colord", m.model),
+                    format!("{}'s profile from {}", m.model, display::SYSTEM_SOURCE),
                 ),
                 None => (
                     MonitorProfile::Srgb,
-                    "colord knows no display profile".to_string(),
+                    format!("{} knows no display profile", display::SYSTEM_SOURCE),
                 ),
             }
         }
@@ -2353,7 +2358,7 @@ pub(crate) fn remember_last_file(st: &State) {
     settings.save();
 }
 
-/// The panel's names for a profile that is colord's, and for one
+/// The panel's names for a profile that is the system's, and for one
 /// that is a file.
 pub(crate) const SYSTEM: &str = "System";
 

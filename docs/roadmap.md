@@ -15,11 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] On a Mac the "System" monitor profile is sRGB on a Display P3
-      panel, so the viewport reads more saturated than the export in
-      Preview; "Display P3" matches by eye (M5, 2026-10-25). Read the
-      display's profile from ColorSync so System means the display, as
-      colord does on Linux; WCS on Windows the same way
 - [ ] The export queue's view (§416): the Loupe over a queued frame
       shows blank scopes and a lone Cull tab; the view has no way to
       start the run, which only the export sheet's foot offers; and the
@@ -380,12 +375,11 @@ ask for first.
       their license shown as lensfun's is. Waits on a tester asking,
       since it covers a fraction of bodies and the chart shot is the
       real answer
-- [ ] The monitor's own profile on Windows and macOS: read it from
-      WCS and from ColorSync, so "System" means the display rather
-      than sRGB. Today `colord_monitors` returns nothing off Linux
-      and the viewport falls back to sRGB unless an ICC file is
-      picked by hand, which a wide-gamut monitor makes wrong
-      (display.rs:565, §137)
+- [ ] The monitor's own profile on Windows: read it from WCS, so
+      "System" means the display rather than sRGB, as colord does on
+      Linux and ColorSync on a Mac (§428). Today the viewport falls
+      back to sRGB there unless an ICC file is picked by hand, which a
+      wide-gamut monitor makes wrong (§137)
 
 ### The library
 

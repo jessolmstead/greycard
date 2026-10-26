@@ -44,9 +44,10 @@ pub struct Settings {
     pub proof_profile: String,
     pub proof_intent: String,
     pub gamut_warning: bool,
-    /// The monitor's profile: "System" for colord's, a standard's
-    /// name, or a file's path; and under "System", which of colord's
-    /// monitors, by model, the primary when empty.
+    /// The monitor's profile: "System" for the color manager's
+    /// (colord, ColorSync), a standard's name, or a file's path; and
+    /// under "System", which of its monitors, by model, the primary
+    /// when empty.
     pub display_profile: String,
     pub display_monitor: String,
     /// The viewport's surround, by the name `render::canvas_name`

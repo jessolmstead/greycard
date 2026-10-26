@@ -136,4 +136,9 @@ windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32
 # and the URLs it is handed. winit carries both already on the Mac.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString", "NSURL"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSString", "NSURL", "NSValue"] }
+# The displays' profiles from ColorSync (CoreGraphics), and their names
+# (NSScreen). winit already carries all three on the Mac.
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFData"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGColorSpace", "CGDirectDisplay", "CGDisplayConfiguration", "CGError"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSGraphics", "NSScreen"] }

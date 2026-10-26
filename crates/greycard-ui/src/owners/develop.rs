@@ -235,7 +235,7 @@ pub(crate) struct Develop {
     pub(crate) mask_picks: Rc<VecModel<MaskPick>>,
     /// The people a part may be of, outlined while one is picked.
     pub(crate) person_boxes: Rc<VecModel<PersonBox>>,
-    /// The displays colord knows, primary first, for the panel's
+    /// The displays the system's color manager knows, primary first, for the panel's
     /// "System" choice.
     pub(crate) monitors: Vec<display::Monitor>,
     /// What the display table on the renderer was built for: the

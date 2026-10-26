@@ -245,9 +245,9 @@ delete sheet.
   than on other raws.
 - The high-quality denoisers are slow, taking tens of seconds on a
   large frame.
-- On Windows and macOS the display is treated as sRGB unless you pick
-  your monitor's ICC profile by hand. On a wide-gamut screen, colors
-  may look too saturated until you do.
+- On Windows the display is treated as sRGB unless you pick your
+  monitor's ICC profile by hand. On a wide-gamut screen, colors may
+  look too saturated until you do.
 - On a Mac, double-clicking a raw or a `.gcd` in Finder launches
   greycard but does not open that file.
 

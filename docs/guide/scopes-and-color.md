@@ -100,18 +100,16 @@ profile changes.
 
 | Choice | Use it when |
 |---|---|
-| **System** | on Linux, to use the profile your desktop has for the monitor; with several monitors, pick yours below |
+| **System** | on Linux and macOS, to use the profile your desktop has for the monitor; with several monitors, pick yours below |
 | **sRGB** | your monitor is an ordinary sRGB screen |
 | **Adobe RGB**, **Display P3** | your monitor is set to emulate that space in its own menu |
 | **File** | you have an ICC profile for the monitor, from a calibrator or its maker; pick it with **Choose...** |
 
-On Windows and macOS, greycard cannot read the system's monitor
-profile yet, so **System** shows colors as sRGB. On a wide-gamut
-screen colors then look too saturated. Pick the monitor's ICC profile
-with **File** (Windows keeps them in
-`C:\Windows\System32\spool\drivers\color`, macOS in
-`/Library/ColorSync/Profiles`), or one of the named spaces if the
-monitor is set to it.
+On Windows, greycard cannot read the system's monitor profile yet,
+so **System** shows colors as sRGB. On a wide-gamut screen colors
+then look too saturated. Pick the monitor's ICC profile with **File**
+(Windows keeps them in `C:\Windows\System32\spool\drivers\color`),
+or one of the named spaces if the monitor is set to it.
 
 **Canvas** sets the color around the picture: black or one of three
 greys. **F** gives the fitted picture a mat of it on every side.

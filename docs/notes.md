@@ -440,3 +440,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§425. Fills kept on disk](notes/425-fills-kept-on-disk.md) (2026-10-25)
 - [§426. The vectorscope folds the shot away](notes/426-the-vectorscope-folds-the-shot-away.md) (2026-10-25)
 - [§427. Shift and the wheel on a Mac](notes/427-shift-and-the-wheel-on-a-mac.md) (2026-10-25)
+- [§428. The display's profile from ColorSync](notes/428-the-displays-profile-from-colorsync.md) (2026-10-25)

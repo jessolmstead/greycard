@@ -184,7 +184,7 @@ struct Cli {
     #[arg(long)]
     sidecar_folder: bool,
     /// The monitor's ICC profile to open with, over the panel's
-    /// remembered choice (colord's profile for the primary display
+    /// remembered choice (the system's profile for the primary display
     /// unless changed)
     #[arg(long)]
     display_profile: Option<PathBuf>,
