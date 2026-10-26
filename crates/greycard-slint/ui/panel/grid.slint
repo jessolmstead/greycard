@@ -127,6 +127,13 @@ export component GridSheet inherits Rectangle {
     }
     /// The export queue's view: no rejects folder to delete.
     in property <bool> queue-view;
+    /// The queue's view runs the queue from its own header, as the
+    /// export sheet's foot does: the count line, and the button, off
+    /// while any export or the queue itself is running.
+    in property <string> queue-line;
+    in property <bool> queue-running;
+    in property <bool> queue-can-run;
+    callback queue-run();
     /// Where a frame sits under the headings, and the first frame of
     /// the row at a height, asked of the arithmetic the Rust side
     /// tests: the rows are as tall as the tallest picture in them, so
@@ -319,6 +326,20 @@ export component GridSheet inherits Rectangle {
                         TouchArea {
                             clicked => { root.sync-retry(); }
                         }
+                    }
+                    if root.queue-view && root.queue-line != "": Text {
+                        text: root.queue-running ? root.queue-line + ", running" : root.queue-line;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if root.queue-view: PanelButton {
+                        text: "Export the queue";
+                        icon: @image-url("../icons/image-down.svg");
+                        words: "Export every queued set, in order";
+                        enabled: root.queue-can-run;
+                        clicked => { root.focus-keys(); root.queue-run(); }
                     }
                     // The order in words rides here, on the header's top
                     // row, which has room to spare: beside the filter's

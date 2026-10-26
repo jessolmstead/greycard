@@ -50,6 +50,10 @@ design note behind it.
 
 ### Library
 
+- The export queue's view runs the queue from its own header, with
+  the count of what waits; the Export queue row sits below the
+  collections, and the Loupe over a queued frame has no tab bar
+  ([§430](https://github.com/jessolmstead/greycard/blob/master/docs/notes/430-the-export-queues-view-polished.md)).
 - The grid's rows take the height of their pictures: a row of
   landscapes loses the empty band above and below each picture, and a
   portrait makes only its own row tall.

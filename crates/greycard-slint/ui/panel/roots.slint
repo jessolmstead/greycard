@@ -10,7 +10,7 @@ import { RootChip } from "../structs.slint";
 
 // A row: what it names, how many files at its right, muted, or
 // "offline" there and the row dimmed when its drive is not there.
-component RootRow inherits Rectangle {
+export component RootRow inherits Rectangle {
     in property <string> text;
     in property <int> count;
     in property <bool> on;
@@ -173,11 +173,6 @@ export component RootsSection inherits Section {
     in property <[RootChip]> roots;
     in property <bool> all-on;
     in property <int> all-count;
-    /// The export queue's row, under the roots' own: its frames, and
-    /// whether its view is open.
-    in property <int> queue-count;
-    in property <bool> queue-on;
-    callback queue-picked();
     /// The folder open is not under a root, and can be added with a
     /// press.
     in property <bool> can-add-open;
@@ -273,15 +268,6 @@ export component RootsSection inherits Section {
             menu-shown => { return root.menu-shown(); }
             clicked => { root.picked(r.path); root.focus-keys(); }
             menu(x, y) => { root.open-menu(r.path, r.archive, x, y); }
-        }
-        // Always there, empty or not: the frames waiting to be
-        // exported, as a view of their own.
-        RootRow {
-            text: "Export queue";
-            count: root.queue-count;
-            on: root.queue-on;
-            menu-shown => { return root.menu-shown(); }
-            clicked => { root.queue-picked(); root.focus-keys(); }
         }
         if root.empty-note != "": Text {
             text: root.empty-note;

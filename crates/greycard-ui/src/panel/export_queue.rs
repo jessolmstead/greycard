@@ -210,6 +210,7 @@ pub(crate) fn show_queue(st: &State, app: &App) {
     app.set_export_queue_sets(st.work.export_queue.len() as i32);
     app.set_export_queue_line(export_queue::count_line(&st.work.export_queue).into());
     app.set_export_queue_running(st.work.queue_run.as_ref().is_some_and(|r| r.set.is_some()));
+    app.set_export_queue_busy(st.work.queue_run.is_some());
     let on = st.work.queue_run.as_ref().map(|r| r.entry);
     let rows: Vec<QueueRow> = st
         .work

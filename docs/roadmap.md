@@ -15,10 +15,9 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] The export queue's view (§416): the Loupe over a queued frame
-      shows blank scopes and a lone Cull tab; the view has no way to
-      start the run, which only the export sheet's foot offers; and the
-      Export queue row sits among the library's roots (2026-10-25)
+- [ ] Blank scopes over a queued frame on a Mac (2026-10-25): not
+      reproduced on Linux; the lead is the camera's stand-in clearing
+      the scopes with no analysis after (§430). A Mac run decides
 - [ ] The Subject model's first run on an M5 is a compile: 43 s on
       Core ML (§422) with every thread of the app asleep and no line
       logged, then 1 s on the next frame (2026-10-25); under WebGPU

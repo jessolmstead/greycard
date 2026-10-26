@@ -1039,6 +1039,104 @@ mod tests {
         teardown(s);
     }
 
+    /// The Loupe over a queued frame has no tab bar: no develop tabs,
+    /// and no Cull tab standing alone where the bar was. Out of the
+    /// view the bar is back.
+    #[test]
+    fn no_tab_bar_over_a_frozen_frame() {
+        let s = setup("tabs", 2);
+        queue(&s, vec![entry(&s, &[0, 1], None, "JPEG")]);
+        open(&s);
+        s.app.set_grid_open(false);
+        s.app.invoke_select(0);
+        assert!(s.app.get_frozen());
+        assert_eq!(crate::testing::count_labeled(&s.app, "Cull mode"), 0);
+        // Rating still works from the keys over the frozen frame.
+        crate::testing::press(&s.app, "3");
+        {
+            let st = s.state.borrow();
+            assert_eq!(st.sidecars[st.file_of(0)].meta.rating, 3);
+        }
+        crate::roots::open_listing(
+            &s.state,
+            &s.app,
+            &s.worker,
+            crate::roots::Listing::Files(s.files.clone()),
+            crate::roots::Select::Row(1),
+        );
+        crate::roots::land_sent(&s.state, &s.app, &s.worker);
+        s.app.set_grid_open(false);
+        s.app.invoke_select(1);
+        assert!(!s.app.get_frozen());
+        assert_eq!(crate::testing::count_labeled(&s.app, "Cull mode"), 1);
+        teardown(s);
+    }
+
+    /// The Export queue row stands under the collections in no section
+    /// of its own, so COLLECTIONS folded (a fold the settings keep)
+    /// still leaves the one way into the queue's view on screen.
+    #[test]
+    fn the_queue_row_is_there_with_collections_folded() {
+        let s = setup("folded", 1);
+        queue(&s, vec![entry(&s, &[0], None, "JPEG")]);
+        s.app.set_collapsed_collections(true);
+        let rows = crate::testing::buttons(&s.app, "Export queue");
+        assert_eq!(rows.len(), 1, "the row, once");
+        let (at, size) = rows[0];
+        crate::testing::click(&s.app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::roots::land_sent(&s.state, &s.app, &s.worker);
+        assert_eq!(s.state.borrow().views.view, View::Queue);
+        assert!(s.app.get_queue_view_on());
+        teardown(s);
+    }
+
+    /// Where the grid header's "Export the queue" is, if it is there.
+    fn run_button(s: &Setup) -> Option<(f32, f32)> {
+        use i_slint_backend_testing::ElementHandle;
+        s.app
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        let e = ElementHandle::find_by_accessible_label(&s.app, "Export the queue").next()?;
+        let (at, size) = (e.absolute_position(), e.size());
+        Some((at.x + size.width / 2.0, at.y + size.height / 2.0))
+    }
+
+    /// The queue's view starts the run from its own header, with the
+    /// sheet's count line beside it; while the run is under way the
+    /// button is off, and a press does nothing.
+    #[test]
+    fn the_queue_view_runs_the_queue_from_its_header() {
+        let s = setup("run-button", 2);
+        assert!(run_button(&s).is_none(), "not outside the queue's view");
+        queue(
+            &s,
+            vec![entry(&s, &[0], None, "JPEG"), entry(&s, &[1], None, "PNG")],
+        );
+        crate::panel::export_queue::show_queue(&s.state.borrow(), &s.app);
+        open(&s);
+        assert!(s.app.get_grid_open());
+        assert_eq!(s.app.get_export_queue_line(), "2 sets, 2 frames queued");
+        let (x, y) = run_button(&s).expect("the run control in the header");
+        crate::testing::click(&s.app, x, y);
+        {
+            let st = s.state.borrow();
+            let run = st.work.queue_run.as_ref().expect("the run began");
+            assert_eq!(run.entry, 0);
+            assert!(run.set.is_some(), "the first set is being written");
+        }
+        assert!(s.app.get_export_queue_busy());
+        assert!(s.app.get_export_queue_running());
+        // Off while it runs: a second press asks nothing of the run,
+        // which would say why it waits.
+        s.app.set_status("".into());
+        crate::testing::click(&s.app, x, y);
+        assert_eq!(s.app.get_status(), "");
+        assert_eq!(s.state.borrow().work.queue_run.as_ref().unwrap().entry, 0);
+        teardown(s);
+    }
+
     /// The queue changed under a run: the view is listed again in place,
     /// the frame on screen and the set kept by the frame each tile is (a
     /// frame queued twice keeps its own copy), and the status line as it
