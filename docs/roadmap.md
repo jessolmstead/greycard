@@ -33,9 +33,12 @@ the reasoning lives in `docs/notes.md`.
       estimate reads texture at the hole's level as noise once the
       real noise is below it. Cap it by the develop's mosaic noise
       model carried through the gains and the matrix, which the base
-      does not carry today (§398). And a fill whose own grain exceeds
-      the surround's (3x with the profiled denoise) wants smoothing,
-      not grain. Harness in target/captures-2026-10-26/fill-grain
+      does not carry today (§398). A wide draw is held to the
+      shortfall's variance since §438; measuring the surround's
+      variance within its quiet blocks, per level bin, would let a
+      truly wide grain be drawn in full. And a fill whose own grain
+      exceeds the surround's (3x with the profiled denoise) wants
+      smoothing, not grain. Harness in target/captures-2026-10-26/fill-grain
 
 ## Tracks
 

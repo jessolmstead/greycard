@@ -528,9 +528,7 @@ pub fn add_picture_noise(
     }
     let widths = shortfall_widths(data, mask, model, present);
     let kernels: [Vec<f32>; 3] = widths.map(grain_kernel);
-    // What a unit of the smoothed draw reads at distance two, against
-    // white's.
-    let gains: [f32; 3] = std::array::from_fn(|k| RESIDUAL_GAIN / residual_gain(&kernels[k], 2));
+    let gains: [f32; 3] = std::array::from_fn(|k| draw_gain(&kernels[k]));
     let pad = kernels.iter().map(|k| k.len() / 2).max().unwrap_or(0);
     let (pw, ph) = (width + 2 * pad, height + 2 * pad);
     let white: Vec<[f32; 3]> = (0..pw * ph)
@@ -596,6 +594,19 @@ pub fn add_picture_noise(
         }
     }
     widths
+}
+
+/// The variance a unit of the draw through `kernel` is scaled by:
+/// what white reads at distance two against what the smoothed draw
+/// reads there, so the draw reads as the shortfall at two; but never
+/// past 1, so it carries no more variance than the shortfall itself.
+/// Past 1 the boost makes a wide draw, read small at two, into
+/// blotches many times the grain: on a frame the denoiser smoothed,
+/// whose residual is small because it was taken out, not because its
+/// grain is wide, a draw of width 3 was scaled by 60 in variance. The
+/// draw then reads short at two, which is the lesser wrong.
+fn draw_gain(kernel: &[f32]) -> f32 {
+    (RESIDUAL_GAIN / residual_gain(kernel, 2)).min(1.0)
 }
 
 /// The width each axis's added grain is smoothed by: at the masked
@@ -1294,10 +1305,54 @@ pub(crate) mod tests {
     }
 
     /// Correlated grain round a smooth hole, as a learned denoise
-    /// leaves it, is drawn as coarse as it is.
+    /// leaves it, is drawn as coarse as it is: the draw's spread at
+    /// one over two is the surround's. Its amount is the shortfall's
+    /// variance, no more ([`draw_gain`]), so it reads short of the
+    /// surround at every distance, never past it.
     #[test]
     fn correlated_grain_is_drawn_as_coarse_as_its_surround() {
-        grain_in_the_hole_matches(2, (0, 0.0), &[1, 2, 4], 0.15);
+        let (mut data, hole) = grain_round_a_hole(2, [0.02, 0.006, 0.008], (0, 0.0));
+        let w = 360;
+        let known: Vec<bool> = hole.iter().map(|&h| !h).collect();
+        let model = estimate_picture_noise(&data, w, w, &known);
+        let present = estimate_picture_noise(&data, w, w, &hole);
+        let mask: Vec<f32> = hole.iter().map(|&h| f32::from(u8::from(h))).collect();
+        let widths = add_picture_noise(&mut data, w, (0, 0), &mask, &model, &present, 5);
+        assert!(widths.iter().all(|&v| v > 1.0), "{widths:?}");
+        let (in1, in2) = (
+            residual_spread(&data, 1, |r| r < 72.0),
+            residual_spread(&data, 2, |r| r < 72.0),
+        );
+        let (out1, out2) = (
+            residual_spread(&data, 1, |r| r > 90.0),
+            residual_spread(&data, 2, |r| r > 90.0),
+        );
+        for k in 0..3 {
+            let (inside, outside) = (in1[k] / in2[k], out1[k] / out2[k]);
+            assert!(
+                (inside / outside - 1.0).abs() < 0.15,
+                "axis {k}: shape {inside} against {outside}"
+            );
+            assert!(
+                in2[k] < out2[k] * 1.05,
+                "axis {k}: {} past {}",
+                in2[k],
+                out2[k]
+            );
+        }
+    }
+
+    /// The draw's gain: 1 for white, and 1 for any smoothed draw, since
+    /// the boost that would make it read as white at two is past 1 for
+    /// every width.
+    #[test]
+    fn a_smoothed_draw_is_never_louder_than_the_shortfall() {
+        assert!((draw_gain(&grain_kernel(0.0)) - 1.0).abs() < 1e-6);
+        for width in [0.3, 0.5, 1.0, 2.0, MAX_GRAIN_WIDTH] {
+            let k = grain_kernel(width);
+            assert!(RESIDUAL_GAIN / residual_gain(&k, 2) > 1.0, "{width}");
+            assert!((draw_gain(&k) - 1.0).abs() < 1e-6, "{width}");
+        }
     }
 
     /// White grain round a smooth hole is drawn white.
@@ -1314,11 +1369,12 @@ pub(crate) mod tests {
 
     /// A fill carrying coarse grain of its own, as a model's answer
     /// does, is given finer grain on top, so the sum matches its
-    /// surround at distances one and two within 8 percent. (Drawn to the
-    /// frame's own shape it measured 14 percent short at one.)
+    /// surround at distances one and two within 12 percent: 9 short at
+    /// one, where the draw's gain is held to 1 ([`draw_gain`]). (Drawn
+    /// to the frame's own shape it measured 14 percent short at one.)
     #[test]
     fn grain_over_a_fills_coarse_grain_makes_up_the_fine_scale() {
-        grain_in_the_hole_matches(1, (4, 1.5), &[1, 2], 0.08);
+        grain_in_the_hole_matches(1, (4, 1.5), &[1, 2], 0.12);
     }
 
     /// The shortfall's two edges: a fill with more energy at distance
