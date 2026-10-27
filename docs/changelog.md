@@ -3,7 +3,18 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.8.2, unreleased
+## 0.9.0, 2026-10-26
+
+The generative remove grows up: a Fill chooses Patch, Fast, or Best,
+a fill is kept on disk, comes back with the frame's grain, and takes a
+window far larger than the model's; Apple silicon runs the learned
+models on Core ML and shows the viewport through the display's own
+profile. Auto in the Look section and Auto level in Crop set a frame's
+tones and horizon in one click. The window goes full screen on F11,
+takes any UI scale, three themes, and every shortcut rebound; the
+export queue has a view of its own. Among the fixes: X-Trans 5 RAFs
+refused as half-copied, a 4 GB card crashing on the denoiser, and a
+Mac trackpad moving sliders backwards.
 
 ### The window
 

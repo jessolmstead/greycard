@@ -139,19 +139,21 @@ planned.
 
 ## Where it stands
 
-Built, as of 0.8.1:
+Built, as of 0.9.0:
 
 - **Pipeline.** rawler decoding. Linear Rec.2020 from the camera
   matrix to the monitor profile, soft proofing, AgX as a second
   display curve. RCD, AMaZE and dual demosaic, Markesteijn for
   X-Trans with the profiled denoise, hot pixel repair and chromatic
   aberration correction on it too. Highlight reconstruction, chromatic aberration and
-  defringe, DCP profiles, a profiled denoiser and a learned one,
-  deconvolution sharpening, lensfun corrections. Every operation has
-  a CPU reference and a test.
+  defringe, DCP profiles, a profiled denoiser and a learned one, on
+  Core ML on Apple silicon, deconvolution sharpening, lensfun
+  corrections. Every operation has a CPU reference and a test.
 - **Editing.** Exposure, tone, curves, a color mixer, grading, black
-  and white, texture, clarity, dehaze, grain, vignette. Crop,
-  rotation, guided perspective. Heal, clone, learned fill. Scopes.
+  and white, texture, clarity, dehaze, grain, vignette, and an Auto
+  for the tones. Crop, rotation, an auto level, guided perspective.
+  Heal, clone, learned fill, and a generative remove that puts the
+  frame's grain back. Scopes.
   Presets, including Lightroom's, 3D LUT looks, and a look fitted
   from the camera's own JPEG. A named history, snapshots, and
   versions of a frame in one sidecar.
@@ -183,8 +185,7 @@ Built, as of 0.8.1:
   problem button that fills in the version, OS and GPU. A release
   check that can be turned off.
 
-Planned, in order: a generative fill; HDR merge and panoramas;
-tethering. The learned denoiser for X-Trans alongside these.
+Planned, in order: HDR merge and panoramas; tethering. The learned denoiser for X-Trans alongside these.
 
 The reasoning behind every choice is in `docs/notes/`, one numbered
 section a file with `docs/notes.md` as the index, and the plan is
