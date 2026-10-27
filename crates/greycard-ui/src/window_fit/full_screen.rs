@@ -76,9 +76,9 @@ fn toggle(window: &slint::Window) {
     }
 }
 
-#[cfg(test)]
-// The tests that press F11 run where it is bound: on a Mac it is
+// The tests press F11, so they run where it is bound: on a Mac it is
 // not, and the toggle is reached from the menu.
+#[cfg(all(test, not(target_os = "macos")))]
 mod tests {
     use crate::App;
     use crate::testing::{click, labeled, press, type_text};
@@ -104,7 +104,6 @@ mod tests {
 
     /// F11 takes the window full screen and back in the grid, the
     /// lightbox, the loupe, Develop, Cull, and the crop.
-    #[cfg(not(target_os = "macos"))]
     #[test]
     fn f11_goes_full_screen_and_back_in_every_view() {
         let (app, _state, _worker) = develop_window();
@@ -134,7 +133,6 @@ mod tests {
     /// A maximized window comes back maximized, though the platform
     /// reported it not while full screen, as Windows does; one that
     /// was not stays as it was.
-    #[cfg(not(target_os = "macos"))]
     #[test]
     fn leaving_full_screen_puts_back_a_maximized_window() {
         let (app, _state, _worker) = develop_window();
@@ -175,7 +173,6 @@ mod tests {
     /// In by the menu while maximized, out by the platform's own,
     /// unmaximized, in by the platform again and out by F11: not
     /// maximized, since what we kept went with the platform's leaving.
-    #[cfg(not(target_os = "macos"))]
     #[test]
     fn a_platforms_leaving_forgets_what_was_kept() {
         let (app, _state, _worker) = develop_window();
@@ -195,7 +192,6 @@ mod tests {
 
     /// Held, F11 is one toggle; under a sheet it does nothing, as the
     /// panes' keys do not.
-    #[cfg(not(target_os = "macos"))]
     #[test]
     fn a_held_f11_toggles_once_and_a_sheet_keeps_it() {
         let (app, _state, _worker) = develop_window();
@@ -225,7 +221,6 @@ mod tests {
 
     /// Typing in a field, the field keeps F11 as it keeps F8, and
     /// types neither; Escape gives the keys back.
-    #[cfg(not(target_os = "macos"))]
     #[test]
     fn f11_in_a_field_is_as_the_panes_keys_are() {
         let (app, _state, _worker) = develop_window();
