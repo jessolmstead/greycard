@@ -2,7 +2,7 @@
 // light, noise, detail, sharpening, the vignette, grain, the demosaic.
 
 import { Theme } from "../theme.slint";
-import { Section, EditSlider, Steps, Toggle, Segmented } from "../controls.slint";
+import { Section, EditSlider, Steps, Toggle, Segmented, PanelButton } from "../controls.slint";
 
 export component LightSection inherits Section {
     in-out property <float> exposure;
@@ -20,7 +20,12 @@ export component LightSection inherits Section {
     in property <bool> show-display-curve;
     in-out property <bool> collapsed-light;
     in-out property <string> target-name;
+    /// The open frame is a raw, which Auto reads.
+    in property <bool> raw-input;
+    /// The picture's light, not a mask's: Auto sets the former only.
+    in property <bool> auto-shown;
     callback view-changed();
+    callback light-auto();
 
     title: "LIGHT";
     owner: root.target-name;
@@ -96,6 +101,17 @@ export component LightSection inherits Section {
         scale: 100;
         text: (root.blacks >= 0 ? "+" : "") + round(root.blacks * 100) + "%";
         changed(v) => { root.view-changed(); }
+    }
+    // Exposure, Highlights, Shadows, Whites, and Blacks from the
+    // frame's own histogram.
+    if root.auto-shown: HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: end;
+        PanelButton {
+            text: "Auto";
+            enabled: root.raw-input;
+            clicked => { root.light-auto(); }
+        }
     }
     if root.show-display-curve: VerticalLayout {
         spacing: 4px;

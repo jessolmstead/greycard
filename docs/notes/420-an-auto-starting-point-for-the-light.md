@@ -78,3 +78,5 @@ where Whites cannot hold the top, the overflow still comes off the
 exposure, past the shadows' hold: a frame with shadows five to eight
 stops under and lights six over asked for a cut of 0.2 and took 1.5; no
 real frame has shown it yet.
+
+*2026-10-27:* the button moved under the Light sliders it sets, shown for the picture only; the Look row of three did not fit a laptop pane, and Auto elided.

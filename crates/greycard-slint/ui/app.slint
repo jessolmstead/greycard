@@ -3217,8 +3217,6 @@ export component App inherits Window {
                             look-renamable: root.look-renamable;
                             look-rename-asked => { root.look-rename-asked(); }
                             match-asked => { root.match-asked(); }
-                            light-auto => { root.light-auto(); }
-                            raw-input: root.raw-input;
                             view-changed => { root.view-changed(); }
                         }
                         if root.shown-tab == "Develop": WhiteBalanceSection {
@@ -3281,6 +3279,9 @@ export component App inherits Window {
                             show-display-curve: root.target == 0 && root.raw-input;
                             collapsed-light <=> root.collapsed-light;
                             target-name <=> root.target-name;
+                            raw-input: root.raw-input;
+                            auto-shown: root.target == 0;
+                            light-auto => { root.light-auto(); }
                             view-changed => { root.view-changed(); }
                         }
                         if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): ColorSection {

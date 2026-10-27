@@ -189,7 +189,7 @@ thread_local! {
 
 /// The whole developed picture, small, in the working space at the
 /// white it was developed at, and how many points across: what the
-/// Auto white balance and the Look section's Auto read.
+/// Auto white balance and the Light section's Auto read.
 fn auto_white_grid(st: &State) -> Option<(Vec<[f32; 3]>, usize)> {
     #[cfg(test)]
     if let Some(grid) = AUTO_WHITE_GRID.with(|g| g.borrow_mut().take()) {
@@ -245,7 +245,7 @@ pub(crate) fn auto_white(mut st: std::cell::RefMut<'_, State>, app: &App) {
     app.set_status(miss.said(true).into());
 }
 
-/// The Look section's Auto: the Light section's exposure and its four
+/// The Light section's Auto: the Light section's exposure and its four
 /// tone sliders set from the open frame's own histogram
 /// ([`greycard_edit::auto`]), read off the same grid of the developed
 /// picture the Auto white balance reads, so nothing is developed again.
@@ -1787,7 +1787,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
         });
     }
-    // The Look section's Auto: the light sliders from the picture.
+    // The Light section's Auto: the light sliders from the picture.
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_light_auto(move || {
@@ -3228,7 +3228,7 @@ mod tests {
         assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
     }
 
-    /// The Look section's Auto sets the light sliders from the picture
+    /// The Light section's Auto sets the light sliders from the picture
     /// through the history, as one step under its name: an undo takes
     /// them back, and a second press changes nothing. Before the
     /// frame's develop is up it does nothing.
@@ -3295,6 +3295,71 @@ mod tests {
         wait();
         assert_eq!(line(&state).1, light);
         assert_eq!(app.get_exposure(), light.exposure);
+    }
+
+    /// Auto is a button under the Light section's sliders, there for
+    /// the picture and not for a mask, whose light it does not set.
+    #[test]
+    fn auto_light_is_a_button_under_the_light_sliders() {
+        use crate::testing::labeled;
+        use greycard_edit::auto::MIDDLE;
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let wait = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ))
+        };
+        wait();
+        {
+            let mut st = state.borrow_mut();
+            st.develop.shown_turn = Some((0, current_turn(&st)));
+        }
+        app.set_raw_input(true);
+        let light = state.borrow().sidecars[0].current.light;
+
+        // The white balance has an Auto of its own above: the Light
+        // section's is the first one under its last slider.
+        let (blacks, _) = labeled(&app, "Blacks");
+        let (at, size) = ElementHandle::find_by_accessible_label(&app, "Auto")
+            .map(|e| (e.absolute_position(), e.size()))
+            .find(|(at, _)| at.y > blacks.y)
+            .expect("an Auto under the Blacks slider");
+        let grid: Vec<[f32; 3]> = (0..4000)
+            .map(|i| {
+                let stops = MIDDLE - 3.0 + 4.0 * (i as f32 + 0.5) / 4000.0;
+                [0.18 * 2f32.powf(stops); 3]
+            })
+            .collect();
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((grid, 40)));
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        wait();
+        let auto = state.borrow().sidecars[0].current.light;
+        assert_ne!(auto, light, "the click moved the sliders");
+        assert!((auto.exposure - 1.0).abs() < 0.05, "{auto:?}");
+        assert_eq!(app.get_exposure(), auto.exposure);
+
+        // A mask's Light section has no Auto, and its white balance
+        // none either.
+        app.set_panel_tab("Masks".into());
+        app.invoke_tab_changed("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        assert_eq!(app.get_target(), 1);
+        // The history's row for the step is named Auto too: only the
+        // panel on the right is looked in.
+        let (blacks, _) = labeled(&app, "Blacks");
+        let panel = ElementHandle::find_by_element_id(&app, "App::panel-view")
+            .next()
+            .expect("the panel's view")
+            .absolute_position();
+        assert!(blacks.x >= panel.x);
+        let in_panel = ElementHandle::find_by_accessible_label(&app, "Auto")
+            .filter(|e| e.absolute_position().x >= panel.x)
+            .count();
+        assert_eq!(in_panel, 0);
     }
 
     /// A picture held up while the next frame develops keeps its own

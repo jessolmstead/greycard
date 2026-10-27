@@ -168,6 +168,11 @@ If you choose a profile made for another camera, a warning says so.
 | **Whites** | −2 to +2 EV | Moves the white point: where the brightest tones reach white. |
 | **Blacks** | −30% to +30% | Moves the black point. |
 
+**Auto** sets Exposure, Highlights, Shadows, Whites, and Blacks from
+the picture's own histogram, as one step in the history. It never
+clips more than the default develop does, and it keeps a night
+frame's lights under white. Press it again and nothing changes.
+
 **Highlights** and **Shadows** work on areas, not single pixels, so
 the texture inside a sky or a shadow keeps its contrast.
 
