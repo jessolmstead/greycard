@@ -379,6 +379,11 @@ ask for first.
       one frame: a refined table is still one fit over a sample, so
       the replacement rule still counts frames
 - [ ] Profile making from a chart shot, after dcamprof (§78)
+- [ ] A DCP's look table applied with its matrix and hue map, as
+      RawTherapee and ART do, so Adobe's Camera Standard, Landscape,
+      and Portrait differ from each other (issue #49, 0.8.1; §122
+      applies the matrix and hue map only); the tone curve stays a
+      Look choice. After 0.9.0
 - [ ] RawTherapee's DCP profiles offered for a fetch: they are made by
       that project under the GPL, so they can be hosted by us as the
       Sky model is and fetched into the profile directory from the
