@@ -89,9 +89,11 @@ design note behind it.
 ### Editing
 
 - On a Mac, a trackpad scroll over a slider moves it the way the
-  fingers went, with Shift held or not
+  fingers went, with Shift held or not, and a swipe up over the
+  picture grows the brush or the retouch patch
   ([§427](https://github.com/jessolmstead/greycard/blob/master/docs/notes/427-shift-and-the-wheel-on-a-mac.md),
-  [§432](https://github.com/jessolmstead/greycard/blob/master/docs/notes/432-the-slider-and-natural-scrolling-on-a-mac.md)).
+  [§432](https://github.com/jessolmstead/greycard/blob/master/docs/notes/432-the-slider-and-natural-scrolling-on-a-mac.md),
+  [§437](https://github.com/jessolmstead/greycard/blob/master/docs/notes/437-the-brushs-wheel-under-natural-scrolling.md)).
 - A slider's drag no longer jumps as it starts, and Shift held while
   dragging moves it a tenth as far
   ([§424](https://github.com/jessolmstead/greycard/blob/master/docs/notes/424-the-sliders-drag-no-jump-and-shift-for-a-fine-drag.md)).

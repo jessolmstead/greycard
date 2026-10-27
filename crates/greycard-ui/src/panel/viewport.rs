@@ -3658,6 +3658,33 @@ mod tests {
             });
     }
 
+    /// Under natural scrolling a swipe up arrives as a negative delta,
+    /// and the brush and the patch, values rather than content, turn it
+    /// back as a slider does: a swipe up grows them. The picture's zoom
+    /// keeps the system's way.
+    #[test]
+    fn under_natural_scrolling_the_brush_grows_with_a_swipe_up() {
+        let (app, _state, _worker) = scrolled_view(1.0);
+        app.global::<crate::SliderKeys>().set_natural(true);
+        app.set_brush_size(0.05);
+        app.set_placing("Brush".into());
+        scroll(&app, 0.0, -60.0);
+        assert!(
+            (app.get_brush_size() - 0.055).abs() < 1e-6,
+            "a swipe up grows the brush"
+        );
+        scroll(&app, 0.0, 60.0);
+        assert!(
+            (app.get_brush_size() - 0.05).abs() < 1e-6,
+            "and a swipe down shrinks it"
+        );
+        app.set_placing("".into());
+        app.set_patch_size(0.05);
+        app.set_retouch_mode("Heal".into());
+        scroll(&app, 0.0, -60.0);
+        assert!((app.get_patch_size() - 0.055).abs() < 1e-6, "the patch too");
+    }
+
     /// A mouse wheel's click, a single vertical delta of 60 px, zooms a
     /// step about the pointer, from the fit as from a zoom.
     #[test]

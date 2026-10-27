@@ -449,3 +449,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§434. The grain's shape under a fill](notes/434-the-grains-shape-under-a-fill.md) (2026-10-26)
 - [§435. A RAF is judged whole by its header](notes/435-a-raf-is-judged-whole-by-its-header.md) (2026-10-26)
 - [§436. Full screen on F11](notes/436-full-screen-on-f11.md) (2026-10-26)
+- [§437. The brush's wheel under natural scrolling](notes/437-the-brushs-wheel-under-natural-scrolling.md) (2026-10-26)

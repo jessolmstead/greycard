@@ -3,6 +3,7 @@
 // to the crop, the masks' shapes, the repairs and the status plate.
 
 import { Theme } from "../theme.slint";
+import { SliderKeys } from "../controls.slint";
 import { Pt, MaskBox, MaskPick, PersonBox, CompareTile } from "../structs.slint";
 import { CropHandle, ThumbBadges, PanelButton, TipArea } from "../controls.slint";
 
@@ -371,11 +372,15 @@ export component Viewport inherits Rectangle {
             // sizes it: a step of 1.1x for each 60 px of delta, a
             // wheel click's size, added up as a touchpad's small
             // deltas come, and started over when the direction turns.
+            // A size is a value, not content, so under natural
+            // scrolling the delta is turned back as a slider's is: the
+            // brush grows with a swipe up.
             if (root.placing == "Brush" || root.retouch-mode != "") {
-                if (self.size-acc * e.delta-y < 0) {
+                let dy = SliderKeys.natural ? -e.delta-y : e.delta-y;
+                if (self.size-acc * dy < 0) {
                     self.size-acc = 0;
                 }
-                self.size-acc += e.delta-y / 1px;
+                self.size-acc += dy / 1px;
                 if (abs(self.size-acc) >= 60) {
                     let steps = (self.size-acc > 0 ? 1 : -1) * floor(abs(self.size-acc) / 60);
                     self.size-acc -= steps * 60;
