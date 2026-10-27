@@ -273,6 +273,14 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       days. Waits on a license search (the strong face-embedding
       models are mostly non-commercial) and on whether a sidecar may
       hold a face embedding, which is biometric data (§253)
+- [ ] The Fast fill's green-magenta mottle at the latent's 8 px scale:
+      on a denoised wall its V axis reads 1.37x the surround at a
+      distance of 8 in the model's own output and 1.31x after the
+      grain, the luma and the U axis under the surround at every
+      scale; Best is clean at every scale, and the grain step adds
+      none of it. A chroma smoothing of the fill at that scale toward
+      the surround's reading, or more steps for Fast; measure both on
+      the church wall (target/scratch-fill/out9) before choosing
 - [ ] The fill's grain estimate capped by the develop's mosaic model
       mapped through the gains and the matrix, so a surround that is
       all texture does not read as noise (§398); the second fit's
