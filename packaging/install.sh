@@ -40,13 +40,10 @@ if [ "$layout" = app ]; then
     echo "installing into $apps and $bin_dir"
 
     rm -rf "$apps/greycard.app"
+    # The quarantine mark a download carries comes along, and is left
+    # on: the app is notarized, with the ticket stapled inside it, so
+    # Gatekeeper passes it at first open without a dialog.
     cp -R "$here/greycard.app" "$apps/greycard.app"
-    # A browser marks what it downloads as quarantined, the archive
-    # utility passes the mark on to what it unpacks, and Gatekeeper
-    # will not open an app that carries it unless Apple has notarized
-    # the app, which this one is not. The copy is yours now, from a
-    # tarball you chose to unpack, so the mark comes off it.
-    xattr -dr com.apple.quarantine "$apps/greycard.app" 2>/dev/null || true
     echo "  $apps/greycard.app"
 
     # Links rather than copies: each binary follows its link back into

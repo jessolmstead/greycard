@@ -120,8 +120,57 @@ for l in $libs; do
     fi
 done
 
+# Notarization, with MACOS_NOTARY_PROFILE naming a notarytool keychain
+# profile (xcrun notarytool store-credentials), and
+# MACOS_NOTARY_KEYCHAIN the keychain it is in when that is not the
+# login one. The app is notarized, and then the disk image it goes out
+# in. The submit and the wait are apart: the wait can run long (the
+# first submissions from an account took over an hour) and a dropped
+# connection ends it while Apple goes on with the submission, so a
+# failed wait is tried again rather than the upload.
+notarize() {
+    if [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
+        echo "package.sh: MACOS_NOTARY_PROFILE needs MACOS_SIGN_IDENTITY;" \
+            "Apple will not notarize an ad-hoc signature" >&2
+        exit 1
+    fi
+    set -- "$1" --keychain-profile "$MACOS_NOTARY_PROFILE"
+    if [ -n "${MACOS_NOTARY_KEYCHAIN:-}" ]; then
+        set -- "$@" --keychain "$MACOS_NOTARY_KEYCHAIN"
+    fi
+    file=$1
+    shift
+    result=$(xcrun notarytool submit "$file" "$@" --output-format json)
+    id=$(printf '%s' "$result" | sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p')
+    if [ -z "$id" ]; then
+        echo "package.sh: notarytool gave no submission id: $result" >&2
+        exit 1
+    fi
+    echo "notarization of ${file##*/} submitted as $id"
+    tries=0
+    while :; do
+        result=$(xcrun notarytool wait "$id" "$@" --timeout 2h \
+            --output-format json) || true
+        printf '%s' "$result" | grep -q '"status"' && break
+        tries=$((tries + 1))
+        if [ "$tries" -ge 5 ]; then
+            echo "package.sh: gave up waiting on $id; check it with" \
+                "xcrun notarytool info $id" >&2
+            exit 1
+        fi
+        echo "notarytool wait failed; trying again in a minute" >&2
+        sleep 60
+    done
+    echo "notarytool: $result"
+    if ! printf '%s' "$result" | grep -q '"status" *: *"Accepted"'; then
+        echo "package.sh: notarization was not accepted; Apple's log:" >&2
+        xcrun notarytool log "$id" "$@" >&2
+        exit 1
+    fi
+}
+
 rm -rf "$stage" "target/dist/$name.tar" "target/dist/$name.tar.gz" \
-    "target/dist/$name.zip"
+    "target/dist/$name.zip" "target/dist/$name.dmg"
 mkdir -p "$stage"
 
 if [ "$os" = macos ]; then
@@ -157,13 +206,39 @@ if [ "$os" = macos ]; then
         rm -rf "$iconset"
     done
 
-    # An ad-hoc signature over the whole bundle. The linker already
-    # signed each binary that way, which Apple silicon insists on; this
-    # seals Info.plist and the resources with them so the bundle is one
-    # signed thing and not three. It is not a Developer ID: a bundle
-    # downloaded by a browser still arrives quarantined, and install.sh
-    # clears that.
-    codesign --force --deep --sign - "$stage/greycard.app"
+    # The signature. With MACOS_SIGN_IDENTITY set (the release workflow
+    # sets it to the Developer ID), each piece is signed inside out,
+    # the libraries and the command line before the bundle that seals
+    # them, under the hardened runtime and with a secure timestamp,
+    # which notarization refuses to go without. Without it, an ad-hoc
+    # signature over the whole bundle: the linker already signed each
+    # binary that way, which Apple silicon insists on, and this seals
+    # Info.plist and the resources with them, but a download of it is
+    # stopped by Gatekeeper.
+    if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+        for f in $libs greycard; do
+            codesign --force --options runtime --timestamp \
+                --sign "$MACOS_SIGN_IDENTITY" "$app/MacOS/$f"
+        done
+        codesign --force --options runtime --timestamp \
+            --sign "$MACOS_SIGN_IDENTITY" "$stage/greycard.app"
+        codesign --verify --strict --deep "$stage/greycard.app"
+    else
+        codesign --force --deep --sign - "$stage/greycard.app"
+    fi
+
+    # Notarized, with the ticket stapled inside the bundle, where it
+    # survives the tarball and lets Gatekeeper pass the app with no
+    # network. Apple takes an app as a zip.
+    if [ -n "${MACOS_NOTARY_PROFILE:-}" ]; then
+        zip="target/dist/$name-notarize.zip"
+        rm -f "$zip"
+        ditto -c -k --keepParent "$stage/greycard.app" "$zip"
+        notarize "$zip"
+        rm -f "$zip"
+        xcrun stapler staple "$stage/greycard.app"
+        spctl --assess --type execute --verbose=2 "$stage/greycard.app"
+    fi
 else
     mkdir -p "$stage/bin"
     cp "$build/greycard-ui$exe" "$build/greycard$exe" "$stage/bin/"
@@ -350,3 +425,34 @@ fi
 rm -f "target/dist/$name.list"
 gzip -9nf "target/dist/$name.tar"
 echo "target/dist/$name.tar.gz"
+
+# The disk image, the Mac's usual download, beside the tarball rather
+# than instead of it: the app and a link to Applications to drag it
+# onto, and nothing else, since install.sh's command-line links would
+# be run from a read-only volume. The tarball stays for those, and as
+# the build that comes out byte for byte the same; hdiutil writes a
+# fresh UUID and the time into every image. The image is signed and
+# notarized itself, so Gatekeeper passes it before it is mounted, and
+# it holds the app already stapled.
+if [ "$os" = macos ]; then
+    dmgroot="target/dist/$name.dmgroot"
+    rm -rf "$dmgroot"
+    mkdir -p "$dmgroot"
+    ditto "$stage/greycard.app" "$dmgroot/greycard.app"
+    ln -s /Applications "$dmgroot/Applications"
+    hdiutil create -quiet -volname greycard -srcfolder "$dmgroot" \
+        -fs HFS+ -format UDZO -imagekey zlib-level=9 \
+        "target/dist/$name.dmg"
+    rm -rf "$dmgroot"
+    if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+        codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" \
+            "target/dist/$name.dmg"
+    fi
+    if [ -n "${MACOS_NOTARY_PROFILE:-}" ]; then
+        notarize "target/dist/$name.dmg"
+        xcrun stapler staple "target/dist/$name.dmg"
+        spctl --assess --type open --context context:primary-signature \
+            --verbose=2 "target/dist/$name.dmg"
+    fi
+    echo "target/dist/$name.dmg"
+fi

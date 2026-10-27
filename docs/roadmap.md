@@ -1011,8 +1011,8 @@ release when the wait clears.
       platform from the release, verifies it against the release's
       checksum, swaps it in beside the running binary and relaunches,
       so nobody downloads and unpacks by hand again; opt-in, with the
-      release page a click away as it is now. Waits on signed builds
-      (notarization on the Mac, Authenticode on Windows) so a swapped
+      release page a click away as it is now. Waits on a signed build
+      on Windows (Authenticode; the Mac is notarized, §440) so a swapped
       binary is not refused by the gate, and on each platform's way of
       replacing a running binary (rename and relaunch on Windows, the
       bundle swapped on the Mac, the tarball's folder on Linux); §186's

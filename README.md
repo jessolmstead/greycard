@@ -75,8 +75,9 @@ and unpack it.
 
 - **Linux:** `sh install.sh`, or take the `.AppImage` instead, make it
   executable and run it (it needs FUSE, or `--appimage-extract-and-run`).
-- **macOS:** `sh install.sh` (Apple silicon, macOS 13.4 or newer).
-  [Step by step](docs/testing-on-a-mac.md).
+- **macOS:** open the `.dmg` and drag greycard to Applications (Apple
+  silicon, macOS 13.4 or newer); the `.tar.gz`'s `sh install.sh` also
+  adds the `greycard` command. [Step by step](docs/testing-on-a-mac.md).
 - **Windows:** double-click `install.cmd`, or just run
   `bin\greycard-ui.exe` from the unpacked folder. `register.cmd` adds
   greycard to Open with for raws. The `aarch64-windows` zip is for

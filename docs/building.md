@@ -239,6 +239,12 @@ the desktop entry and icon under `~/.local/share` on Linux, or
 `greycard.app` in `~/Applications` on a Mac. `sh uninstall.sh` takes
 it back out.
 
+On a Mac it also writes `greycard-<version>-aarch64-macos.dmg`, the
+app and a link to Applications. Both are signed ad hoc unless
+`MACOS_SIGN_IDENTITY` names a Developer ID, and notarized and stapled
+when `MACOS_NOTARY_PROFILE` also names a notarytool keychain profile,
+as the release does ([§440](notes/440-the-mac-build-signed-and-notarized.md)).
+
 On x86_64 Linux, `scripts/appimage.sh` then turns that staging
 directory into `target/dist/greycard-<version>-linux-x86_64.AppImage`,
 the release's fourth file. It fetches appimagetool and the AppImage

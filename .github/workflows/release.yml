@@ -284,6 +284,50 @@ jobs:
             fi
           done
 
+      # The Developer ID and the notary's API key, in a keychain of the
+      # run's own that goes away with the runner. package.sh signs with
+      # the first and notarizes with the second when the next step
+      # names them. The partition list lets codesign use the key
+      # without the dialog a runner has nobody to click.
+      - name: Signing keychain
+        if: runner.os == 'macOS'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          pass=$(openssl rand -hex 24)
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          printf '%s' "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$pass" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" \
+            $(security list-keychains -d user | tr -d '"')
+          printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool store-credentials greycard \
+            --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" --keychain "$keychain"
+          rm "$RUNNER_TEMP/notary.p8"
+          identity=$(security find-identity -v -p codesigning "$keychain" |
+            sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)
+          if [ -z "$identity" ]; then
+            echo "no Developer ID Application identity in the .p12" >&2
+            exit 1
+          fi
+          {
+            echo "MACOS_SIGN_IDENTITY=$identity"
+            echo "MACOS_NOTARY_PROFILE=greycard"
+            echo "MACOS_NOTARY_KEYCHAIN=$keychain"
+          } >> "$GITHUB_ENV"
+
       - name: Package
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -309,6 +353,30 @@ jobs:
           if-no-files-found: error
           # The release below is the copy that matters; this one only
           # has to outlive the workflow run.
+          retention-days: 7
+
+      # The disk image package.sh rolls beside the Mac's tarball, the
+      # download the guide points a Mac at. Mounted and read here, so a
+      # broken image fails the run rather than a tester.
+      - name: What is in the disk image
+        if: runner.os == 'macOS'
+        env:
+          DMG: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}.dmg
+        run: |
+          hdiutil verify "$DMG"
+          mnt=$(mktemp -d)
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mnt" "$DMG"
+          ls -la "$mnt"
+          spctl --assess --type execute --verbose=2 "$mnt/greycard.app"
+          "$mnt/greycard.app/Contents/MacOS/greycard" --version
+          hdiutil detach -quiet "$mnt"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: runner.os == 'macOS'
+        with:
+          name: package-${{ matrix.package }}-dmg
+          path: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}.dmg
+          if-no-files-found: error
           retention-days: 7
 
       # The AppImage, beside the tarball rather than instead of it: one
@@ -396,6 +464,7 @@ jobs:
             target/dist/greycard-${{ needs.version.outputs.version }}-*.tar.gz
             target/dist/greycard-${{ needs.version.outputs.version }}-*.zip
             target/dist/greycard-${{ needs.version.outputs.version }}-*.AppImage
+            target/dist/greycard-${{ needs.version.outputs.version }}-*.dmg
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           fail_on_unmatched_files: true
           body_path: target/dist/release-notes.md

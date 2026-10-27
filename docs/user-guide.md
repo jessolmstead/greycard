@@ -62,8 +62,11 @@ unpack it.
   Its settings, cache, and downloaded models are the same ones an
   installed copy uses, so the two can be swapped. It needs the same
   glibc as the tarball ([Before you start](#before-you-start)).
-- **macOS:** follow [testing-on-a-mac.md](testing-on-a-mac.md), which
-  gets you past the security warning for an app not yet signed by Apple.
+- **macOS:** open `greycard-<version>-aarch64-macos.dmg` and drag
+  greycard onto Applications. The app is signed and notarized, so it
+  opens with one question the first time. For the `greycard` command
+  too, take the `.tar.gz` instead and run `sh install.sh`;
+  [testing-on-a-mac.md](testing-on-a-mac.md) has both step by step.
 - **Windows:** take `greycard-<version>-x86_64-windows.zip`, or
   `greycard-<version>-aarch64-windows.zip` on Windows on ARM, and
   double-click `install.cmd`. Run `register.cmd` too if you

@@ -452,3 +452,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§437. The brush's wheel under natural scrolling](notes/437-the-brushs-wheel-under-natural-scrolling.md) (2026-10-26)
 - [§438. The grain's draw held to the shortfall](notes/438-the-grains-draw-held-to-the-shortfall.md) (2026-10-26)
 - [§439. A RAF is judged by its last cropped row](notes/439-a-raf-is-judged-by-its-last-cropped-row.md) (2026-10-27)
+- [§440. The Mac build, signed and notarized](notes/440-the-mac-build-signed-and-notarized.md) (2026-10-27)

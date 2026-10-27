@@ -1,7 +1,6 @@
 # Testing greycard on a Mac
 
-For anyone trying greycard on a Mac before it is in the App Store or
-signed by Apple, which it is not yet. Ten minutes the first time, two
+For anyone trying greycard on a Mac. Ten minutes the first time, two
 after that. Nothing here needs a terminal unless you want one.
 
 ## What you need
@@ -19,53 +18,37 @@ after that. Nothing here needs a terminal unless you want one.
 1. Open the link you were sent, or go to the releases page and find
    the newest release.
 2. Under **Assets**, download the file whose name ends in
-   `-aarch64-macos.tar.gz`. Ignore the two "Source code" links.
-3. Safari unpacks it on its own into a folder in Downloads named
-   like `greycard-0.1.0-aarch64-macos`. If you see a `.tar.gz` file
-   there instead, double-click it and the folder appears.
-
-Inside the folder: `greycard.app`, two small scripts, the license
-and a README.
+   `-aarch64-macos.dmg`. Ignore the two "Source code" links.
 
 ## Installing
 
-Two ways. The first needs no terminal; the second skips the security
-steps.
+1. Double-click the `.dmg` in Downloads. A window opens with
+   greycard and a shortcut to Applications.
+2. Drag greycard onto Applications.
+3. Open greycard from Applications, Launchpad or Spotlight. macOS
+   asks once whether to open an app downloaded from the internet;
+   click **Open**. From now on it opens like any other app.
+4. Eject the greycard disk in Finder's sidebar, and throw the `.dmg`
+   away if you like.
 
-### Without a terminal
+**The `greycard` command.** For the command line in the terminal as
+well, download the file ending in `-aarch64-macos.tar.gz` instead.
+Safari unpacks it into a folder in Downloads; if you see the
+`.tar.gz` file itself, double-click it. Then open Terminal (⌘ Space,
+type `Terminal`, Return), type `cd ` with a space after it, drag the
+folder onto the Terminal window, press Return, and type
+`sh install.sh` and Return. That puts greycard in Applications and the
+`greycard` command in `~/.local/bin`; `sh uninstall.sh` in the same
+folder takes it all out again.
 
-1. Open a second Finder window at Applications (Go menu,
-   Applications) and drag `greycard.app` into it.
-2. Double-click greycard. A dialog says **Apple could not verify
-   "greycard" is free of malware**. Click **Done**, not Move to
-   Trash. This is macOS saying the app is not signed by Apple, which
-   is true and is explained below.
-3. Open **System Settings**, then **Privacy & Security**, and scroll
-   down to the **Security** heading. A line says *"greycard" was
-   blocked to protect your Mac*, with an **Open Anyway** button.
-   Click it, enter your password or use Touch ID, and click **Open
-   Anyway** again in the dialog that follows.
-4. greycard opens. From now on it opens like any other app, until
-   you install a newer version, when steps 2 and 3 happen once more.
-
-### With a terminal
-
-1. Open Terminal: press ⌘ Space, type `Terminal`, press Return.
-2. Type `cd ` with a space after it, drag the unpacked folder from
-   Finder onto the Terminal window, and press Return.
-3. Type `sh install.sh` and press Return.
-
-That puts greycard in your Applications folder, clears the security
-mark so there is no dialog, and adds a `greycard` command for the
-terminal. `sh uninstall.sh` in the same folder takes it all out
-again.
-
-**Why the security dialog.** Apps that skip it are signed with an
-Apple developer certificate and checked by Apple. greycard is open
-source under the GPL and is not, yet. The dialog means "Apple has
-not looked at this", not "this is harmful"; you can read every line
-of it on GitHub. `install.sh` removes the mark macOS puts on
-downloads, which is what Apple's own check would have done.
+**Signed and notarized.** From 0.9.0 on, the app is signed with an
+Apple Developer ID and checked by Apple before it is published, which
+is why macOS opens it with no more than that one question. A release
+before 0.9.0 is not, and comes as the `.tar.gz` only: macOS says
+**Apple could not verify "greycard" is free of malware**, and it opens
+only after **Open Anyway** under System Settings, Privacy & Security,
+or after `sh install.sh`, which for those releases clears the mark
+macOS puts on downloads.
 
 ## First run
 
@@ -115,15 +98,17 @@ message whoever sent you the link with the same things attached.
 
 ## Updating
 
-Download the new release and do the install again. Installing over
-the old one is fine; your edits live beside your raw files, and your
-settings and the models it fetched stay where they are.
+Download the new release and do the install again; when Finder asks
+whether to replace the old greycard, say yes. Replacing it is fine:
+your edits live beside your raw files, and your settings and the
+models it fetched stay where they are.
 
 ## Removing it
 
-`sh uninstall.sh` from the downloaded folder, or drag greycard out
-of Applications. Settings are in `~/Library/Application
-Support/greycard`, the fetched models and lens database in
-`~/Library/Caches/greycard`, and the logs in `~/Library/Logs/greycard`;
-none of those is removed for you. Your edits are `.gcd` files beside
+Drag greycard out of Applications to the Trash, or, if you used
+`install.sh`, run `sh uninstall.sh` from the downloaded folder.
+Settings are in `~/Library/Application Support/greycard`, the
+fetched models and lens database in `~/Library/Caches/greycard`, and
+the logs in `~/Library/Logs/greycard`; none of those is removed for
+you. Your edits are `.gcd` files beside
 your raws and are yours.
