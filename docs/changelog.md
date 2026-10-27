@@ -5,222 +5,133 @@ design note behind it.
 
 ## 0.9.0, 2026-10-27
 
-The generative remove grows up: a Fill chooses Patch, Fast, or Best,
-a fill is kept on disk, comes back with the frame's grain, and takes a
-window far larger than the model's; Apple silicon runs the learned
-models on Core ML and shows the viewport through the display's own
-profile. Auto in the Look section and Auto level in Crop set a frame's
-tones and horizon in one click. The window goes full screen on F11,
-takes any UI scale, three themes, and every shortcut rebound; the
-export queue has a view of its own. Among the fixes: X-Trans 5 RAFs
-refused as half-copied, a 4 GB card crashing on the denoiser, and a
-Mac trackpad moving sliders backwards.
+Better generative fills, one-click Auto and Auto level, faster AI on
+Apple silicon, a signed Mac app, full screen, themes, and shortcuts
+you can change.
 
 ### The window
 
-- F11 takes the window full screen and back, in any view, as does
-  Full screen on the Fit button's menu (on a Mac, the menu or the
-  green button)
+- F11 toggles full screen (on a Mac, the green button)
   ([§436](https://github.com/jessolmstead/greycard/blob/master/docs/notes/436-full-screen-on-f11.md)).
-- Choosing the vectorscope no longer pushes the panel far down: its
-  circle is smaller and centered, and the shot's details fold away
-  while it shows
-  ([§426](https://github.com/jessolmstead/greycard/blob/master/docs/notes/426-the-vectorscope-folds-the-shot-away.md)).
-- Settings > Interface > Scale takes any whole percentage from 50 to
-  300, typed, in place of five fixed steps; it still applies at the
-  next start
-  ([§418](https://github.com/jessolmstead/greycard/blob/master/docs/notes/418-the-ui-scale-as-any-percentage.md)).
-- Scroll bars read: a brighter thumb everywhere, and Settings >
-  Interface can make them stay and pick Thin, Medium, or Wide
-  ([§411](https://github.com/jessolmstead/greycard/blob/master/docs/notes/411-scroll-bars-of-our-own.md)).
-- Settings > Editing lists the canvas, the monitor and soft proof
-  profiles, and the export's format and color space beside where
-  they are set; a change in either place shows in both
-  ([§407](https://github.com/jessolmstead/greycard/blob/master/docs/notes/407-the-sticky-choices-listed.md)).
-- A Theme setting under Interface: Charcoal, Grey, or Light; the
-  picture's surround keeps its own setting
+- Three themes: Charcoal, Grey, and Light
   ([§404](https://github.com/jessolmstead/greycard/blob/master/docs/notes/404-three-themes.md)).
-- A menu on the Fit button, from its chevron or a right-click: Fit,
-  50%, 100%, 200%, and 400%
-  ([§402](https://github.com/jessolmstead/greycard/blob/master/docs/notes/402-a-zoom-menu-on-fit.md)).
-- The Settings sheet is five categories down its left side: Interface,
-  Library, Editing, Keys, and About, which also shows the version and
-  where greycard keeps its files
+- Every hotkey can be changed, under Settings > Keys
+  ([§390](https://github.com/jessolmstead/greycard/blob/master/docs/notes/390-rebindable-keys.md)).
+- The interface scale takes any value from 50% to 300%
+  ([§418](https://github.com/jessolmstead/greycard/blob/master/docs/notes/418-the-ui-scale-as-any-percentage.md)).
+- Settings is split into five categories, with an About page
   ([§401](https://github.com/jessolmstead/greycard/blob/master/docs/notes/401-settings-in-five-categories.md)).
-- Ctrl on a focused slider's arrow or with the wheel moves a fine
-  step, where the slider's number can show it. F puts a mat of the
-  canvas color around the picture at Fit. A Settings switch opens one
-  section at a time
-  ([§397](https://github.com/jessolmstead/greycard/blob/master/docs/notes/397-fine-steps-a-mat-and-one-section-open.md))
-- Any shortcut can be changed: Settings ends with a Keys section;
-  click a key, press the new one, Esc keeps the old. A key given two
-  jobs says so in red; Reset to defaults puts them all back. Kept in
-  settings.json
-  ([§390](https://github.com/jessolmstead/greycard/blob/master/docs/notes/390-rebindable-keys.md))
-- A focused slider stays in view when a section opens above it; the
-  filter, a custom aspect, a mask name, the title, and the keywords
-  keep the keys while the pointer crosses the picture; Esc leaves
-  the crop
-  ([§391](https://github.com/jessolmstead/greycard/blob/master/docs/notes/391-keys-follow-ups.md))
+- A zoom menu on the Fit button: Fit, 50%, 100%, 200%, and 400%
+  ([§402](https://github.com/jessolmstead/greycard/blob/master/docs/notes/402-a-zoom-menu-on-fit.md)).
+- Easier-to-see scroll bars, with a choice of width
+  ([§411](https://github.com/jessolmstead/greycard/blob/master/docs/notes/411-scroll-bars-of-our-own.md)).
+- Settings > Editing shows your color profiles and export format in
+  one place
+  ([§407](https://github.com/jessolmstead/greycard/blob/master/docs/notes/407-the-sticky-choices-listed.md)).
+- The vectorscope fits in the panel
+  ([§426](https://github.com/jessolmstead/greycard/blob/master/docs/notes/426-the-vectorscope-folds-the-shot-away.md)).
+- Ctrl makes fine slider steps, F puts a mat around the picture, and
+  a setting opens one section at a time
+  ([§397](https://github.com/jessolmstead/greycard/blob/master/docs/notes/397-fine-steps-a-mat-and-one-section-open.md)).
+- Keyboard focus fixes in text fields, sliders, and the crop
+  ([§391](https://github.com/jessolmstead/greycard/blob/master/docs/notes/391-keys-follow-ups.md)).
 
 ### Library
 
-- The export queue's view runs the queue from its own header, with
-  the count of what waits; the Export queue row sits below the
-  collections, and the Loupe over a queued frame has no tab bar
-  ([§430](https://github.com/jessolmstead/greycard/blob/master/docs/notes/430-the-export-queues-view-polished.md)).
-- The grid's rows take the height of their pictures: a row of
-  landscapes loses the empty band above and below each picture, and a
-  portrait makes only its own row tall.
-  ([§417](https://github.com/jessolmstead/greycard/blob/master/docs/notes/417-the-grids-rows-shaped-to-the-pictures.md))
-- The export queue shows in the grid: an "Export queue" row in the
-  roots pane lists every queued frame under a heading a destination;
-  select and Delete, or "Remove from queue..." in the frame menu, to
-  take frames out. A queued frame opens as it will export and is not
-  editable there. While the queue runs the status counts the whole
-  run, not each set
-  ([§416](https://github.com/jessolmstead/greycard/blob/master/docs/notes/416-the-export-queue-in-the-grid.md)).
-- The grid's cells sit closer; Settings > Library takes the cell size
-  as a number and can turn the wheel resize off
-  ([§410](https://github.com/jessolmstead/greycard/blob/master/docs/notes/410-the-grids-cell-by-number.md)).
-- The export sheet lists the queued sets, each with its preset or
-  format, frame count, and folder, and a bin that removes one
+- The export queue has its own view in the library: see what's
+  queued, remove frames, and run it
+  ([§416](https://github.com/jessolmstead/greycard/blob/master/docs/notes/416-the-export-queue-in-the-grid.md),
+  [§430](https://github.com/jessolmstead/greycard/blob/master/docs/notes/430-the-export-queues-view-polished.md)).
+- The export sheet lists queued exports, and you can remove one
   ([§409](https://github.com/jessolmstead/greycard/blob/master/docs/notes/409-the-export-queue-listed.md)).
-- Settings can name the folder to open at start instead of the last
-  one, and hide the filter bar; Sort moves to the grid's header
-  while it is hidden
+- The grid fits rows to the pictures, so there's less empty space
+  ([§417](https://github.com/jessolmstead/greycard/blob/master/docs/notes/417-the-grids-rows-shaped-to-the-pictures.md)).
+- Set the grid's thumbnail size as a number
+  ([§410](https://github.com/jessolmstead/greycard/blob/master/docs/notes/410-the-grids-cell-by-number.md)).
+- Choose a folder to open at start, and hide the filter bar
   ([§403](https://github.com/jessolmstead/greycard/blob/master/docs/notes/403-a-start-folder-and-the-bar-hidden.md)).
-- A Lightroom catalog import reads about one fiftieth of what it did
-  from each raw (1.6 MB of a 45 MB CR3), writes four sidecars at a
-  time, shows a bar in its sheet, says how far it is on the command
-  line, and logs its progress. It no longer memory-maps the raws, so a share that drops while the
-  Mac sleeps fails the frame instead of crashing the editor
-  ([§389](https://github.com/jessolmstead/greycard/blob/master/docs/notes/389-the-catalog-import-over-a-share.md))
+- Lightroom catalog import is much faster, shows progress, and
+  survives a network drive dropping
+  ([§389](https://github.com/jessolmstead/greycard/blob/master/docs/notes/389-the-catalog-import-over-a-share.md)).
 
 ### Editing
 
-- On a Mac, a trackpad scroll over a slider moves it the way the
-  fingers went, with Shift held or not, and a swipe up over the
-  picture grows the brush or the retouch patch
+- **Auto** in the Light section sets a starting exposure and tones in
+  one click
+  ([§420](https://github.com/jessolmstead/greycard/blob/master/docs/notes/420-an-auto-starting-point-for-the-light.md)).
+- Sliders no longer jump when you start dragging, and Shift-drag
+  makes fine adjustments
+  ([§424](https://github.com/jessolmstead/greycard/blob/master/docs/notes/424-the-sliders-drag-no-jump-and-shift-for-a-fine-drag.md)).
+- On a Mac, trackpad scrolling moves sliders and resizes the brush
+  in the right direction
   ([§427](https://github.com/jessolmstead/greycard/blob/master/docs/notes/427-shift-and-the-wheel-on-a-mac.md),
   [§432](https://github.com/jessolmstead/greycard/blob/master/docs/notes/432-the-slider-and-natural-scrolling-on-a-mac.md),
   [§437](https://github.com/jessolmstead/greycard/blob/master/docs/notes/437-the-brushs-wheel-under-natural-scrolling.md)).
-- A slider's drag no longer jumps as it starts, and Shift held while
-  dragging moves it a tenth as far
-  ([§424](https://github.com/jessolmstead/greycard/blob/master/docs/notes/424-the-sliders-drag-no-jump-and-shift-for-a-fine-drag.md)).
-- **Auto** in the Look section sets Exposure, Highlights, Shadows, Whites,
-  and Blacks from the frame's own histogram, as one step of the history
-  you can drag from or undo. It never clips more than the default
-  develop does, and it keeps a night frame's lights under white
-  ([§420](https://github.com/jessolmstead/greycard/blob/master/docs/notes/420-an-auto-starting-point-for-the-light.md)).
 
 ### Crop
 
-- **Auto level** in the Crop tab's ROTATE section levels the picture
-  in one click: it finds the longest straight line near horizontal or
-  vertical, a horizon or a wall, and levels to it as if drawn with
-  Level. Nothing happens when no line stands out
+- **Auto level** straightens the picture in one click
   ([§419](https://github.com/jessolmstead/greycard/blob/master/docs/notes/419-a-one-click-straighten.md)).
 
 ### Masks
 
-- A mask's white balance can follow the global: Follow global in the
-  mask's section makes its temperature an offset in mired and its
-  tint a difference, so a mask stays that much warmer as the global
-  moves; off, it names an absolute light as before
-  ([§400](https://github.com/jessolmstead/greycard/blob/master/docs/notes/400-a-masks-white-as-an-offset.md))
+- A mask's white balance can follow the global one
+  ([§400](https://github.com/jessolmstead/greycard/blob/master/docs/notes/400-a-masks-white-as-an-offset.md)).
 
 ### Retouch
 
-- A Fill offers Patch, Fast, and Best: from the picture around it,
-  the generative remove in four steps (quicker, rougher on large
-  areas), or in full. The choice sticks for the next Fill and is in
-  Settings. Fast is a 390 MB download beside the remove's own
+- Fill offers three choices: Patch, Fast, and Best
   ([§429](https://github.com/jessolmstead/greycard/blob/master/docs/notes/429-patch-fast-or-best-for-a-fill.md)).
-- A Fill made by the generative remove or LaMa is kept on disk, so
-  opening the frame again shows it at once rather than running the
-  model again
+- A new removal model for Fill handles larger areas and blends in
+  better (an optional 5.5 GB download, GPU only)
+  ([§406](https://github.com/jessolmstead/greycard/blob/master/docs/notes/406-remove-behind-fill.md),
+  [§414](https://github.com/jessolmstead/greycard/blob/master/docs/notes/414-the-remove-past-1024-and-level-matched.md)).
+- Fills match the photo's grain, so they no longer look smooth
+  ([§398](https://github.com/jessolmstead/greycard/blob/master/docs/notes/398-the-frames-grain-under-a-fill.md)).
+- Fills show instantly when you reopen a photo
   ([§425](https://github.com/jessolmstead/greycard/blob/master/docs/notes/425-fills-kept-on-disk.md)).
-- On a Mac or another machine whose GPU shares its memory, the
-  generative remove keeps its largest model open between removals
-  from 16 GB, decodes whole from 24 GB, and keeps all of it open from
-  32 GB, so a second removal starts without its 16 s load
+- Repeated removals are faster on Macs with more memory
   ([§421](https://github.com/jessolmstead/greycard/blob/master/docs/notes/421-the-removes-memory-read-from-the-machine.md)).
-- Fill can use a second model trained for removal, offered once on a
-  machine with a GPU (5.5 GB, under the CreativeML Open RAIL++-M
-  license); "Another" on a fill's row makes a different one
-  ([§406](https://github.com/jessolmstead/greycard/blob/master/docs/notes/406-remove-behind-fill.md)).
-  It takes a window up to four times its own size, scaled to it and
-  back, and its fill is matched to the picture around the hole so no
-  darker band shows at the edge
-  ([§414](https://github.com/jessolmstead/greycard/blob/master/docs/notes/414-the-remove-past-1024-and-level-matched.md)).
-- A deep fill comes back with the frame's grain, measured around the
-  hole on the luma and chroma axes, so a removed object no longer
-  leaves a smooth patch; the retired Carve model's 208 MB file is
-  removed from the store
-  ([§398](https://github.com/jessolmstead/greycard/blob/master/docs/notes/398-the-frames-grain-under-a-fill.md))
 
 ### On a Mac
 
-- The MONITOR section's System uses the display's own profile from
-  ColorSync, so the viewport on a Display P3 screen matches the
-  export instead of looking more saturated
-  ([§428](https://github.com/jessolmstead/greycard/blob/master/docs/notes/428-the-displays-profile-from-colorsync.md)).
-- On Apple silicon the learned denoiser and the Sky and Subject masks
-  can run on Core ML, which reaches the Neural Engine; greycard times
-  it against WebGPU when a model loads and keeps the faster
+- The app is signed and notarized by Apple, so it opens without a
+  security warning, and it now comes as a `.dmg`
+  ([§440](https://github.com/jessolmstead/greycard/blob/master/docs/notes/440-the-mac-build-signed-and-notarized.md)).
+- AI denoise and the Sky and Subject masks are faster on Apple
+  silicon
   ([§422](https://github.com/jessolmstead/greycard/blob/master/docs/notes/422-the-core-ml-provider-in.md)).
+- Colors on a Display P3 screen match the export
+  ([§428](https://github.com/jessolmstead/greycard/blob/master/docs/notes/428-the-displays-profile-from-colorsync.md)).
 
 ### Fixes
 
-- An uncompressed RAF from an X-T5, an X-H2, or another X-Trans 5 HR
-  body is no longer refused as half-copied: the camera writes the rows
-  below the picture as zeros, and a RAF is now judged by its header
-  and its last row of picture
+- Uncompressed RAFs from the X-T5, X-H2, and other X-Trans 5 HR
+  cameras open again
   ([§435](https://github.com/jessolmstead/greycard/blob/master/docs/notes/435-a-raf-is-judged-whole-by-its-header.md),
   [§439](https://github.com/jessolmstead/greycard/blob/master/docs/notes/439-a-raf-is-judged-by-its-last-cropped-row.md)).
-- The learned denoiser runs in smaller tiles on a card under 6 GB or
-  a unified-memory machine under 16 GB, so a 4 GB card no longer
-  crashes on it; the tiles' seams stay inside their margin ([§431](https://github.com/jessolmstead/greycard/blob/master/docs/notes/431-the-denoisers-tile-from-the-cards-memory.md)).
-- A camera profile made under another name for the same body, Adobe's
-  Rebel T8i profiles on an EOS 850D, is listed for it now
-  ([§423](https://github.com/jessolmstead/greycard/blob/master/docs/notes/423-camera-profiles-by-the-bodys-other-names.md)).
-- A fixed-lens compact, phone, or action camera gets its lens profile
-  from the body when the file names no lens (a PowerShot SX710 HS
-  shooting DNG through CHDK got none with lensfun installed)
-  ([§413](https://github.com/jessolmstead/greycard/blob/master/docs/notes/413-a-compacts-lens-from-the-body.md)).
-- A long sharpen no longer runs past the GPU driver's watchdog and
-  takes the device with it (a GTX 1060 on Windows at 50 iterations,
-  a Renoir iGPU); if a device is lost anyway greycard saves and
-  reopens the file with its ops on the CPU instead of crashing
+- AI denoise no longer crashes on graphics cards with 4 GB
+  ([§431](https://github.com/jessolmstead/greycard/blob/master/docs/notes/431-the-denoisers-tile-from-the-cards-memory.md)).
+- Heavy sharpening no longer crashes the GPU driver
   ([§412](https://github.com/jessolmstead/greycard/blob/master/docs/notes/412-gpu-passes-under-the-watchdog.md)).
-- The click that closes a menu over the picture no longer zooms the
-  picture, and a lone release no longer ends a straighten stroke or
-  moves the tint ring
-  ([§396](https://github.com/jessolmstead/greycard/blob/master/docs/notes/396-the-click-that-closes-a-menu.md))
-- On Windows, a start that died inside a GPU driver as the window
-  was made is noticed by the next one, which starts on Direct3D 12
-  instead; `WGPU_BACKEND=dx12` does the same by hand
-  ([§395](https://github.com/jessolmstead/greycard/blob/master/docs/notes/395-a-start-marker-for-a-driver-that-dies.md))
-- The library's index pass and the thumbnails no longer memory-map
-  raws, so a share that drops while the machine sleeps fails a frame
-  instead of crashing the editor; a CR3's index pass reads about a
-  tenth of what it did
-  ([§394](https://github.com/jessolmstead/greycard/blob/master/docs/notes/394-the-index-pass-maps-nothing.md))
-- An unedited ORF shows in the lightbox: the decoder reads the
-  preview an ORF carries, a raw with no preview gets a quick develop
-  there, and a raw+JPEG pair shows its JPEG in the lightbox as it
-  does in the loupe
-  ([§393](https://github.com/jessolmstead/greycard/blob/master/docs/notes/393-the-lightbox-shows-every-raw.md))
-- On a laptop with two GPUs the window and the develop take the
-  discrete one; `WGPU_POWER_PREF=low` keeps the other. The clipping
-  toggles on the RGB scope show plainly when they are on
-  ([§392](https://github.com/jessolmstead/greycard/blob/master/docs/notes/392-the-discrete-gpu-by-default.md))
-- The histogram, the scopes, the clipping lamps, and the readout under
-  the pointer read the export's values again when a monitor profile is
-  in use; they were going through the monitor's table, and the shadow
-  lamp could stay dark
-  ([§388](https://github.com/jessolmstead/greycard/blob/master/docs/notes/388-the-scopes-read-the-export-not-the-monitors-table.md))
+- A network drive dropping no longer crashes the library
+  ([§394](https://github.com/jessolmstead/greycard/blob/master/docs/notes/394-the-index-pass-maps-nothing.md)).
+- Laptops with two GPUs use the faster one
+  ([§392](https://github.com/jessolmstead/greycard/blob/master/docs/notes/392-the-discrete-gpu-by-default.md)).
+- On Windows, greycard recovers from a GPU driver crash at startup
+  ([§395](https://github.com/jessolmstead/greycard/blob/master/docs/notes/395-a-start-marker-for-a-driver-that-dies.md)).
+- Unedited ORF files show in the lightbox
+  ([§393](https://github.com/jessolmstead/greycard/blob/master/docs/notes/393-the-lightbox-shows-every-raw.md)).
+- Camera profiles are found for bodies sold under another name, such
+  as the EOS 850D and Rebel T8i
+  ([§423](https://github.com/jessolmstead/greycard/blob/master/docs/notes/423-camera-profiles-by-the-bodys-other-names.md)).
+- Fixed-lens cameras and phones get lens corrections
+  ([§413](https://github.com/jessolmstead/greycard/blob/master/docs/notes/413-a-compacts-lens-from-the-body.md)).
+- The histogram and scopes are correct when a monitor profile is in
+  use
+  ([§388](https://github.com/jessolmstead/greycard/blob/master/docs/notes/388-the-scopes-read-the-export-not-the-monitors-table.md)).
+- Clicking to close a menu no longer zooms the picture
+  ([§396](https://github.com/jessolmstead/greycard/blob/master/docs/notes/396-the-click-that-closes-a-menu.md)).
 
 ## 0.8.1, 2026-10-21
 
