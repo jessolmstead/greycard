@@ -72,6 +72,9 @@ In **ROTATE**:
   that should be level or upright, such as a horizon or a wall. The
   picture turns to straighten it. greycard takes whichever is nearer:
   level or upright.
+- **Auto level** does the same by itself: it finds the longest straight
+  line near level or upright, a horizon or a wall, and turns the
+  picture to it. Nothing happens when no line stands out.
 - **Angle** turns the picture by hand, −45° to +45°.
 
 ### Turning and mirroring

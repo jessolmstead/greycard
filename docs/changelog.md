@@ -105,8 +105,8 @@ design note behind it.
 
 ### Crop
 
-- **Straighten** in the Crop tab's ROTATE section levels the picture in
-  one click: it finds the longest straight line near horizontal or
+- **Auto level** in the Crop tab's ROTATE section levels the picture
+  in one click: it finds the longest straight line near horizontal or
   vertical, a horizon or a wall, and levels to it as if drawn with
   Level. Nothing happens when no line stands out
   ([§419](https://github.com/jessolmstead/greycard/blob/master/docs/notes/419-a-one-click-straighten.md)).

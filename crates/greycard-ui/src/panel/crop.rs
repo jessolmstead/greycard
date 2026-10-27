@@ -320,7 +320,7 @@ fn level_by(state: &std::cell::RefCell<State>, app: &App, drawn: f32) {
     app.invoke_view_changed();
 }
 
-/// The long edge of the grid Straighten asks the GPU for, before the
+/// The long edge of the grid Auto level asks the GPU for, before the
 /// texture's own width rounds it to a whole step: the detector shrinks
 /// it by a whole factor to [`LONG_EDGE`] or under, which averages the
 /// grid's points into pixels.
@@ -330,7 +330,7 @@ const STRAIGHTEN_GRID: u32 = 2 * greycard_core::horizon::LONG_EDGE as u32;
 
 #[cfg(test)]
 thread_local! {
-    /// The picture Straighten reads in a test, which has no GPU: the
+    /// The picture Auto level reads in a test, which has no GPU: the
     /// develop's working-space pixels and the width.
     pub(crate) static STRAIGHTEN_PICTURE: std::cell::RefCell<Option<(Vec<[f32; 3]>, usize)>> =
         const { std::cell::RefCell::new(None) };
@@ -376,7 +376,7 @@ fn texture_to_source((x, y): (f32, f32), texture: (u32, u32), lag: u8) -> (f32, 
     }
 }
 
-/// The dominant line of what Straighten read: its luminance in the
+/// The dominant line of what Auto level read: its luminance in the
 /// working space (Rec. 2020), to a perceptual scale so a horizon in
 /// shadow counts for what it looks like.
 fn straighten_find(read: &StraightenRead) -> Option<greycard_core::horizon::Line> {
