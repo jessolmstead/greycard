@@ -3,7 +3,7 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.9.0, 2026-10-26
+## 0.9.0, 2026-10-27
 
 The generative remove grows up: a Fill chooses Patch, Fast, or Best,
 a fill is kept on disk, comes back with the frame's grain, and takes a
