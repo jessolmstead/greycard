@@ -256,7 +256,8 @@ fn ends_in_zeros(tail: &[u8]) -> bool {
 }
 
 /// What a file that [`ends_in_zeros`] is told with, whether the decoder
-/// gave up on it or read it to the end.
+/// gave up on it or read it to the end, and an uncompressed RAF whose
+/// last cropped row decodes to zeros (see [`judge_rows`]).
 const HALF_COPIED: &str = "the file ends in zeros where a finished one has data: \
      it looks half-copied, or still being copied";
 
@@ -302,15 +303,24 @@ fn raf_sections(head: &[u8]) -> Option<RafSections> {
 }
 
 /// Whether a file of `len` bytes that starts with `head` and ends with
-/// `tail` looks half-copied, and the words to say so in. A RAF is
-/// judged by its header and its sensor data: one whose sections run
-/// past its end is half-copied, and so is one whose CFA data ends in
-/// [`TAIL`] bytes of zeros, as a copier that sets the length first
-/// leaves it; one that holds its sections and whose data does not end
-/// so is whole whatever follows them (some bodies' files carry a tail
-/// of zeros past the CFA data). `data_tail` reads the [`TAIL`] bytes
-/// that end at an offset. Every other file, and a RAF whose header
-/// cannot be read, is judged by [`ends_in_zeros`].
+/// `tail` looks half-copied, and the words to say so in, for when the
+/// decoder has panicked on it. A RAF is judged by its header and its
+/// sensor data: one whose sections run past its end is half-copied,
+/// and so is one whose CFA data ends in [`TAIL`] bytes of zeros, as a
+/// copier that sets the length first leaves it; one that holds its
+/// sections and whose data does not end so is whole whatever follows
+/// them (some bodies' files carry a tail of zeros past the CFA data).
+/// `data_tail` reads the [`TAIL`] bytes that end at an offset. Every
+/// other file, and a RAF whose header cannot be read, is judged by
+/// [`ends_in_zeros`].
+///
+/// The CFA test stays keyed on zeros here, though up front it no
+/// longer refuses an uncompressed RAF (see [`refuse_a_half_copy`]):
+/// a whole uncompressed X-Trans 5 HR file ends in zeros too, but the
+/// decoder reads it without panicking, so a panic on a RAF whose data
+/// ends in zeros is far likelier a preallocated copy than a whole
+/// file, and the header alone cannot tell that copy from a finished
+/// one.
 fn half_copied(
     head: &[u8],
     len: u64,
@@ -326,18 +336,118 @@ fn half_copied(
     }
 }
 
-/// Refuse a file that [`half_copied`] names, before its samples are
+/// What the up-front check leaves to the decode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpFront {
+    /// Nothing: the bytes say the file is whole.
+    Whole,
+    /// An uncompressed RAF whose CFA data ends in zeros, which a whole
+    /// one may: [`judge_rows`] decides once it is decoded.
+    JudgeRows,
+}
+
+/// What rawler's dummy read says of a RAF's CFA data: its size, the
+/// bits a sample rawler reports (16 for every RAF, from its camera
+/// table), and whether it rotates the data (a SuperCCD body).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RafShape {
+    width: usize,
+    height: usize,
+    bps: usize,
+    rotated: bool,
+}
+
+/// A RAF's [`RafShape`] from the dummy read, which reads no sample.
+fn raf_shape(source: &RawSource) -> Option<RafShape> {
+    let image = ::rawler::get_decoder(source)
+        .ok()?
+        .raw_image(source, &RawDecodeParams::default(), true)
+        .ok()?;
+    Some(RafShape {
+        width: image.width,
+        height: image.height,
+        bps: image.bps,
+        rotated: image.fuji_rotation_width.is_some(),
+    })
+}
+
+/// Refuse a file that looks half-copied, before its samples are
 /// decoded. rawler reads a file whose last [`TAIL`] bytes are zeros
 /// without complaint when its format lets it: an ARW, and a CR3 once
 /// dnglab/dnglab#851 is released, decode the zeros past the copied
-/// part as samples, and the picture comes out blank below it; so does
-/// a RAF whose CFA data ends in zeros. The bytes are already in memory
-/// (rawler maps the whole file, or was handed it), so this costs no
-/// read.
-fn refuse_a_half_copy(bytes: &[u8]) -> Result<()> {
-    match half_copied_bytes(bytes) {
-        Some(why) => Err(Error::Decode(why.into())),
-        None => Ok(()),
+/// part as samples, and the picture comes out blank below it. The
+/// bytes are already in memory (rawler maps the whole file, or was
+/// handed it), so this costs no read.
+///
+/// A RAF is judged by its header and its CFA data, as [`half_copied`]
+/// does, with one exception. An uncompressed X-Trans 5 HR file (X-H2,
+/// X-T5) stores rows below the active area that the camera writes as
+/// zeros, seven of them on the X-H2, 110 KiB, so every whole one ends
+/// its CFA data in more than [`TAIL`] bytes of zeros, as a
+/// preallocated copy does. So when the CFA data ends in zeros, `shape`
+/// (rawler's dummy read, asked for only then) tells the kind: a RAF
+/// stored uncompressed and not rotated is left to [`judge_rows`]
+/// after the decode. A compressed one keeps the byte rule: rawler
+/// decodes its strips on a pool's threads, where a strip of zeros
+/// panics outside this thread's guard, and its strips run top to
+/// bottom side by side, so a copy cut short zeros the right of the
+/// frame, not its last rows. A rotated one keeps it too, since its
+/// rows hold zero corners of their own. A RAF is compressed when its
+/// CFA data is shorter than `width * height * bps / 8`, rawler's own
+/// test. rawler reports 16 bits for every RAF, so only data stored at
+/// two bytes a pixel counts as uncompressed here, and a packed 12- or
+/// 14-bit file keeps the byte rule, which is the conservative side.
+fn refuse_a_half_copy(bytes: &[u8], shape: impl FnOnce() -> Option<RafShape>) -> Result<UpFront> {
+    let refuse = |why: &str| Err(Error::Decode(why.into()));
+    match raf_sections(bytes) {
+        Some(raf) if raf.end > bytes.len() as u64 => refuse(RAF_HALF_COPIED),
+        Some(raf) => match half_copied_bytes(bytes) {
+            None => Ok(UpFront::Whole),
+            Some(why) => match shape() {
+                Some(s) if !s.rotated && raf.cfa_len >= (s.width * s.height * s.bps / 8) as u64 => {
+                    Ok(UpFront::JudgeRows)
+                }
+                _ => refuse(why),
+            },
+        },
+        None if ends_in_zeros(&bytes[bytes.len().saturating_sub(TAIL)..]) => refuse(HALF_COPIED),
+        None => Ok(UpFront::Whole),
+    }
+}
+
+/// The decode's half of [`refuse_a_half_copy`]: refuse a frame left
+/// to it whose [`last_row_unwritten`], when every black level is well
+/// above zero. Under such a black (some thousand on a 14-bit body,
+/// near 256 on a 12-bit one) no sensor reads 0, so zeros are data
+/// never written; with a black of 0 a dark frame could read so, and
+/// the frame is let through.
+fn judge_rows(frame: &RawFrame, up_front: UpFront) -> Result<()> {
+    let black_above_zero = frame.levels.black.values.iter().all(|&b| b > 0.0);
+    if up_front == UpFront::JudgeRows && black_above_zero && last_row_unwritten(frame) {
+        return Err(Error::Decode(HALF_COPIED.into()));
+    }
+    Ok(())
+}
+
+/// Whether the last row inside the frame's crop (the whole frame's
+/// last row without one) reads nothing but zeros, across the crop's
+/// columns. The samples are the file's own, before the black level is
+/// taken off. Rows below the crop are not looked at, since a camera
+/// may write those as zeros (see [`refuse_a_half_copy`]).
+fn last_row_unwritten(frame: &RawFrame) -> bool {
+    // `RawFrame::validate` holds the crop inside the frame; the
+    // checked subtraction and `get` only keep a bad one from panicking.
+    let crop = frame.effective_crop();
+    let Some(row) = (crop.y + crop.height).checked_sub(1) else {
+        return false;
+    };
+    let (start, cpp) = (row * frame.width, frame.channels);
+    let span = (start + crop.x) * cpp..(start + crop.x + crop.width) * cpp;
+    match &frame.samples {
+        Samples::U16(v) => v.get(span).is_some_and(|r| r.iter().all(|&s| s == 0)),
+        // rawler decodes a RAF to integers; a float frame is held to
+        // the same rule should one ever come.
+        Samples::F32(v) => v.get(span).is_some_and(|r| r.iter().all(|&s| s == 0.0)),
     }
 }
 
@@ -594,7 +704,10 @@ fn raf_jpeg_end(
 /// Samples and metadata from one source; the frame takes what it keeps
 /// of the metadata (the shot).
 fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
-    refuse_a_half_copy(source.buf())?;
+    // Every file is judged by its bytes before rawler reads it, as it
+    // always was; only a RAF whose CFA data ends in zeros has rawler
+    // look at it first, through a dummy read of its own.
+    let up_front = refuse_a_half_copy(source.buf(), || raf_shape(source))?;
     let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
     let image = decoder
@@ -604,6 +717,7 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
         .raw_metadata(source, &params)
         .map_err(decoder_error)?;
     let mut frame = frame_from_rawler(image)?;
+    judge_rows(&frame, up_front)?;
     // rawler leaves the image's orientation at Normal (a TODO in its
     // `RawImage::new`); the EXIF tag has the camera's word.
     if frame.orientation == Orientation::Normal
@@ -1039,27 +1153,61 @@ mod tests {
     /// A RAF is judged by its header and its sensor data, not its
     /// tail: one that holds all its sections, its CFA data not ending
     /// in zeros, is whole with a tail of zeros past them; one whose
-    /// sections run past its end, or whose CFA data ends in zeros, is
-    /// half-copied; one too short for a header falls back to the tail.
+    /// sections run past its end is refused up front; one whose CFA
+    /// data ends in zeros is refused up front when it is compressed,
+    /// rotated, or of a shape the dummy read cannot give, and when it
+    /// is none of those is left to its decoded rows; a panic on it
+    /// names a half copy either way. One too short for a header falls
+    /// back to the tail.
     #[test]
     fn a_raf_is_judged_by_its_header() {
         let data = vec![0x33; 3 * TAIL];
         let padded = [data.clone(), vec![0; TAIL]].concat();
         let whole = a_raf(data.len(), &padded);
         assert_eq!(half_copied_bytes(&whole), None);
-        assert!(refuse_a_half_copy(&whole).is_ok());
+        // The dummy read is asked for only when the data ends in zeros.
+        let unasked = || -> Option<RafShape> { panic!("the shape is not needed") };
+        assert_eq!(refuse_a_half_copy(&whole, unasked).unwrap(), UpFront::Whole);
 
         let past = a_raf(data.len() + 1, &data);
         assert_eq!(half_copied_bytes(&past), Some(RAF_HALF_COPIED));
-        match refuse_a_half_copy(&past) {
+        match refuse_a_half_copy(&past, unasked) {
             Err(Error::Decode(text)) => assert_eq!(text, RAF_HALF_COPIED),
             other => panic!("{other:?}"),
         }
 
         // Full size, as a copier that sets the length first leaves it,
-        // the CFA data's last 64 KiB zeros; one byte of data in them,
-        // and it is whole.
+        // the CFA data's last 64 KiB zeros, as a whole uncompressed
+        // X-Trans 5 HR file's are too. Stored uncompressed (the data
+        // as long as width * height * bps / 8) and not rotated, it is
+        // left to its rows; compressed, rotated, or with no shape to
+        // be had, it is refused. A panic on it names a half copy; one
+        // byte of data in them, and it is whole.
         let preallocated = a_raf(padded.len(), &padded);
+        let shape = |width, rotated| {
+            move || {
+                Some(RafShape {
+                    width,
+                    height: 512,
+                    bps: 16,
+                    rotated,
+                })
+            }
+        };
+        assert_eq!(
+            refuse_a_half_copy(&preallocated, shape(256, false)).unwrap(),
+            UpFront::JudgeRows
+        );
+        for refused in [
+            refuse_a_half_copy(&preallocated, shape(257, false)),
+            refuse_a_half_copy(&preallocated, shape(256, true)),
+            refuse_a_half_copy(&preallocated, || None),
+        ] {
+            match refused {
+                Err(Error::Decode(text)) => assert_eq!(text, HALF_COPIED),
+                other => panic!("{other:?}"),
+            }
+        }
         assert_eq!(half_copied_bytes(&preallocated), Some(HALF_COPIED));
         let mut one = preallocated.clone();
         one[0x400 + padded.len() - TAIL] = 1;
@@ -1076,9 +1224,13 @@ mod tests {
         let empty = [a_raf_head(empty), vec![0x33; 0x100]].concat();
         assert_eq!(half_copied_bytes(&empty), None);
 
-        // Not a RAF: the tail rule.
+        // Not a RAF: the tail rule, up front too.
         let other = [b"II*\0".to_vec(), padded.clone()].concat();
         assert_eq!(half_copied_bytes(&other), Some(HALF_COPIED));
+        match refuse_a_half_copy(&other, unasked) {
+            Err(Error::Decode(text)) => assert_eq!(text, HALF_COPIED),
+            other => panic!("{other:?}"),
+        }
         let mut wrong = whole.clone();
         wrong[0] = b'X';
         assert_eq!(half_copied_bytes(&wrong), Some(HALF_COPIED));
@@ -1107,6 +1259,130 @@ mod tests {
         std::panic::set_hook(hook);
         let gave_up = gave_up.unwrap_err().to_string();
         assert!(gave_up.contains(RAF_HALF_COPIED), "{gave_up}");
+    }
+
+    /// A copy that stopped short leaves the last row inside the crop
+    /// zeros; dead rows below the crop may be zeros in a whole file,
+    /// and are not looked at, nor are columns beside the crop. Without
+    /// a crop, the frame's last row. Only a frame the up-front check
+    /// left to its rows, with a black above zero, is refused.
+    #[test]
+    fn a_raf_is_judged_by_its_last_cropped_row() {
+        let frame = |crop, zero_rows: std::ops::Range<usize>, f32: bool| {
+            let mut f = crate::develop::tests::flat_frame();
+            (f.width, f.height, f.crop) = (6, 6, crop);
+            let v: Vec<u16> = (0..36)
+                .map(|i| {
+                    if zero_rows.contains(&(i / 6)) {
+                        0
+                    } else {
+                        1020 + i as u16
+                    }
+                })
+                .collect();
+            f.samples = if f32 {
+                Samples::F32(v.iter().map(|&s| f32::from(s)).collect())
+            } else {
+                Samples::U16(v)
+            };
+            f
+        };
+        let cropped = Rect {
+            x: 0,
+            y: 0,
+            width: 6,
+            height: 5,
+        };
+        let crop = Some(cropped);
+        for f32 in [false, true] {
+            assert!(!last_row_unwritten(&frame(crop, 0..0, f32)));
+            assert!(!last_row_unwritten(&frame(crop, 5..6, f32)), "dead row");
+            assert!(last_row_unwritten(&frame(crop, 4..6, f32)));
+            assert!(last_row_unwritten(&frame(crop, 4..5, f32)));
+            assert!(last_row_unwritten(&frame(None, 5..6, f32)));
+            assert!(!last_row_unwritten(&frame(None, 4..5, f32)));
+        }
+        // One sample of data in the row is enough; a column beside the
+        // crop is not looked at.
+        let inset = Some(Rect {
+            x: 2,
+            width: 3,
+            ..cropped
+        });
+        let with = |crop, at: usize| {
+            let mut f = frame(crop, 4..6, false);
+            if let Samples::U16(v) = &mut f.samples {
+                v[4 * 6 + at] = 1;
+            }
+            f
+        };
+        assert!(!last_row_unwritten(&with(crop, 3)));
+        assert!(!last_row_unwritten(&with(inset, 2)));
+        assert!(!last_row_unwritten(&with(inset, 4)));
+        assert!(last_row_unwritten(&with(inset, 1)), "left of the crop");
+        assert!(last_row_unwritten(&with(inset, 5)), "right of the crop");
+        // A crop that `validate` would refuse says nothing, and does
+        // not panic.
+        let past = Some(Rect {
+            height: 7,
+            ..cropped
+        });
+        assert!(!last_row_unwritten(&frame(past, 0..6, false)));
+        let empty = Some(Rect {
+            height: 0,
+            ..cropped
+        });
+        assert!(!last_row_unwritten(&frame(empty, 0..6, false)));
+
+        // What `decode_source` asks: only a frame left to its rows is
+        // judged, and only under a black above zero.
+        let unwritten = frame(crop, 4..6, false);
+        match judge_rows(&unwritten, UpFront::JudgeRows) {
+            Err(Error::Decode(text)) => assert_eq!(text, HALF_COPIED),
+            other => panic!("{other:?}"),
+        }
+        assert!(judge_rows(&unwritten, UpFront::Whole).is_ok());
+        assert!(judge_rows(&frame(crop, 5..6, false), UpFront::JudgeRows).is_ok());
+        let mut no_black = unwritten.clone();
+        no_black.levels.black = LevelPattern::uniform(0.0, 1);
+        assert!(judge_rows(&no_black, UpFront::JudgeRows).is_ok());
+    }
+
+    /// The wiring, on a real RAF named by `GREYCARD_RAF_SAMPLE` (none
+    /// may sit in the repo): it decodes whole, and with the second half
+    /// of its CFA data zeroed, as a copier that sets the length first
+    /// leaves it, it is refused as a half copy and does not panic. An
+    /// uncompressed X-H2 or X-T5 file is the case this pins: refused
+    /// by its rows after the decode, where a compressed one is refused
+    /// by its bytes before it. It swaps the process's panic hook, as
+    /// the header test does, so run it on its own, by name.
+    #[test]
+    #[ignore = "needs a RAF in GREYCARD_RAF_SAMPLE"]
+    fn a_half_copied_raf_sample_is_refused() {
+        let path = std::env::var_os("GREYCARD_RAF_SAMPLE").expect("GREYCARD_RAF_SAMPLE");
+        let whole = std::fs::read(path).unwrap();
+        assert!(whole.starts_with(RAF_MAGIC), "not a RAF");
+        RawlerDecoder.decode_bytes(&whole).unwrap();
+        let (at, len) = (be_u32_at(&whole, 0x64), be_u32_at(&whole, 0x68));
+        let (at, len) = (at as usize, len as usize);
+        let mut copying = whole.clone();
+        copying[at + len / 2..at + len].fill(0);
+        let hook = std::panic::take_hook();
+        let panicked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = panicked.clone();
+        std::panic::set_hook(Box::new(move |_| {
+            seen.store(true, std::sync::atomic::Ordering::SeqCst)
+        }));
+        let refused = RawlerDecoder.decode_bytes(&copying);
+        std::panic::set_hook(hook);
+        match refused {
+            Err(Error::Decode(text)) => assert_eq!(text, HALF_COPIED),
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            !panicked.load(std::sync::atomic::Ordering::SeqCst),
+            "no panic on the way"
+        );
     }
 
     #[test]
