@@ -3,7 +3,11 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.9.1
+## 0.9.1, 2026-10-28
+
+Fixes for 0.9.0's fills: their level, grain, and color blotches, a
+learned mask made again under a fill, and the Mac disk image's
+install window.
 
 ### Install
 
