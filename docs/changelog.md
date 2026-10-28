@@ -5,6 +5,12 @@ design note behind it.
 
 ## 0.9.1
 
+### Install
+
+- The Mac `.dmg` opens as an install window, with an arrow from
+  greycard to Applications showing where to drag it
+  ([§442](https://github.com/jessolmstead/greycard/blob/master/docs/notes/442-the-disk-images-window.md)).
+
 ### Fixes
 
 - On a Mac, the first Subject or Background mask of a launch no longer

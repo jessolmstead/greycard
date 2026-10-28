@@ -2,6 +2,8 @@
 /testdata
 *.tiff
 *.png
+# The disk image's window background, which package.sh copies in.
+!/packaging/dmg/background.tiff
 /CLAUDE.local.md
 /data/
 /.idea/

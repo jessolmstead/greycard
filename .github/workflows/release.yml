@@ -367,6 +367,10 @@ jobs:
           mnt=$(mktemp -d)
           hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mnt" "$DMG"
           ls -la "$mnt"
+          # The install window (§442): without these Finder opens a
+          # plain window, and nothing else would say so.
+          test -f "$mnt/.DS_Store"
+          test -f "$mnt/.background/background.tiff"
           spctl --assess --type execute --verbose=2 "$mnt/greycard.app"
           "$mnt/greycard.app/Contents/MacOS/greycard" --version
           hdiutil detach -quiet "$mnt"

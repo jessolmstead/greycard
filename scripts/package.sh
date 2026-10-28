@@ -449,13 +449,18 @@ echo "target/dist/$name.tar.gz"
 # the build that comes out byte for byte the same; hdiutil writes a
 # fresh UUID and the time into every image. The image is signed and
 # notarized itself, so Gatekeeper passes it before it is mounted, and
-# it holds the app already stapled.
+# it holds the app already stapled. Its window, the arrow from the app
+# to Applications, is packaging/dmg's background and the layout
+# layout.sh made, which finds the background through the volume's
+# name: keep it "greycard" here and there.
 if [ "$os" = macos ]; then
     dmgroot="target/dist/$name.dmgroot"
     rm -rf "$dmgroot"
-    mkdir -p "$dmgroot"
+    mkdir -p "$dmgroot/.background"
     ditto "$stage/greycard.app" "$dmgroot/greycard.app"
     ln -s /Applications "$dmgroot/Applications"
+    cp packaging/dmg/background.tiff "$dmgroot/.background/background.tiff"
+    cp packaging/dmg/DS_Store "$dmgroot/.DS_Store"
     hdiutil create -quiet -volname greycard -srcfolder "$dmgroot" \
         -fs HFS+ -format UDZO -imagekey zlib-level=9 \
         "target/dist/$name.dmg"
