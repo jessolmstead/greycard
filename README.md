@@ -59,8 +59,8 @@ Panasonic raws.
 - Nikon High Efficiency raws only open in a build from source with the
   `nikon-he` feature. The format is licensed, and shipping its decoder
   means royalties. I'm working on it.
-- The Mac and Windows builds aren't signed yet, so you have to click
-  past a warning the first time.
+- The Windows build isn't signed yet, so you have to click past a
+  warning the first time.
 - No build yet for Intel Macs.
 - There is a Windows on ARM build, though a release can still go out
   without it while it's new. Its AI features run on the CPU alone,
