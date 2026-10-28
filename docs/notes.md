@@ -453,3 +453,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§438. The grain's draw held to the shortfall](notes/438-the-grains-draw-held-to-the-shortfall.md) (2026-10-26)
 - [§439. A RAF is judged by its last cropped row](notes/439-a-raf-is-judged-by-its-last-cropped-row.md) (2026-10-27)
 - [§440. The Mac build, signed and notarized](notes/440-the-mac-build-signed-and-notarized.md) (2026-10-27)
+- [§441. Subject kept off Core ML](notes/441-subject-kept-off-core-ml.md) (2026-10-27)

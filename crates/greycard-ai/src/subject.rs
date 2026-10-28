@@ -89,6 +89,14 @@ pub fn pick(
     }
 }
 
+/// The providers Subject is tried on, of those `given`: not Core ML,
+/// whose ML Program builder refuses BiRefNet's dilated Conv ("Required
+/// param 'pad' is missing") after two minutes and more of converting
+/// the graph (§441).
+pub fn offered(given: &[Provider]) -> Vec<Provider> {
+    Provider::without_core_ml(given)
+}
+
 impl Subject {
     /// Load from the store, on the first provider that runs it: the
     /// file [`model_for`] picks.
@@ -97,7 +105,7 @@ impl Subject {
     }
 
     /// Load this one of the two Subject files, whichever the
-    /// providers.
+    /// providers, on those of them it is [`offered`].
     pub fn load_model(
         store: &Store,
         model: &'static Model,
@@ -115,7 +123,7 @@ impl Subject {
         let loaded = runtime::open(
             &path,
             GraphOptimizationLevel::Level3,
-            providers,
+            &offered(providers),
             Some(remember),
             |s| {
                 let zeros =
@@ -233,6 +241,12 @@ mod tests {
     fn a_declined_rewrite_falls_back_to_the_original() {
         let orig = SUBJECT.id;
         assert_eq!(id_with(true, &[orig], &[SUBJECT_WEBGPU.id], true), orig);
+    }
+
+    #[test]
+    fn subject_is_never_tried_on_core_ml() {
+        let all = [Provider::CoreMl, Provider::WebGpu, Provider::Cpu];
+        assert_eq!(offered(&all), [Provider::WebGpu, Provider::Cpu]);
     }
 
     #[test]

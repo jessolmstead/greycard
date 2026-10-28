@@ -104,10 +104,11 @@ impl Provider {
     }
 
     /// `given` less Core ML, for a model that stays off it: Core ML is
-    /// for the denoiser, Sky, and Subject, whose shapes are fixed; the
-    /// others (LaMa's free size, SAM's prompts) would pay a second
-    /// session and two more warm runs at every load to lose the race,
-    /// or fall to the CPU under static shapes.
+    /// for the denoiser and Sky, whose shapes are fixed; the others
+    /// (LaMa's free size, SAM's prompts) would pay a second session and
+    /// two more warm runs at every load to lose the race, or fall to
+    /// the CPU under static shapes, and Subject fails to compile
+    /// there at all (§441).
     pub fn without_core_ml(given: &[Provider]) -> Vec<Provider> {
         given
             .iter()

@@ -3,6 +3,15 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.9.1
+
+### Fixes
+
+- On a Mac, the first Subject or Background mask of a launch no longer
+  waits two minutes or more for Core ML, which cannot run that model;
+  it goes straight to the GPU
+  ([§441](https://github.com/jessolmstead/greycard/blob/master/docs/notes/441-subject-kept-off-core-ml.md)).
+
 ## 0.9.0, 2026-10-27
 
 Better generative fills, one-click Auto and Auto level, faster AI on
