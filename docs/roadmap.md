@@ -26,6 +26,9 @@ the reasoning lives in `docs/notes.md`.
       until §441 kept it off Core ML. The compile runs out of process
       and is cached after. Compile the models in the background when
       they are fetched or at launch, or say "preparing" while it runs
+- [ ] Enter on the Export sheet does nothing: the sheet has no key
+      handling, where the delete and look-remove sheets take Enter as
+      their default and Esc as Cancel (pixls, 2026-10-28)
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
 - [ ] A fill on a denoised frame still gets more grain than its
@@ -977,6 +980,9 @@ clears or a tester asks for it.
       not in a second window (discussion 51, 2026-10-28)
 - [ ] The download progress shown where it cannot be missed while a
       dialog has the window greyed out (discussion 51, 2026-10-28)
+- [ ] Ctrl+E exports the selection with the last settings into the
+      last folder, no sheet, as darktable does; the sheet the first
+      time, before any export has set them (pixls, 2026-10-28)
 
 ## Blocked
 
