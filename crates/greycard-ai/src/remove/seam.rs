@@ -593,17 +593,17 @@ fn read(
 
 /// A box of a window: the hole's box grown by a reach, held to the
 /// window.
-struct Crop {
-    origin: (usize, usize),
-    width: usize,
-    height: usize,
+pub(super) struct Crop {
+    pub(super) origin: (usize, usize),
+    pub(super) width: usize,
+    pub(super) height: usize,
     stride: usize,
 }
 
 impl Crop {
     /// The box round `hole`'s pixels (nonzero), grown by `reach`, in a
     /// `width` × `height` window; `None` for no hole.
-    fn round(hole: &[f32], width: usize, height: usize, reach: usize) -> Option<Crop> {
+    pub(super) fn round(hole: &[f32], width: usize, height: usize, reach: usize) -> Option<Crop> {
         let (mut x0, mut x1, mut y0, mut y1) = (width, 0, height, 0);
         for (i, _) in hole.iter().enumerate().filter(|(_, m)| **m > 0.0) {
             let (x, y) = (i % width, i / width);
@@ -623,11 +623,11 @@ impl Crop {
     }
 
     /// The window's index of the box's pixel `i`.
-    fn at(&self, i: usize) -> usize {
+    pub(super) fn at(&self, i: usize) -> usize {
         (self.origin.1 + i / self.width) * self.stride + self.origin.0 + i % self.width
     }
 
-    fn mask(&self, m: &[f32]) -> Vec<f32> {
+    pub(super) fn mask(&self, m: &[f32]) -> Vec<f32> {
         (0..self.width * self.height)
             .map(|i| m[self.at(i)])
             .collect()
@@ -661,7 +661,7 @@ fn weighted_median(v: &mut [(f64, f64)]) -> f64 {
 /// `m x = r` for an `n` × `n` `m` stored by rows, by Gaussian
 /// elimination with partial pivoting; `None` when `m` is singular or
 /// near it.
-fn solve(mut m: Vec<f64>, mut r: Vec<f64>, n: usize) -> Option<Vec<f64>> {
+pub(super) fn solve(mut m: Vec<f64>, mut r: Vec<f64>, n: usize) -> Option<Vec<f64>> {
     let scale = m.iter().fold(0.0f64, |a, v| a.max(v.abs()));
     for col in 0..n {
         let pivot =

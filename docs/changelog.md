@@ -28,6 +28,12 @@ install window.
   disagrees with itself or reads no more than the picture's own texture
   ([§443](https://github.com/jessolmstead/greycard/blob/master/docs/notes/443-the-fills-level-across-its-edge.md),
   [§447](https://github.com/jessolmstead/greycard/blob/master/docs/notes/447-the-fills-level-read-by-sector.md)).
+- A fill's middle no longer drifts from the sky round it, grey and
+  warm in Patch, light and red in Fast and Best, which the edge match
+  cannot see: the picture round the hole is read as a smooth surface
+  and the fill's low-frequency departure from it is divided out, where
+  the surround is smooth enough to read
+  ([§448](https://github.com/jessolmstead/greycard/blob/master/docs/notes/448-the-fills-middle-against-the-surface-round-it.md)).
 - The status line keeps "the fill model is at work..." when you put
   the Fill tool down, or any tool while a develop runs; only the
   tool's own hint goes

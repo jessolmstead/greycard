@@ -1594,6 +1594,7 @@ impl Ai {
                 // too, across a wide hole; matched across the edge as
                 // the remove's is.
                 let (image, under) = greycard_ai::remove::matched(&input, &hole, &made.image);
+                let (image, evened) = greycard_ai::remove::evened(&input, &hole, &image);
                 let made = greycard_ai::fill::Filled { image, ..made };
                 tracing::info!(
                     "fill {}: LaMa, a window of {ww}x{wh} at {:.2} ({}x{}), {} tile(s) of up to {} on {}, {:.2}s",
@@ -1613,6 +1614,16 @@ impl Ai {
                         g.gain[0],
                         g.gain[1],
                         g.gain[2]
+                    );
+                }
+                if let Some(m) = evened {
+                    tracing::info!(
+                        "fill {}: the fill's middle brought to the smooth surface round it, by up to {:.1}%, mean gains {:.3}, {:.3}, and {:.3} in R, G, and B",
+                        patch.name(),
+                        100.0 * m.largest,
+                        m.mean[0],
+                        m.mean[1],
+                        m.mean[2]
                     );
                 }
                 (made.image, made.scale)
@@ -4598,7 +4609,9 @@ mod tests {
             let mean = v.iter().sum::<f64>() / v.len() as f64;
             (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / v.len() as f64).sqrt() as f32
         };
-        assert!(spread(&out) < 1e-6, "flat before");
+        // Not exactly flat: the middle's evening carries a trace of the
+        // band's own grain into the hole, a hundredth of the grain.
+        assert!(spread(&out) < 0.02 * sigma, "flat before: {}", spread(&out));
         let r = regrain(&mut out, &region, window, &image, 3).expect("the frame has noise");
         let want = sigma * (1.0f32 + 0.09 / 3.0).sqrt();
         let after = spread(&out);

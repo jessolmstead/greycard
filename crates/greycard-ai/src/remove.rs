@@ -74,10 +74,12 @@ use crate::registry::{File, REMOVE, REMOVE_FAST};
 use crate::runtime::{self, Error, Provider, Result};
 use crate::store::Store;
 
+mod middle;
 mod mottle;
 mod scale;
 mod seam;
 
+pub use middle::{Middle, evened};
 pub use scale::{FACTOR, factor_for, scaled, scaled_size};
 pub use seam::{Gains, matched};
 
@@ -883,9 +885,10 @@ fn cut(planes: &[f32], size: usize, width: usize, height: usize) -> Result<Rgbf>
 /// the hole ([`level`]), so the fill does not sit darker than its
 /// surround where the blend feathers it in, and then its hole to the
 /// picture's level across the hole's edge, so a level the UNet set
-/// for the whole hole does not show either ([`Gains`]); last, its
-/// chroma is smoothed where it is mottled past the picture's round it
-/// ([`mottle`]).
+/// for the whole hole does not show either ([`Gains`]), and its middle
+/// to the smooth surface round it where it has one ([`evened`]); last,
+/// its chroma is smoothed where it is mottled past the picture's round
+/// it ([`mottle`]).
 /// [`Error::Implausible`] when the decoder's answer outside the hole
 /// strays from the picture by more than [`bound`] allows for its
 /// detail ([`drift`]), correlates with it under [`CORRELATION`], or is
@@ -914,6 +917,16 @@ fn leveled(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<(Rgbf, Level, O
     }
     let matched = level(image, hole, decoded);
     let (decoded, under) = seam::matched(image, hole, &matched.apply(decoded));
+    let (decoded, evened) = middle::evened(image, hole, &decoded);
+    if let Some(m) = evened {
+        log::info!(
+            "remove: the fill's middle brought to the smooth surface round it, by up to {:.1}%, mean gains {:.3}, {:.3}, and {:.3} in R, G, and B",
+            100.0 * m.largest,
+            m.mean[0],
+            m.mean[1],
+            m.mean[2]
+        );
+    }
     let (decoded, smoothed) = mottle::smoothed(image, hole, &decoded);
     if let Some(s) = smoothed {
         log::info!(
