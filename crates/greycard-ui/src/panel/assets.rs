@@ -890,7 +890,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 {
                     st.sheets.declined.push(model.id);
                     if st.develop.retouching.is_some() {
-                        app.set_status(crate::panel::retouch::RETOUCH_HINT.into());
+                        crate::panel::deliver::show_hint(
+                            &app,
+                            &mut st,
+                            crate::panel::retouch::RETOUCH_HINT,
+                        );
                     }
                 }
                 (Fetch::Model(model), false) => {

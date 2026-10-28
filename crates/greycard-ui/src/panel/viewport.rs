@@ -1811,7 +1811,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     // press on the view reads the developed picture there, a drag
     // moves what the press chose, a release records it.
     {
-        let app_weak = app.as_weak();
+        let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_pick_started(move |kind| {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -1820,7 +1820,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.invoke_stop_placing();
             if !same {
                 app.set_picking(kind.clone());
-                app.set_status(picking_hint(kind.as_str()).into());
+                let hint = picking_hint(kind.as_str());
+                crate::panel::deliver::show_hint(&app, &mut state.borrow_mut(), hint);
                 // The defringe's dropper wants the pass's input on
                 // screen, not its output: see `edit_to_develop`.
                 if kind == "Defringe" {
@@ -1838,7 +1839,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let mut st = state.borrow_mut();
             let picking = app.get_picking();
             if !dropper_reads_develop(&st) {
-                app.set_status(waiting_said(picking.as_str()).into());
+                crate::panel::deliver::show_hint(&app, &mut st, &waiting_said(picking.as_str()));
                 return;
             }
             let Some(px) = sample_view(&st, &app, x, y) else {

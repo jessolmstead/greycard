@@ -208,7 +208,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if method.is_none() || st.develop.retouching == method {
                 st.develop.retouching = None;
                 app.set_retouch_mode("".into());
-                app.set_status("".into());
+                crate::panel::deliver::drop_hint(&app, &mut st);
                 show_patches(&st, &st.develop.edit, &app);
                 return;
             }
@@ -235,7 +235,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.develop.placing = None;
             app.set_placing("".into());
             app.set_retouch_mode(kind);
-            app.set_status(RETOUCH_HINT.into());
+            crate::panel::deliver::show_hint(&app, &mut st, RETOUCH_HINT);
             show_patches(&st, &st.develop.edit, &app);
             if offer {
                 st.sheets.remove_offered = true;
@@ -829,5 +829,52 @@ mod tests {
         assert_eq!(app.get_patch(), 0, "chosen from the list");
         press(&app, Key::Escape);
         assert_eq!(app.get_patch(), -1, "Esc lets go of it");
+    }
+
+    /// Putting the repair tool down takes its hint off the status line,
+    /// and leaves whatever has been written over it: a fill at work
+    /// keeps its word there, by the Fill button, a change of tab, or
+    /// Esc.
+    #[test]
+    fn putting_the_repair_down_leaves_what_replaced_its_hint() {
+        let dir = crate::testing::scratch_dir("drop-hint");
+        let store = greycard_ai::Store::at(&dir);
+        for f in greycard_ai::FILL.files {
+            let path = store.path(&greycard_ai::FILL, f);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::File::create(&path)
+                .unwrap()
+                .set_len(f.bytes)
+                .unwrap();
+        }
+        crate::ai::set_test_webgpu(Some(false));
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        state.borrow_mut().develop.store = Some(store);
+        let filling = "developing... the fill model is at work on Fill 3";
+        type Down = fn(&App);
+        let downs: [(&str, Down); 3] = [
+            ("button", |app| app.invoke_retouch_toggled("Fill".into())),
+            ("tab", |app| app.invoke_tab_changed("Develop".into())),
+            ("Esc", |app| app.invoke_stop_placing()),
+        ];
+        for (how, down) in downs {
+            app.set_panel_tab("Retouch".into());
+            app.invoke_retouch_toggled("Fill".into());
+            assert_eq!(app.get_retouch_mode(), "Fill", "{how}");
+            assert_eq!(app.get_status(), super::RETOUCH_HINT, "{how}");
+            down(&app);
+            assert_eq!(app.get_retouch_mode(), "", "{how}");
+            assert_eq!(app.get_status(), "", "{how}: the hint goes");
+
+            app.set_panel_tab("Retouch".into());
+            app.invoke_retouch_toggled("Fill".into());
+            app.set_status(filling.into());
+            down(&app);
+            assert_eq!(app.get_retouch_mode(), "", "{how}");
+            assert_eq!(app.get_status(), filling, "{how}: the fill's word stays");
+        }
+        crate::ai::set_test_webgpu(None);
+        crate::testing::remove_scratch(state, &dir);
     }
 }

@@ -21,6 +21,10 @@ design note behind it.
   around it: its level is matched to the picture's across the hole's
   edge, and left alone where the edge disagrees with itself
   ([§443](https://github.com/jessolmstead/greycard/blob/master/docs/notes/443-the-fills-level-across-its-edge.md)).
+- The status line keeps "the fill model is at work..." when you put
+  the Fill tool down, or any tool while a develop runs; only the
+  tool's own hint goes
+  ([§444](https://github.com/jessolmstead/greycard/blob/master/docs/notes/444-a-tools-hint-remembered.md)).
 
 ## 0.9.0, 2026-10-27
 

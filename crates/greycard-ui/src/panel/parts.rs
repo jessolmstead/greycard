@@ -189,14 +189,14 @@ pub(crate) fn people_found(
             why: Asking::Unsure,
         },
     });
-    arm(app, "click the person, or All people");
+    arm(st, app, "click the person, or All people");
     false
 }
 
-fn arm(app: &App, status: &str) {
+fn arm(st: &mut State, app: &App, hint: &str) {
     app.set_placing_into(true);
     app.set_placing(PICKING.into());
-    app.set_status(status.into());
+    crate::panel::deliver::show_hint(app, st, hint);
     app.window().request_redraw();
 }
 
@@ -437,7 +437,7 @@ pub(crate) fn rearm(st: &mut State, app: &App) {
         mode: Mode::Add,
         ask,
     });
-    arm(app, words);
+    arm(st, app, words);
 }
 
 /// The people's outlines on the view while one is to be picked.
@@ -667,6 +667,27 @@ mod tests {
         assert!(st.develop.choosing.is_none() && st.develop.part_pending.is_none());
         assert_eq!(app.get_placing(), "");
         assert_eq!(shapes(&st).len(), 1);
+    }
+
+    /// Escape takes the picker's hint off the status line, and leaves
+    /// whatever has been written over it.
+    #[test]
+    fn escape_drops_the_pickers_hint_and_leaves_what_replaced_it() {
+        let (app, state, _worker) = masks();
+        for keep in ["", "developing..."] {
+            {
+                let mut st = state.borrow_mut();
+                pending(&mut st, "Hands");
+                people_found(&mut st, &app, None, Ok((two(), "CPU", 0.1)));
+            }
+            assert_eq!(app.get_status(), "click the person, or All people");
+            if !keep.is_empty() {
+                app.set_status(keep.into());
+            }
+            app.invoke_stop_placing();
+            assert_eq!(app.get_placing(), "");
+            assert_eq!(app.get_status(), keep);
+        }
     }
 
     /// A placed part that asks on this picture: the people outlined,

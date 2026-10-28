@@ -603,11 +603,15 @@ pub(crate) fn sky_pick(no_sky: bool, have_sam: bool) -> Result<&'static str, &'s
 /// color range the dropper in hand, so the next click on the picture
 /// centers the window. Called with the state let go of, since putting
 /// a dropper in hand puts any other tool down.
-fn arm_range_pick(app: &App, kind: &str) {
-    if kind == "Color" && app.get_picking() != "Range" {
+fn arm_range_pick(app: &App, state: &RefCell<State>, kind: &str) {
+    if kind != "Color" {
+        app.set_status(made_hint(kind).into());
+        return;
+    }
+    if app.get_picking() != "Range" {
         app.invoke_pick_started("Range".into());
     }
-    app.set_status(made_hint(kind).into());
+    crate::panel::deliver::show_hint(app, &mut state.borrow_mut(), made_hint(kind));
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
@@ -635,7 +639,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // it down first, as leaving the Masks tab already does.
             if st.develop.placing.take().is_some() || st.develop.choosing.take().is_some() {
                 app.set_placing("".into());
-                app.set_status("".into());
+                crate::panel::deliver::drop_hint(&app, &mut st);
             }
             st.develop.part_pending = None;
             crate::panel::landscape::stopped(&mut st);
@@ -669,7 +673,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if tab != "Masks" {
                 if st.develop.placing.take().is_some() || st.develop.choosing.is_some() {
                     app.set_placing("".into());
-                    app.set_status("".into());
+                    crate::panel::deliver::drop_hint(&app, &mut st);
                 }
                 crate::panel::parts::stopped(&mut st);
                 if st.develop.target.is_some() {
@@ -682,7 +686,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             if tab != "Retouch" && st.develop.retouching.take().is_some() {
                 app.set_retouch_mode("".into());
-                app.set_status("".into());
+                crate::panel::deliver::drop_hint(&app, &mut st);
             }
             // Back on Masks with a Part on this picture asking which
             // person: its mask chosen, and the picking armed.
@@ -750,7 +754,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if app.get_placing() == kind && app.get_placing_into() {
                 st.develop.placing = None;
                 app.set_placing("".into());
-                app.set_status("".into());
+                crate::panel::deliver::drop_hint(&app, &mut st);
                 return;
             }
             let chosen = app.get_component().max(0) as usize;
@@ -798,7 +802,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 show_edit(&st, &st.develop.edit, &app, st.develop.target);
                 drop(st);
                 app.invoke_view_changed();
-                arm_range_pick(&app, kind.as_str());
+                arm_range_pick(&app, &state, kind.as_str());
                 return;
             }
             // A brush chosen in the list takes more strokes rather
@@ -850,7 +854,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             tool_in_hand(&mut st, &app);
             app.set_placing_into(true);
             app.set_placing(kind.clone());
-            app.set_status(hint.into());
+            crate::panel::deliver::show_hint(&app, &mut st, hint);
         });
     }
     {
@@ -862,19 +866,19 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let mut st = state.borrow_mut();
             if st.develop.placing.take().is_some() || st.develop.choosing.is_some() {
                 app.set_placing("".into());
-                app.set_status("".into());
+                crate::panel::deliver::drop_hint(&app, &mut st);
             }
             crate::panel::parts::dismissed(&mut st);
             crate::panel::parts::stopped(&mut st);
             if st.develop.retouching.take().is_some() {
                 app.set_retouch_mode("".into());
-                app.set_status("".into());
+                crate::panel::deliver::drop_hint(&app, &mut st);
             }
             st.develop.picking = None;
             let was_defringe = app.get_picking() == "Defringe";
             if !app.get_picking().is_empty() {
                 app.set_picking("".into());
-                app.set_status("".into());
+                crate::panel::deliver::drop_hint(&app, &mut st);
             }
             // The defringe's dropper had the pass switched off so it
             // could see the fringes; putting it down puts it back.
@@ -1044,7 +1048,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // its place.
             if st.develop.placing.take().is_some() || st.develop.choosing.is_some() {
                 app.set_placing("".into());
-                app.set_status("".into());
+                crate::panel::deliver::drop_hint(&app, &mut st);
             }
             crate::panel::parts::stopped(&mut st);
             let edit = read_edit(&app, &st.develop.edit, st.develop.target);
@@ -3492,5 +3496,44 @@ mod tests {
         assert_eq!(app.get_tip_text(), "Remove");
         click(&app, x, y);
         assert_eq!(app.get_tip_text(), "", "gone with the press");
+    }
+
+    /// Esc puts a mask's tool or a dropper down and its hint with it,
+    /// and leaves whatever has been written over the hint: a develop's
+    /// word, a failure, or an export's.
+    #[test]
+    fn esc_drops_a_tools_hint_and_leaves_what_replaced_it() {
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        let filling = "developing... the fill model is at work on Fill 3";
+        let lines = [
+            "",
+            filling,
+            "developing...",
+            "failed: no memory",
+            "exporting 3 frames...",
+        ];
+        for keep in lines {
+            app.invoke_add_shape("Brush".into(), "Add".into());
+            assert_eq!(app.get_status(), placing_hint("Brush"));
+            if !keep.is_empty() {
+                app.set_status(keep.into());
+            }
+            app.invoke_stop_placing();
+            assert_eq!(app.get_placing(), "");
+            assert_eq!(app.get_status(), keep, "the Brush");
+
+            app.invoke_pick_started("Range".into());
+            assert_eq!(app.get_picking(), "Range");
+            if !keep.is_empty() {
+                app.set_status(keep.into());
+            }
+            app.invoke_stop_placing();
+            assert_eq!(app.get_picking(), "");
+            assert_eq!(app.get_status(), keep, "the dropper");
+        }
     }
 }

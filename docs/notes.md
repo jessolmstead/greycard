@@ -456,3 +456,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§441. Subject kept off Core ML](notes/441-subject-kept-off-core-ml.md) (2026-10-27)
 - [§442. The disk image's window](notes/442-the-disk-images-window.md) (2026-10-28)
 - [§443. The fill's level across its edge](notes/443-the-fills-level-across-its-edge.md) (2026-10-28)
+- [§444. A tool's hint, remembered](notes/444-a-tools-hint-remembered.md) (2026-10-28)

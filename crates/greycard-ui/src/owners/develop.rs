@@ -260,6 +260,9 @@ pub(crate) struct Develop {
     /// land: the develop's own line would otherwise stand alone,
     /// since it is set again once that develop is on screen.
     pub(crate) status_after_develop: Option<(u64, String)>,
+    /// The hint the tool in hand put on the status line, which
+    /// putting the tool down takes off while the line still says it.
+    pub(crate) hint: Option<String>,
     /// A state shown in the viewport in place of the panel's while a
     /// history or snapshot row is under the pointer, and the status
     /// line it covers meanwhile.

@@ -36,6 +36,27 @@ pub(crate) struct Landed {
     pub(crate) generation: u64,
 }
 
+/// A tool's hint on the status line, remembered so that putting the
+/// tool down takes off this and nothing else.
+pub(crate) fn show_hint(app: &App, st: &mut State, hint: &str) {
+    app.set_status(hint.into());
+    st.develop.hint = Some(hint.to_string());
+}
+
+/// The tool's hint taken off the status line as the tool is put down,
+/// while the line still says it: whatever has been written over it
+/// since, a develop's or a worker's word, stays.
+pub(crate) fn drop_hint(app: &App, st: &mut State) {
+    if st
+        .develop
+        .hint
+        .take()
+        .is_some_and(|h| app.get_status() == h)
+    {
+        app.set_status("".into());
+    }
+}
+
 /// Names in a sentence: "Fill 1", "Fill 1 and Fill 2", "Fill 1,
 /// Fill 2 and Fill 3".
 pub(crate) fn listed(names: &[String]) -> String {
@@ -702,7 +723,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     .into(),
                 );
             } else {
-                app.set_status(picking_hint(picking.as_str()).into());
+                show_hint(app, &mut st, picking_hint(picking.as_str()));
             }
             // The picture the viewport draws from the next frame on,
             // whether it takes a camera picture's place or stands

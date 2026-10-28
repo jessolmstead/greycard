@@ -356,6 +356,8 @@ fn put_tools_down(st: &mut State, app: &App) {
     app.set_retouch_mode("".into());
     st.develop.picking = None;
     app.set_picking("".into());
+    // A hint the tool in hand left on the status line goes with it.
+    crate::panel::deliver::drop_hint(app, st);
     st.develop.guiding.clear();
     app.set_guide_mode("".into());
     app.set_level_mode(false);
@@ -6601,5 +6603,19 @@ mod tests {
         }
         assert_eq!(shown(&state).0, cull::Origin::Camera, "still the camera's");
         crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// Into culling with the repair tool in hand: the tool is put down
+    /// and its hint, with its Esc, goes off the status line.
+    #[test]
+    fn culling_entered_with_a_repair_in_hand_drops_its_hint() {
+        let app = window(1);
+        let (state, _worker) = state_for(&app, folder(1));
+        app.invoke_select(0);
+        app.invoke_retouch_toggled("Clone".into());
+        assert_eq!(app.get_status(), crate::panel::retouch::RETOUCH_HINT);
+        enter_cull(&mut state.borrow_mut(), &app, 1);
+        assert_eq!(app.get_retouch_mode(), "");
+        assert_eq!(app.get_status(), "");
     }
 }

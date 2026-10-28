@@ -1031,6 +1031,7 @@ impl State {
                 presets: Vec::new(),
                 preset_store: None,
                 status_after_develop: None,
+                hint: None,
                 peek: None,
                 held: None,
                 status_kept: None,
