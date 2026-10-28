@@ -459,3 +459,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§444. A tool's hint, remembered](notes/444-a-tools-hint-remembered.md) (2026-10-28)
 - [§445. A learned mask made again under a fill](notes/445-a-learned-mask-made-again-under-a-fill.md) (2026-10-28)
 - [§446. The fill's chroma mottle](notes/446-the-fills-chroma-mottle.md) (2026-10-28)
+- [§447. The fill's level read by sector](notes/447-the-fills-level-read-by-sector.md) (2026-10-28)

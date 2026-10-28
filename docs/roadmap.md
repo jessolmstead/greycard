@@ -282,10 +282,12 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       days. Waits on a license search (the strong face-embedding
       models are mostly non-commercial) and on whether a sidecar may
       hold a face embedding, which is biometric data (§253)
-- [ ] The fill's level match past §443: sectors in the hole's own
-      frame so a thin stroke is matched; a gate that weighs a sector's
-      scatter against its band's texture so a blotchy wall takes a true
-      level; a contact shadow wider than the 8 px gap, which leaks
+- [ ] The fill's level match past §447: sectors in the hole's own
+      frame so a thin stroke is matched; the picture's own texture read
+      past the window's 32 px margin so a pattern with a 30 to 45 px
+      period cannot move a correct fill; a contact shadow wider than
+      the 8 px gap, which leaks; the fill's own light middle on a large
+      sky, which an edge match cannot see
 - [ ] The fill's grain estimate capped by the develop's mosaic noise
       model, built on the branch fill-grain-cap and parked (§398): it
       bound on no frame tried, and its flat tile reads silent on a

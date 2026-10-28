@@ -22,9 +22,12 @@ install window.
   it goes straight to the GPU
   ([§441](https://github.com/jessolmstead/greycard/blob/master/docs/notes/441-subject-kept-off-core-ml.md)).
 - A fill, Patch, Fast, or Best, no longer comes back lighter than the
-  picture around it: its level is matched to the picture's across the hole's
-  edge, and left alone where the edge disagrees with itself
-  ([§443](https://github.com/jessolmstead/greycard/blob/master/docs/notes/443-the-fills-level-across-its-edge.md)).
+  picture around it: its level is matched to the picture's across the
+  hole's edge, sector by sector so a hole that crosses from sky into
+  something dark is matched on the sky, and left alone where the edge
+  disagrees with itself or reads no more than the picture's own texture
+  ([§443](https://github.com/jessolmstead/greycard/blob/master/docs/notes/443-the-fills-level-across-its-edge.md),
+  [§447](https://github.com/jessolmstead/greycard/blob/master/docs/notes/447-the-fills-level-read-by-sector.md)).
 - The status line keeps "the fill model is at work..." when you put
   the Fill tool down, or any tool while a develop runs; only the
   tool's own hint goes
