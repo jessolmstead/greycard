@@ -328,7 +328,10 @@ say) can still be turned off. See [Demosaic](#demosaic).
 
 The buttons along the top choose it: **off** (the default), **fast**,
 **balanced** or **best**. The slower tiers clean noise better.
-**fast** is quickest. **best** can take a while on a large frame.
+**fast** is quickest. **best** can take a while on a large frame. On
+an Apple silicon Mac the model runs through Core ML, which is quicker
+than the graphics path it used before; the first run of each tier on
+a machine takes longer while Core ML prepares it.
 
 **Blend** mixes the denoised picture with the original, so a little
 grain stays. When you first open a raw, **Blend** is set from its ISO:

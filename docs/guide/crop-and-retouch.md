@@ -207,6 +207,9 @@ Open RAIL++-M license, offered once the first time you choose **Fill**
 with LaMa in hand. **Not now** keeps LaMa. A fill it made opens on a
 machine without it, or without a GPU, left as it was.
 
+Every fill takes on the photo's grain, measured around the area, so
+it does not stand out as a smooth patch.
+
 A fill the generative remove made has **Another** on its row in the
 list: each press makes a new version of it, and undo takes you back to
 the last one.

@@ -19,13 +19,12 @@ but a whole number puts the field back as it was.
 
 ### Scale
 
-How large greycard draws its type and controls, on top of the scaling
-your system already applies.
-
-| Choice | Type and controls |
-|---|---|
-| **System** (default) | The size your system's own display scaling gives |
-| **125%**, **150%**, **175%**, **200%** | That much larger than **System** |
+How large greycard draws its type and controls, as a percentage of
+the scaling your system already applies: 100 (the default) is the
+size your system's own display scaling gives, 150 is half again as
+large, and 75 is smaller. Type a whole number from 50 to 300; it is
+taken on Enter or when the sheet closes, and anything else puts the
+field back.
 
 The change applies the next time greycard starts, and the sheet says
 so until then. The whole window scales, panels, sheets, and menus alike;
