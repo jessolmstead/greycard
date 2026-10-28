@@ -3629,7 +3629,7 @@ fn write_raster(path: &Path, height: usize, data: &[u8]) {
 /// The fills kept on disk's format: bumped when a change to either
 /// engine, or to how a fill is put together, makes another fill of the
 /// same patch, so the old ones are made again.
-const FILL_VERSION: u8 = 2;
+const FILL_VERSION: u8 = 3;
 
 /// The first bytes of a fill kept on disk.
 const FILL_MAGIC: &[u8; 6] = b"GCFILL";

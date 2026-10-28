@@ -74,6 +74,7 @@ use crate::registry::{File, REMOVE, REMOVE_FAST};
 use crate::runtime::{self, Error, Provider, Result};
 use crate::store::Store;
 
+mod mottle;
 mod scale;
 mod seam;
 
@@ -882,7 +883,9 @@ fn cut(planes: &[f32], size: usize, width: usize, height: usize) -> Result<Rgbf>
 /// the hole ([`level`]), so the fill does not sit darker than its
 /// surround where the blend feathers it in, and then its hole to the
 /// picture's level across the hole's edge, so a level the UNet set
-/// for the whole hole does not show either ([`Gains`]).
+/// for the whole hole does not show either ([`Gains`]); last, its
+/// chroma is smoothed where it is mottled past the picture's round it
+/// ([`mottle`]).
 /// [`Error::Implausible`] when the decoder's answer outside the hole
 /// strays from the picture by more than [`bound`] allows for its
 /// detail ([`drift`]), correlates with it under [`CORRELATION`], or is
@@ -911,6 +914,14 @@ fn leveled(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<(Rgbf, Level, O
     }
     let matched = level(image, hole, decoded);
     let (decoded, under) = seam::matched(image, hole, &matched.apply(decoded));
+    let (decoded, smoothed) = mottle::smoothed(image, hole, &decoded);
+    if let Some(s) = smoothed {
+        log::info!(
+            "remove: the fill's chroma over the picture's round it at the latents' scale, smoothed by {:.2} and {:.2} on the two chroma axes",
+            s.amount[0],
+            s.amount[1]
+        );
+    }
     let mut data = Vec::with_capacity(image.data.len());
     for (i, &m) in hole.iter().enumerate() {
         let a = m.clamp(0.0, 1.0);

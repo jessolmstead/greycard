@@ -32,6 +32,11 @@ design note behind it.
 - A fill's grain is read right where a dark, quiet surround sits
   beside strong texture
   ([§398](https://github.com/jessolmstead/greycard/blob/master/docs/notes/398-the-frames-grain-under-a-fill.md)).
+- A Fast fill's green and magenta blotches are smoothed out, down to
+  the picture's own color noise round the hole, with its luma and any
+  color edge that follows it left as they were. Fills made before
+  this version are made again once when the photo is next opened
+  ([§446](https://github.com/jessolmstead/greycard/blob/master/docs/notes/446-the-fills-chroma-mottle.md)).
 
 ## 0.9.0, 2026-10-27
 
