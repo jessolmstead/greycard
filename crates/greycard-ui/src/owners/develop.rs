@@ -195,6 +195,16 @@ pub(crate) struct Develop {
     /// The file `learned` and `asked` are of: the one last sent to the
     /// worker to open (`panel::mask::learned_for`).
     pub(crate) learned_of: Option<PathBuf>,
+    /// The version of `learned_of` they are of, once one is opened
+    /// (`panel::mask::learned_anew`).
+    pub(crate) learned_version: Option<Option<std::sync::Arc<str>>>,
+    /// Rasters kept drawn across a reopen of the same frame, to be asked
+    /// for again: the worker starts the open afresh, and its answer
+    /// takes their place.
+    pub(crate) reasks: std::collections::HashSet<Key>,
+    /// Those of `reasks` asked for: their answers do not turn the
+    /// overlay on.
+    pub(crate) quiet: std::collections::HashSet<Key>,
     /// The model store, to know what is there.
     pub(crate) store: Option<greycard_ai::Store>,
     /// What the lens database made of the open file.

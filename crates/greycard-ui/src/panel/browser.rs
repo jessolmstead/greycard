@@ -2433,6 +2433,7 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
     let path = st.path_of(i).clone();
     let file = st.file_of(i);
     crate::panel::mask::learned_for(st, &path);
+    crate::panel::mask::learned_anew(st, st.cells[i].version.clone());
     Job::Open {
         path,
         version: st.cells[i].version.clone(),

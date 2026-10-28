@@ -835,7 +835,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 );
                 return;
             }
-            st.develop.asked.remove(&key);
+            // Not asked for (made again by the worker for a fill over
+            // it), or asked again for a raster already drawn across a
+            // reopen: the user is not to be shown the mask for either.
+            let quiet = st.develop.quiet.remove(&key);
+            let asked = st.develop.asked.remove(&key).is_some() && !quiet;
             st.develop.masks_failed.remove(&key);
             // A Part asking which person it is of here: the picking,
             // with the people outlined; settled, it asks no more. An
@@ -867,6 +871,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .and_then(|a| a.mask.components.get(key.1))
                 .is_some_and(|c| c.enabled);
             if live
+                && asked
                 && matches!(
                     shape,
                     Shape::Subject {}
@@ -913,6 +918,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         }
         Outcome::MaskFailed { key, message } => {
             let mut st = state.borrow_mut();
+            st.develop.quiet.remove(&key);
             tracing::error!("mask: {message}");
             if let Some(shape) = st.develop.asked.get(&key).cloned() {
                 app.set_status(format!("mask: {message}").into());
@@ -964,6 +970,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     }
                 });
             }
+            // A learned mask that fell back to its base raster for want
+            // of a model may be had now.
+            WORKER.with(|w| {
+                if let Some(w) = &*w.borrow() {
+                    w.models_arrived();
+                }
+            });
             // A denoiser the edit is waiting for, or the fill model
             // with a fill to make: develop again with it.
             develop_for(&mut st, app, |m| m.id == model.id);

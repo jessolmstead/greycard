@@ -50,9 +50,10 @@ pub(super) fn learned_masks(
                 if !c.shape.is_learned() || !crate::ai::prompted(&c.shape) {
                     continue;
                 }
-                match ai.raster(
+                match ai.raster_retouched(
                     b.stamp,
                     &b.image,
+                    retouched_of(b, Some(edit)),
                     &b.edit,
                     b.source,
                     b.turn,
@@ -60,7 +61,7 @@ pub(super) fn learned_masks(
                     &c.shape,
                     None,
                 ) {
-                    Ok(made) => {
+                    Ok((made, _)) => {
                         // A Part whose person is not settled here goes
                         // out empty, and the log says so.
                         if let Some(part) = &made.part {
@@ -83,6 +84,73 @@ pub(super) fn learned_masks(
         }
     }
     (rasters, left_out)
+}
+
+/// The base's picture with its retouch applied, when that is `edit`'s
+/// retouch (any edit for `None`): the picture a learned shape a patch
+/// meets is made on ([`Ai::raster_retouched`]).
+pub(super) fn retouched_of<'a>(
+    b: &'a Base,
+    edit: Option<&Edit>,
+) -> Option<crate::ai::Retouched<'a>> {
+    let (retouch, image, _, unmade) = b.patched.as_ref()?;
+    if edit.is_some_and(|e| !same_retouch(&e.retouch, retouch)) {
+        return None;
+    }
+    Some(crate::ai::Retouched {
+        retouch,
+        image,
+        unmade,
+    })
+}
+
+/// Whether `applied`, a retouch as a develop applied it, is `edit`'s:
+/// the same patches, a source the develop chose standing for one the
+/// edit has not been given yet.
+pub(super) fn same_retouch(edit: &Retouch, applied: &Retouch) -> bool {
+    edit.enabled == applied.enabled
+        && edit.patches.len() == applied.patches.len()
+        && edit.patches.iter().zip(&applied.patches).all(|(p, q)| {
+            p == q
+                || (p.source.is_none()
+                    && *p
+                        == greycard_edit::retouch::Patch {
+                            source: None,
+                            ..q.clone()
+                        })
+        })
+}
+
+/// The learned components the panel was given a raster of whose
+/// patches the develop of `edit` on `base` changed: each to be asked for
+/// again, behind the develop.
+pub(super) fn to_ask_again(
+    edit: &Edit,
+    base: Option<&Base>,
+    ai: &Ai,
+) -> Vec<(Key, Shape, Option<&'static greycard_ai::Model>)> {
+    let Some(b) = base else {
+        return Vec::new();
+    };
+    let live = |key: Key, shape: &Shape| {
+        edit.adjustments
+            .iter()
+            .find(|a| a.id == key.0)
+            .and_then(|a| a.mask.components.get(key.1))
+            .is_some_and(|c| c.enabled && c.shape == *shape)
+    };
+    ai.to_ask_again(retouched_of(b, None), b.turn, live)
+}
+
+/// The edit a reduced develop for the models is made under: `edit`
+/// without its retouch. The models see the base, as the open frame's
+/// do, so the rasters [`masks_for`] makes go in the base's slots, and a
+/// Fill, which refuses the reduced develop, does not stop them.
+pub(super) fn models_see(edit: &Edit) -> Edit {
+    Edit {
+        retouch: Default::default(),
+        ..edit.clone()
+    }
 }
 
 /// How [`masks_for`] ended.
@@ -127,10 +195,11 @@ pub(super) fn masks_for(
     };
     let edit = std::mem::take(&mut line.current);
     let turn = sidecar.turn;
+    let bare = models_see(&edit);
     if !crate::reduced::draws_learned(&edit) {
         return MasksMade::All;
     }
-    let developed = match crate::reduced::develop(path, &edit, turn, lenses) {
+    let developed = match crate::reduced::develop(path, &bare, turn, lenses) {
         Ok(developed) => developed,
         Err(why) => {
             tracing::info!("the masks of {name}: not made: {why}");
@@ -200,8 +269,7 @@ pub(super) fn person_on(
     let started = Instant::now();
     // A Fill's patch is the open frame's alone, and refuses the reduced
     // develop; the people are found on the base, which it is not in.
-    let mut edit = job.edit.clone();
-    edit.retouch = Default::default();
+    let edit = models_see(&job.edit);
     let developed = crate::reduced::develop(&job.frame.path, &edit, job.turn, lenses)
         .map_err(|why| why.to_string())?;
     // Another file: its hash is the one a person found here records.

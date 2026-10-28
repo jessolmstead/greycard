@@ -177,6 +177,14 @@ pub(super) fn run(
                     q.forget_subject = false;
                     ai.forget_subject();
                 }
+                if q.models_arrived {
+                    q.models_arrived = false;
+                    for (key, shape, model) in ai.retry_fallbacks() {
+                        if !q.masks.iter().any(|(k, _, _)| *k == key) {
+                            q.masks.push_back((key, shape, model));
+                        }
+                    }
+                }
                 if let Some(job) = q.keeps.pop_front() {
                     break job;
                 }
@@ -724,6 +732,7 @@ pub(super) fn run(
                             &deliver,
                         );
                         shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
+                        ask_again(lock, masks::to_ask_again(&edit, base.as_ref(), &ai));
                         last = image
                             .and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                         landed = base.is_some().then_some(generation);
@@ -762,6 +771,7 @@ pub(super) fn run(
                         &deliver,
                     );
                     shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
+                    ask_again(lock, masks::to_ask_again(&edit, base.as_ref(), &ai));
                     last =
                         image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                     deliver(outcome);
@@ -773,19 +783,30 @@ pub(super) fn run(
                 }
                 let outcome = match &base {
                     Some(b) => {
-                        match ai.raster(
-                            b.stamp, &b.image, &b.edit, b.source, b.turn, key, &shape, model,
+                        match ai.raster_retouched(
+                            b.stamp,
+                            &b.image,
+                            masks::retouched_of(b, None),
+                            &b.edit,
+                            b.source,
+                            b.turn,
+                            key,
+                            &shape,
+                            model,
                         ) {
-                            Ok(made) => Outcome::Mask {
-                                key,
-                                shape,
-                                file: opened_path.clone(),
-                                raster: made.raster,
-                                provider: made.provider.map(|p| p.label()),
-                                seconds: made.seconds,
-                                note: made.note,
-                                part: made.part,
-                            },
+                            Ok((made, print)) => {
+                                ai.given(key, &shape, model, print);
+                                Outcome::Mask {
+                                    key,
+                                    shape,
+                                    file: opened_path.clone(),
+                                    raster: made.raster,
+                                    provider: made.provider.map(|p| p.label()),
+                                    seconds: made.seconds,
+                                    note: made.note,
+                                    part: made.part,
+                                }
+                            }
                             Err(message) => Outcome::MaskFailed { key, message },
                         }
                     }
@@ -1082,4 +1103,23 @@ fn has_live_part(edit: &Edit) -> bool {
                 .live()
                 .any(|(_, c)| matches!(c.shape, Shape::Part { .. }))
     })
+}
+
+/// The learned masks a develop's retouch changed the patches of, queued
+/// again behind it: the panel is given each one as it is made. A key
+/// already queued is left as it is: that ask is the panel's, newer than
+/// the shape recorded here, and is made under the same patches.
+pub(super) fn ask_again(
+    lock: &Mutex<Queue>,
+    again: Vec<(Key, Shape, Option<&'static greycard_ai::Model>)>,
+) {
+    if again.is_empty() {
+        return;
+    }
+    let mut q = lock.lock().expect("worker queue");
+    for (key, shape, model) in again {
+        if !q.masks.iter().any(|(k, _, _)| *k == key) {
+            q.masks.push_back((key, shape, model));
+        }
+    }
 }

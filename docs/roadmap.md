@@ -230,10 +230,6 @@ Decided (§34): ONNX Runtime through `ort`, CPU floor with CUDA, DirectML
 or CoreML when found; models downloaded on first use with their
 licenses, never bundled; a `greycard-ai` crate that core never sees.
 
-- [ ] A learned mask made again after a fill that overlaps it: the
-      models see the base, before the retouch, so a Subject mask still
-      holds a person a fill removed. Run the shape again on the patched
-      picture when a patch's region meets its raster, and only then
 - [ ] AI masks, after Sky (§175): a learned sky matte for dense canopies and twigs
       against glare, where the color-line matte fails (needs clean
       data we assemble); more hard negatives

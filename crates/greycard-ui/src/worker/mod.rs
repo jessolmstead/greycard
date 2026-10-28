@@ -638,6 +638,9 @@ struct Queue {
     /// so the next Subject mask picks up the new file rather than the
     /// one already running.
     forget_subject: bool,
+    /// A model arrived in the store: the learned masks whose second run
+    /// failed are asked for again (`Ai::retry_fallbacks`).
+    models_arrived: bool,
     /// The editor is leaving: finish what is in hand and stop, so the
     /// engine's GPU context is dropped on this thread rather than
     /// under a process that is already on its way out.
@@ -1006,8 +1009,9 @@ struct Base {
     /// Counts the bases made, for the learned masks to know theirs.
     stamp: u64,
     /// The base with its retouch applied, for the retouch it was,
-    /// and whether every fill in it was made.
-    patched: Option<(Retouch, Arc<WorkingImage>, bool)>,
+    /// whether every fill in it was made, and the Fill patches left as
+    /// they were, by id.
+    patched: Option<(Retouch, Arc<WorkingImage>, bool, Vec<u64>)>,
     /// The picture before its sharpen, on the GPU, for the sharpen's
     /// slider: made once, re-read on every move.
     pre: Option<PreSharpen>,

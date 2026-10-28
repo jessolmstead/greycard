@@ -273,6 +273,25 @@ pub struct Ai {
     /// What has been made, by component and the base's turn, with the
     /// shape it was made for.
     cache: HashMap<(Key, u8), (Shape, Arc<Raster>)>,
+    /// What has been made again on the retouched picture, by component
+    /// and the base's turn, with the shape and the print of the patches
+    /// it was made under ([`Retouched::print_over`]).
+    retouched: HashMap<(Key, u8), (Shape, u64, Arc<Raster>)>,
+    /// What the open frame's panel was last given for each component:
+    /// the shape, the model asked with, and the print of the Fill
+    /// patches over it, none when none is. A develop whose retouch
+    /// changes that print asks for it again ([`Ai::to_ask_again`]).
+    given: HashMap<Key, (Shape, Option<&'static Model>, Option<u64>)>,
+    /// The components whose second run on the retouched picture failed
+    /// and were given the base's raster: tried again when a model
+    /// arrives ([`Ai::retry_fallbacks`]), since the failure may be one.
+    fell_back: std::collections::HashSet<Key>,
+    /// The print a raster is being made again under: hashed into its
+    /// disk slot, so it is kept apart from the base's.
+    salt: Option<u64>,
+    /// The retouched picture's kept work while the base's is in the
+    /// fields, and the other way round while a shape is made again.
+    other_side: Side,
     /// Whether made rasters and fills are kept on disk (`cached_path`,
     /// `fill_path`); never for a test that runs the models.
     disk: bool,
@@ -292,6 +311,100 @@ pub struct Ai {
     /// one run.
     #[cfg(test)]
     pub(crate) scene_runs: usize,
+}
+
+/// A base's picture with its retouch applied: the retouch as the
+/// develop applied it (sources chosen), the picture, and the Fill
+/// patches in it left as they were (a model missing, failed, or wanting
+/// a GPU), by id.
+#[derive(Clone, Copy)]
+pub struct Retouched<'a> {
+    pub retouch: &'a Retouch,
+    pub image: &'a WorkingImage,
+    pub unmade: &'a [u64],
+}
+
+/// How much of a learned raster counts as the shape where a patch
+/// meets it: an eighth, above the faint haze a matte leaves around.
+const MEETS: u8 = 32;
+
+impl Retouched<'_> {
+    /// The print of the Fill patches that meet `raster` and how many
+    /// there are; none when none do, or when one of them is not made
+    /// (the picture there is still the base's).
+    pub fn print_over(&self, raster: &Raster) -> Option<(u64, usize)> {
+        let under = overlapping(self.retouch, raster);
+        if under.is_empty() || under.iter().any(|p| self.unmade.contains(&p.id)) {
+            return None;
+        }
+        Some((print_of(&under), under.len()))
+    }
+
+    /// A print of the whole picture: every patch as applied and the
+    /// fills left unmade, for the stamp the models' kept work on it
+    /// goes by.
+    fn picture_print(&self) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let all: Vec<&Patch> = self.retouch.patches.iter().collect();
+        (self.retouch.enabled, print_of(&all), self.unmade).hash(&mut h);
+        h.finish()
+    }
+}
+
+/// The Fill patches of `retouch` whose hole meets `raster`'s shape. A
+/// Heal or a Clone keeps what is under it (a spot, a hair, a blemish
+/// gone), so the shape stands; a Fill takes it out. A patch's points
+/// are in units of the picture's width, as the raster's texels are, so
+/// its region is found on the raster's own grid.
+pub fn overlapping<'a>(retouch: &'a Retouch, raster: &Raster) -> Vec<&'a Patch> {
+    if retouch.is_empty() {
+        return Vec::new();
+    }
+    let data = raster.data();
+    let w = raster.width;
+    retouch
+        .patches
+        .iter()
+        .filter(|p| p.method == greycard_edit::retouch::Method::Fill)
+        .filter(|p| {
+            let Some(r) = p.region(w, raster.height) else {
+                return false;
+            };
+            (0..r.height).any(|y| {
+                (0..r.width).any(|x| {
+                    r.cover[y * r.width + x] > 0.0
+                        && data
+                            .get((r.y + y) * w + r.x + x)
+                            .is_some_and(|&v| v >= MEETS)
+                })
+            })
+        })
+        .collect()
+}
+
+/// A hash of `patches` in every field: their places, sizes, sources,
+/// methods, and fill choices and seeds.
+pub fn print_of(patches: &[&Patch]) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for p in patches {
+        serde_json::to_string(p).unwrap_or_default().hash(&mut h);
+    }
+    h.finish()
+}
+
+/// What the models keep of one picture, by its stamp: the preview, the
+/// Object model's embedding, the sky's scene and cut, the Subject
+/// matte, and the people. The base's and the retouched picture's are
+/// kept apart, so a shape asked on one does not throw the other's away.
+#[derive(Default)]
+struct Side {
+    preview: Option<(u64, Rgb8, Vec<f32>)>,
+    embedding: Option<(u64, Embedding)>,
+    scene: Option<(u64, Scene, Provider)>,
+    sky_cut: Option<SkyCut>,
+    subject_matte: Option<(u64, Vec<u8>, Provider)>,
+    people: Option<(u64, Vec<sam3::Person>)>,
+    parts_view: Option<PartsView>,
 }
 
 /// Why the learned denoiser is not to be had.
@@ -983,6 +1096,11 @@ impl Ai {
             parts_view: None,
             picture: None,
             cache: HashMap::new(),
+            retouched: HashMap::new(),
+            given: HashMap::new(),
+            fell_back: std::collections::HashSet::new(),
+            salt: None,
+            other_side: Side::default(),
             disk: true,
             subject_matte: None,
             #[cfg(test)]
@@ -1039,6 +1157,10 @@ impl Ai {
     pub fn forget(&mut self, file: Option<PathBuf>) {
         self.file = file;
         self.cache.clear();
+        self.retouched.clear();
+        self.given.clear();
+        self.fell_back.clear();
+        self.other_side = Side::default();
         self.fills.clear();
         self.failed.clear();
         self.windows.clear();
@@ -1064,6 +1186,23 @@ impl Ai {
         self.encodings.clear();
         self.people = None;
         self.parts_view = None;
+        self.other_side.people = None;
+        self.other_side.parts_view = None;
+    }
+
+    /// The base's kept work for the retouched picture's, or back: the
+    /// People model's encodings are not kept for both, at about 2 GB,
+    /// and go at each change of side.
+    fn swap_side(&mut self) {
+        let o = &mut self.other_side;
+        std::mem::swap(&mut self.preview, &mut o.preview);
+        std::mem::swap(&mut self.embedding, &mut o.embedding);
+        std::mem::swap(&mut self.scene, &mut o.scene);
+        std::mem::swap(&mut self.sky_cut, &mut o.sky_cut);
+        std::mem::swap(&mut self.subject_matte, &mut o.subject_matte);
+        std::mem::swap(&mut self.people, &mut o.people);
+        std::mem::swap(&mut self.parts_view, &mut o.parts_view);
+        self.encodings.clear();
     }
 
     /// The People model lent to `other`, or back from it: the export of
@@ -1099,8 +1238,10 @@ impl Ai {
     pub fn forget_subject(&mut self) {
         self.subject = None;
         self.subject_matte = None;
+        self.other_side.subject_matte = None;
         // A Whole person made without Subject's edge is made again.
         self.cache.retain(|_, (s, _)| !takes_subject_edge(s));
+        self.retouched.retain(|_, (s, _, _)| !takes_subject_edge(s));
     }
 
     /// Whether the fill model is in the store, so a fill not kept
@@ -1683,6 +1824,11 @@ impl Ai {
         if width != RASTER_WIDTH {
             ("raster width", width).hash(&mut h);
         }
+        // Made again on the retouched picture: a slot of its own for
+        // the patches it was made under.
+        if let Some(print) = self.salt {
+            ("retouched", print).hash(&mut h);
+        }
         Some(root.join(format!("{:016x}.png", h.finish())))
     }
 
@@ -1842,6 +1988,187 @@ impl Ai {
                 Err(why) => why.to_string(),
                 Ok(_) => e,
             })
+    }
+
+    /// [`Ai::raster`] on the base, and made again on the retouched
+    /// picture when a Fill patch of `retouched` meets that raster: the
+    /// base's raster is the one overlap is measured against, so a fill
+    /// that takes a person out does not turn the question back. Beside
+    /// the raster, the print of the Fill patches over it
+    /// ([`Retouched::print_over`]), none when none is; a shape that
+    /// could not be made again keeps the base's raster under that print,
+    /// so it is not tried again until the patches change. A fill over it
+    /// still unmade leaves the base's raster: the picture there is the
+    /// base's.
+    #[allow(clippy::too_many_arguments)]
+    pub fn raster_retouched(
+        &mut self,
+        stamp: u64,
+        image: &WorkingImage,
+        retouched: Option<Retouched<'_>>,
+        edit: &Edit,
+        kind: crate::finish::Source,
+        turn: u8,
+        key: Key,
+        shape: &Shape,
+        model: Option<&'static Model>,
+    ) -> Result<(Made, Option<u64>), String> {
+        let made = self.raster(stamp, image, edit, kind, turn, key, shape, model)?;
+        if made.part.is_some() {
+            return Ok((made, None));
+        }
+        let Some((r, (print, under))) =
+            retouched.and_then(|r| Some((r, r.print_over(&made.raster)?)))
+        else {
+            return Ok((made, None));
+        };
+        if let Some((s, p, raster)) = self.retouched.get(&(key, turn))
+            && s == shape
+            && *p == print
+        {
+            let raster = raster.clone();
+            return Ok((
+                Made {
+                    note: self.empty_note(shape, &raster),
+                    raster,
+                    provider: None,
+                    seconds: 0.0,
+                    part: None,
+                },
+                Some(print),
+            ));
+        }
+        // Made as the base's is, on the retouched picture under a stamp
+        // of the whole picture's own, with its kept work, into a disk
+        // slot of the print's own; the base's raster and kept work stay
+        // where they were.
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (stamp, r.picture_print(), "retouched").hash(&mut h);
+        let kept = self.cache.remove(&(key, turn));
+        self.salt = Some(print);
+        self.swap_side();
+        let again = self.raster(h.finish(), r.image, edit, kind, turn, key, shape, model);
+        self.swap_side();
+        self.salt = None;
+        self.cache.remove(&(key, turn));
+        if let Some(k) = kept {
+            self.cache.insert((key, turn), k);
+        }
+        let name = self
+            .file
+            .as_deref()
+            .and_then(|f| f.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let shape_name = shape.name();
+        // A failure may pass (a model fetched, a device back): the base's
+        // raster stands, given under the print so a develop does not ask
+        // again, and is tried again when a model arrives.
+        let mut again = match again {
+            Ok(m) => m,
+            Err(why) => {
+                tracing::info!(
+                    "the masks of {name}: {shape_name} not made again under its fills ({why}); the base's kept"
+                );
+                self.fell_back.insert(key);
+                return Ok((made, Some(print)));
+            }
+        };
+        self.fell_back.remove(&key);
+        match again.part.take() {
+            None => {}
+            // The person is not on the retouched picture: taken out.
+            // Kept in the print's slot, so a reopen does not run the
+            // People model again for the same answer.
+            Some(Unresolved::Nobody) => {
+                let blank = vec![0u8; made.raster.width * made.raster.height];
+                self.salt = Some(print);
+                let slot = self.cached_path_at(shape, model, turn, made.raster.width);
+                self.salt = None;
+                if let Some(path) = &slot {
+                    write_raster(path, made.raster.height, &blank);
+                }
+                again.raster = Arc::new(Raster::from_data(
+                    made.raster.aspect,
+                    made.raster.width,
+                    blank,
+                ));
+                again.note = None;
+            }
+            Some(Unresolved::Ask(_)) => {
+                tracing::info!(
+                    "the masks of {name}: {shape_name} not settled on the retouched picture; the base's kept"
+                );
+                // Kept under the print: asking again would ask the same.
+                self.retouched
+                    .insert((key, turn), (shape.clone(), print, made.raster.clone()));
+                return Ok((made, Some(print)));
+            }
+        }
+        if again.provider.is_some() {
+            tracing::info!(
+                "the masks of {name}: {shape_name} made again on the retouched picture, under {under} fill{}, in {:.2} s",
+                if under == 1 { "" } else { "s" },
+                again.seconds
+            );
+        }
+        self.retouched
+            .insert((key, turn), (shape.clone(), print, again.raster.clone()));
+        Ok((again, Some(print)))
+    }
+
+    /// The open frame's panel was given the raster of `shape` at `key`,
+    /// asked with `model`, under the Fill patches of `print`.
+    pub fn given(
+        &mut self,
+        key: Key,
+        shape: &Shape,
+        model: Option<&'static Model>,
+        print: Option<u64>,
+    ) {
+        self.given.insert(key, (shape.clone(), model, print));
+    }
+
+    /// A model arrived: the components given the base's raster for a
+    /// failed second run, each with its shape and model, to be asked for
+    /// again.
+    pub fn retry_fallbacks(&mut self) -> Vec<(Key, Shape, Option<&'static Model>)> {
+        let mut again: Vec<_> = self
+            .fell_back
+            .drain()
+            .filter_map(|key| {
+                let (shape, model, _) = self.given.get(&key)?;
+                Some((key, shape.clone(), *model))
+            })
+            .collect();
+        again.sort_by_key(|(k, _, _)| *k);
+        again
+    }
+
+    /// The components given to the panel whose raster a develop under
+    /// `retouched` at `turn` changed the patches of, still `live` with
+    /// the same shape: each to be asked for again, with its model.
+    pub fn to_ask_again(
+        &self,
+        retouched: Option<Retouched<'_>>,
+        turn: u8,
+        live: impl Fn(Key, &Shape) -> bool,
+    ) -> Vec<(Key, Shape, Option<&'static Model>)> {
+        let mut again: Vec<_> = self
+            .given
+            .iter()
+            .filter(|(key, (shape, _, _))| live(**key, shape))
+            .filter_map(|(key, (shape, model, print))| {
+                let (s, base) = self.cache.get(&(*key, turn))?;
+                if s != shape {
+                    return None;
+                }
+                let now = retouched.and_then(|r| r.print_over(base)).map(|p| p.0);
+                (now != *print).then(|| (*key, shape.clone(), *model))
+            })
+            .collect();
+        again.sort_by_key(|(k, _, _)| *k);
+        again
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3497,6 +3824,370 @@ fn decode(v: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A raster 64 wide whose left half is the shape, and patches
+    /// placed on it, in units of its width.
+    fn half_shape() -> Raster {
+        let (w, h) = (64, 32);
+        let data = (0..w * h)
+            .map(|i| if i % w < w / 2 { 255 } else { 0 })
+            .collect();
+        Raster::from_data(0.5, w, data)
+    }
+
+    fn patch_at(id: u64, x: f32, seed: u32) -> Patch {
+        Patch {
+            id,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[x, 0.25]],
+            radius: 0.05,
+            seed,
+            ..Default::default()
+        }
+    }
+
+    /// A patch meets a raster where its hole lies on the shape, not
+    /// where it lies off it, nor on an empty raster; a picture whose
+    /// fills are not all made, or a retouch switched off, counts none.
+    #[test]
+    fn a_patch_meets_a_raster_where_its_hole_is_on_the_shape() {
+        let shape = half_shape();
+        let on = patch_at(1, 0.2, 0);
+        let off = patch_at(2, 0.8, 0);
+        let retouch = Retouch {
+            enabled: true,
+            patches: vec![on.clone(), off.clone()],
+        };
+        let under = overlapping(&retouch, &shape);
+        assert_eq!(under.iter().map(|p| p.id).collect::<Vec<_>>(), vec![1]);
+        let empty = Raster::from_data(0.5, 64, vec![0; 64 * 32]);
+        assert!(overlapping(&retouch, &empty).is_empty());
+        // Faint matte haze is not the shape.
+        let haze = Raster::from_data(0.5, 64, vec![MEETS - 1; 64 * 32]);
+        assert!(overlapping(&retouch, &haze).is_empty());
+
+        let image = WorkingImage::new(4, 2);
+        let whole = Retouched {
+            retouch: &retouch,
+            image: &image,
+            unmade: &[],
+        };
+        assert_eq!(whole.print_over(&shape).map(|p| p.1), Some(1));
+        assert!(whole.print_over(&empty).is_none());
+        let waiting = Retouched {
+            unmade: &[1],
+            ..whole
+        };
+        assert!(
+            waiting.print_over(&shape).is_none(),
+            "the fill over it unmade"
+        );
+        let elsewhere = Retouched {
+            unmade: &[2],
+            ..whole
+        };
+        assert_eq!(
+            elsewhere.print_over(&shape),
+            whole.print_over(&shape),
+            "a fill unmade elsewhere"
+        );
+        // A heal or a clone keeps what is under it.
+        for method in [
+            greycard_edit::retouch::Method::Heal,
+            greycard_edit::retouch::Method::Clone,
+        ] {
+            let kept = Retouch {
+                enabled: true,
+                patches: vec![Patch {
+                    method,
+                    source: Some([0.1, 0.0]),
+                    ..on.clone()
+                }],
+            };
+            assert!(overlapping(&kept, &shape).is_empty(), "{method:?}");
+        }
+        let off_switch = Retouch {
+            enabled: false,
+            ..retouch.clone()
+        };
+        let switched = Retouched {
+            retouch: &off_switch,
+            ..whole
+        };
+        assert!(switched.print_over(&shape).is_none());
+    }
+
+    /// The print changes with a patch over the shape (moved, another
+    /// seed, another engine, taken away) and not with one off it.
+    #[test]
+    fn the_print_follows_the_patches_over_the_shape_alone() {
+        let shape = half_shape();
+        let image = WorkingImage::new(4, 2);
+        let print = |patches: Vec<Patch>| {
+            let retouch = Retouch {
+                enabled: true,
+                patches,
+            };
+            Retouched {
+                retouch: &retouch,
+                image: &image,
+                unmade: &[],
+            }
+            .print_over(&shape)
+            .map(|p| p.0)
+        };
+        let first = print(vec![patch_at(1, 0.2, 0), patch_at(2, 0.8, 0)]);
+        assert!(first.is_some());
+        assert_eq!(
+            print(vec![patch_at(1, 0.2, 0), patch_at(2, 0.7, 3)]),
+            first,
+            "a patch off the shape moved"
+        );
+        assert_eq!(print(vec![patch_at(1, 0.2, 0)]), first, "one off it gone");
+        assert_ne!(print(vec![patch_at(1, 0.25, 0)]), first, "moved");
+        assert_ne!(print(vec![patch_at(1, 0.2, 1)]), first, "another seed");
+        let mut remove = patch_at(1, 0.2, 0);
+        remove.set_fill_choice(FillChoice::Fast);
+        assert_ne!(print(vec![remove]), first, "another engine");
+        assert_ne!(
+            print(vec![patch_at(1, 0.2, 0), patch_at(3, 0.3, 0)]),
+            first,
+            "a second over it"
+        );
+        assert_eq!(print(vec![patch_at(2, 0.8, 0)]), None, "none over it");
+    }
+
+    /// A Subject a patch meets is made again on the retouched picture,
+    /// into a slot of its own (read here from disk, as no model is in
+    /// the store); one no patch meets keeps the base's raster. What the
+    /// panel was given is asked for again only when a develop changes
+    /// the patches over it.
+    #[test]
+    fn a_subject_under_a_patch_is_made_again_on_the_retouched_picture() {
+        let dir = crate::testing::scratch_dir("retouched-mask");
+        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
+        ai.providers = vec![Provider::Cpu];
+        ai.forget(Some(PathBuf::from("open.CR3")));
+        let shape = Shape::Subject {};
+        let key = (1, 0);
+        let model = Some(&greycard_ai::SUBJECT);
+        let image = WorkingImage::new(200, 100);
+        let base = Arc::new(half_shape());
+        ai.cache.insert((key, 0), (shape.clone(), base.clone()));
+        let edit = Edit::default();
+        let kind = crate::finish::Source::default();
+        let off = Retouch {
+            enabled: true,
+            patches: vec![patch_at(2, 0.8, 0)],
+        };
+        let on = Retouch {
+            enabled: true,
+            patches: vec![patch_at(1, 0.2, 0), patch_at(2, 0.8, 0)],
+        };
+        let retouched = |r| Retouched {
+            retouch: r,
+            image: &image,
+            unmade: &[],
+        };
+        let (made, print) = ai
+            .raster_retouched(
+                1,
+                &image,
+                Some(retouched(&off)),
+                &edit,
+                kind,
+                0,
+                key,
+                &shape,
+                model,
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(&made.raster, &base));
+        assert_eq!(print, None);
+        ai.given(key, &shape, model, print);
+        assert!(
+            ai.to_ask_again(Some(retouched(&off)), 0, |_, _| true)
+                .is_empty()
+        );
+        let again = ai.to_ask_again(Some(retouched(&on)), 0, |_, _| true);
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0].0, key);
+        assert!(
+            ai.to_ask_again(Some(retouched(&on)), 0, |_, _| false)
+                .is_empty(),
+            "a shape no longer drawn"
+        );
+
+        // The retouched picture's raster in its own slot.
+        let (print_on, _) = retouched(&on).print_over(&base).unwrap();
+        let width = raster_width(&shape, (image.width, image.height));
+        let height = raster_height(width, 0.5);
+        ai.salt = Some(print_on);
+        let slot = ai.cached_path_at(&shape, model, 0, width).unwrap();
+        ai.salt = None;
+        assert_ne!(
+            Some(&slot),
+            ai.cached_path_at(&shape, model, 0, width).as_ref()
+        );
+        std::fs::create_dir_all(slot.parent().unwrap()).unwrap();
+        write_raster(&slot, height, &vec![7u8; width * height]);
+        let (made, print) = ai
+            .raster_retouched(
+                1,
+                &image,
+                Some(retouched(&on)),
+                &edit,
+                kind,
+                0,
+                key,
+                &shape,
+                model,
+            )
+            .unwrap();
+        assert_eq!(print, Some(print_on));
+        assert!(made.raster.data().iter().all(|&v| v == 7));
+        // The base's raster is where it was, for the next question.
+        assert!(Arc::ptr_eq(&ai.cache[&(key, 0)].1, &base));
+        ai.given(key, &shape, model, print);
+        assert!(
+            ai.to_ask_again(Some(retouched(&on)), 0, |_, _| true)
+                .is_empty()
+        );
+        // Taken away, the base's again.
+        assert_eq!(
+            ai.to_ask_again(Some(retouched(&off)), 0, |_, _| true).len(),
+            1
+        );
+        assert_eq!(ai.to_ask_again(None, 0, |_, _| true).len(), 1);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// An open starts the worker afresh: nothing given is known until
+    /// the panel asks again, and once it has, a fill drawn over the
+    /// shape asks for it again.
+    #[test]
+    fn after_a_reopen_the_ask_again_finds_a_fill_drawn_after() {
+        let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::Cpu]);
+        let file = PathBuf::from("open.CR3");
+        ai.forget(Some(file.clone()));
+        let shape = Shape::Subject {};
+        let key = (1, 0);
+        let image = WorkingImage::new(200, 100);
+        let edit = Edit::default();
+        let kind = crate::finish::Source::default();
+        let base = Arc::new(half_shape());
+        let fill = Retouch {
+            enabled: true,
+            patches: vec![patch_at(1, 0.2, 0)],
+        };
+        let retouched = Retouched {
+            retouch: &fill,
+            image: &image,
+            unmade: &[],
+        };
+        ai.cache.insert((key, 0), (shape.clone(), base.clone()));
+        ai.given(key, &shape, None, None);
+        // Reopened: what was given is forgotten with the rest.
+        ai.forget(Some(file));
+        ai.cache.insert((key, 0), (shape.clone(), base.clone()));
+        assert!(ai.to_ask_again(Some(retouched), 0, |_, _| true).is_empty());
+        // The panel's ask after the open, on no retouch yet.
+        let (_, print) = ai
+            .raster_retouched(1, &image, None, &edit, kind, 0, key, &shape, None)
+            .unwrap();
+        ai.given(key, &shape, None, print);
+        assert_eq!(ai.to_ask_again(Some(retouched), 0, |_, _| true).len(), 1);
+    }
+
+    /// A shape that cannot be made again (here no model, no slot) keeps
+    /// the base's raster under the print of the fills over it, so the
+    /// next develop does not ask again, and is tried again once a model
+    /// arrives; the retouched picture's preview is kept beside the
+    /// base's, not in its place.
+    #[test]
+    fn a_shape_not_made_again_is_not_asked_again_each_develop() {
+        let dir = crate::testing::scratch_dir("retouched-mask-fails");
+        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
+        ai.providers = vec![Provider::Cpu];
+        ai.forget(Some(PathBuf::from("open.CR3")));
+        let shape = Shape::Subject {};
+        let key = (1, 0);
+        let image = WorkingImage::new(200, 100);
+        let edit = Edit::default();
+        let kind = crate::finish::Source::default();
+        let base = Arc::new(half_shape());
+        ai.cache.insert((key, 0), (shape.clone(), base.clone()));
+        ai.preview_of(1, &image, &edit, kind);
+        let on = Retouch {
+            enabled: true,
+            patches: vec![patch_at(1, 0.2, 0)],
+        };
+        let retouched = Retouched {
+            retouch: &on,
+            image: &image,
+            unmade: &[],
+        };
+        let want = retouched.print_over(&base).map(|p| p.0);
+        let (made, print) = ai
+            .raster_retouched(
+                1,
+                &image,
+                Some(retouched),
+                &edit,
+                kind,
+                0,
+                key,
+                &shape,
+                None,
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(&made.raster, &base), "the base's kept");
+        assert_eq!(print, want);
+        ai.given(key, &shape, None, print);
+        assert!(ai.to_ask_again(Some(retouched), 0, |_, _| true).is_empty());
+        assert_eq!(
+            ai.preview.as_ref().map(|p| p.0),
+            Some(1),
+            "the base's preview"
+        );
+        assert!(
+            ai.other_side.preview.as_ref().is_some_and(|p| p.0 != 1),
+            "the retouched picture's beside it"
+        );
+        // A model arrives: it is tried again, once.
+        assert_eq!(
+            ai.retry_fallbacks(),
+            vec![(key, shape.clone(), None)],
+            "not stuck on the base's"
+        );
+        assert!(ai.retry_fallbacks().is_empty());
+        // Now it can be had (its slot filled, as a model would): made.
+        let model = Some(&greycard_ai::SUBJECT);
+        let width = raster_width(&shape, (image.width, image.height));
+        let height = raster_height(width, 0.5);
+        ai.salt = want;
+        let slot = ai.cached_path_at(&shape, model, 0, width).unwrap();
+        ai.salt = None;
+        std::fs::create_dir_all(slot.parent().unwrap()).unwrap();
+        write_raster(&slot, height, &vec![7u8; width * height]);
+        let (made, print) = ai
+            .raster_retouched(
+                1,
+                &image,
+                Some(retouched),
+                &edit,
+                kind,
+                0,
+                key,
+                &shape,
+                model,
+            )
+            .unwrap();
+        assert_eq!(print, want);
+        assert!(made.raster.data().iter().all(|&v| v == 7));
+        assert!(ai.retry_fallbacks().is_empty());
+        crate::testing::remove_dir_retry(&dir);
+    }
 
     /// Each choice runs where what it needs is here, and says why not
     /// otherwise; a patch drawn asks for the sticky choice and falls to

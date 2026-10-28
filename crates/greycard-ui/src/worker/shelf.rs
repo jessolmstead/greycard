@@ -441,7 +441,7 @@ pub(super) fn bytes_of(base: &Base, learned: Option<&LearnedBase>) -> u64 {
         }
     };
     count(&base.image);
-    if let Some((_, patched, _)) = &base.patched {
+    if let Some((_, patched, _, _)) = &base.patched {
         count(patched);
     }
     if let Some(l) = learned {
@@ -908,7 +908,7 @@ mod tests {
         let edit = Edit::default();
         let mut b = base(&edit, 0, 10, 10);
         let patched = Arc::new(WorkingImage::new(10, 10));
-        b.patched = Some((Retouch::default(), patched.clone(), true));
+        b.patched = Some((Retouch::default(), patched.clone(), true, Vec::new()));
         let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
         shelf.put(file("a"), b, None);
         assert_eq!(shelf.bytes(), 2 * size(10, 10));

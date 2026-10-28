@@ -232,8 +232,11 @@ pub(super) fn develop_job(
     // A kept picture with fills left unmade serves while none of them
     // can be made, and no longer once one can, by either engine.
     let patched = if retouch.is_empty() {
+        // None kept: what is kept is always the last develop's retouch,
+        // which the learned masks read (`masks::retouched_of`).
+        b.patched = None;
         b.image.clone()
-    } else if let Some((r, image, whole)) = &b.patched
+    } else if let Some((r, image, whole, _)) = &b.patched
         && *r == retouch
         && (*whole || !ai.could_fill_more(&retouch, &b.image))
     {
@@ -242,6 +245,8 @@ pub(super) fn develop_job(
         // Timed with its fills, which have a part of their own too.
         let started = Instant::now();
         let mut image = (*b.image).clone();
+        // The fills left as they were, by id, for the learned masks.
+        let mut unmade = Vec::new();
         retouch.apply_with(&mut image, |patch, region, picture| {
             // A fill the model has to make is said so before it
             // starts, since it takes a while.
@@ -263,14 +268,17 @@ pub(super) fn develop_job(
                     Some(data)
                 }
                 Err(NoFill::Missing(model)) => {
+                    unmade.push(patch.id);
                     fills.missing.push((patch.name(), model));
                     None
                 }
                 Err(NoFill::NoGpu) => {
+                    unmade.push(patch.id);
                     fills.no_gpu.push(patch.name());
                     None
                 }
                 Err(NoFill::Failed(why)) => {
+                    unmade.push(patch.id);
                     fills.failed.push((patch.name(), why));
                     None
                 }
@@ -278,7 +286,7 @@ pub(super) fn develop_job(
         });
         let image = Arc::new(image);
         let whole = fills.missing.is_empty() && fills.failed.is_empty();
-        b.patched = Some((retouch, image.clone(), whole));
+        b.patched = Some((retouch, image.clone(), whole, unmade));
         stages.push(("retouch", started.elapsed().as_secs_f64()));
         image
     };

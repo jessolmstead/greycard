@@ -343,6 +343,10 @@ session takes a few seconds while the model loads; after that, masks
 come quickly. Without the Object model, Sky still works, with a
 coarser edge, and clicks can only remove sky.
 
+A learned mask that a Fill lies over is made again on the retouched
+picture, so a person a Fill took out leaves the Subject mask too; a
+Heal, a Clone, or a Fill elsewhere leaves it alone.
+
 ### On an older processor
 
 The models run on ONNX Runtime, and the copy that comes with greycard

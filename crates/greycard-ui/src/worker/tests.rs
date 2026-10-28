@@ -3523,3 +3523,84 @@ fn a_dropped_worker_and_prefetcher_leave_no_threads() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
+
+/// A mask the worker asks for again behind a develop does not take the
+/// place of one the panel queued for the same key, which is newer.
+#[test]
+fn a_mask_asked_again_leaves_a_queued_ask_of_the_same_key() {
+    let lock = Mutex::new(Queue::default());
+    let sky = Shape::Sky { picks: Vec::new() };
+    lock.lock()
+        .unwrap()
+        .masks
+        .push_back(((1, 0), sky.clone(), None));
+    super::engine::ask_again(
+        &lock,
+        vec![
+            ((1, 0), Shape::Subject {}, None),
+            ((2, 0), Shape::Subject {}, None),
+        ],
+    );
+    let q = lock.lock().unwrap();
+    let queued: Vec<_> = q.masks.iter().map(|(k, s, _)| (*k, s.clone())).collect();
+    assert_eq!(queued, vec![((1, 0), sky), ((2, 0), Shape::Subject {})]);
+}
+
+/// The models see the base: the mask cache's reduced develop drops the
+/// retouch (a Fill would refuse it, a heal would put the patched
+/// picture's raster in the base's slot) and keeps the rest.
+#[test]
+fn the_mask_cache_develops_without_the_retouch() {
+    let mut edit = Edit::default();
+    edit.light.exposure = 0.7;
+    edit.retouch.patches.push(greycard_edit::retouch::Patch {
+        id: 1,
+        method: greycard_edit::retouch::Method::Fill,
+        points: vec![[0.5, 0.3]],
+        ..Default::default()
+    });
+    let seen = masks::models_see(&edit);
+    assert!(seen.retouch.is_empty());
+    assert_eq!(seen.light.exposure, 0.7);
+    assert_eq!(
+        Edit {
+            retouch: Default::default(),
+            ..edit
+        },
+        seen
+    );
+}
+
+/// A retouch as the develop applied it is the edit's when the only
+/// difference is a source the develop chose.
+#[test]
+fn a_retouch_applied_is_the_edits_with_the_sources_chosen() {
+    use greycard_edit::retouch::Patch;
+    let heal = Patch {
+        id: 1,
+        points: vec![[0.2, 0.2]],
+        ..Default::default()
+    };
+    let edit = Retouch {
+        enabled: true,
+        patches: vec![heal.clone()],
+    };
+    let applied = Retouch {
+        enabled: true,
+        patches: vec![Patch {
+            source: Some([0.1, 0.0]),
+            ..heal.clone()
+        }],
+    };
+    assert!(masks::same_retouch(&edit, &applied));
+    let moved = Retouch {
+        enabled: true,
+        patches: vec![Patch {
+            points: vec![[0.3, 0.2]],
+            source: Some([0.1, 0.0]),
+            ..heal
+        }],
+    };
+    assert!(!masks::same_retouch(&edit, &moved));
+    assert!(!masks::same_retouch(&edit, &Retouch::default()));
+}

@@ -25,6 +25,10 @@ design note behind it.
   the Fill tool down, or any tool while a develop runs; only the
   tool's own hint goes
   ([§444](https://github.com/jessolmstead/greycard/blob/master/docs/notes/444-a-tools-hint-remembered.md)).
+- A Subject, Sky, or other learned mask that a Fill lies over is made
+  again on the filled picture, so a person you removed leaves the mask
+  too
+  ([§445](https://github.com/jessolmstead/greycard/blob/master/docs/notes/445-a-learned-mask-made-again-under-a-fill.md)).
 
 ## 0.9.0, 2026-10-27
 

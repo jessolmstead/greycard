@@ -301,6 +301,27 @@ pub(crate) fn learned_for(st: &mut State, file: &Path) {
     }
 }
 
+/// Version `version` of the file `learned_for` was given is sent to the
+/// worker to open: the asks still out are let go, and every raster held
+/// is asked for again. The worker starts every open afresh, and a raster
+/// a fill lies over is made on the retouched picture: one the worker no
+/// longer knows it gave would not be made again when a fill is drawn
+/// over it. The same frame again keeps its rasters drawn until the
+/// answers (from the worker's disk slots, no model run) take their
+/// place; another version of the file (a virtual copy, with the same
+/// adjustment ids) lets them go, since they are another picture's.
+pub(crate) fn learned_anew(st: &mut State, version: Option<Arc<str>>) {
+    let same = st.develop.learned_version.as_ref() == Some(&version);
+    if !same {
+        st.develop.learned.clear();
+    }
+    st.develop.reasks = st.develop.learned.keys().copied().collect();
+    st.develop.quiet.clear();
+    st.develop.asked.clear();
+    st.develop.masks_failed.clear();
+    st.develop.learned_version = Some(version);
+}
+
 /// What to do for a learned shape wanted: ask the worker for it, offer
 /// its model, or wait (the sheet is busy, or every model it could use
 /// was declined).
@@ -409,9 +430,57 @@ pub(crate) fn edge_offer(
     }
 }
 
+/// The rasters kept drawn across a reopen that are to be asked for
+/// again now: those of shapes still held and switched on. Each stays in
+/// `reasks` until its ask is sent, so one switched off at the reopen,
+/// or waiting on its model, is asked for when it can be.
+pub(crate) fn reasks_due(st: &State) -> Vec<(Key, Shape)> {
+    let mut due: Vec<_> = st
+        .develop
+        .reasks
+        .iter()
+        .filter_map(|&key| {
+            let c = st
+                .develop
+                .edit
+                .adjustments
+                .iter()
+                .find(|a| a.id == key.0)
+                .and_then(|a| a.mask.components.get(key.1))
+                .filter(|c| c.enabled)?;
+            let (held, _) = st.develop.learned.get(&key)?;
+            (c.shape == *held).then(|| (key, held.clone()))
+        })
+        .collect();
+    due.sort_by_key(|(k, _)| *k);
+    due
+}
+
+/// The mask of `shape` at `key` was asked for. A raster kept across a
+/// reopen, asked for again as it is held, is answered quietly: its
+/// answer replaces it without showing the overlay. Any other ask, the
+/// user's own, is not, even for a key a quiet one was waiting on.
+pub(crate) fn mask_sent(st: &mut State, key: Key, shape: &Shape) {
+    let held = st
+        .develop
+        .learned
+        .get(&key)
+        .is_some_and(|(s, _)| s == shape);
+    if st.develop.reasks.remove(&key) && held {
+        st.develop.quiet.insert(key);
+    } else {
+        st.develop.quiet.remove(&key);
+    }
+}
+
 /// Ask the worker for the learned masks wanted and not yet asked for;
 /// where the model is not in the store, offer to fetch it.
-pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
+pub(crate) fn ask_for(st: &mut State, app: &App, mut wants: Vec<(Key, Shape)>) {
+    for want in reasks_due(st) {
+        if !wants.iter().any(|(k, _)| *k == want.0) {
+            wants.push(want);
+        }
+    }
     for (key, shape) in wants {
         if st.develop.asked.get(&key) == Some(&shape) {
             continue;
@@ -464,6 +533,7 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
                     });
                 }
             });
+            mask_sent(st, key, &shape);
             // A Whole person goes ahead with SAM's edge; asked for from
             // the menu just now, the Subject model its finer edge runs
             // is offered beside it, once. The first with Subject in the
@@ -1702,6 +1772,150 @@ mod tests {
         app.invoke_view_changed();
         assert!(!app.get_show_mask());
         assert_eq!(state.borrow().develop.show_mask_kept, None);
+    }
+
+    /// A Subject the worker makes again for a patch drawn over it
+    /// replaces the one held, unasked, and does not turn the overlay
+    /// on; one asked for does.
+    #[test]
+    fn a_subject_made_again_for_a_patch_replaces_the_one_held() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Subject".into(), "Add".into());
+        let id = state.borrow().develop.edit.adjustments[0].id;
+        let raster = |v: u8| Arc::new(Raster::from_data(1.5, 16, vec![v; 16 * 11]));
+        let made = |v: u8| Outcome::Mask {
+            key: (id, 0),
+            shape: Shape::Subject {},
+            file: None,
+            raster: raster(v),
+            provider: Some("CPU"),
+            seconds: 0.1,
+            note: None,
+            part: None,
+        };
+        state
+            .borrow_mut()
+            .develop
+            .asked
+            .insert((id, 0), Shape::Subject {});
+        app.set_show_mask(false);
+        crate::panel::deliver::deliver(&app, made(200));
+        assert!(app.get_show_mask(), "asked for: shown");
+        app.set_show_mask(false);
+        crate::panel::deliver::deliver(&app, made(9));
+        assert!(!app.get_show_mask(), "made again: not shown");
+        // Asked again after a reopen: not shown either.
+        {
+            let mut st = state.borrow_mut();
+            st.develop.asked.insert((id, 0), Shape::Subject {});
+            st.develop.quiet.insert((id, 0));
+        }
+        crate::panel::deliver::deliver(&app, made(9));
+        assert!(!app.get_show_mask(), "asked again: not shown");
+        assert!(state.borrow().develop.quiet.is_empty());
+        let st = state.borrow();
+        let (shape, held) = &st.develop.learned[&(id, 0)];
+        assert_eq!(*shape, Shape::Subject {});
+        assert!(held.data().iter().all(|&v| v == 9));
+    }
+
+    /// Every open asks for the rasters held again, so the worker, which
+    /// starts the open afresh, knows it gave them and a fill drawn after
+    /// is noticed. The same frame again keeps them drawn meanwhile;
+    /// another copy of the same file lets them go.
+    #[test]
+    fn every_open_asks_for_the_learned_rasters_again() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        let mut st = state.borrow_mut();
+        let st = &mut *st;
+        let mut edit = Edit::default();
+        edit.adjustments.push(greycard_edit::Adjustment {
+            id: 1,
+            name: "Subject 1".into(),
+            enabled: true,
+            mask: greycard_edit::mask::Mask {
+                components: vec![greycard_edit::mask::Component {
+                    shape: Shape::Subject {},
+                    ..Default::default()
+                }],
+                invert: false,
+            },
+            look: Default::default(),
+        });
+        st.develop.edit = edit.clone();
+        let held = |st: &mut State| {
+            st.develop.learned.insert(
+                (1, 0),
+                (
+                    Shape::Subject {},
+                    Arc::new(Raster::from_data(1.5, 16, vec![9; 16 * 11])),
+                ),
+            );
+            st.develop.asked.insert((2, 0), Shape::Subject {});
+        };
+        let open = |st: &mut State, version: Option<&str>| {
+            st.cells[0].version = version.map(Arc::from);
+            let _ = crate::panel::browser::open_job(st, 0, edit.clone());
+            (st.develop.learned.len(), st.develop.asked.len())
+        };
+        open(st, Some("a"));
+        held(st);
+        assert_eq!(
+            open(st, Some("a")),
+            (1, 0),
+            "the same copy again: still drawn"
+        );
+        let (locals, wants) = bake_locals(
+            &edit,
+            &mut st.develop.rasters,
+            &mut st.develop.learned,
+            1.5,
+            None,
+        );
+        assert!(
+            locals[0].rasters[0].is_some(),
+            "drawn while it is asked for"
+        );
+        assert!(wants.is_empty());
+        assert_eq!(
+            reasks_due(st),
+            vec![((1, 0), Shape::Subject {})],
+            "asked again"
+        );
+        // Switched off at the reopen: not asked for yet, and not let go.
+        st.develop.edit.adjustments[0].mask.components[0].enabled = false;
+        assert!(reasks_due(st).is_empty());
+        assert!(st.develop.reasks.contains(&(1, 0)));
+        // On again: asked for then.
+        st.develop.edit.adjustments[0].mask.components[0].enabled = true;
+        assert_eq!(reasks_due(st), vec![((1, 0), Shape::Subject {})]);
+        // Sent as held: quiet. The user's own ask after, of a new shape
+        // for the key, is not; nor one sent while it was still due.
+        mask_sent(st, (1, 0), &Shape::Subject {});
+        assert!(st.develop.reasks.is_empty());
+        assert!(st.develop.quiet.contains(&(1, 0)));
+        let sky = Shape::Sky { picks: Vec::new() };
+        mask_sent(st, (1, 0), &sky);
+        assert!(st.develop.quiet.is_empty(), "the user's ask after");
+        st.develop.reasks.insert((1, 0));
+        mask_sent(st, (1, 0), &sky);
+        assert!(st.develop.quiet.is_empty(), "the user's ask while due");
+        assert!(st.develop.reasks.is_empty());
+        held(st);
+        assert_eq!(open(st, Some("b")), (0, 0), "the other copy");
+        assert!(st.develop.reasks.is_empty());
+        let (_, wants) = bake_locals(
+            &edit,
+            &mut st.develop.rasters,
+            &mut st.develop.learned,
+            1.5,
+            None,
+        );
+        assert_eq!(wants, vec![((1, 0), Shape::Subject {})]);
     }
 
     /// Picking another mask keeps today's rule: the look on show is

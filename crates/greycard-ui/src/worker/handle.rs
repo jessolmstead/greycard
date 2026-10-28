@@ -633,6 +633,14 @@ impl Worker {
         cv.notify_one();
     }
 
+    /// A model arrived in the store: a learned mask that could not be
+    /// made again on the retouched picture is tried again.
+    pub fn models_arrived(&self) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().expect("worker queue").models_arrived = true;
+        cv.notify_one();
+    }
+
     /// Make the thumbnails for `first..=last` before the folder's
     /// others, the rest outward from that range. The strip says what
     /// it shows; a folder of hundreds is otherwise decoded in file
