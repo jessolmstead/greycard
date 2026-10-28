@@ -284,10 +284,12 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       frame so a thin stroke is matched; a gate that weighs a sector's
       scatter against its band's texture so a blotchy wall takes a true
       level; a contact shadow wider than the 8 px gap, which leaks
-- [ ] The fill's grain estimate capped by the develop's mosaic model
-      mapped through the gains and the matrix, so a surround that is
-      all texture does not read as noise (§398); the second fit's
-      floor applied near the channel peaks only
+- [ ] The fill's grain estimate capped by the develop's mosaic noise
+      model, built on the branch fill-grain-cap and parked (§398): it
+      bound on no frame tried, and its flat tile reads silent on a
+      clean bright frame. Waits on a fallback to no cap on a silent
+      tile, the DCP map modeled, the learned denoiser's leftover
+      measured across ISOs, and a frame where it binds
 - [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
       Remove and through us, blind pairs, scored (§380)
 - [ ] The Fast fill's files uploaded to greycard-rorem-fast (the

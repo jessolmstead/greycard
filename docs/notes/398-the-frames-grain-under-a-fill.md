@@ -73,3 +73,13 @@ on a background thread, when its name, size, and SHA-256 all match,
 then the empty directory and its license. A first version swept on
 the store's open, which every test that opens the user's store would
 have run against the real cache; the reviewer caught it.
+
+*2026-10-28.* The second fit's floor of a sixteenth now applies only
+to blocks with a pixel within two stops of a channel's peak, where
+the clipped values pull a block's reading down; applied everywhere,
+it lifted the quiet shadows beside strong texture to 0.64 of the
+texture's reading, against 0.10 with the guard. A cap on the whole
+estimate from the develop's mosaic noise model was built and measured
+on the same day and parked: on every frame tried it never bound and
+changed no pixel, while on a clean bright frame its own flat tile read
+silent and would have left the fill with no grain at all.

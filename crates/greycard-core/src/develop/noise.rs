@@ -350,7 +350,8 @@ impl PictureNoise {
 /// their level. So a block reaching the brightest value of a channel
 /// is left out, and the line is fitted twice, the second time without
 /// the blocks quieter than a sixteenth of what the first gave at their
-/// level.
+/// level, among those reaching within two stops of a channel's
+/// brightest value.
 pub fn estimate_picture_noise(
     data: &[f32],
     width: usize,
@@ -383,6 +384,13 @@ pub fn estimate_picture_noise(
             - unknown[y1 * stride + x0]
     };
     let near_peak = peak.map(|p| if p > 0.0 { p * PEAK_FRACTION } else { f32::MAX });
+    let toward_peak = peak.map(|p| {
+        if p > 0.0 {
+            p * FLOOR_FRACTION
+        } else {
+            f32::MAX
+        }
+    });
     let yuv = |i: usize| super::denoise::to_yuv([data[i * 3], data[i * 3 + 1], data[i * 3 + 2]]);
     let block_rows: Vec<usize> = (2..height - 2 - BLOCK + 1).step_by(BLOCK).collect();
     let lum = |i: usize| {
@@ -392,9 +400,9 @@ pub fn estimate_picture_noise(
             + super::sharpen::LUMA[2] * p[2]
     };
     // Per block: its mean level, each axis's variance from the residual
-    // at distance two and at distance one, and the luminance's at one
-    // and two.
-    type Block = (f32, [f32; 3], [f32; 3], [f32; 2]);
+    // at distance two and at distance one, the luminance's at one and
+    // two, and whether it reaches toward a channel's peak.
+    type Block = (f32, [f32; 3], [f32; 3], [f32; 2], bool);
     let blocks: Vec<Block> = block_rows
         .par_iter()
         .flat_map_iter(|&by| {
@@ -407,6 +415,7 @@ pub fn estimate_picture_noise(
                 let mut sq = [0.0f64; 3];
                 let mut sq1 = [0.0f64; 3];
                 let mut sql = [0.0f64; 2];
+                let mut high = false;
                 for y in by..by + BLOCK {
                     for x in bx..bx + BLOCK {
                         let i = y * width + x;
@@ -414,6 +423,7 @@ pub fn estimate_picture_noise(
                         if (0..3).any(|c| p[c] >= near_peak[c]) {
                             continue 'block;
                         }
+                        high |= (0..3).any(|c| p[c] >= toward_peak[c]);
                         sum += (p[0] + p[1] + p[2]) as f64 / 3.0;
                         let v = yuv(i);
                         let n = [
@@ -445,18 +455,19 @@ pub fn estimate_picture_noise(
                     var(sq),
                     var(sq1),
                     sql.map(|s| (s / n) as f32),
+                    high,
                 ));
             }
             out
         })
         .collect();
-    let fit = |keep: &dyn Fn(usize, f32, f32) -> bool| {
+    let fit = |keep: &dyn Fn(usize, f32, f32, bool) -> bool| {
         let mut bins: Bins = std::array::from_fn(|_| vec![Vec::new(); BINS]);
         let mut counts = [0usize; 3];
-        for &(level, var, ..) in &blocks {
+        for &(level, var, .., high) in &blocks {
             let bin = level_bin(level);
             for k in 0..3 {
-                if var[k] > STILL && keep(k, level, var[k]) {
+                if var[k] > STILL && keep(k, level, var[k], high) {
                     bins[k][bin].push((level, var[k], BLOCK * BLOCK));
                     counts[k] += 1;
                 }
@@ -464,8 +475,15 @@ pub fn estimate_picture_noise(
         }
         fit_bins(vec![(bins, counts)]).model
     };
-    let first = fit(&|_, _, _| true);
-    let axes = fit(&|k, level, var| var * QUIET_FLOOR >= first.variance(k, level.max(0.0)));
+    // The floor is for made-up highlights, so it is held only where a
+    // block reaches toward a channel's peak: below that, a picture all
+    // texture lifts the first fit, and a dark bin's true quiet blocks
+    // would fall under it.
+    let first = fit(&|_, _, _, _| true);
+    let kept = |k: usize, level: f32, var: f32, high: bool| {
+        !high || var * QUIET_FLOOR >= first.variance(k, level.max(0.0))
+    };
+    let axes = fit(&kept);
     // The shape from the blocks the second fit keeps that lie near
     // it, since texture reads coarser than grain, binned by level as
     // the fit is, so it is read where the hole is ([`ShapeBins::at`]):
@@ -473,12 +491,12 @@ pub fn estimate_picture_noise(
     // than the red and the blue after a demosaic, as the eye does; the
     // chroma's from its two axes together.
     let mut shape = ShapeBins::default();
-    for &(level, far, near, luminance) in &blocks {
+    for &(level, far, near, luminance, high) in &blocks {
         let bin = level_bin(level);
         for k in 0..3 {
             let l = level.max(0.0);
             let fit = axes.variance(k, l);
-            let kept = far[k] * QUIET_FLOOR >= first.variance(k, l);
+            let kept = kept(k, l, far[k], high);
             if fit > STILL && far[k] > STILL && kept && far[k] <= SHAPE_CEILING * fit {
                 let g = usize::from(k > 0);
                 let [n, f] = if k == 0 { luminance } else { [near[k], far[k]] };
@@ -496,6 +514,9 @@ pub fn estimate_picture_noise(
 const PEAK_FRACTION: f32 = 0.99;
 /// A block quieter than the first fit over this is made, not seen.
 const QUIET_FLOOR: f32 = 16.0;
+/// A block with a value past this fraction of a channel's brightest,
+/// two stops under it, is near enough the peak to be held to the floor.
+const FLOOR_FRACTION: f32 = 0.25;
 /// A block whose variance is no more than this does not move at all.
 const STILL: f32 = 1e-14;
 
@@ -1415,5 +1436,38 @@ pub(crate) mod tests {
         bins.blocks = [[0; 2]; BINS];
         bins.blocks[0] = [100; 2];
         assert!((bins.at(0.8).ratio[0] - 0.625f32.sqrt()).abs() < 1e-6);
+    }
+
+    /// A picture all texture above two stops under its peak lifts the
+    /// first fit; a dark stretch of plain grain below that is kept by
+    /// the second, not taken for made-up highlights.
+    #[test]
+    fn a_textured_picture_keeps_its_quiet_shadows() {
+        let (w, h) = (384, 256);
+        let truth = picture_truth();
+        let level: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                if x < w / 3 {
+                    0.02 + 0.15 * x as f32 / (w / 3) as f32
+                } else {
+                    // Fine texture, a level of its own every few pixels.
+                    let base = 0.3 + 0.6 * (x - w / 3) as f32 / (2 * w / 3) as f32;
+                    let cell = ((x / 3) * 7919 + (y / 3) * 104729) % 97;
+                    base + 0.3 * (cell as f32 / 97.0 - 0.5)
+                }
+            })
+            .collect();
+        let data = noisy_picture(&level, &truth, 37);
+        let est = estimate_picture_noise(&data, w, h, &vec![true; w * h]);
+        // The texture's luma lifts the line, but the shadows hold its
+        // foot down: a floor everywhere dropped them, and read 0.64 of
+        // the texture's variance at 0.05 against 0.1 here.
+        let (shadow, texture) = (est.axes.variance(0, 0.05), est.axes.variance(0, 0.6));
+        assert!(shadow < 0.2 * texture, "{shadow} against {texture}");
+        for k in 1..3 {
+            let (got, want) = (est.axes.sigma(k, 0.05), truth.axes.sigma(k, 0.05));
+            assert!((got / want - 1.0).abs() < 0.1, "axis {k}: {got} vs {want}");
+        }
     }
 }

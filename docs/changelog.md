@@ -29,6 +29,9 @@ design note behind it.
   again on the filled picture, so a person you removed leaves the mask
   too
   ([§445](https://github.com/jessolmstead/greycard/blob/master/docs/notes/445-a-learned-mask-made-again-under-a-fill.md)).
+- A fill's grain is read right where a dark, quiet surround sits
+  beside strong texture
+  ([§398](https://github.com/jessolmstead/greycard/blob/master/docs/notes/398-the-frames-grain-under-a-fill.md)).
 
 ## 0.9.0, 2026-10-27
 
