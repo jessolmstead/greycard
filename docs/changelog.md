@@ -17,6 +17,10 @@ design note behind it.
   waits two minutes or more for Core ML, which cannot run that model;
   it goes straight to the GPU
   ([§441](https://github.com/jessolmstead/greycard/blob/master/docs/notes/441-subject-kept-off-core-ml.md)).
+- A generative fill no longer comes back lighter than the picture
+  around it: its level is matched to the picture's across the hole's
+  edge, and left alone where the edge disagrees with itself
+  ([§443](https://github.com/jessolmstead/greycard/blob/master/docs/notes/443-the-fills-level-across-its-edge.md)).
 
 ## 0.9.0, 2026-10-27
 

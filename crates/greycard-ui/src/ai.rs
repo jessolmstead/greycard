@@ -1492,6 +1492,15 @@ impl Ai {
                     t.total,
                     remove.memory()
                 );
+                if let Some(g) = t.under {
+                    tracing::info!(
+                        "fill {}: level under the hole matched to the picture's across its edge, gain {:.3}, {:.3}, and {:.3} in R, G, and B",
+                        patch.name(),
+                        g.gain[0],
+                        g.gain[1],
+                        g.gain[2]
+                    );
+                }
                 (made, 1.0)
             }
         };
@@ -3874,13 +3883,15 @@ mod tests {
             }
         }
         let middle: Vec<usize> = (0..rs * rs).filter(|&i| region.cover[i] >= 1.0).collect();
+        // Summed in f64: thousands of equal values summed in f32 put
+        // the mean off by more than the flatness asked for below.
         let spread = |data: &[f32]| {
-            let v: Vec<f32> = middle
+            let v: Vec<f64> = middle
                 .iter()
-                .map(|&i| (data[i * 3] + data[i * 3 + 1] + data[i * 3 + 2]) / 3.0)
+                .map(|&i| f64::from(data[i * 3] + data[i * 3 + 1] + data[i * 3 + 2]) / 3.0)
                 .collect();
-            let mean = v.iter().sum::<f32>() / v.len() as f32;
-            (v.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / v.len() as f32).sqrt()
+            let mean = v.iter().sum::<f64>() / v.len() as f64;
+            (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / v.len() as f64).sqrt() as f32
         };
         assert!(spread(&out) < 1e-6, "flat before");
         let r = regrain(&mut out, &region, window, &image, 3).expect("the frame has noise");

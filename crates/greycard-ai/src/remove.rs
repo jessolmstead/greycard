@@ -35,9 +35,9 @@
 //!
 //! The answer is the window under the hole alone, weighted by the
 //! hole's own values ([`composite`]), brought first to the picture's
-//! level in a ring round the hole ([`level`]): the retouch's blend
-//! feathers it with the coverage's edge, as it does LaMa's. The
-//! decoder gives back
+//! level in a ring round the hole ([`level`]) and then across the
+//! hole's edge ([`Gains`]): the retouch's blend feathers it with the
+//! coverage's edge, as it does LaMa's. The decoder gives back
 //! the whole window, and how far it strays from the picture outside
 //! the hole is the check on the WebGPU provider, which answers a
 //! device out of memory with finite garbage rather than an error.
@@ -75,7 +75,10 @@ use crate::runtime::{self, Error, Provider, Result};
 use crate::store::Store;
 
 mod scale;
+mod seam;
+
 pub use scale::{FACTOR, factor_for, scaled, scaled_size};
+pub use seam::Gains;
 
 /// The longest side of a window, the larger VAE export's.
 pub const MAX: usize = 1024;
@@ -380,6 +383,9 @@ pub struct Times {
     /// What the answer was matched to the picture's level by
     /// ([`level`]).
     pub level: Level,
+    /// The gains the fill was brought to the picture's level by across
+    /// the hole's edge, `None` where it was not ([`Gains`]).
+    pub under: Option<Gains>,
 }
 
 /// The decoder's answer outside the hole against the picture: the
@@ -874,17 +880,20 @@ fn cut(planes: &[f32], size: usize, width: usize, height: usize) -> Result<Rgbf>
 /// the rest the picture clamped to 0 to 1 as [`implausible`] reads it.
 /// The decoder's answer is first brought to the picture's level round
 /// the hole ([`level`]), so the fill does not sit darker than its
-/// surround where the blend feathers it in.
+/// surround where the blend feathers it in, and then its hole to the
+/// picture's level across the hole's edge, so a level the UNet set
+/// for the whole hole does not show either ([`Gains`]).
 /// [`Error::Implausible`] when the decoder's answer outside the hole
 /// strays from the picture by more than [`bound`] allows for its
 /// detail ([`drift`]), correlates with it under [`CORRELATION`], or is
 /// not finite: what a card out of memory gives.
 pub fn composite(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<Rgbf> {
-    leveled(image, hole, decoded).map(|(out, _)| out)
+    leveled(image, hole, decoded).map(|(out, _, _)| out)
 }
 
-/// [`composite`], and the [`Level`] it matched the answer by.
-fn leveled(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<(Rgbf, Level)> {
+/// [`composite`], the [`Level`] it matched the answer by, and the
+/// gains it put under the hole ([`seam::matched`]).
+fn leveled(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<(Rgbf, Level, Option<Gains>)> {
     if decoded.data.iter().any(|v| !v.is_finite()) {
         return Err(Error::Implausible("the removal is not finite".into()));
     }
@@ -901,7 +910,7 @@ fn leveled(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<(Rgbf, Level)> 
         )));
     }
     let matched = level(image, hole, decoded);
-    let decoded = matched.apply(decoded);
+    let (decoded, under) = seam::matched(image, hole, &matched.apply(decoded));
     let mut data = Vec::with_capacity(image.data.len());
     for (i, &m) in hole.iter().enumerate() {
         let a = m.clamp(0.0, 1.0);
@@ -917,7 +926,7 @@ fn leveled(image: &Rgbf, hole: &[f32], decoded: &Rgbf) -> Result<(Rgbf, Level)> 
     if let Some(why) = implausible(image, hole, &out) {
         return Err(Error::Implausible(why));
     }
-    Ok((out, matched))
+    Ok((out, matched, under))
 }
 
 /// How wide the ring round the hole is that the decoder's answer is
@@ -1535,8 +1544,9 @@ impl Remove {
         let total = Instant::now();
         let (decoded, mut times) = self.generate(image, hole, noise, pool)?;
         times.drift = drift(image, hole, &decoded);
-        let out = leveled(image, hole, &decoded).map(|(out, level)| {
+        let out = leveled(image, hole, &decoded).map(|(out, level, under)| {
             times.level = level;
+            times.under = under;
             out
         });
         times.total = total.elapsed().as_secs_f64();
@@ -2267,8 +2277,12 @@ mod tests {
     }
 
     /// The composite of `decoded` is the picture to the bit outside
-    /// the hole and within `inside` of it under the hole.
-    fn composite_within(image: &Rgbf, hole: &[f32], decoded: &Rgbf, inside: f32) {
+    /// the hole and within `inside` of it under the hole after the
+    /// ring's match alone, within `under` after the match across the
+    /// hole's edge too (which reads the texture at the edge, so is
+    /// looser on a picture of strong patches).
+    fn composite_within(image: &Rgbf, hole: &[f32], decoded: &Rgbf, inside: f32, under: f32) {
+        let ringed = level(image, hole, decoded).apply(decoded);
         let out = composite(image, hole, decoded).expect("an honest answer");
         for (i, &m) in hole.iter().enumerate() {
             for c in 0..3 {
@@ -2276,7 +2290,9 @@ mod tests {
                 if m <= 0.0 {
                     assert_eq!(a.to_bits(), b.to_bits());
                 } else {
-                    assert!((a - b).abs() < inside, "{a} against {b}");
+                    let r = ringed.data[i * 3 + c];
+                    assert!((r - b).abs() < inside, "{r} against {b}");
+                    assert!((a - b).abs() < under, "{a} against {b}");
                 }
             }
         }
@@ -2303,7 +2319,7 @@ mod tests {
         for v in ring_off(&image, &hole, &l.apply(&decoded)) {
             assert!(v.abs() < 1e-4, "{v}");
         }
-        composite_within(&image, &hole, &decoded, 5e-4);
+        composite_within(&image, &hole, &decoded, 5e-4, 2e-3);
         // No hole, or nothing round it: nothing to match by.
         let (w, h) = (image.width, image.height);
         assert_eq!(level(&image, &vec![0.0; w * h], &decoded), Level::NONE);
@@ -2325,7 +2341,7 @@ mod tests {
         for v in ring_off(&image, &hole, &l.apply(&decoded)) {
             assert!(v.abs() < 1e-4, "{v}");
         }
-        composite_within(&image, &hole, &decoded, 1e-4);
+        composite_within(&image, &hole, &decoded, 1e-4, 5e-3);
         // A gain past what a decoder gives is a bad fit: the offset
         // alone.
         let (image, hole, decoded) = leveled_case(patches, 0.8, 0.0);

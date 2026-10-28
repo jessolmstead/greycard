@@ -114,7 +114,7 @@ fn bounds(hole: &[f32], w: usize) -> Option<(std::ops::Range<usize>, std::ops::R
 }
 
 /// The sRGB decoding, of a value clamped to 0 to 1.
-fn to_linear(v: f32) -> f32 {
+pub(super) fn to_linear(v: f32) -> f32 {
     let v = v.clamp(0.0, 1.0);
     if v <= 0.04045 {
         v / 12.92
@@ -124,7 +124,7 @@ fn to_linear(v: f32) -> f32 {
 }
 
 /// The sRGB encoding, of a value clamped to 0 to 1.
-fn to_srgb(v: f32) -> f32 {
+pub(super) fn to_srgb(v: f32) -> f32 {
     let v = v.clamp(0.0, 1.0);
     if v <= 0.003_130_8 {
         12.92 * v
