@@ -2293,12 +2293,21 @@ export component App inherits Window {
 
     // A value typed into a field, set or let go: the keys are the
     // window's again, as when a sheet closes.
+    // Under the export sheet, which has fields and sliders of its
+    // own, the sheet's instead: one handler decides, so the order of
+    // two cannot.
     property <int> entries-done: Typing.done;
-    changed entries-done => { keys.focus(); }
+    changed entries-done => {
+        if (root.export-open) { root.export-keys-back += 1; } else { keys.focus(); }
+    }
     // A focused slider's keys that are not its own: the window's, as
     // if the keys had them.
     property <int> slider-passed: SliderKeys.passed;
-    changed slider-passed => { keys.key-pressed(SliderKeys.passed-key); }
+    changed slider-passed => {
+        if (root.export-open) { root.export-key-passed += 1; } else { keys.key-pressed(SliderKeys.passed-key); }
+    }
+    property <int> export-keys-back;
+    property <int> export-key-passed;
 
     // A sheet closed from the Rust side (an answer invoked, not
     // clicked) takes its focus with it: the keys are the window's
@@ -2306,6 +2315,7 @@ export component App inherits Window {
     // A changed handler runs after the turn, so a sheet that closed
     // as the next one opened would otherwise take the keys from it.
     changed rejects-open => { if (!root.rejects-open && !root.sheet-open()) { keys.focus(); } }
+    changed export-open => { if (!root.export-open && !root.sheet-open()) { keys.focus(); } }
     changed delete-open => { if (!root.delete-open && !root.sheet-open()) { keys.focus(); } }
     changed look-remove-open => { if (!root.look-remove-open && !root.sheet-open()) { keys.focus(); } }
     changed look-rename-open => { if (!root.look-rename-open && !root.sheet-open()) { keys.focus(); } }
@@ -4685,6 +4695,8 @@ export component App inherits Window {
         export-preset-saved(n) => { root.export-preset-saved(n); }
         export-preset-deleted => { root.export-preset-deleted(); }
         export-preset-exists(n) => { return root.export-preset-exists(n); }
+        keys-back: root.export-keys-back;
+        key-passed: root.export-key-passed;
     }
 
     // The import sheet, over everything, until started or left.
@@ -4843,7 +4855,11 @@ export component App inherits Window {
             if (!root.time-shift-open) { root.menu-done(); }
         }
         reveal => { root.menu-reveal(); root.menu-done(); }
-        export => { root.menu-export(); root.menu-done(); }
+        // The sheet takes the focus itself, as the time shift's does.
+        export => {
+            root.menu-export();
+            if (!root.export-open) { root.menu-done(); }
+        }
         // The sheet takes the focus itself: no `menu-done`, whose
         // timer would take it back.
         current: root.selected >= 0 && root.selected < root.thumbs.length

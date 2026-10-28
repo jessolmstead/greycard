@@ -5,7 +5,7 @@
 
 import { ComboBox, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { EditSlider, Steps, Toggle, PanelButton, Segmented, ScrollPane } from "../controls.slint";
+import { EditSlider, Steps, Toggle, PanelButton, Segmented, ScrollPane, SliderKeys } from "../controls.slint";
 import { QueueRow } from "../structs.slint";
 
 // Nine places for a watermark, three by three, one chosen.
@@ -143,6 +143,18 @@ export component ExportSheet inherits Rectangle {
     /// Save then says Replace.
     pure callback export-preset-exists(string) -> bool;
     property <bool> naming: false;
+    // The name row gone, or the queue's question answered, takes the
+    // focused field or button with it: the keys are the sheet's again.
+    changed naming => { if (!root.naming) { keys.focus(); } }
+    changed confirm-clear => { keys.focus(); }
+    /// Counted up by the window for a field or slider here letting go
+    /// of the keys: the sheet's again, not the window's.
+    in property <int> keys-back;
+    changed keys-back => { keys.focus(); }
+    /// Counted up by the window for a key a focused slider here did
+    /// not take (`SliderKeys.passed-key`): the sheet's, Enter included.
+    in property <int> key-passed;
+    changed key-passed => { keys.key-pressed(SliderKeys.passed-key); }
     property <string> new-name;
     property <length> sheet-width: 420px;
 
@@ -162,206 +174,384 @@ export component ExportSheet inherits Rectangle {
         drop-shadow-color: #00000099;
         clip: true;
         TouchArea { }
-        VerticalLayout {
-            header := VerticalLayout {
-                padding: Theme.space-5;
-                padding-bottom: Theme.space-3;
-                spacing: Theme.space-2;
-                Text {
-                    text: root.set-count > 1 ? "Export " + root.set-count + " frames" : "Export";
-                    font-size: Theme.font-lg;
-                    font-weight: Theme.weight-medium;
-                    color: Theme.text;
+        // The sheet takes the keys while it is up: Enter is Export's,
+        // Escape Cancel's. A field or a control with the focus keeps
+        // its own Enter; only a dialog, which took the focus anyway,
+        // hands it back here.
+        keys := FocusScope {
+            init => { self.focus(); }
+            key-pressed(e) => {
+                // The open question first: the name row's Cancel, the
+                // queue's no; else the sheet's.
+                if (e.text == Key.Escape) {
+                    if (root.naming) {
+                        root.naming = false;
+                    } else if (root.confirm-clear) {
+                        root.confirm-clear = false;
+                    } else {
+                        root.export-open = false;
+                    }
+                    return accept;
                 }
-                Text {
-                    text: root.set-count > 1
-                        ? root.file-name + " and " + (root.set-count - 1) + (root.set-count == 2 ? " other" : " others") + ", each under its own edit"
-                        : root.file-name;
-                    wrap: word-wrap;
-                    font-size: Theme.font-sm;
-                    color: Theme.text-secondary;
+                // The preset list opens on Enter and still lets the
+                // press come up: the list's, not Export's.
+                if (e.text == Key.Return && presets.has-focus) { return accept; }
+                if (e.text == Key.Return) {
+                    // Not while the queue's Clear is asked, nor while
+                    // Export is off.
+                    if (!e.repeat && !root.confirm-clear && root.sub-problem == "") {
+                        root.export-open = false;
+                        root.export();
+                    }
+                    return accept;
                 }
-                HorizontalLayout {
-                    spacing: Theme.space-2;
-                    Text { text: "Preset"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                    ComboBox {
-                        horizontal-stretch: 1;
-                        model: root.export-presets;
-                        current-value <=> root.export-preset;
-                        selected(v) => { root.naming = false; root.export-preset-chosen(v); }
-                    }
-                    Text {
-                        text: root.export-preset-edited ? "(edited)" : "";
-                        width: 52px;
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                    }
-                }
-                if !root.naming: HorizontalLayout {
-                    spacing: Theme.space-2;
-                    padding-left: 68px + Theme.space-2;
-                    PanelButton {
-                        text: "Save as...";
-                        clicked => {
-                            root.new-name = root.export-preset == "None" ? "" : root.export-preset;
-                            root.naming = true;
-                        }
-                    }
-                    PanelButton {
-                        text: "Delete";
-                        enabled: root.export-preset != "None" && root.export-preset != "";
-                        clicked => { root.export-preset-deleted(); }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                }
-                if root.naming: HorizontalLayout {
-                    spacing: Theme.space-2;
-                    Text { text: "Name"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                    LineEdit {
-                        horizontal-stretch: 1;
-                        text <=> root.new-name;
-                        placeholder-text: "Web 2048";
-                        accepted(t) => {
-                            if (t.to-lowercase() != "none" && t != "") { root.naming = false; root.export-preset-saved(t); }
-                        }
-                        init => { self.focus(); }
-                    }
-                    PanelButton {
-                        // Over a preset of that name, in any case.
-                        text: root.export-preset-exists(root.new-name) ? "Replace" : "Save";
-                        primary: true;
-                        enabled: root.new-name != "" && root.new-name.to-lowercase() != "none";
-                        clicked => { root.naming = false; root.export-preset-saved(root.new-name); }
-                    }
-                    PanelButton {
-                        text: "Cancel";
-                        clicked => { root.naming = false; }
-                    }
-                }
+                return reject;
             }
-            Rectangle { height: 1px; background: Theme.border; }
-            ScrollPane {
-                vertical-stretch: 1;
-                body := VerticalLayout {
-                    alignment: start;
-                    padding-left: Theme.space-5;
-                    padding-right: Theme.space-5;
-                    padding-top: Theme.space-3;
+            VerticalLayout {
+                header := VerticalLayout {
+                    padding: Theme.space-5;
                     padding-bottom: Theme.space-3;
                     spacing: Theme.space-2;
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Format"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented { options: ["JPEG", "PNG", "TIFF 16-bit"]; current <=> root.export-format; }
+                    Text {
+                        text: root.set-count > 1 ? "Export " + root.set-count + " frames" : "Export";
+                        font-size: Theme.font-lg;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text;
                     }
-                    EditSlider {
-                        label: "Quality";
-                        enabled: root.export-format == "JPEG";
-                        minimum: 50;
-                        maximum: 100;
-                        default: 92;
-                        step: 1;
-                        steps: Steps.whole;
-                        value <=> root.export-quality;
-                        text: round(root.export-quality);
+                    Text {
+                        text: root.set-count > 1
+                            ? root.file-name + " and " + (root.set-count - 1) + (root.set-count == 2 ? " other" : " others") + ", each under its own edit"
+                            : root.file-name;
+                        wrap: word-wrap;
+                        font-size: Theme.font-sm;
+                        color: Theme.text-secondary;
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text { text: "Long edge"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented { options: ["Full", "4096", "2048", "1024", "Custom"]; current <=> root.export-size; }
-                    }
-                    if root.export-size == "Custom": HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Pixels"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        LineEdit {
-                            width: 96px;
-                            text <=> root.export-custom;
-                            placeholder-text: "1600";
-                            input-type: number;
+                        Text { text: "Preset"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        presets := ComboBox {
+                            horizontal-stretch: 1;
+                            model: root.export-presets;
+                            current-value <=> root.export-preset;
+                            selected(v) => { root.naming = false; root.export-preset-chosen(v); }
                         }
-                        // What comes out at that edge, or the picture's
-                        // own when the number is no smaller, or no size.
                         Text {
-                            text: root.frame-width > 0
-                                ? (root.export-resizes()
-                                    ? root.export-width() + " × " + root.export-height()
-                                    : root.frame-width + " × " + root.frame-height + ", as it is")
-                                : "";
+                            text: root.export-preset-edited ? "(edited)" : "";
+                            width: 52px;
                             color: Theme.text-secondary;
                             font-size: Theme.font-sm;
                             vertical-alignment: center;
-                            horizontal-stretch: 1;
-                            overflow: elide;
                         }
                     }
-                    HorizontalLayout {
+                    if !root.naming: HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text { text: "Sharpen"; width: 68px; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented { options: ["Off", "Low", "Standard", "High"]; current <=> root.export-sharpen; }
+                        padding-left: 68px + Theme.space-2;
+                        PanelButton {
+                            text: "Save as...";
+                            clicked => {
+                                root.new-name = root.export-preset == "None" ? "" : root.export-preset;
+                                root.naming = true;
+                            }
+                        }
+                        PanelButton {
+                            text: "Delete";
+                            enabled: root.export-preset != "None" && root.export-preset != "";
+                            clicked => { root.export-preset-deleted(); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
                     }
-                    HorizontalLayout {
+                    if root.naming: HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text { text: "Color"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented { options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; current <=> root.export-space; }
-                    }
-                    Toggle {
-                        label: "Embed profile";
-                        checked <=> root.export-embed;
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Metadata"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented { options: ["All", "No edit", "None"]; current <=> root.export-metadata; }
-                    }
-                    // Typed, every export goes into it beside each frame
-                    // with no chooser; left empty, the chooser asks.
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Subfolder"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Text { text: "Name"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         LineEdit {
                             horizontal-stretch: 1;
-                            text <=> root.export-subfolder;
-                            placeholder-text: "None: the folder below";
+                            text <=> root.new-name;
+                            placeholder-text: "Web 2048";
+                            accepted(t) => {
+                                if (t.to-lowercase() != "none" && t != "") { root.naming = false; root.export-preset-saved(t); }
+                            }
+                            init => { self.focus(); }
+                        }
+                        PanelButton {
+                            // Over a preset of that name, in any case.
+                            text: root.export-preset-exists(root.new-name) ? "Replace" : "Save";
+                            primary: true;
+                            enabled: root.new-name != "" && root.new-name.to-lowercase() != "none";
+                            clicked => { root.naming = false; root.export-preset-saved(root.new-name); }
+                        }
+                        PanelButton {
+                            text: "Cancel";
+                            clicked => { root.naming = false; }
                         }
                     }
-                    // Always there, so the sheet does not move as the
-                    // field is typed in: blank when there is nothing to say.
-                    Text {
-                        text: root.sub-name != "" ? "Saved in " + root.sub-name + " beside each original."
-                            : root.sub-problem != "" ? root.sub-problem : " ";
-                        color: root.sub-problem != "" ? Theme.warn-yellow : Theme.text-secondary;
-                        font-size: Theme.font-sm;
-                        // Any character may break, so a long run
-                        // without a space never widens the sheet.
-                        wrap: char-wrap;
-                    }
-                    HorizontalLayout {
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                ScrollPane {
+                    vertical-stretch: 1;
+                    body := VerticalLayout {
+                        alignment: start;
+                        padding-left: Theme.space-5;
+                        padding-right: Theme.space-5;
+                        padding-top: Theme.space-3;
+                        padding-bottom: Theme.space-3;
                         spacing: Theme.space-2;
-                        Text { text: "If it exists"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented { options: ["Increment", "Overwrite", "Skip"]; current <=> root.export-on-exists; }
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Watermark"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented { options: ["Off", "Text", "Image"]; current <=> root.export-mark; }
-                    }
-                    if root.export-mark == "Text": HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Text"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        LineEdit {
-                            horizontal-stretch: 1;
-                            text <=> root.export-mark-text;
-                            placeholder-text: "© Your Name";
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Format"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["JPEG", "PNG", "TIFF 16-bit"]; current <=> root.export-format; }
                         }
-                        Segmented { width: 110px; options: ["White", "Black"]; current <=> root.export-mark-color; }
-                    }
-                    if root.export-mark == "Image": HorizontalLayout {
-                        spacing: Theme.space-2;
-                        Text { text: "Image"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        EditSlider {
+                            label: "Quality";
+                            enabled: root.export-format == "JPEG";
+                            minimum: 50;
+                            maximum: 100;
+                            default: 92;
+                            step: 1;
+                            steps: Steps.whole;
+                            value <=> root.export-quality;
+                            text: round(root.export-quality);
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Long edge"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["Full", "4096", "2048", "1024", "Custom"]; current <=> root.export-size; }
+                        }
+                        if root.export-size == "Custom": HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Pixels"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            LineEdit {
+                                width: 96px;
+                                text <=> root.export-custom;
+                                placeholder-text: "1600";
+                                input-type: number;
+                            }
+                            // What comes out at that edge, or the picture's
+                            // own when the number is no smaller, or no size.
+                            Text {
+                                text: root.frame-width > 0
+                                    ? (root.export-resizes()
+                                        ? root.export-width() + " × " + root.export-height()
+                                        : root.frame-width + " × " + root.frame-height + ", as it is")
+                                    : "";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Sharpen"; width: 68px; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["Off", "Low", "Standard", "High"]; current <=> root.export-sharpen; }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Color"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; current <=> root.export-space; }
+                        }
+                        Toggle {
+                            label: "Embed profile";
+                            checked <=> root.export-embed;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Metadata"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["All", "No edit", "None"]; current <=> root.export-metadata; }
+                        }
+                        // Typed, every export goes into it beside each frame
+                        // with no chooser; left empty, the chooser asks.
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Subfolder"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text <=> root.export-subfolder;
+                                placeholder-text: "None: the folder below";
+                            }
+                        }
+                        // Always there, so the sheet does not move as the
+                        // field is typed in: blank when there is nothing to say.
                         Text {
-                            text: root.export-mark-image-name == "" ? "No PNG chosen" : root.export-mark-image-name;
-                            color: root.export-mark-image-name == "" ? Theme.text-muted : Theme.text-secondary;
+                            text: root.sub-name != "" ? "Saved in " + root.sub-name + " beside each original."
+                                : root.sub-problem != "" ? root.sub-problem : " ";
+                            color: root.sub-problem != "" ? Theme.warn-yellow : Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            // Any character may break, so a long run
+                            // without a space never widens the sheet.
+                            wrap: char-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "If it exists"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["Increment", "Overwrite", "Skip"]; current <=> root.export-on-exists; }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Watermark"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["Off", "Text", "Image"]; current <=> root.export-mark; }
+                        }
+                        if root.export-mark == "Text": HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Text"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text <=> root.export-mark-text;
+                                placeholder-text: "© Your Name";
+                            }
+                            Segmented { width: 110px; options: ["White", "Black"]; current <=> root.export-mark-color; }
+                        }
+                        if root.export-mark == "Image": HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Image"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text {
+                                text: root.export-mark-image-name == "" ? "No PNG chosen" : root.export-mark-image-name;
+                                color: root.export-mark-image-name == "" ? Theme.text-muted : Theme.text-secondary;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                            PanelButton {
+                                text: "Choose...";
+                                clicked => { root.export-mark-choose(); keys.focus(); }
+                            }
+                        }
+                        // Where it goes beside how big, how far in and how
+                        // strong: one block rather than four rows.
+                        if root.export-mark != "Off": HorizontalLayout {
+                            spacing: Theme.space-3;
+                            VerticalLayout {
+                                width: 68px;
+                                alignment: center;
+                                spacing: Theme.space-1;
+                                PositionGrid { current <=> root.export-mark-position; }
+                                Text {
+                                    text: root.export-mark-position;
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-xs;
+                                }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 0;
+                                EditSlider {
+                                    label: "Size";
+                                    minimum: 1;
+                                    maximum: 50;
+                                    default: 15;
+                                    step: 0.5;
+                                    steps: Steps.halves;
+                                    value <=> root.export-mark-size;
+                                    text: round(root.export-mark-size * 10) / 10 + " %";
+                                }
+                                EditSlider {
+                                    label: "Margin";
+                                    minimum: 0;
+                                    maximum: 10;
+                                    default: 2;
+                                    step: 0.1;
+                                    steps: Steps.tenths;
+                                    value <=> root.export-mark-margin;
+                                    text: round(root.export-mark-margin * 10) / 10 + " %";
+                                }
+                                EditSlider {
+                                    label: "Opacity";
+                                    minimum: 5;
+                                    maximum: 100;
+                                    default: 60;
+                                    step: 1;
+                                    steps: Steps.whole;
+                                    value <=> root.export-mark-opacity;
+                                    text: round(root.export-mark-opacity) + " %";
+                                }
+                            }
+                        }
+                        // A band round the picture: off, or one of five
+                        // colors, Match being the picture's own mean. A
+                        // color both picks it and turns the border on.
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Text { text: "Border"; width: 68px + Theme.space-2 - 4px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            for choice in [
+                                { name: "Off", fill: Theme.base, word: "Off", wide: true },
+                                { name: "White", fill: #ffffff, word: "", wide: false },
+                                { name: "Light grey", fill: #cccccc, word: "", wide: false },
+                                { name: "Dark grey", fill: #333333, word: "", wide: false },
+                                { name: "Black", fill: #000000, word: "", wide: false },
+                                { name: "Match", fill: Theme.base, word: "Match", wide: true },
+                            ]: Rectangle {
+                                property <bool> on: choice.name == "Off" ? !root.export-border
+                                    : root.export-border && choice.name == root.export-border-color;
+                                width: choice.wide ? 48px : 24px;
+                                height: 24px;
+                                border-radius: Theme.radius-sm;
+                                border-width: on ? 2px : 1px;
+                                border-color: on ? Theme.accent : Theme.border-strong;
+                                background: choice.wide && t.has-hover ? Theme.hover : choice.fill;
+                                Text {
+                                    text: choice.word;
+                                    color: on ? Theme.text : Theme.text-secondary;
+                                    font-size: Theme.font-xs;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                                t := TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => {
+                                        if (choice.name == "Off") {
+                                            root.export-border = false;
+                                        } else {
+                                            root.export-border = true;
+                                            root.export-border-color = choice.name;
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                text: root.export-border && root.export-border-color != "Match" ? root.export-border-color : "";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-xs;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                        }
+                        if root.export-border: EditSlider {
+                            label: "Width";
+                            minimum: 0.5;
+                            maximum: 25;
+                            default: 5;
+                            step: 0.5;
+                            steps: Steps.halves;
+                            value <=> root.export-border-width;
+                            text: round(root.export-border-width * 10) / 10 + " %";
+                        }
+                        if root.export-border: Text {
+                            text: "Added outside the picture"
+                                + (root.frame-width > 0
+                                    ? "; the file is " + (root.export-width() + 2 * root.border-band()) + " × " + (root.export-height() + 2 * root.border-band()) + "."
+                                    : ".");
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                footer := VerticalLayout {
+                    padding: Theme.space-5;
+                    padding-top: Theme.space-3;
+                    spacing: Theme.space-3;
+                    // Where Export writes, in the footer rather than among
+                    // the choices: it is what the button below acts on, so
+                    // it stays in view with it however short the window.
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Folder"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Text {
+                            text: root.folder-line;
+                            color: Theme.text-secondary;
                             font-size: Theme.font-sm;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
@@ -369,287 +559,143 @@ export component ExportSheet inherits Rectangle {
                         }
                         PanelButton {
                             text: "Choose...";
-                            clicked => { root.export-mark-choose(); }
+                            clicked => { root.export-folder-choose(); keys.focus(); }
                         }
                     }
-                    // Where it goes beside how big, how far in and how
-                    // strong: one block rather than four rows.
-                    if root.export-mark != "Off": HorizontalLayout {
-                        spacing: Theme.space-3;
-                        VerticalLayout {
-                            width: 68px;
-                            alignment: center;
-                            spacing: Theme.space-1;
-                            PositionGrid { current <=> root.export-mark-position; }
-                            Text {
-                                text: root.export-mark-position;
-                                color: Theme.text-secondary;
-                                font-size: Theme.font-xs;
-                            }
-                        }
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 0;
-                            EditSlider {
-                                label: "Size";
-                                minimum: 1;
-                                maximum: 50;
-                                default: 15;
-                                step: 0.5;
-                                steps: Steps.halves;
-                                value <=> root.export-mark-size;
-                                text: round(root.export-mark-size * 10) / 10 + " %";
-                            }
-                            EditSlider {
-                                label: "Margin";
-                                minimum: 0;
-                                maximum: 10;
-                                default: 2;
-                                step: 0.1;
-                                steps: Steps.tenths;
-                                value <=> root.export-mark-margin;
-                                text: round(root.export-mark-margin * 10) / 10 + " %";
-                            }
-                            EditSlider {
-                                label: "Opacity";
-                                minimum: 5;
-                                maximum: 100;
-                                default: 60;
-                                step: 1;
-                                steps: Steps.whole;
-                                value <=> root.export-mark-opacity;
-                                text: round(root.export-mark-opacity) + " %";
-                            }
-                        }
-                    }
-                    // A band round the picture: off, or one of five
-                    // colors, Match being the picture's own mean. A
-                    // color both picks it and turns the border on.
                     HorizontalLayout {
-                        spacing: 4px;
-                        Text { text: "Border"; width: 68px + Theme.space-2 - 4px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        for choice in [
-                            { name: "Off", fill: Theme.base, word: "Off", wide: true },
-                            { name: "White", fill: #ffffff, word: "", wide: false },
-                            { name: "Light grey", fill: #cccccc, word: "", wide: false },
-                            { name: "Dark grey", fill: #333333, word: "", wide: false },
-                            { name: "Black", fill: #000000, word: "", wide: false },
-                            { name: "Match", fill: Theme.base, word: "Match", wide: true },
-                        ]: Rectangle {
-                            property <bool> on: choice.name == "Off" ? !root.export-border
-                                : root.export-border && choice.name == root.export-border-color;
-                            width: choice.wide ? 48px : 24px;
-                            height: 24px;
-                            border-radius: Theme.radius-sm;
-                            border-width: on ? 2px : 1px;
-                            border-color: on ? Theme.accent : Theme.border-strong;
-                            background: choice.wide && t.has-hover ? Theme.hover : choice.fill;
-                            Text {
-                                text: choice.word;
-                                color: on ? Theme.text : Theme.text-secondary;
-                                font-size: Theme.font-xs;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                            t := TouchArea {
-                                mouse-cursor: MouseCursor.pointer;
-                                clicked => {
-                                    if (choice.name == "Off") {
-                                        root.export-border = false;
-                                    } else {
-                                        root.export-border = true;
-                                        root.export-border-color = choice.name;
+                        spacing: Theme.space-2;
+                        PanelButton {
+                            text: "Cancel";
+                            clicked => { root.export-open = false; }
+                        }
+                        // What Export would send, kept to be sent later.
+                        PanelButton {
+                            text: "Add to queue";
+                            clicked => { root.export-open = false; root.queue-add(); }
+                        }
+                    }
+                    // Into the folder the row shows, with no dialog.
+                    PanelButton {
+                        text: "Export";
+                        icon: @image-url("../icons/image-down.svg");
+                        primary: true;
+                        enabled: root.sub-problem == "";
+                        clicked => { root.export-open = false; root.export(); }
+                    }
+                    // The queue's sets, one row each, the bin at its end
+                    // taking that set out at once; past five rows the list
+                    // scrolls in its own box, so the sheet does not grow.
+                    if root.queue-rows.length > 0: Rectangle {
+                        border-radius: Theme.radius-md;
+                        background: Theme.base;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        height: min(queue-list.preferred-height,
+                                    root.queue-rows-shown * root.queue-row-height + (root.queue-rows-shown - 1) * 2px + 4px);
+                        ScrollPane {
+                            queue-list := VerticalLayout {
+                                padding: 2px;
+                                spacing: 2px;
+                                for row[i] in root.queue-rows: Rectangle {
+                                    height: root.queue-row-height;
+                                    border-radius: Theme.radius-sm;
+                                    background: row.running ? Theme.hover : transparent;
+                                    HorizontalLayout {
+                                        padding-left: Theme.space-2;
+                                        // Clears the scroll bar, as the
+                                        // presets list does.
+                                        padding-right: Theme.space-1 + Theme.scrollbar-band;
+                                        spacing: Theme.space-2;
+                                        Text {
+                                            text: row.name;
+                                            width: 96px;
+                                            color: row.running ? Theme.text : Theme.text-secondary;
+                                            font-size: Theme.font-xs;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: row.running ? row.frames + ", running" : row.frames;
+                                            color: row.running ? Theme.text : Theme.text-secondary;
+                                            font-size: Theme.font-xs;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: row.folder;
+                                            color: Theme.text-secondary;
+                                            font-size: Theme.font-xs;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+                                        Rectangle {
+                                            width: root.queue-row-height;
+                                            accessible-role: button;
+                                            accessible-label: "Remove " + row.name;
+                                            accessible-enabled: !row.running;
+                                            accessible-action-default => { if (!row.running) { root.queue-remove(i); } }
+                                            Image {
+                                                source: @image-url("../icons/trash-2.svg");
+                                                colorize: row.running ? Theme.text-muted
+                                                    : bin.has-hover ? Theme.text : Theme.text-muted;
+                                                opacity: row.running ? 0.4 : 1;
+                                                width: Theme.icon;
+                                                height: Theme.icon;
+                                                x: (parent.width - self.width) / 2;
+                                                y: (parent.height - self.height) / 2;
+                                            }
+                                            bin := TouchArea {
+                                                enabled: !row.running;
+                                                mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+                                                clicked => { root.queue-remove(i); }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+                    }
+                    // The queue: its count, run it, or clear it after asking.
+                    if root.queue-sets > 0 && !root.confirm-clear: HorizontalLayout {
+                        spacing: Theme.space-2;
                         Text {
-                            text: root.export-border && root.export-border-color != "Match" ? root.export-border-color : "";
+                            text: root.queue-running ? root.queue-line + ", running" : root.queue-line;
                             color: Theme.text-secondary;
-                            font-size: Theme.font-xs;
+                            font-size: Theme.font-sm;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
                             overflow: elide;
                         }
-                    }
-                    if root.export-border: EditSlider {
-                        label: "Width";
-                        minimum: 0.5;
-                        maximum: 25;
-                        default: 5;
-                        step: 0.5;
-                        steps: Steps.halves;
-                        value <=> root.export-border-width;
-                        text: round(root.export-border-width * 10) / 10 + " %";
-                    }
-                    if root.export-border: Text {
-                        text: "Added outside the picture"
-                            + (root.frame-width > 0
-                                ? "; the file is " + (root.export-width() + 2 * root.border-band()) + " × " + (root.export-height() + 2 * root.border-band()) + "."
-                                : ".");
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-sm;
-                        wrap: word-wrap;
-                    }
-                }
-            }
-            Rectangle { height: 1px; background: Theme.border; }
-            footer := VerticalLayout {
-                padding: Theme.space-5;
-                padding-top: Theme.space-3;
-                spacing: Theme.space-3;
-                // Where Export writes, in the footer rather than among
-                // the choices: it is what the button below acts on, so
-                // it stays in view with it however short the window.
-                HorizontalLayout {
-                    spacing: Theme.space-2;
-                    Text { text: "Folder"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                    Text {
-                        text: root.folder-line;
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                        overflow: elide;
-                    }
-                    PanelButton {
-                        text: "Choose...";
-                        clicked => { root.export-folder-choose(); }
-                    }
-                }
-                HorizontalLayout {
-                    spacing: Theme.space-2;
-                    PanelButton {
-                        text: "Cancel";
-                        clicked => { root.export-open = false; }
-                    }
-                    // What Export would send, kept to be sent later.
-                    PanelButton {
-                        text: "Add to queue";
-                        clicked => { root.export-open = false; root.queue-add(); }
-                    }
-                }
-                // Into the folder the row shows, with no dialog.
-                PanelButton {
-                    text: "Export";
-                    icon: @image-url("../icons/image-down.svg");
-                    primary: true;
-                    enabled: root.sub-problem == "";
-                    clicked => { root.export-open = false; root.export(); }
-                }
-                // The queue's sets, one row each, the bin at its end
-                // taking that set out at once; past five rows the list
-                // scrolls in its own box, so the sheet does not grow.
-                if root.queue-rows.length > 0: Rectangle {
-                    border-radius: Theme.radius-md;
-                    background: Theme.base;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    height: min(queue-list.preferred-height,
-                                root.queue-rows-shown * root.queue-row-height + (root.queue-rows-shown - 1) * 2px + 4px);
-                    ScrollPane {
-                        queue-list := VerticalLayout {
-                            padding: 2px;
-                            spacing: 2px;
-                            for row[i] in root.queue-rows: Rectangle {
-                                height: root.queue-row-height;
-                                border-radius: Theme.radius-sm;
-                                background: row.running ? Theme.hover : transparent;
-                                HorizontalLayout {
-                                    padding-left: Theme.space-2;
-                                    // Clears the scroll bar, as the
-                                    // presets list does.
-                                    padding-right: Theme.space-1 + Theme.scrollbar-band;
-                                    spacing: Theme.space-2;
-                                    Text {
-                                        text: row.name;
-                                        width: 96px;
-                                        color: row.running ? Theme.text : Theme.text-secondary;
-                                        font-size: Theme.font-xs;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                    }
-                                    Text {
-                                        text: row.running ? row.frames + ", running" : row.frames;
-                                        color: row.running ? Theme.text : Theme.text-secondary;
-                                        font-size: Theme.font-xs;
-                                        vertical-alignment: center;
-                                    }
-                                    Text {
-                                        text: row.folder;
-                                        color: Theme.text-secondary;
-                                        font-size: Theme.font-xs;
-                                        vertical-alignment: center;
-                                        horizontal-stretch: 1;
-                                        overflow: elide;
-                                    }
-                                    Rectangle {
-                                        width: root.queue-row-height;
-                                        accessible-role: button;
-                                        accessible-label: "Remove " + row.name;
-                                        accessible-enabled: !row.running;
-                                        accessible-action-default => { if (!row.running) { root.queue-remove(i); } }
-                                        Image {
-                                            source: @image-url("../icons/trash-2.svg");
-                                            colorize: row.running ? Theme.text-muted
-                                                : bin.has-hover ? Theme.text : Theme.text-muted;
-                                            opacity: row.running ? 0.4 : 1;
-                                            width: Theme.icon;
-                                            height: Theme.icon;
-                                            x: (parent.width - self.width) / 2;
-                                            y: (parent.height - self.height) / 2;
-                                        }
-                                        bin := TouchArea {
-                                            enabled: !row.running;
-                                            mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
-                                            clicked => { root.queue-remove(i); }
-                                        }
-                                    }
-                                }
-                            }
+                        PanelButton {
+                            text: "Export the queue";
+                            enabled: !root.exporting;
+                            clicked => { root.export-open = false; root.queue-run(); }
+                        }
+                        PanelButton {
+                            text: "Clear";
+                            enabled: !root.queue-running;
+                            clicked => { root.confirm-clear = true; }
                         }
                     }
-                }
-                // The queue: its count, run it, or clear it after asking.
-                if root.queue-sets > 0 && !root.confirm-clear: HorizontalLayout {
-                    spacing: Theme.space-2;
-                    Text {
-                        text: root.queue-running ? root.queue-line + ", running" : root.queue-line;
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                        overflow: elide;
-                    }
-                    PanelButton {
-                        text: "Export the queue";
-                        enabled: !root.exporting;
-                        clicked => { root.export-open = false; root.queue-run(); }
-                    }
-                    PanelButton {
-                        text: "Clear";
-                        enabled: !root.queue-running;
-                        clicked => { root.confirm-clear = true; }
-                    }
-                }
-                if root.queue-sets > 0 && root.confirm-clear: HorizontalLayout {
-                    spacing: Theme.space-2;
-                    Text {
-                        text: "Clear the queue of " + root.queue-sets + (root.queue-sets == 1 ? " set?" : " sets?");
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                        wrap: word-wrap;
-                    }
-                    PanelButton {
-                        text: "Cancel";
-                        clicked => { root.confirm-clear = false; }
-                    }
-                    PanelButton {
-                        text: "Clear";
-                        primary: true;
-                        clicked => { root.confirm-clear = false; root.queue-clear(); }
+                    if root.queue-sets > 0 && root.confirm-clear: HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text {
+                            text: "Clear the queue of " + root.queue-sets + (root.queue-sets == 1 ? " set?" : " sets?");
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            wrap: word-wrap;
+                        }
+                        PanelButton {
+                            text: "Cancel";
+                            clicked => { root.confirm-clear = false; }
+                        }
+                        PanelButton {
+                            text: "Clear";
+                            primary: true;
+                            clicked => { root.confirm-clear = false; root.queue-clear(); }
+                        }
                     }
                 }
             }

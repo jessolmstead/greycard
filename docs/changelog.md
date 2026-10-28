@@ -34,6 +34,9 @@ install window.
   and the fill's low-frequency departure from it is divided out, where
   the surround is smooth enough to read
   ([§448](https://github.com/jessolmstead/greycard/blob/master/docs/notes/448-the-fills-middle-against-the-surface-round-it.md)).
+- On the Export sheet, Enter presses Export and Esc presses Cancel,
+  unless a field or a control has the focus; the sheet took neither
+  before.
 - The status line keeps "the fill model is at work..." when you put
   the Fill tool down, or any tool while a develop runs; only the
   tool's own hint goes

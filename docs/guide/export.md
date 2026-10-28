@@ -16,6 +16,10 @@ Export is not available while culling. With two or more frames
 selected, the sheet's title says **Export 3 frames**, and each frame is
 written under its own edit.
 
+Enter presses **Export** unless a field or a control has the focus.
+Esc presses **Cancel**, or first cancels a preset name or a queue
+clear in hand.
+
 ## The sheet, row by row
 
 | Row | Choices | Default | What it does |

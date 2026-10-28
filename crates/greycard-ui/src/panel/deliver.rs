@@ -3237,4 +3237,243 @@ mod tests {
         assert_eq!(std::fs::read(&left).unwrap(), b"kept");
         crate::testing::remove_dir_retry(&dir);
     }
+
+    /// The sheet takes the keys: Enter is Export, Escape Cancel. Enter
+    /// is nothing while Export is off, and a focused field keeps its
+    /// own: the preset's name saves it, and once that row goes Enter
+    /// exports again.
+    #[test]
+    fn enter_exports_and_escape_cancels_unless_a_field_has_it() {
+        use crate::testing::{click, press, type_text};
+        use slint::platform::Key;
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        state.borrow_mut().window.batch = true;
+        app.invoke_select(0);
+        let exports = Rc::new(RefCell::new(0));
+        let seen = exports.clone();
+        app.on_export(move || *seen.borrow_mut() += 1);
+        let saved = Rc::new(RefCell::new(Vec::<String>::new()));
+        let seen = saved.clone();
+        app.on_export_preset_saved(move |n| seen.borrow_mut().push(n.to_string()));
+        let at = |label: &str| {
+            use i_slint_backend_testing::ElementHandle;
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(0.0, 0.0),
+                });
+            let e = ElementHandle::find_by_accessible_label(&app, label)
+                .next()
+                .unwrap_or_else(|| panic!("no {label:?}"));
+            let (p, s) = (e.absolute_position(), e.size());
+            (p.x + s.width / 2.0, p.y + s.height / 2.0)
+        };
+
+        app.set_export_open(true);
+        press(&app, Key::Return);
+        assert!(!app.get_export_open());
+        assert_eq!(*exports.borrow(), 1);
+
+        app.set_export_open(true);
+        press(&app, Key::Escape);
+        assert!(!app.get_export_open());
+        assert_eq!(*exports.borrow(), 1);
+
+        // A subfolder the export refuses: Export is off, and so is
+        // Enter.
+        app.set_export_subfolder("../out".into());
+        app.set_export_open(true);
+        press(&app, Key::Return);
+        assert!(app.get_export_open());
+        assert_eq!(*exports.borrow(), 1);
+        app.set_export_subfolder("".into());
+
+        // The subfolder field focused: its Enter, not Export's.
+        let (x, y) = at("Subfolder");
+        click(&app, x + 120.0, y);
+        press(&app, Key::Return);
+        assert!(app.get_export_open());
+        assert_eq!(*exports.borrow(), 1);
+        press(&app, Key::Escape);
+        assert!(!app.get_export_open());
+
+        // The name row: Enter saves the preset and exports nothing,
+        // then the keys are the sheet's and Enter exports.
+        app.set_export_open(true);
+        let (x, y) = at("Save as...");
+        click(&app, x, y);
+        type_text(&app, "Web");
+        press(&app, Key::Return);
+        assert_eq!(*saved.borrow(), ["Web"]);
+        assert!(app.get_export_open());
+        assert_eq!(*exports.borrow(), 1);
+        press(&app, Key::Return);
+        assert!(!app.get_export_open());
+        assert_eq!(*exports.borrow(), 2);
+    }
+
+    /// A field or a slider on the sheet hands the keys back to the
+    /// sheet, not the window: Enter after a typed Quality, or with
+    /// the slider focused, exports; Tab keeps its place. Escape answers the open question
+    /// first: the name row's Cancel, the queue's no.
+    #[test]
+    fn the_sheets_fields_and_sliders_hand_enter_back_to_the_sheet() {
+        use crate::testing::{click, press, type_text};
+        use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+        use slint::platform::Key;
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        state.borrow_mut().window.batch = true;
+        app.invoke_select(0);
+        let exports = Rc::new(RefCell::new(0));
+        let seen = exports.clone();
+        app.on_export(move || *seen.borrow_mut() += 1);
+        let quality = || {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(0.0, 0.0),
+                });
+            let e = ElementHandle::find_by_accessible_label(&app, "Quality")
+                .find(|e| e.accessible_role() == Some(AccessibleRole::Slider))
+                .expect("the Quality slider");
+            (e.absolute_position(), e.size())
+        };
+
+        app.set_export_format("JPEG".into());
+        app.set_export_quality(92.0);
+        app.set_export_open(true);
+        // The reading, at the slider's right end, typed over.
+        let (p, s) = quality();
+        click(&app, p.x + s.width - 12.0, p.y + s.height / 2.0);
+        type_text(&app, "85");
+        press(&app, Key::Return);
+        assert_eq!(app.get_export_quality(), 85.0);
+        assert!(app.get_export_open());
+        assert_eq!(*exports.borrow(), 0);
+        press(&app, Key::Return);
+        assert!(!app.get_export_open());
+        assert_eq!(*exports.borrow(), 1);
+
+        // The slider's track clicked: Enter is not its own, and comes
+        // to the sheet.
+        app.set_export_open(true);
+        let (p, s) = quality();
+        click(&app, p.x + 90.0, p.y + s.height / 2.0);
+        press(&app, Key::Return);
+        assert!(!app.get_export_open());
+        assert_eq!(*exports.borrow(), 2);
+
+        // Tab and Space keep their places: from the slider, Tab to
+        // the toggle, Space flips it, and Tab goes on to Subfolder.
+        app.set_export_open(true);
+        let embed = app.get_export_embed();
+        let (p, s) = quality();
+        click(&app, p.x + 90.0, p.y + s.height / 2.0);
+        press(&app, Key::Tab);
+        press(&app, " ");
+        assert_eq!(app.get_export_embed(), !embed, "Space on the toggle");
+        press(&app, Key::Tab);
+        type_text(&app, "web");
+        assert_eq!(app.get_export_subfolder(), "web");
+        app.set_export_subfolder("".into());
+        app.set_export_open(false);
+
+        // Escape with the name row up is its Cancel; then the sheet's.
+        app.set_export_open(true);
+        let (x, y) = {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(0.0, 0.0),
+                });
+            let e = ElementHandle::find_by_accessible_label(&app, "Save as...")
+                .next()
+                .expect("Save as...");
+            let (p, s) = (e.absolute_position(), e.size());
+            (p.x + s.width / 2.0, p.y + s.height / 2.0)
+        };
+        let names = || crate::testing::count_labeled(&app, "Name");
+        let closed = names();
+        click(&app, x, y);
+        assert_eq!(names(), closed + 1, "the name row");
+        press(&app, Key::Escape);
+        assert!(app.get_export_open());
+        assert_eq!(names(), closed);
+        press(&app, Key::Escape);
+        assert!(!app.get_export_open());
+
+        // And with the queue's Clear asked, its no.
+        let clears = || {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(0.0, 0.0),
+                });
+            ElementHandle::find_by_accessible_label(&app, "Clear")
+                .map(|e| {
+                    let (p, s) = (e.absolute_position(), e.size());
+                    (p.x + s.width / 2.0, p.y + s.height / 2.0)
+                })
+                .collect::<Vec<_>>()
+        };
+        let under = clears();
+        app.set_export_queue_sets(1);
+        app.set_export_open(true);
+        let asked = || crate::testing::count_labeled(&app, "Clear the queue of 1 set?");
+        let (x, y) = clears()
+            .into_iter()
+            .find(|c| !under.contains(c))
+            .expect("the queue's Clear");
+        click(&app, x, y);
+        assert_eq!(asked(), 1);
+        press(&app, Key::Escape);
+        assert!(app.get_export_open());
+        assert_eq!(asked(), 0);
+        press(&app, Key::Escape);
+        assert!(!app.get_export_open());
+        assert_eq!(*exports.borrow(), 2);
+    }
+
+    /// The preset list keeps its own keys: Enter on it, reached by
+    /// Tab, opens the list and exports nothing; an arrow and Enter in
+    /// the open list picks, and exports nothing either.
+    #[test]
+    fn the_preset_list_keeps_enter() {
+        use crate::testing::{click, press};
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::Key;
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        state.borrow_mut().window.batch = true;
+        app.invoke_select(0);
+        let exports = Rc::new(RefCell::new(0));
+        let seen = exports.clone();
+        app.on_export(move || *seen.borrow_mut() += 1);
+        let names: Vec<slint::SharedString> = vec!["None".into(), "Web".into()];
+        app.set_export_presets(ModelRc::new(VecModel::from(names)));
+        app.set_export_preset("None".into());
+
+        app.set_export_open(true);
+        press(&app, Key::Tab);
+        press(&app, Key::Return);
+        assert!(app.get_export_open(), "the list's Enter");
+        assert_eq!(*exports.borrow(), 0);
+        app.set_export_open(false);
+
+        app.set_export_open(true);
+        let (x, y) = {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(0.0, 0.0),
+                });
+            let e = ElementHandle::find_by_element_id(&app, "ExportSheet::presets")
+                .next()
+                .expect("the preset list");
+            let (p, s) = (e.absolute_position(), e.size());
+            (p.x + s.width / 2.0, p.y + s.height / 2.0)
+        };
+        click(&app, x, y);
+        press(&app, Key::DownArrow);
+        press(&app, Key::Return);
+        assert!(app.get_export_open(), "the open list's Enter");
+        assert_eq!(*exports.borrow(), 0);
+    }
 }

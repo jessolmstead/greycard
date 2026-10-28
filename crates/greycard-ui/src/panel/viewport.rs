@@ -2913,11 +2913,16 @@ mod tests {
         assert_eq!(hidden(&app), (false, false, false), "not under a sheet");
         app.set_export_open(false);
 
-        // Nor over the grid, which has the window already.
+        // Over the grid, which has the window already, Tab is the
+        // left pane's alone, and F6 nobody's.
         app.set_grid_open(true);
         crate::testing::press(&app, tab);
         crate::testing::press(&app, slint::platform::Key::F6);
-        assert_eq!(hidden(&app), (false, false, false), "not over the grid");
+        assert_eq!(
+            hidden(&app),
+            (true, false, false),
+            "over the grid Tab is the left pane's alone"
+        );
     }
 
     #[test]

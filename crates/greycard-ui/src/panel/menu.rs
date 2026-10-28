@@ -621,6 +621,57 @@ mod tests {
         assert!(!app.get_export_waiting());
     }
 
+    /// Export... picked from the frame menu: the sheet keeps the keys
+    /// past the menu's closing, so Enter exports.
+    #[test]
+    fn the_menus_export_leaves_the_sheet_the_keys() {
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = state_for(&app, folder(3));
+        app.invoke_select(0);
+        let exports = Rc::new(RefCell::new(0));
+        let seen = exports.clone();
+        app.on_export(move || *seen.borrow_mut() += 1);
+        // The develop the pick started, landed: the sheet opens now.
+        app.set_busy(false);
+        let items = || {
+            app.window().dispatch_event(WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+            ElementHandle::find_by_accessible_label(&app, "Export...").collect::<Vec<_>>()
+        };
+        let under: Vec<_> = items().iter().map(|e| e.absolute_position()).collect();
+        let position = slint::LogicalPosition::new(strip_cell(0).0, strip_cell(0).1);
+        for event in [
+            WindowEvent::PointerMoved { position },
+            WindowEvent::PointerPressed {
+                position,
+                button: PointerEventButton::Right,
+            },
+            WindowEvent::PointerReleased {
+                position,
+                button: PointerEventButton::Right,
+            },
+        ] {
+            app.window().dispatch_event(event);
+        }
+        assert!(app.get_menu_up());
+        let item = items()
+            .into_iter()
+            .find(|e| !under.contains(&e.absolute_position()))
+            .expect("the menu's Export...");
+        item.mock_single_click(PointerEventButton::Left);
+        assert!(app.get_export_open());
+        // Past the menu's own refocus timer.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+        slint::platform::update_timers_and_animations();
+        crate::testing::press(&app, slint::platform::Key::Return);
+        assert!(!app.get_export_open());
+        assert_eq!(*exports.borrow(), 1);
+    }
+
     #[test]
     fn the_viewport_menu_is_the_frame_on_screen_and_its_set() {
         let app = window(4);

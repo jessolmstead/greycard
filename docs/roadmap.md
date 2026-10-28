@@ -26,9 +26,6 @@ the reasoning lives in `docs/notes.md`.
       until §441 kept it off Core ML. The compile runs out of process
       and is cached after. Compile the models in the background when
       they are fetched or at launch, or say "preparing" while it runs
-- [ ] Enter on the Export sheet does nothing: the sheet has no key
-      handling, where the delete and look-remove sheets take Enter as
-      their default and Esc as Cancel (pixls, 2026-10-28)
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
 - [ ] A fill on a denoised frame still gets more grain than its
