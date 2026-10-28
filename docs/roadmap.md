@@ -283,6 +283,14 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       none of it. A chroma smoothing of the fill at that scale toward
       the surround's reading, or more steps for Fast; measure both on
       the church wall (target/scratch-fill/out9) before choosing
+- [ ] The Fast fill a fifth of a stop light (2026-10-27): on the
+      church wall its hole reads 1.14x the ring in the model's own
+      output and 1.20x after the look, Best 1.00x; the §414 ring
+      match compares known pixels only, so the UNet's own level
+      inside the hole passes it. A low-frequency match for the hole:
+      the ring's level carried inward (a harmonic fill of its blur)
+      against the fill's own blur, applied at the hole's scale only,
+      the texture left alone; measure on the wall first
 - [ ] The fill's grain estimate capped by the develop's mosaic model
       mapped through the gains and the matrix, so a surround that is
       all texture does not read as noise (§398); the second fit's
