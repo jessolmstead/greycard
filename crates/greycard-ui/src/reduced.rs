@@ -1060,7 +1060,12 @@ mod tests {
         }
         edited.note_all(frames.iter().map(|f| (f.clone(), true, None, None)));
         greycard_core::decode::watch_maps_under(&raws);
-        let reducer = Reducer::new();
+        // A store of its own, empty, so a Sky model fetched on this
+        // machine does not turn the Sky's frame into one asking for
+        // masks.
+        let reducer = Reducer::with_ai(Ai::for_test_on_disk(greycard_ai::Store::at(
+            dir.join("models"),
+        )));
         for frame in &frames {
             let made = reducer.make(&edited, frame);
             assert!(
