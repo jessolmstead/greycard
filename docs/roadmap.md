@@ -203,6 +203,16 @@ seconds.
 - [ ] The denoisers exported at fp16 as well, so Core ML can place
       them on the Neural Engine: at fp32 every op falls to the CPU
       when the Neural Engine is asked for (M5, 2026-10-25)
+- [ ] The generative remove on Core ML: on WebGPU over Metal a UNet
+      call is 2.5 s on an M5 and 8.7 s on an M1, so Best is 71 s and
+      230 s warm, Fast 18 s and 70 s, and the first load 17 s and
+      47 s (pixls, 2026-10-28). Waits on the UNet and VAE exported
+      for the ML Program compiler at fp16, and on the Subject Conv
+      fix above, which is the same compiler
+- [ ] A word in the window while a model loads or compiles for the
+      first time, since a tester gave up on a 47 s load with nothing
+      shown (pixls, 2026-10-28); one with the first-run compile bug
+      above
 - [ ] The non-local means' symmetric-offset halving, §128's leftover:
       the means are the larger half of the hybrid denoise again (about
       4.4 s of the 45 MP denoise at six threads against the chain's
