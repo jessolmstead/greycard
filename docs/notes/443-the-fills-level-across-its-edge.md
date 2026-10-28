@@ -70,3 +70,7 @@ can fix. A 1024² window with a radius-400 hole takes about 60 ms.
   12 px, 6% at 20 px.
 - With one gain a fill, the middle of a large sky fill is still about
   1.5% light.
+
+*2026-10-28, later.* The same match now runs under LaMa's answer
+(Patch), at the window's own size, which sat off the picture's level
+across a wide hole too.

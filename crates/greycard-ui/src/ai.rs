@@ -1590,6 +1590,11 @@ impl Ai {
                     }
                 };
                 let fill = self.fill.as_ref().expect("LaMa, loaded above");
+                // LaMa's answer sits a little off the picture's level
+                // too, across a wide hole; matched across the edge as
+                // the remove's is.
+                let (image, under) = greycard_ai::remove::matched(&input, &hole, &made.image);
+                let made = greycard_ai::fill::Filled { image, ..made };
                 tracing::info!(
                     "fill {}: LaMa, a window of {ww}x{wh} at {:.2} ({}x{}), {} tile(s) of up to {} on {}, {:.2}s",
                     patch.name(),
@@ -1601,6 +1606,15 @@ impl Ai {
                     fill.provider().name(),
                     started.elapsed().as_secs_f64()
                 );
+                if let Some(g) = under {
+                    tracing::info!(
+                        "fill {}: level under the hole matched to the picture's across its edge, gain {:.3}, {:.3}, and {:.3} in R, G, and B",
+                        patch.name(),
+                        g.gain[0],
+                        g.gain[1],
+                        g.gain[2]
+                    );
+                }
                 (made.image, made.scale)
             }
             Engine::Remove => {

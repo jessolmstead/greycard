@@ -79,7 +79,7 @@ mod scale;
 mod seam;
 
 pub use scale::{FACTOR, factor_for, scaled, scaled_size};
-pub use seam::Gains;
+pub use seam::{Gains, matched};
 
 /// The longest side of a window, the larger VAE export's.
 pub const MAX: usize = 1024;
