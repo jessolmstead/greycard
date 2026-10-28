@@ -57,7 +57,8 @@ panel". The word goes when you click, press a key or scroll.
   with the wheel moves any slider without clicking it first. Hold Ctrl
   with the arrows or the wheel for finer steps, a tenth of one where
   the number shows it (Ctrl+Shift with the wheel on a slider not
-  clicked).
+  clicked). Hold Shift while dragging a slider and it moves a tenth as
+  far as the mouse does.
 
 ### Sections
 
