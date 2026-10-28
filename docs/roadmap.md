@@ -956,6 +956,15 @@ clears or a tester asks for it.
       (pixls, 2026-10-24)
 - [ ] The clipping warnings as a pair of plain buttons, with the
       toolbar (pixls, 2026-10-24)
+- [ ] A color negative photographed with a digital camera inverted:
+      the film base sampled as the white point, each channel turned
+      about it, a curve per film stock later (pixls, 2026-10-28)
+- [ ] Open on the Library rather than the Loupe at launch, as a
+      choice under Settings' Start in (discussion 51, 2026-10-28)
+- [ ] One instance: a file sent to a running greycard opens in it,
+      not in a second window (discussion 51, 2026-10-28)
+- [ ] The download progress shown where it cannot be missed while a
+      dialog has the window greyed out (discussion 51, 2026-10-28)
 
 ## Blocked
 
