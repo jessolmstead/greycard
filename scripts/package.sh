@@ -169,6 +169,22 @@ notarize() {
     fi
 }
 
+# The staple fetches the ticket from Apple's CDN, which drops the
+# connection now and then (error 68, "the network connection was
+# lost") minutes after the notarization itself was accepted.
+staple() {
+    tries=0
+    until xcrun stapler staple "$1"; do
+        tries=$((tries + 1))
+        if [ "$tries" -ge 5 ]; then
+            echo "package.sh: could not staple ${1##*/}" >&2
+            exit 1
+        fi
+        echo "stapler failed; trying again in a minute" >&2
+        sleep 60
+    done
+}
+
 rm -rf "$stage" "target/dist/$name.tar" "target/dist/$name.tar.gz" \
     "target/dist/$name.zip" "target/dist/$name.dmg"
 mkdir -p "$stage"
@@ -236,7 +252,7 @@ if [ "$os" = macos ]; then
         ditto -c -k --keepParent "$stage/greycard.app" "$zip"
         notarize "$zip"
         rm -f "$zip"
-        xcrun stapler staple "$stage/greycard.app"
+        staple "$stage/greycard.app"
         spctl --assess --type execute --verbose=2 "$stage/greycard.app"
     fi
 else
@@ -450,7 +466,7 @@ if [ "$os" = macos ]; then
     fi
     if [ -n "${MACOS_NOTARY_PROFILE:-}" ]; then
         notarize "target/dist/$name.dmg"
-        xcrun stapler staple "target/dist/$name.dmg"
+        staple "target/dist/$name.dmg"
         spctl --assess --type open --context context:primary-signature \
             --verbose=2 "target/dist/$name.dmg"
     fi
