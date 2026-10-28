@@ -18,13 +18,14 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Blank scopes over a queued frame on a Mac (2026-10-25): not
       reproduced on Linux; the lead is the camera's stand-in clearing
       the scopes with no analysis after (§430). A Mac run decides
-- [ ] The Subject model's first run on an M5 is a compile: 43 s on
-      Core ML (§422) with every thread of the app asleep and no line
-      logged, then 1 s on the next frame (2026-10-25); under WebGPU
-      the day before it sat for minutes and the next launch was
-      instant. The compile runs out of process and is cached after.
-      Compile the models in the background when they are fetched or
-      at launch, or say "preparing" while it runs
+- [ ] A model's first run on a Mac is a compile with no word in the
+      window: Sky and the denoisers on Core ML (§422), tens of seconds
+      with every thread of the app asleep and no line logged, then a
+      second on the next frame; under WebGPU a first run has sat for
+      minutes too (2026-10-25). Subject's wait was the worst of these
+      until §441 kept it off Core ML. The compile runs out of process
+      and is cached after. Compile the models in the background when
+      they are fetched or at launch, or say "preparing" while it runs
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
 - [ ] A fill on a denoised frame still gets more grain than its
