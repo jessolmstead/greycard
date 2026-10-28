@@ -93,6 +93,15 @@ jobs:
             *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
           esac
 
+  # The same checks a push gets, run beside the builds; the release
+  # waits on them, so a tag on a commit that fails a test publishes
+  # nothing.
+  tests:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build:
     name: ${{ matrix.package }} package
     needs: version
@@ -419,7 +428,7 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [version, build]
+    needs: [version, build, tests]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

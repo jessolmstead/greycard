@@ -19,8 +19,12 @@
 name: CI
 
 on:
+  # Branches only: a tag's push runs this through release.yml instead,
+  # which publishes nothing until it is green.
   push:
+    branches: ['**']
   pull_request:
+  workflow_call:
   # Weekly, so an advisory filed against a lock file that has not
   # changed is still seen; only the audit job runs then.
   schedule:
