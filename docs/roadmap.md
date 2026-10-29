@@ -31,8 +31,21 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The Loupe shows no tools after the export queue was viewed,
       until the folders are shown again (discussion 51, 2026-10-29)
 - [ ] Idle in the Library on Windows, CPU at 50 percent and memory
-      tripling within minutes (discussion 51, pixls, 2026-10-29): not
-      reproduced on Linux; waits on the reporter's log
+      tripling within minutes (discussion 51, pixls, 2026-10-29): the
+      logs show the Library's open building thumbnails for every file
+      under a 12515-file root, 610 s of decoding on 8 threads with no
+      word in the window, and the base shelf holding 1.1 GB of its
+      4 GB budget; nineteen minutes of 50 percent CPU after that log
+      nothing, so they are not the worker's. Show the thumbnail work,
+      question walking the whole root unasked, size the shelf to the
+      machine, and find the silent spinner
+- [ ] A Fast fill on a Windows GeForce RTX 3080 Ti reloads the models
+      every fill (the policy cannot read a discrete card's memory, so
+      it holds nothing), takes 11 to 19 s for 24 UNet calls against
+      2.7 s on a 5070 Ti here, and once lost the device after a
+      76 s model load, which the watchdog restarted on CPU ops
+      (issue 54, 2026-10-29): read the card's memory (DXGI, NVML, or
+      Vulkan's heap sizes) and find the slow path
 - [ ] System and File display profiles differ with the same profile
       picked (issue 53): waits on the reporter's profile; a table-based
       monitor profile is the lead
