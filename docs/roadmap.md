@@ -1031,6 +1031,13 @@ clears or a tester asks for it.
       from the event loop: the title's send, an import's stop, the
       worker's stop, and the index's close moved into the loop's
       exiting hook (§449)
+- [ ] The rotated log named so GitHub's issue form takes it
+      (`greycard-ui-1.log`, not `.log.1`), and more than one run kept:
+      two reporters lost the run that mattered (issues 44 and 54,
+      2026-10-29)
+- [ ] Settings' folder locations clickable, opening the folder; the
+      library and the caches placed where the user says, off the
+      system drive (discussion 51, 2026-10-29)
 
 ## Blocked
 
