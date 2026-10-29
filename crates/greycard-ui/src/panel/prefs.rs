@@ -1700,6 +1700,84 @@ mod tests {
         assert_eq!(row_shows(&app, "intent-row"), "Perceptual");
     }
 
+    /// A window whose settings file is a scratch one, and the timer
+    /// that keeps the panel's choices in it, as a run starts it.
+    fn kept_window() -> (
+        App,
+        Rc<RefCell<State>>,
+        Rc<Worker>,
+        slint::Timer,
+        std::path::PathBuf,
+    ) {
+        let dir = crate::testing::scratch_dir("choices-kept");
+        crate::settings::use_file(Some(dir.join("settings.json")));
+        let (app, state, worker) = develop_window();
+        let timer = crate::panel::startup::keep_choices(&app, &state, false);
+        (app, state, worker, timer, dir)
+    }
+
+    /// One tick of the keeping timer, and the file as it then stands.
+    fn file_after_a_tick() -> crate::settings::Settings {
+        i_slint_backend_testing::mock_elapsed_time(crate::panel::startup::CHOICES_EVERY);
+        crate::settings::Settings::load()
+    }
+
+    /// A Mac's Quit ends the process inside the event loop, before the
+    /// close's write: the canvas, the monitor, and the soft proof are
+    /// in the file as soon as they are chosen.
+    #[test]
+    fn the_editing_choices_are_in_the_file_before_any_close() {
+        let (app, _state, _worker, _timer, dir) = kept_window();
+        open_editing(&app);
+        let canvas = crate::render::CANVAS_NAMES[1];
+        click_row(&app, "canvas-row", canvas);
+        click_row(&app, "monitor-row", "Adobe RGB");
+        click_row(&app, "proof-row", "Display P3");
+        click_row(&app, "intent-row", "Relative");
+        let file = file_after_a_tick();
+        assert_eq!(file.canvas_color, canvas);
+        assert_eq!(file.display_profile, "Adobe RGB");
+        assert_eq!(file.proof_profile, "Display P3");
+        assert_eq!(file.proof_intent, "Relative");
+        crate::settings::use_file(None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A field written to the file as it changes (the sidecar switch,
+    /// by `keep`) stays as written when the panel's choices are written
+    /// after it.
+    #[test]
+    fn a_kept_field_outlives_the_next_write_of_the_choices() {
+        let (app, _state, _worker, _timer, dir) = kept_window();
+        assert!(!file_after_a_tick().xmp_sidecars);
+        // As `keep` writes, which a test build skips.
+        let mut file = crate::settings::Settings::load();
+        file.xmp_sidecars = true;
+        file.save();
+        open_editing(&app);
+        click_row(&app, "monitor-row", "Adobe RGB");
+        let file = file_after_a_tick();
+        assert_eq!(file.display_profile, "Adobe RGB");
+        assert!(file.xmp_sidecars);
+        crate::settings::use_file(None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A file that will not read is not merged over mid-run: the
+    /// defaults would replace what the user meant to write.
+    #[test]
+    fn a_file_that_will_not_read_is_left_alone() {
+        let (app, _state, _worker, _timer, dir) = kept_window();
+        let file = dir.join("settings.json");
+        std::fs::write(&file, "{ not json").unwrap();
+        open_editing(&app);
+        click_row(&app, "monitor-row", "Adobe RGB");
+        i_slint_backend_testing::mock_elapsed_time(crate::panel::startup::CHOICES_EVERY);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "{ not json");
+        crate::settings::use_file(None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// The export's format and color space: a row of the sheet is the
     /// export sheet's choice, and the export sheet's shows on the row.
     #[test]

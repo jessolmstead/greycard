@@ -1650,6 +1650,28 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             });
         });
     }
+    // The panel's choices go to the file as they change, and they and
+    // a resting edit once more as the loop exits: a Mac's Quit ends
+    // the process inside the loop, so nothing after `app.run()` runs.
+    let _choices = (cli.screenshot.is_none() && cli.snapshot.is_none()).then(|| {
+        let (app_weak, held, panes) = (app.as_weak(), state.clone(), cli.hide_panels);
+        AT_EXIT.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let (Some(app), Ok(mut st)) = (app_weak.upgrade(), held.try_borrow_mut()) else {
+                    return;
+                };
+                // An edit still resting on its save timer would be lost
+                // with the process: written now, as the timer would.
+                if st.develop.save_timer.running() {
+                    st.develop.save_timer.stop();
+                    let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+                    save_edit(&mut st, edit);
+                }
+                save_choices(&app, &st, panes);
+            }));
+        });
+        keep_choices(&app, &state, cli.hide_panels)
+    });
     // An event loop that ends in an error (the compositor gone: a
     // logout, the shell crashing) still quits as a closed window does,
     // with every save below and the worker out of the driver, and the
@@ -1705,55 +1727,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     }
 
     // The panel's choices, for the next run. Not from a screenshot or
-    // a snapshot, which should leave the user's alone. The last file
-    // is kept as whatever it already is: it is written as soon as it
-    // develops, not gathered from the panel here.
+    // a snapshot, which should leave the user's alone. Written as they
+    // change too (`keep_choices`); this write is for the last second.
     if cli.screenshot.is_none() && cli.snapshot.is_none() {
-        let mut settings = remember(&app);
-        take_state_choices(&mut settings, &state.borrow());
-        settings.filter = filter::Saved::of(&state.borrow().views.filter);
-        let kept = settings::Settings::load();
-        settings.last_file = kept.last_file;
-        settings.recent_folders = kept.recent_folders;
-        settings.start_folder = kept.start_folder;
-        settings.filter_bar = kept.filter_bar;
-        settings.grid_wheel = kept.grid_wheel;
-        settings.folder_tree_subfolders = kept.folder_tree_subfolders;
-        settings.xmp_sidecars = kept.xmp_sidecars;
-        settings.sidecars_in_folder = kept.sidecars_in_folder;
-        settings.jpegs_apart = kept.jpegs_apart;
-        settings.one_section = kept.one_section;
-        settings.cull_move_on = kept.cull_move_on;
-        settings.loupe_cull = kept.loupe_cull;
-        settings.cull_developed = kept.cull_developed;
-        settings.sort = kept.sort;
-        settings.lenses_declined = kept.lenses_declined;
-        settings.rawtherapee_answered = kept.rawtherapee_answered;
-        settings.thumb_cache_mb = kept.thumb_cache_mb;
-        settings.preview_cache_mb = kept.preview_cache_mb;
-        settings.network_poll_minutes = kept.network_poll_minutes;
-        settings.import = kept.import;
-        settings.update = kept.update;
-        settings.match_unchecked = kept.match_unchecked;
-        settings.crop_start = kept.crop_start;
-        settings.crop_last = kept.crop_last;
-        settings.fill_choice = kept.fill_choice;
-        settings.ui_scale = kept.ui_scale;
-        settings.keys = kept.keys;
-        settings.settings_category = kept.settings_category;
-        settings.theme = kept.theme;
-        settings.scroll_bars = kept.scroll_bars;
-        settings.scroll_bar_size = kept.scroll_bar_size;
-        settings.ui_scale_system =
-            crate::window_fit::scale::system_seen().unwrap_or(kept.ui_scale_system);
-        // A run opened with `--hide-panels` was a look at the picture
-        // alone: the panes stay as the run before it left them.
-        if cli.hide_panels {
-            settings.hide_left = kept.hide_left;
-            settings.hide_right = kept.hide_right;
-            settings.hide_strip = kept.hide_strip;
-        }
-        settings.save();
+        save_choices(&app, &state.borrow(), cli.hide_panels);
     }
 
     // The open file's edit, as left.
@@ -2204,6 +2181,127 @@ pub(crate) fn take_state_choices(settings: &mut settings::Settings, st: &State) 
         .as_ref()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_default();
+}
+
+/// How often the panel's choices are compared with those last written.
+pub(crate) const CHOICES_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
+thread_local! {
+    /// The choices' last write, run as winit's loop exits: on a Mac's
+    /// Quit the process ends there, `app.run()` never returning.
+    static AT_EXIT: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+}
+
+/// The loop is exiting: the choices are written while the window is
+/// still here to read them.
+pub(crate) fn exiting() {
+    if let Some(hook) = AT_EXIT.with(|h| h.borrow_mut().take()) {
+        hook();
+    }
+}
+
+/// The choices the panel and the state own, as the file keeps them.
+fn gathered(app: &App, st: &State) -> settings::Settings {
+    let mut settings = remember(app);
+    take_state_choices(&mut settings, st);
+    settings.filter = filter::Saved::of(&st.views.filter);
+    settings
+}
+
+/// `gathered` over the file's `kept`: every field the panel does not
+/// own is the file's, so a field another path wrote as it changed is
+/// never put back by a stale copy here. `panes_from_file` keeps the
+/// file's panes, for a run opened with `--hide-panels`.
+fn merged(
+    mut settings: settings::Settings,
+    kept: settings::Settings,
+    panes_from_file: bool,
+) -> settings::Settings {
+    settings.last_file = kept.last_file;
+    settings.recent_folders = kept.recent_folders;
+    settings.start_folder = kept.start_folder;
+    settings.filter_bar = kept.filter_bar;
+    settings.grid_wheel = kept.grid_wheel;
+    settings.folder_tree_subfolders = kept.folder_tree_subfolders;
+    settings.xmp_sidecars = kept.xmp_sidecars;
+    settings.sidecars_in_folder = kept.sidecars_in_folder;
+    settings.jpegs_apart = kept.jpegs_apart;
+    settings.one_section = kept.one_section;
+    settings.cull_move_on = kept.cull_move_on;
+    settings.loupe_cull = kept.loupe_cull;
+    settings.cull_developed = kept.cull_developed;
+    settings.sort = kept.sort;
+    settings.lenses_declined = kept.lenses_declined;
+    settings.rawtherapee_answered = kept.rawtherapee_answered;
+    settings.thumb_cache_mb = kept.thumb_cache_mb;
+    settings.preview_cache_mb = kept.preview_cache_mb;
+    settings.network_poll_minutes = kept.network_poll_minutes;
+    settings.import = kept.import;
+    settings.update = kept.update;
+    settings.match_unchecked = kept.match_unchecked;
+    settings.crop_start = kept.crop_start;
+    settings.crop_last = kept.crop_last;
+    settings.fill_choice = kept.fill_choice;
+    settings.ui_scale = kept.ui_scale;
+    settings.keys = kept.keys;
+    settings.settings_category = kept.settings_category;
+    settings.theme = kept.theme;
+    settings.scroll_bars = kept.scroll_bars;
+    settings.scroll_bar_size = kept.scroll_bar_size;
+    settings.ui_scale_system =
+        crate::window_fit::scale::system_seen().unwrap_or(kept.ui_scale_system);
+    if panes_from_file {
+        settings.hide_left = kept.hide_left;
+        settings.hide_right = kept.hide_right;
+        settings.hide_strip = kept.hide_strip;
+    }
+    settings
+}
+
+/// The panel's choices written into the file as it stands.
+pub(crate) fn save_choices(app: &App, st: &State, panes_from_file: bool) {
+    merged(
+        gathered(app, st),
+        settings::Settings::load(),
+        panes_from_file,
+    )
+    .save();
+}
+
+/// A timer that writes the panel's choices whenever they differ from
+/// the last written, so a run that ends without the close's write (a
+/// Mac's Quit, a crash) keeps them. Polled rather than wired to each
+/// control, so a choice added to `remember` is kept with no more work.
+pub(crate) fn keep_choices(
+    app: &App,
+    state: &Rc<RefCell<State>>,
+    panes_from_file: bool,
+) -> slint::Timer {
+    let mut last = gathered(app, &state.borrow());
+    let mut said_unread = false;
+    let (app_weak, state) = (app.as_weak(), state.clone());
+    let timer = slint::Timer::default();
+    timer.start(slint::TimerMode::Repeated, CHOICES_EVERY, move || {
+        let (Some(app), Ok(st)) = (app_weak.upgrade(), state.try_borrow()) else {
+            return;
+        };
+        let now = gathered(&app, &st);
+        if now == last {
+            return;
+        }
+        // A file that will not read is left for the user to mend; the
+        // close's write still replaces it, as it always has.
+        let Some(file) = settings::Settings::load_parsed() else {
+            if !std::mem::replace(&mut said_unread, true) {
+                tracing::warn!("settings: the file will not read; choices kept at close");
+            }
+            return;
+        };
+        tracing::debug!("settings: the panel's choices written as changed");
+        merged(now.clone(), file, panes_from_file).save();
+        last = now;
+    });
+    timer
 }
 
 /// The panel's choices, to keep for the next run. What the panel

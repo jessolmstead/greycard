@@ -1012,6 +1012,10 @@ clears or a tester asks for it.
 - [ ] The status area clear of the picture, or dismissable; the scroll
       bars at their hovered size always; the Export sheet's text crisp
       at 1080p (discussion 51, 2026-10-29)
+- [ ] The rest of the close on a Mac's Quit, which ends the process
+      from the event loop: the title's send, an import's stop, the
+      worker's stop, and the index's close moved into the loop's
+      exiting hook (§449)
 
 ## Blocked
 

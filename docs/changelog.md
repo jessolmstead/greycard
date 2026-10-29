@@ -37,6 +37,11 @@ install window.
 - On the Export sheet, Enter presses Export and Esc presses Cancel,
   unless a field or a control has the focus; the sheet took neither
   before.
+- On a Mac, Settings' Canvas, Monitor, and Soft proof, and the rest of
+  the panel's choices, survive Cmd+Q: they are written as they change
+  rather than when the window closes, which Quit skipped; so is the
+  last edit before it
+  ([§449](https://github.com/jessolmstead/greycard/blob/master/docs/notes/449-the-panels-choices-written-as-they-change.md)).
 - The status line keeps "the fill model is at work..." when you put
   the Fill tool down, or any tool while a develop runs; only the
   tool's own hint goes

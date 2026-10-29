@@ -129,6 +129,14 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         }
         slint::winit_030::EventResult::Propagate
     }
+
+    fn exiting(
+        &mut self,
+        _event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop,
+    ) -> slint::winit_030::EventResult {
+        crate::panel::startup::exiting();
+        slint::winit_030::EventResult::Propagate
+    }
 }
 
 /// Whether the process was started with the window asked to open

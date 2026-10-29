@@ -631,18 +631,28 @@ impl Settings {
     /// first run, and says nothing; one that will not parse is worth
     /// a warning, since the defaults then appear from nowhere.
     pub fn load_from(path: &std::path::Path) -> Self {
-        let bytes = match std::fs::read(path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
-            Err(e) => {
-                tracing::warn!("settings {}: {e}; defaults", path.display());
-                return Self::default();
-            }
-        };
-        serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+        Self::read(path).unwrap_or_else(|e| {
             tracing::warn!("settings {}: {e}; defaults", path.display());
             Self::default()
         })
+    }
+
+    /// The file as it stands, or none when it is there and will not
+    /// read: a write merged over the defaults would put a file
+    /// hand-edited with a typo out of reach.
+    pub fn load_parsed() -> Option<Self> {
+        path().map_or(Some(Self::default()), |p| Self::read(&p).ok())
+    }
+
+    /// The file, the defaults when there is none, or why it will not
+    /// read.
+    fn read(path: &std::path::Path) -> Result<Self, String> {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(e.to_string()),
+        };
+        serde_json::from_slice(&bytes).map_err(|e| e.to_string())
     }
 
     pub fn save_to(&self, path: &std::path::Path) {
@@ -653,14 +663,30 @@ impl Settings {
                 return;
             }
         };
+        // A symlinked file is written where it points, and stays a link.
+        let path = &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if let Some(dir) = path.parent()
             && let Err(e) = std::fs::create_dir_all(dir)
         {
             tracing::warn!("settings directory {}: {e}", dir.display());
             return;
         }
-        if let Err(e) = std::fs::write(path, text) {
+        // Through a temporary and a rename: the file is written as
+        // choices change, and a process ended mid-write must leave the
+        // old file whole rather than half of the new one.
+        // Named for the process, so two windows never rename each
+        // other's half-written file into place; given the old file's
+        // permissions.
+        let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        let written = std::fs::write(&temporary, text).and_then(|()| {
+            if let Ok(old) = std::fs::metadata(path) {
+                std::fs::set_permissions(&temporary, old.permissions())?;
+            }
+            std::fs::rename(&temporary, path)
+        });
+        if let Err(e) = written {
             tracing::warn!("settings not saved to {}: {e}", path.display());
+            let _ = std::fs::remove_file(&temporary);
         }
     }
 }
@@ -668,6 +694,25 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A settings file that is a link is written where it points, and
+    /// stays a link.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_file_is_written_through_the_link() {
+        let dir = crate::testing::scratch_dir("settings-link");
+        let (real, link) = (dir.join("real.json"), dir.join("settings.json"));
+        Settings::default().save_to(&real);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let mine = Settings {
+            canvas_color: crate::render::CANVAS_NAMES[1].into(),
+            ..Settings::default()
+        };
+        mine.save_to(&link);
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(Settings::load_from(&real), mine);
+        crate::testing::remove_dir_retry(&dir);
+    }
 
     #[test]
     fn the_settings_round_trip() {
