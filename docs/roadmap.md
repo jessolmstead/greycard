@@ -1038,6 +1038,10 @@ clears or a tester asks for it.
 - [ ] Settings' folder locations clickable, opening the folder; the
       library and the caches placed where the user says, off the
       system drive (discussion 51, 2026-10-29)
+- [ ] The mask section's name field and its Show mask and Invert row
+      do not share a left edge; a mask's row deletes with a bin and a
+      shape's with an x: one edge, one glyph (discussion 51,
+      2026-10-29)
 
 ## Blocked
 
