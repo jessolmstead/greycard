@@ -86,9 +86,12 @@ camera's picture comes back.
 Some frames are edited without being opened: a sync, a preset or a
 paste over a selection, an edit joined from another machine through an
 archive, or a folder opened with its edits already on disk. Their
-pictures are made in the background, and until then they show the
-camera's. greycard holds this work back while you edit the frame on
-screen, so your own develop comes first.
+pictures are made in the background, for the frames on screen and
+near them, and until then they show the camera's. Scroll and the
+frames you scroll to are made next. greycard holds this work back
+while you edit the frame on screen, so your own develop comes first.
+While pictures are being made, the status line says how many are
+left.
 
 ### Edited and exported marks
 

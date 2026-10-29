@@ -1358,6 +1358,26 @@ pub(crate) fn grid_breaks(st: &State, app: &App) -> Vec<i32> {
     st.views.grid_heads.iter().map(|h| h.row as i32).collect()
 }
 
+/// The rows `first..=last` are on screen, of the strip or the grid: the
+/// worker has the cells of the rows near them for the edit's pictures,
+/// and they are kept for a list made again under them.
+pub(crate) fn near_shown(st: &mut State, worker: &Worker, first: usize, last: usize) {
+    st.views.near_rows = Some((first, last));
+    worker.near_thumbnails(near_cells(st));
+}
+
+/// The cells of the rows near those last on screen
+/// ([`crate::thumbpool::near_rows`]), as the list stands now: by row,
+/// so a filter's hidden cells between two rows are never near.
+pub(crate) fn near_cells(st: &State) -> std::collections::HashSet<usize> {
+    let Some((first, last)) = st.views.near_rows else {
+        return Default::default();
+    };
+    crate::thumbpool::near_rows(first, last, st.views.shown.len())
+        .map(|row| st.views.shown[row])
+        .collect()
+}
+
 /// The browser's list again: the filter over the flags, the strip's
 /// and the grid's rows made afresh, their cells' pictures put on from
 /// those already made, and the selection kept on its row, or put on
@@ -1377,6 +1397,11 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     st.views.shown = (0..st.cells.len())
         .filter(|&c| passes[st.cells[c].file])
         .collect();
+    // Other rows under the ones on screen: other cells near them.
+    if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
+        worker.near_thumbnails(near_cells(st));
+    }
+
     show_filter(st, app);
     // Under a root that is offline the tile is dimmed, and a picture
     // the cache did not have is no failure of the file's.
@@ -3161,6 +3186,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             st.views.strip_shown = Some((first, last));
             worker.want_thumbnails(f, l);
+            near_shown(&mut st, &worker, first as usize, last as usize);
             crate::edited::note_editing(&mut st, &worker, false);
         });
     }
@@ -3322,6 +3348,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             // After the pushes, which clear the queue's order.
             worker.want_thumbnails(st.views.shown[first], st.views.shown[last]);
+            near_shown(&mut st, &worker, first, last);
             // In the grid, no frame is being edited.
             crate::edited::note_editing(&mut st, &worker, true);
             // The lightbox's tiles follow the cells.

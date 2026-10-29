@@ -154,6 +154,13 @@ pub(crate) struct Views {
     /// The folder's first round of thumbnails, counted as they come
     /// back, for one line in the log when the last one has.
     pub(crate) thumb_run: Option<panel::browser::ThumbRun>,
+    /// The thumbnails' pool's last word on the status line
+    /// (`deliver::show_making`), while the line still says it.
+    pub(crate) making_said: Option<String>,
+    /// The rows of the strip or the grid last on screen, whose near
+    /// rows' cells the worker makes the edit's pictures for
+    /// (`browser::near_shown`).
+    pub(crate) near_rows: Option<(usize, usize)>,
     /// When the folder on screen was opened, until the first frame
     /// that draws every row on screen with its picture.
     pub(crate) fill_clock: Option<std::time::Instant>,

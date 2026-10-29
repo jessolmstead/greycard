@@ -7,7 +7,8 @@ design note behind it.
 
 Fixes for 0.9.0's fills: their level, grain, and color blotches, the
 Light sliders' lift over a removed object, a learned mask made again
-under a fill, and the Mac disk image's install window.
+under a fill, the Library's idle CPU over a large root, and the Mac
+disk image's install window.
 
 ### Install
 
@@ -17,6 +18,12 @@ under a fill, and the Mac disk image's install window.
 
 ### Fixes
 
+- The Library no longer develops every edited frame under a root
+  while it sits idle, which kept the CPU at 50 percent for minutes on
+  a large root: the pictures of edited frames are made for the rows
+  on screen and near them, the rest as you scroll to them, and the
+  status line says how many are being made
+  ([§452](https://github.com/jessolmstead/greycard/blob/master/docs/notes/452-the-edits-pictures-made-near-the-screen.md)).
 - An exported JPEG or TIFF now carries an ICC version 2 profile, so
   Windows' photo viewer, which ignored the version 4 one and showed an
   Adobe RGB export flat, reads it like Lightroom's

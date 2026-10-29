@@ -57,6 +57,34 @@ pub(crate) fn drop_hint(app: &App, st: &mut State) {
     }
 }
 
+/// The thumbnails' pool's making on the status line, "making 12
+/// pictures...", or taken off it when it is over. Like a tool's hint
+/// it is remembered, and written only over an empty line or its own
+/// last word: what the user did, or a develop, says more than a count,
+/// and whatever was written over it since stays.
+pub(crate) fn show_making(app: &App, st: &mut State, making: crate::thumbpool::Making) {
+    let ours = st.views.making_said.take();
+    let now = app.get_status();
+    if !now.is_empty() && ours.as_deref() != Some(now.as_str()) {
+        return;
+    }
+    let line = making_line(making);
+    app.set_status(line.as_str().into());
+    st.views.making_said = (!line.is_empty()).then_some(line);
+}
+
+/// "making 12 pictures...", "making 1 picture...", "making
+/// pictures..." while how many is not known, or nothing once it is
+/// over.
+pub(crate) fn making_line(making: crate::thumbpool::Making) -> String {
+    use crate::thumbpool::Making;
+    match making {
+        Making::Over | Making::Left(0) => String::new(),
+        Making::Left(n) => format!("making {}...", crate::delete::count(n, "picture")),
+        Making::Uncounted => "making pictures...".into(),
+    }
+}
+
 /// Names in a sentence: "Fill 1", "Fill 1 and Fill 2", "Fill 1,
 /// Fill 2 and Fill 3".
 pub(crate) fn listed(names: &[String]) -> String {
@@ -1044,6 +1072,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 crate::edited::kept(&mut st, &worker, &frame);
             }
         }
+        Outcome::Making(making) => show_making(app, &mut state.borrow_mut(), making),
         Outcome::LensesFetched => {
             let mut st = state.borrow_mut();
             st.sheets.fetching = false;
@@ -2143,6 +2172,31 @@ fn export_gathered(state: &Rc<RefCell<State>>, app: &App, raw: PathBuf, frames: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pool's making on the status line: said over an empty line
+    /// and over its own last word, taken off at its end while the line
+    /// still says it, and never over another's.
+    #[test]
+    fn the_making_is_said_over_its_own_word_and_never_over_another() {
+        let app = crate::testing::window(0);
+        let mut st = State::empty(Vec::new(), &app);
+        use crate::thumbpool::Making;
+        app.set_status("".into());
+        show_making(&app, &mut st, Making::Uncounted);
+        assert_eq!(app.get_status(), "making pictures...");
+        show_making(&app, &mut st, Making::Left(12));
+        assert_eq!(app.get_status(), "making 12 pictures...");
+        show_making(&app, &mut st, Making::Left(1));
+        assert_eq!(app.get_status(), "making 1 picture...");
+        show_making(&app, &mut st, Making::Over);
+        assert_eq!(app.get_status(), "");
+        show_making(&app, &mut st, Making::Left(5));
+        app.set_status("saved the filter as Dusk".into());
+        show_making(&app, &mut st, Making::Left(4));
+        assert_eq!(app.get_status(), "saved the filter as Dusk");
+        show_making(&app, &mut st, Making::Over);
+        assert_eq!(app.get_status(), "saved the filter as Dusk");
+    }
 
     #[test]
     fn the_sheet_picks_saves_marks_and_deletes_presets() {

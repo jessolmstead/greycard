@@ -649,6 +649,13 @@ impl Worker {
         self.pool.want(first, last);
     }
 
+    /// The cells of the rows near those on screen
+    /// ([`crate::thumbpool::near_rows`]): the edit's pictures are made
+    /// for these alone.
+    pub fn near_thumbnails(&self, cells: std::collections::HashSet<usize>) {
+        self.pool.set_near(cells);
+    }
+
     /// Another folder's list: the thumbnails still waiting are
     /// dropped, and one in hand is not delivered. Its numbering is
     /// the old list's, and a late picture must not land on the new.

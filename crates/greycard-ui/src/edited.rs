@@ -1922,6 +1922,9 @@ mod tests {
             "the open frame is the worker's"
         );
         assert!(edited.wants_develop(&other_frame).is_some());
+        // Its cell on screen: the pool makes the edit's pictures of the
+        // frames near the rows shown.
+        rig.worker.near_thumbnails([1].into());
         let ask = || {
             rig.worker.send(crate::worker::Job::Thumbnail {
                 index: 1,

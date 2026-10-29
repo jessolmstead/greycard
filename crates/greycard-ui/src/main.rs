@@ -939,6 +939,8 @@ impl State {
                 thumb_asked: vec![worker::THUMB_WIDTH; count],
                 thumb_want: worker::THUMB_WIDTH,
                 thumb_run: None,
+                making_said: None,
+                near_rows: None,
                 fill_clock: None,
                 selected_at: None,
                 grid_shown: None,

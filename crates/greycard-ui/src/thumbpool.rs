@@ -25,7 +25,16 @@
 //! does, never while it is held, the frames shown first, and a thread
 //! always left for a thumbnail; one at a time while a frame is open in
 //! the editor and two while culling or browsing (`reduced::at_once`),
-//! and a frame under a root on a network mount alone.
+//! and a frame under a root on a network mount alone. Only for the
+//! frames on screen and near them ([`near_rows`]): a root of thousands of
+//! edited frames made whole would take the machine for minutes, for
+//! pictures nobody is looking at. The rest wait in the queue for a
+//! scroll to bring them near.
+//!
+//! While it makes anything the cache did not have, the pool says so:
+//! a line in the log when it begins and when it has nothing left, and
+//! how many are left to the window ([`Outcome::Making`]) for its status
+//! line, once the making has gone on long enough to be worth a word.
 //!
 //! What the threads finish goes to the window one call each, or
 //! through an [`Outbox`] ([`Pool::batched`], the editor's). A warm
@@ -109,6 +118,87 @@ pub(crate) fn default_threads() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or_else(|| threads_for(std::thread::available_parallelism().map_or(2, |n| n.get())))
+}
+
+/// The rows near `first..=last`, the rows on screen of a list of
+/// `count`: those and as many again above and below them, within the
+/// list. Rows, not cells: under a filter twenty rows may be thousands
+/// of cells apart, and the frames between are hidden. The window hands
+/// the pool these rows' cells ([`Pool::set_near`]), the only frames the
+/// edit's pictures are made for.
+pub(crate) fn near_rows(first: usize, last: usize, count: usize) -> std::ops::Range<usize> {
+    if first > last {
+        return 0..0;
+    }
+    let span = last - first + 1;
+    let end = last.saturating_add(span).saturating_add(1).min(count);
+    first.saturating_sub(span).min(end)..end
+}
+
+/// What the pool says of its making to the window
+/// ([`Outcome::Making`]), for its status line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Making {
+    /// So many known to be left to make.
+    Left(usize),
+    /// Thumbnails not yet looked up are waiting, and how many of them
+    /// the cache lacks is not known until they are.
+    Uncounted,
+    /// Nothing left in hand.
+    Over,
+}
+
+/// How long a making goes on before the window is told of it: a warm
+/// folder's few misses are done before a word would be read.
+const TELL_AFTER: Duration = Duration::from_secs(1);
+
+/// How often the window is told how many are left, at most.
+const TELL_EVERY: Duration = Duration::from_millis(500);
+
+/// What the pool has made since it last had nothing in hand, for the
+/// log and the window's status line.
+struct Pass {
+    began: Instant,
+    /// Thumbnails made rather than found in the cache, local previews
+    /// made, and the edit's pictures made or tried.
+    thumbs: usize,
+    previews: usize,
+    edits: usize,
+    /// When the window was last told how many are left; none before.
+    told: Option<Instant>,
+}
+
+impl Pass {
+    fn new() -> Self {
+        Self {
+            began: Instant::now(),
+            thumbs: 0,
+            previews: 0,
+            edits: 0,
+            told: None,
+        }
+    }
+
+    fn made(&self) -> usize {
+        self.thumbs + self.previews + self.edits
+    }
+
+    /// Nothing left in hand: the line in the log, and the window told
+    /// the making is over when it was told it began.
+    fn end(self, deliver: &dyn Fn(Outcome)) {
+        if self.made() > 0 {
+            tracing::info!(
+                "the thumbnails' pool: {} thumbnails, {} previews and {} of the edit's pictures made in {:.1} s",
+                self.thumbs,
+                self.previews,
+                self.edits,
+                self.began.elapsed().as_secs_f64()
+            );
+        }
+        if self.told.is_some() {
+            deliver(Outcome::Making(Making::Over));
+        }
+    }
 }
 
 /// What the threads have finished and the window has not yet taken
@@ -267,6 +357,11 @@ struct Pending {
     /// alone.
     edits_busy: usize,
     edits_alone: bool,
+    /// The cells of the rows near those the window shows, as it last
+    /// said ([`Pool::set_near`]): an edit is begun only for one of these.
+    near: HashSet<usize>,
+    /// What has been made since the pool last had nothing in hand.
+    pass: Option<Pass>,
     /// How many times a thread has looked at all of the above and found
     /// nothing to begin, before it waits: what a test reads to know the
     /// pool has declined, rather than not yet looked.
@@ -295,6 +390,47 @@ struct Pending {
     /// thumbnail is asked for.
     started: bool,
     stopping: bool,
+}
+
+impl Pending {
+    /// How many are known to be left to make: the previews waiting, the
+    /// edits waiting near the rows shown, the thumbnails a lookup found
+    /// missing from the cache, and those in hand. Uncounted while a
+    /// thumbnail not yet looked up waits: in a warm folder nearly all
+    /// are hits, and in a cold one all are not.
+    fn left(&self) -> Making {
+        if self.jobs.iter().any(|(_, f)| !self.missed.contains(f)) {
+            return Making::Uncounted;
+        }
+        let edits = self.edits.iter().filter(|(i, _)| self.near.contains(i));
+        Making::Left(self.previews.len() + edits.count() + self.jobs.len() + self.busy)
+    }
+
+    /// One of `what` made: counted into the pass, which begins with the
+    /// first, said in the log, and how many are left when the window is
+    /// due a word of it.
+    fn count_made(&mut self, what: What) -> Option<Making> {
+        let left = self.left();
+        if self.pass.is_none() {
+            let edits = self.edits.iter().filter(|(i, _)| self.near.contains(i));
+            let waiting = self.jobs.len() + self.previews.len() + edits.count();
+            tracing::info!("the thumbnails' pool: making pictures, {waiting} waiting");
+        }
+        let pass = self.pass.get_or_insert_with(Pass::new);
+        match what {
+            What::Thumb => pass.thumbs += 1,
+            What::Preview => pass.previews += 1,
+            What::Edit => pass.edits += 1,
+        }
+        let due = pass.began.elapsed() >= TELL_AFTER
+            && pass.told.is_none_or(|t| t.elapsed() >= TELL_EVERY);
+        // None left is the end's to say.
+        if !due || left == Making::Left(0) {
+            return None;
+        }
+        pass.told = Some(Instant::now());
+        Some(left)
+    }
 }
 
 struct Shared {
@@ -404,15 +540,18 @@ impl Pool {
                     self.previews.clone(),
                     self.edits.clone(),
                 );
-                // Straight to the window, or into the outbox with the
-                // window told only when it is not already.
+                // Straight to the window, or a picture into the outbox
+                // with the window told only when it is not already. The
+                // window takes only pictures from the outbox, so
+                // anything else (an edit's pictures kept, the making's
+                // word) goes straight.
                 let send = move |outcome: Outcome| match &outbox {
-                    Some(outbox) => {
+                    Some(outbox) if file_of(&outcome).is_some() => {
                         if outbox.put(outcome) {
                             deliver(Outcome::Thumbnails(Batch(outbox.clone())));
                         }
                     }
-                    None => deliver(outcome),
+                    _ => deliver(outcome),
                 };
                 let spawned = std::thread::Builder::new()
                     .name(format!("greycard thumbnails {n}"))
@@ -474,6 +613,20 @@ impl Pool {
         }
         q.wanted = Some((first, last));
         order_thumbnails(q.jobs.make_contiguous(), first, last);
+    }
+
+    /// The cells near the rows the window shows ([`near_rows`]): the
+    /// edit's pictures are made for these alone from now on. Others
+    /// brought near, a thread waiting with only far ones queued looks
+    /// again.
+    pub(crate) fn set_near(&self, cells: HashSet<usize>) {
+        let mut q = self.lock();
+        if q.near != cells {
+            q.near = cells;
+            if !q.edits.is_empty() {
+                self.shared.cv.notify_all();
+            }
+        }
     }
 
     /// The long edge to make pictures at from the next one begun.
@@ -662,8 +815,10 @@ fn serve(
                     let p = &*q;
                     p.edits
                         .iter()
-                        .position(|(_, f)| {
-                            !p.making.contains(f) && (p.edits_busy == 0 || !(h.alone)(f))
+                        .position(|(i, f)| {
+                            p.near.contains(i)
+                                && !p.making.contains(f)
+                                && (p.edits_busy == 0 || !(h.alone)(f))
                         })
                         .map(|at| (at, (h.alone)(&p.edits[at].1)))
                 });
@@ -675,6 +830,15 @@ fn serve(
                     q.edits_queued.remove(&frame);
                     q.making.push(frame.clone());
                     break (index, frame, 0, q.epoch, true, What::Edit);
+                }
+                // Nothing in hand and nothing to begin: the making is
+                // over, for now. Said under the lock, as every word of
+                // the making is, so a late count from another thread
+                // never lands after the end (`deliver` only posts).
+                if q.busy == 0
+                    && let Some(pass) = q.pass.take()
+                {
+                    pass.end(deliver);
                 }
                 #[cfg(test)]
                 {
@@ -702,6 +866,9 @@ fn serve(
                 q.edits_busy -= 1;
                 q.edits_alone = false;
                 shared.cv.notify_all();
+                if let Some(left) = q.count_made(What::Edit) {
+                    deliver(Outcome::Making(left));
+                }
             }
             match made {
                 Ok(Ok(true)) => deliver(Outcome::EditedKept { frame }),
@@ -727,6 +894,11 @@ fn serve(
                 }
                 q.busy -= 1;
                 shared.cv.notify_all();
+                if matches!(made, Ok(Ok(())))
+                    && let Some(left) = q.count_made(What::Preview)
+                {
+                    deliver(Outcome::Making(left));
+                }
             }
             match made {
                 Ok(Ok(())) => {}
@@ -785,6 +957,12 @@ fn serve(
             }
             // A thread may be waiting for this file, or for room.
             shared.cv.notify_all();
+            // Made, not found in the cache: a decode, the work said.
+            if matches!(made, Ok(Ok((_, false))))
+                && let Some(left) = q.count_made(What::Thumb)
+            {
+                deliver(Outcome::Making(left));
+            }
             q.epoch == epoch
         };
         if !current {
@@ -1205,6 +1383,7 @@ mod tests {
             .with_previews(preview_hooks(log.clone(), &[0, 1, 2, 4, 5]))
             .with_edits(edit_hooks(log.clone(), &[3]));
         pool.hold(true);
+        pool.set_near((0..6).collect());
         for i in 0..6 {
             pool.push(i, file(i));
         }
@@ -1265,6 +1444,7 @@ mod tests {
         );
         let (deliver, rx) = collector();
         let pool = Pool::new(4, instant(), deliver).with_edits(hooks);
+        pool.set_near((0..=2).collect());
         for i in 0..3 {
             pool.push(i, file(i));
         }
@@ -1314,6 +1494,7 @@ mod tests {
         );
         let (deliver, rx) = collector();
         let pool = Pool::new(4, instant(), deliver).with_edits(hooks);
+        pool.set_near((0..=7).collect());
         for i in 0..4 {
             pool.push(i, file(i));
         }
@@ -1339,6 +1520,7 @@ mod tests {
         );
         let (deliver, rx) = collector();
         let pool = Pool::new(2, instant(), deliver).with_edits(hooks);
+        pool.set_near((0..=2).collect());
         for i in 0..3 {
             pool.push(i, file(i));
         }
@@ -1372,6 +1554,7 @@ mod tests {
         let hooks = gated_hooks(log.clone(), gate, at_once, Arc::new(|_| false));
         let (deliver, rx) = collector();
         let pool = Pool::new(8, instant(), deliver).with_edits(hooks);
+        pool.set_near((0..=3).collect());
         for i in 0..4 {
             pool.push(i, file(i));
         }
@@ -1408,6 +1591,7 @@ mod tests {
         }
         receive(&rx, 4);
         pool.want(0, 3);
+        pool.set_near((0..4).collect());
         pool.hold(false);
         until_logged(&log, 1);
         settled(&pool);
@@ -1433,6 +1617,134 @@ mod tests {
         until_logged(&log, 4);
         assert_eq!(log.lock().unwrap()[3], "e2");
         gate_tx.send(()).unwrap();
+    }
+
+    /// The rows near those shown are those and as many again above and
+    /// below them, within the list.
+    #[test]
+    fn near_is_the_rows_shown_and_as_many_again_each_side() {
+        assert_eq!(near_rows(10, 13, 100), 6..18);
+        // At the top and the foot, nothing past the list's ends.
+        assert_eq!(near_rows(0, 0, 100), 0..2);
+        assert_eq!(near_rows(96, 99, 100), 92..100);
+        assert!(near_rows(0, 3, 0).is_empty());
+    }
+
+    /// The edit's pictures are made only for the cells the window says
+    /// are near: a root of thousands is not developed whole, and under a
+    /// filter the hidden cells between two rows are not near. The far
+    /// ones wait in the queue, and a scroll to them has them made.
+    #[test]
+    fn the_edits_are_made_near_the_rows_shown_and_the_rest_wait_for_a_scroll() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (deliver, rx) = collector();
+        let pool = Pool::new(4, instant(), deliver).with_edits(edit_hooks(log.clone(), &[]));
+        pool.hold(true);
+        for i in 0..40 {
+            pool.push(i, file(i));
+        }
+        // A filter shows every tenth cell: the near rows' cells are far
+        // apart, and nothing between them is made.
+        pool.want(0, 30);
+        pool.set_near([0, 10, 20, 30].into());
+        pool.hold(false);
+        receive(&rx, 40);
+        until_logged(&log, 4);
+        settled(&pool);
+        let mut made = log.lock().unwrap().clone();
+        made.sort_by_key(|e| e[1..].parse::<usize>().unwrap());
+        assert_eq!(made, ["e0", "e10", "e20", "e30"]);
+        // Scrolled: those now near, and nothing else.
+        pool.set_near((32..40).collect());
+        until_logged(&log, 12);
+        settled(&pool);
+        let mut made: Vec<usize> = log.lock().unwrap()[4..]
+            .iter()
+            .map(|e| e[1..].parse().unwrap())
+            .collect();
+        made.sort();
+        assert_eq!(made, (32..40).collect::<Vec<_>>());
+    }
+
+    /// The words of the pool's making, as the window hears them.
+    fn makings() -> (Deliver, mpsc::Receiver<Making>) {
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        let deliver: Deliver = Arc::new(move |o| {
+            if let Outcome::Making(m) = o {
+                tx.lock().unwrap().send(m).unwrap();
+            }
+        });
+        (deliver, rx)
+    }
+
+    /// Every word until the making is over, the last.
+    fn until_over(rx: &mpsc::Receiver<Making>) -> Vec<Making> {
+        let mut said = Vec::new();
+        loop {
+            let m = rx.recv_timeout(WAIT).expect("the making said");
+            said.push(m);
+            if m == Making::Over {
+                return said;
+            }
+        }
+    }
+
+    /// A making that goes on is said to the window: uncounted while
+    /// thumbnails wait to be looked up, how many are left once each
+    /// is known to be missing, and over at its end; a folder found
+    /// whole in the cache says nothing.
+    #[test]
+    fn a_making_that_goes_on_says_how_many_are_left_and_when_it_is_over() {
+        let slow: Make = Arc::new(|_, _| {
+            std::thread::sleep(Duration::from_millis(100));
+            Ok((picture(), false))
+        });
+        let (deliver, rx) = makings();
+        let pool = Pool::new(1, slow.clone(), deliver);
+        for i in 0..20 {
+            pool.push(i, file(i));
+        }
+        let said = until_over(&rx);
+        assert!(said.len() >= 2, "{said:?}");
+        assert!(
+            said[..said.len() - 1]
+                .iter()
+                .all(|&m| m == Making::Uncounted),
+            "{said:?}"
+        );
+
+        // Each looked up and missed while held: counted.
+        let (deliver, rx) = makings();
+        let missing: Lookup = Arc::new(|_, _| None);
+        let pool = Pool::with_lookup(1, missing, slow, deliver);
+        pool.hold(true);
+        for i in 0..20 {
+            pool.push(i, file(i));
+        }
+        let started = Instant::now();
+        while pool.lock().missed.len() < 20 {
+            assert!(started.elapsed() < WAIT, "never looked up");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        pool.hold(false);
+        let said = until_over(&rx);
+        assert!(said.len() >= 2, "{said:?}");
+        assert!(
+            said[..said.len() - 1]
+                .iter()
+                .all(|m| matches!(m, Making::Left(n) if *n > 0 && *n < 20)),
+            "{said:?}"
+        );
+
+        // From the cache: nothing said.
+        let (deliver, rx) = makings();
+        let pool = Pool::new(2, instant(), deliver);
+        for i in 0..20 {
+            pool.push(i, file(i));
+        }
+        settled(&pool);
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
     }
 
     /// A scroll while a picture is in hand re-orders what is left,

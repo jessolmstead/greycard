@@ -594,6 +594,10 @@ pub enum Outcome {
     EditedKept {
         frame: Frame,
     },
+    /// The thumbnails' pool is making pictures the cache did not have
+    /// (camera thumbnails, local previews, the edit's pictures): how
+    /// many are left, or that it has nothing left in hand.
+    Making(crate::thumbpool::Making),
 }
 
 #[derive(Default)]

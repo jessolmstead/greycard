@@ -464,3 +464,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§449. The panel's choices written as they change](notes/449-the-panels-choices-written-as-they-change.md) (2026-10-29)
 - [§450. The tone's guide made after the retouch](notes/450-the-tones-guide-made-after-the-retouch.md) (2026-10-29)
 - [§451. Version 2 profiles in exports](notes/451-version-2-profiles-in-exports.md) (2026-10-29)
+- [§452. The edit's pictures made near the screen](notes/452-the-edits-pictures-made-near-the-screen.md) (2026-10-29)
