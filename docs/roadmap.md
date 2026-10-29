@@ -602,16 +602,24 @@ still inside the window's crate; the big move waits on its design
 section, and the small items go first since they shrink what it
 touches.
 
-- [ ] A `greycard export` subcommand that runs the headless export
-      the editor binary has, and the command-line export in the
-      README's highlights; people have asked for it
-- [ ] The engine's design: the stage list defined once from the edit
-      and walked by the worker and the command line alike; the worker,
-      the base cache, the GPU substitution, and the model lifecycle in
-      a crate below the window, delivery behind a trait; the viewport
-      shader held to the render crate's CPU finish inside greycard-gpu
-      as the other ops are. A design section first, then parts, after
-      0.9.1 has been out a week
+- [ ] The command-line export the editor binary has today in the
+      README's highlights, since people ask for it without finding it
+- [ ] The engine, part 1 (§454): the sidecar helpers, the edited
+      pictures' engine half, and the version key moved below the
+      window as pure moves, explicit imports in each file touched.
+      After 0.9.1 has been out a week
+- [ ] The engine, part 2 (§454): greycard-engine with the stage list
+      defined once, the worker and its collaborators moved, core's
+      `finish` trimmed to prepare, the reduced develop on the list;
+      exports byte-equal before and after. Waits on part 1 and a
+      design pass on the stage list's type
+- [ ] The engine, part 3 (§454): the viewport crate, the shader and
+      its parity tests over gpu and render, Slint's pixel types out
+      of it. Waits on part 2
+- [ ] The engine, part 4 (§454): `greycard export`, one settings
+      subset reader for the window, headless export, and the command
+      line, the editor's `--export` kept an alias for a release.
+      Waits on part 2
 - [ ] A lib target for greycard-ui and the modules with no Slint,
       wgpu, or State in them moved out of the binary (archive, import,
       naming, collections, camera match, reduced, thumbpool, the

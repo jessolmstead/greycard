@@ -466,3 +466,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§451. Version 2 profiles in exports](notes/451-version-2-profiles-in-exports.md) (2026-10-29)
 - [§452. The edit's pictures made near the screen](notes/452-the-edits-pictures-made-near-the-screen.md) (2026-10-29)
 - [§453. A named lens the database lacks falls to the body](notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md) (2026-10-29)
+- [§454. One engine below the window](notes/454-one-engine-below-the-window.md) (2026-10-29)
