@@ -593,6 +593,43 @@ for testing are in `docs/test-frames.md`.
 - [ ] Float samples in the DNG writer, for brackets deeper than 16 bits
       hold. Waits on someone needing it (§71)
 
+### The engine
+
+The command line renders an edit exactly as the editor exports it,
+through one develop engine below the window. An outside review of
+the layering (2026-10-29) found the direction clean and the engine
+still inside the window's crate; the big move waits on its design
+section, and the small items go first since they shrink what it
+touches.
+
+- [ ] A `greycard export` subcommand that runs the headless export
+      the editor binary has, and the command-line export in the
+      README's highlights; people have asked for it
+- [ ] The engine's design: the stage list defined once from the edit
+      and walked by the worker and the command line alike; the worker,
+      the base cache, the GPU substitution, and the model lifecycle in
+      a crate below the window, delivery behind a trait; the viewport
+      shader held to the render crate's CPU finish inside greycard-gpu
+      as the other ops are. A design section first, then parts, after
+      0.9.1 has been out a week
+- [ ] A lib target for greycard-ui and the modules with no Slint,
+      wgpu, or State in them moved out of the binary (archive, import,
+      naming, collections, camera match, reduced, thumbpool, the
+      measurement runners), explicit imports in place of the 88 glob
+      imports of the crate root as each moves
+- [ ] One entry for every Slint callback that takes the State borrow
+      and names the callback when it fails, so a re-entrant borrow
+      reports itself (1521 borrow_mut sites, 10 try_borrow)
+- [ ] The dependencies repeated across manifests (slint, wgpu, half,
+      lcms2, blake3, and the rest) in the workspace table, and the
+      "keep the two lists the same" comments gone
+- [ ] greycard-edit's lib.rs (5900 lines: the struct, migrations, the
+      sidecar, the history) split by part; the profile and look
+      stores, the sync algorithm, and the importers to a sibling so
+      the schema crate stays data and conversion
+- [ ] The architecture document (in the pool below) written first,
+      since it is the map the move is planned on
+
 ---
 
 ## Pool
