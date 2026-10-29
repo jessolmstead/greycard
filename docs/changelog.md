@@ -3,7 +3,7 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.9.1, 2026-10-28
+## 0.9.1, 2026-10-29
 
 Fixes for 0.9.0's fills: their level, grain, and color blotches, the
 Light sliders' lift over a removed object, a learned mask made again
@@ -17,6 +17,10 @@ under a fill, and the Mac disk image's install window.
 
 ### Fixes
 
+- An exported JPEG or TIFF now carries an ICC version 2 profile, so
+  Windows' photo viewer, which ignored the version 4 one and showed an
+  Adobe RGB export flat, reads it like Lightroom's
+  ([§451](https://github.com/jessolmstead/greycard/blob/master/docs/notes/451-version-2-profiles-in-exports.md)).
 - On a Mac, the first Subject or Background mask of a launch no longer
   waits two minutes or more for Core ML, which cannot run that model;
   it goes straight to the GPU

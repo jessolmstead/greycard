@@ -33,10 +33,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Idle in the Library on Windows, CPU at 50 percent and memory
       tripling within minutes (discussion 51, pixls, 2026-10-29): not
       reproduced on Linux; waits on the reporter's log
-- [ ] An exported JPEG's embedded profile reads flat in Windows'
-      viewer, right in Photoshop (issue 53): lcms writes a version 4
-      profile with parametric curves; write version 2 with curve
-      tables, as Lightroom does, and check in the viewer
 - [ ] System and File display profiles differ with the same profile
       picked (issue 53): waits on the reporter's profile; a table-based
       monitor profile is the lead

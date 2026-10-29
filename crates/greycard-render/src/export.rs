@@ -157,14 +157,19 @@ impl Space {
     /// header with the second the profile was made, so two builds
     /// straddling a tick differ in four bytes, and an export's profile
     /// and a check of it a moment later must be the same bytes.
+    ///
+    /// A version 2 profile, built as Lightroom's and the common sRGB
+    /// and Adobe RGB profiles are: Windows' photo viewer ignores a
+    /// version 4 one and shows the file unmanaged.
     pub fn icc(self) -> Result<Vec<u8>> {
         self.cached_icc(false)
     }
 
     /// The profile of the encoding the finish hands the display table:
-    /// the space's primaries under the sRGB curve, which is `icc()`
-    /// for the spaces that take it. For Adobe RGB it differs only in
-    /// the curve, and the table reading the finish's values through it
+    /// the space's primaries under the sRGB curve, the same colors as
+    /// `icc()` for the spaces that take it, in lcms's own version 4
+    /// bytes since only lcms reads it. For Adobe RGB it differs in the
+    /// curve too, and the table reading the finish's values through it
     /// shows the colors the file's own values (`recode`) hold.
     pub fn finish_icc(self) -> Result<Vec<u8>> {
         self.cached_icc(true)
@@ -180,11 +185,18 @@ impl Space {
         if let Some(bytes) = slot.get() {
             return Ok(bytes.clone());
         }
-        let bytes = self.build_icc(finish)?;
+        let bytes = if finish {
+            self.build_finish_icc()?
+        } else {
+            self.build_icc()?
+        };
         Ok(slot.get_or_init(|| bytes).clone())
     }
 
-    fn build_icc(self, finish: bool) -> Result<Vec<u8>> {
+    /// The version 4 profile lcms builds from the primaries, with
+    /// parametric curves: the finish's view, which only lcms reads,
+    /// and the colorants the exported profile copies.
+    fn v4_profile(self, finish: bool) -> Result<lcms2::Profile> {
         use lcms2::{CIExyY, CIExyYTRIPLE, Locale, MLU, Profile, Tag, TagSignature, ToneCurve};
         let s = self.rgb();
         let point = |x: f64, y: f64| CIExyY { x, y, Y: 1.0 };
@@ -219,6 +231,99 @@ impl Space {
         let mut copyright = MLU::new(1);
         copyright.set_text_ascii("No copyright, use freely", Locale::none());
         profile.write_tag(TagSignature::CopyrightTag, Tag::MLU(&copyright));
+        Ok(profile)
+    }
+
+    fn build_finish_icc(self) -> Result<Vec<u8>> {
+        self.v4_profile(true)?
+            .icc()
+            .map_err(|e| anyhow::anyhow!("writing the {} profile: {e}", self.name()))
+    }
+
+    fn build_icc(self) -> Result<Vec<u8>> {
+        use lcms2::{
+            CIEXYZ, ColorSpaceSignature, Locale, MLU, Profile, ProfileClassSignature, Tag,
+            TagSignature, ToneCurve,
+        };
+        let colorants = self.v4_profile(false)?;
+        let colorant = |sig: TagSignature| -> Result<CIEXYZ> {
+            match colorants.read_tag(sig) {
+                Tag::CIEXYZ(xyz) => Ok(*xyz),
+                _ => anyhow::bail!("the {} profile has no {sig:?}", self.name()),
+            }
+        };
+        let s = self.rgb();
+        // Version 2's white point is the space's own white, the
+        // colorants staying D50 adapted; lcms reads a version 2
+        // display profile's white as D50 whatever it says.
+        let white = CIEXYZ {
+            X: s.white.x / s.white.y,
+            Y: 1.0,
+            Z: (1.0 - s.white.x - s.white.y) / s.white.y,
+        };
+        // Version 2 has no parametric curves: a single gamma entry is
+        // its pure power, and the sRGB curve a table.
+        let curve = match self.gamma() {
+            Some(g) => ToneCurve::new_parametric(1, &[g])
+                .map_err(|e| anyhow::anyhow!("the {} curve: {e}", self.name()))?,
+            None => {
+                let table: Vec<u16> = (0..1024)
+                    .map(|i| {
+                        let v = i as f64 / 1023.0;
+                        let lin = if v <= 0.04045 {
+                            v / 12.92
+                        } else {
+                            ((v + 0.055) / 1.055).powf(2.4)
+                        };
+                        (lin * 65535.0).round() as u16
+                    })
+                    .collect();
+                ToneCurve::new_tabulated(&table)
+            }
+        };
+        let mut profile = Profile::new_placeholder();
+        // The version first: lcms picks each tag's type by the version
+        // when the tag is written.
+        profile.set_version(2.1);
+        profile.set_device_class(ProfileClassSignature::DisplayClass);
+        profile.set_color_space(ColorSpaceSignature::RgbData);
+        profile.set_pcs(ColorSpaceSignature::XYZData);
+        let mut description = MLU::new(1);
+        // Adobe's name is its mark: the profile says "compatible", as
+        // darktable's and RawTherapee's do.
+        let named = match self {
+            Space::AdobeRgb => "Adobe RGB (compatible)",
+            _ => self.name(),
+        };
+        description.set_text_ascii(named, Locale::none());
+        let mut copyright = MLU::new(1);
+        copyright.set_text_ascii("No copyright, use freely", Locale::none());
+        let written = [
+            profile.write_tag(TagSignature::ProfileDescriptionTag, Tag::MLU(&description)),
+            profile.write_tag(TagSignature::CopyrightTag, Tag::MLU(&copyright)),
+            profile.write_tag(TagSignature::MediaWhitePointTag, Tag::CIEXYZ(&white)),
+            profile.write_tag(
+                TagSignature::RedColorantTag,
+                Tag::CIEXYZ(&colorant(TagSignature::RedColorantTag)?),
+            ),
+            profile.write_tag(
+                TagSignature::GreenColorantTag,
+                Tag::CIEXYZ(&colorant(TagSignature::GreenColorantTag)?),
+            ),
+            profile.write_tag(
+                TagSignature::BlueColorantTag,
+                Tag::CIEXYZ(&colorant(TagSignature::BlueColorantTag)?),
+            ),
+            profile.write_tag(TagSignature::RedTRCTag, Tag::ToneCurve(&curve)),
+            // One curve the three channels share, as Lightroom's do.
+            profile.link_tag(TagSignature::GreenTRCTag, TagSignature::RedTRCTag),
+            profile.link_tag(TagSignature::BlueTRCTag, TagSignature::RedTRCTag),
+        ];
+        anyhow::ensure!(
+            written.iter().all(|w| *w),
+            "writing the {} profile's tags",
+            self.name()
+        );
         profile
             .icc()
             .map_err(|e| anyhow::anyhow!("writing the {} profile: {e}", self.name()))
@@ -1509,6 +1614,140 @@ mod tests {
             assert_eq!((back.width(), back.height()), source);
         }
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The version 2 profile lcms reads as it read the version 4 one
+    /// it replaced: every color of a grid lands on the same XYZ.
+    #[test]
+    fn the_version_two_profile_transforms_as_version_four_did() {
+        use lcms2::{Intent, PixelFormat, Profile, Transform};
+        let xyz = Profile::new_xyz();
+        let transform = |profile: &Profile| -> Transform<[f32; 3], [f64; 3]> {
+            Transform::new(
+                profile,
+                PixelFormat::RGB_FLT,
+                &xyz,
+                PixelFormat::XYZ_DBL,
+                Intent::RelativeColorimetric,
+            )
+            .unwrap()
+        };
+        let steps = 12;
+        let grid: Vec<[f32; 3]> = (0..=steps)
+            .flat_map(|r| (0..=steps).flat_map(move |g| (0..=steps).map(move |b| [r, g, b])))
+            .map(|c| c.map(|v| v as f32 / steps as f32))
+            .collect();
+        for space in Space::ALL {
+            let old = Profile::new_icc(&space.v4_profile(false).unwrap().icc().unwrap()).unwrap();
+            let new = Profile::new_icc(&space.icc().unwrap()).unwrap();
+            let mut a = vec![[0f64; 3]; grid.len()];
+            let mut b = a.clone();
+            transform(&old).transform_pixels(&grid, &mut a);
+            transform(&new).transform_pixels(&grid, &mut b);
+            let worst = a
+                .iter()
+                .zip(&b)
+                .flat_map(|(a, b)| (0..3).map(move |k| (a[k] - b[k]).abs()))
+                .fold(0f64, f64::max);
+            eprintln!("{}: worst XYZ difference {worst:e}", space.name());
+            assert!(worst < 1e-3, "{}: {worst}", space.name());
+        }
+    }
+
+    /// The shape Windows' photo viewer reads: version 2, `curv`
+    /// curves, `desc` and `text` names, the space's own white, and
+    /// nothing of version 4's.
+    #[test]
+    fn the_exported_profile_is_version_two() {
+        for space in Space::ALL {
+            let icc = space.icc().unwrap();
+            let name = space.name();
+            let u32_at = |at: usize| u32::from_be_bytes(icc[at..at + 4].try_into().unwrap());
+            assert_eq!(u32_at(0) as usize, icc.len(), "{name}");
+            assert_eq!(&icc[8..10], &[2, 0x10], "{name}: version 2.1");
+            assert_eq!(&icc[12..16], b"mntr", "{name}");
+            assert_eq!(&icc[36..40], b"acsp", "{name}");
+            let tags: Vec<([u8; 4], &[u8])> = (0..u32_at(128) as usize)
+                .map(|i| {
+                    let at = 132 + i * 12;
+                    let (offset, size) = (u32_at(at + 4) as usize, u32_at(at + 8) as usize);
+                    (
+                        icc[at..at + 4].try_into().unwrap(),
+                        &icc[offset..offset + size],
+                    )
+                })
+                .collect();
+            let sigs: Vec<&[u8; 4]> = tags.iter().map(|(s, _)| s).collect();
+            for want in [
+                b"desc", b"cprt", b"wtpt", b"rXYZ", b"gXYZ", b"bXYZ", b"rTRC", b"gTRC", b"bTRC",
+            ] {
+                assert!(sigs.contains(&want), "{name}: no {want:?}");
+            }
+            assert_eq!(tags.len(), 9, "{name}: {sigs:?}");
+            let tag = |sig: &[u8; 4]| tags.iter().find(|(s, _)| s == sig).unwrap().1;
+            assert_eq!(&tag(b"desc")[0..4], b"desc", "{name}");
+            assert_eq!(&tag(b"cprt")[0..4], b"text", "{name}");
+            let trc = tag(b"rTRC");
+            assert_eq!(&trc[0..4], b"curv", "{name}");
+            assert_eq!(tag(b"gTRC"), trc);
+            assert_eq!(tag(b"bTRC"), trc);
+            let entries = u32::from_be_bytes(trc[8..12].try_into().unwrap());
+            match space.gamma() {
+                Some(_) => {
+                    assert_eq!(entries, 1, "{name}");
+                    assert_eq!(u16::from_be_bytes([trc[12], trc[13]]), 563, "{name}");
+                }
+                None => assert_eq!(entries, 1024, "{name}"),
+            }
+            // The media white is the space's own, D65 for all four.
+            let wtpt = tag(b"wtpt");
+            assert_eq!(&wtpt[0..4], b"XYZ ", "{name}");
+            let xyz = [8, 12, 16].map(|at| {
+                i32::from_be_bytes(wtpt[at..at + 4].try_into().unwrap()) as f64 / 65536.0
+            });
+            for (got, want) in xyz.iter().zip([0.9505, 1.0, 1.089]) {
+                assert!((got - want).abs() < 1e-3, "{name}: {xyz:?}");
+            }
+            for v4 in [b"mluc", b"para", b"chad", b"chrm"] {
+                assert!(!icc.windows(4).any(|w| w == v4), "{name}: {v4:?}");
+            }
+        }
+    }
+
+    /// Our own reader takes our own files: a picture under the
+    /// version 2 profile reads back as it did under the version 4 one,
+    /// through the single gamma and through the table.
+    #[test]
+    fn our_reader_reads_the_version_two_profile_as_version_four() {
+        use image::ImageEncoder;
+        use image::codecs::png::PngEncoder;
+        let (w, h) = (64u32, 4u32);
+        let samples: Vec<u16> = (0..w * h * 3)
+            .map(|i| ((i * 2521) % 65536) as u16)
+            .collect();
+        let read = |icc: Vec<u8>| {
+            let mut png = Vec::new();
+            let mut enc = PngEncoder::new(&mut png);
+            enc.set_icc_profile(icc).unwrap();
+            let bytes: Vec<u8> = samples.iter().flat_map(|v| v.to_be_bytes()).collect();
+            enc.write_image(&bytes, w, h, image::ExtendedColorType::Rgb16)
+                .unwrap();
+            greycard_core::picture::decode_picture(&png).unwrap()
+        };
+        for space in Space::ALL {
+            let new = read(space.icc().unwrap());
+            let old = read(space.v4_profile(false).unwrap().icc().unwrap());
+            assert_eq!(new.space, old.space);
+            let worst = new
+                .image
+                .data
+                .iter()
+                .zip(&old.image.data)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0f32, f32::max);
+            eprintln!("{}: worst reader difference {worst:e}", space.name());
+            assert!(worst < 1e-4, "{}: {worst}", space.name());
+        }
     }
 
     /// lcms writes the second of its making into a profile's header,
