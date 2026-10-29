@@ -36,9 +36,15 @@ the reasoning lives in `docs/notes.md`.
       under a 12515-file root, 610 s of decoding on 8 threads with no
       word in the window, and the base shelf holding 1.1 GB of its
       4 GB budget; nineteen minutes of 50 percent CPU after that log
-      nothing, so they are not the worker's. Show the thumbnail work,
-      question walking the whole root unasked, size the shelf to the
-      machine, and find the silent spinner
+      nothing. Reproduced on Linux: the Library's list goes whole to
+      the edited pictures (`edited::note_list`), which develops every
+      frame under the root that has an edit, on the CPU, two at a
+      time, 1 to 22 s each, until the list is done, seven cores busy
+      for minutes with nothing in the window; the camera thumbnails
+      are asked for the whole root too. Ask for the rows on screen
+      and near them only, show the work in the status area, and size
+      the shelf to the machine. Harness: `--library <db> --roots <dir>`
+      under headless weston, `ps -L` by thread, gdb as the parent
 - [ ] A Fast fill on a Windows GeForce RTX 3080 Ti reloads the models
       every fill (the policy cannot read a discrete card's memory, so
       it holds nothing), takes 11 to 19 s for 24 UNet calls against
