@@ -30,13 +30,14 @@ pub const FILE: &str = "greycard-ui.log";
 /// and `-v` raises them. Everything else, the libraries, from warn.
 /// Of the library crate, the catalog import, whose night-long write
 /// says how far it is.
-const OURS: [&str; 7] = [
+const OURS: [&str; 8] = [
     "greycard_ui",
     "greycard_core",
     "greycard_edit",
     "greycard_ai",
     "greycard_lens",
     "greycard_gpu",
+    "greycard_render",
     "greycard_library::lightroom_catalog",
 ];
 
