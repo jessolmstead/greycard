@@ -341,9 +341,6 @@ pub(crate) fn develop(
         options.radius /= bin as f32;
         defringe::defringe(&mut image, &options);
     }
-    // The guide plane, before the retouch and the local contrast, as
-    // the worker makes it: in the developed picture's own coordinates.
-    let guide = Arc::new(crate::finish::guide_plane(&image));
     // The retouch: its patches are in units of the picture's width. A
     // Fill is the model's and runs on the open frame alone; a picture
     // without one is not the edit's.
@@ -356,6 +353,10 @@ pub(crate) fn develop(
             None
         });
     }
+    // The guide plane, after the retouch and before the local
+    // contrast, as the worker makes it: in the developed picture's own
+    // coordinates.
+    let guide = Arc::new(crate::finish::guide_plane(&image));
     // The masks' bands, of the picture at this size, as the worker
     // makes them of the full one.
     let detail = crate::detail::DetailPlanes::make(

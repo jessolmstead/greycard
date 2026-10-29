@@ -995,11 +995,13 @@ struct Base {
     /// not part of the edit, so `same_base` cannot see it.
     turn: u8,
     image: Arc<WorkingImage>,
-    /// The tone equalizer's read of the scene, made once with
-    /// the base: the Light sliders never re-develop, so a slider move
+    /// The tone equalizer's read of the scene, of the patched picture
+    /// when there is one and of the base otherwise, made once with
+    /// each: the Light sliders never re-develop, so a slider move
     /// must not pay for it, and neither must a sharpen change. Every
     /// way of making a base leaves [`crate::finish::Guide::NONE`] here
-    /// and `develop_job` fills it in the one place, after the lens.
+    /// and `develop_job` fills it in after the lens, and again with
+    /// each fresh retouch or a retouch cleared.
     guide: Arc<crate::finish::Guide>,
     white: WhiteBase,
     radius: Option<f32>,

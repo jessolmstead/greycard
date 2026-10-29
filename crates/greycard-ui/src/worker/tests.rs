@@ -3604,3 +3604,75 @@ fn a_retouch_applied_is_the_edits_with_the_sources_chosen() {
     assert!(!masks::same_retouch(&edit, &moved));
     assert!(!masks::same_retouch(&edit, &Retouch::default()));
 }
+
+/// A light field with a dark bar down its middle, and an edit that
+/// clones the bar away from the field beside it.
+fn bar_and_its_clone() -> (Arc<WorkingImage>, Edit) {
+    let n = 256;
+    let mut image = WorkingImage::new(n, n);
+    for (i, px) in image.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+        let dark = (120..136).contains(&(i % n));
+        px.fill(if dark { 0.02 } else { 0.4 });
+    }
+    let edit = Edit {
+        retouch: Retouch {
+            enabled: true,
+            patches: vec![greycard_edit::retouch::Patch {
+                id: 1,
+                method: greycard_edit::retouch::Method::Clone,
+                points: vec![[0.5, 0.05], [0.5, 0.95]],
+                radius: 0.06,
+                source: Some([0.25, 0.0]),
+                ..Default::default()
+            }],
+        },
+        ..Default::default()
+    };
+    (Arc::new(image), edit)
+}
+
+/// The guide plane is the retouched picture's: a dark bar cloned
+/// away leaves no trace in it for the tone sliders to lift, and an
+/// unchanged retouch keeps the plane rather than making it again.
+#[test]
+fn the_guide_is_made_after_the_retouch() {
+    let (image, edit) = bar_and_its_clone();
+    let input = picture_input(&image);
+    let mut base = None;
+    develop_picture(&input, &Edit::default(), &mut base, &mut None);
+    let before = base.as_ref().unwrap().guide.clone();
+    let (bar, beside) = ((128.0, 128.0), (200.0, 128.0));
+    assert!(
+        before.at(beside.0, beside.1) - before.at(bar.0, bar.1) > 1.0,
+        "the bar is in the base's guide"
+    );
+    develop_picture(&input, &edit, &mut base, &mut None);
+    let b = base.as_ref().unwrap();
+    let (_, patched, _, _) = b.patched.as_ref().expect("the retouch is kept");
+    let px = &patched.data[(128 * 256 + 128) * 3..][..3];
+    assert!((px[1] - 0.4).abs() < 1e-3, "the clone took the bar: {px:?}");
+    let at = (b.guide.at(bar.0, bar.1), b.guide.at(beside.0, beside.1));
+    assert!(
+        (at.0 - at.1).abs() < 0.02,
+        "the bar's ghost in the guide: {at:?}"
+    );
+    let made = b.guide.clone();
+    develop_picture(&input, &edit, &mut base, &mut None);
+    assert!(Arc::ptr_eq(&made, &base.as_ref().unwrap().guide));
+}
+
+/// Clearing the retouch gives the guide back to the base.
+#[test]
+fn a_cleared_retouch_brings_back_the_bases_guide() {
+    let (image, edit) = bar_and_its_clone();
+    let input = picture_input(&image);
+    let mut base = None;
+    develop_picture(&input, &Edit::default(), &mut base, &mut None);
+    let own = base.as_ref().unwrap().guide.data.clone();
+    develop_picture(&input, &edit, &mut base, &mut None);
+    assert_ne!(base.as_ref().unwrap().guide.data, own);
+    develop_picture(&input, &Edit::default(), &mut base, &mut None);
+    let b = base.as_ref().unwrap();
+    assert!(b.patched.is_none());
+    assert_eq!(b.guide.data, own);
+}

@@ -23,7 +23,8 @@ in outline. Within a region the shift is one constant, so a gain is
 all it is and the texture keeps every bit of its contrast; across a
 region boundary each side is pulled on its own. Made once with the
 base after the lens and the defringe, before the retouch and the
-sharpen, cached with it, an R16Float texture for the viewport and the
+sharpen (after the retouch since §450: a removed object stayed in
+it), cached with it, an R16Float texture for the viewport and the
 same plane for the export, read through the same bilinear on both
 paths and through the geometry, so a crop or a turn finds the same
 region. The ramps move to where the scene is: highlights 0..2.5

@@ -5,9 +5,9 @@ design note behind it.
 
 ## 0.9.1, 2026-10-28
 
-Fixes for 0.9.0's fills: their level, grain, and color blotches, a
-learned mask made again under a fill, and the Mac disk image's
-install window.
+Fixes for 0.9.0's fills: their level, grain, and color blotches, the
+Light sliders' lift over a removed object, a learned mask made again
+under a fill, and the Mac disk image's install window.
 
 ### Install
 
@@ -28,6 +28,12 @@ install window.
   disagrees with itself or reads no more than the picture's own texture
   ([§443](https://github.com/jessolmstead/greycard/blob/master/docs/notes/443-the-fills-level-across-its-edge.md),
   [§447](https://github.com/jessolmstead/greycard/blob/master/docs/notes/447-the-fills-level-read-by-sector.md)).
+- A removed dark object no longer leaves a bright ghost of itself when
+  Shadows, Highlights, Whites, or Blacks are set: the plane those
+  sliders read to decide where to lift was made before the retouch and
+  still held the object; it is made after it now, for the viewport,
+  the export, and the thumbnails
+  ([§450](https://github.com/jessolmstead/greycard/blob/master/docs/notes/450-the-tones-guide-made-after-the-retouch.md)).
 - A fill's middle no longer drifts from the sky round it, grey and
   warm in Patch, light and red in Fast and Best, which the edge match
   cannot see: the picture round the hole is read as a smooth surface

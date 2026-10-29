@@ -233,8 +233,11 @@ pub(super) fn develop_job(
     // can be made, and no longer once one can, by either engine.
     let patched = if retouch.is_empty() {
         // None kept: what is kept is always the last develop's retouch,
-        // which the learned masks read (`masks::retouched_of`).
-        b.patched = None;
+        // which the learned masks read (`masks::retouched_of`). A
+        // retouch just cleared gives the guide back to the base.
+        if b.patched.take().is_some() {
+            guide_step(b, &mut stages);
+        }
         b.image.clone()
     } else if let Some((r, image, whole, _)) = &b.patched
         && *r == retouch
@@ -286,6 +289,11 @@ pub(super) fn develop_job(
         });
         let image = Arc::new(image);
         let whole = fills.missing.is_empty() && fills.failed.is_empty();
+        // The guide follows the patches: a dark object taken out of a
+        // bright surround moves its region's mean far more than the
+        // guide's scale can miss, and a guide still holding it would
+        // have the tone sliders draw its ghost back.
+        b.guide = Arc::new(crate::finish::guide_plane(&image));
         b.patched = Some((retouch, image.clone(), whole, unmade));
         stages.push(("retouch", started.elapsed().as_secs_f64()));
         image
@@ -713,12 +721,12 @@ pub(super) fn lens_step(
     failed
 }
 
-/// A fresh base's guide plane, after the lens and the defringe and
-/// before the retouch and the sharpen: the geometry has not moved a
-/// pixel yet, so the plane is in the developed picture's own
-/// coordinates, which is where the viewport and the export both read
-/// it. Neither the retouch's patches nor the sharpen moves a region's
-/// mean luminance by anything the guide's scale can see.
+/// A base's guide plane, after the lens and the defringe and before
+/// the sharpen: the geometry has not moved a pixel yet, so the plane
+/// is in the developed picture's own coordinates, which is where the
+/// viewport and the export both read it. A retouch makes its own from
+/// the patched picture, as a patch can move a region's mean a long
+/// way; the sharpen moves none by anything the guide's scale can see.
 pub(super) fn guide_step(b: &mut Base, stages: &mut Stages) {
     b.guide = Arc::new(timed(stages, "guide", || {
         crate::finish::guide_plane(&b.image)
