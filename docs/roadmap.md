@@ -1027,6 +1027,12 @@ clears or a tester asks for it.
 - [ ] The status area clear of the picture, or dismissable; the scroll
       bars at their hovered size always; the Export sheet's text crisp
       at 1080p (discussion 51, 2026-10-29)
+- [ ] Subject's edge through hair under an extreme correction: the
+      matte is made on a 1024 square and brought up to the frame, so
+      wisps and locks come out as a soft band with a light fringe
+      against a background pushed near black. A second pass at full
+      resolution along the edge band, as Sky's twice-size pass does
+      for wide frames (discussion 51, 2026-10-29)
 - [ ] The rest of the close on a Mac's Quit, which ends the process
       from the event loop: the title's send, an import's stop, the
       worker's stop, and the index's close moved into the loop's
