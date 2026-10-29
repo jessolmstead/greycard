@@ -49,6 +49,8 @@ const FULL_FRAME_DIAGONAL: f32 = 43.266_6;
 pub struct Profile<'a> {
     pub lens: &'a Lens,
     pub camera: Option<&'a Camera>,
+    /// Whether the lens is the body's own (see [`Lookup::from_body`]).
+    pub from_body: bool,
 }
 
 /// Which corrections a consumer wants of a profile.
@@ -93,10 +95,11 @@ impl Database {
             .lens_model
             .as_deref()
             .and_then(|name| self.lens(camera, shot.lens_make.as_deref(), name, shot.focal_length));
-        // A file that names no lens may be a compact's, whose lens is
-        // its body's.
-        let fixed = shot
-            .lens_model
+        // A file that names no lens, or names one the database does
+        // not know, may be a compact's, whose lens is its body's: a
+        // CHDK DNG names the lens by its focal range, which is in no
+        // lensfun entry.
+        let fixed = named
             .is_none()
             .then(|| camera.and_then(|c| self.fixed_lens(c, shot.focal_length, raw)))
             .flatten();
@@ -106,6 +109,12 @@ impl Database {
         match (lens, shot.lens_model.as_deref()) {
             (Some(l), None) => {
                 log::debug!("{make} {model}: no lens named, the body's {}", l.name())
+            }
+            (Some(l), Some(name)) if fixed.is_some() => {
+                log::debug!(
+                    "{make} {model}: lens {name} unknown, the body's {}",
+                    l.name()
+                )
             }
             (Some(l), Some(name)) => log::debug!(
                 "lens {name}: {}{}",
@@ -144,6 +153,7 @@ impl Database {
         l.lens.map(|lens| Profile {
             lens,
             camera: l.camera,
+            from_body: l.from_body,
         })
     }
 }
@@ -524,6 +534,7 @@ mod tests {
         let q = Profile {
             lens: &small,
             camera: full.camera,
+            from_body: false,
         };
         assert!(q.measured_on_smaller_sensor() && (q.reach() - 1.6).abs() < 1e-6);
         let e = q
@@ -535,7 +546,8 @@ mod tests {
         assert!(
             !Profile {
                 lens: &small,
-                camera: full.camera
+                camera: full.camera,
+                from_body: false,
             }
             .measured_on_smaller_sensor()
         );
@@ -758,6 +770,23 @@ mod tests {
     }
 
     #[test]
+    fn a_compact_naming_a_lens_the_database_lacks_gets_the_bodys() {
+        // CHDK's DNG names the lens by its focal range.
+        let db = with_compacts();
+        let mut shot = unnamed(Some(5.5));
+        shot.lens_model = Some("4.5-135.0 mm f/3.2-6.9".into());
+        let l = db.lookup_shot("Canon", "Canon PowerShot SX710 HS", &shot, true);
+        assert_eq!(
+            l.lens.unwrap().name(),
+            "Canon PowerShot SX710 HS & compatibles, with CHDK's DNG"
+        );
+        assert!(l.from_body);
+        // An interchangeable body naming an unknown lens still gets none.
+        let l = db.lookup_shot("Canon", "EOS R6", &shot, true);
+        assert!(l.lens.is_none() && !l.from_body);
+    }
+
+    #[test]
     fn a_raw_gets_the_chdk_profile_and_a_rendered_picture_the_plain_one() {
         let db = with_compacts();
         assert_eq!(
@@ -815,19 +844,11 @@ mod tests {
     #[test]
     fn a_named_lens_wins_over_the_body() {
         let db = with_compacts();
-        // A lens named is matched by name, and a name that matches
-        // nothing is not replaced by the body's.
+        // A lens named is matched by name.
         let mut shot = unnamed(Some(50.0));
         shot.lens_model = Some("RF50mm F1.8 STM".into());
         let l = db.lookup_shot("Canon", "PowerShot SX710 HS", &shot, true);
         assert_eq!(l.lens.unwrap().name(), "Canon RF 50mm F1.8 STM");
         assert!(!l.from_body);
-        shot.lens_model = Some("4.5-135.0 mm".into());
-        shot.focal_length = Some(5.5);
-        assert!(
-            db.lookup_shot("Canon", "PowerShot SX710 HS", &shot, true)
-                .lens
-                .is_none()
-        );
     }
 }

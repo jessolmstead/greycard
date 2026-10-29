@@ -359,8 +359,9 @@ the lens profile that was found, or says why none was:
   sliders below.
 - "no profile for" a lens: the database does not know it.
 
-A compact's file often names no lens, but its lens is part of the
-body: greycard finds it from the camera. When the database has
+A compact's file often names no lens, or names it only as a focal
+range, but its lens is part of the body: greycard finds it from the
+camera. When the database has
 several entries for that body, it takes the one that covers the focal
 length. A raw gets the entry made from CHDK's DNGs where there is
 one, and a JPEG never does, since the camera has corrected it

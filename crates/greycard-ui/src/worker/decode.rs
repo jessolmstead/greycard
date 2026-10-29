@@ -99,8 +99,7 @@ pub(super) fn lens_report(db: Option<&greycard_lens::Database>, input: &Input) -
                 } else {
                     ", body not in the database"
                 },
-                // Without a name, only a compact's own lens is found.
-                if named.is_none() {
+                if p.from_body {
                     ", the fixed lens of the body"
                 } else {
                     ""

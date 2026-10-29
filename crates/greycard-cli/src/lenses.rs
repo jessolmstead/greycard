@@ -108,6 +108,7 @@ pub(crate) fn lenses(
             let p = greycard_lens::Profile {
                 lens,
                 camera: l.camera,
+                from_body: l.from_body,
             };
             let c = p.correction(frame.width, frame.height, shot, greycard_lens::Wanted::ALL);
             println!("correction    {}", correction_words(&c));

@@ -24,6 +24,9 @@ disk image's install window.
   on screen and near them, the rest as you scroll to them, and the
   status line says how many are being made
   ([§452](https://github.com/jessolmstead/greycard/blob/master/docs/notes/452-the-edits-pictures-made-near-the-screen.md)).
+- A compact whose raw names its lens as a focal range, as CHDK's DNGs
+  do, now gets the body's lens profile instead of "no profile for"
+  ([§453](https://github.com/jessolmstead/greycard/blob/master/docs/notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md)).
 - An exported JPEG or TIFF now carries an ICC version 2 profile, so
   Windows' photo viewer, which ignored the version 4 one and showed an
   Adobe RGB export flat, reads it like Lightroom's

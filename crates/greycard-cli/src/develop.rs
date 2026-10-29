@@ -629,7 +629,11 @@ fn correct_lens(
                         ""
                     }
                 );
-                let p = greycard_lens::Profile { lens, camera };
+                let p = greycard_lens::Profile {
+                    lens,
+                    camera,
+                    from_body: l.from_body,
+                };
                 if p.measured_on_smaller_sensor() {
                     tracing::info!(
                         "{}: measured on a smaller sensor, the corners reach r={:.2}; the vignetting is held at its edge past r=1",
@@ -643,7 +647,11 @@ fn correct_lens(
                         lens.name()
                     );
                 }
-                Some(greycard_lens::Profile { lens, camera })
+                Some(greycard_lens::Profile {
+                    lens,
+                    camera,
+                    from_body: l.from_body,
+                })
             }
             (None, _) => {
                 tracing::warn!(
