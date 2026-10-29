@@ -26,6 +26,22 @@ the reasoning lives in `docs/notes.md`.
       until §441 kept it off Core ML. The compile runs out of process
       and is cached after. Compile the models in the background when
       they are fetched or at launch, or say "preparing" while it runs
+- [ ] The picture drags when the pointer is over the canvas round it,
+      not over it (discussion 51, 2026-10-29)
+- [ ] The Loupe shows no tools after the export queue was viewed,
+      until the folders are shown again (discussion 51, 2026-10-29)
+- [ ] Idle in the Library on Windows, CPU at 50 percent and memory
+      tripling within minutes (discussion 51, pixls, 2026-10-29): not
+      reproduced on Linux; waits on the reporter's log
+- [ ] An exported JPEG's embedded profile reads flat in Windows'
+      viewer, right in Photoshop (issue 53): lcms writes a version 4
+      profile with parametric curves; write version 2 with curve
+      tables, as Lightroom does, and check in the viewer
+- [ ] System and File display profiles differ with the same profile
+      picked (issue 53): waits on the reporter's profile; a table-based
+      monitor profile is the lead
+- [ ] "Finding people" ran forever and the masks broke after, on
+      Windows (issue 44): waits on the reporter's log
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
 - [ ] A fill on a denoised frame still gets more grain than its
@@ -982,6 +998,20 @@ clears or a tester asks for it.
 - [ ] Ctrl+E exports the selection with the last settings into the
       last folder, no sheet, as darktable does; the sheet the first
       time, before any export has set them (pixls, 2026-10-28)
+- [ ] A lighter canvas and a white one, for the light theme
+      (issue 53, 2026-10-29)
+- [ ] A fill from the near surround only, so a logo on a red button
+      does not take the blue round it, and a repeated object is not
+      drawn again (issue 54, 2026-10-29)
+- [ ] A smaller remove brush, and a selection redrawn rather than
+      started over (issue 54, 2026-10-29)
+- [ ] A mark when a remove's region is filled below full resolution
+      (issue 54, 2026-10-29)
+- [ ] A way back from the export queue to the folder viewed before it
+      (discussion 51, 2026-10-29)
+- [ ] The status area clear of the picture, or dismissable; the scroll
+      bars at their hovered size always; the Export sheet's text crisp
+      at 1080p (discussion 51, 2026-10-29)
 
 ## Blocked
 
