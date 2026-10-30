@@ -32,6 +32,11 @@ the reasoning lives in `docs/notes.md`.
       root and more for raws with no embedded JPEG, where each preview
       is a develop; shown now (§452). The previews on the near-screen
       rule, or made only while culling (discussion 51, 2026-10-29)
+- [ ] The window at rest holds a third of a laptop's GPU on Windows,
+      in the Library after a frame was opened (an RTX 5060 Laptop at
+      2.3x, discussion 51, 2026-10-29); the same path here draws
+      nothing at rest at that scale. The log says since 9680ffd4 when
+      the window keeps drawing, with what was on. A Windows log decides
 - [ ] A Fast fill on a Windows GeForce RTX 3080 Ti reloads the models
       every fill (5 s each) and takes 11 to 19 s for 24 UNet calls
       against under 3 s here, and once lost the device after a 76 s
