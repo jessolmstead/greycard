@@ -605,6 +605,30 @@ pub(super) fn ask(st: &State) -> Option<Look> {
     })
 }
 
+/// [`refresh_view`] for a list whose view has just changed: a read of
+/// the list still out is the view before's, so it is let go (it lands
+/// as given up, by its token) and the new view's sent at once rather
+/// than after it. A view still opening sends nothing, as
+/// [`refresh_view`] has it, and the read out is then still out: its
+/// mark is put back.
+pub(crate) fn read_view_now(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> bool {
+    let was = {
+        let mut st = state.borrow_mut();
+        (
+            std::mem::take(&mut st.views.library.merging),
+            st.views.library.merge_since.take(),
+        )
+    };
+    if refresh_view(state, app, worker) {
+        return true;
+    }
+    let mut st = state.borrow_mut();
+    if st.views.library.loading {
+        (st.views.library.merging, st.views.library.merge_since) = was;
+    }
+    false
+}
+
 /// The browser's list read again, from the folder or from the index,
 /// and merged into the window's. The read is off the window's thread,
 /// and the new files' sidecars with it. One is out at a time: a

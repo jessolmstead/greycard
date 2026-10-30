@@ -1597,14 +1597,23 @@ pub(crate) fn index_open_folder(st: &mut State, ids: Option<Vec<Option<i64>>>) {
     // pass still running for the list before is dropped, by the
     // generation, so it does not report over the view.
     if st.views.view.lists_rows() {
-        st.views.index_generation += 1;
-        st.views.index_progress = None;
-        indexer.folders(Vec::new(), st.views.index_generation);
+        drop_folder_pass(st);
         return;
     }
     st.views.index_generation += 1;
     st.views.index_progress = Some((0, st.files.len()));
     indexer.folders(folders_of(&st.files), st.views.index_generation);
+}
+
+/// A folder pass still running for the list before dropped, by the
+/// generation, so it does not report over a list of the index's rows.
+pub(crate) fn drop_folder_pass(st: &mut State) {
+    let Some(indexer) = &st.views.index else {
+        return;
+    };
+    st.views.index_generation += 1;
+    st.views.index_progress = None;
+    indexer.folders(Vec::new(), st.views.index_generation);
 }
 
 /// A file's sidecar was written: its row is brought up to date on

@@ -824,7 +824,12 @@ fn folded(st: &mut State, app: &App, row: i32) {
 }
 
 /// The switch flipped: kept for the next run, and the folder open in
-/// the tree opened again with it.
+/// the tree opened again with it. When the frame on screen is in the
+/// new list the view changes in place and the list is merged, as a
+/// sort's is: the frame stays on screen, its picture and develop with
+/// it, and nothing else is opened again. When it is not (the
+/// switch turned off under a frame of a folder below), or there is no
+/// frame on screen, the view is opened as any is.
 fn subfolders_changed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
     let on = app.get_folder_tree_subfolders();
     let again = {
@@ -837,15 +842,77 @@ fn subfolders_changed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>
         // frames already.
         match shown_for(&st) {
             Some(_) if st.views.view == View::Folder && !on => None,
-            Some((root, folder)) => {
-                Some(view_for(root, folder, on)).filter(|v| *v != st.views.view)
-            }
+            Some((root, folder)) => Some(view_for(root, folder, on))
+                .filter(|v| *v != st.views.view)
+                .map(|v| (v, keeps_frame(&st, folder, on))),
             None => None,
         }
     };
-    if let Some(view) = again {
-        crate::roots::open_view(state, app, worker, view);
+    let Some((view, kept)) = again else {
+        return;
+    };
+    if kept && change_in_place(state, app, worker, view.clone()) {
+        return;
     }
+    crate::roots::open_view(state, app, worker, view);
+}
+
+/// Whether the frame on screen is in the list of `folder`, with `deep`
+/// those under it too, as the index spells its paths: the view's folder
+/// is the index's spelling, and so is every path of a list read from
+/// it. A folder opened from the disk under another spelling (a link to
+/// it) is not taken for the same, and is opened again instead.
+fn keeps_frame(st: &State, folder: &Path, deep: bool) -> bool {
+    let Some(path) = st.current.and_then(|c| st.path_at(c)) else {
+        return false;
+    };
+    if deep {
+        path.starts_with(folder)
+    } else {
+        path.parent() == Some(folder)
+    }
+}
+
+/// `view` put in place of the one open, over the same folder, and the
+/// list read again and merged into the window's, the frame on screen
+/// kept (`roots::refresh_view`). What is drawn from the view and not
+/// from the list (the tree's mark, the tiles, the switch, the folder
+/// named, the Sort menu) follows now, as an open's landing has it.
+/// The merge keeps a frame on screen that is not in the list it
+/// brings, which is why the caller asks only when it is. A read of
+/// the list already out is of the view before, and is let go for this
+/// one. Should the read fail (the index unreadable mid-read), the view
+/// is the new one over the old list until the next read of it. False,
+/// the view left as it was, when there is nothing to read the list
+/// from or a view is still opening.
+fn change_in_place(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, view: View) -> bool {
+    let was = std::mem::replace(&mut state.borrow_mut().views.view, view);
+    if !crate::roots::read_view_now(state, app, worker) {
+        state.borrow_mut().views.view = was;
+        return false;
+    }
+    let mut st = state.borrow_mut();
+    // A folder from the disk had its folder passed over by the
+    // indexer; the list is the index's rows now, as an open of the
+    // view would have it. What the pass said of itself (its progress,
+    // or that the index was busy, a retry the dropped pass will not
+    // make) goes from the filter's line with it, as an open's list
+    // clears it: the merge may change no row, and redraw nothing.
+    if was == View::Folder {
+        crate::library::drop_folder_pass(&mut st);
+        st.views.index_progress = None;
+        st.views.index_tries = 0;
+        st.views.index_error = None;
+        crate::panel::cull::show_filter(&st, app);
+    }
+    // The frame on screen brought into view when the merge lands: the
+    // rows round it may have come or gone.
+    st.views.sort_reveal = true;
+    crate::panel::recent::opened(&mut st, app);
+    want(&mut st, app);
+    crate::roots::show(&st, app);
+    crate::panel::sort::show(&st, app);
+    true
 }
 
 impl Tree {
@@ -1747,6 +1814,332 @@ mod tests {
         land_sent(&state, &app, &worker);
         assert_eq!(state.borrow().views.view, by_tile);
         done(&dir, state);
+    }
+
+    /// Row `i` chosen and its frame opened, its sidecar read as the
+    /// window reads the one on screen.
+    fn open_at(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, i: i32) {
+        app.invoke_select(i);
+        crate::rows::land_pending(state, app, worker);
+    }
+
+    /// The frame on screen, by name, and the develop it is on.
+    fn on_screen(state: &Rc<RefCell<State>>) -> (Option<String>, u64) {
+        let st = state.borrow();
+        let name = st
+            .current
+            .and_then(|c| st.path_at(c))
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned());
+        (name, st.develop.generation)
+    }
+
+    /// The switch flipped, and what it sends landed: the reads of the
+    /// list, and the sidecars of a frame it opens.
+    fn flip(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, on: bool) {
+        app.set_folder_tree_subfolders(on);
+        app.invoke_folder_tree_subfolders_changed();
+        land_sent(state, app, worker);
+        crate::rows::land_pending(state, app, worker);
+    }
+
+    /// The switch turned on over a folder with a frame open: the list
+    /// grows to those under it around the frame, which stays on screen
+    /// on the develop it had, never opened again; the tiles go, and the
+    /// tree's mark and the switch say the new view.
+    #[test]
+    fn the_switch_turned_on_keeps_the_frame_on_screen() {
+        let dir = scratch("switch-on-kept");
+        let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
+        let (root, day) = (dir.join("archive"), dir.join("archive").join("day"));
+        pick(&app, "day");
+        land_sent(&state, &app, &worker);
+        open_at(&state, &app, &worker, 1);
+        let before = on_screen(&state);
+        assert_eq!(before.0.as_deref(), Some("d2.tif"));
+        assert_eq!(tiles(&app), [("more".into(), 1)]);
+
+        flip(&state, &app, &worker, true);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
+        assert_eq!(
+            state.borrow().views.view,
+            View::Branch {
+                root,
+                folder: day,
+                deep: true
+            }
+        );
+        assert_eq!(
+            on_screen(&state),
+            before,
+            "the same frame, not opened again"
+        );
+        assert!(tiles(&app).is_empty());
+        assert!(app.get_folder_tree_subfolders());
+        assert_eq!(rows(&app)[1], ("day".into(), 1, 3, true));
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The switch turned off with the frame on screen directly in the
+    /// folder: the list shrinks to the folder's own around it, and the
+    /// frame stays on screen; the tiles come back.
+    #[test]
+    fn the_switch_turned_off_keeps_a_frame_of_the_folders_own() {
+        let dir = scratch("switch-off-kept");
+        let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
+        state.borrow_mut().views.tree.subfolders = true;
+        app.set_folder_tree_subfolders(true);
+        pick(&app, "day");
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
+        open_at(&state, &app, &worker, 1);
+        let before = on_screen(&state);
+        assert_eq!(before.0.as_deref(), Some("d2.tif"));
+
+        flip(&state, &app, &worker, false);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
+        assert!(matches!(
+            state.borrow().views.view,
+            View::Branch { deep: false, .. }
+        ));
+        assert_eq!(
+            on_screen(&state),
+            before,
+            "the same frame, not opened again"
+        );
+        assert_eq!(tiles(&app), [("more".into(), 1)]);
+        assert!(!app.get_folder_tree_subfolders());
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The switch turned off with the frame on screen in a folder
+    /// below: it is not in the new list, so the view is opened again
+    /// as any is, and the frame of the folder below is not kept in the
+    /// folder's own list as a merge would keep it.
+    #[test]
+    fn the_switch_turned_off_under_a_frame_below_opens_the_folder_again() {
+        let dir = scratch("switch-off-below");
+        let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
+        state.borrow_mut().views.tree.subfolders = true;
+        app.set_folder_tree_subfolders(true);
+        pick(&app, "day");
+        land_sent(&state, &app, &worker);
+        open_at(&state, &app, &worker, 2);
+        assert_eq!(on_screen(&state).0.as_deref(), Some("m.tif"));
+
+        flip(&state, &app, &worker, false);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
+        assert!(matches!(
+            state.borrow().views.view,
+            View::Branch { deep: false, .. }
+        ));
+        // The list replaced and its first frame to be opened: in a
+        // test's window, from the rendering setup it waits for.
+        assert_eq!(on_screen(&state).0, None);
+        assert_eq!(state.borrow().launch.select_at_start, Some(0));
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// Over the root, whose view with the switch on is the root's own:
+    /// on and off again with the root's own frame on screen, the list
+    /// grows and shrinks around it and it stays on screen throughout.
+    #[test]
+    fn the_switch_over_the_root_keeps_the_roots_own_frame() {
+        let dir = scratch("switch-root-kept");
+        let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
+        let root = dir.join("archive");
+        pick(&app, "archive");
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["r.tif"]);
+        open_at(&state, &app, &worker, 0);
+        let before = on_screen(&state);
+        assert_eq!(before.0.as_deref(), Some("r.tif"));
+
+        flip(&state, &app, &worker, true);
+        assert_eq!(state.borrow().views.view, View::Roots(Some(root.clone())));
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif", "r.tif"]);
+        assert_eq!(
+            on_screen(&state),
+            before,
+            "the same frame, not opened again"
+        );
+        assert!(tiles(&app).is_empty());
+        assert_eq!(state.borrow().views.recent.open, None, "the root's view");
+
+        flip(&state, &app, &worker, false);
+        assert_eq!(
+            state.borrow().views.view,
+            View::Branch {
+                root: root.clone(),
+                folder: root.clone(),
+                deep: false
+            }
+        );
+        assert_eq!(listed(&state), ["r.tif"]);
+        assert_eq!(
+            on_screen(&state),
+            before,
+            "the same frame, not opened again"
+        );
+        assert_eq!(tiles(&app), [("day".into(), 3)]);
+        assert_eq!(state.borrow().views.recent.open, Some(root));
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A folder opened from the disk under a root, a frame of it on
+    /// screen, and the switch turned on: the folder with those under
+    /// it from the index, the frame kept on screen.
+    #[test]
+    fn the_switch_turned_on_over_a_disk_folder_keeps_the_frame_on_screen() {
+        let dir = scratch("switch-disk-kept");
+        let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
+        let day = dir.join("archive").join("day");
+        crate::panel::browser::open_folder(&state, &app, &worker, &day);
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().views.view, View::Folder);
+        open_at(&state, &app, &worker, 0);
+        let before = on_screen(&state);
+        assert_eq!(before.0.as_deref(), Some("d1.tif"));
+
+        flip(&state, &app, &worker, true);
+        assert!(matches!(
+            state.borrow().views.view,
+            View::Branch { deep: true, .. }
+        ));
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
+        assert_eq!(
+            on_screen(&state),
+            before,
+            "the same frame, not opened again"
+        );
+        assert!(app.get_folder_tree_subfolders());
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A read of the list out when the switch flips is of the view
+    /// before: the new view's is sent at once beside it, and the old
+    /// one, landing after, is let go and does not put its list back.
+    #[test]
+    fn the_switch_over_a_read_still_out_reads_the_new_view_at_once() {
+        let dir = scratch("switch-merging");
+        let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
+        pick(&app, "day");
+        land_sent(&state, &app, &worker);
+        open_at(&state, &app, &worker, 1);
+        let before = on_screen(&state);
+        assert!(crate::roots::refresh_view(&state, &app, &worker));
+        assert_eq!(crate::roots::sent_reads(), 1, "the day's own read out");
+
+        app.set_folder_tree_subfolders(true);
+        app.invoke_folder_tree_subfolders_changed();
+        assert_eq!(crate::roots::sent_reads(), 2, "the new view's sent at once");
+        crate::roots::land_sent_last_first(&state, &app, &worker);
+        crate::rows::land_pending(&state, &app, &worker);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
+        assert_eq!(on_screen(&state), before);
+        assert!(!state.borrow().views.library.merging);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A read of the list out and a view still opening when the switch
+    /// flips: nothing is read in place, the view is opened as any is,
+    /// and the read out is still marked out, so a refresh asked for
+    /// meanwhile waits for it rather than sending a second.
+    #[test]
+    fn the_switch_while_a_view_opens_leaves_the_read_out_marked() {
+        let dir = scratch("switch-loading");
+        let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
+        pick(&app, "day");
+        land_sent(&state, &app, &worker);
+        open_at(&state, &app, &worker, 1);
+        assert!(crate::roots::refresh_view(&state, &app, &worker));
+        {
+            let mut st = state.borrow_mut();
+            st.views.library.loading = true;
+            st.views.library.loading_since = Some(std::time::Instant::now());
+        }
+        app.set_folder_tree_subfolders(true);
+        app.invoke_folder_tree_subfolders_changed();
+        {
+            let st = state.borrow();
+            assert!(st.views.library.merging, "the read out is still out");
+            assert!(st.views.library.merge_since.is_some());
+            // Opened as any view is: the view changes when its read
+            // lands, not before.
+            assert!(matches!(st.views.view, View::Branch { deep: false, .. }));
+        }
+        assert_eq!(crate::roots::sent_reads(), 2, "the open's read sent");
+        land_sent(&state, &app, &worker);
+        assert!(matches!(
+            state.borrow().views.view,
+            View::Branch { deep: true, .. }
+        ));
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A folder from the disk whose pass was saying something on the
+    /// filter's line (its progress, or that the index is busy) and the
+    /// switch turned on: the pass is dropped, and its words with it,
+    /// though the list (a folder with nothing under it) does not move.
+    #[test]
+    fn the_switch_over_a_disk_folder_clears_what_its_pass_said() {
+        let dir = scratch("switch-pass-said");
+        let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
+        let day = dir.join("archive").join("day");
+        let said = |state: &Rc<RefCell<State>>, app: &App| {
+            crate::panel::cull::show_filter(&state.borrow(), app);
+            app.get_filter_facet_note().to_string()
+        };
+        crate::panel::browser::open_folder(&state, &app, &worker, &day.join("more"));
+        land_sent(&state, &app, &worker);
+        open_at(&state, &app, &worker, 0);
+        state.borrow_mut().views.index_progress = Some((0, 1));
+        assert_eq!(said(&state, &app), "Indexing the folder: 0 of 1");
+        flip(&state, &app, &worker, true);
+        assert_eq!(listed(&state), ["m.tif"]);
+        assert!(matches!(
+            state.borrow().views.view,
+            View::Branch { deep: true, .. }
+        ));
+        assert!(!app.get_filter_facet_note().starts_with("Indexing"));
+
+        flip(&state, &app, &worker, false);
+        crate::panel::browser::open_folder(&state, &app, &worker, &day);
+        land_sent(&state, &app, &worker);
+        open_at(&state, &app, &worker, 0);
+        {
+            let mut st = state.borrow_mut();
+            st.views.index_tries = 1;
+            st.views.index_error = Some("Library index busy; trying again (locked)".into());
+        }
+        assert!(said(&state, &app).starts_with("Library index busy"));
+        flip(&state, &app, &worker, true);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
+        assert!(!app.get_filter_facet_note().starts_with("Library index"));
+        assert_eq!(state.borrow().views.index_tries, 0);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// In Cull the switch keeps the frame on screen too, and the mode
+    /// stays on over the new list.
+    #[test]
+    fn the_switch_in_cull_keeps_the_frame_and_the_mode() {
+        let dir = scratch("switch-cull");
+        let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
+        pick(&app, "day");
+        land_sent(&state, &app, &worker);
+        open_at(&state, &app, &worker, 1);
+        app.invoke_cull_toggled();
+        assert!(state.borrow().culling.cull.is_some());
+        let before = on_screen(&state);
+
+        flip(&state, &app, &worker, true);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
+        // The frame by its path is what an open of the view would
+        // lose; the mode stays on through an open as well.
+        assert_eq!(on_screen(&state), before);
+        assert!(state.borrow().culling.cull.is_some(), "still culling");
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// With the switch on there are no tiles: a folder's view holds

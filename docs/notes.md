@@ -470,3 +470,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§455. A pan from a press on the picture](notes/455-a-pan-from-a-press-on-the-picture.md) (2026-10-29)
 - [§456. The way back from the export queue](notes/456-the-way-back-from-the-export-queue.md) (2026-10-29)
 - [§457. Every compared frame whole at 1:1](notes/457-every-compared-frame-whole-at-one-to-one.md) (2026-10-30)
+- [§458. The switch keeps the frame on screen](notes/458-the-switch-keeps-the-frame-on-screen.md) (2026-10-30)

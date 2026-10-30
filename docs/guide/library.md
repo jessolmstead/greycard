@@ -170,7 +170,8 @@ shows its folders under **FOLDERS**, in the grid and the loupe alike.
 - The count beside a folder is its own frames when it is unfolded, and
   everything under it when it is folded.
 - **With subfolders** off (the default) opens a folder's own frames
-  only. Turn it on to open a folder with everything under it. greycard
+  only. Turn it on to open a folder with everything under it. The
+  frame on screen stays open when it is still in the list. greycard
   remembers the setting.
 
 A folder with no frames of its own opens empty, and the status line

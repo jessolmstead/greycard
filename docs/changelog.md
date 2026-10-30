@@ -38,6 +38,10 @@ disk image's install window.
   full camera JPEG, not only the chosen one; the others were scaled-up
   previews, soft where sharpness was the question
   ([§457](https://github.com/jessolmstead/greycard/blob/master/docs/notes/457-every-compared-frame-whole-at-one-to-one.md)).
+- Flipping With subfolders in the Loupe no longer reloads the frame
+  on screen, which made the navigator blink; the list changes under
+  it and the frame stays as it is
+  ([§458](https://github.com/jessolmstead/greycard/blob/master/docs/notes/458-the-switch-keeps-the-frame-on-screen.md)).
 - A compact whose raw names its lens as a focal range, as CHDK's DNGs
   do, now gets the body's lens profile instead of "no profile for"
   ([§453](https://github.com/jessolmstead/greycard/blob/master/docs/notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md)).

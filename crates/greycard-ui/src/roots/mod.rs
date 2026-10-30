@@ -87,7 +87,10 @@ pub(crate) use self::{
     pane::{
         add_and_open, edit_roots, one_root_named, recount, root_name, said, show, taken_from_file,
     },
-    view::{loading_words, open_listing, open_nothing, open_view, open_view_on, refresh_view},
+    view::{
+        loading_words, open_listing, open_nothing, open_view, open_view_on, read_view_now,
+        refresh_view,
+    },
     watcher::{poll_every, restart_poll, start},
 };
 
@@ -765,6 +768,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 #[cfg(test)]
 pub(crate) fn land_sent(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
     land_sent_in(state, app, worker, false)
+}
+
+/// How many reads of views and folders are out in a test, sent and not
+/// yet landed.
+#[cfg(test)]
+pub(crate) fn sent_reads() -> usize {
+    tests::SENT.with(|s| s.borrow().len())
 }
 
 /// [`land_sent`], the reads sent landing last first: a thread that was
