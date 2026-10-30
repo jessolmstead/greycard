@@ -34,6 +34,10 @@ disk image's install window.
   longer pans it; a drag on the picture does, and a picture dragged
   out of view can be dragged back from anywhere
   ([§455](https://github.com/jessolmstead/greycard/blob/master/docs/notes/455-a-pan-from-a-press-on-the-picture.md)).
+- In culling's compare view at 1:1, every frame is now shown from its
+  full camera JPEG, not only the chosen one; the others were scaled-up
+  previews, soft where sharpness was the question
+  ([§457](https://github.com/jessolmstead/greycard/blob/master/docs/notes/457-every-compared-frame-whole-at-one-to-one.md)).
 - A compact whose raw names its lens as a focal range, as CHDK's DNGs
   do, now gets the body's lens profile instead of "no profile for"
   ([§453](https://github.com/jessolmstead/greycard/blob/master/docs/notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md)).

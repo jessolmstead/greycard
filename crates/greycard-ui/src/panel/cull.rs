@@ -31,9 +31,12 @@ pub(crate) struct Cull {
     /// for again, so a share that has stopped answering is not tried
     /// at every step.
     pub(crate) file_failed: std::collections::HashSet<usize>,
-    /// The file whose full-size copy has been asked for and has not
-    /// arrived.
-    pub(crate) full_asked: Option<usize>,
+    /// The files whose full-size copies have been asked for and have
+    /// not arrived.
+    pub(crate) full_asked: std::collections::HashSet<usize>,
+    /// The frames whose full-size copies the log last said were in, so
+    /// it says so once a set.
+    pub(crate) full_said: Option<Vec<usize>>,
     /// The previews on the GPU, by file: the number of the copy each
     /// was made from, and the texture.
     pub(crate) textures: HashMap<usize, (u64, gpu::Texture)>,
@@ -94,12 +97,64 @@ impl Cull {
         }
     }
 
+    /// The frames held whole at 1:1, in the order they are asked for:
+    /// every tile's, `chosen`'s first. A versions compare's chosen tile
+    /// alone: its versions share one camera JPEG, and the other tiles
+    /// keep the pictures of their edits. `shown` is the browser's rows.
+    pub(crate) fn whole(&self, chosen: usize, shown: &[usize]) -> Vec<usize> {
+        if self.versions_of.is_some() {
+            return vec![chosen];
+        }
+        let cells: Vec<usize> = self.rows(shown).into_iter().map(|r| shown[r]).collect();
+        cull::chosen_first(chosen, &cells)
+    }
+
+    /// The textures made from full-size copies the cache let go: a
+    /// full copy of a 45 MP frame is some 180 MB on the GPU too.
+    pub(crate) fn let_go(&mut self, dropped: cull::Dropped) {
+        for (cell, id) in dropped {
+            if self.textures.get(&cell).is_some_and(|(t, _)| *t == id) {
+                self.textures.remove(&cell);
+            }
+        }
+    }
+
+    /// The log's word once every frame held whole at 1:1 (`whole`) is
+    /// in at its own size or has no copy coming: how many are and how
+    /// much memory they hold, since four can be most of a gigabyte.
+    /// Once a set; one frame alone says nothing more than its decode's
+    /// own line does.
+    fn say_full(&mut self, whole: &[usize]) {
+        let set = sorted(whole);
+        if set.len() < 2
+            || self.full_said.as_ref() == Some(&set)
+            || set.iter().any(|f| self.full_asked.contains(f))
+        {
+            return;
+        }
+        let held: Vec<_> = set
+            .iter()
+            .filter(|&&f| self.cache.has_own_size(f))
+            .filter_map(|&f| self.cache.best(f))
+            .collect();
+        let bytes: usize = held.iter().map(|p| p.bytes()).sum();
+        tracing::info!(
+            "culling: {} frame{} at 1:1, {} MB of full copies",
+            held.len(),
+            if held.len() == 1 { "" } else { "s" },
+            bytes / 1_000_000
+        );
+        self.full_said = Some(set);
+    }
+
     /// Another list, or the old one renumbered: what was learned of
-    /// its files by their numbers goes.
+    /// its files by their numbers goes, and what was asked of them.
     pub(crate) fn clear_failures(&mut self) {
         self.failed.clear();
         self.no_local.clear();
         self.file_failed.clear();
+        self.full_asked.clear();
+        self.full_said = None;
     }
 
     /// The view is no longer a versions compare: its note and its file
@@ -140,7 +195,8 @@ impl Cull {
             failed: HashMap::new(),
             no_local: std::collections::HashSet::new(),
             file_failed: std::collections::HashSet::new(),
-            full_asked: None,
+            full_asked: std::collections::HashSet::new(),
+            full_said: None,
             textures: HashMap::new(),
             compare: 1,
             anchor: 0,
@@ -157,6 +213,13 @@ impl Cull {
             set: None,
         }
     }
+}
+
+/// `cells` in order, to be compared as a set.
+fn sorted(cells: &[usize]) -> Vec<usize> {
+    let mut set = cells.to_vec();
+    set.sort_unstable();
+    set
 }
 
 /// Into culling mode: whatever is in hand is put down and the edit
@@ -258,6 +321,9 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     // The camera's picture is kept until the develop lands; only the
     // one frame's is needed for that.
     cull.compare = 1;
+    let dropped = cull.cache.keep_full(&[c]);
+    cull.let_go(dropped);
+    cull.full_asked.retain(|f| *f == c);
     cull.textures.retain(|f, _| *f == c);
     // The develop view stands an edited frame in with the picture of its
     // edit: the camera's of the frames about this one, which the mode
@@ -637,10 +703,20 @@ pub(crate) fn cull_select(st: &mut State, app: &App, cell: usize) {
             cull.anchor = cull::anchor_for(cull.anchor, row, cull.compare, count);
         }
         cull.switched = Some(std::time::Instant::now());
-        // A full-size copy is the frame's own; the next one asks for
-        // its own if 1:1 is still on.
-        cull.cache.drop_full_unless(cell);
-        cull.full_asked = None;
+        // A full-size copy is its frame's own; a frame no longer shown
+        // lets its copy go and its ask lapse, and each one shown asks
+        // for its own if 1:1 is still on.
+        let shown = cull.whole(cell, &st.views.shown);
+        let dropped = cull.cache.keep_full(&shown);
+        cull.let_go(dropped);
+        cull.full_asked.retain(|f| shown.contains(f));
+        if cull
+            .full_said
+            .as_ref()
+            .is_some_and(|s| *s != sorted(&shown))
+        {
+            cull.full_said = None;
+        }
         // A decode that failed is tried again when the frame comes
         // round: a cell being written, a moment's shortage.
         cull.failed.remove(&cell);
@@ -666,6 +742,7 @@ pub(crate) fn cull_refresh(st: &mut State) {
         return;
     };
     let rows = cull.rows(&st.views.shown);
+    let whole = cull.whole(c, &st.views.shown);
     let mut order: Vec<usize> = rows.clone();
     for r in cull::order(row, count, cull.reach, cull.forward) {
         if !order.contains(&r) {
@@ -678,7 +755,8 @@ pub(crate) fn cull_refresh(st: &mut State) {
         .chain(rows)
         .map(|r| st.views.shown[r])
         .collect();
-    cull.cache.keep(&window, c);
+    let dropped = cull.cache.keep(&window, &whole);
+    cull.let_go(dropped);
     cull.textures.retain(|f, _| window.contains(f));
     tracing::debug!(
         "cull window: rows {}..{} about {row}, {} previews held, {} MB",
@@ -695,14 +773,18 @@ pub(crate) fn cull_refresh(st: &mut State) {
     let version_of = |c: usize| cells[c].version.clone();
     let frames: Vec<usize> = order.iter().map(|&r| st.views.shown[r]).collect();
     let mut wants = Vec::new();
-    // At 1:1, the frame's full JPEG before anything, where its file can
-    // be read.
-    if st.develop.zoom > 0.0 && !cull.cache.has_own_size(c) && cull.wants_file(c) && plan(c).file {
-        wants.push(
-            cull::Want::for_loupe(c, path_of(c), 0)
-                .of_version(version_of(c))
-                .with_picture(picture_of(c)),
-        );
+    // At 1:1, the full JPEG of each frame shown before anything, the
+    // chosen one's first, where its file can be read.
+    if st.develop.zoom > 0.0 {
+        for &f in &whole {
+            if !cull.cache.has_own_size(f) && cull.wants_file(f) && plan(f).file {
+                wants.push(
+                    cull::Want::for_loupe(f, path_of(f), 0)
+                        .of_version(version_of(f))
+                        .with_picture(picture_of(f)),
+                );
+            }
+        }
     }
     // The local previews of the frames with no picture yet, all of
     // them ahead of any file: under an offline root they are all there
@@ -756,6 +838,14 @@ pub(crate) fn cull_refresh(st: &mut State) {
                 .camera_only(camera),
         );
     }
+    // The full asks of this list are the ones outstanding, and one it
+    // drops from the queue (at a fit, or a set moved on) is asked again
+    // at the next 1:1; one a thread is on is not begun twice.
+    cull.full_asked = wants
+        .iter()
+        .filter(|w| w.size == 0)
+        .map(|w| w.file)
+        .collect();
     st.culling.prefetch.want(wants);
 }
 
@@ -831,7 +921,8 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
             // window about; its own picture is all that is wanted.
             None => vec![cell],
         };
-        hold.cache.keep(&window, cell);
+        let dropped = hold.cache.keep(&window, &[cell]);
+        hold.let_go(dropped);
         hold.textures.retain(|f, _| window.contains(f));
     }
     if row.is_none() || !placeholder::worth_it(st.path_of(cell)) {
@@ -1061,13 +1152,20 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
     }
     let path = frame.path.clone();
     let current = st.current;
+    let zoom = st.develop.zoom;
     let culling = st.culling.cull.is_some();
+    // The frames whose full-size copies are taken in: those held whole
+    // at 1:1 while culling, the one standing in otherwise.
+    let shown: Vec<usize> = match (st.culling.cull.as_ref(), current) {
+        (Some(cull), Some(c)) => cull.whole(c, &st.views.shown),
+        _ => current.into_iter().collect(),
+    };
     let plan = loupe_plan(st, file);
     let Some(cull) = st.culling.cull.as_mut().or(st.culling.hold.as_mut()) else {
         return;
     };
-    if cull.full_asked == Some(file) && size == 0 {
-        cull.full_asked = None;
+    if size == 0 {
+        cull.full_asked.remove(&file);
     }
     let made = match loaded {
         cull::Loaded::Ok { preview, .. } => {
@@ -1081,7 +1179,9 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
                 if preview.full { " (full)" } else { "" },
                 preview.seconds * 1e3
             );
-            if preview.full && current != Some(file) {
+            // A full-size copy is for a frame held whole at 1:1, and one
+            // that lands after a fit or a move is not taken in.
+            if preview.full && (zoom <= 0.0 || !shown.contains(&file)) {
                 return;
             }
             // The kind the cell wants: the camera's in Cull on the
@@ -1149,6 +1249,9 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
             false
         }
     };
+    if culling && size == 0 && zoom > 0.0 {
+        cull.say_full(&shown);
+    }
     app.window().request_redraw();
     if culling {
         return;
@@ -1174,6 +1277,44 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
     }
 }
 
+/// At 1:1, the full-size copy of each frame held whole before anything
+/// else, the chosen one's first. Asked once: the thread's own record of
+/// it is gone a moment before the delivery reaches this thread, and a
+/// frame in that moment would ask again. A frame out of reach has its
+/// local preview and nothing more.
+pub(crate) fn ask_whole(st: &mut State) {
+    let Some(c) = st.current else {
+        return;
+    };
+    if st.develop.zoom <= 0.0 {
+        return;
+    }
+    let Some(cull) = st.culling.cull.as_mut() else {
+        return;
+    };
+    let mut asks = Vec::new();
+    for f in cull.whole(c, &st.views.shown) {
+        if !cull.cache.has_own_size(f)
+            && cull.wants_file(f)
+            && !cull.full_asked.contains(&f)
+            && loupe_plan_of(&st.files, &st.from_row, &st.cells, &st.views.library, f).file
+        {
+            cull.full_asked.insert(f);
+            let path = st.files[st.cells[f].file].clone();
+            asks.push(
+                cull::Want::for_loupe(f, path.clone(), 0)
+                    .of_version(st.cells[f].version.clone())
+                    .with_picture(companion_picture(&st.views.companions, &path)),
+            );
+        }
+    }
+    // Each goes to the front of the queue, so the last one put there
+    // is the first decoded.
+    for want in asks.into_iter().rev() {
+        st.culling.prefetch.push_front(want);
+    }
+}
+
 /// One frame of the culling loupe: the compared frames' previews on
 /// the GPU (made now if their copy changed), each fitted to its tile
 /// or at the zoom, turned as its edit turns it; the tiles' boxes
@@ -1193,6 +1334,9 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // The mode itself, or the camera's picture standing in for a
     // develop: the mode just left, or a frame just selected.
     let holding = st.culling.cull.is_none();
+    if !holding {
+        ask_whole(st);
+    }
     // Which frame is drawn: while one stands in, the frame there is a
     // picture of, which lags the selection until its own is decoded.
     let c = match standing_in(st) {
@@ -1244,29 +1388,17 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
         }
     }
     // A frame needs its full-size copy only while it is looked at
-    // 1:1; at a fit that copy and its texture are let go, and at
-    // 1:1 it is asked for before anything else.
-    if st.develop.zoom <= 0.0 && cull.cache.full(c).is_some() {
-        cull.cache.drop_full();
-        cull.textures.remove(&c);
-    }
-    // Asked once: the thread's own record of it is gone a moment
-    // before the delivery reaches this thread, and a frame in that
-    // moment would ask again.
-    // A frame out of reach has its local preview and nothing more.
-    if !holding
-        && st.develop.zoom > 0.0
-        && !cull.cache.has_own_size(c)
-        && cull.wants_file(c)
-        && cull.full_asked != Some(c)
-        && loupe_plan_of(&st.files, &st.from_row, &st.cells, &st.views.library, c).file
-    {
-        cull.full_asked = Some(c);
-        let path = st.files[st.cells[c].file].clone();
-        let want = cull::Want::for_loupe(c, path.clone(), 0)
-            .of_version(st.cells[c].version.clone())
-            .with_picture(companion_picture(&st.views.companions, &path));
-        st.culling.prefetch.push_front(want);
+    // 1:1 (`ask_whole`); at a fit those copies and their textures are
+    // let go.
+    let whole = if holding {
+        vec![c]
+    } else {
+        cull.whole(c, &st.views.shown)
+    };
+    if st.develop.zoom <= 0.0 {
+        let dropped = cull.cache.drop_full();
+        cull.full_said = None;
+        cull.let_go(dropped);
     }
     let mut tiles = Vec::new();
     let mut overlay = Vec::new();
@@ -1369,10 +1501,11 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             },
             rect,
         ));
-        if file == c
+        // At 1:1 a capture waits for every pixel of each tile held whole.
+        if whole.contains(&file)
             && st.develop.zoom > 0.0
             && !preview.own_size()
-            && !cull.failed.contains_key(&c)
+            && !cull.failed.contains_key(&file)
         {
             ready = false;
         }
@@ -3044,6 +3177,177 @@ mod tests {
             .find(|w| w.file == 1 && w.size == 0)
             .expect("the full copy");
         assert_eq!(full.picture.as_ref(), Some(&jpeg));
+    }
+
+    /// Two frames compared at 1:1: each is asked for at its full size,
+    /// the chosen one first, each is held whole once delivered, and a
+    /// frame that leaves the set lets its copy go. A full copy of a
+    /// frame not shown is not taken in.
+    #[test]
+    fn two_frames_compared_at_one_to_one_are_each_held_whole() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(1);
+            enter_cull(&mut st, &app, 2);
+            st.develop.zoom = 1.0;
+            cull_refresh(&mut st);
+            let asked = st.culling.prefetch.asked();
+            let full: Vec<usize> = asked
+                .iter()
+                .filter(|w| w.size == 0)
+                .map(|w| w.file)
+                .collect();
+            assert_eq!(full, vec![1, 0], "{asked:?}");
+            assert!(asked.iter().position(|w| w.size != 0) >= Some(2));
+        }
+        let whole = |st: &State, file: usize| cull::Loaded::Ok {
+            file,
+            frame: st.key_of(file).unwrap(),
+            size: 0,
+            preview: Arc::new(cull::Preview::new(8, 6, vec![0; 192], (8, 6), true)),
+        };
+        // The log waits for the set: one frame in is not it.
+        let loaded = whole(&state.borrow(), 1);
+        deliver_preview(&app, loaded);
+        assert_eq!(
+            state.borrow().culling.cull.as_ref().unwrap().full_said,
+            None
+        );
+        for file in [0, 3] {
+            let loaded = whole(&state.borrow(), file);
+            deliver_preview(&app, loaded);
+        }
+        {
+            let st = state.borrow();
+            let cull = st.culling.cull.as_ref().unwrap();
+            assert!(cull.cache.has_own_size(0) && cull.cache.has_own_size(1));
+            assert!(cull.cache.full(3).is_none(), "frame 3 is not shown");
+            assert_eq!(cull.full_said.as_deref(), Some(&[0, 1][..]));
+        }
+        // On to frame 2: the set is 1 and 2, so frame 0's copy goes, 1
+        // keeps its own, and 2 is asked for whole.
+        let mut st = state.borrow_mut();
+        cull_select(&mut st, &app, 2);
+        let cull = st.culling.cull.as_ref().unwrap();
+        assert!(cull.cache.full(0).is_none() && cull.cache.full(1).is_some());
+        let asked = st.culling.prefetch.asked();
+        let full: Vec<usize> = asked
+            .iter()
+            .filter(|w| w.size == 0)
+            .map(|w| w.file)
+            .collect();
+        assert_eq!(full, vec![2], "{asked:?}");
+    }
+
+    /// The full sizes put at the front of the queue since `from`.
+    fn pushed_whole(st: &State, from: usize) -> Vec<usize> {
+        let mut files: Vec<usize> = st.culling.prefetch.pushed()[from..]
+            .iter()
+            .filter(|w| w.size == 0)
+            .map(|w| w.file)
+            .collect();
+        files.sort_unstable();
+        files
+    }
+
+    /// Asks a fit drops from the queue are asked again at the next 1:1:
+    /// a frame still waiting for its full copy when the view was fitted,
+    /// and the selection moved within the set, is not left soft.
+    #[test]
+    fn a_fit_and_an_arrow_within_the_set_leave_no_ask_behind() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        let mut st = state.borrow_mut();
+        st.current = Some(1);
+        enter_cull(&mut st, &app, 2);
+        st.develop.zoom = 1.0;
+        ask_whole(&mut st);
+        assert_eq!(pushed_whole(&st, 0), vec![0, 1]);
+        // Fitted, the copies let go, then an arrow onto frame 0, which
+        // keeps the set at 0 and 1; its list asks for nothing whole.
+        st.develop.zoom = 0.0;
+        let _ = st.culling.cull.as_mut().unwrap().cache.drop_full();
+        cull_select(&mut st, &app, 0);
+        assert!(st.culling.cull.as_ref().unwrap().full_asked.is_empty());
+        // 1:1 again: both are asked for.
+        let from = st.culling.prefetch.pushed().len();
+        st.develop.zoom = 1.0;
+        ask_whole(&mut st);
+        assert_eq!(pushed_whole(&st, from), vec![0, 1]);
+    }
+
+    /// A new list forgets what was asked of the last one's numbers: a
+    /// cell of the same number at 1:1 is asked for whole.
+    #[test]
+    fn a_new_list_forgets_the_full_asks_of_the_last() {
+        let app = window(4);
+        let (state, worker) = state_for(&app, folder(4));
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            enter_cull(&mut st, &app, 1);
+            st.develop.zoom = 1.0;
+            ask_whole(&mut st);
+            assert_eq!(pushed_whole(&st, 0), vec![0]);
+        }
+        let files: Vec<PathBuf> = (0..4)
+            .map(|i| PathBuf::from(format!("/other/B_{i}.CR3")))
+            .collect();
+        let held = files
+            .iter()
+            .map(|f| crate::rows::from_disk(f, false))
+            .collect();
+        crate::panel::browser::open_loaded(&state, &app, &worker, files, held, true, 0);
+        let mut st = state.borrow_mut();
+        assert!(st.culling.cull.as_ref().unwrap().full_asked.is_empty());
+        // Frame 0 of the new list, at 1:1 (as Space leaves it: no list).
+        let from = st.culling.prefetch.pushed().len();
+        st.current = Some(0);
+        st.develop.zoom = 1.0;
+        ask_whole(&mut st);
+        assert_eq!(pushed_whole(&st, from), vec![0]);
+    }
+
+    /// A versions compare at 1:1 asks for the chosen tile's camera JPEG
+    /// whole and no other: its versions share that JPEG, and the other
+    /// tiles keep the pictures of their edits.
+    #[test]
+    fn a_versions_compare_at_one_to_one_holds_the_chosen_tile_alone_whole() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(1);
+            enter_cull(&mut st, &app, 2);
+            let path = st.path_of(1).clone();
+            let cull = st.culling.cull.as_mut().unwrap();
+            cull.versions_of = Some(path);
+            cull.set = Some(vec![0, 1]);
+            st.develop.zoom = 1.0;
+            cull_refresh(&mut st);
+            let asked = st.culling.prefetch.asked();
+            let full: Vec<usize> = asked
+                .iter()
+                .filter(|w| w.size == 0)
+                .map(|w| w.file)
+                .collect();
+            assert_eq!(full, vec![1], "{asked:?}");
+        }
+        let whole = |st: &State, file: usize| cull::Loaded::Ok {
+            file,
+            frame: st.key_of(file).unwrap(),
+            size: 0,
+            preview: Arc::new(cull::Preview::new(8, 6, vec![0; 192], (8, 6), true)),
+        };
+        for file in [1, 0] {
+            let loaded = whole(&state.borrow(), file);
+            deliver_preview(&app, loaded);
+        }
+        let st = state.borrow();
+        let cull = st.culling.cull.as_ref().unwrap();
+        assert!(cull.cache.full(1).is_some() && cull.cache.full(0).is_none());
     }
 
     /// The frame's full-size copy held from 1:1 and no view-size one

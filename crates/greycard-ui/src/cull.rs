@@ -88,8 +88,8 @@ pub struct Preview {
     /// whatever size this copy was made at.
     pub source: (u32, u32),
     /// This copy was asked for at the JPEG's own size, and goes in
-    /// the cache's one full-size slot. A screen-size request on a
-    /// small JPEG comes back at its own size too, and is a window
+    /// its frame's full-size slot of the cache. A screen-size request
+    /// on a small JPEG comes back at its own size too, and is a window
     /// preview all the same: the slot is the request's, not the
     /// picture's, or a frame no larger than the view would never be
     /// shown (see `Cache`).
@@ -240,35 +240,36 @@ pub fn reach_for(size: u32) -> usize {
 }
 
 /// The previews kept in memory, by file index: the screen-size ones
-/// of the window about the current frame, and the full-size one of
-/// the current frame when 1:1 asked for it.
+/// of the window about the current frame, and at 1:1 the full-size
+/// ones of the frames the view shows, at most one a tile.
 #[derive(Default)]
 pub struct Cache {
     previews: HashMap<usize, Arc<Preview>>,
-    full: Option<(usize, Arc<Preview>)>,
+    full: HashMap<usize, Arc<Preview>>,
 }
+
+/// The full-size copies a cache let go, by cell and the copy's number:
+/// the textures made from them go too.
+pub type Dropped = Vec<(usize, u64)>;
 
 impl Cache {
     pub fn get(&self, cell: usize) -> Option<&Arc<Preview>> {
         self.previews.get(&cell)
     }
 
-    /// The full-size preview of `file`, if it is the one held.
+    /// The full-size preview of `file`, if one is held.
     pub fn full(&self, cell: usize) -> Option<&Arc<Preview>> {
-        self.full
-            .as_ref()
-            .filter(|(f, _)| *f == cell)
-            .map(|(_, p)| p)
+        self.full.get(&cell)
     }
 
-    /// The best copy there is of `file`: the full one when it is the
-    /// one held, else the screen-size one.
+    /// The best copy there is of `file`: its full one when one is
+    /// held, else the screen-size one.
     pub fn best(&self, cell: usize) -> Option<&Arc<Preview>> {
         self.full(cell).or_else(|| self.get(cell))
     }
 
     /// Whether a copy of `file` at the JPEG's every pixel is held:
-    /// the full slot's, or a window preview of a JPEG no larger than
+    /// a full-size one, or a window preview of a JPEG no larger than
     /// the view. A local preview is its own every pixel and not the
     /// JPEG's, so it is not: at 1:1 the file's is still asked for
     /// where the file can be read.
@@ -279,37 +280,42 @@ impl Cache {
 
     pub fn insert(&mut self, cell: usize, preview: Arc<Preview>) {
         if preview.full {
-            self.full = Some((cell, preview));
+            self.full.insert(cell, preview);
         } else {
             self.previews.insert(cell, preview);
         }
     }
 
-    /// Drop everything outside `files`, and the full-size copy unless
-    /// it is `current`'s: the window moved on.
-    pub fn keep(&mut self, files: &[usize], current: usize) {
+    /// Drop everything outside `files`, and the full-size copies
+    /// outside `shown`, the frames the view shows: the window moved on.
+    pub fn keep(&mut self, files: &[usize], shown: &[usize]) -> Dropped {
         self.previews.retain(|f, _| files.contains(f));
-        if self.full.as_ref().is_some_and(|(f, _)| *f != current) {
-            self.full = None;
-        }
+        self.keep_full(shown)
     }
 
-    /// Drop the full-size copy unless it is `file`'s: the selection
-    /// moved.
-    pub fn drop_full_unless(&mut self, cell: usize) {
-        if self.full.as_ref().is_some_and(|(f, _)| *f != cell) {
-            self.full = None;
+    /// Drop the full-size copies but those of `shown`: the selection
+    /// moved, and a frame no longer shown needs none.
+    pub fn keep_full(&mut self, shown: &[usize]) -> Dropped {
+        let gone: Dropped = self
+            .full
+            .iter()
+            .filter(|(f, _)| !shown.contains(f))
+            .map(|(&f, p)| (f, p.id))
+            .collect();
+        for (f, _) in &gone {
+            self.full.remove(f);
         }
+        gone
     }
 
-    /// Drop the full-size copy: the view is fitted again.
-    pub fn drop_full(&mut self) {
-        self.full = None;
+    /// Drop every full-size copy: the view is fitted again.
+    pub fn drop_full(&mut self) -> Dropped {
+        self.keep_full(&[])
     }
 
     pub fn clear(&mut self) {
         self.previews.clear();
-        self.full = None;
+        self.full.clear();
     }
 
     /// Drop `file`'s view-size copy: its picture changed (its edit's
@@ -326,7 +332,7 @@ impl Cache {
     /// What is held, in bytes.
     pub fn bytes(&self) -> usize {
         self.previews.values().map(|p| p.bytes()).sum::<usize>()
-            + self.full.as_ref().map_or(0, |(_, p)| p.bytes())
+            + self.full.values().map(|p| p.bytes()).sum::<usize>()
     }
 
     /// How many screen-size previews are held.
@@ -410,6 +416,14 @@ pub fn anchor_for(anchor: usize, current: usize, n: usize, count: usize) -> usiz
 /// The rows a compare set shows, from its anchor.
 pub fn compare_rows(anchor: usize, n: usize, count: usize) -> Vec<usize> {
     (anchor..(anchor + n.max(1)).min(count)).collect()
+}
+
+/// The frames a view shows in the order their full-size copies are
+/// asked for at 1:1: the chosen one, then the others in tile order.
+pub fn chosen_first(chosen: usize, shown: &[usize]) -> Vec<usize> {
+    std::iter::once(chosen)
+        .chain(shown.iter().copied().filter(|&f| f != chosen))
+        .collect()
 }
 
 /// What a decode came back with.
@@ -615,6 +629,9 @@ pub struct Prefetcher {
     /// The last list wanted, for the tests to read what was asked.
     #[cfg(test)]
     asked: Mutex<Vec<Want>>,
+    /// Every decode put at the front, for the tests.
+    #[cfg(test)]
+    pushed: Mutex<Vec<Want>>,
 }
 
 /// The local previews, once the editor has a cache to keep them in.
@@ -643,6 +660,8 @@ impl Prefetcher {
             previews,
             #[cfg(test)]
             asked: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            pushed: Mutex::new(Vec::new()),
         }
     }
 
@@ -658,6 +677,12 @@ impl Prefetcher {
     #[cfg(test)]
     pub(crate) fn asked(&self) -> Vec<Want> {
         self.asked.lock().expect("cull asked").clone()
+    }
+
+    /// Every decode put at the front so far.
+    #[cfg(test)]
+    pub(crate) fn pushed(&self) -> Vec<Want> {
+        self.pushed.lock().expect("cull pushed").clone()
     }
 
     /// The local previews to read and to make: the worker's.
@@ -683,9 +708,11 @@ impl Prefetcher {
         cv.notify_all();
     }
 
-    /// One decode before everything else wanted: the full-size copy
-    /// of the frame just taken to 1:1.
+    /// One decode before everything else wanted: a full-size copy of
+    /// a frame just taken to 1:1.
     pub fn push_front(&self, want: Want) {
+        #[cfg(test)]
+        self.pushed.lock().expect("cull pushed").push(want.clone());
         let (lock, cv) = &*self.queue;
         let mut q = lock.lock().expect("cull queue");
         if q.in_flight.iter().any(|f| want.covered_by(f)) {
@@ -1089,7 +1116,7 @@ fn shaped(
     for px in rgb.as_chunks::<3>().0 {
         rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
     }
-    // The slot is the request's: a full-size request fills the one
+    // The slot is the request's: a full-size request fills its frame's
     // full slot, a screen-size one is a window preview even when the
     // JPEG was no larger than the view and came back whole.
     let mut preview = Preview::new(w, h, rgba, source, size == 0);
@@ -1653,7 +1680,7 @@ mod tests {
         assert_eq!(cache.bytes(), 19 * 8);
         assert!(cache.full(5).is_some() && cache.best(5).unwrap().full);
         let window: Vec<usize> = kept(20, 40, REACH).collect();
-        cache.keep(&window, 20);
+        let _ = cache.keep(&window, &[20]);
         // Frames 8 to 17 survive the move, 0 to 7 do not, and the
         // full-size copy of frame 5 goes with it.
         assert_eq!(cache.count(), 10);
@@ -1667,7 +1694,7 @@ mod tests {
         // A full-size copy of the current frame stays while it is
         // current.
         cache.insert(20, preview(true));
-        cache.keep(&window, 20);
+        let _ = cache.keep(&window, &[20]);
         assert!(cache.full(20).is_some());
         cache.clear();
         assert!(cache.count() == 0 && cache.bytes() == 0);
@@ -1689,6 +1716,60 @@ mod tests {
         assert!(reach_for(2560) < REACH && reach_for(2560) >= 4);
         assert_eq!(reach_for(20_000), 1);
         assert!(frames_within(BUDGET_BYTES, 1410) * 3 * 1410 * 1410 <= BUDGET_BYTES);
+    }
+
+    /// At 1:1 each frame the compare view shows holds its own full-size
+    /// copy, kept while it is shown and let go when it leaves the set
+    /// or the view is fitted; one frame alone holds one, as ever.
+    #[test]
+    fn each_frame_compared_at_one_to_one_holds_its_own_full_copy() {
+        // A view-size copy of a 2:1 JPEG, or its every pixel.
+        let preview = |full: bool| {
+            let source = if full { (2, 1) } else { (6000, 3000) };
+            Arc::new(Preview::new(2, 1, vec![0; 8], source, full))
+        };
+        let mut cache = Cache::default();
+        for i in 0..6 {
+            cache.insert(i, preview(false));
+        }
+        // Two up: the chosen frame's copy is asked for first, then the
+        // other's in tile order.
+        assert_eq!(chosen_first(3, &[2, 3]), vec![3, 2]);
+        assert_eq!(chosen_first(1, &[0, 1, 2, 3]), vec![1, 0, 2, 3]);
+        assert_eq!(chosen_first(4, &[4]), vec![4]);
+        let (a, b) = (preview(true), preview(true));
+        let ids = (a.id, b.id);
+        cache.insert(2, a);
+        cache.insert(3, b);
+        assert_eq!(cache.best(2).map(|p| p.id), Some(ids.0));
+        assert_eq!(cache.best(3).map(|p| p.id), Some(ids.1));
+        assert!(cache.has_own_size(2) && cache.has_own_size(3));
+        assert!(cache.full(4).is_none() && !cache.has_own_size(4));
+        assert_eq!(cache.bytes(), 8 * 8);
+        // The set steps on one: frame 3 is still shown and keeps its
+        // copy, frame 2 is not and lets its copy go, by its number.
+        let window: Vec<usize> = (0..6).collect();
+        assert_eq!(cache.keep(&window, &[3, 4]), vec![(2, ids.0)]);
+        assert!(cache.full(2).is_none() && cache.get(2).is_some());
+        assert_eq!(cache.best(3).map(|p| p.id), Some(ids.1));
+        // The selection moves within the set: nothing goes.
+        assert!(cache.keep_full(&[3, 4]).is_empty());
+        // A fit lets every full copy go and keeps the view-size ones.
+        let c = preview(true);
+        let id = c.id;
+        cache.insert(4, c);
+        let mut gone = cache.drop_full();
+        gone.sort();
+        assert_eq!(gone, vec![(3, ids.1), (4, id)]);
+        assert!((0..6).all(|i| cache.full(i).is_none() && cache.get(i).is_some()));
+        // Compare 1: the set is the chosen frame alone, and an arrow
+        // lets its copy go for the next frame's.
+        let d = preview(true);
+        let id = d.id;
+        cache.insert(1, d);
+        assert!(cache.keep_full(&[1]).is_empty());
+        assert_eq!(cache.keep(&window, &[2]), vec![(1, id)]);
+        assert!(cache.full(1).is_none());
     }
 
     #[test]

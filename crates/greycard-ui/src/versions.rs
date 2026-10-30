@@ -671,7 +671,6 @@ pub(crate) fn carry(
             cull.cache.clear();
             cull.textures.clear();
             cull.clear_failures();
-            cull.full_asked = None;
             // A count of the versions compare left out is not this
             // list's, nor its set; a caller that relists takes the
             // compared file first and fits the view to the new cells
