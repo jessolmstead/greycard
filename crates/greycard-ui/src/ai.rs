@@ -1509,12 +1509,9 @@ impl Ai {
                     .as_ref()
                     .is_none_or(|r| patch.fast && !r.has_fast()) =>
             {
-                // The card's memory is the machine's on unified memory,
-                // and the remove keeps more open there.
-                let machine = greycard_ai::remove::Machine {
-                    memory: greycard_ai::ram::physical(),
-                    unified: greycard_ai::runtime::webgpu_unified(),
-                };
+                // The card's memory, or the machine's on unified
+                // memory: the remove keeps more open on unified memory with more.
+                let machine = greycard_ai::remove::Machine::here();
                 match Remove::load_on(&store, &self.providers, Some(machine)) {
                     Ok(r) => self.remove = Some(r),
                     Err(e) => {

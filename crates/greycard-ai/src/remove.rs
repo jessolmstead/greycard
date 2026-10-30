@@ -231,12 +231,38 @@ impl Memory {
 /// What the remove knows of the machine it runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Machine {
-    /// The bytes of physical memory, or `None` when the system will
-    /// not say.
+    /// The bytes the GPU has: the machine's physical memory on unified
+    /// memory, the card's own on a discrete one, or `None` when the
+    /// system or the backend will not say.
     pub memory: Option<u64>,
     /// Whether the GPU shares that memory ([`runtime::webgpu_unified`]),
     /// or `None` when no GPU adapter answered.
     pub unified: Option<bool>,
+    /// What a discrete card's memory was read from, for the log.
+    pub source: Option<&'static str>,
+}
+
+impl Machine {
+    /// The machine this runs on: on unified memory, or with no adapter
+    /// to ask, the machine's memory; on a discrete card the card's own,
+    /// as the backend under wgpu says it ([`runtime::webgpu_memory`]).
+    pub fn here() -> Self {
+        let unified = runtime::webgpu_unified();
+        if unified == Some(false) {
+            let read = runtime::webgpu_memory_read();
+            Machine {
+                memory: read.map(|(bytes, _)| bytes),
+                unified,
+                source: read.map(|(_, from)| from),
+            }
+        } else {
+            Machine {
+                memory: crate::ram::physical(),
+                unified,
+                source: None,
+            }
+        }
+    }
 }
 
 /// How the remove uses the card, and why, for the log.
@@ -262,14 +288,18 @@ const ALL_FROM: u64 = 30;
 /// ask for over it. On unified memory the card's memory is the
 /// machine's: from 16 GB the UNet stays open, from 24 GB the decoder
 /// runs whole as well (a 24 GB Mac decoded whole with all three open),
-/// and from 32 GB all three stay open. A discrete card's memory is
-/// not known, nor is a machine's that will not say, and they keep to
-/// one at a time with the decoder in tiles, about 7 GB at 1024.
+/// and from 32 GB all three stay open. A discrete card, its memory
+/// read or not, and a machine that will not say, keep to one at a time
+/// with the decoder in tiles, about 7 GB at 1024: on a card ONNX
+/// Runtime's buffer cache stays alive with a held UNet, so what a mode
+/// holds there is not yet known. The log names a card's memory where
+/// it was read.
 pub fn policy(machine: Option<Machine>, resident: Option<&str>, tiled: Option<&str>) -> Policy {
+    const GIB: f64 = (1u64 << 30) as f64;
     // In GiB to the nearest, which is how a machine's memory is sold.
     let gib = machine
         .and_then(|m| m.memory)
-        .map(|b| (b + (1 << 29)) >> 30);
+        .map(|b| b.saturating_add(1 << 29) >> 30);
     let (memory, vae, mut why) = match (machine.map(|m| m.unified), gib) {
         (Some(Some(true)), Some(g)) => {
             let (memory, vae) = if g >= ALL_FROM {
@@ -288,11 +318,17 @@ pub fn policy(machine: Option<Machine>, resident: Option<&str>, tiled: Option<&s
             Vae::DEFAULT,
             "unified, its memory not known".to_string(),
         ),
-        (Some(Some(false)), _) => (
-            Memory::OneAtATime,
-            Vae::DEFAULT,
-            "a discrete card, its memory not known".to_string(),
-        ),
+        (Some(Some(false)), _) => {
+            let from = machine.and_then(|m| m.source).unwrap_or("the backend");
+            let why = match machine.and_then(|m| m.memory) {
+                Some(b) => format!(
+                    "a discrete card's {:.1} GiB from {from}, held to one at a time",
+                    b as f64 / GIB
+                ),
+                None => "a discrete card, its memory not known".to_string(),
+            };
+            (Memory::OneAtATime, Vae::DEFAULT, why)
+        }
         (Some(None), _) => (
             Memory::OneAtATime,
             Vae::DEFAULT,
@@ -2394,6 +2430,7 @@ mod tests {
         Some(Machine {
             memory: Some((gib * (1u64 << 30) as f64) as u64),
             unified: Some(unified),
+            source: (!unified).then_some("Vulkan's device-local heaps"),
         })
     }
 
@@ -2422,6 +2459,46 @@ mod tests {
     }
 
     #[test]
+    fn a_discrete_card_read_or_misread_keeps_to_one_at_a_time() {
+        let one = (Memory::OneAtATime, Vae::Tiled);
+        let card = |memory: Option<u64>| {
+            Some(Machine {
+                memory,
+                unified: Some(false),
+                source: memory.map(|_| "DXGI's dedicated video memory"),
+            })
+        };
+        for memory in [
+            None,
+            Some(0),
+            Some(1),
+            Some(12 << 30),
+            Some(24 << 30),
+            Some(u64::MAX),
+        ] {
+            assert_eq!(chosen(card(memory)), one, "{memory:?}");
+        }
+        assert_eq!(
+            policy(card(None), None, None).why,
+            "a discrete card, its memory not known"
+        );
+        assert_eq!(
+            policy(card(Some(0)), None, None).why,
+            "a discrete card's 0.0 GiB from DXGI's dedicated video memory, held to one at a time"
+        );
+        // A card's memory with no source still names one.
+        let bare = Some(Machine {
+            memory: Some(12 << 30),
+            unified: Some(false),
+            source: None,
+        });
+        assert_eq!(
+            policy(bare, None, None).why,
+            "a discrete card's 12.0 GiB from the backend, held to one at a time"
+        );
+    }
+
+    #[test]
     fn a_discrete_card_or_an_unknown_machine_keeps_to_one_at_a_time() {
         let one = (Memory::OneAtATime, Vae::DEFAULT);
         assert_eq!(chosen(machine(64.0, false)), one);
@@ -2429,11 +2506,13 @@ mod tests {
         let silent = Some(Machine {
             memory: None,
             unified: Some(true),
+            source: None,
         });
         assert_eq!(chosen(silent), one);
         let no_adapter = Some(Machine {
             memory: Some(64 << 30),
             unified: None,
+            source: None,
         });
         assert_eq!(chosen(no_adapter), one);
     }
@@ -2468,12 +2547,22 @@ mod tests {
             "24 GiB unified, GREYCARD_REMOVE_RESIDENT=1"
         );
         assert_eq!(
-            policy(machine(16.0, false), None, Some("0")).why,
-            "a discrete card, its memory not known, GREYCARD_REMOVE_TILED=0"
+            policy(machine(15.9, false), None, Some("0")).why,
+            "a discrete card's 15.9 GiB from Vulkan's device-local heaps, held to one at a time, GREYCARD_REMOVE_TILED=0"
+        );
+        let unread = Some(Machine {
+            memory: None,
+            unified: Some(false),
+            source: None,
+        });
+        assert_eq!(
+            policy(unread, Some("unet"), None).why,
+            "a discrete card, its memory not known, GREYCARD_REMOVE_RESIDENT=unet"
         );
         let no_adapter = Some(Machine {
             memory: Some(64 << 30),
             unified: None,
+            source: None,
         });
         assert_eq!(
             policy(no_adapter, None, None).why,

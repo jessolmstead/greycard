@@ -366,6 +366,12 @@ pub fn webgpu_unified() -> Option<bool> {
 /// read the machine's memory instead. Same adapter, and same guess,
 /// as [`webgpu_unified`].
 pub fn webgpu_memory() -> Option<u64> {
+    webgpu_memory_read().map(|(bytes, _)| bytes)
+}
+
+/// [`webgpu_memory`], with what it was read from, for the log:
+/// Vulkan's device-local heaps or DXGI's dedicated video memory.
+pub fn webgpu_memory_read() -> Option<(u64, &'static str)> {
     #[cfg(feature = "webgpu")]
     {
         webgpu_adapter()?.memory
@@ -382,14 +388,16 @@ struct Adapter {
     /// Name, backend, and driver.
     identity: String,
     device_type: wgpu::DeviceType,
-    /// The bytes of its own memory ([`webgpu_memory`]).
-    memory: Option<u64>,
+    /// The bytes of its own memory, and what said so
+    /// ([`webgpu_memory_read`]).
+    memory: Option<(u64, &'static str)>,
 }
 
 /// The bytes of `adapter`'s own memory, asked of the backend under
-/// wgpu, which keeps it to itself.
+/// wgpu, which keeps it to itself, and which of the backend's answers
+/// it is.
 #[cfg(feature = "webgpu")]
-fn adapter_memory(adapter: &wgpu::Adapter) -> Option<u64> {
+fn adapter_memory(adapter: &wgpu::Adapter) -> Option<(u64, &'static str)> {
     // Where wgpu builds its Vulkan backend: not on a Mac, where Metal
     // is the backend and the memory the machine's.
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
@@ -412,7 +420,7 @@ fn adapter_memory(adapter: &wgpu::Adapter) -> Option<u64> {
                 .filter(|h| h.flags.as_raw() & DEVICE_LOCAL != 0)
                 .map(|h| h.size)
                 .sum();
-            return (bytes > 0).then_some(bytes);
+            return (bytes > 0).then_some((bytes, "Vulkan's device-local heaps"));
         }
     }
     #[cfg(windows)]
@@ -423,7 +431,7 @@ fn adapter_memory(adapter: &wgpu::Adapter) -> Option<u64> {
             // has no preconditions on a live adapter.
             let desc = unsafe { dx.raw_adapter().GetDesc1() }.ok()?;
             let bytes = desc.DedicatedVideoMemory as u64;
-            return (bytes > 0).then_some(bytes);
+            return (bytes > 0).then_some((bytes, "DXGI's dedicated video memory"));
         }
     }
     let _ = adapter;
