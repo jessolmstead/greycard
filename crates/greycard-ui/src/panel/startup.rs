@@ -891,6 +891,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         let cpu_ops = cli.cpu_ops;
         let state = state.clone();
         let app_weak = app.as_weak();
+        // Frames drawn, counted by the minute. A window at rest draws
+        // none; one that draws hundreds has something marking it dirty
+        // every frame. Said in the log with what was on, so a report
+        // of a GPU kept busy by an idle window names the cause.
+        let mut frames: (std::time::Instant, u32) = (std::time::Instant::now(), 0);
         app.window()
             .set_rendering_notifier(move |phase, api| match phase {
                 slint::RenderingState::RenderingSetup => {
@@ -1016,6 +1021,32 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     }
                 }
                 slint::RenderingState::BeforeRendering => {
+                    frames.1 += 1;
+                    if frames.0.elapsed() >= FRAMES_COUNTED_OVER {
+                        let (since, n) =
+                            std::mem::replace(&mut frames, (std::time::Instant::now(), 0));
+                        // Over the span the frames came in: a window
+                        // left at rest for an hour reaches here on its
+                        // next frame with that hour behind it.
+                        let seconds = since.elapsed().as_secs_f64();
+                        if f64::from(n) >= FRAMES_A_SECOND_SAID * seconds
+                            && let Some(app) = app_weak.upgrade()
+                        {
+                            let pictures = state
+                                .try_borrow()
+                                .map(|st| st.views.thumb_run.is_some())
+                                .unwrap_or(false);
+                            tracing::info!(
+                                "window: {n} frames in the last {:.0} s; grid {}, busy {}, \
+                                 queue busy {}, pictures coming {pictures}, status \"{}\"",
+                                seconds,
+                                app.get_grid_open(),
+                                app.get_busy(),
+                                app.get_queue_busy(),
+                                app.get_status(),
+                            );
+                        }
+                    }
                     // On a lost device the viewport draws nothing until
                     // the quit the loss asked for.
                     if crate::gpu_lost::lost() {
@@ -2267,6 +2298,12 @@ pub(crate) fn save_choices(app: &App, st: &State, panes_from_file: bool) {
     )
     .save();
 }
+
+/// How long the window's frames are counted over before the count is
+/// weighed, and the rate over that span from which it is said in the
+/// log: five a second, averaged, where a window at rest draws none.
+const FRAMES_COUNTED_OVER: std::time::Duration = std::time::Duration::from_secs(60);
+const FRAMES_A_SECOND_SAID: f64 = 5.0;
 
 /// A timer that writes the panel's choices whenever they differ from
 /// the last written, so a run that ends without the close's write (a
