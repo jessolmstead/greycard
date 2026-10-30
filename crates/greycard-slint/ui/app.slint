@@ -85,6 +85,9 @@ export component App inherits Window {
     out property <int> view-height: view.height / 1phx;
     callback zoom(float, length, length);
     callback pan(length, length);
+    /// Whether a point of the view (logical pixels) lies on the
+    /// picture as placed, not on the canvas round it.
+    pure callback picture-at(length, length) -> bool;
     callback wheel-pan(length, length);
     callback reset-view();
     /// Zoom to a level (0 fits) with the image pixel at the point held.
@@ -2837,6 +2840,7 @@ export component App inherits Window {
                     || Typing.boxes > 0;
                 zoom(a, b, c) => { root.zoom(a, b, c); }
                 pan(a, b) => { root.pan(a, b); }
+                picture-at(a, b) => { return root.picture-at(a, b); }
                 wheel-pan(a, b) => { root.wheel-pan(a, b); }
                 toggle-zoom(a, b) => { root.toggle-zoom(a, b); }
                 hovered(a, b, c) => { root.view-hovered(a, b, c); }

@@ -13,6 +13,9 @@ export component Viewport inherits Rectangle {
     in property <bool> typing: false;
     callback zoom(float, length, length);
     callback pan(length, length);
+    /// Whether a point of the view lies on the picture as placed, not
+    /// on the canvas round it: only a drag that starts on it pans.
+    pure callback picture-at(length, length) -> bool;
     /// A touchpad's scroll: the picture follows the fingers, held
     /// at its edges, and still where it fits the view.
     callback wheel-pan(length, length);
@@ -206,13 +209,19 @@ export component Viewport inherits Rectangle {
         // click, so it zooms as anywhere else.
         property <bool> body-down;
         property <bool> body-moving;
+        // Whether the press landed on the canvas round the picture,
+        // where a drag pans nothing. Latched, so a drag that starts on
+        // the picture and leaves it still pans.
+        property <bool> canvas-down;
         mouse-cursor: root.picking != "" ? (root.dropper.width > 0 ? MouseCursor.none : MouseCursor.crosshair)
             : root.placing != "" || root.retouch-mode != "" ? MouseCursor.crosshair
             : root.crop-mode ? MouseCursor.crosshair
             : self.body-moving ? MouseCursor.move
             : !self.pressed && root.mask-body-live && self.has-hover
                 && root.mask-body-at(self.mouse-x, self.mouse-y, root.mask-shape-key) ? MouseCursor.move
-            : self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+            : self.pressed ? (self.canvas-down ? MouseCursor.default : MouseCursor.grabbing)
+            : self.has-hover && !root.picture-at(self.mouse-x, self.mouse-y) ? MouseCursor.default
+            : MouseCursor.grab;
         // The keys belong to the picture whenever the pointer is
         // on it, or the last press was: a clicked slider keeps
         // them while the pointer stays on the panel. Not while a
@@ -230,6 +239,7 @@ export component Viewport inherits Rectangle {
             if (e.kind == PointerEventKind.down) {
                 self.held = true;
                 root.focus-keys();
+                self.canvas-down = !root.picture-at(self.mouse-x, self.mouse-y);
                 // The press that closed the menu: its release is not a
                 // click to zoom by, and its drag no pan.
                 if (root.menu-shown() && e.button == PointerEventButton.left) {
@@ -328,6 +338,7 @@ export component Viewport inherits Rectangle {
                 self.placed-down = false;
                 self.dragged = false;
                 self.crop-drawing = false;
+                self.canvas-down = false;
             }
         }
         moved => {
@@ -360,7 +371,7 @@ export component Viewport inherits Rectangle {
                         root.crop-draw-pressed(self.down-x, self.down-y);
                     }
                     root.crop-draw-dragged(self.mouse-x, self.mouse-y);
-                } else if (self.dragged && !self.picked-down && !self.placed-down) {
+                } else if (self.dragged && !self.picked-down && !self.placed-down && !self.canvas-down) {
                     root.pan(self.mouse-x - self.last-x, self.mouse-y - self.last-y);
                 }
                 self.last-x = self.mouse-x;

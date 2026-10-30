@@ -26,8 +26,6 @@ the reasoning lives in `docs/notes.md`.
       until §441 kept it off Core ML. The compile runs out of process
       and is cached after. Compile the models in the background when
       they are fetched or at launch, or say "preparing" while it runs
-- [ ] The picture drags when the pointer is over the canvas round it,
-      not over it (discussion 51, 2026-10-29)
 - [ ] The Loupe shows no tools after the export queue was viewed,
       until the folders are shown again (discussion 51, 2026-10-29)
 - [ ] The Library's camera thumbnails and the previews behind them

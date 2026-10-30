@@ -24,6 +24,10 @@ disk image's install window.
   on screen and near them, the rest as you scroll to them, and the
   status line says how many are being made
   ([§452](https://github.com/jessolmstead/greycard/blob/master/docs/notes/452-the-edits-pictures-made-near-the-screen.md)).
+- In the Loupe, a drag that starts on the canvas round the picture no
+  longer pans it; a drag on the picture does, and a picture dragged
+  out of view can be dragged back from anywhere
+  ([§455](https://github.com/jessolmstead/greycard/blob/master/docs/notes/455-a-pan-from-a-press-on-the-picture.md)).
 - A compact whose raw names its lens as a focal range, as CHDK's DNGs
   do, now gets the body's lens profile instead of "no profile for"
   ([§453](https://github.com/jessolmstead/greycard/blob/master/docs/notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md)).

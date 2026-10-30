@@ -69,6 +69,33 @@ pub fn wheel_pan(center: f32, by: f32, shown: f32, frame: f32) -> f32 {
     (center - by).clamp(center.min(low), center.max(high))
 }
 
+/// Whether a point of a `view` (physical pixels from its top left)
+/// lies on a picture of `image` pixels shown at `zoom` with its pixel
+/// `center` in the middle of the view, rather than on the canvas
+/// round it. A picture zoomed past the view covers all of it; a fit,
+/// or a zoom out, leaves canvas on two sides or all four.
+pub fn on_picture(
+    point: (f32, f32),
+    view: (u32, u32),
+    zoom: f32,
+    center: (f32, f32),
+    image: (u32, u32),
+) -> bool {
+    let at = |p: f32, v: u32, c: f32| (p - v as f32 / 2.0) / zoom + c;
+    let (u, v) = (at(point.0, view.0, center.0), at(point.1, view.1, center.1));
+    (0.0..=image.0 as f32).contains(&u) && (0.0..=image.1 as f32).contains(&v)
+}
+
+/// Whether any of a picture placed as [`on_picture`] places it shows
+/// in the `view`, or a drag has carried all of it off.
+pub fn in_view(view: (u32, u32), zoom: f32, center: (f32, f32), image: (u32, u32)) -> bool {
+    let shows = |v: u32, c: f32, i: u32| {
+        let low = v as f32 / 2.0 - c * zoom;
+        i > 0 && low < v as f32 && low + i as f32 * zoom > 0.0
+    };
+    shows(view.0, center.0, image.0) && shows(view.1, center.1, image.1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,6 +114,44 @@ mod tests {
         // held where it is, and nothing jumps.
         assert_eq!(wheel_pan(200.0, 100.0, 1000.0, 6000.0), 200.0);
         assert_eq!(wheel_pan(200.0, -100.0, 1000.0, 6000.0), 300.0);
+    }
+
+    #[test]
+    fn a_point_is_on_the_picture_inside_its_placed_rectangle_only() {
+        // 6000 by 4000 fitted into 1000 by 800 at a sixth: 1000 by
+        // 667 in the middle, a band of canvas above and below.
+        let fit = 1.0 / 6.0;
+        let on = |x, y| on_picture((x, y), (1000, 800), fit, (3000.0, 2000.0), (6000, 4000));
+        assert!(on(500.0, 400.0));
+        assert!(on(5.0, 100.0) && on(995.0, 700.0));
+        assert!(!on(500.0, 50.0), "the canvas above");
+        assert!(!on(500.0, 760.0), "the canvas below");
+        // Zoomed in, the picture covers the view: every point is on it.
+        for (x, y) in [(0.0, 0.0), (999.0, 0.0), (0.0, 799.0), (999.0, 799.0)] {
+            assert!(on_picture(
+                (x, y),
+                (1000, 800),
+                1.0,
+                (3000.0, 2000.0),
+                (6000, 4000)
+            ));
+        }
+        // Panned to the picture's right edge, the canvas shows past it.
+        let edge = |x| on_picture((x, 400.0), (1000, 800), 1.0, (5800.0, 2000.0), (6000, 4000));
+        assert!(edge(600.0) && !edge(800.0));
+        // A small picture at 1:1 sits in the middle with canvas round it.
+        let small = |x, y| on_picture((x, y), (1000, 800), 1.0, (200.0, 150.0), (400, 300));
+        assert!(small(500.0, 400.0) && small(301.0, 251.0));
+        assert!(!small(250.0, 400.0) && !small(500.0, 600.0));
+
+        // Any of the picture in view, or none: a fit, a zoom, a pan to
+        // the edge with canvas past it, and one dragged clean off.
+        assert!(in_view((1000, 800), fit, (3000.0, 2000.0), (6000, 4000)));
+        assert!(in_view((1000, 800), 1.0, (5800.0, 2000.0), (6000, 4000)));
+        assert!(in_view((1000, 800), 1.0, (200.0, 150.0), (400, 300)));
+        assert!(!in_view((1000, 800), 1.0, (-600.0, 150.0), (400, 300)));
+        assert!(!in_view((1000, 800), 1.0, (200.0, 800.0), (400, 300)));
+        assert!(!in_view((1000, 800), 1.0, (0.0, 0.0), (0, 0)));
     }
 
     #[test]

@@ -526,6 +526,30 @@ pub(crate) fn view_on_picture(st: &State, app: &App, x: f32, y: f32) -> bool {
     (0.0..=fw).contains(&fx) && (0.0..=fh).contains(&fy)
 }
 
+/// Whether a point of the view (logical pixels) lies on the picture
+/// as the pan and the zoom place it, not on the canvas round it: what
+/// a drag needs under its press to pan. A compare view's tiles each
+/// place their own frame, so every point there counts as on one, and
+/// so does every point once a drag has carried the whole picture off
+/// the view, so the next drag can bring it back. It reads
+/// `image_size`, not the source and the panel's geometry as
+/// [`view_on_picture`] does, because that is the drawn picture's
+/// frame, whatever a peek or a held picture shows.
+pub(crate) fn picture_at(st: &State, app: &App, x: f32, y: f32) -> bool {
+    if compared(st) > 1 {
+        return true;
+    }
+    let scale = app.window().scale_factor();
+    let view = (
+        app.get_view_width().max(1) as u32,
+        app.get_view_height().max(1) as u32,
+    );
+    let zoom = effective_zoom(st, view.0, view.1);
+    let (center, image) = (st.develop.center, st.develop.image_size);
+    !zoom::in_view(view, zoom, center, image)
+        || zoom::on_picture((x * scale, y * scale), view, zoom, center, image)
+}
+
 /// A point of the view (logical pixels) on the picture as shown, as
 /// fractions of the frame's width and height, which is how the
 /// scopes' analysis picture covers it, and the frame's size in its
@@ -2134,9 +2158,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             }
             let zoom = effective_zoom(&st, vw, vh);
-            let u = (x * scale - vw as f32 / 2.0) / zoom + st.develop.center.0;
-            let v = (y * scale - vh as f32 / 2.0) / zoom + st.develop.center.1;
-            if u < 0.0 || v < 0.0 || u > iw as f32 || v > ih as f32 {
+            if !zoom::on_picture(
+                (x * scale, y * scale),
+                (vw, vh),
+                zoom,
+                st.develop.center,
+                (iw, ih),
+            ) {
                 return;
             }
             let fitted = st.develop.zoom == 0.0;
@@ -2195,6 +2223,20 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             st.develop.center = (place(fx, fw, shown_w), place(fy, fh, shown_h));
             app.window().request_redraw();
+        });
+    }
+    // Only a drag that starts on the picture pans it; one that starts
+    // on the canvas round it does nothing. Asked while a callback
+    // holds the state, it says yes, as every point did before.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_picture_at(move |x, y| {
+            let Some(app) = app_weak.upgrade() else {
+                return true;
+            };
+            state
+                .try_borrow()
+                .map_or(true, |st| picture_at(&st, &app, x, y))
         });
     }
     // Drag to pan.
@@ -3717,6 +3759,62 @@ mod tests {
             st.develop.zoom = zoom;
         }
         (app, state, worker)
+    }
+
+    /// The tester's report: a drag that starts on the canvas round a
+    /// fitted picture pans nothing, a drag that starts on the picture
+    /// pans it as before, and one that starts there and leaves it
+    /// keeps panning. Zoomed in, the picture covers the view and a
+    /// drag anywhere pans.
+    #[test]
+    fn only_a_drag_that_starts_on_the_picture_pans_it() {
+        let (app, state, _worker) = scrolled_view(0.0);
+        let base =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Viewport")
+                .next()
+                .expect("the viewport is on screen")
+                .absolute_position();
+        let (vw, vh) = (app.get_view_width() as f32, app.get_view_height() as f32);
+        let scale = app.window().scale_factor();
+        let (mx, my) = (vw / scale / 2.0, vh / scale / 2.0);
+        // Fitted, the picture in the middle and canvas in the corner.
+        let canvas = (2.0, 2.0);
+        assert!(!app.invoke_picture_at(canvas.0, canvas.1));
+        assert!(app.invoke_picture_at(mx, my));
+        let at = |p: (f32, f32)| (base.x + p.0, base.y + p.1);
+        let drag_from = |p: (f32, f32), by: f32| {
+            let (x, y) = at(p);
+            crate::testing::drag(
+                &app,
+                &[(x, y), (x + 10.0, y + by / 4.0), (x + 40.0, y + by)],
+            );
+        };
+        let still = state.borrow().develop.center;
+        drag_from(canvas, 0.0);
+        assert_eq!(state.borrow().develop.center, still, "the canvas panned it");
+        // From the picture, out onto the canvas: it pans all the way.
+        drag_from((mx, my), -(my - 2.0));
+        let moved = state.borrow().develop.center;
+        assert_ne!(moved, still, "the picture did not pan");
+        assert!(
+            moved.1 > still.1,
+            "the pan followed the drag off the picture"
+        );
+        // Dragged clean off the view, every point counts as the
+        // picture's, so a drag from anywhere brings it back.
+        state.borrow_mut().develop.center = (36000.0, 2000.0);
+        assert!(app.invoke_picture_at(canvas.0, canvas.1));
+        drag_from(canvas, 0.0);
+        assert!(
+            state.borrow().develop.center.0 < 36000.0,
+            "the stranded picture stayed off"
+        );
+        // Zoomed in, the canvas's old place is the picture's.
+        state.borrow_mut().develop.zoom = 1.0;
+        state.borrow_mut().develop.center = (3000.0, 2000.0);
+        assert!(app.invoke_picture_at(canvas.0, canvas.1));
+        drag_from(canvas, 0.0);
+        assert_ne!(state.borrow().develop.center, (3000.0, 2000.0));
     }
 
     /// A wheel event at the middle of the view.

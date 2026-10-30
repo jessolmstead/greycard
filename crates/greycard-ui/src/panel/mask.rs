@@ -3121,6 +3121,7 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.develop.source_size = (400, 300);
+            st.develop.image_size = (400, 300);
             st.develop.zoom = 1.0;
             st.develop.edit.adjustments.push(Adjustment {
                 id: 1,
@@ -3351,6 +3352,8 @@ mod tests {
             let mut st = state.borrow_mut();
             st.develop.zoom = 2.0;
             st.develop.center = (100.0, 75.0);
+            // The cropped frame, as the next frame would set it.
+            st.develop.image_size = (200, 150);
         }
         // Off the radial on the cropped, zoomed view: it pans.
         let off = shown_at(&app, &state, base, 0.7, 0.45);
