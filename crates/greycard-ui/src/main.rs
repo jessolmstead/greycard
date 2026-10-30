@@ -902,6 +902,8 @@ impl State {
                 grid_heads: Vec::new(),
                 queued_open: None,
                 queue_relist_due: false,
+                before_queue: None,
+                back_on_land: None,
                 queue_cell_ids: Vec::new(),
                 cells_by_file: None,
                 stacks_listed: Vec::new(),

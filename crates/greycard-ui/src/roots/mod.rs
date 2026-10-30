@@ -87,7 +87,7 @@ pub(crate) use self::{
     pane::{
         add_and_open, edit_roots, one_root_named, recount, root_name, said, show, taken_from_file,
     },
-    view::{loading_words, open_listing, open_view, refresh_view},
+    view::{loading_words, open_listing, open_nothing, open_view, open_view_on, refresh_view},
     watcher::{poll_every, restart_poll, start},
 };
 

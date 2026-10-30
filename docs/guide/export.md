@@ -261,7 +261,11 @@ queued twice shows twice.
 - Double-click a tile, or press **E**, to open the frame as it will
   export: under the edit it was queued with, not its edit now. The
   filmstrip shows the queued frames in the grid's order, without the
-  headings. **G** goes back to the queue's grid.
+  headings. **G** goes back to the queue's grid. A line at the top of
+  the right-hand panel says the frame is queued for export.
+- The **Library** and **Loupe** buttons at the top of the left pane
+  leave the queue's view, back to what you had open before it, on the
+  same frame, with its tools.
 - Editing is off in the queue's view, in the grid and the Loupe alike.
   The develop tabs, the presets, the history, and the snapshots are
   hidden. Undo, paste, sync, versions, turns, and presets do nothing,

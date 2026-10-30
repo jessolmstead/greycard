@@ -26,8 +26,6 @@ the reasoning lives in `docs/notes.md`.
       until §441 kept it off Core ML. The compile runs out of process
       and is cached after. Compile the models in the background when
       they are fetched or at launch, or say "preparing" while it runs
-- [ ] The Loupe shows no tools after the export queue was viewed,
-      until the folders are shown again (discussion 51, 2026-10-29)
 - [ ] The Library's camera thumbnails and the previews behind them
       are still made for the whole root at its first open, about a
       quarter of a CPU second a cold frame, an hour on a 12515-file
@@ -1065,8 +1063,6 @@ clears or a tester asks for it.
       started over (issue 54, 2026-10-29)
 - [ ] A mark when a remove's region is filled below full resolution
       (issue 54, 2026-10-29)
-- [ ] A way back from the export queue to the folder viewed before it
-      (discussion 51, 2026-10-29)
 - [ ] The status area clear of the picture, or dismissable; the scroll
       bars at their hovered size always; the Export sheet's text crisp
       at 1080p (discussion 51, 2026-10-29)

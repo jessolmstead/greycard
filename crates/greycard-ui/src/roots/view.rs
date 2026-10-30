@@ -70,31 +70,58 @@ pub(super) fn read_order(st: &State, view: &View) -> Option<greycard_library::Or
 /// browser's list replaced once they are in. The window goes on with
 /// what it has meanwhile. An open is asked for by hand, so every folder
 /// is looked at again.
-pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>, view: View) {
+pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, view: View) {
+    open_view_on(state, app, worker, view, None);
+}
+
+/// [`open_view`], starting with `on` on the frame it names when the
+/// view has it (with none named, on the first) rather than on the
+/// frame on screen: the way back from the export queue's view, whose
+/// frame is the queue's. False when no read was sent: the index not
+/// open yet (the view opened once it is), the collection gone, or the
+/// index unreadable.
+pub(crate) fn open_view_on(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    _worker: &Rc<Worker>,
+    view: View,
+    on: Option<Option<PathBuf>>,
+) -> bool {
     let mut st = state.borrow_mut();
     // The export queue's frames are its file's, not the index's: listed
     // as files given are, with or without an index.
     if view == View::Queue {
+        crate::panel::queue_view::entering(&mut st);
         let (frames, listed) = crate::panel::queue_view::listing(&st);
         let count = frames.len();
         let source = Source::Queue { frames, listed };
         drop(st);
-        send_view(state, app, view, source, count, Instant::now(), None, None);
-        return;
+        send_view(
+            state,
+            app,
+            view,
+            source,
+            count,
+            Instant::now(),
+            None,
+            None,
+            on,
+        );
+        return true;
     }
     let Some(lib) = &st.views.index_reader else {
         // Asked before the indexer has opened the library: done when
         // it has.
         st.views.library.wanted = Some(view);
         app.set_status("opening the library index...".into());
-        return;
+        return false;
     };
     let asked = Instant::now();
     let order = order_of(&st, &view);
     if let View::Collection { id } = &view {
         let Some(c) = st.views.collections.collection(id) else {
             app.set_status("that collection is gone".into());
-            return;
+            return false;
         };
         let refs = c.refs.clone();
         let archives = st.views.library.roots.archives().to_vec();
@@ -111,7 +138,7 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
                     tracing::warn!("library: {e}");
                     app.set_status(format!("the library index could not be read: {e}").into());
                     loading_done(&mut st.views.library, app);
-                    return;
+                    return false;
                 }
             }
         };
@@ -123,8 +150,8 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
             shown,
         };
         drop(st);
-        send_view(state, app, view, source, count, asked, None, order);
-        return;
+        send_view(state, app, view, source, count, asked, None, order, on);
+        return true;
     }
     let order = listed_order(&st, &view);
     let (roots, only) = view.listed(st.views.library.roots.list());
@@ -149,7 +176,7 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
                 app.set_status(format!("the library index could not be read: {e}").into());
                 st.views.library.awaiting = false;
                 loading_done(&mut st.views.library, app);
-                return;
+                return false;
             }
         }
     };
@@ -166,12 +193,36 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         hide: hidden_under(&st, &view),
     };
     drop(st);
-    send_view(state, app, view, source, count, asked, at, Some(order));
+    send_view(state, app, view, source, count, asked, at, Some(order), on);
+    true
 }
 
-/// A view's read sent off the window's thread: the frame on screen kept
-/// when it is in the new list, the folders looked at again, and the bar
-/// put up if the read is slow. `order` is what it is read in.
+/// Nothing open, as a window with no folder is: the list emptied, the
+/// view a folder's, and a read still out dropped. The way back from
+/// the export queue's view when nothing was open before it.
+pub(crate) fn open_nothing(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+    {
+        let mut st = state.borrow_mut();
+        st.views.view_generation += 1;
+        loading_done(&mut st.views.library, app);
+        crate::panel::browser::save_leaving(&mut st, app);
+        st.views.view = View::Folder;
+        // A view's own frames and the queue's listing go with it: no
+        // read lands here to replace them.
+        st.views.collection_frames = None;
+        st.views.queue_listed = None;
+    }
+    open_loaded(state, app, worker, Vec::new(), Vec::new(), true, 0);
+    let mut st = state.borrow_mut();
+    crate::tree::want(&mut st, app);
+    show(&st, app);
+}
+
+/// A view's read sent off the window's thread: the frame on screen (or
+/// the one `on` names, or the first when it names none) kept when it is
+/// in the new list, the folders
+/// looked at again, and the bar put up if the read is slow. `order` is
+/// what it is read in.
 #[allow(clippy::too_many_arguments)]
 fn send_view(
     state: &Rc<RefCell<State>>,
@@ -182,6 +233,7 @@ fn send_view(
     asked: Instant,
     at: Option<String>,
     order: Option<greycard_library::Order>,
+    on: Option<Option<PathBuf>>,
 ) {
     let mut st = state.borrow_mut();
     st.views.view_generation += 1;
@@ -190,10 +242,13 @@ fn send_view(
     let last = if count == 0 {
         None
     } else {
-        st.current.and_then(|c| st.path_at(c)).cloned().or_else(|| {
-            let last = settings::Settings::load().last_file;
-            (!last.is_empty()).then(|| PathBuf::from(last))
-        })
+        match on {
+            Some(on) => on,
+            None => st.current.and_then(|c| st.path_at(c)).cloned().or_else(|| {
+                let last = settings::Settings::load().last_file;
+                (!last.is_empty()).then(|| PathBuf::from(last))
+            }),
+        }
     };
     st.views.library.readable.clear();
     st.views.library.readable_epoch += 1;

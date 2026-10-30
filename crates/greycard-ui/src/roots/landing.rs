@@ -188,6 +188,7 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
             };
             if files.is_empty() && bare.is_none() {
                 take_empty(state, app, worker, view, asked, missing);
+                crate::panel::queue_view::landed(state, app, generation);
                 return;
             }
             {
@@ -200,6 +201,7 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
                 loading_done(&mut st.views.library, app);
             }
             open_loaded(state, app, worker, files, held, rows.is_some(), select);
+            crate::panel::queue_view::landed(state, app, generation);
             let mut st = state.borrow_mut();
             st.views.library.awaiting = false;
             st.views.library.painted = Some((asked, "the list asked for"));

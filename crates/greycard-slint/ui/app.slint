@@ -607,7 +607,9 @@ export component App inherits Window {
     /// The Loupe from Library, the one way every way back takes (the
     /// pane's Loupe, the grid's, a double-click on a cell, Return or
     /// Escape in the grid, G, E): the grid goes, and the Loupe shows in
-    /// the mode it was left in, which stays on under the grid.
+    /// the mode it was left in, which stays on under the grid. The
+    /// pane's Loupe in the export queue's view leaves the view instead
+    /// (`queue-leave`).
     function show-loupe() {
         root.grid-open = false;
     }
@@ -714,6 +716,9 @@ export component App inherits Window {
     in property <int> queue-view-count: 0;
     in property <bool> queue-view-on: false;
     callback queue-view-picked();
+    /// The top's Library (false) or Loupe (true) pressed in the queue's
+    /// view: out of it, to what was open before it.
+    callback queue-leave(bool);
     callback library-root-removed(string);
     callback library-root-add();
     callback library-root-add-open();
@@ -2986,11 +2991,18 @@ export component App inherits Window {
                 // edit is not to be changed, and Cull's rating, flags,
                 // and labels are on their keys and the strip, so a
                 // lone Cull tab would be a mode switch posing as a bar.
+                // In its place, over a frame, a line saying why.
                 tabs := HorizontalLayout {
                     padding-left: Theme.space-4;
                     padding-right: Theme.space-4;
-                    padding-top: root.frozen ? 0 : Theme.space-2;
+                    padding-top: root.frozen && root.selected < 0 ? 0 : Theme.space-2;
                     spacing: Theme.space-2;
+                    if root.frozen && root.selected >= 0: Text {
+                        text: "Queued for export, shown as it will export. Edit it from its folder.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
                     if !root.frozen: Segmented {
                         width: 56px;
                         options: ["Cull"];
@@ -3967,11 +3979,13 @@ export component App inherits Window {
                 accessible-label: "Library view";
                 accessible-checked: root.grid-open;
                 // Out of the lightbox first, to the grid, as G and L
-                // leave it.
+                // leave it. In the export queue's view, out of it too,
+                // to what was open before.
                 clicked => {
                     keys.focus();
                     root.lightbox-leave();
                     root.grid-open = true;
+                    if (root.queue-view-on) { root.queue-leave(false); }
                 }
             }
             PanelButton {
@@ -3982,10 +3996,17 @@ export component App inherits Window {
                 accessible-label: "Loupe view";
                 accessible-checked: !root.grid-open;
                 // Out of the lightbox and its loupe both, to the frame.
+                // In the export queue's view, out of it, to the frame
+                // open before it and its tools; Rust shows the Loupe
+                // once that list is in.
                 clicked => {
                     keys.focus();
                     root.lightbox-leave();
-                    root.show-loupe();
+                    if (root.queue-view-on) {
+                        root.queue-leave(true);
+                    } else {
+                        root.show-loupe();
+                    }
                 }
             }
         }

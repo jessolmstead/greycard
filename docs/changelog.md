@@ -24,6 +24,12 @@ disk image's install window.
   on screen and near them, the rest as you scroll to them, and the
   status line says how many are being made
   ([§452](https://github.com/jessolmstead/greycard/blob/master/docs/notes/452-the-edits-pictures-made-near-the-screen.md)).
+- From the export queue, the Library and Loupe buttons at the top now
+  go back to what was open before the queue, on the same frame with
+  its tools; before, Loupe showed the queued frame frozen with no
+  tools and nothing saying why. Opening a queued tile still shows it
+  as it will export, and says so
+  ([§456](https://github.com/jessolmstead/greycard/blob/master/docs/notes/456-the-way-back-from-the-export-queue.md)).
 - In the Loupe, a drag that starts on the canvas round the picture no
   longer pans it; a drag on the picture does, and a picture dragged
   out of view can be dragged back from anywhere

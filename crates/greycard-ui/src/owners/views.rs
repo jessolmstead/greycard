@@ -36,6 +36,12 @@ pub(crate) struct Views {
     pub(crate) queued_open: Option<crate::panel::queue_view::QueuedOpen>,
     /// A listing of the queue's view is asked for, by the event loop.
     pub(crate) queue_relist_due: bool,
+    /// What was open when the queue's view was entered, for the top's
+    /// Library and Loupe to go back to from it.
+    pub(crate) before_queue: Option<crate::panel::queue_view::Before>,
+    /// The way back from the queue's view, while its read is out: what
+    /// its landing shows.
+    pub(crate) back_on_land: Option<crate::panel::queue_view::Back>,
     /// Each file's cells, by file, while the cells do not stand as
     /// `versions::cells_of` makes them (each file's together, its own
     /// first, the files in order): an open stack gathers its members

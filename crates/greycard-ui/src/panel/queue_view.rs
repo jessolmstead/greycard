@@ -57,6 +57,27 @@ pub(crate) struct QueuedOpen {
     pub(crate) seed: bool,
 }
 
+/// What was open when the queue's view was entered, for the top's
+/// Library and Loupe to go back to: the view, a folder's view's list
+/// (its folder, read again, or the files the desktop handed over), and
+/// the frame on screen, by its file and its version.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct Before {
+    pub(crate) view: View,
+    pub(crate) listing: Option<crate::roots::Listing>,
+    pub(crate) frame: Option<Key>,
+}
+
+/// The way back from the queue's view, out on its read: the read's
+/// generation, whether it was the Loupe that was pressed, and the
+/// frame to come back on.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Back {
+    pub(crate) generation: u64,
+    pub(crate) loupe: bool,
+    pub(crate) frame: Option<Key>,
+}
+
 /// Whether the frames listed are the export queue's, which are not to
 /// be edited: the one question every write of an edit asks, in the
 /// grid and the Loupe alike. Ratings, flags, and labels are the
@@ -233,6 +254,117 @@ pub(crate) fn open_under(st: &mut State, c: usize) -> Option<greycard_edit::Edit
         seed: q.seed_blend,
     });
     q.map(|q| q.edit)
+}
+
+/// The queue's view asked for: what is open now kept for the way back,
+/// unless it is the queue's own (a listing again). A folder's files
+/// all in one folder are that folder, read again on the way back so a
+/// file gone or come meanwhile (an export beside its original) is seen;
+/// files from here and there are the desktop's list, kept as given.
+pub(crate) fn entering(st: &mut State) {
+    if st.views.view == View::Queue {
+        return;
+    }
+    let listing = match (&st.views.view, st.files.first()) {
+        (View::Folder, Some(first)) => {
+            let dir = first.parent().filter(|d| !d.as_os_str().is_empty());
+            Some(match dir {
+                Some(dir) if st.files.iter().all(|f| f.parent() == Some(dir)) => {
+                    crate::roots::Listing::Folder(dir.to_path_buf())
+                }
+                _ => crate::roots::Listing::Files(st.files.clone()),
+            })
+        }
+        _ => None,
+    };
+    st.views.before_queue = Some(Before {
+        view: st.views.view.clone(),
+        listing,
+        frame: st.current.and_then(|c| st.key_of(c)),
+    });
+}
+
+/// The top's Library or Loupe pressed in the queue's view: out of it,
+/// to the view and the frame open before it was entered, in the Loupe
+/// (`loupe`) or the grid as pressed, the panel's tools as they were. A
+/// queue entered with nothing open, or a view that cannot be opened
+/// again (a collection gone, the index not open yet), leaves to nothing
+/// open. Every other way to the Loupe (a tile opened, Return, Escape,
+/// G) stays in the view, on the queued frame as it will export.
+pub(crate) fn leave(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, loupe: bool) {
+    let Before {
+        view,
+        listing,
+        frame,
+    } = {
+        let st = state.borrow();
+        if st.views.view != View::Queue {
+            return;
+        }
+        st.views.before_queue.clone().unwrap_or_default()
+    };
+    if !loupe {
+        app.set_grid_open(true);
+    }
+    let path = frame.as_ref().map(|k| k.path.clone());
+    let sent = match (view, listing) {
+        (View::Folder, Some(listing)) => {
+            let select = crate::roots::Select::Last(path);
+            crate::roots::open_listing(state, app, worker, listing, select);
+            true
+        }
+        (View::Folder, None) => false,
+        (view, _) => crate::roots::open_view_on(state, app, worker, view, Some(path)),
+    };
+    if !sent {
+        crate::roots::open_nothing(state, app, worker);
+        if loupe {
+            app.set_grid_open(false);
+        }
+        return;
+    }
+    // The Loupe, and a version on screen before, once the list it goes
+    // back to is in.
+    let mut st = state.borrow_mut();
+    st.views.back_on_land = Some(Back {
+        generation: st.views.view_generation,
+        loupe,
+        frame,
+    });
+}
+
+/// A read landed: when it is the way back's, the frame it comes back on
+/// (a version as itself, which the read's own pick, by path, takes for
+/// its file), then the Loupe when that was pressed. Shown with the list,
+/// never over the queue's frame while the read is out.
+pub(crate) fn landed(state: &Rc<RefCell<State>>, app: &App, generation: u64) {
+    let (loupe, row) = {
+        let mut st = state.borrow_mut();
+        let Some(back) = st
+            .views
+            .back_on_land
+            .take_if(|b| b.generation == generation)
+        else {
+            return;
+        };
+        let cell = back.frame.as_ref().and_then(|k| st.find_cell(k));
+        let mut row = None;
+        if let Some(c) = cell {
+            if st.launch.select_at_start.is_some() {
+                // Opened by the rendering setup, as the list's pick is.
+                st.launch.select_at_start = Some(c);
+            } else if st.current != Some(c) {
+                row = crate::panel::browser::row_of(&st, c);
+            }
+        }
+        (back.loupe, row)
+    };
+    if let Some(row) = row {
+        app.invoke_select(row as i32);
+    }
+    if loupe {
+        app.set_grid_open(false);
+    }
 }
 
 /// The queue's entries or frames changed: the left pane's count
@@ -493,6 +625,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
         app.on_queue_view_picked(move || {
             if let Some(app) = app_weak.upgrade() {
                 crate::roots::open_view(&state, &app, &worker, View::Queue);
+            }
+        });
+    }
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_queue_leave(move |loupe| {
+            if let Some(app) = app_weak.upgrade() {
+                leave(&state, &app, &worker, loupe);
             }
         });
     }
@@ -1069,6 +1209,206 @@ mod tests {
         s.app.invoke_select(1);
         assert!(!s.app.get_frozen());
         assert_eq!(crate::testing::count_labeled(&s.app, "Cull mode"), 1);
+        teardown(s);
+    }
+
+    /// The frame a list just landed opens on: a test's window has no
+    /// device, so it is kept for the setup to open (as the launch's is).
+    fn starts_on(s: &Setup) -> Option<PathBuf> {
+        let st = s.state.borrow();
+        st.launch.select_at_start.map(|c| st.path_of(c).clone())
+    }
+
+    /// The line in the tab bar's place over a frozen frame.
+    const WHY: &str = "Queued for export, shown as it will export. Edit it from its folder.";
+
+    /// A click on the middle of the top's button named `label`.
+    fn press_button(s: &Setup, label: &str) {
+        let (at, size) = crate::testing::buttons(&s.app, label)[0];
+        crate::testing::click(&s.app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    }
+
+    /// The top's Loupe pressed in the queue's view, over a queued
+    /// frame's frozen Loupe: out of the view, back on the folder's
+    /// frame open before it, under its sidecar's edit, the tab bar
+    /// there. The Loupe from a tile is still the frozen one.
+    #[test]
+    fn the_loupe_button_leaves_the_queue_for_the_frame_before() {
+        let s = setup("back", 3);
+        queue(&s, vec![entry(&s, &[0, 2], None, "JPEG")]);
+        crate::roots::open_listing(
+            &s.state,
+            &s.app,
+            &s.worker,
+            crate::roots::Listing::Files(s.files.clone()),
+            crate::roots::Select::Row(1),
+        );
+        crate::roots::land_sent(&s.state, &s.app, &s.worker);
+        s.app.set_grid_open(false);
+        s.app.invoke_select(1);
+        assert!(!s.app.get_frozen());
+        s.app.set_grid_open(true);
+        s.app.invoke_queue_view_picked();
+        crate::roots::land_sent(&s.state, &s.app, &s.worker);
+        assert_eq!(s.state.borrow().views.view, View::Queue);
+        s.app.set_grid_open(false);
+        s.app.invoke_select(0);
+        assert!(s.app.get_frozen());
+        assert_eq!(crate::testing::count_labeled(&s.app, "Cull mode"), 0);
+        assert_eq!(crate::testing::count_labeled(&s.app, WHY), 1);
+        press_button(&s, "Loupe view");
+        crate::roots::land_sent(&s.state, &s.app, &s.worker);
+        assert_eq!(starts_on(&s), Some(s.files[1].clone()));
+        s.app.invoke_select(1);
+        {
+            let st = s.state.borrow();
+            assert_eq!(st.views.view, View::Folder);
+            assert_eq!(st.files, s.files);
+            assert_eq!(st.current.map(|c| st.path_of(c)), Some(&s.files[1]));
+            assert!(!frozen(&st));
+            assert!(st.views.queued_open.is_none());
+            assert!((st.develop.edit.light.exposure - 0.1).abs() < 1e-6);
+        }
+        assert!(!s.app.get_grid_open());
+        assert!(!s.app.get_frozen());
+        assert!(!s.app.get_queue_view_on());
+        assert_eq!(crate::testing::count_labeled(&s.app, "Cull mode"), 1);
+        assert_eq!(crate::testing::count_labeled(&s.app, WHY), 0);
+        teardown(s);
+    }
+
+    /// The folder held before, its frame chosen, opened in the grid.
+    fn folder_on(s: &Setup, row: usize) {
+        crate::roots::open_listing(
+            &s.state,
+            &s.app,
+            &s.worker,
+            crate::roots::Listing::Files(s.files.clone()),
+            crate::roots::Select::Row(row),
+        );
+        crate::roots::land_sent(&s.state, &s.app, &s.worker);
+        s.app.set_grid_open(true);
+        s.app.invoke_select(row as i32);
+    }
+
+    /// With nothing open before the queue's view, either button leaves
+    /// it to nothing open, never to a frozen frame; nothing of the
+    /// queue's listing is left behind.
+    #[test]
+    fn nothing_open_before_the_queue_is_nothing_after() {
+        let s = setup("none", 2);
+        queue(&s, vec![entry(&s, &[0], None, "JPEG")]);
+        let gone = |s: &Setup| {
+            let st = s.state.borrow();
+            assert_eq!(st.views.view, View::Folder);
+            assert!(st.files.is_empty());
+            assert!(st.current.is_none());
+            assert!(st.views.collection_frames.is_none());
+            assert!(st.views.queue_listed.is_none());
+            drop(st);
+            assert!(!s.app.get_frozen());
+        };
+        for (button, grid) in [("Loupe view", false), ("Library view", true)] {
+            // The queue the first view, or after nothing.
+            open(&s);
+            s.app.set_grid_open(false);
+            s.app.invoke_select(0);
+            assert!(s.app.get_frozen());
+            press_button(&s, button);
+            crate::roots::land_sent(&s.state, &s.app, &s.worker);
+            gone(&s);
+            assert_eq!(s.app.get_grid_open(), grid, "{button}");
+        }
+        teardown(s);
+    }
+
+    /// The top's Library pressed in the queue's view leaves it to the
+    /// grid of the folder open before, read again: a file written
+    /// there meanwhile (an export beside its original) is in it.
+    #[test]
+    fn the_library_button_leaves_the_queue_for_the_folder_read_again() {
+        let s = setup("lib", 2);
+        queue(&s, vec![entry(&s, &[0], None, "JPEG")]);
+        folder_on(&s, 1);
+        open(&s);
+        assert_eq!(s.state.borrow().views.view, View::Queue);
+        let written = s.dir.join("IMG_0001-edited.jpg");
+        std::fs::write(&written, b"").unwrap();
+        press_button(&s, "Library view");
+        crate::roots::land_sent(&s.state, &s.app, &s.worker);
+        assert_eq!(starts_on(&s), Some(s.files[1].clone()));
+        {
+            let st = s.state.borrow();
+            assert_eq!(st.views.view, View::Folder);
+            assert!(st.files.contains(&written), "{:?}", st.files);
+            assert!(s.files.iter().all(|f| st.files.contains(f)));
+        }
+        assert!(s.app.get_grid_open());
+        assert!(!s.app.get_frozen());
+        teardown(s);
+    }
+
+    /// The Loupe pressed from the queue's grid: the grid stays until
+    /// the list it goes back to is in, never the queue's frame first;
+    /// and a list opened while that read is out takes the press with
+    /// the read, so its landing shows no Loupe.
+    #[test]
+    fn the_way_back_waits_for_its_own_read() {
+        let s = setup("wait", 2);
+        queue(&s, vec![entry(&s, &[0], None, "JPEG")]);
+        folder_on(&s, 1);
+        open(&s);
+        press_button(&s, "Loupe view");
+        assert!(s.app.get_grid_open(), "no Loupe before the read lands");
+        assert_eq!(s.state.borrow().views.view, View::Queue);
+        crate::roots::land_sent(&s.state, &s.app, &s.worker);
+        assert!(!s.app.get_grid_open());
+        assert_eq!(s.state.borrow().views.view, View::Folder);
+        // Overtaken.
+        s.app.set_grid_open(true);
+        open(&s);
+        press_button(&s, "Loupe view");
+        crate::roots::open_listing(
+            &s.state,
+            &s.app,
+            &s.worker,
+            crate::roots::Listing::Files(vec![s.files[0].clone()]),
+            crate::roots::Select::Row(0),
+        );
+        crate::roots::land_sent(&s.state, &s.app, &s.worker);
+        assert!(
+            s.app.get_grid_open(),
+            "the other list's landing is not the way back's"
+        );
+        assert_eq!(s.state.borrow().files, vec![s.files[0].clone()]);
+        teardown(s);
+    }
+
+    /// A virtual copy on screen before the queue's view comes back as
+    /// itself, not as its file's own frame.
+    #[test]
+    fn a_virtual_copy_comes_back_as_itself() {
+        let s = setup("copy", 2);
+        queue(&s, vec![entry(&s, &[0], None, "JPEG")]);
+        folder_on(&s, 1);
+        s.app.invoke_version_new_asked(false, false);
+        s.app.invoke_collection_sheet_done();
+        let key = {
+            let st = s.state.borrow();
+            let key = st.key_of(st.current.unwrap()).unwrap();
+            assert!(key.version.is_some());
+            key
+        };
+        open(&s);
+        press_button(&s, "Library view");
+        crate::roots::land_sent(&s.state, &s.app, &s.worker);
+        let st = s.state.borrow();
+        assert_eq!(st.views.view, View::Folder);
+        assert_eq!(
+            st.launch.select_at_start.and_then(|c| st.key_of(c)),
+            Some(key)
+        );
+        drop(st);
         teardown(s);
     }
 
