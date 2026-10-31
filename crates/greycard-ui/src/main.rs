@@ -793,6 +793,7 @@ impl State {
                 scripted: false,
                 facets_wanted: Vec::new(),
                 awaiting_index: false,
+                last_folder: None,
                 select_at_start: None,
                 overrides_at_start: None,
                 overridden: None,

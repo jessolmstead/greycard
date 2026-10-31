@@ -106,6 +106,25 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         .then(|| PathBuf::from(&remembered.last_file))
         .filter(|p| p.is_file());
 
+    // The library index, on a thread of its own once the window is up:
+    // the folder open is indexed there, so the first frame never waits
+    // for a pass, and the facets fill in as it goes. The roots kept
+    // beside it, unless the command line names this run's own, are
+    // read now, before the files: a start folder with no frames of its
+    // own opens as the library's view of it when it lies under a root.
+    let library_path = cli
+        .library
+        .clone()
+        .or_else(greycard_library::Library::user_path);
+    let roots_kept = library_path
+        .as_ref()
+        .filter(|_| cli.roots.is_empty())
+        .map(|path| {
+            let file = greycard_library::Roots::path_beside(path);
+            let read = greycard_library::Roots::load(&file);
+            (file, read)
+        });
+
     // The files to open, and which of them to start on. The command
     // line's path, a file or a directory, as before; without one, the
     // last file's folder when the settings still find it there,
@@ -114,8 +133,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // empty editor is left showing, its Open folder button waiting.
     // Which of them to start on is settled off the window's thread
     // with the list's sidecars (`roots::open_listing`), since matching
-    // the last file to the list makes folders canonical.
-    let (files, select): (Vec<PathBuf>, crate::roots::Select) = match &cli.path {
+    // the last file to the list makes folders canonical. Instead of
+    // files, the view of the library to open once its index is.
+    let (files, select, start_view): (
+        Vec<PathBuf>,
+        crate::roots::Select,
+        Option<crate::roots::View>,
+    ) = match &cli.path {
         Some(path) => {
             let files = files::list_files(path, remembered.jpegs_apart)?;
             anyhow::ensure!(!files.is_empty(), "no RAW files at {}", path.display());
@@ -124,25 +148,35 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             } else {
                 crate::roots::Select::Row(0)
             };
-            (files, select)
+            (files, select, None)
         }
         // The all-roots view asked for, and no path: the view is what
         // opens, and nothing of the last file's folder is read or
         // developed first.
         None if cli.all_roots || !cli.roots.is_empty() => {
-            (Vec::new(), crate::roots::Select::Row(0))
+            (Vec::new(), crate::roots::Select::Row(0), None)
         }
         // The folder the Settings sheet names to start in while it is
         // there with frames in it, else the last file's.
         None => {
-            let last_dir = last_file.as_deref().and_then(Path::parent);
-            let from_last = settings::start_listing(&remembered.start_folder, last_dir, |dir| {
-                files::list_files(dir, remembered.jpegs_apart).ok()
-            });
-            match from_last {
-                Some(files) => (files, crate::roots::Select::Last(last_file.clone())),
-                None => (Vec::new(), crate::roots::Select::Row(0)),
-            }
+            let none = greycard_library::Roots::default();
+            let roots = roots_kept
+                .as_ref()
+                .and_then(|(_, read)| read.as_ref().ok())
+                .unwrap_or(&none);
+            let (files, view) = start_open(
+                roots,
+                &remembered.start_folder,
+                remembered.folder_tree_subfolders,
+                last_file.as_deref().and_then(Path::parent),
+                |dir| files::list_files(dir, remembered.jpegs_apart).ok(),
+            );
+            let select = if files.is_empty() {
+                crate::roots::Select::Row(0)
+            } else {
+                crate::roots::Select::Last(last_file.clone())
+            };
+            (files, select, view)
         }
     };
 
@@ -762,15 +796,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         .culling
         .prefetch
         .set_previews(worker.previews());
-    // The library index, on a thread of its own: the folder open is
-    // indexed there, so the first frame never waits for a pass, and
-    // the facets fill in as it goes.
-    let library_path = cli
-        .library
-        .clone()
-        .or_else(greycard_library::Library::user_path);
     // The roots: the command line's for this run, else the ones kept
-    // beside the library.
+    // beside the library, read with the files above.
     {
         let mut st = state.borrow_mut();
         // The collections, kept beside the library whatever the roots,
@@ -791,9 +818,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         }
         st.views.library.poll_every = crate::roots::poll_every(remembered.network_poll_minutes);
         if cli.roots.is_empty() {
-            if let Some(path) = &library_path {
-                let file = greycard_library::Roots::path_beside(path);
-                match greycard_library::Roots::load(&file) {
+            if let Some((file, read)) = roots_kept {
+                match read {
                     Ok(roots) => {
                         st.views.library.roots = roots;
                         st.views.library.file = Some(file);
@@ -814,6 +840,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             st.views.library.wanted = Some(crate::roots::View::Roots(None));
             // A capture waits for the view, not the folder under it.
             st.views.library.awaiting = st.window.batch;
+        } else if let Some(view) = start_view {
+            st.views.library.wanted = Some(view);
+            st.views.library.awaiting = st.window.batch;
+            st.launch.last_folder = last_file
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf);
         }
     }
     // The launch's folder, the command line's or the last one's, is
@@ -2563,6 +2596,44 @@ pub(crate) fn view_edit(st: &State, panel: &Edit) -> Edit {
         .unwrap_or_else(|| panel.clone())
 }
 
+/// A launch with no path: the frames to open as a folder, or else the
+/// view of the library to open once its index is. The chosen start
+/// folder with no frames of its own opens as a click on its row in the
+/// folder tree does, when it is a root or under one: its folders as
+/// tiles, or with `subfolders` the frames under it. One under no root
+/// gives way to the last folder, `last`, as one gone does.
+fn start_open<T>(
+    roots: &greycard_library::Roots,
+    chosen: &str,
+    subfolders: bool,
+    last: Option<&Path>,
+    list: impl Fn(&Path) -> Option<Vec<T>>,
+) -> (Vec<T>, Option<crate::roots::View>) {
+    let folder = match settings::start_listing(chosen, last, &list) {
+        settings::Start::Frames(files) => return (files, None),
+        settings::Start::Nothing => return (Vec::new(), None),
+        settings::Start::Bare(folder) => folder,
+    };
+    // Roots are kept canonical, as the index keeps its folders; the
+    // chosen folder is taken as written, and is there.
+    let folder =
+        dunce::canonicalize(&folder).unwrap_or_else(|_| greycard_library::roots::tidy(&folder));
+    if let Some(root) = roots.root_of(&folder) {
+        tracing::info!("start folder {chosen} has no frames of its own; its view in the library");
+        return (
+            Vec::new(),
+            Some(crate::tree::view_for(root, &folder, subfolders)),
+        );
+    }
+    tracing::info!(
+        "start folder {chosen} has no frames and is under no root; the last folder, if any"
+    );
+    match settings::start_listing("", last, &list) {
+        settings::Start::Frames(files) => (files, None),
+        settings::Start::Bare(_) | settings::Start::Nothing => (Vec::new(), None),
+    }
+}
+
 /// The picture's size for the panel: "6000 \u{d7} 4000 \u{b7} 24 MP".
 /// The megapixels are rounded to the nearest whole one, as a camera
 /// is named, and to a tenth below ten, where a whole one would be
@@ -2813,5 +2884,87 @@ mod tests {
             Some("Preset: Faded film")
         );
         std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+    }
+
+    /// A start folder with no frames of its own, a root or under one,
+    /// opens as its row in the folder tree does, the switch as it was
+    /// left; under no root, the last folder opens; with frames, those.
+    #[test]
+    fn a_bare_start_folder_under_a_root_opens_its_view_in_the_library() {
+        use crate::roots::View;
+        let dir = crate::testing::scratch_dir("start-view");
+        let root = dir.join("photos");
+        let year = root.join("2026");
+        let day = year.join("10-30");
+        let loose = dir.join("loose");
+        let last = dir.join("last");
+        for d in [&day, &loose.join("shoot"), &last] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        // Frames in the day and the last folder only.
+        let list = |d: &Path| -> Option<Vec<PathBuf>> {
+            Some(if d.ends_with("10-30") || d.ends_with("last") {
+                vec![d.join("a.CR3")]
+            } else {
+                Vec::new()
+            })
+        };
+        let roots = greycard_library::Roots::from_list(vec![root.clone()]);
+        let text = |p: &Path| p.to_string_lossy().into_owned();
+        let open = |chosen: &str, subfolders: bool| {
+            start_open(&roots, chosen, subfolders, Some(&last), list)
+        };
+        // A folder under the root, the switch off, then on.
+        assert_eq!(
+            open(&text(&year), false),
+            (
+                Vec::new(),
+                Some(View::Branch {
+                    root: root.clone(),
+                    folder: year.clone(),
+                    deep: false,
+                })
+            )
+        );
+        assert_eq!(
+            open(&text(&year), true),
+            (
+                Vec::new(),
+                Some(View::Branch {
+                    root: root.clone(),
+                    folder: year.clone(),
+                    deep: true,
+                })
+            )
+        );
+        // The root itself, written with a separator at its end.
+        let written = format!("{}{}", text(&root), std::path::MAIN_SEPARATOR);
+        assert_eq!(
+            open(&written, false),
+            (
+                Vec::new(),
+                Some(View::Branch {
+                    root: root.clone(),
+                    folder: root.clone(),
+                    deep: false,
+                })
+            )
+        );
+        assert_eq!(
+            open(&written, true),
+            (Vec::new(), Some(View::Roots(Some(root.clone()))))
+        );
+        // Under no root: the last folder, or nothing without one.
+        let in_last = vec![last.join("a.CR3")];
+        assert_eq!(open(&text(&loose), false), (in_last.clone(), None));
+        assert_eq!(
+            start_open(&roots, &text(&loose), false, None, list),
+            (Vec::new(), None)
+        );
+        // With frames of its own: listed from the disk, root or not.
+        assert_eq!(open(&text(&day), true), (vec![day.join("a.CR3")], None));
+        // Gone: the last folder.
+        assert_eq!(open(&text(&dir.join("gone")), true), (in_last, None));
+        crate::testing::remove_dir_retry(&dir);
     }
 }

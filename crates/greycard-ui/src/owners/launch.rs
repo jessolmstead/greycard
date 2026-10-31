@@ -61,6 +61,10 @@ pub(crate) struct Launch {
     pub(crate) facets_wanted: Vec<filter::Wanted>,
     /// A capture waits for those to be chosen.
     pub(crate) awaiting_index: bool,
+    /// The last folder, kept while the launch waits for the start
+    /// folder's view in the library: opened instead should the index
+    /// fail to open.
+    pub(crate) last_folder: Option<PathBuf>,
     /// The file to open once the window has its device: the first
     /// develop then runs where every later one does, so a screenshot
     /// or an export shows the same path a session would.

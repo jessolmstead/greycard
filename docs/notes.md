@@ -471,3 +471,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§456. The way back from the export queue](notes/456-the-way-back-from-the-export-queue.md) (2026-10-29)
 - [§457. Every compared frame whole at 1:1](notes/457-every-compared-frame-whole-at-one-to-one.md) (2026-10-30)
 - [§458. The switch keeps the frame on screen](notes/458-the-switch-keeps-the-frame-on-screen.md) (2026-10-30)
+- [§459. A start folder of folders](notes/459-a-start-folder-of-folders.md) (2026-10-30)

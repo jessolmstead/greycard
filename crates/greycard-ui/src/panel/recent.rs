@@ -499,6 +499,44 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// A launch waiting for its start folder's view in the library: a
+    /// folder opened by hand meanwhile wins over the view, and an index
+    /// that fails to open gives way to the last folder.
+    #[test]
+    fn a_launch_waiting_on_its_start_view_gives_way_to_a_folder_opened_or_the_last() {
+        let dir = scratch("start-view");
+        let (a, b) = (shoot(&dir.join("a")), shoot(&dir.join("b")));
+        let view = crate::roots::View::Branch {
+            root: dir.clone(),
+            folder: dir.clone(),
+            deep: false,
+        };
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        state.borrow_mut().views.library.wanted = Some(view.clone());
+        open_folder(&state, &app, &worker, &b);
+        assert_eq!(state.borrow().views.library.wanted, None);
+        assert_eq!(app.get_open_folder_name(), "b");
+        drop(state);
+
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.views.library.wanted = Some(view);
+            st.views.library.awaiting = true;
+            st.launch.last_folder = Some(a.clone());
+        }
+        crate::library::told(&app, crate::library::Told::Failed("no index".into()));
+        crate::roots::land_sent(&state, &app, &worker);
+        assert!(!state.borrow().views.library.awaiting, "a capture ends");
+        assert_eq!(app.get_open_folder_name(), "a");
+        crate::STATE.with(|s| *s.borrow_mut() = None);
+        crate::WORKER.with(|w| *w.borrow_mut() = None);
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     #[test]
     fn a_folder_gone_from_the_disk_says_so_and_stays_listed() {
         let dir = scratch("gone");

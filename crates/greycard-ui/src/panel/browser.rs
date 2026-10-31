@@ -1657,6 +1657,10 @@ pub(crate) fn load_sidecar_said(
 /// not one, is said and the list left alone rather than emptied under
 /// the user's feet.
 pub(crate) fn open_folder(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+    // A folder opened by hand while the index is still opening wins
+    // over the view the launch asked for: that view is not opened
+    // over it once the index is open.
+    state.borrow_mut().views.library.wanted = None;
     let last = settings::Settings::load().last_file;
     let last = (!last.is_empty()).then(|| PathBuf::from(last));
     crate::roots::open_listing(
@@ -1696,6 +1700,9 @@ pub(crate) fn open_paths(
         state.borrow_mut().views.filter = filter::Filter::default();
         app.set_filter_text("".into());
     }
+    // As for a folder opened by hand: the launch's view is not opened
+    // over these once the index is open.
+    state.borrow_mut().views.library.wanted = None;
     crate::roots::open_listing(
         state,
         app,

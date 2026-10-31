@@ -139,8 +139,10 @@ pub struct Settings {
     /// The folder a launch with no path opens, as chosen in the
     /// Settings sheet; empty for the last folder, the last file's, which
     /// is what every earlier build opened. Taken as written, with no `~`
-    /// made a home; one gone from the disk opens the last folder
-    /// instead ([`start_listing`]). Written as it is chosen.
+    /// made a home. One that is gone or empty opens the last folder
+    /// instead; one that holds only folders opens as the folder tree
+    /// opens it, when it is a root or under one ([`start_listing`]).
+    /// Written as it is chosen.
     #[serde(deserialize_with = "string_leniently")]
     pub start_folder: String,
     /// Whether the filter bar is shown, over the grid and in culling's
@@ -378,30 +380,64 @@ where
     }
 }
 
+/// What a launch with no path opens first ([`start_listing`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Start<T> {
+    /// These frames, as a folder: the chosen one's, or the last one's.
+    Frames(Vec<T>),
+    /// The chosen folder, there with no frames of its own and folders
+    /// in it: a folder of shoots, say. The caller knows the roots, and
+    /// opens it as the library's view of it or passes over it.
+    Bare(std::path::PathBuf),
+    /// Neither folder has frames.
+    Nothing,
+}
+
 /// The frames a launch with no path opens: the `chosen` folder's, as
 /// `list` finds them, while it is a folder on the disk with frames in
-/// it, else the `last` folder's, the last file's; none when neither has
-/// any. Empty is no choice. A chosen folder gone (a drive unplugged, a
-/// shoot moved) or empty (a card's folder emptied after each import)
-/// is said in the log and the last folder opened, so the launch is
-/// neither an empty window nor the chooser over it.
+/// it, else the `last` folder's, the last file's. Empty is no choice. A
+/// chosen folder gone (a drive unplugged, a shoot moved) is said in the
+/// log and the last folder opened, so the launch is neither an empty
+/// window nor the chooser over it, and so is one there and empty (a
+/// card's folder emptied after each import). A chosen folder with no
+/// frames of its own but folders in it is handed back bare for the
+/// caller to settle.
 pub fn start_listing<T>(
     chosen: &str,
     last: Option<&std::path::Path>,
     list: impl Fn(&std::path::Path) -> Option<Vec<T>>,
-) -> Option<Vec<T>> {
+) -> Start<T> {
     let listed = |dir: &std::path::Path| list(dir).filter(|frames| !frames.is_empty());
     if !chosen.is_empty() {
         let dir = std::path::Path::new(chosen);
         if !dir.is_dir() {
             tracing::info!("start folder {chosen} is not there; the last folder");
         } else if let Some(frames) = listed(dir) {
-            return Some(frames);
+            return Start::Frames(frames);
+        } else if holds_folders(dir) {
+            return Start::Bare(dir.to_path_buf());
         } else {
             tracing::info!("start folder {chosen} has no frames; the last folder");
         }
     }
-    last.and_then(listed)
+    match last.and_then(listed) {
+        Some(frames) => Start::Frames(frames),
+        None => Start::Nothing,
+    }
+}
+
+/// Whether `dir` holds a folder that is not hidden (no dot to its
+/// name). The listing stops at the first; one that cannot be read
+/// holds none.
+fn holds_folders(dir: &std::path::Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        !e.file_name().to_string_lossy().starts_with('.')
+            && e.file_type()
+                .is_ok_and(|t| t.is_dir() || (t.is_symlink() && e.path().is_dir()))
+    })
 }
 
 /// The `keys` of a file edited by hand: each string kept, anything
@@ -1006,7 +1042,9 @@ mod tests {
 
     /// The frames a launch opens: the chosen folder's while it is
     /// there with frames in it, else the last folder's; no choice is
-    /// the last, and neither is nothing.
+    /// the last, and neither is nothing. The chosen folder there with
+    /// no frames of its own but folders is handed back bare, not
+    /// passed over; one empty, or with only hidden folders, is.
     #[test]
     fn the_start_folder_falls_back_to_the_last_one() {
         let dir = std::env::temp_dir().join(format!("greycard-start-{}", std::process::id()));
@@ -1030,8 +1068,8 @@ mod tests {
                 }
             }
         };
-        let in_chosen = Some(vec![chosen.join("a.CR3")]);
-        let in_last = Some(vec![last.join("b.CR3")]);
+        let in_chosen = Start::Frames(vec![chosen.join("a.CR3")]);
+        let in_last = Start::Frames(vec![last.join("b.CR3")]);
         let chosen_text = chosen.to_string_lossy();
         assert_eq!(
             start_listing(&chosen_text, Some(last), frames(true)),
@@ -1039,13 +1077,28 @@ mod tests {
         );
         assert_eq!(start_listing(&chosen_text, None, frames(true)), in_chosen);
         assert_eq!(start_listing("", Some(last), frames(true)), in_last);
-        assert_eq!(start_listing("", None, frames(true)), None);
-        // There, but no frames in it: the last folder, or nothing.
+        assert_eq!(start_listing("", None, frames(true)), Start::Nothing);
+        // There and empty, or with only a hidden folder in it: the
+        // last folder, or nothing.
+        std::fs::create_dir_all(chosen.join(".thumbs")).unwrap();
         assert_eq!(
             start_listing(&chosen_text, Some(last), frames(false)),
             in_last
         );
-        assert_eq!(start_listing(&chosen_text, None, frames(false)), None);
+        assert_eq!(
+            start_listing(&chosen_text, None, frames(false)),
+            Start::Nothing
+        );
+        // No frames of its own, but folders: bare, whatever the last.
+        std::fs::create_dir_all(chosen.join("2026")).unwrap();
+        assert_eq!(
+            start_listing(&chosen_text, Some(last), frames(false)),
+            Start::Bare(chosen.clone())
+        );
+        assert_eq!(
+            start_listing(&chosen_text, None, frames(false)),
+            Start::Bare(chosen.clone())
+        );
         // A file is no folder to open.
         let file = dir.join("a.CR3");
         std::fs::write(&file, b"raw").unwrap();
@@ -1053,13 +1106,20 @@ mod tests {
             start_listing(&file.to_string_lossy(), Some(last), frames(true)),
             in_last
         );
+        assert_eq!(
+            start_listing(&file.to_string_lossy(), None, frames(true)),
+            Start::Nothing
+        );
         // Gone from the disk: the last folder, or nothing.
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(
             start_listing(&chosen_text, Some(last), frames(true)),
             in_last
         );
-        assert_eq!(start_listing(&chosen_text, None, frames(true)), None);
+        assert_eq!(
+            start_listing(&chosen_text, None, frames(true)),
+            Start::Nothing
+        );
         // A `~` is not made a home: taken as written, and not there.
         assert_eq!(start_listing("~", Some(last), frames(true)), in_last);
     }

@@ -79,8 +79,11 @@ Where greycard opens when you start it without naming a folder.
 | **Chosen folder** | The folder you pick in the chooser it opens, shown under the row |
 
 Click **Chosen folder** again to pick another. If that folder is gone,
-say on a drive that is unplugged, or holds no raws, greycard opens the
-last folder instead.
+say on a drive that is unplugged, or empty, greycard opens the last
+folder instead. A chosen folder that holds only folders opens as it
+does from the folder tree when it is a root or under one: its folders
+as tiles, or everything under it with **With subfolders** on. Under no
+root, the last folder opens.
 
 ### Show the filter bar
 

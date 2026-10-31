@@ -42,6 +42,11 @@ disk image's install window.
   on screen, which made the navigator blink; the list changes under
   it and the frame stays as it is
   ([§458](https://github.com/jessolmstead/greycard/blob/master/docs/notes/458-the-switch-keeps-the-frame-on-screen.md)).
+- A Start in folder that holds only folders, a root or under one, now
+  opens at launch as it does from the folder tree, its folders as
+  tiles, or everything under it with With subfolders on; before, the
+  last folder opened in its place
+  ([§459](https://github.com/jessolmstead/greycard/blob/master/docs/notes/459-a-start-folder-of-folders.md)).
 - A compact whose raw names its lens as a focal range, as CHDK's DNGs
   do, now gets the body's lens profile instead of "no profile for"
   ([§453](https://github.com/jessolmstead/greycard/blob/master/docs/notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md)).

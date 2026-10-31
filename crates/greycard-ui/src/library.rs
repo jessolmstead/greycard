@@ -2133,6 +2133,9 @@ pub(crate) fn told(app: &App, told: Told) {
             crate::tree::want(&mut st, app);
             crate::roots::show(&st, app);
             let wanted = st.views.library.wanted.take();
+            // The index is open: the last folder kept for its failing is
+            // not wanted any more.
+            st.launch.last_folder = None;
             drop(st);
             reread(&state, app, false);
             if let (Some(view), Some(worker)) = (wanted, crate::WORKER.with(|w| w.borrow().clone()))
@@ -2252,13 +2255,24 @@ pub(crate) fn told(app: &App, told: Told) {
             let mut st = state.borrow_mut();
             st.views.index = None;
             // The view of the roots asked for will not come, and a
-            // folder opened meanwhile is recorded as any other.
-            st.views.library.wanted = None;
+            // folder opened meanwhile is recorded as any other. A
+            // capture waiting on it ends.
+            let wanted = st.views.library.wanted.take();
+            st.views.library.awaiting = false;
+            // A launch that was to open its start folder's view opens
+            // the last folder instead, as it would with no root.
+            let last = st.launch.last_folder.take();
+            let last = last.filter(|_| wanted.is_some() && st.files.is_empty());
             st.views.index_progress = None;
             st.views.index_error = Some(format!("No library index: {message}"));
             st.launch.awaiting_index = false;
             crate::panel::cull::show_filter(&st, app);
             app.window().request_redraw();
+            drop(st);
+            if let (Some(dir), Some(worker)) = (last, crate::WORKER.with(|w| w.borrow().clone())) {
+                tracing::info!("opening the last folder {} instead", dir.display());
+                crate::panel::browser::open_folder(&state, app, &worker, &dir);
+            }
         }
         Told::Progress {
             generation,
