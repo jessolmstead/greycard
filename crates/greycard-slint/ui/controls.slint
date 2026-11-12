@@ -2075,8 +2075,10 @@ export component EdgeArrow inherits Rectangle {
 // track at rest when the bars are set to stay; a press in the band is
 // the bar's and never what is under it.
 export component ScrollBand inherits TouchArea {
-    /// Along the foot rather than down the right edge.
+    /// Along the foot rather than down a vertical edge.
     in property <bool> horizontal;
+    /// Place a vertical thumb against the left edge of its band.
+    in property <bool> left-edge: false;
     /// How far the owner is scrolled, and how far it can be.
     in property <length> scroll;
     in property <length> max;
@@ -2247,7 +2249,8 @@ export component ScrollBand inherits TouchArea {
             property <length> long: round(root.thumb-len / 1phx) * 1phx;
             property <length> edge: round(((root.horizontal ? parent.height : parent.width) - 4px) / 1phx) * 1phx;
             animate thick { duration: 150ms; easing: ease-out; }
-            x: root.horizontal ? self.at : self.edge - self.thick;
+            x: root.horizontal ? self.at
+                : root.left-edge ? round(4px / 1phx) * 1phx : self.edge - self.thick;
             y: root.horizontal ? self.edge - self.thick : self.at;
             width: root.horizontal ? self.long : self.thick;
             height: root.horizontal ? self.thick : self.long;
@@ -2257,7 +2260,7 @@ export component ScrollBand inherits TouchArea {
     }
 }
 
-// A view that scrolls what it holds, with `ScrollBand`s down its right
+// A view that scrolls what it holds, with `ScrollBand`s down either
 // edge and along its foot in place of the std widgets' bars, so a
 // list's and a panel's bar look, stay, and size as the grid's does.
 // The thumb stays drawn at rest here: a view whose bar faded would
@@ -2312,6 +2315,7 @@ export component DragEdge inherits Rectangle {
 }
 
 export component ScrollPane {
+    in property <bool> vertical-bar-on-left: false;
     out property <length> visible-width <=> flick.width;
     out property <length> visible-height <=> flick.height;
     in-out property <length> content-width <=> flick.content-width;
@@ -2343,7 +2347,8 @@ export component ScrollPane {
         @children
     }
     ScrollBand {
-        x: parent.width - self.width;
+        x: root.vertical-bar-on-left ? 0px : parent.width - self.width;
+        left-edge: root.vertical-bar-on-left;
         width: ScrollBars.band;
         height: root.max-x > 0 ? parent.height - ScrollBars.band : parent.height;
         fades: false;
@@ -2368,6 +2373,7 @@ export component ScrollPane {
     }
     ScrollBand {
         horizontal: true;
+        x: root.vertical-bar-on-left && root.max-y > 0 ? ScrollBars.band : 0px;
         y: parent.height - self.height;
         height: ScrollBars.band;
         width: root.max-y > 0 ? parent.width - ScrollBars.band : parent.width;

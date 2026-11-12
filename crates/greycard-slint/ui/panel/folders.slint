@@ -1,18 +1,33 @@
-// The open root's folders as a tree, in the left pane under the name
-// of what is open: each folder indented under the one it is in, a
+// The folder entry point and the open root's tree in the left pane:
+// each folder indented under the one it is in, a
 // triangle where it has folders of its own, its count muted after its
 // name, the one open lit. A click opens the folder's frames from the
 // index; the switch above takes in the folders under it too. Built
 // from the index, so a root that is offline still shows its shape.
 
 import { Theme } from "../theme.slint";
-import { NameTip, Section, Toggle, ScrollPane } from "../controls.slint";
+import { NameTip, PanelButton, Section, Toggle, ScrollPane } from "../controls.slint";
+import { FolderName } from "recent.slint";
 import { FolderRow } from "../structs.slint";
 
 export component FoldersSection inherits Section {
     in property <[FolderRow]> rows;
+    in property <bool> tree-shown;
+    in property <string> open-name;
+    in property <string> open-root;
+    in property <string> open-path;
+    in property <string> open-note;
+    in property <bool> has-recent;
+    in property <bool> quiet;
+    in property <string> rt-offer;
     in-out property <bool> subfolders;
     in-out property <bool> collapsed-folders;
+    callback open-folder();
+    callback recent-menu(length, length);
+    callback tip(string, length, length);
+    pure callback menu-shown() -> bool;
+    callback rt-offer-import();
+    callback rt-offer-dismissed();
     /// A folder chosen, by its row.
     callback picked(int);
     /// A folder's triangle pressed, by its row.
@@ -24,13 +39,66 @@ export component FoldersSection inherits Section {
     title: @tr("FOLDERS");
     icon: @image-url("../icons/folder-open.svg");
     collapsed <=> root.collapsed-folders;
-    shares: true;
-    Toggle {
+    // With no tree, the button to open a folder must stay in sight.
+    init => { if (!root.tree-shown) { root.collapsed-folders = false; } }
+    changed tree-shown => { if (!root.tree-shown) { root.collapsed-folders = false; } }
+    changed collapsed-folders => {
+        if (!root.tree-shown && root.collapsed-folders) { root.collapsed-folders = false; }
+    }
+    shares: root.tree-shown;
+    VerticalLayout {
+        vertical-stretch: 0;
+        spacing: 2px;
+        padding-bottom: Theme.space-2;
+        PanelButton {
+            text: @tr("Open folder...");
+            icon: @image-url("../icons/folder-open.svg");
+            clicked => { root.focus-keys(); root.open-folder(); }
+        }
+        if root.open-name != "" || root.open-note != "" || root.has-recent: FolderName {
+            name: root.open-name;
+            root-name: root.open-root;
+            path: root.open-path;
+            note: root.open-note;
+            has-list: root.has-recent;
+            quiet: root.quiet;
+            menu(x, y) => { root.recent-menu(x, y); }
+            tip(t, x, y) => { root.tip(t, x, y); }
+            menu-shown => { return root.menu-shown(); }
+        }
+        // Profiles found beside the folder's frames, offered once.
+        if root.rt-offer != "": VerticalLayout {
+            vertical-stretch: 0;
+            spacing: 2px;
+            padding-top: 2px;
+            padding-bottom: Theme.space-2;
+            Text {
+                text: root.rt-offer;
+                color: Theme.text-secondary;
+                font-size: Theme.font-xs;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: @tr("Import...");
+                    horizontal-stretch: 1;
+                    clicked => { root.focus-keys(); root.rt-offer-import(); }
+                }
+                PanelButton {
+                    text: @tr("Not now");
+                    horizontal-stretch: 1;
+                    clicked => { root.focus-keys(); root.rt-offer-dismissed(); }
+                }
+            }
+        }
+    }
+    if root.tree-shown: Toggle {
         label: @tr("With subfolders");
         checked <=> root.subfolders;
         toggled => { root.subfolders-changed(); root.focus-keys(); }
     }
-    if root.rows.length > 0: Rectangle {
+    if root.tree-shown && root.rows.length > 0: Rectangle {
         border-radius: Theme.radius-md;
         background: Theme.base;
         border-width: 1px;
@@ -76,12 +144,12 @@ export component FoldersSection inherits Section {
                         // The triangle, or its room, so names at one
                         // depth line up whether or not they fold.
                         Rectangle {
-                            width: 14px;
+                            width: Theme.icon;
                             if row.children: Image {
                                 source: @image-url("../icons/chevron-right.svg");
                                 colorize: fold.has-hover ? Theme.text : Theme.text-muted;
-                                width: 10px;
-                                height: 10px;
+                                width: Theme.icon;
+                                height: Theme.icon;
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
                                 transform-rotation: row.expanded ? 90deg : 0deg;

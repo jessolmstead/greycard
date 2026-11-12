@@ -100,7 +100,8 @@ export component SnapshotsSection inherits Section {
         min-height: self.floor;
         max-height: snapshot-list.preferred-height;
         vertical-stretch: 1;
-        ScrollPane {
+        snapshot-scroll := ScrollPane {
+            content-width: self.visible-width;
             snapshot-list := VerticalLayout {
                 padding: 2px;
                 spacing: 2px;
@@ -147,7 +148,10 @@ export component SnapshotsSection inherits Section {
                         if root.snapshot-editing == i: LineEdit {
                             text: name;
                             font-size: Theme.font-xs;
+                            height: snapshot-box.height - 6px;
+                            cross-axis-self-alignment: center;
                             horizontal-stretch: 1;
+                            min-width: 1px;
                             accepted(t) => {
                                 root.snapshot-editing = -1;
                                 root.snapshot-renamed(i, t);
@@ -177,39 +181,42 @@ export component SnapshotsSection inherits Section {
                             horizontal-stretch: 1;
                             overflow: elide;
                         }
-                        // The row is the only way back to a snapshot,
-                        // so what a click does is on it in pictures:
-                        // back to it, a new name, away. The rename
-                        // icon names it without restoring it.
-                        restore := SnapshotIcon {
-                            icon: @image-url("../icons/undo-2.svg");
-                            label: @tr("Restore {}", name);
-                            words: @tr("Restore");
-                            clicked => {
-                                root.hold-restore();
-                                if (root.selected >= 0) { root.snapshot-restored(i); }
+                        HorizontalLayout {
+                            padding-left: Theme.space-1;
+                            // The row is the only way back to a snapshot,
+                            // so what a click does is on it in pictures:
+                            // back to it, a new name, away. The rename
+                            // icon names it without restoring it.
+                            restore := SnapshotIcon {
+                                icon: @image-url("../icons/undo-2.svg");
+                                label: @tr("Restore {}", name);
+                                words: @tr("Restore");
+                                clicked => {
+                                    root.hold-restore();
+                                    if (root.selected >= 0) { root.snapshot-restored(i); }
+                                }
                             }
-                        }
-                        rename := SnapshotIcon {
-                            icon: @image-url("../icons/pencil.svg");
-                            label: @tr("Rename {}", name);
-                            words: @tr("Rename");
-                            // As the double-click: never over another
-                            // row's name being typed.
-                            clicked => {
-                                root.hold-restore();
-                                if (root.snapshot-editing >= 0) { return; }
-                                root.snapshot-editing = i;
+                            rename := SnapshotIcon {
+                                icon: @image-url("../icons/pencil.svg");
+                                label: @tr("Rename {}", name);
+                                words: @tr("Rename");
+                                // As the double-click: never over another
+                                // row's name being typed.
+                                clicked => {
+                                    root.hold-restore();
+                                    if (root.snapshot-editing >= 0) { return; }
+                                    root.snapshot-editing = i;
+                                }
                             }
-                        }
-                        bin := SnapshotIcon {
-                            icon: @image-url("../icons/trash-2.svg");
-                            label: @tr("Remove {}", name);
-                            // Snapshots: remove the snapshot
-                            words: @tr("Remove");
-                            clicked => {
-                                root.hold-restore();
-                                root.snapshot-deleted(i);
+                            bin := SnapshotIcon {
+                                icon: @image-url("../icons/trash-2.svg");
+                                label: @tr("Remove {}", name);
+                                // Snapshots: remove the snapshot
+                                words: @tr("Remove");
+                                clicked => {
+                                    root.hold-restore();
+                                    root.snapshot-deleted(i);
+                                }
                             }
                         }
                     }
@@ -225,6 +232,7 @@ export component SnapshotsSection inherits Section {
         color: Theme.text-muted;
         wrap: word-wrap;
     }
+    Rectangle { height: Theme.space-1; }
     PanelButton {
         // Snapshots: take a snapshot of the edit as it is
         text: @tr("Take");
