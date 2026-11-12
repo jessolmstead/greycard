@@ -4944,7 +4944,6 @@ export component App inherits Window {
             padding-top: Theme.space-1;
             padding-bottom: Theme.space-2;
             navigator-section := NavigatorSection {
-                padding-left: max(Theme.space-1, ScrollBars.band - 2px);
                 zoom-text: root.zoom-text;
                 collapsed-navigator <=> root.collapsed-navigator;
                 navigator: root.navigator;
@@ -4966,7 +4965,7 @@ export component App inherits Window {
         // height past the screen's (see the note above about
         // Windows leaving fullscreen).
         ScrollPane {
-            vertical-bar-on-left: true;
+            vertical-bar-on-left: false;
             // This pane only scrolls vertically. The Flickable would
             // otherwise infer a wider content area from its children.
             content-width: self.visible-width;
@@ -4977,8 +4976,7 @@ export component App inherits Window {
                 // room the lists leave goes to the foot below them.
                 padding: Theme.space-1;
                 // Clear of the scroll bar's band, however wide it is.
-                padding-left: max(Theme.space-1, ScrollBars.band + 2px);
-                padding-right: Theme.space-1;
+                padding-right: max(Theme.space-1, ScrollBars.band + 2px);
                 padding-top: Theme.space-1;
                 // The foot's own gap makes up the rest.
                 padding-bottom: Theme.space-1;
