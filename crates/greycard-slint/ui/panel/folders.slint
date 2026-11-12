@@ -99,10 +99,6 @@ export component FoldersSection inherits Section {
         toggled => { root.subfolders-changed(); root.focus-keys(); }
     }
     if root.tree-shown && root.rows.length > 0: Rectangle {
-        border-radius: Theme.radius-md;
-        background: Theme.base;
-        border-width: 1px;
-        border-color: Theme.border;
         // Three rows, or the list when shorter, and as much more of the
         // list as the pane's share gives it (app.slint), the rest a
         // scroll away, so a root of a thousand folders never pushes
@@ -114,7 +110,6 @@ export component FoldersSection inherits Section {
         vertical-stretch: 1;
         folder-pane := ScrollPane {
             folder-list := VerticalLayout {
-                padding: 2px;
                 spacing: 1px;
                 for row[i] in root.rows: Rectangle {
                     height: Theme.control-height - 8px;
