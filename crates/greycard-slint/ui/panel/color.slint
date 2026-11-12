@@ -607,7 +607,7 @@ export component GradingSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         for name[i] in [@tr("Shadows"), @tr("Mid-tones"), @tr("Highlights")]: VerticalLayout {
-            spacing: Theme.space-1;
+            width: (parent.width - 2 * Theme.space-2) / 3;
             alignment: end;
             if root.grade-big != i && i < root.grade-images.length: GradeWheel {
                 picture: root.grade-images[i];
@@ -622,7 +622,7 @@ export component GradingSection inherits Section {
                 double-clicked(x, y) => { root.grade-double(i); }
             }
             Rectangle {
-                height: Theme.control-height - 6px;
+                height: 2 * Theme.font-xs + 8px;
                 border-radius: Theme.radius-sm;
                 background: name-area.has-hover ? Theme.hover : transparent;
                 accessible-role: button;
@@ -638,6 +638,7 @@ export component GradingSection inherits Section {
                     clicked => { self.choose(); }
                 }
                 HorizontalLayout {
+                    width: parent.width;
                     alignment: center;
                     spacing: Theme.space-1;
                     Text {
@@ -645,6 +646,11 @@ export component GradingSection inherits Section {
                         color: root.grade-range == i ? Theme.accent-text : Theme.text-secondary;
                         font-size: Theme.font-xs;
                         font-weight: root.grade-range == i ? Theme.weight-medium : Theme.weight-regular;
+                        min-width: 0px;
+                        wrap: word-wrap;
+                        overflow: elide;
+                        max-lines: 2;
+                        horizontal-alignment: center;
                         vertical-alignment: center;
                     }
                     Image {
