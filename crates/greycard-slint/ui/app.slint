@@ -54,7 +54,7 @@ import { Filmstrip } from "panel/strip.slint";
 import { Viewport } from "panel/viewport.slint";
 import { FrameMenu } from "panel/frame-menu.slint";
 import { RootSheet } from "panel/root-sheet.slint";
-import { RecentMenu } from "panel/recent.slint";
+import { FolderName, RecentMenu } from "panel/recent.slint";
 import { FoldersSection } from "panel/folders.slint";
 import { RootsSection, RootRow } from "panel/roots.slint";
 import { CollectionsSection } from "panel/collections.slint";
@@ -4965,7 +4965,6 @@ export component App inherits Window {
         // height past the screen's (see the note above about
         // Windows leaving fullscreen).
         ScrollPane {
-            vertical-bar-on-left: false;
             // This pane only scrolls vertically. The Flickable would
             // otherwise infer a wider content area from its children.
             content-width: self.visible-width;
@@ -4981,6 +4980,56 @@ export component App inherits Window {
                 // The foot's own gap makes up the rest.
                 padding-bottom: Theme.space-1;
                 spacing: Theme.space-2;
+                // The folder entry point stays available when FOLDERS is
+                // folded or no root is open.
+                VerticalLayout {
+                    vertical-stretch: 0;
+                    spacing: 2px;
+                    PanelButton {
+                        // File menu
+                        text: @tr("Open folder...");
+                        icon: @image-url("icons/folder-open.svg");
+                        clicked => { keys.focus(); root.open-folder(); }
+                    }
+                    if root.open-folder-name != "" || root.open-folder-note != ""
+                        || root.recent-folders.length > 0: FolderName {
+                        name: root.open-folder-name;
+                        root-name: root.open-folder-root;
+                        path: root.open-folder-path;
+                        note: root.open-folder-note;
+                        has-list: root.recent-folders.length > 0;
+                        quiet: root.sheet-open();
+                        menu(x, y) => { root.recent-menu-at(x, y); }
+                        tip(t, x, y) => { root.tip-at(t, x, y); }
+                        menu-shown => { return root.menu-shown(); }
+                    }
+                    // Profiles found beside the folder's frames, offered once.
+                    if root.rt-offer != "": VerticalLayout {
+                        spacing: 2px;
+                        padding-top: 2px;
+                        padding-bottom: Theme.space-2;
+                        Text {
+                            text: root.rt-offer;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            PanelButton {
+                                // File menu
+                                text: @tr("Import...");
+                                horizontal-stretch: 1;
+                                clicked => { keys.focus(); root.rt-offer-import(); }
+                            }
+                            PanelButton {
+                                text: @tr("Not now");
+                                horizontal-stretch: 1;
+                                clicked => { keys.focus(); root.rt-offer-dismissed(); }
+                            }
+                        }
+                    }
+                }
                 // The other way a folder fills, from a card, and while
                 // it runs its progress under it: the grid covers the
                 // status plate. Ctrl+Shift+I reaches the same sheet.
@@ -5062,17 +5111,16 @@ export component App inherits Window {
                     quiet: root.sheet-open();
                     tip(t, x, y) => { root.tip-at(t, x, y); }
                 }
-                // The folder entry point stays available without an open root;
-                // the tree below it appears when the index has a root.
+                // The open root's folder tree, from the index.
                 // Its share of the pane's height (see `share-folders`):
                 // the section's own bounds, its weight, how it lies now.
-                Rectangle {
+                if root.folder-tree-shown: Rectangle {
                     min-height: folders-section.min-height;
                     preferred-height: folders-section.preferred-height;
                     max-height: folders-section.max-height;
                     min-width: folders-section.min-width;
                     preferred-width: folders-section.preferred-width;
-                    vertical-stretch: root.folder-tree-shown ? root.share-folders : 0;
+                    vertical-stretch: root.share-folders;
                     property <length> grown: self.height - folders-section.preferred-height;
                     property <length> room: folders-section.max-height - self.height;
                     // Told only when a gap asks (a hover, a press, or a release): a
@@ -5082,24 +5130,10 @@ export component App inherits Window {
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(0, self.grown, self.room); }
                     folders-section := FoldersSection {
-                        tree-shown: root.folder-tree-shown;
                         rows: root.folder-tree;
-                        open-name: root.open-folder-name;
-                        open-root: root.open-folder-root;
-                        open-path: root.open-folder-path;
-                        open-note: root.open-folder-note;
-                        has-recent: root.recent-folders.length > 0;
-                        quiet: root.sheet-open();
-                        rt-offer: root.rt-offer;
                         subfolders <=> root.folder-tree-subfolders;
                         collapsed-folders <=> root.collapsed-folders;
                         animated <=> root.folders-animated;
-                        open-folder => { root.open-folder(); }
-                        recent-menu(x, y) => { root.recent-menu-at(x, y); }
-                        tip(t, x, y) => { root.tip-at(t, x, y); }
-                        menu-shown => { return root.menu-shown(); }
-                        rt-offer-import => { root.rt-offer-import(); }
-                        rt-offer-dismissed => { root.rt-offer-dismissed(); }
                         picked(p) => { root.commit-title(); root.folder-tree-picked(p); }
                         folded(p) => { root.folder-tree-folded(p); }
                         subfolders-changed => { root.folder-tree-subfolders-changed(); }
@@ -5438,7 +5472,7 @@ export component App inherits Window {
     // pane's width or the strip's pictures' height, held to its floor
     // and ceiling, and a double-click goes back to the default. Inside
     // the pane, 4 px along its edge, so the viewport keeps every pixel
-    // of its presses. The left pane's scroll band is on its outer edge.
+    // of its presses. The left pane's scroll band is at its right edge.
     // Under the arrows,
     // declared after, and the sheets. The Develop panel's and the
     // strip's are the Loupe's: the grid covers both.

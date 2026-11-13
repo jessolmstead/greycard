@@ -37,9 +37,6 @@ export component NavigatorSection inherits Section {
             property <float> aspect: self.has ? root.navigator.width / max(1, root.navigator.height) : 1.5;
             property <length> shown-w: min(self.width, self.height * self.aspect);
             property <length> shown-h: self.shown-w / self.aspect;
-            // background: Theme.base;
-            // border-width: 1px;
-            // border-color: Theme.border;
             clip: true;
             shown := Rectangle {
                 visible: parent.has;
@@ -56,9 +53,8 @@ export component NavigatorSection inherits Section {
                 }
                 // Always here, drawn only when the view
                 // shows less than the frame: a conditional
-                // element appearing under this clip's
-                // rounded corners would not refresh the
-                // renderer's cached layer of them.
+                // element appearing under this clip would not refresh
+                // the renderer's cached layer.
                 Rectangle {
                     x: root.nav-left * parent.width;
                     y: root.nav-top * parent.height;

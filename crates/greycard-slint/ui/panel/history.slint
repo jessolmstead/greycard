@@ -100,7 +100,6 @@ export component SnapshotsSection inherits Section {
         snapshot-scroll := ScrollPane {
             content-width: self.visible-width;
             snapshot-list := VerticalLayout {
-                padding: 2px;
                 spacing: 1px;
                 for name[i] in root.snapshot-names: snapshot-box := Rectangle {
                     // What the pointer is over: the row, one of its
@@ -268,7 +267,6 @@ export component HistorySection inherits Section {
         vertical-stretch: 1;
         ScrollPane {
             history-list := VerticalLayout {
-                padding: 2px;
                 spacing: 1px;
                 for row[i] in root.history-rows: Rectangle {
                     height: Theme.control-height - 8px;

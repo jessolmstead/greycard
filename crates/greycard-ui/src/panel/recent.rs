@@ -286,7 +286,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{click, count_labeled, labeled, state_for, window};
+    use crate::testing::{click, count_labeled, labeled, settle, state_for, window};
 
     fn scratch(what: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -375,7 +375,7 @@ mod tests {
             .set_size(slint::LogicalSize::new(1200.0, 700.0));
         let (state, worker) = state_for(&app, Vec::new());
         open_folder(&state, &app, &worker, &a);
-        slint::platform::update_timers_and_animations();
+        settle(&app);
         let (at, size) = labeled(&app, "Recently opened");
         let (x, y) = (at.x + 8.0, at.y + size.height / 2.0);
         assert!(!app.get_menu_up());
@@ -384,6 +384,7 @@ mod tests {
         click(&app, x, y);
         assert!(!app.get_menu_up(), "the press closed it and opened nothing");
         app.set_grid_open(true);
+        settle(&app);
         assert_eq!(count_labeled(&app, "Recently opened"), 1);
         drop(state);
         crate::testing::remove_dir_retry(&dir);
@@ -404,7 +405,9 @@ mod tests {
             .set_size(slint::LogicalSize::new(1200.0, 700.0));
         let (state, worker) = state_for(&app, Vec::new());
         open_folder(&state, &app, &worker, &a);
+        settle(&app);
         app.set_grid_open(true);
+        settle(&app);
         assert_eq!(count_labeled(&app, "Recently opened"), 1);
         let (at, size) = ElementHandle::find_by_accessible_label(&app, "Recently opened")
             .map(|e| (e.absolute_position(), e.size()))

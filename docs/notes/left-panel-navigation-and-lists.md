@@ -12,12 +12,12 @@ limit of 260 px: widening the left panel leaves the picture at that
 size and centers it, while a portrait or a new frame cannot move the
 lists below.
 
-**Folders is the entry point.** Open folder, the name of the folder
+**Folders keeps its saved fold.** Open folder, the name of the folder
 open, its recent-folder menu, and the one-time RawTherapee profile
-offer now live together in Folders, ahead of its tree. The section
-remains open when there is no tree, so Open folder stays reachable
-before a root is indexed. With a tree, With subfolders and the folder
-rows retain their actions and the list shares the available height.
+offer stay below Navigator, outside the Folders section. They remain
+available when Folders is folded or no root is open. With a tree,
+With subfolders and the folder rows retain their actions and the list
+shares the available height.
 The folder disclosure icon uses the same size as the other panel icons.
 
 **The lists take less room.** Presets, Snapshots, and History use
@@ -25,7 +25,7 @@ shorter rows, tighter spacing, and the same three-row minimum before
 they scroll. Their inner rounded boxes and extra framing are gone;
 snapshot actions and its rename field fit the denser row. Preset
 removal's question and the actions below the list have their own
-small gaps. The left pane's scrollbar sits on its outer edge, and its
+small gaps. The left pane's scrollbar sits on its right edge, and its
 scroll area follows the visible width rather than acquiring a
 horizontal scroll from its contents.
 
