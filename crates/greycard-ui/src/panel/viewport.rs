@@ -2623,9 +2623,13 @@ pub(crate) mod tests {
             let left = plot_at.x - box_at.x;
             let right = box_at.x + box_size.width - (plot_at.x + plot_size.width);
             assert!((left - right).abs() <= 0.5, "centered: {left} and {right}");
-            // Three lines of 16 px and their spacing of 2 folded away.
+            // Three 14 px lines, a 6 px spacer, and 2 px of net spacing fold away.
             let moved = bounds("App::panel-view").0.y - top;
-            assert_eq!(moved, 180.0 - before.height - 3.0 * 18.0, "from {from}");
+            assert_eq!(
+                moved,
+                180.0 - before.height - (3.0 * 14.0 + 6.0 + 2.0),
+                "from {from}"
+            );
 
             choose(from);
             assert_eq!(shot(), 1, "{from}: the lines back");
@@ -6336,7 +6340,7 @@ pub(crate) mod tests {
         assert_eq!(app.get_tip_text(), "Show panel");
     }
 
-    /// NAVIGATOR is one height, its header and a box the pane's width
+    /// NAVIGATOR is one height, its header and an inset box
     /// at 3:2, with a 3:2 frame, a 16:9 one, a portrait one, and a
     /// chosen frame whose picture is on its way: nothing below it
     /// moves. The frame sits centered in the box at its own shape,
@@ -6375,13 +6379,17 @@ pub(crate) mod tests {
             let (section_at, section) = find("App::navigator-section");
             heights.push(section.height);
             let (held_at, held) = find("NavigatorSection::held");
+            let inset = held_at.x - section_at.x;
             assert!(
                 (held.height - held.width / 1.5).abs() < 0.5,
                 "the box at 3:2: {held:?}"
             );
             assert!(
                 held_at.y > section_at.y
-                    && (held_at.y + held.height - section_at.y - section.height).abs() < 0.5,
+                    && (inset - 8.0).abs() < 0.5
+                    && (section.width - held.width - 2.0 * inset).abs() < 0.5
+                    && (section_at.y + section.height - held_at.y - held.height - inset).abs()
+                        < 0.5,
                 "the header, then the box: {held_at:?} {held:?} in {section_at:?} {section:?}"
             );
             let (at, shown) = find("NavigatorSection::shown");

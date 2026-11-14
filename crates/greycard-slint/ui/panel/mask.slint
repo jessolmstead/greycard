@@ -64,8 +64,8 @@ export component AdjustmentsList inherits Section {
     // 8) and the line under it (1), the section's padding (4), header
     // (16 + 4) and rule with the spacing either side (6 + 1 + 6), the
     // list's border (2), the spacing before New mask (4) and New mask
-    // itself (28): 88 px.
-    property <length> chrome: Theme.space-2 * 2 + 1px + Theme.space-1 + Theme.icon + Theme.space-1 + 6px + 1px + 6px + 2px + Theme.space-1 + Theme.control-height;
+    // itself (28), plus the 3 px the layout adds around the header: 91 px.
+    property <length> chrome: Theme.space-2 * 2 + 1px + Theme.space-1 + Theme.icon + Theme.space-1 + 6px + 1px + 6px + 2px + Theme.space-1 + Theme.control-height + 3px;
     // The least view of the sections a row is given up for.
     property <length> sections-view: 150px;
     function fit-rows() {

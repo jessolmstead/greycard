@@ -123,6 +123,7 @@ export component MetaSection inherits Section {
         font-size: Theme.font-sm;
         vertical-alignment: center;
     }
+    Rectangle { height: Theme.space-1; }
     LineEdit {
         text <=> root.title-text;
         accessible-label: @tr("Frame title");
@@ -149,12 +150,14 @@ export component MetaSection inherits Section {
             return reject;
         }
     }
+    Rectangle { height: Theme.space-1; }
     Text {
         text: @tr("Keywords");
         color: Theme.text;
         font-size: Theme.font-sm;
         vertical-alignment: center;
     }
+    Rectangle { height: Theme.space-1; }
     // The chips' flow, as tall as its rows at the width it is given,
     // so the section grows with them and the field below keeps its own
     // line. Measured in a box of its own: in the section's column the
