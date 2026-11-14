@@ -184,11 +184,18 @@ so a phone's DNG opens a little darker than the phone's own picture.
 
 A DCP profile gives Adobe's rendering of your camera, or a profile
 made for your own copy of it. Put `.dcp` files in the folder the
-section names (`greycard/profiles` in your data directory). The list
-shows the profiles made for the open frame's camera, by the name inside
-each file. The same profile copied under two file names is listed once;
-two different profiles listed with one name show their file names in
-parentheses.
+section names (`greycard/profiles` in your data directory), loose or in
+folders of their own: Adobe's whole `CameraProfiles` folder can be
+copied or linked in as it is. The list shows the profiles made for the
+open frame's camera, by the name inside each file. The same profile
+copied under two file names is listed once; two different profiles
+listed with one name show their file names in parentheses.
+
+**Show all cameras**, under the list, lists every profile, grouped by
+the camera each was made for: the open frame's camera first, the
+others folded under their names. Open a group to choose a profile
+made for another camera. The switch only changes the list, and stays
+as you leave it.
 
 Where to get profiles:
 
@@ -244,9 +251,10 @@ single pixels, so the texture inside a sky or a shadow keeps its
 contrast.
 
 **Midtones** finds the middle of the frame from the frame itself, as
-**Highlights** does: full at its middle tone, it fades to nothing two
-stops darker and at the frame's brightest areas. At ±2 the middle
-moves a stop. It is not **Exposure**, which moves every tone alike,
+**Highlights** does: full half a stop under its middle tone, it fades
+to nothing a stop and three quarters either side, short of where
+**Highlights** is strongest. At ±2 the middle moves 0.875 of a stop.
+It is not **Exposure**, which moves every tone alike,
 nor **Contrast**, which moves the dark and the bright apart around mid
 grey; it is closer to the curve's **Lights** and **Darks**, but works
 on areas and follows the frame rather than fixed places on the curve.
@@ -354,7 +362,7 @@ Turns the picture monochrome. Choosing a filter turns the section on.
 
 ## Color grading
 
-Three wheels: **Shadows**, **Mid-tones** and **Highlights**.
+Three wheels: **Shadows**, **Midtones** and **Highlights**.
 
 - Drag in a wheel to set its color. The angle is the hue, and the
   distance from the center is the strength. Hold **Shift** as you
@@ -576,6 +584,23 @@ already been sharpened once.
   Texture, Clarity, and Structure, so the grain they lift is not
   sharpened as detail.
 - **Show mask** paints in red where the sharpening acts.
+
+## Output sharpen
+
+An unsharp mask on the finished picture, after the tone curve, the
+curves, and the look. It crisps edges as they will be seen, where
+**SHARPEN** above restores what the camera lost. It is off until
+**Amount** is above zero, and it sharpens brightness only, so colors
+do not fringe.
+
+| Slider | Range | What it does |
+|---|---|---|
+| **Amount** | 0 to 200% | How strongly edges are sharpened. |
+| **Radius** | 0.5 to 3 | The width of the edges it acts on, in pixels of the full-size picture. An export made smaller gets a radius made smaller with it. |
+| **Threshold** | 0 to 10% | Differences below it are mostly left alone, so smooth skin, sky, and noise stay smooth. Raise it if grain sharpens. |
+
+At the fit zoom you will see little of it, as with the grain; check
+it at 1:1.
 
 ## Vignette
 

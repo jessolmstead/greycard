@@ -54,6 +54,7 @@ pub(super) struct EditKey {
     locals: Vec<Local>,
     vignette: Vignette,
     grain: Grain,
+    output_sharpen: greycard_edit::OutputSharpen,
     source_turn: u8,
 }
 
@@ -75,6 +76,7 @@ impl EditKey {
             locals: v.locals.clone(),
             vignette: v.vignette,
             grain: v.grain,
+            output_sharpen: v.output_sharpen,
             source_turn: v.source_turn,
         }
     }

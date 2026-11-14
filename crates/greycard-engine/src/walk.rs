@@ -28,7 +28,7 @@ use greycard_core::develop::{
 };
 use greycard_core::image::WorkingImage;
 use greycard_core::picture::Picture;
-use greycard_core::raw::{Orientation, RawFrame};
+use greycard_core::raw::{Orientation, RawFrame, SensorLayout};
 use greycard_core::{CameraProfile, TempTint, WhiteBalance};
 use greycard_edit::retouch::{Patch, Retouch};
 use greycard_edit::{DetailWants, WhiteShift};
@@ -172,6 +172,8 @@ pub struct Meta {
     /// A picture's own white and the light its white balance shows it
     /// at, the same at As shot; none for a raw.
     pub picture: Option<(TempTint, TempTint)>,
+    /// A monochrome sensor's raw: no white moves it, a mask's neither.
+    pub monochrome: bool,
 }
 
 impl Meta {
@@ -188,6 +190,7 @@ impl Meta {
             gave_way: None,
             stood_in: None,
             picture: None,
+            monochrome: false,
         }
     }
 
@@ -200,6 +203,9 @@ impl Meta {
             return Some(WhiteShift::picture(light));
         }
         let (profile, wb) = (self.profile.as_ref()?, self.white.as_ref()?);
+        if self.monochrome {
+            return Some(WhiteShift::neutral(wb.temp_tint));
+        }
         let cols = wb.matrix_f32();
         let rows = std::array::from_fn(|r| std::array::from_fn(|c| cols[c][r]));
         Some(WhiteShift::from_parts(
@@ -1468,6 +1474,7 @@ fn start(
                 gave_way: None,
                 stood_in: None,
                 picture: None,
+                monochrome: frame.layout == SensorLayout::Monochrome,
             },
         ),
         Input::Picture { image, meta } => (
@@ -1483,6 +1490,7 @@ fn start(
                 gave_way: None,
                 stood_in: None,
                 picture: Some((meta.own_white(), meta.own_white())),
+                monochrome: false,
             },
         ),
     };
@@ -1952,8 +1960,15 @@ fn cpu_op(
                 unreachable!("the denoise is camera RGB's")
             };
             if let Some(model) = prepared.noise_model() {
-                denoise::denoise_profiled(rgb, prepared.width, prepared.height, &model, options)
-                    .map_err(failed)?;
+                denoise::denoise_picture(
+                    rgb,
+                    prepared.width,
+                    prepared.height,
+                    &model,
+                    options,
+                    prepared.monochrome,
+                )
+                .map_err(failed)?;
             }
         }
         Stage::Warp(options) => {
@@ -3822,6 +3837,118 @@ mod tests {
         println!("the device's run against the CPU's: {worst:.3e} relative at worst");
         assert!(worst <= 1e-4, "{worst:.3e}");
         assert!(device.data != cpu.data, "did the device run?");
+    }
+
+    /// No white tints a monochrome raw, on a device or on the CPU: the
+    /// edit's 3000 K light with a tint develops grey, the edit keeps
+    /// it, and a mask's white from the walk's shift moves nothing.
+    #[test]
+    fn no_white_tints_a_monochrome_raw_on_either_path() {
+        let input = Input::Raw(Arc::new(RawFrame {
+            layout: SensorLayout::Monochrome,
+            samples: Samples::U16(
+                (0..160 * 120)
+                    .map(|i| 300 + (i % 160) as u16 * 20)
+                    .collect(),
+            ),
+            as_shot_coefficients: Some([1.0; 3]),
+            calibrations: Vec::new(),
+            ..(*frame()).clone()
+        }));
+        let mut e = edit();
+        e.lens.defringe = false;
+        e.white_balance = greycard_edit::WhiteBalance::Custom {
+            temperature: 3000.0,
+            tint: 0.01,
+        };
+        let held = e.white_balance.clone();
+        let purpose = Purpose::Export(Box::default());
+        let steps = stages::stages(&e, &purpose, &input.facts(0), None);
+        let mut runs = vec![(plan(&steps, &purpose, false), None)];
+        if let Some(gpu) = device() {
+            runs.push((plan(&steps, &purpose, true), gpu));
+        }
+        for (plan, mut gpu) in runs {
+            let walked = walk(
+                &steps,
+                &plan,
+                &input,
+                &mut Kept::new(),
+                &mut NoModels,
+                &mut gpu,
+                &NoHold,
+            )
+            .unwrap();
+            for px in picture(&walked).pixels() {
+                assert!((px[0] - px[1]).abs() < 1e-5 && (px[2] - px[1]).abs() < 1e-5);
+            }
+            let local = greycard_edit::white::LocalWhite::Absolute {
+                temperature: 2500.0,
+                tint: -0.01,
+            };
+            let m = walked.meta.white_shift().unwrap().local(&local).unwrap();
+            assert_eq!(m, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        }
+        assert_eq!(e.white_balance, held);
+    }
+
+    /// A monochrome raw on a device: no mosaic for the device's
+    /// demosaic, so the base is the CPU's, and the Detail section, the
+    /// dehaze, and the sharpen run there; the picture stays grey and is
+    /// the CPU's run within the sharpen's tolerance.
+    #[test]
+    fn a_monochrome_raw_on_a_device_is_the_cpu_s_in_grey() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let (w, h) = (160, 120);
+        let samples = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                let checker = if (x / 3 + y / 3) % 2 == 0 { 150 } else { 0 };
+                (200 + 2400 * x / w + checker) as u16
+            })
+            .collect();
+        let input = Input::Raw(Arc::new(RawFrame {
+            layout: SensorLayout::Monochrome,
+            samples: Samples::U16(samples),
+            as_shot_coefficients: Some([1.0; 3]),
+            calibrations: Vec::new(),
+            ..(*frame()).clone()
+        }));
+        let mut e = edit();
+        e.lens.defringe = false;
+        let purpose = Purpose::Export(Box::default());
+        let steps = stages::stages(&e, &purpose, &input.facts(0), None);
+        let go = |plan: &[Place], gpu: &mut Option<greycard_gpu::Context>| {
+            let walked = walk(
+                &steps,
+                plan,
+                &input,
+                &mut Kept::new(),
+                &mut NoModels,
+                gpu,
+                &NoHold,
+            )
+            .unwrap();
+            (picture(&walked), walked.places)
+        };
+        let (device, places) = go(&plan(&steps, &purpose, true), &mut gpu);
+        assert!(places.contains(&Place::Gpu));
+        let (cpu, _) = go(&plan(&steps, &purpose, false), &mut None);
+        for image in [&device, &cpu] {
+            for px in image.pixels() {
+                assert!((px[0] - px[1]).abs() < 1e-5 && (px[2] - px[1]).abs() < 1e-5);
+            }
+        }
+        let worst = cpu
+            .data
+            .iter()
+            .zip(&device.data)
+            .map(|(a, b)| (a - b).abs() / a.abs().max(1e-2))
+            .fold(0f32, f32::max);
+        println!("a monochrome raw on the device against the CPU: {worst:.3e} relative at worst");
+        assert!(worst <= 1e-4, "{worst:.3e}");
     }
 
     /// An export lent a device whose ops fail goes on on the CPU, as

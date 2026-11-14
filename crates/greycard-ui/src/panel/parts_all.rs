@@ -647,6 +647,7 @@ mod tests {
                 enabled: true,
                 mask,
                 look: Default::default(),
+                opacity: 1.0,
             });
             st.sidecars[0].record(edit);
         }

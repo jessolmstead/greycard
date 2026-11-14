@@ -136,7 +136,7 @@ pub fn denoise_nlm(
             px[c] = vst[c].forward(px[c]);
         }
     });
-    let stats = denoise_stabilized(
+    let stats = denoise_stabilized::<3>(
         rgb,
         width,
         height,
@@ -153,13 +153,14 @@ pub fn denoise_nlm(
 }
 
 /// The means on samples already in the stabilized space, where the
-/// noise has unit variance in every channel; `sigma` is the green
-/// noise at mid grey the automatic settings follow. A caller that
+/// noise has unit variance in every channel; `C` interleaved channels,
+/// three for a color picture, one for a monochrome plane; `sigma` is
+/// the green noise at mid grey the automatic settings follow. A caller that
 /// goes on to work in that space (the hybrid) transforms once each
 /// way around the whole; a second pass through the unbiased inverse
 /// shifts every level by a fraction of the noise, which the coarse
 /// error measures (notes §13u).
-pub(crate) fn denoise_stabilized(
+pub(crate) fn denoise_stabilized<const C: usize>(
     rgb: &mut [f32],
     width: usize,
     height: usize,
@@ -167,14 +168,22 @@ pub(crate) fn denoise_stabilized(
     strength: f32,
     options: &NlmOptions,
 ) -> NlmStats {
-    denoise_stabilized_by(rgb, width, height, sigma, strength, options, accumulate)
+    denoise_stabilized_by::<C>(
+        rgb,
+        width,
+        height,
+        sigma,
+        strength,
+        options,
+        accumulate::<C>,
+    )
 }
 
 /// A tile's weighted sums: [`accumulate`], or under test the reference
 /// it is checked against.
 type Accumulate = fn(&[f32], &Params, &mut Scratch, (usize, usize), (usize, usize));
 
-fn denoise_stabilized_by(
+fn denoise_stabilized_by<const C: usize>(
     rgb: &mut [f32],
     width: usize,
     height: usize,
@@ -214,16 +223,18 @@ fn denoise_stabilized_by(
         radius: patch_radius,
         // Over the patch's pixel count, so the dissimilarity is a mean
         // per pixel; strength divides it, so more strength smooths more;
-        // and over one plus the center weight, which is how much has
-        // been added to the sum.
-        norm: NORM / patch_pixels / strength.max(1e-3) / (1.0 + center_weight),
+        // over one plus the center weight, which is how much has been
+        // added to the sum; and up by three over the channels, so a
+        // pixel's difference weighs as three channels' do (one for
+        // three, exactly).
+        norm: NORM / patch_pixels / strength.max(1e-3) / (1.0 + center_weight) * (3.0 / C as f32),
         // The center pair's difference scaled up to the whole patch, as
         // the reference does, so the weight means the same at any size.
         center: center_weight * patch_pixels,
         offsets: &offsets,
     };
-    let mut out = vec![0.0f32; width * height * 3];
-    let row = width * 3;
+    let mut out = vec![0.0f32; width * height * C];
+    let row = width * C;
     let tiles_x = width.div_ceil(TILE);
     out.par_chunks_mut(TILE * row)
         .enumerate()
@@ -241,7 +252,7 @@ fn denoise_stabilized_by(
                 let mut rest = line;
                 for (tx, slot) in slots.iter_mut().skip(r).step_by(th).enumerate() {
                     let wide = ((tx + 1) * TILE).min(width) - tx * TILE;
-                    let (head, tail) = rest.split_at_mut(wide * 3);
+                    let (head, tail) = rest.split_at_mut(wide * C);
                     *slot = Some(head);
                     rest = tail;
                 }
@@ -253,7 +264,7 @@ fn denoise_stabilized_by(
                 |scratch, (tx, rows)| {
                     let x0 = tx * TILE;
                     let x1 = (x0 + TILE).min(width);
-                    denoise_tile(rows, rgb, &params, scratch, (x0, x1), (y0, y1), sums);
+                    denoise_tile::<C>(rows, rgb, &params, scratch, (x0, x1), (y0, y1), sums);
                 },
             );
         });
@@ -267,30 +278,40 @@ fn denoise_stabilized_by(
 /// running the means as they ran (`stats`) over a field of pure unit
 /// noise and reading the band variances of what comes out. Flat noise
 /// is where the means average most, so this is the least they leave;
-/// in texture they leave more, which errs toward keeping it.
-pub(crate) fn residual_band_ratios(stats: &NlmStats, search_radius: usize) -> [f32; MAX_BANDS] {
+/// in texture they leave more, which errs toward keeping it. `C` is
+/// the channels the means compared: what one channel's means leave is
+/// more than three independent channels' do.
+pub(crate) fn residual_band_ratios<const C: usize>(
+    stats: &NlmStats,
+    search_radius: usize,
+) -> [f32; MAX_BANDS] {
     const SIDE: usize = 512;
-    let mut rgb = unit_noise(SIDE * SIDE * 3, 0x9E37_79B9_7F4A_7C15);
+    let mut rgb = unit_noise(SIDE * SIDE * C, 0x9E37_79B9_7F4A_7C15);
     let options = NlmOptions {
         patch_radius: Some(stats.patch_radius),
         search_radius,
         scattering: Some(stats.scattering),
         center_weight: stats.center_weight,
     };
-    denoise_stabilized(&mut rgb, SIDE, SIDE, 1.0, stats.strength, &options);
+    denoise_stabilized::<C>(&mut rgb, SIDE, SIDE, 1.0, stats.strength, &options);
     let white = band_variances();
     // The grids take planes.
-    let mut planes = vec![0.0f32; SIDE * SIDE * 3];
-    for (i, px) in rgb.as_chunks::<3>().0.iter().enumerate() {
+    let mut planes = vec![0.0f32; SIDE * SIDE * C];
+    for (i, px) in rgb.as_chunks::<C>().0.iter().enumerate() {
         for (c, &v) in px.iter().enumerate() {
             planes[c * SIDE * SIDE + i] = v;
         }
     }
-    let grids = variance_grids(&planes, SIDE, SIDE, MAX_BANDS);
+    let grids = variance_grids::<C>(&planes, SIDE, SIDE, MAX_BANDS);
     std::array::from_fn(|scale| {
         let grid = &grids[scale];
-        let n = (grid.values.len() * 3) as f32;
-        let mean: f32 = grid.values.iter().map(|v| v[0] + v[1] + v[2]).sum::<f32>() / n;
+        let n = (grid.values.len() * C) as f32;
+        let mean: f32 = grid
+            .values
+            .iter()
+            .map(|v| v.iter().sum::<f32>())
+            .sum::<f32>()
+            / n;
         (mean / white[scale]).min(1.0)
     })
 }
@@ -389,10 +410,10 @@ impl Scratch {
     }
 }
 
-/// One tile of the output, `x0..x1` by `y0..y1`, interleaved RGB, into
-/// `out`: the tile's own part of each of its rows, `y1 - y0` of them,
-/// `(x1 - x0) * 3` long.
-fn denoise_tile(
+/// One tile of the output, `x0..x1` by `y0..y1`, `C` interleaved
+/// channels, into `out`: the tile's own part of each of its rows,
+/// `y1 - y0` of them, `(x1 - x0) * C` long.
+fn denoise_tile<const C: usize>(
     out: &mut [&mut [f32]],
     input: &[f32],
     p: &Params,
@@ -407,12 +428,12 @@ fn denoise_tile(
         ys.1 - ys.0,
         "a tile writes every one of its rows"
     );
-    debug_assert!(out.iter().all(|line| line.len() == tw * 3));
+    debug_assert!(out.iter().all(|line| line.len() == tw * C));
     sums(input, p, s, xs, ys);
     for (line, arow) in out.iter_mut().zip(s.acc.chunks(tw)) {
-        for (o, a) in line.as_chunks_mut::<3>().0.iter_mut().zip(arow) {
+        for (o, a) in line.as_chunks_mut::<C>().0.iter_mut().zip(arow) {
             let inv = if a[3] > 0.0 { 1.0 / a[3] } else { 0.0 };
-            *o = [a[0] * inv, a[1] * inv, a[2] * inv];
+            *o = std::array::from_fn(|c| a[c] * inv);
         }
     }
 }
@@ -441,7 +462,13 @@ fn denoise_tile(
 /// buffers are behind loaded pointers, so the loops run behind a
 /// runtime overlap check either way. The split is harmless and kept.
 #[inline(never)]
-fn accumulate(input: &[f32], p: &Params, s: &mut Scratch, xs: (usize, usize), ys: (usize, usize)) {
+fn accumulate<const C: usize>(
+    input: &[f32],
+    p: &Params,
+    s: &mut Scratch,
+    xs: (usize, usize),
+    ys: (usize, usize),
+) {
     let ((x0, x1), (y0, y1)) = (xs, ys);
     let (w, h) = (p.width as isize, p.height as isize);
     let (tw, th) = (x1 - x0, y1 - y0);
@@ -463,9 +490,11 @@ fn accumulate(input: &[f32], p: &Params, s: &mut Scratch, xs: (usize, usize), ys
     for (a, q) in s
         .acc
         .iter_mut()
-        .zip((y0..y1).flat_map(|y| input[(y * p.width + x0) * 3..][..tw * 3].as_chunks::<3>().0))
+        .zip((y0..y1).flat_map(|y| input[(y * p.width + x0) * C..][..tw * C].as_chunks::<C>().0))
     {
-        *a = [q[0], q[1], q[2], 1.0];
+        // The sums' last slot is the weight's, whatever the channels.
+        *a = [0.0, 0.0, 0.0, 1.0];
+        a[..C].copy_from_slice(q);
     }
 
     let tile = ((x0 as isize, x1 as isize), (y0 as isize, y1 as isize));
@@ -482,13 +511,13 @@ fn accumulate(input: &[f32], p: &Params, s: &mut Scratch, xs: (usize, usize), ys
             for (r, c) in [(dr, dc), (-dr, -dc)] {
                 let xs = clip((tx0, tx1), ((-c).max(0), w.min(w - c)));
                 let ys = clip((ty0, ty1), ((-r).max(0), h.min(h - r)));
-                pass(input, p, s, tile, (r, c), (xs, ys), false);
+                pass::<C>(input, p, s, tile, (r, c), (xs, ys), false);
             }
             continue;
         }
         let xs = clip((tx0.min(tx0 - dc), tx1.max(tx1 - dc)), (vx0, vx1));
         let ys = clip((ty0.min(ty0 - dr), ty1.max(ty1 - dr)), (vy0, vy1));
-        pass(input, p, s, tile, (dr, dc), (xs, ys), true);
+        pass::<C>(input, p, s, tile, (dr, dc), (xs, ys), true);
     }
 }
 
@@ -500,7 +529,7 @@ fn accumulate(input: &[f32], p: &Params, s: &mut Scratch, xs: (usize, usize), ys
 /// The rows of squared differences are made one at a time and kept in a
 /// ring only as tall as the patch, so the vertical box sums run down
 /// whole rows rather than down a column at a stride.
-fn pass(
+fn pass<const C: usize>(
     input: &[f32],
     p: &Params,
     s: &mut Scratch,
@@ -539,7 +568,7 @@ fn pass(
     // Row `j` of the ring's coordinates, `0..eh`, is image row
     // `ey0 + j`; only the covered part carries differences.
     let (dlo, dhi) = ((px0 - ex0) as usize, (px1 - ex0) as usize);
-    let at = |y: isize, x: isize| (y * w + x) as usize * 3;
+    let at = |y: isize, x: isize| (y * w + x) as usize * C;
     let row = |j: usize, dst: &mut [f32]| {
         let y = ey0 + j as isize;
         if y < py0 || y >= py1 {
@@ -549,13 +578,19 @@ fn pass(
         dst[..dlo].fill(0.0);
         dst[dhi..].fill(0.0);
         let n = (px1 - px0) as usize;
-        let a = &input[at(y, px0)..][..n * 3];
-        let b = &input[at(y + dr, px0 + dc)..][..n * 3];
-        let (a, _) = a.as_chunks::<3>();
-        let (b, _) = b.as_chunks::<3>();
+        let a = &input[at(y, px0)..][..n * C];
+        let b = &input[at(y + dr, px0 + dc)..][..n * C];
+        let (a, _) = a.as_chunks::<C>();
+        let (b, _) = b.as_chunks::<C>();
         for ((o, a), b) in dst[dlo..dhi].iter_mut().zip(a).zip(b) {
-            let (e0, e1, e2) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-            *o = e0 * e0 + e1 * e1 + e2 * e2;
+            // The channels summed in order, as three were.
+            let e = a[0] - b[0];
+            let mut d = e * e;
+            for c in 1..C {
+                let e = a[c] - b[c];
+                d += e * e;
+            }
+            *o = d;
         }
     };
 
@@ -615,27 +650,27 @@ fn pass(
             }
             if let Some((lo, hi)) = direct.filter(|(lo, hi)| lo < hi) {
                 let n = (hi - lo) as usize;
-                let q = &input[at(yy, lo + dc)..][..n * 3];
-                let (q, _) = q.as_chunks::<3>();
+                let q = &input[at(yy, lo + dc)..][..n * C];
+                let (q, _) = q.as_chunks::<C>();
                 let o = (y - y0) as usize * tw + (lo - x0) as usize;
                 let k = (lo - bx0) as usize;
                 for ((a, &wt), q) in acc[o..o + n].iter_mut().zip(&wrow[k..k + n]).zip(q) {
-                    a[0] += wt * q[0];
-                    a[1] += wt * q[1];
-                    a[2] += wt * q[2];
+                    for c in 0..C {
+                        a[c] += wt * q[c];
+                    }
                     a[3] += wt;
                 }
             }
             if let Some((lo, hi)) = mirrored.filter(|(lo, hi)| lo < hi) {
                 let n = (hi - lo) as usize;
-                let q = &input[at(y, lo)..][..n * 3];
-                let (q, _) = q.as_chunks::<3>();
+                let q = &input[at(y, lo)..][..n * C];
+                let (q, _) = q.as_chunks::<C>();
                 let o = (yy - y0) as usize * tw + (lo + dc - x0) as usize;
                 let k = (lo - bx0) as usize;
                 for ((a, &wt), q) in acc[o..o + n].iter_mut().zip(&wrow[k..k + n]).zip(q) {
-                    a[0] += wt * q[0];
-                    a[1] += wt * q[1];
-                    a[2] += wt * q[2];
+                    for c in 0..C {
+                        a[c] += wt * q[c];
+                    }
                     a[3] += wt;
                 }
             }
@@ -862,8 +897,9 @@ mod tests {
     ) -> (Vec<f32>, Vec<f32>) {
         let mut halved = rgb.to_vec();
         let mut reference = rgb.to_vec();
-        let a = denoise_stabilized_by(&mut halved, w, h, 0.03, strength, options, accumulate);
-        let b = denoise_stabilized_by(
+        let a =
+            denoise_stabilized_by::<3>(&mut halved, w, h, 0.03, strength, options, accumulate::<3>);
+        let b = denoise_stabilized_by::<3>(
             &mut reference,
             w,
             h,
@@ -981,14 +1017,14 @@ mod tests {
             let mut tiled = vec![0.0f32; w * h * 3];
             {
                 let mut rows: Vec<&mut [f32]> = tiled.chunks_mut(w * 3).collect();
-                denoise_tile(
+                denoise_tile::<3>(
                     &mut rows,
                     &input,
                     &p,
                     &mut scratch,
                     (0, w),
                     (0, h),
-                    accumulate,
+                    accumulate::<3>,
                 );
             }
             let at = |y: isize, x: isize| -> Option<&[f32]> {
@@ -1042,14 +1078,14 @@ mod tests {
             let mut a = vec![0.0f32; 10 * 7 * 3];
             {
                 let mut rows: Vec<&mut [f32]> = a.chunks_mut(10 * 3).collect();
-                denoise_tile(
+                denoise_tile::<3>(
                     &mut rows,
                     &input,
                     &p,
                     &mut scratch,
                     (0, 10),
                     (0, 7),
-                    accumulate,
+                    accumulate::<3>,
                 );
             }
             for ty in 0..7 {
@@ -1082,7 +1118,7 @@ mod tests {
             patches: 225,
             max_shift: 7,
         };
-        let left = residual_band_ratios(&stats, DEFAULT_SEARCH);
+        let left = residual_band_ratios::<3>(&stats, DEFAULT_SEARCH);
         assert!(left[0] < 0.02 && left[1] < 0.02, "fine bands {left:?}");
         assert!(
             left[2] < 0.1 && left[3] > 0.2 && left[3] < 0.5,

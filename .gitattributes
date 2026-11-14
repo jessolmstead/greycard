@@ -1,0 +1,7 @@
+# LF on every checkout, Windows too, for what the shell scripts run or
+# read and what THIRD-PARTY-NOTICES is assembled from, so a package's
+# notices are the same bytes on every platform.
+scripts/*.sh text eol=lf
+about.toml text eol=lf
+packaging/notices/* text eol=lf
+crates/greycard-slint/ui/icons/LICENSE text eol=lf

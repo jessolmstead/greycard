@@ -2462,7 +2462,7 @@ mod tests {
         assert_eq!(state.borrow().views.loads.whats(), ["sync"]);
         // In, the sync runs on what they said.
         assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
-        assert_eq!(app.get_status(), "synced 18 sections onto 3 frames");
+        assert_eq!(app.get_status(), "synced 19 sections onto 3 frames");
         {
             let st = state.borrow();
             for s in &st.sidecars[1..] {
@@ -2478,7 +2478,7 @@ mod tests {
         app.set_exposure(-0.5);
         app.invoke_sync_open_asked();
         app.invoke_sync_applied();
-        assert_eq!(app.get_status(), "synced 18 sections onto 3 frames");
+        assert_eq!(app.get_status(), "synced 19 sections onto 3 frames");
         assert_eq!(crate::rows::land_pending(&state, &app, &worker), 0);
         assert_eq!(state.borrow().sidecars[3].current.light.exposure, -0.5);
         crate::rows::HOLD_MOSAICS.with(|h| h.set(false));
@@ -2527,12 +2527,12 @@ mod tests {
         assert!(!ran.get());
         crate::rows::land_mosaics(&state, &app, &worker, mosaics);
         assert!(ran.get());
-        assert_eq!(app.get_status(), "synced 18 sections onto 1 frame");
+        assert_eq!(app.get_status(), "synced 19 sections onto 1 frame");
         assert!(state.borrow().views.loads.since.is_none());
         let later = std::time::Instant::now() + std::time::Duration::from_secs(90);
         crate::rows::bar_tick(&state, &app, &worker, later);
         assert!(!app.get_loading_shown());
-        assert_eq!(app.get_status(), "synced 18 sections onto 1 frame");
+        assert_eq!(app.get_status(), "synced 19 sections onto 1 frame");
         crate::rows::HOLD_MOSAICS.with(|h| h.set(false));
         crate::testing::remove_dir_retry(&dir);
     }
@@ -2617,7 +2617,7 @@ mod tests {
         assert!(app.get_sync_open());
         app.invoke_sync_applied();
         assert!(!app.get_sync_open());
-        assert_eq!(app.get_status(), "synced 18 sections onto 1 frame");
+        assert_eq!(app.get_status(), "synced 19 sections onto 1 frame");
 
         let st = state.borrow();
         // The frame synced from kept what it had and recorded the
@@ -4047,7 +4047,7 @@ mod tests {
         assert_eq!(app.get_display_curve(), agx);
         assert!(
             app.get_status()
-                .starts_with("pasted 17 sections from IMG_0002.JPG"),
+                .starts_with("pasted 18 sections from IMG_0002.JPG"),
             "{}",
             app.get_status()
         );
@@ -4074,7 +4074,7 @@ mod tests {
         app.set_preset_name("Bright".into());
         app.invoke_preset_saved();
         assert!(
-            app.get_status().starts_with("saved Bright (18 sections)"),
+            app.get_status().starts_with("saved Bright (19 sections)"),
             "{}",
             app.get_status()
         );
@@ -4448,6 +4448,7 @@ mod tests {
                     ..Default::default()
                 },
                 look: Default::default(),
+                opacity: 1.0,
             });
         crate::panel::deliver::deliver(&app, made(&files[0], 10));
         assert_eq!(baked(&state), (Some(10), false), "the source's own");
@@ -4512,6 +4513,7 @@ mod tests {
                     ..Default::default()
                 },
                 look: Default::default(),
+                opacity: 1.0,
             });
         }
         app.invoke_copy_asked();

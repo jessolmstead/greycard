@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::SystemTime;
 
-use greycard_edit::camera::{EXTENSION, ProfileChoice};
+use greycard_edit::camera::ProfileChoice;
 use greycard_edit::key::{
-    DEVELOP_RECIPE, LANDSCAPE_PIPELINE, PART_PIPELINE, PERSON_EDGE, Read, SHARPEN_GUIDE,
-    SKY_PIPELINE,
+    ASPECT_FRAME, DEVELOP_RECIPE, LANDSCAPE_PIPELINE, MIDTONES_SHAPE, PART_PIPELINE, PERSON_EDGE,
+    Read, SHARPEN_GUIDE, SKY_PIPELINE,
 };
 use greycard_edit::look::LutChoice;
 use greycard_edit::{Edit, LensChoice};
@@ -58,8 +58,10 @@ fn files_read(edit: &Edit, looks: Option<&Path>, profiles: Option<&Path>) -> Vec
         // otherwise, so a change to either may change the picture.
         files.extend(crate::looks::tables_in(dir, name, edit.display_curve));
     }
-    if let (ProfileChoice::Named(name), Some(dir)) = (&edit.camera.profile, profiles) {
-        files.push(dir.join(format!("{name}.{EXTENSION}")));
+    if let (ProfileChoice::Named(name), Some(dir)) = (&edit.camera.profile, profiles)
+        && let Some(path) = crate::profiles::path_in(Some(dir), name)
+    {
+        files.push(path);
     }
     // An Adobe lens profile picked by hand, beside the camera
     // profiles: read by its file name, so only a plain name counts.
@@ -106,7 +108,9 @@ fn contents(path: &Path) -> Option<[u8; 32]> {
 
 /// What every develop key made now is made under, beside each edit's
 /// own: [`DEVELOP_RECIPE`], the learned masks' stages, the sharpen's
-/// guide ([`SHARPEN_GUIDE`]), the lens database's name as the caller gives
+/// guide ([`SHARPEN_GUIDE`]), the Midtones bell's shape
+/// ([`MIDTONES_SHAPE`]), an aspect's framing with no crop stored
+/// ([`ASPECT_FRAME`]), the lens database's name as the caller gives
 /// it, and the look and profile directories as they stand (each file's
 /// name, length and modification time; not their contents, which only
 /// the files an edit names are read for). A store of keys made under
@@ -162,7 +166,7 @@ pub fn keys_made_under_in(
     let files = hasher.finalize();
     format!(
         "recipe {DEVELOP_RECIPE}; masks {SKY_PIPELINE} {LANDSCAPE_PIPELINE} {PART_PIPELINE} \
-         {PERSON_EDGE}; {SHARPEN_GUIDE}; lenses {lenses:?}; files {}",
+         {PERSON_EDGE}; {SHARPEN_GUIDE}; {MIDTONES_SHAPE}; {ASPECT_FRAME}; lenses {lenses:?}; files {}",
         &files.to_hex()[..16]
     )
 }
@@ -264,6 +268,11 @@ mod tests {
             first.starts_with(&format!("recipe {DEVELOP_RECIPE};")),
             "{first}"
         );
+        // Each part some edits alone take into their key: raised, the
+        // index's keys are settled again (`settle_develop_keys`).
+        for part in [SHARPEN_GUIDE, MIDTONES_SHAPE, ASPECT_FRAME] {
+            assert!(first.contains(&format!("; {part};")), "{part}: {first}");
+        }
         assert_eq!(under(Some("lensfun 1")), first, "nothing moved");
         assert_ne!(under(None), first, "the lens database's cache wiped");
         assert_ne!(under(Some("lensfun 2")), first, "another database");

@@ -82,6 +82,47 @@ pub fn linear_dng(path: &std::path::Path, width: usize, height: usize, make: &st
     .unwrap();
 }
 
+/// A monochrome sensor's DNG of our own writing, `width` by `height`,
+/// with no preview: one plane of LinearRaw, a ramp from left to right
+/// with a texture on it, as a Leica Monochrom's or a Ricoh GR IV
+/// Monochrome's file is laid out.
+pub fn monochrome_dng(path: &std::path::Path, width: usize, height: usize) {
+    use greycard_core::raw::{LevelPattern, Levels, Orientation, Samples, SensorLayout};
+    let frame = greycard_core::RawFrame {
+        make: "Test".into(),
+        model: "Mono".into(),
+        other_names: Vec::new(),
+        width,
+        height,
+        channels: 1,
+        layout: SensorLayout::Monochrome,
+        samples: Samples::U16(Vec::new()),
+        levels: Levels {
+            black: LevelPattern::uniform(0.0, 1),
+            white: LevelPattern::uniform(65535.0, 1),
+            black_deltas: None,
+        },
+        as_shot_coefficients: Some([1.0; 3]),
+        calibrations: Vec::new(),
+        crop: None,
+        orientation: Orientation::Normal,
+        shot: Default::default(),
+        dng: Default::default(),
+    };
+    let mut data = Vec::with_capacity(width * height * 3);
+    for y in 0..height {
+        for x in 0..width {
+            let (fx, fy) = (x as f32, y as f32);
+            let v = 0.5 + 0.2 * (fx * 0.13).sin() * (fy * 0.09).cos();
+            data.extend_from_slice(&[(0.02 + 0.6 * fx / width as f32) * v; 3]);
+        }
+    }
+    let image = greycard_core::CameraImage::from_data(width, height, data).unwrap();
+    let mut file = std::fs::File::create(path).unwrap();
+    greycard_core::dng::write_linear_dng(&mut file, &frame, &image, [1.0; 3], &Default::default())
+        .unwrap();
+}
+
 /// Models whose learned denoiser is there and whose network is the
 /// plain demosaic: a walk or a merge asked for a tier runs it with no
 /// model on the machine, and says it ran.

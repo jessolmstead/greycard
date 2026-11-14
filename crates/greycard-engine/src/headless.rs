@@ -247,9 +247,26 @@ pub fn plan(
     // still is as saved.
     let (sheet, chosen) =
         remembered.opening_sheet(req.export_preset.as_deref(), req.long_edge, req.on_exists)?;
+    let sheet_settings = sheet.settings();
+    // Metadata None writes nothing, the author and copyright included:
+    // the choice wins over the flags, and the run says so.
+    let rights = if sheet_settings.metadata == export::Metadata::None {
+        let flagged = export::Rights::new(
+            req.author.as_deref().unwrap_or_default(),
+            req.copyright.as_deref().unwrap_or_default(),
+        );
+        if !flagged.is_empty() {
+            tracing::warn!(
+                "--author and --copyright are not written: the export's metadata is None"
+            );
+        }
+        export::Rights::default()
+    } else {
+        req.rights(remembered)
+    };
     let sheet_settings = export::Settings {
-        rights: req.rights(remembered),
-        ..sheet.settings()
+        rights,
+        ..sheet_settings
     };
     let preset_name = chosen
         .filter(|n| !sheet::reserved(n))
@@ -1393,6 +1410,22 @@ mod tests {
                 .rights
                 .is_empty()
         );
+
+        // Metadata None: neither the settings' nor the flags'.
+        let mut none = remembered.clone();
+        none.export.metadata = "None".into();
+        for req in [&all, &flagged] {
+            let planned = plan(req, &none, None, None).unwrap();
+            assert_eq!(planned.settings.metadata, export::Metadata::None);
+            assert!(planned.settings.rights.is_empty());
+        }
+        // The other choices keep them.
+        for choice in ["All", "No edit"] {
+            let mut kept = remembered.clone();
+            kept.export.metadata = choice.into();
+            let rights = plan(&flagged, &kept, None, None).unwrap().settings.rights;
+            assert_eq!(rights.author.as_deref(), Some("Zoë Ångström"), "{choice}");
+        }
     }
 
     /// `--also ROWS` into a folder: the frame opened and the rows, in

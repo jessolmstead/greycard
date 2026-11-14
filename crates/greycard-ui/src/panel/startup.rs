@@ -389,6 +389,17 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             });
         });
     }
+    // The camera profiles' headers read ahead, on a thread nothing
+    // waits for: the list is read again on every open, on the window's
+    // thread, and a tree of thousands read cold for the first open
+    // would hold the window for a moment the user sees.
+    if !cfg!(test)
+        && let Err(e) = std::thread::Builder::new()
+            .name("profiles".into())
+            .spawn(greycard_edit_io::profiles::warm)
+    {
+        tracing::warn!("camera profiles not read ahead: {e}");
+    }
     // The Settings sheet's scale row: the setting, and the one this
     // window started at, which a change is told it waits for.
     {
@@ -512,6 +523,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_canvas_choice(render::canvas_choice(&remembered.canvas_color));
     app.set_one_section(remembered.one_section);
     app.set_filter_bar(remembered.filter_bar);
+    app.set_camera_profiles_all(remembered.profiles_all_cameras);
     if remembered.curve_mode == PARAMETRIC {
         app.set_curve_mode(PARAMETRIC.into());
     }
@@ -754,7 +766,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.window.xmp_sidecars = xmp_sidecars;
         st.window.placement = placement;
         st.window.lens_on_new = remembered.shared.lens_on_new;
-        st.window.rights = remembered.shared.rights();
+        st.window.author = remembered.shared.author.clone();
+        st.window.copyright = remembered.shared.copyright.clone();
+        // The fields as the file has them, so a close of the sheet
+        // before any opening takes nothing away.
+        app.set_settings_author(st.window.author.as_str().into());
+        app.set_settings_copyright(st.window.copyright.as_str().into());
         st.window.settings_file = settings_file;
         st.window.deletes_allowed = deletes_allowed;
         st.launch.scripted = scripted;
@@ -1559,6 +1576,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         display_curve,
                         vignette,
                         grain,
+                        output_sharpen,
                         ..
                     } = View::with_look(&edit);
                     let view = View {
@@ -1572,6 +1590,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         curves,
                         vignette,
                         grain,
+                        output_sharpen,
                         matrix: edit.geometry.matrix(),
                         persp: edit.geometry.perspective(sw, sh),
                         plane: edit.geometry.plane_size(sw, sh),
@@ -2302,6 +2321,7 @@ fn merged(
     settings.filter_bar = kept.filter_bar;
     settings.grid_wheel = kept.grid_wheel;
     settings.folder_tree_subfolders = kept.folder_tree_subfolders;
+    settings.profiles_all_cameras = kept.profiles_all_cameras;
     settings.shared.xmp_sidecars = kept.shared.xmp_sidecars;
     settings.shared.sidecars_in_folder = kept.shared.sidecars_in_folder;
     settings.shared.jpegs_apart = kept.shared.jpegs_apart;
@@ -2453,7 +2473,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
             // As the Settings sheet's switch is flipped.
             lens_on_new: true,
             last_file: String::new(),
-            // No field shows them yet: the caller keeps the file's.
+            // Kept as the sheet's fields take them: the caller keeps
+            // the file's.
             author: String::new(),
             copyright: String::new(),
         },
@@ -2532,6 +2553,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         filter_bar: true,
         // Written as the tree's switch is flipped.
         folder_tree_subfolders: false,
+        // Written as the profile list's switch is flipped.
+        profiles_all_cameras: false,
         // Not the panel's either: the settings file is where it is set.
         thumb_cache_mb: 0,
         preview_cache_mb: 0,

@@ -267,8 +267,16 @@ scripts/ort-dylib.sh release
 scripts/package.sh
 ```
 
-It writes `target/dist/greycard-<version>-<arch>-<os>.tar.gz` and
-leaves the unpacked staging directory beside it. Running `sh
+It needs [cargo-about](https://github.com/EmbarkStudios/cargo-about)
+0.9.3 (`cargo install cargo-about --locked --version 0.9.3 --features
+cli`), with which `scripts/notices.sh` writes the package's
+`THIRD-PARTY-NOTICES` from the dependency tree, `about.toml`, and the
+hand-kept parts in `packaging/notices/`. Run `scripts/notices.sh`
+alone to regenerate it into `target/THIRD-PARTY-NOTICES`.
+
+`scripts/package.sh` writes
+`target/dist/greycard-<version>-<arch>-<os>.tar.gz` and leaves the
+unpacked staging directory beside it. Running `sh
 install.sh` in that directory puts the binaries in `~/.local/bin`,
 the desktop entry and icon under `~/.local/share` on Linux, or
 `greycard.app` in `~/Applications` on a Mac. `sh uninstall.sh` takes

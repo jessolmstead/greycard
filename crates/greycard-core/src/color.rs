@@ -14,7 +14,7 @@ use rawcolor::{
 
 use crate::dcp::{EmbedPolicy, HueSatMap, HueSatMaps, LookTable};
 use crate::error::{Error, Result};
-use crate::raw::{Calibration, RawFrame};
+use crate::raw::{Calibration, RawFrame, SensorLayout};
 
 /// The engine's working space: linear Rec.2020, D65.
 ///
@@ -43,8 +43,28 @@ pub enum WhitePoint {
 /// Uses the widest pair by temperature when there are several, and the one
 /// there is otherwise. Calibrations with an unknown illuminant or a matrix
 /// that is not an invertible 3x3 are ignored.
+///
+/// A monochrome sensor's frame has no color to calibrate (its DNG
+/// carries no matrix) and takes [`monochrome_profile`].
 pub fn profile_from_frame(frame: &RawFrame) -> Result<CameraProfile> {
+    if frame.layout == SensorLayout::Monochrome {
+        return Ok(monochrome_profile());
+    }
     profile_from_calibrations(&frame.calibrations)
+}
+
+/// The profile of a monochrome sensor, its one channel developed as
+/// three equal ones: a camera whose RGB is the working space's under
+/// D65. At its neutral gains (as shot, 1 each) the matrix into the
+/// working space is the identity, so equal channels stay equal.
+pub fn monochrome_profile() -> CameraProfile {
+    let xyz_to_working = WORKING_SPACE
+        .from_xyz_matrix()
+        .expect("the working space has an inverse");
+    CameraProfile::single(ProfileCalibration::new(
+        CalibrationIlluminant::D65,
+        xyz_to_working,
+    ))
 }
 
 /// [`profile_from_frame`] from the calibrations alone, as
@@ -169,12 +189,30 @@ pub fn primary_weight(profile: &CameraProfile, cct: f64) -> f64 {
     ((1.0 / cct) - (1.0 / t2)) / ((1.0 / t1) - (1.0 / t2))
 }
 
-/// Resolve a white point against a frame and its profile.
+/// A monochrome frame's white balance, whatever white is asked: the
+/// neutral gains through [`monochrome_profile`], the identity into the
+/// working space, at D65.
+pub fn monochrome_white_balance() -> Result<WhiteBalance> {
+    Ok(WhiteBalance::from_coefficients(
+        &monochrome_profile(),
+        Vec3::new(1.0, 1.0, 1.0),
+        &WORKING_SPACE,
+        CAT,
+    )?)
+}
+
+/// Resolve a white point against a frame and its profile. A
+/// monochrome frame has no color to balance: whatever the white point
+/// and the profile, it takes [`monochrome_white_balance`], so no white
+/// (a pasted one, a preset's, a slider's) can tint it.
 pub fn resolve_white_balance(
     frame: &RawFrame,
     profile: &CameraProfile,
     white_point: WhitePoint,
 ) -> Result<WhiteBalance> {
+    if frame.layout == SensorLayout::Monochrome {
+        return monochrome_white_balance();
+    }
     let wb = match white_point {
         WhitePoint::AsShot => {
             let c = frame.as_shot_coefficients.ok_or_else(|| {
@@ -651,6 +689,26 @@ pub fn srgb_encode(v: f32) -> f32 {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// A monochrome frame's profile takes its neutral as-shot to the
+    /// working space's white by the identity, and its as-shot white is
+    /// D65's.
+    #[test]
+    fn a_monochrome_frame_s_matrix_is_the_identity_as_shot() {
+        let frame = crate::develop::tests::mono_frame(2, 2, |_, _| 500);
+        let profile = profile_from_frame(&frame).unwrap();
+        let wb = resolve_white_balance(&frame, &profile, WhitePoint::AsShot).unwrap();
+        assert_eq!(wb.coefficients_f32(), [1.0; 3]);
+        let rows = matrix_rows(&wb);
+        for (r, row) in rows.iter().enumerate() {
+            for (c, v) in row.iter().enumerate() {
+                let want = if r == c { 1.0 } else { 0.0 };
+                assert!((v - want).abs() < 1e-6, "{rows:?}");
+            }
+        }
+        let d65 = CalibrationIlluminant::D65.chromaticity();
+        assert!((wb.scene_white.x - d65.x).abs() < 1e-6 && (wb.scene_white.y - d65.y).abs() < 1e-6);
+    }
 
     #[test]
     fn a_neutral_picked_gives_back_the_gains_that_made_it() {

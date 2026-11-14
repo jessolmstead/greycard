@@ -15,7 +15,8 @@ use greycard_edit::curve::{CurveLut, color_shift, lookup};
 use greycard_edit::mask::Sample;
 use greycard_edit::mixer::{BANDS, MEAN_RADIUS, confidence};
 use greycard_edit::{
-    BlackWhite, Color, DisplayCurve, Edit, Grain, Light, Look, Mask, Mixer, Tint, WhiteShift,
+    BlackWhite, Color, DisplayCurve, Edit, Grain, Light, Look, Mask, Mixer, OutputSharpen, Tint,
+    WhiteShift,
 };
 use rayon::prelude::*;
 
@@ -52,6 +53,10 @@ pub struct Baked {
     /// Detail is in the develop. Put on at the finish from the
     /// develop's bands (`crate::detail`).
     pub detail: [f32; 5],
+    /// Global only, as the black and white is: the unsharp mask on the
+    /// finished picture ([`crate::output_sharpen`]), between the look
+    /// table and the output transform. Off on every local's.
+    pub output_sharpen: OutputSharpen,
 }
 
 /// What the finish is handed. A raw's develop is a scene, which the
@@ -246,6 +251,7 @@ impl Baked {
             } else {
                 [0.0; 5]
             },
+            output_sharpen: OutputSharpen::default(),
         }
     }
 
@@ -260,6 +266,7 @@ impl Baked {
             mixer: edit.acting_mixer(),
             source,
             display_curve: edit.display_curve,
+            output_sharpen: edit.output_sharpen,
             ..Self::of(&edit.look())
         }
     }
@@ -282,6 +289,11 @@ pub struct Local {
     pub baked: Baked,
     pub mask: Mask,
     pub enabled: bool,
+    /// Its Opacity (`Adjustment::strength`): the weight the finish
+    /// blends its look in by is the mask's value scaled by this, after
+    /// the invert, the feather, and Refine edge. The mask's own value
+    /// ([`Local::weight_sampled`]), which the overlay shows, is not.
+    pub opacity: f32,
     /// The mask's brushes, one entry per component, painted.
     pub rasters: Vec<Option<RasterRef>>,
     /// The mask refined, read in place of its shapes: made when its
@@ -312,6 +324,7 @@ impl Local {
             },
             mask: a.mask.clone(),
             enabled: a.enabled && !a.mask.is_empty(),
+            opacity: a.strength(),
             rasters,
             refined: None,
         }
@@ -687,6 +700,26 @@ pub fn finish_pixel_with(
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
 ) -> [f32; 3] {
+    let c = finish_pixel_display(px, global, locals, stops, reference, guide, detail, look);
+    finish_pixel_output(c, global, grain, to_out)
+}
+
+/// The first part of [`finish_pixel_with`]: everything up to the look
+/// table, the picture display-referred in the linear working space,
+/// where the output sharpen reads and writes it
+/// ([`crate::output_sharpen`]).
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn finish_pixel_display(
+    px: [f32; 3],
+    global: &Baked,
+    locals: &[(&Baked, f32)],
+    stops: f32,
+    reference: Option<[f32; 2]>,
+    guide: Option<(f32, [f32; 2])>,
+    detail: Option<([f32; 5], &DetailMeta)>,
+    look: Option<&lut::Look>,
+) -> [f32; 3] {
     // The masks' Detail first, from the develop's bands at this pixel,
     // on the developed picture in the develop's white, as the develop
     // puts the global's on: the dehaze's airlight and its bound are of
@@ -804,6 +837,18 @@ pub fn finish_pixel_with(
     if let Some(look) = look {
         c = look.at(c);
     }
+    c
+}
+
+/// The rest of [`finish_pixel_with`]: the display-referred working
+/// space color `c` into the output space, encoded, the grain on it.
+#[inline]
+pub fn finish_pixel_output(
+    c: [f32; 3],
+    global: &Baked,
+    grain: Option<[f32; 3]>,
+    to_out: &[[f32; 3]; 3],
+) -> [f32; 3] {
     let mut s = [
         to_out[0][0] * c[0] + to_out[0][1] * c[1] + to_out[0][2] * c[2],
         to_out[1][0] * c[0] + to_out[1][1] * c[1] + to_out[1][2] * c[2],
@@ -1431,19 +1476,22 @@ fn highlights_weight(g: f32, span: [f32; 2]) -> f32 {
 }
 
 /// How much of the midtones slider the middle of the frame takes: a
-/// slider of ±2 moves it a stop either way.
-pub const MIDTONES_PEAK: f32 = 0.5;
-/// How far under the middle the midtones bell reaches, in stops: from
-/// the foot of the span, where it is full, to nothing two stops down,
-/// so what shadows owns three and a half stops under grey is its own.
-pub const MIDTONES_BELOW: f32 = 2.0;
-/// The least it reaches over the middle, in stops: up to the frame's
-/// top, where it is nothing, on a frame whose span is at least this;
-/// on a narrower one, a little past the top. With [`MIDTONES_BELOW`]
-/// it sets the bell's steepest slope at the slider's limit,
-/// `1.5 * 2 * MIDTONES_PEAK / 2` or 0.75, so on its own it never turns
-/// the curve back.
-pub const MIDTONES_ABOVE: f32 = 2.0;
+/// slider of ±2 moves it 0.875 of a stop either way.
+pub const MIDTONES_PEAK: f32 = 0.4375;
+/// How far under the highlights span's foot the midtones bell is full,
+/// in stops: half a stop, so it sits under the highlights ramp's rise
+/// rather than on it.
+pub const MIDTONES_UNDER_FOOT: f32 = 0.5;
+/// How far the midtones bell reaches either way from where it is full,
+/// in stops: to nothing 1.75 under, so what shadows owns three and a
+/// half stops under grey on a typical frame is its own, and 1.75 over,
+/// a stop and a quarter over the span's foot, so it is next to nothing
+/// where the highlights ramp is strongest and nothing at the frame's
+/// top, the span being never narrower than 1.6 stops. With
+/// [`MIDTONES_PEAK`] it sets the bell's steepest slope at the slider's
+/// limit, `1.5 * 2 * MIDTONES_PEAK / MIDTONES_REACH` or 0.75, so on its
+/// own it never turns the curve back.
+pub const MIDTONES_REACH: f32 = 1.75;
 /// What the midtones that reaches [`midtones_weight`] is held to, once
 /// a picture's and its masks' are summed: the slider's own limit, where
 /// the bell's slope is the 0.75 above. Unheld, a mask at the limit over
@@ -1451,17 +1499,16 @@ pub const MIDTONES_ABOVE: f32 = 2.0;
 pub const MIDTONES_LIMIT: f32 = 2.0;
 
 /// How much of the midtones slider a region takes, by where it sits
-/// in the frame's span ([`highlights_span`]): a bell, full at the
-/// span's foot (the frame's median where the span is its own, the
-/// middle of the frame), falling by a smoothstep to nothing
-/// [`MIDTONES_BELOW`] under it and to nothing at the frame's top
-/// over it (the span's width, at least [`MIDTONES_ABOVE`]). Placed by
-/// the frame's range as highlights is, so it finds the middle of a
-/// low-key frame and of a high-key one alike; the ends stay where they
-/// are, black at black and the frame's top at its top. Where the
-/// highlights ramp is strongest, three quarters up the span, it is a
-/// sixth of its peak; at the foot, where it is full, highlights takes
-/// a fifth of its own.
+/// in the frame's span ([`highlights_span`]): a bell, full
+/// [`MIDTONES_UNDER_FOOT`] under the span's foot (the frame's median
+/// where the span is its own, the middle of the frame), falling by a
+/// smoothstep to nothing [`MIDTONES_REACH`] either way. Placed by the
+/// frame's range as highlights is, so it finds the middle of a low-key
+/// frame and of a high-key one alike; the ends stay where they are,
+/// black at black and the frame's top at its top. Where the highlights
+/// ramp is strongest it is nothing, but for a four-hundredth of its
+/// peak on the least span; where it is full, highlights takes at most a
+/// sixteenth of its own, on the widest span.
 ///
 /// Not exposure, which moves every tone alike; not contrast, a power
 /// about mid grey that moves the two ends apart and holds the middle;
@@ -1471,13 +1518,8 @@ pub const MIDTONES_LIMIT: f32 = 2.0;
 /// ends, by region, so a region keeps its texture.
 #[inline]
 fn midtones_weight(g: f32, span: [f32; 2]) -> f32 {
-    let d = g - span[0];
-    let reach = if d < 0.0 {
-        MIDTONES_BELOW
-    } else {
-        span[1].max(MIDTONES_ABOVE)
-    };
-    MIDTONES_PEAK * (1.0 - smoothstep(0.0, 1.0, d.abs() / reach))
+    let d = g - (span[0] - MIDTONES_UNDER_FOOT);
+    MIDTONES_PEAK * (1.0 - smoothstep(0.0, 1.0, d.abs() / MIDTONES_REACH))
 }
 
 /// Scene white, in stops over mid grey: where a channel at the
@@ -1910,6 +1952,46 @@ pub fn finish_reaching<T: Copy + Default + Send>(
     to_out: &[[f32; 3]; 3],
     quantize: impl Fn(f32) -> T + Sync,
 ) -> Vec<T> {
+    finish_in_bands(
+        SHARPEN_BAND,
+        image,
+        reach,
+        sampled,
+        global,
+        locals,
+        position,
+        frame,
+        guide,
+        detail,
+        look,
+        to_out,
+        quantize,
+    )
+}
+
+/// The rows of a band the output sharpen holds at the look table at a
+/// time: on a 45 MP frame, 8256 pixels wide, 25 MB of color, where
+/// the whole frame was a gigabyte; the band's reach above and below
+/// (nine rows at most) made twice, 7% more.
+const SHARPEN_BAND: usize = 256;
+
+/// [`finish_reaching`], the output sharpen held `band` rows at a time.
+#[allow(clippy::too_many_arguments)]
+fn finish_in_bands<'l, T: Copy + Default + Send>(
+    band: usize,
+    image: &WorkingImage,
+    reach: f32,
+    sampled: Option<&WorkingImage>,
+    global: &Baked,
+    locals: &'l [Local],
+    position: impl Fn(usize, usize) -> (f32, f32) + Sync,
+    frame: impl Fn(usize, usize) -> (f32, Option<[f32; 3]>) + Sync,
+    guide: Option<(&Guide, f32)>,
+    detail: Option<(&crate::detail::BandImages, &DetailMeta)>,
+    look: Option<&lut::Look>,
+    to_out: &[[f32; 3]; 3],
+    quantize: impl Fn(f32) -> T + Sync,
+) -> Vec<T> {
     // The mean the mixer and the black and white read a hue from,
     // only when one of them acts.
     let reference = (global.mixer.enabled
@@ -1945,48 +2027,114 @@ pub fn finish_reaching<T: Copy + Default + Send>(
                 "the finish",
             )
         });
-    let mut out = vec![T::default(); image.width * image.height * 3];
-    out.par_chunks_mut(image.width * 3)
-        .zip(image.data.par_chunks(image.width * 3))
-        .enumerate()
-        .for_each(|(y, (row_out, row_in))| {
-            let mut on: Vec<(&Baked, f32)> = Vec::with_capacity(locals.len());
-            for (x, (o, px)) in row_out
-                .as_chunks_mut::<3>()
-                .0
-                .iter_mut()
-                .zip(row_in.as_chunks::<3>().0)
-                .enumerate()
-            {
-                on.clear();
-                let mut g = None;
-                let i = y * image.width + x;
-                let ab = reference.as_ref().map(|r| r[i]);
-                if !locals.is_empty() || guide.is_some() {
-                    let (u, v) = position(x, y);
-                    let s = reads.then(|| {
-                        let px = source.map_or(*px, |s| s.pixel(x, y));
-                        let mean_ab = match &mean {
-                            Some(Some(m)) => Some(m[i]),
-                            Some(None) => ab,
-                            None => None,
-                        };
-                        sample(px, mean_ab, exposure)
-                    });
-                    for local in locals.iter().filter(|l| l.enabled) {
-                        let w = local.weight_sampled(u, v, s);
-                        if w > 0.0 {
-                            on.push((&local.baked, w));
-                        }
-                    }
-                    g = guide.map(|(plane, sw)| (plane.at(u * sw, v * sw), plane.range));
+    // A pixel up to the look table, display-referred in the working
+    // space, and the grain to lay over it at the output.
+    let display_at = |x: usize,
+                      y: usize,
+                      px: &[f32; 3],
+                      on: &mut Vec<(&'l Baked, f32)>|
+     -> ([f32; 3], Option<[f32; 3]>) {
+        on.clear();
+        let mut g = None;
+        let i = y * image.width + x;
+        let ab = reference.as_ref().map(|r| r[i]);
+        if !locals.is_empty() || guide.is_some() {
+            let (u, v) = position(x, y);
+            let s = reads.then(|| {
+                let px = source.map_or(*px, |s| s.pixel(x, y));
+                let mean_ab = match &mean {
+                    Some(Some(m)) => Some(m[i]),
+                    Some(None) => ab,
+                    None => None,
+                };
+                sample(px, mean_ab, exposure)
+            });
+            for local in locals.iter().filter(|l| l.enabled) {
+                // Scaled by its Opacity: a mask at half puts its look on
+                // as its feather's half-way does.
+                let w = local.weight_sampled(u, v, s) * local.opacity;
+                if w > 0.0 {
+                    on.push((&local.baked, w));
                 }
-                let (stops, grain) = frame(x, y);
-                let bands = detail.map(|(d, meta)| (d.at(x, y), meta));
-                *o = finish_pixel_with(*px, global, &on, stops, grain, ab, g, bands, look, to_out)
-                    .map(&quantize);
             }
-        });
+            g = guide.map(|(plane, sw)| (plane.at(u * sw, v * sw), plane.range));
+        }
+        let (stops, grain) = frame(x, y);
+        let bands = detail.map(|(d, meta)| (d.at(x, y), meta));
+        (
+            finish_pixel_display(*px, global, on, stops, ab, g, bands, look),
+            grain,
+        )
+    };
+    let w = image.width;
+    let mut out = vec![T::default(); w * image.height * 3];
+    match crate::output_sharpen::Params::of(&global.output_sharpen, reach) {
+        // One pass, each pixel to its output at once.
+        None => out
+            .par_chunks_mut(w * 3)
+            .zip(image.data.par_chunks(w * 3))
+            .enumerate()
+            .for_each(|(y, (row_out, row_in))| {
+                let mut on = Vec::with_capacity(locals.len());
+                for (x, (o, px)) in row_out
+                    .as_chunks_mut::<3>()
+                    .0
+                    .iter_mut()
+                    .zip(row_in.as_chunks::<3>().0)
+                    .enumerate()
+                {
+                    let (c, grain) = display_at(x, y, px, &mut on);
+                    *o = finish_pixel_output(c, global, grain, to_out).map(&quantize);
+                }
+            }),
+        // A band of rows at a time to the look table, with the rows its
+        // blur reads above and below, since the sharpen reads each
+        // pixel's neighbors there; then the band to the output, its
+        // grain drawn again. Only a band is ever held, and a band comes
+        // out as the same rows of the whole frame would.
+        Some(params) => {
+            let h = image.height;
+            let reach_rows = params.reach();
+            for y0 in (0..h).step_by(band.max(1)) {
+                let count = band.max(1).min(h - y0);
+                let lo = y0.saturating_sub(reach_rows);
+                let hi = (y0 + count + reach_rows).min(h);
+                let mut held = vec![[0.0f32; 3]; w * (hi - lo)];
+                held.par_chunks_mut(w)
+                    .zip(image.data[lo * w * 3..hi * w * 3].par_chunks(w * 3))
+                    .enumerate()
+                    .for_each(|(r, (row_held, row_in))| {
+                        let mut on = Vec::with_capacity(locals.len());
+                        for (x, (o, px)) in row_held
+                            .iter_mut()
+                            .zip(row_in.as_chunks::<3>().0)
+                            .enumerate()
+                        {
+                            *o = display_at(x, lo + r, px, &mut on).0;
+                        }
+                    });
+                let sharpened =
+                    crate::output_sharpen::sharpen_rows(&held, w, hi - lo, y0 - lo, count, &params);
+                drop(held);
+                out[y0 * w * 3..(y0 + count) * w * 3]
+                    .par_chunks_mut(w * 3)
+                    .zip(sharpened.par_chunks(w))
+                    .enumerate()
+                    .for_each(|(r, (row_out, row))| {
+                        for (x, (o, c)) in row_out
+                            .as_chunks_mut::<3>()
+                            .0
+                            .iter_mut()
+                            .zip(row)
+                            .enumerate()
+                        {
+                            let grain = frame(x, y0 + r).1;
+                            *o = finish_pixel_output(*c, global, grain, to_out).map(&quantize);
+                        }
+                    });
+            }
+        }
+    }
     out
 }
 
@@ -2030,6 +2178,96 @@ pub fn not_previewed(
 mod tests {
     use super::*;
     use greycard_edit::{Curves, Tone};
+
+    /// The output sharpen held in bands of rows is the whole frame's,
+    /// to the bit, across every seam: bands of seven rows over a frame
+    /// of 45, a mask's look and the grain on it, against one band of
+    /// the whole frame and against the frame finished to the look table
+    /// and sharpened whole.
+    #[test]
+    fn the_output_sharpen_in_bands_is_the_whole_frames() {
+        let (w, h) = (31, 45);
+        let mut image = WorkingImage::new(w, h);
+        for (i, v) in image.data.iter_mut().enumerate() {
+            *v = ((i * 2654435761) % 997) as f32 / 997.0 * 0.6 + 0.01;
+        }
+        let mut edit = Edit::default();
+        edit.output_sharpen.amount = 1.4;
+        edit.output_sharpen.radius = 2.3;
+        let mut look = Look::default();
+        look.light.exposure = -0.7;
+        let adjustment = greycard_edit::Adjustment {
+            id: 1,
+            mask: Mask {
+                components: vec![greycard_edit::mask::Component {
+                    shape: greycard_edit::mask::Shape::Linear {
+                        from: [0.0, 0.3],
+                        to: [0.0, 0.8],
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            look,
+            ..Default::default()
+        };
+        let locals = vec![Local::of(&adjustment, vec![None], None)];
+        let global = Baked::global(&edit, Source::SCENE);
+        let to_out = crate::export::Space::Srgb.matrix();
+        let grain = Grain {
+            amount: 0.5,
+            ..Grain::default()
+        };
+        let run = |band: usize| {
+            finish_in_bands(
+                band,
+                &image,
+                1.0,
+                None,
+                &global,
+                &locals,
+                |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
+                |x, y| {
+                    let (fx, fy) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+                    (0.0, Some(grain.at(fx, fy, w as f32 / h as f32)))
+                },
+                None,
+                None,
+                None,
+                &to_out,
+                |v: f32| v,
+            )
+        };
+        let whole = run(h);
+        assert_eq!(run(7), whole);
+        assert_eq!(run(1), whole);
+        // And the frame to the look table, sharpened whole.
+        let p = crate::output_sharpen::Params::of(&edit.output_sharpen, 1.0).unwrap();
+        let mut colors: Vec<[f32; 3]> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32);
+                let m = locals[0].weight_sampled(u, v, None);
+                let on: Vec<(&Baked, f32)> = if m > 0.0 {
+                    vec![(&locals[0].baked, m)]
+                } else {
+                    Vec::new()
+                };
+                finish_pixel_display(image.pixel(x, y), &global, &on, 0.0, None, None, None, None)
+            })
+            .collect();
+        crate::output_sharpen::sharpen(&mut colors, w, h, &p);
+        for (i, c) in colors.iter().enumerate() {
+            let (x, y) = (i % w, i / w);
+            let (fx, fy) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+            let g = Some(grain.at(fx, fy, w as f32 / h as f32));
+            assert_eq!(
+                finish_pixel_output(*c, &global, g, &to_out),
+                [whole[i * 3], whole[i * 3 + 1], whole[i * 3 + 2]],
+                "at {x},{y}"
+            );
+        }
+    }
 
     /// Auto (`greycard_edit::auto`) aims through the finish's numbers,
     /// copied there: they are these.
@@ -2204,6 +2442,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         };
         finish_pixel(px, &global, &[], m)
     }
@@ -2227,6 +2466,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         }
     }
 
@@ -2993,6 +3233,7 @@ mod tests {
                 display_curve: curve,
                 white: None,
                 detail: [0.0; 5],
+                output_sharpen: OutputSharpen::default(),
             };
             let mut last = -1.0;
             for i in 0..=1400 {
@@ -3068,11 +3309,12 @@ mod tests {
     }
 
     /// Midtones moves the middle of the frame and holds its ends: at
-    /// zero it is nothing, to the bit; it is full at the foot of the
-    /// span, the frame's median, half a stop a stop of slider; nothing
-    /// two stops under that or at the frame's top and past it; and it
-    /// finds the middle of a low-key frame, a typical one, and a
-    /// high-key one alike, by the frame's range.
+    /// zero it is nothing, to the bit; it is full half a stop under the
+    /// foot of the span (the frame's median), 0.4375 of a stop a stop
+    /// of slider; nothing 1.75 stops either side of that, so nothing at
+    /// the frame's top and past it; and it finds the middle of a
+    /// low-key frame, a typical one, and a high-key one alike, by the
+    /// frame's range.
     #[test]
     fn midtones_moves_the_middle_and_holds_the_ends() {
         let none = Tone::default();
@@ -3116,27 +3358,31 @@ mod tests {
                     ..none
                 };
                 let moved = |stops: f32| shifted(&t, span, stops) - stops;
-                // Full at the foot: half a stop a stop of slider.
+                // Full half a stop under the foot: 0.4375 of a stop a
+                // stop of slider.
+                let full = foot - MIDTONES_UNDER_FOOT;
                 assert!(
-                    (moved(foot) - m * MIDTONES_PEAK).abs() < 1e-4,
+                    (moved(full) - m * MIDTONES_PEAK).abs() < 1e-4,
                     "{name} {m}: {}",
-                    moved(foot)
+                    moved(full)
                 );
-                // Nothing two stops under it, nor deeper; black is black.
-                for under in [MIDTONES_BELOW, 3.0, 6.0] {
-                    assert!(moved(foot - under).abs() < 1e-5, "{name} {m} {under}");
+                // Nothing the reach under it, nor deeper; black is black.
+                for under in [MIDTONES_REACH, 3.0, 6.0] {
+                    assert!(moved(full - under).abs() < 1e-5, "{name} {m} {under}");
                 }
                 assert_eq!(shape([0.0; 3], &t, None, span), [0.0; 3]);
-                // Nothing over the reach: the frame's top where its span
-                // is at least the least reach.
-                let reach = width.max(MIDTONES_ABOVE);
-                for over in [reach, reach + 1.0, 8.0] {
-                    assert!(moved(foot + over).abs() < 1e-5, "{name} {m} {over}");
+                // Nothing the reach over it, nor higher: the span is
+                // never narrower than the reach over its foot, so the
+                // frame's top is never moved.
+                for over in [MIDTONES_REACH, MIDTONES_REACH + 1.0, 8.0] {
+                    assert!(moved(full + over).abs() < 1e-5, "{name} {m} {over}");
                 }
+                assert!(width > MIDTONES_REACH - MIDTONES_UNDER_FOOT, "{name}");
+                assert!(moved(top).abs() < 1e-5, "{name} {m}");
                 // The middle moves more than anything else.
                 for k in 0..=80 {
                     let s = foot - 4.0 + k as f32 * 0.1;
-                    assert!(moved(s).abs() <= moved(foot).abs() + 1e-5, "{name} {m} {s}");
+                    assert!(moved(s).abs() <= moved(full).abs() + 1e-5, "{name} {m} {s}");
                 }
             }
             // The foot is the frame's median where the span is its own.
@@ -3149,8 +3395,11 @@ mod tests {
             };
             let at = |s: f32| shifted(&t, span, s) - s;
             eprintln!(
-                "{name}: foot {foot:.2}, width {width:.2}; at +2 the median {:.3}, grey {:.3}, \
-                 a stop under the foot {:.3}, a stop over {:.3}, the top {:.3}",
+                "{name}: foot {foot:.2}, width {width:.2}; at +2 half a stop under the foot \
+                 {:.3}, the foot {:.3}, the median {:.3}, grey {:.3}, a stop under the foot \
+                 {:.3}, a stop over {:.3}, the top {:.3}",
+                at(foot - MIDTONES_UNDER_FOOT),
+                at(foot),
                 at(median),
                 at(0.0),
                 at(foot - 1.0),
@@ -3158,18 +3407,22 @@ mod tests {
                 at(top)
             );
         }
-        // The typical frame by the numbers: a stop at its middle at the
-        // slider's limit, three quarters of one at mid grey, a sixth of
-        // the peak where the highlights peak, half a stop a stop under.
+        // The typical frame by the numbers, at the slider's limit:
+        // 0.875 of a stop half a stop under its median, 0.70 at the
+        // median and a stop under it alike, a tenth at mid grey, a
+        // twentieth a stop over the median, and nothing where the
+        // highlights peak nor at the top.
         let t = Tone {
             midtones: 2.0,
             ..none
         };
         let at = |s: f32| shifted(&t, typical(), s) - s;
-        assert!((at(-0.9) - 1.0).abs() < 1e-4, "{}", at(-0.9));
-        assert!((at(0.0) - 0.757).abs() < 2e-3, "{}", at(0.0));
-        assert!((at(-1.9) - 0.5).abs() < 1e-4, "{}", at(-1.9));
-        assert!((at(1.2) - 0.156).abs() < 2e-3, "{}", at(1.2));
+        assert!((at(-1.4) - 0.875).abs() < 1e-4, "{}", at(-1.4));
+        assert!((at(-0.9) - 0.7015).abs() < 1e-3, "{}", at(-0.9));
+        assert!((at(-1.9) - 0.7015).abs() < 1e-3, "{}", at(-1.9));
+        assert!((at(0.0) - 0.091).abs() < 2e-3, "{}", at(0.0));
+        assert!((at(0.1) - 0.0485).abs() < 2e-3, "{}", at(0.1));
+        assert!(at(1.2).abs() < 1e-5, "{}", at(1.2));
         assert!(at(1.9).abs() < 1e-5, "{}", at(1.9));
         // A color keeps its channel ratios.
         let c = shape([0.06, 0.04, 0.02], &t, None, typical());
@@ -3233,8 +3486,10 @@ mod tests {
         );
         // Each step's own least: shadows 0.14, midtones 0.25,
         // highlights 0.125; the product is the floor, and the sweep
-        // finds 0.0052 against 0.020 without midtones, all three at +2
-        // on the least span, where each is falling at once.
+        // finds 0.017 against 0.020 without midtones, shadows and
+        // midtones at +2 and highlights at -2 on the least span, just
+        // over where the midtones bell is full, where each is falling
+        // at once.
         assert!(least.0 > 0.14 * 0.25 * 0.125, "{least:?}");
         assert!(least_without > 0.14 * 0.125, "{least_without}");
     }
@@ -3647,6 +3902,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         };
         let g = guide.map(|g| (g.at(x as f32 + 0.5, y as f32 + 0.5), g.range));
         let px = image.pixel(x, y);
@@ -4676,6 +4932,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         };
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let out = finish_pixel(px, &global, &[], &m);
@@ -4717,6 +4974,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         };
         let bare = Baked {
             tint: idle,
@@ -4800,6 +5058,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         };
         let local = Baked {
             tint,
@@ -4962,6 +5221,7 @@ mod tests {
             enabled: true,
             rasters: vec![None],
             refined: None,
+            opacity: 1.0,
         };
         let m = crate::export::Space::Srgb.matrix();
         let global = plain_look();
@@ -5235,6 +5495,7 @@ mod tests {
             mask,
             enabled: true,
             refined: None,
+            opacity: 1.0,
         };
         let both = local(Mask {
             components: vec![
@@ -5348,6 +5609,7 @@ mod tests {
                 enabled: true,
                 rasters: vec![None],
                 refined: None,
+                opacity: 1.0,
             }
         };
         let render = |global: &Baked, locals: &[Local]| -> Vec<u8> {

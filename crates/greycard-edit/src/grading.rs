@@ -56,7 +56,7 @@ impl Range {
     pub fn name(self) -> &'static str {
         match self {
             Range::Shadows => "Shadows",
-            Range::Midtones => "Mid-tones",
+            Range::Midtones => "Midtones",
             Range::Highlights => "Highlights",
         }
     }

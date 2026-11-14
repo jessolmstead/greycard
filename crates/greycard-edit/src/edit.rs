@@ -8,8 +8,8 @@ use greycard_core::develop::denoise::{DenoiseOptions, Strength};
 
 use crate::{
     BlackWhite, Camera, Color, Curves, Demosaic, Detail, DisplayCurve, Geometry, Grading, Lens,
-    Light, Loader, LocalWhite, LookLut, Mask, Mixer, Noise, Result, Sharpen, Tint, VERSION,
-    WhiteBalance, grain, mask, migrate, retouch, vignette,
+    Light, Loader, LocalWhite, LookLut, Mask, Mixer, Noise, OutputSharpen, Result, Sharpen, Tint,
+    VERSION, WhiteBalance, grain, mask, migrate, retouch, vignette,
 };
 
 /// A development, described.
@@ -36,6 +36,12 @@ pub struct Edit {
     /// developed picture after the retouch and before the sharpen.
     pub detail: Detail,
     pub sharpen: Sharpen,
+    /// The unsharp mask on the finished picture, after the tone curve,
+    /// the curves, and the look table. Left out of a sidecar at its
+    /// default, so every sidecar and develop key written before it is
+    /// unchanged.
+    #[serde(skip_serializing_if = "OutputSharpen::is_default")]
+    pub output_sharpen: OutputSharpen,
     /// The parametric and point curves on the encoded picture, after
     /// the tone curve.
     pub curves: Curves,
@@ -161,6 +167,18 @@ pub struct Adjustment {
     pub enabled: bool,
     pub mask: Mask,
     pub look: Look,
+    /// Opacity, 0 to 1: how much of the look the mask puts on, the
+    /// mask's weight scaled by it after the invert, the feather, and
+    /// Refine edge, so half is the look at half strength over the same
+    /// region and the overlay is unchanged. Whole, the default, is
+    /// left out of the sidecar, so every sidecar written before it
+    /// reads and writes as it did. Read through [`Adjustment::strength`].
+    #[serde(skip_serializing_if = "is_whole")]
+    pub opacity: f32,
+}
+
+fn is_whole(v: &f32) -> bool {
+    *v == 1.0
 }
 
 impl Default for Adjustment {
@@ -171,6 +189,7 @@ impl Default for Adjustment {
             enabled: true,
             mask: Mask::default(),
             look: Look::default(),
+            opacity: 1.0,
         }
     }
 }
@@ -180,6 +199,17 @@ impl Default for Adjustment {
 pub const MAX_MASKS: usize = 16;
 
 impl Adjustment {
+    /// Its opacity as the finish reads it: held to 0 to 1, and whole
+    /// for a value that is not a number, as a file edited by hand may
+    /// hold.
+    pub fn strength(&self) -> f32 {
+        if self.opacity.is_nan() {
+            1.0
+        } else {
+            self.opacity.clamp(0.0, 1.0)
+        }
+    }
+
     /// The name a mask carries from New mask until its first shape
     /// lands: "Mask 3".
     pub fn placeholder_name(id: u64) -> String {
@@ -314,14 +344,13 @@ impl Edit {
         // picture's is `detail`, before the sharpen.
     }
 
-    /// The detail bands the masks ask for ([`DetailWants`]).
+    /// The detail bands the masks ask for ([`DetailWants`]). A mask at
+    /// no opacity asks for none, as one switched off does.
     pub fn detail_wants(&self) -> DetailWants {
         let mut wants = DetailWants::default();
-        for a in self
-            .adjustments
-            .iter()
-            .filter(|a| a.enabled && !a.mask.is_empty() && a.look.detail.enabled)
-        {
+        for a in self.adjustments.iter().filter(|a| {
+            a.enabled && a.strength() > 0.0 && !a.mask.is_empty() && a.look.detail.enabled
+        }) {
             let d = &a.look.detail;
             wants.texture |= d.texture != 0.0;
             wants.clarity |= d.clarity != 0.0;
@@ -347,6 +376,16 @@ impl Edit {
     pub fn sharpen_reads_guide(&self) -> bool {
         self.detail.options().is_some()
             && (self.sharpen.options().is_some() || self.detail_wants().sharpen)
+    }
+
+    /// Whether Midtones moves anything: the picture's own slider or a
+    /// mask's set.
+    pub fn sets_midtones(&self) -> bool {
+        self.light.tone.midtones != 0.0
+            || self
+                .adjustments
+                .iter()
+                .any(|a| a.look.light.tone.midtones != 0.0)
     }
 
     /// Whether the range masks read a picture of their own, the one
@@ -413,6 +452,7 @@ impl Default for Edit {
             noise: Noise::default(),
             detail: Detail::default(),
             sharpen: Sharpen::default(),
+            output_sharpen: OutputSharpen::default(),
             curves: Curves::default(),
             mixer: Mixer::default(),
             color: Color::default(),
@@ -562,9 +602,23 @@ pub fn overlay_changes(before: &Edit, touched: &Edit, onto: &Edit) -> Result<Edi
             }
         }
     }
-    let before: Value = serde_json::from_str(&before.to_json())?;
-    let touched: Value = serde_json::from_str(&touched.to_json())?;
-    let mut result: Value = serde_json::from_str(&onto.to_json())?;
+    // A section left out of the file whole at its default is written
+    // out in all three, so that one of its fields set back to the
+    // default is a leaf like any other and not the whole section of
+    // `onto` taken away with it.
+    let json = |e: &Edit| -> Result<Value> {
+        let mut v: Value = serde_json::from_str(&e.to_json())?;
+        if let Value::Object(m) = &mut v {
+            m.insert(
+                "output_sharpen".into(),
+                serde_json::to_value(e.output_sharpen)?,
+            );
+        }
+        Ok(v)
+    };
+    let before = json(before)?;
+    let touched = json(touched)?;
+    let mut result = json(onto)?;
     overlay(&before, &touched, &mut result);
     Edit::from_json(&serde_json::to_string(&result)?)
 }
@@ -589,6 +643,57 @@ mod tests {
         });
         edit.adjustments[0].look.detail = detail;
         edit
+    }
+
+    /// A mask's Opacity in the sidecar: whole is left out, so the file
+    /// and the develop key are what they were, and a sidecar from
+    /// before it reads whole; set, it is written, read back, and
+    /// another develop; and a value a hand put out of range reads held.
+    #[test]
+    fn a_masks_opacity_round_trips_absent_whole_and_set() {
+        let mut e = masked(Detail::default());
+        e.adjustments[0].look.light.exposure = 1.0;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        assert!(
+            json["adjustments"][0].get("opacity").is_none(),
+            "whole is left out: {json}"
+        );
+        let read = Edit::from_json(&json.to_string()).unwrap();
+        assert_eq!(read.adjustments[0].opacity, 1.0);
+        assert_eq!(read, e);
+        let before = e.develop_key_with(&[], None);
+        e.adjustments[0].opacity = 0.7;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        let written = json["adjustments"][0]["opacity"].as_f64();
+        assert!(written.is_some_and(|v| (v - 0.7).abs() < 1e-6), "{json}");
+        assert_eq!(Edit::from_json(&e.to_json()).unwrap(), e);
+        assert_ne!(e.develop_key_with(&[], None), before);
+        e.adjustments[0].opacity = 1.0;
+        assert_eq!(e.develop_key_with(&[], None), before);
+        for (stored, read) in [(1.5, 1.0), (-0.2, 0.0), (0.25, 0.25)] {
+            e.adjustments[0].opacity = stored;
+            assert_eq!(e.adjustments[0].strength(), read);
+        }
+        e.adjustments[0].opacity = f32::NAN;
+        assert_eq!(e.adjustments[0].strength(), 1.0);
+    }
+
+    /// A mask's Detail at no opacity asks for no bands, as one switched
+    /// off does, so the develop is the one it would be.
+    #[test]
+    fn a_mask_at_no_opacity_asks_for_no_detail() {
+        let mut e = masked(Detail {
+            enabled: true,
+            texture: 0.5,
+            ..Default::default()
+        });
+        assert!(e.detail_wants().texture);
+        e.adjustments[0].opacity = 0.0;
+        let mut off = e.clone();
+        off.adjustments[0].opacity = 1.0;
+        off.adjustments[0].enabled = false;
+        assert_eq!(e.detail_wants(), off.detail_wants());
+        assert!(!e.detail_wants().texture);
     }
 
     /// A picture starts with the capture sharpen and the lens
@@ -826,6 +931,7 @@ mod tests {
             enabled: true,
             mask: mask::Mask::default(),
             look: Look::default(),
+            opacity: 1.0,
         });
         // One slider moved: the shadows.
         let mut touched = before.clone();
@@ -859,7 +965,10 @@ mod tests {
         frame.noise.learned_chroma_strength = 0.5;
         frame.lens.chosen = crate::lens::LensChoice::Database("Frame's lens".into());
         frame.tint.enabled = false;
+        frame.output_sharpen.amount = 0.8;
+        frame.output_sharpen.radius = 2.0;
         let mut before = Edit::default();
+        before.output_sharpen.amount = 0.5;
         before.light.tone.midtones = 0.5;
         before.detail.structure = 0.6;
         before.detail.sharpen = 0.2;
@@ -878,6 +987,7 @@ mod tests {
                 e.lens.chosen = crate::lens::LensChoice::FromFile
             }),
             ("tint", |e| e.tint.enabled = true),
+            ("output sharpen", |e| e.output_sharpen.amount = 0.0),
         ] {
             let mut touched = before.clone();
             reset(&mut touched);
@@ -979,6 +1089,7 @@ mod tests {
                     ..Default::default()
                 },
                 look,
+                opacity: 1.0,
             });
         }
         edit
@@ -1031,6 +1142,13 @@ mod tests {
         assert!(json.contains("\"demosaic\": \"rcd\""), "{json}");
         assert!(json.contains("\"learned\": \"best\""), "{json}");
         assert_eq!(Edit::from_json(&json).unwrap(), edit);
+        // The output sharpen is left out at its default, and kept when set.
+        assert!(!json.contains("output_sharpen"), "{json}");
+        let mut sharpened = edit.clone();
+        sharpened.output_sharpen.amount = 0.6;
+        let json = sharpened.to_json();
+        assert!(json.contains("\"output_sharpen\""), "{json}");
+        assert_eq!(Edit::from_json(&json).unwrap(), sharpened);
         // An empty document is the default edit; unknown fields are ignored.
         assert_eq!(Edit::from_json("{}").unwrap(), Edit::default());
         let partial = r#"{"light": {"exposure": -1}, "future_field": 3}"#;

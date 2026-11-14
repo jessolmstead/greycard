@@ -983,7 +983,8 @@ impl FrameDevelop {
         settings: &greycard_render::export::Settings,
     ) -> greycard_render::export::Scene {
         let framed;
-        let image: &WorkingImage = if edit.geometry.is_identity() {
+        let (w, h) = (self.image.width as f32, self.image.height as f32);
+        let image: &WorkingImage = if edit.geometry.is_identity_on(w, h) {
             &self.image
         } else {
             framed = greycard_render::geometry::apply(&self.image, &edit.geometry);

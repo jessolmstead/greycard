@@ -79,23 +79,9 @@ export component SyncSheet inherits Rectangle {
         // A check has the focus, and a key goes up from it and never
         // reaches the window's keys: Escape is taken here, on the card,
         // so a click beside it still reaches the scrim. Tab goes round
-        // the card's controls and never out to the window behind it:
-        // past Paste back to Check all, and Shift+Tab the other way.
+        // the card's controls as round every sheet's (`sheet-before`).
         FocusScope {
             focus-on-tab-navigation: false;
-            capture-key-pressed(e) => {
-                if (e.modifiers.control || e.modifiers.alt || e.modifiers.meta) { return reject; }
-                let back = e.text == Key.Backtab || (e.text == Key.Tab && e.modifiers.shift);
-                if (e.text == Key.Tab && !back && go.focused) {
-                    list.focus-first();
-                    return accept;
-                }
-                if (back && list.first-focused) {
-                    go.focus();
-                    return accept;
-                }
-                return reject;
-            }
             key-pressed(e) => {
                 if (e.text == Key.Escape) {
                     root.sync-open = false;

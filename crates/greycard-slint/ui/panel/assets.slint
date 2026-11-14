@@ -3,64 +3,136 @@
 // presets.slint.
 
 import { Theme } from "../theme.slint";
-import { LookRow } from "../structs.slint";
-import { Section, EditSlider, Steps, PanelButton } from "../controls.slint";
+import { LookRow, ProfileRow } from "../structs.slint";
+import { Section, EditSlider, Steps, PanelButton, ScrollPane, Toggle } from "../controls.slint";
 
 export component CameraSection inherits Section {
     in-out property <bool> collapsed-camera;
     in property <bool> raw-input;
     in property <string> source-note;
     in-out property <string> camera-profile;
-    in property <[string]> camera-profile-names;
-    in property <[string]> camera-profile-labels;
+    /// The list: the file's own calibrations first, then the profiles
+    /// that fit this camera; with every camera shown, the profiles
+    /// grouped under their cameras' names, this camera's first.
+    in property <[ProfileRow]> camera-profile-rows;
     in property <string> camera-profile-note;
     in property <string> camera-profile-warning;
+    /// Whether the profile directory holds any profile, for the switch.
+    in property <bool> camera-profiles-any;
+    /// Every camera's profiles listed, not only this camera's.
+    in-out property <bool> camera-profiles-all;
     callback camera-profile-picked();
+    callback camera-profile-group-toggled(string);
+    callback camera-profiles-all-changed();
 
     title: @tr("CAMERA PROFILE");
     icon: @image-url("../icons/camera.svg");
     // Camera profile: the hint by the heading when the frame is no raw
     hint: root.raw-input ? "" : @tr("raw only");
     collapsed <=> root.collapsed-camera;
-    // The list: the file's own calibrations
-    // first, then the profiles in the profile
-    // directory that fit this camera.
-    if root.raw-input: Rectangle {
+    if root.raw-input: profile-box := Rectangle {
         border-radius: Theme.radius-md;
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
-        VerticalLayout {
-            padding: 2px;
-            spacing: 2px;
-            for label[i] in root.camera-profile-labels: Rectangle {
-                property <bool> on: root.camera-profile-names[i] == root.camera-profile;
-                height: Theme.control-height;
-                border-radius: Theme.radius-sm;
-                background: on ? Theme.raised : (profile-row.has-hover ? Theme.hover : transparent);
-                animate background { duration: Theme.quick; }
-                profile-row := TouchArea {
-                    mouse-cursor: MouseCursor.pointer;
-                    clicked => {
-                        root.camera-profile = root.camera-profile-names[i];
-                        root.camera-profile-picked();
+        // The whole list up to twelve rows, the rest a scroll away, so
+        // every camera of a copy of Adobe's folder never pushes the
+        // rest of the panel out of reach.
+        property <length> cap: 12 * (Theme.control-height + 2px) + 2px;
+        property <bool> long: profile-list.preferred-height > self.cap;
+        height: min(profile-list.preferred-height, self.cap);
+        ScrollPane {
+            profile-list := VerticalLayout {
+                padding: 2px;
+                spacing: 2px;
+                for row in root.camera-profile-rows: Rectangle {
+                    property <bool> on: !row.heading && row.name == root.camera-profile;
+                    height: Theme.control-height;
+                    border-radius: Theme.radius-sm;
+                    background: on ? Theme.raised : (profile-row.has-hover ? Theme.hover : transparent);
+                    animate background { duration: Theme.quick; }
+                    profile-row := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        // A heading's fold, as the look list's; a
+                        // profile by the label it shows.
+                        accessible-role: button;
+                        accessible-label: !row.heading ? row.label
+                            : row.folded ? @tr("Unfold {}", row.label) : @tr("Fold {}", row.label);
+                        clicked => {
+                            if (row.heading) {
+                                root.camera-profile-group-toggled(row.name);
+                            } else {
+                                root.camera-profile = row.name;
+                                root.camera-profile-picked();
+                            }
+                        }
                     }
-                }
-                HorizontalLayout {
-                    padding-left: Theme.space-2;
-                    padding-right: Theme.space-2;
-                    Text {
-                        text: label;
-                        color: on ? Theme.text : (profile-row.has-hover ? Theme.text : Theme.text-secondary);
-                        font-size: Theme.font-xs;
-                        font-weight: on ? Theme.weight-medium : Theme.weight-regular;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                        overflow: elide;
+                    // A heading: the fold's triangle, the camera, a mark
+                    // for the open frame's own, and the count.
+                    if row.heading: HorizontalLayout {
+                        padding-left: 2px;
+                        padding-right: Theme.space-2 + (profile-box.long ? Theme.scrollbar-band : 0);
+                        spacing: Theme.space-1;
+                        Rectangle {
+                            width: 14px;
+                            Image {
+                                source: @image-url("../icons/chevron-right.svg");
+                                colorize: profile-row.has-hover ? Theme.text : Theme.text-muted;
+                                width: 10px;
+                                height: 10px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                transform-rotation: row.folded ? 0deg : 90deg;
+                            }
+                        }
+                        Text {
+                            text: row.label;
+                            color: profile-row.has-hover ? Theme.text : Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            font-weight: Theme.weight-medium;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        if row.own: Text {
+                            // Look section: the tag on a look fitted to the open frame's camera
+                            text: @tr("this camera");
+                            color: Theme.accent-text;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: row.note;
+                            color: Theme.text-muted;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                    }
+                    // A profile, set in under its heading's text when it
+                    // has one.
+                    if !row.heading: HorizontalLayout {
+                        padding-left: row.indented ? 2px + 14px + Theme.space-1 : Theme.space-2;
+                        padding-right: Theme.space-2 + (profile-box.long ? Theme.scrollbar-band : 0);
+                        Text {
+                            text: row.label;
+                            color: on ? Theme.text : (profile-row.has-hover ? Theme.text : Theme.text-secondary);
+                            font-size: Theme.font-xs;
+                            font-weight: on ? Theme.weight-medium : Theme.weight-regular;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
                     }
                 }
             }
         }
+    }
+    // At the foot of the list: every camera's profiles, a view of the
+    // list kept in the window's settings, not in the edit.
+    if root.raw-input && root.camera-profiles-any: Toggle {
+        label: @tr("Show all cameras");
+        checked <=> root.camera-profiles-all;
+        toggled => { root.camera-profiles-all-changed(); }
     }
     if root.raw-input && root.camera-profile-warning != "": Text {
         text: root.camera-profile-warning;

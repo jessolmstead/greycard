@@ -48,7 +48,7 @@ pub(super) struct LocalGpu {
     mix_hue: [[f32; 4]; 2],
     mix_sat: [[f32; 4]; 2],
     mix_lum: [[f32; 4]; 2],
-    /// Its own midtones, in x.
+    /// Its own midtones, in x; its Opacity (`Local::opacity`), in y.
     tone: [f32; 4],
 }
 
@@ -313,7 +313,7 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
             mix_hue: halves(&b.mixer.hue),
             mix_sat: halves(&b.mixer.saturation),
             mix_lum: halves(&b.mixer.luminance),
-            tone: [b.light.tone.midtones, 0.0, 0.0, 0.0],
+            tone: [b.light.tone.midtones, local.opacity, 0.0, 0.0],
         });
         tables.extend_from_slice(&b.curves.tone);
         tables.extend(b.curves.color.iter().map(|c| [c[0], c[1], 0.0, 0.0]));
@@ -509,6 +509,7 @@ mod tests {
             mask,
             enabled: true,
             refined: None,
+            opacity: 1.0,
         };
         let mut off = local(Mask {
             components: vec![
@@ -567,6 +568,7 @@ mod tests {
                 mask,
                 enabled: true,
                 refined: None,
+                opacity: 1.0,
             })
             .collect();
         let gpu = locals_gpu(&locals);
@@ -610,6 +612,7 @@ mod tests {
             mask,
             enabled: true,
             refined: None,
+            opacity: 1.0,
         };
         let gpu = locals_gpu(&[local]);
         assert_eq!(gpu.params[0].shapes_count, 2);

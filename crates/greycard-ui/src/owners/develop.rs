@@ -162,6 +162,11 @@ pub(crate) struct Develop {
     /// A frame opened with crop mode on: the starting aspect is laid
     /// on it once, when its develop lands and its shape is known.
     pub(crate) crop_start_due: bool,
+    /// A ratio taken with the Crop button before the frame's develop
+    /// said its size: its crop is fitted when that frame's develop
+    /// lands. The frame (its file and version) it was taken on, so a
+    /// develop of any other frame, reached however, fits nothing.
+    pub(crate) crop_fit_due: Option<crate::panel::crop::FrameId>,
     /// What a Fill drawn next asks to be made by, as last chosen
     /// (`settings.fill_choice`); None until one is, for the machine's
     /// default (`ai::FillHaves::default_choice`).
@@ -305,6 +310,10 @@ pub(crate) struct Develop {
     /// The look list's groups the user has opened (true) or folded,
     /// by key (`greycard_edit::look::Listing::open`).
     pub(crate) look_groups_open: std::collections::BTreeMap<String, bool>,
+    /// The profile list's camera groups the user has opened (true) or
+    /// folded, by key, while every camera is shown
+    /// (`greycard_edit::camera::Listing::open`).
+    pub(crate) profile_groups_open: std::collections::BTreeMap<String, bool>,
     /// The look list's row under the pointer and the look previewed
     /// from it, drawn in place of `look` while it stands.
     pub(crate) look_hover: RefCell<panel::look_preview::Hover>,
@@ -374,11 +383,12 @@ pub(crate) struct Develop {
     /// shows while a shape is placed, and the toggle comes back after,
     /// unless it was thrown meanwhile.
     pub(crate) show_mask_kept: Option<bool>,
-    /// The look as the panel last showed it, read back from the panel
+    /// The look as the panel last showed it, and the mask's Opacity,
+    /// which acts as a look slider does, read back from the panel
     /// where it is written (`show_edit`) and where it is changed
     /// (`mask::look_edited`), so the next change can tell a look slider
     /// from a shape control.
-    pub(crate) look_seen: RefCell<Option<greycard_edit::Look>>,
+    pub(crate) look_seen: RefCell<Option<(greycard_edit::Look, f32)>>,
     /// The detail planes the shown develop came with: a mask's Detail
     /// moved to ask for one it lacks develops again
     /// (`panel::mask::detail_asks`).

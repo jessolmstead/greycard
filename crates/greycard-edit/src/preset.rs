@@ -29,6 +29,8 @@ pub enum Section {
     /// The Detail section: Texture, Clarity, Structure, and Dehaze.
     Detail,
     Sharpen,
+    /// The unsharp mask on the finished picture.
+    OutputSharpen,
     Curves,
     Mixer,
     Color,
@@ -64,6 +66,7 @@ impl Section {
         Section::Lens,
         Section::Detail,
         Section::Sharpen,
+        Section::OutputSharpen,
         Section::Vignette,
         Section::Grain,
         Section::Demosaic,
@@ -79,6 +82,7 @@ impl Section {
             Section::WhiteBalance => "white-balance",
             Section::Noise => "noise",
             Section::Detail => "detail",
+            Section::OutputSharpen => "output-sharpen",
             Section::Sharpen => "sharpen",
             Section::Curves => "curves",
             Section::Mixer => "mixer",
@@ -104,6 +108,7 @@ impl Section {
             Section::WhiteBalance => "White balance",
             Section::Noise => "Noise",
             Section::Detail => "Detail",
+            Section::OutputSharpen => "Output sharpen",
             Section::Sharpen => "Sharpen",
             Section::Curves => "Curves",
             Section::Mixer => "Color mixer",
@@ -173,6 +178,7 @@ impl Section {
                 onto.noise.strength = from.noise.strength;
             }
             Section::Detail => onto.detail = from.detail,
+            Section::OutputSharpen => onto.output_sharpen = from.output_sharpen,
             Section::Sharpen => onto.sharpen = from.sharpen,
             Section::Curves => onto.curves = from.curves.clone(),
             Section::Mixer => onto.mixer = from.mixer,
@@ -223,6 +229,7 @@ impl Section {
                     && a.noise.strength == b.noise.strength
             }
             Section::Detail => a.detail == b.detail,
+            Section::OutputSharpen => a.output_sharpen == b.output_sharpen,
             Section::Sharpen => a.sharpen == b.sharpen,
             Section::Curves => a.curves == b.curves,
             Section::Mixer => a.mixer == b.mixer,
@@ -492,7 +499,7 @@ impl Part {
             BlackWhiteWeights => "Weights",
             BlackWhiteStrength => "Strength",
             GradingShadows => "Shadows",
-            GradingMidtones => "Mid-tones",
+            GradingMidtones => "Midtones",
             GradingHighlights => "Highlights",
             GradingBalance => "Balance",
             LensProfile => "Profile",
@@ -2331,6 +2338,7 @@ mod tests {
                 Section::Tint,
                 Section::Noise,
                 Section::Sharpen,
+                Section::OutputSharpen,
                 Section::Demosaic,
                 Section::Camera,
                 Section::Adjustments,
@@ -2631,7 +2639,7 @@ mod tests {
             );
         }
         let on: Vec<_> = Section::ALL.iter().filter(|s| s.by_default()).collect();
-        assert_eq!(on.len(), 14);
+        assert_eq!(on.len(), 15);
         // A film preset is a look and a strength, so the look comes
         // across by default as the rest of the look does.
         assert!(on.contains(&&Section::Look));

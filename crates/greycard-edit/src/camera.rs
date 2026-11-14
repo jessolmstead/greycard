@@ -45,8 +45,10 @@ pub enum ProfileChoice {
     /// The matrices the raw file carries.
     #[default]
     Embedded,
-    /// A DCP in the profile directory, by file name without the
-    /// extension.
+    /// A DCP in the profile directory, by its path under it without
+    /// the extension, folders joined by `/` on every system: a file at
+    /// the top is its bare file name, as every edit made before the
+    /// folder was read with its subfolders names it.
     Named(String),
 }
 
@@ -169,7 +171,9 @@ impl Camera {
 /// A profile in the directory, as the panel lists it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
-    /// The file name without its extension: what the edit stores.
+    /// The file's path under the profile directory without its
+    /// extension, folders joined by `/`: what the edit stores
+    /// ([`ProfileChoice::Named`]).
     pub name: String,
     pub path: PathBuf,
     /// The profile's own name, when it carries one.
@@ -190,9 +194,14 @@ impl Entry {
     /// stand side by side.
     pub fn label(&self) -> &str {
         match &self.title {
-            Some(title) if !title.is_empty() && title != &self.name => title,
-            _ => &self.name,
+            Some(title) if !title.is_empty() && title != self.file_name() => title,
+            _ => self.file_name(),
         }
+    }
+
+    /// The file's name without its extension or its folders.
+    pub fn file_name(&self) -> &str {
+        self.name.rsplit('/').next().unwrap_or(&self.name)
     }
 
     /// Whether this profile was made for `body`: its folded
@@ -277,6 +286,134 @@ pub fn listed<'a>(entries: &'a [Entry], chosen: &str) -> impl Iterator<Item = &'
         Some(_) => e.name == chosen,
         None => Some(e.name.as_str()) != instead,
     })
+}
+
+/// What the panel shows for each of `rows`, which stand side by side:
+/// each profile's label, and when two different profiles go by one
+/// label, the file name beside each to tell them apart, or the path
+/// under the directory when the file names are one too.
+pub fn told_apart(rows: &[&Entry]) -> Vec<String> {
+    rows.iter()
+        .map(|e| {
+            let label = e.label();
+            if rows.iter().filter(|o| o.label() == label).count() < 2 {
+                return label.to_string();
+            }
+            let file = e.file_name();
+            let same_file = rows
+                .iter()
+                .filter(|o| o.label() == label && o.file_name() == file)
+                .count()
+                > 1;
+            let by = if same_file { e.name.as_str() } else { file };
+            match by == label {
+                true => label.to_string(),
+                false => format!("{label} ({by})"),
+            }
+        })
+        .collect()
+}
+
+/// Where the list of every camera's profiles is drawn from.
+#[derive(Debug, Clone, Copy)]
+pub struct Listing<'a> {
+    /// What the edit names.
+    pub chosen: &'a str,
+    /// The open frame's camera; no make for none.
+    pub body: Body<'a>,
+    /// The groups the user has opened (true) or folded, by key.
+    pub open: &'a std::collections::BTreeMap<String, bool>,
+}
+
+/// A row of the list of every camera's profiles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Row {
+    /// A camera's heading, over its profiles unless folded.
+    Heading {
+        /// The camera folded to its letters and digits: what a click
+        /// on the heading toggles.
+        key: String,
+        /// The camera as its profiles name it.
+        label: String,
+        count: usize,
+        folded: bool,
+        /// The open frame's own camera, under any of its names.
+        own: bool,
+        /// It holds the chosen profile, so it is open whatever it was
+        /// set to.
+        locked: bool,
+    },
+    Profile {
+        /// What the edit stores.
+        name: String,
+        label: String,
+        /// Under a heading.
+        indented: bool,
+    },
+}
+
+/// The directory's profiles grouped by the camera each names, one row
+/// a profile however many files hold it ([`listed`]): first the open
+/// frame's camera's groups, under each name it is sold by, open and
+/// marked; then every other camera by name, folded with its count; then
+/// the profiles that name no camera, under no heading. A group the
+/// user opened or folded stays so ([`Listing::open`]), and the group
+/// holding the chosen profile is open whatever it was, so the list
+/// shows what the edit says.
+pub fn grouped(entries: &[Entry], at: Listing) -> Vec<Row> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, (String, Vec<&Entry>)> = BTreeMap::new();
+    let mut loose: Vec<&Entry> = Vec::new();
+    for e in listed(entries, at.chosen) {
+        let key = e.folded_unique();
+        if key.is_empty() {
+            loose.push(e);
+            continue;
+        }
+        let label = e.unique_camera_model.as_deref().unwrap_or_default().trim();
+        groups
+            .entry(key)
+            .or_insert_with(|| (label.to_string(), Vec::new()))
+            .1
+            .push(e);
+    }
+    let has_body = !at.body.make.is_empty() || !at.body.model.is_empty();
+    let mut order: Vec<(String, String, Vec<&Entry>, bool)> = groups
+        .into_iter()
+        .map(|(key, (label, members))| {
+            let own = has_body && members.iter().any(|e| e.fits(at.body));
+            (key, label, members, own)
+        })
+        .collect();
+    order.sort_by_cached_key(|(key, label, _, own)| (!own, label.to_lowercase(), key.clone()));
+    let mut rows = Vec::new();
+    for (key, label, members, own) in order {
+        let locked = members.iter().any(|e| e.name == at.chosen);
+        let folded = at.open.get(&key).map_or(!own, |open| !open) && !locked;
+        rows.push(Row::Heading {
+            key,
+            label,
+            count: members.len(),
+            folded,
+            own,
+            locked,
+        });
+        if !folded {
+            let labels = told_apart(&members);
+            rows.extend(members.iter().zip(labels).map(|(e, label)| Row::Profile {
+                name: e.name.clone(),
+                label,
+                indented: true,
+            }));
+        }
+    }
+    let labels = told_apart(&loose);
+    rows.extend(loose.iter().zip(labels).map(|(e, label)| Row::Profile {
+        name: e.name.clone(),
+        label,
+        indented: false,
+    }));
+    rows
 }
 
 /// What is wrong with the chosen profile, if anything: that it is not
@@ -530,6 +667,152 @@ mod tests {
         assert_eq!(entry.label(), "Canon EOS R6 Neutral");
         entry.title = None;
         assert_eq!(entry.label(), "canon-r6-neutral");
+        // A file in a subfolder is labeled by its own name, not its
+        // folders; a title that is that name again is no title.
+        entry.name = "Camera/Canon EOS R6/canon-r6-neutral".into();
+        assert_eq!(entry.label(), "canon-r6-neutral");
+        entry.title = Some("canon-r6-neutral".into());
+        assert_eq!(entry.file_name(), "canon-r6-neutral");
+        assert_eq!(entry.label(), "canon-r6-neutral");
+    }
+
+    fn named(name: &str, title: &str, unique: Option<&str>) -> Entry {
+        Entry {
+            name: name.into(),
+            title: Some(title.into()),
+            ..entry(unique)
+        }
+    }
+
+    /// Every camera's profiles: the open camera's groups first under
+    /// each of its names, open and marked; the rest by name, folded;
+    /// the profiles naming no camera last, under no heading. The group
+    /// holding the chosen profile is open, and a fold set by hand
+    /// holds.
+    #[test]
+    fn every_cameras_profiles_group_by_camera() {
+        let entries = vec![
+            named(
+                "Camera/Nikon Z 8/Adobe Standard",
+                "Adobe Standard",
+                Some("NIKON Z 8"),
+            ),
+            named(
+                "Camera/Canon EOS R5/Adobe Standard",
+                "Adobe Standard",
+                Some("Canon EOS R5"),
+            ),
+            named(
+                "Camera/Canon EOS R5/Neutral",
+                "Neutral",
+                Some("CANON EOS R5"),
+            ),
+            named("t8i", "Adobe Standard", Some("Canon EOS Rebel T8i")),
+            named("850d", "Adobe Standard", Some("Canon EOS 850D")),
+            named("Anything", "Anything", None),
+        ];
+        let aliases = ["EOS Rebel T8i".to_string()];
+        let body = Body::new("Canon", "EOS 850D", &aliases);
+        let mut open = std::collections::BTreeMap::new();
+        let heads = |rows: &[Row]| -> Vec<(String, bool, bool)> {
+            rows.iter()
+                .filter_map(|r| match r {
+                    Row::Heading {
+                        label, folded, own, ..
+                    } => Some((label.clone(), *folded, *own)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let rows = grouped(
+            &entries,
+            Listing {
+                chosen: EMBEDDED,
+                body,
+                open: &open,
+            },
+        );
+        assert_eq!(
+            heads(&rows),
+            [
+                ("Canon EOS 850D".to_string(), false, true),
+                ("Canon EOS Rebel T8i".to_string(), false, true),
+                ("Canon EOS R5".to_string(), true, false),
+                ("NIKON Z 8".to_string(), true, false),
+            ]
+        );
+        // The loose one last, not set in.
+        assert_eq!(
+            rows.last(),
+            Some(&Row::Profile {
+                name: "Anything".into(),
+                label: "Anything".into(),
+                indented: false,
+            })
+        );
+        // Two spellings of one camera are one group of two.
+        assert!(rows.contains(&Row::Heading {
+            key: "canoneosr5".into(),
+            label: "Canon EOS R5".into(),
+            count: 2,
+            folded: true,
+            own: false,
+            locked: false,
+        }));
+        // Another camera's profile chosen: its group is open.
+        let rows = grouped(
+            &entries,
+            Listing {
+                chosen: "Camera/Nikon Z 8/Adobe Standard",
+                body,
+                open: &open,
+            },
+        );
+        assert!(heads(&rows).contains(&("NIKON Z 8".to_string(), false, false)));
+        assert!(rows.iter().any(|r| matches!(r,
+            Row::Profile { name, indented: true, .. } if name == "Camera/Nikon Z 8/Adobe Standard")));
+        // Folded by hand, the own group folds; opened, another opens.
+        open.insert("canoneos850d".to_string(), false);
+        open.insert("canoneosr5".to_string(), true);
+        let rows = grouped(
+            &entries,
+            Listing {
+                chosen: EMBEDDED,
+                body,
+                open: &open,
+            },
+        );
+        assert_eq!(heads(&rows)[0], ("Canon EOS 850D".to_string(), true, true));
+        assert!(heads(&rows).contains(&("Canon EOS R5".to_string(), false, false)));
+        // No frame open: nothing is own, every group by name.
+        let none = Listing {
+            chosen: EMBEDDED,
+            body: Body::default(),
+            open: &std::collections::BTreeMap::new(),
+        };
+        let rows = grouped(&entries, none);
+        assert_eq!(heads(&rows)[0].0, "Canon EOS 850D");
+        assert!(heads(&rows).iter().all(|(_, folded, own)| *folded && !own));
+    }
+
+    /// Two profiles of one label side by side are told apart by their
+    /// file names, or by their paths when the file names agree too.
+    #[test]
+    fn twins_are_told_apart_by_file_name_then_path() {
+        let a = named("Camera/A/Adobe Standard", "Standard", Some("X"));
+        let b = named("Camera/B/Adobe Standard", "Standard", Some("X"));
+        let c = named("old", "Standard", Some("X"));
+        let d = named("Other", "Other", Some("X"));
+        assert_eq!(
+            told_apart(&[&a, &b, &c, &d]),
+            [
+                "Standard (Camera/A/Adobe Standard)",
+                "Standard (Camera/B/Adobe Standard)",
+                "Standard (old)",
+                "Other",
+            ]
+        );
+        assert_eq!(told_apart(&[&a, &d]), ["Standard", "Other"]);
     }
 
     #[test]

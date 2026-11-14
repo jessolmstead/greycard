@@ -196,3 +196,68 @@ fn exiv2_reads_the_users_author_and_copyright() {
     assert!(line(&pa, "Exif.Image.Copyright").contains("camera notice"));
     assert!(!px.contains("Xmp.dc."), "{px}");
 }
+
+/// Metadata None writes nothing: not the settings' author and
+/// copyright, not the flags', not the source's, in any format; the
+/// run says the flags went unwritten.
+#[test]
+fn metadata_none_writes_no_author_or_copyright() {
+    if Command::new("exiv2").arg("--version").output().is_err() {
+        println!("SKIPPED: metadata None: exiv2 is not on the path");
+        return;
+    }
+    let scratch = Scratch(
+        Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("greycard-cli-export-none-{}", std::process::id())),
+    );
+    let home = &scratch.0;
+    greycard_core::testing::remove_dir_retry(home);
+    std::fs::create_dir_all(home.join("config/greycard")).unwrap();
+    let shot = home.join("shot.tif");
+    source(&shot);
+    std::fs::write(
+        home.join("config/greycard/settings.json"),
+        r#"{"author": "Settings Author", "copyright": "© 2026 Zoë Ångström", "export_metadata": "None"}"#,
+    )
+    .unwrap();
+
+    for name in ["none.jpg", "none.png", "none.tif", "none.webp"] {
+        for flagged in [false, true] {
+            let out = home.join(format!("{flagged}-{name}"));
+            let mut args = vec![
+                shot.as_os_str(),
+                out.as_os_str(),
+                "--no-sidecars".as_ref(),
+                "--cpu".as_ref(),
+            ];
+            if flagged {
+                args.extend::<[&std::ffi::OsStr; 4]>([
+                    "--author".as_ref(),
+                    "Flag Author".as_ref(),
+                    "--copyright".as_ref(),
+                    "flag notice".as_ref(),
+                ]);
+            }
+            let done = export(home, &args);
+            let stderr = String::from_utf8_lossy(&done.stderr);
+            assert!(done.status.success(), "{name}: {stderr}");
+            assert_eq!(
+                stderr.contains("are not written: the export's metadata is None"),
+                flagged,
+                "{name}: {stderr}"
+            );
+            let (pa, px) = (exiv2("-pa", &out), exiv2("-px", &out));
+            for key in ["Exif.Image.Artist", "Exif.Image.Copyright"] {
+                assert_eq!(line(&pa, key), "", "{name} {flagged}: {pa}");
+            }
+            assert!(!px.contains("Xmp.dc."), "{name} {flagged}: {px}");
+            let bytes = std::fs::read(&out).unwrap();
+            for word in ["Author", "notice", "Ångström", "Camera Owner"] {
+                assert!(
+                    !bytes.windows(word.len()).any(|w| w == word.as_bytes()),
+                    "{name} {flagged}: {word}"
+                );
+            }
+        }
+    }
+}

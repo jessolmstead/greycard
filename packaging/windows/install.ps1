@@ -117,7 +117,7 @@ foreach ($name in 'greycard-ui', 'greycard') {
 
 New-Item -ItemType Directory -Force -Path $target | Out-Null
 Copy-Item (Join-Path $source '*') $target -Recurse -Force
-foreach ($name in 'LICENSE', 'README.md', 'register.cmd', 'unregister.cmd') {
+foreach ($name in 'LICENSE', 'THIRD-PARTY-NOTICES', 'README.md', 'register.cmd', 'unregister.cmd') {
     $file = Join-Path $here $name
     if (Test-Path $file) { Copy-Item $file $target -Force }
 }

@@ -364,15 +364,11 @@ pub struct Dcp {
 impl Dcp {
     /// Read a DCP from a file.
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        use std::io::Read;
         let path = path.as_ref();
-        let len = std::fs::metadata(path)?.len();
-        if len > MAX_FILE {
-            return Err(Error::Profile(format!(
-                "{}: {len} bytes is too large for a camera profile",
-                path.display()
-            )));
-        }
-        let bytes = std::fs::read(path)?;
+        let (file, len) = open_profile(path).map_err(|e| at_path(path, e))?;
+        let mut bytes = Vec::with_capacity(len as usize);
+        file.take(len).read_to_end(&mut bytes)?;
         Self::from_bytes(&bytes).map_err(|e| at_path(path, e))
     }
 
@@ -512,22 +508,86 @@ impl Dcp {
 
     /// What a profile says about itself, without reading its tables.
     ///
-    /// A directory of profiles is listed with this: the file is opened
-    /// and its directory walked, but the hue map and the look table —
-    /// a megabyte of floats in a profile that carries a 90x30x30 look —
-    /// are never decoded. Reading a profile in full is for the one
-    /// that is chosen.
+    /// A directory of profiles is listed with this, thousands of files
+    /// for a copy of Adobe's: only the header, the directory, and the
+    /// few values it answers with are read from the disk, never the
+    /// hue map and the look table, a megabyte of floats in a profile
+    /// that carries a 90x30x30 look. Reading a profile in full is for
+    /// the one that is chosen. What it answers is
+    /// [`Dcp::info_from_bytes`]'s on the whole file, errors included.
     pub fn info(path: impl AsRef<Path>) -> Result<DcpInfo> {
         let path = path.as_ref();
-        let len = std::fs::metadata(path)?.len();
-        if len > MAX_FILE {
-            return Err(Error::Profile(format!(
-                "{}: {len} bytes is too large for a camera profile",
-                path.display()
-            )));
+        Self::info_sparse(path).map_err(|e| at_path(path, e))
+    }
+
+    fn info_sparse(path: &Path) -> Result<DcpInfo> {
+        use std::io::{Read, Seek, SeekFrom};
+        /// Read whole up to this, and as the first piece past it: the
+        /// header and, in every file seen, the directory.
+        const HEAD: usize = 4096;
+        let (mut file, len) = open_profile(path)?;
+        let len = len as usize;
+        if len <= HEAD {
+            let mut bytes = Vec::with_capacity(len);
+            (&mut file).take(len as u64).read_to_end(&mut bytes)?;
+            return Self::info_from_bytes(&bytes);
         }
-        let bytes = std::fs::read(path)?;
-        Self::info_from_bytes(&bytes).map_err(|e| at_path(path, e))
+        // The file's length in zeros, which the allocator hands over
+        // untouched, with only the pieces the answer reads filled in:
+        // the parse then checks every offset against the real length
+        // and reads the same bytes it would from the whole file.
+        let mut bytes = vec![0u8; len];
+        let mut fill = |bytes: &mut [u8], from: usize, to: usize| -> Result<()> {
+            let to = to.min(len);
+            if from < to {
+                file.seek(SeekFrom::Start(from as u64))?;
+                file.read_exact(&mut bytes[from..to])?;
+            }
+            Ok(())
+        };
+        fill(&mut bytes, 0, HEAD)?;
+        let little = &bytes[0..2] == b"II";
+        let u32_at = |b: &[u8], at: usize| {
+            let v = [b[at], b[at + 1], b[at + 2], b[at + 3]];
+            if little {
+                u32::from_le_bytes(v)
+            } else {
+                u32::from_be_bytes(v)
+            }
+        };
+        let start = u32_at(&bytes, 4) as usize;
+        // The count, wherever it is: past the first block, or across
+        // its end.
+        if start.saturating_add(2) > HEAD {
+            fill(&mut bytes, start, start.saturating_add(2))?;
+        }
+        if start.saturating_add(2) <= len {
+            let b = [bytes[start], bytes[start + 1]];
+            let count = if little {
+                u16::from_le_bytes(b)
+            } else {
+                u16::from_be_bytes(b)
+            } as usize;
+            fill(&mut bytes, start + 2, start + 2 + count * 12)?;
+        }
+        // The values the answer reads, where the directory says.
+        let wanted: Vec<(usize, usize)> = {
+            let ifd = Ifd::parse(&bytes)?;
+            [
+                tag::PROFILE_NAME,
+                tag::UNIQUE_CAMERA_MODEL,
+                tag::PROFILE_COPYRIGHT,
+                tag::PROFILE_EMBED_POLICY,
+            ]
+            .into_iter()
+            .filter_map(|t| ifd.entry(t))
+            .map(|e| (e.offset, e.offset + type_size(e.kind) * e.count))
+            .collect()
+        };
+        for (from, to) in wanted {
+            fill(&mut bytes, from, to)?;
+        }
+        Self::info_from_bytes(&bytes)
     }
 
     /// [`Dcp::info`] from bytes already in hand.
@@ -695,6 +755,24 @@ impl Dcp {
         }
         w.finish()
     }
+}
+
+/// A profile file opened for reading, with its length: a regular file
+/// (after any link), no larger than [`MAX_FILE`]. A device, a pipe, or
+/// a folder named like a profile is refused before it is opened, as
+/// reading one would never end or never start.
+fn open_profile(path: &Path) -> Result<(std::fs::File, u64)> {
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Err(Error::Profile("not a regular file".into()));
+    }
+    let len = meta.len();
+    if len > MAX_FILE {
+        return Err(Error::Profile(format!(
+            "{len} bytes is too large for a camera profile"
+        )));
+    }
+    Ok((std::fs::File::open(path)?, len))
 }
 
 /// A profile's complaint with the file it came from in front of it.
@@ -1468,6 +1546,132 @@ pub(crate) mod tests {
             .unwrap_err()
             .to_string();
         assert!(msg.contains("ColorMatrix1"), "{msg}");
+    }
+
+    /// A directory starting at the first block's last bytes, or just
+    /// past it, a long one included, reads as the whole file does.
+    #[test]
+    fn a_directory_across_the_first_block_reads_as_the_whole_file() {
+        let dir = std::env::temp_dir().join(format!("greycard-dcp-edge-{}", std::process::id()));
+        crate::testing::remove_dir_retry(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A profile with its directory at 8 and its values after it,
+        // as the writer lays it out, then `extra` tags this reader
+        // passes over, so a directory can be made of any size.
+        let laid = |extra: u16| {
+            let dcp = test_dcp(None, None);
+            let mut w = IfdWriter::default();
+            for t in 0..extra {
+                w.short(60000 + t, 1);
+            }
+            let mut plain = dcp.to_bytes();
+            if extra > 0 {
+                // The profile's own tags, then the extra ones.
+                let ifd = Ifd::parse(&plain).unwrap();
+                let tags: Vec<(u16, u16, u32, Vec<u8>)> = ifd
+                    .entries
+                    .iter()
+                    .map(|e| {
+                        let len = type_size(e.kind) * e.count;
+                        (
+                            e.tag,
+                            e.kind,
+                            e.count as u32,
+                            plain[e.offset..e.offset + len].to_vec(),
+                        )
+                    })
+                    .collect();
+                w.entries.extend(tags);
+                plain = w.finish();
+            }
+            plain
+        };
+        for (at, extra) in [(4094usize, 0u16), (4095, 0), (4096, 0), (4095, 300)] {
+            let front = laid(extra);
+            assert!(front.len() < at, "{} bytes", front.len());
+            let count = u16::from_le_bytes([front[8], front[9]]) as usize;
+            assert!(extra == 0 || count > 256);
+            // The directory copied to `at`, the header pointing there.
+            let mut moved = front.clone();
+            moved.resize(at, 0);
+            moved.extend_from_slice(&front[8..8 + 2 + count * 12 + 4]);
+            moved[4..8].copy_from_slice(&(at as u32).to_le_bytes());
+            let path = dir.join(format!("at-{at}-{extra}.dcp"));
+            std::fs::write(&path, &moved).unwrap();
+            let whole = Dcp::info_from_bytes(&moved).unwrap();
+            assert_eq!(Dcp::info(&path).unwrap(), whole, "at {at}, {count} tags");
+        }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A file named like a profile that is no regular file, a link to
+    /// a device or a pipe, is refused at once, never read without end.
+    #[cfg(unix)]
+    #[test]
+    fn a_profile_that_is_no_regular_file_is_refused() {
+        let dir = std::env::temp_dir().join(format!("greycard-dcp-dev-{}", std::process::id()));
+        crate::testing::remove_dir_retry(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let zero = dir.join("zero.dcp");
+        std::os::unix::fs::symlink("/dev/zero", &zero).unwrap();
+        let fifo = dir.join("pipe.dcp");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .is_ok_and(|s| s.success());
+        for path in std::iter::once(&zero).chain(made.then_some(&fifo)) {
+            assert!(Dcp::info(path).is_err(), "{}", path.display());
+            assert!(Dcp::load(path).is_err(), "{}", path.display());
+        }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The header read from a file reads only pieces of it, and answers
+    /// what the whole file's bytes answer: a directory at the front or
+    /// moved to the end, values far past the first block, a file cut
+    /// short, and one that is no profile.
+    #[test]
+    fn the_header_read_from_a_file_answers_as_the_whole_file() {
+        let dir = std::env::temp_dir().join(format!("greycard-dcp-info-{}", std::process::id()));
+        crate::testing::remove_dir_retry(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut dcp = test_dcp(Some(stepped_map()), None);
+        // A table big enough that the copyright, written after it, is
+        // well past the first block.
+        dcp.look = Some(HueSatMap::identity(36, 8, 8));
+        let front = dcp.to_bytes();
+        assert!(front.len() > 4 * 4096);
+        // The same file with its directory copied to the end and the
+        // header pointing there.
+        let count = u16::from_le_bytes([front[8], front[9]]) as usize;
+        let mut back = front.clone();
+        let at = back.len() as u32;
+        back.extend_from_slice(&front[8..8 + 2 + count * 12 + 4]);
+        back[4..8].copy_from_slice(&at.to_le_bytes());
+        let mut short = front.clone();
+        short.truncate(front.len() / 2);
+        let mut junk = vec![7u8; 10_000];
+        junk[..4].copy_from_slice(b"II\x52\x43");
+        for (name, bytes) in [
+            ("front", &front),
+            ("back", &back),
+            ("short", &short),
+            ("junk", &junk),
+        ] {
+            let path = dir.join(format!("{name}.dcp"));
+            std::fs::write(&path, bytes).unwrap();
+            let whole = Dcp::info_from_bytes(bytes);
+            let read = Dcp::info(&path);
+            match (&whole, &read) {
+                (Ok(a), Ok(b)) => assert_eq!(a, b, "{name}"),
+                (Err(_), Err(_)) => {}
+                _ => panic!("{name}: {whole:?} against {read:?}"),
+            }
+        }
+        let info = Dcp::info(dir.join("back.dcp")).unwrap();
+        assert_eq!(info.copyright.as_deref(), Some("public domain"));
+        assert_eq!(info.unique_camera_model.as_deref(), Some("Test Cam"));
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Found by fuzzing: a look table entry of 1e30 is finite, but the

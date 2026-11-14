@@ -1,0 +1,9 @@
+{{!
+  cargo-about's template for the list scripts/notices.sh checks
+  packaging/notices/crate-notices and about.toml against: every crate
+  in the notices, one a line, as name, version and the Cargo.toml cargo
+  resolved it to, tab-separated. It is not shipped.
+~}}
+{{#each crates}}
+{{{this.package.name}}}	{{{this.package.version}}}	{{{this.package.manifest_path}}}
+{{/each}}

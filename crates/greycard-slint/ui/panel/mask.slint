@@ -273,6 +273,7 @@ export component AdjustmentsSection inherits Section {
     in-out property <int> target;
     in-out property <bool> mask-invert;
     in-out property <float> mask-refine;
+    in-out property <float> mask-opacity;
     in-out property <bool> has-feather;
     in-out property <float> mask-feather;
     in-out property <float> lum-low;
@@ -409,6 +410,22 @@ export component AdjustmentsSection inherits Section {
                     value <=> root.mask-refine;
                     scale: 100;
                     text: round(root.mask-refine * 100) + "%";
+                    changed(v) => { root.view-changed(); }
+                }
+                // How much of the mask's look goes on, the overlay
+                // as it is.
+                EditSlider {
+                    // Mask: the strength of its whole look
+                    label: @tr("Opacity");
+                    label-width: 84px;
+                    minimum: 0;
+                    maximum: 1;
+                    default: 1;
+                    step: 0.01;
+                    steps: Steps.percent;
+                    value <=> root.mask-opacity;
+                    scale: 100;
+                    text: round(root.mask-opacity * 100) + "%";
                     changed(v) => { root.view-changed(); }
                 }
             }

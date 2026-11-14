@@ -22,6 +22,7 @@ fn the_shaders_parse_and_validate() {
         ("viewport.wgsl", include_str!("../viewport.wgsl")),
         ("scope.wgsl", include_str!("../scope.wgsl")),
         ("peaking.wgsl", include_str!("../peaking.wgsl")),
+        ("osharp.wgsl", include_str!("../osharp.wgsl")),
     ] {
         let module = naga::front::wgsl::parse_str(source)
             .unwrap_or_else(|e| panic!("{name}:\n{}", e.emit_to_string(source)));
@@ -74,11 +75,13 @@ fn the_shaders_shift_fade_at_black_is_the_cpus() {
 /// The shader's midtones bell is the render crate's exactly.
 #[test]
 fn the_shaders_midtones_bell_is_the_cpus() {
-    use greycard_render::finish::{MIDTONES_ABOVE, MIDTONES_BELOW, MIDTONES_LIMIT, MIDTONES_PEAK};
+    use greycard_render::finish::{
+        MIDTONES_LIMIT, MIDTONES_PEAK, MIDTONES_REACH, MIDTONES_UNDER_FOOT,
+    };
     for (name, value) in [
         ("MIDTONES_PEAK", MIDTONES_PEAK),
-        ("MIDTONES_BELOW", MIDTONES_BELOW),
-        ("MIDTONES_ABOVE", MIDTONES_ABOVE),
+        ("MIDTONES_UNDER_FOOT", MIDTONES_UNDER_FOOT),
+        ("MIDTONES_REACH", MIDTONES_REACH),
         ("MIDTONES_LIMIT", MIDTONES_LIMIT),
     ] {
         assert_eq!(shader_literal(name), value, "the shader's {name}");
@@ -104,6 +107,7 @@ fn local_of(shapes: Vec<(Shape, Mode)>) -> Local {
         enabled: true,
         rasters: Vec::new(),
         refined: None,
+        opacity: 1.0,
     }
 }
 
@@ -1631,6 +1635,628 @@ fn midtones_on_the_gpu_is_the_cpus() {
             "exposure {exposure}, contrast {contrast}, midtones {midtones}, mask {local:?}: {worst:?}"
         );
     }
+}
+
+/// The output sharpen on the GPU is the CPU's: at 1:1 over the parity
+/// frame, at amounts, radii, and thresholds across their ranges, under
+/// a mask's look too, every pixel within a level; and at no
+/// amount the viewport is the one draw it was, to the bit.
+#[test]
+fn the_output_sharpen_on_the_gpu_is_the_cpus() {
+    use greycard_render::finish::finish_with;
+    let Some((device, queue)) = device("the output sharpen check") else {
+        return;
+    };
+    let image = parity_frame();
+    let (w, h) = (image.width, image.height);
+    let seen = WorkingImage {
+        width: w,
+        height: h,
+        data: image
+            .data
+            .iter()
+            .map(|v| half::f16::from_f32(*v).to_f32())
+            .collect(),
+    };
+    let source = Source::SCENE;
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let to_out = greycard_render::export::Space::Srgb.matrix();
+    let iw = w as f32;
+    let draw = |renderer: &mut Renderer, edit: &greycard_edit::Edit, locals: &[Local]| {
+        let view = View {
+            center: (w as f32 / 2.0, h as f32 / 2.0),
+            plane: (w as f32, h as f32),
+            frame_size: (w as f32, h as f32),
+            source,
+            locals: locals.to_vec(),
+            ..View::with_look(edit)
+        };
+        let target = renderer.render(w as u32, h as u32, &view).0;
+        renderer.read_back(&target).expect("read back")
+    };
+    let plain = draw(&mut renderer, &greycard_edit::Edit::default(), &[]);
+    let mut off = greycard_edit::Edit::default();
+    off.output_sharpen.radius = 2.5;
+    off.output_sharpen.threshold = 0.05;
+    assert_eq!(
+        draw(&mut renderer, &off, &[]),
+        plain,
+        "no amount, no change"
+    );
+    let mut cases = Vec::new();
+    for amount in [0.3f32, 1.0, 2.0] {
+        for radius in [0.5f32, 1.0, 3.0] {
+            for threshold in [0.0f32, 0.01, 0.05] {
+                cases.push((amount, radius, threshold, false));
+            }
+        }
+    }
+    cases.push((1.5, 1.5, 0.01, true));
+    for (amount, radius, threshold, masked) in cases {
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.exposure = 0.4;
+        edit.output_sharpen.amount = amount;
+        edit.output_sharpen.radius = radius;
+        edit.output_sharpen.threshold = threshold;
+        if masked {
+            let mut look = Look::default();
+            look.light.exposure = -1.0;
+            edit.adjustments.push(greycard_edit::Adjustment {
+                id: 1,
+                mask: Mask {
+                    components: vec![Component {
+                        shape: Shape::Linear {
+                            from: [0.45, 0.0],
+                            to: [0.55, 0.0],
+                        },
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                look,
+                ..Default::default()
+            });
+        }
+        let shift = greycard_render::testing::white_shift();
+        let locals: Vec<Local> = edit
+            .adjustments
+            .iter()
+            .map(|a| Local::of(a, vec![None; a.mask.components.len()], Some(&shift)))
+            .collect();
+        let global = Baked::global(&edit, source);
+        let shown = draw(&mut renderer, &edit, &locals);
+        let cpu = finish_with(
+            &seen,
+            None,
+            &global,
+            &locals,
+            |x, y| ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / iw),
+            |_, _| (0.0, None),
+            None,
+            None,
+            None,
+            &to_out,
+            |v: f32| v,
+        );
+        let mut unsharpened = edit.clone();
+        unsharpened.output_sharpen.amount = 0.0;
+        let before = draw(&mut renderer, &unsharpened, &locals);
+        let (mut worst, mut sum, mut moved) = ((0.0f32, 0, 0), 0.0f64, 0usize);
+        for y in 0..h {
+            for x in 0..w {
+                let gpu = shown.get_pixel(x as u32, y as u32);
+                if gpu != before.get_pixel(x as u32, y as u32) {
+                    moved += 1;
+                }
+                for k in 0..3 {
+                    let d = (cpu[(y * w + x) * 3 + k] - f32::from(gpu[k]) / 255.0).abs();
+                    sum += f64::from(d);
+                    if d > worst.0 {
+                        worst = (d, x, y);
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "amount {amount}, radius {radius}, threshold {threshold}, mask {masked}: \
+             {moved} pixels moved, worst {:.2} levels at {},{}, mean {:.3} levels",
+            worst.0 * 255.0,
+            worst.1,
+            worst.2,
+            sum / (w * h * 3) as f64 * 255.0
+        );
+        assert!(moved > w * h / 10, "the case moves the picture");
+        // Within the read back's own rounding: a level at the most, a
+        // tenth of one on the mean.
+        assert!(
+            worst.0 < 1.0 / 255.0 && sum / ((w * h * 3) as f64) < 0.15 / 255.0,
+            "amount {amount}, radius {radius}, threshold {threshold}: {worst:?}"
+        );
+    }
+}
+
+/// The viewport at `zoom` (a whole number, 1 and up) over `seen`, as the
+/// shader takes it, worked on the CPU: each target pixel's picture read
+/// bilinearly where the view puts it, finished to the look table, the
+/// luminance blurred by the output sharpen's taps a picture's pixel
+/// apart, its blur held only at the picture's own edges (the margin
+/// past the window drawn as the window is), and on to the output.
+/// `None` where the target shows the canvas.
+fn osharp_view_on_the_cpu(
+    seen: &WorkingImage,
+    global: &Baked,
+    zoom: usize,
+    center: (f32, f32),
+    (vw, vh): (usize, usize),
+    to_out: &[[f32; 3]; 3],
+) -> Vec<Option<[f32; 3]>> {
+    use greycard_render::finish::{finish_pixel_display, finish_pixel_output};
+    use greycard_render::output_sharpen::{Params, apply, luminance};
+    let p = Params::of(&global.output_sharpen, 1.0).unwrap();
+    let z = zoom as f32;
+    let sigma = p.sigma * z;
+    let n = ((3.0 * sigma / z).ceil() as usize).clamp(1, 9);
+    let m = n * zoom;
+    let (lw, lh) = (vw + 2 * m, vh + 2 * m);
+    let (w, h) = (seen.width, seen.height);
+    // The frame position under a pixel of the margined texture.
+    let q = |x: usize, y: usize| {
+        (
+            (x as f32 + 0.5 - m as f32 - vw as f32 * 0.5) / z + center.0,
+            (y as f32 + 0.5 - m as f32 - vh as f32 * 0.5) / z + center.1,
+        )
+    };
+    let inside = |(qx, qy): (f32, f32)| qx >= 0.0 && qy >= 0.0 && qx < w as f32 && qy < h as f32;
+    let bilinear = |(qx, qy): (f32, f32)| {
+        let (u, v) = (qx - 0.5, qy - 0.5);
+        let (x0, y0) = (u.floor(), v.floor());
+        let (fx, fy) = (u - x0, v - y0);
+        let at = |x: f32, y: f32| {
+            seen.pixel(
+                (x.max(0.0) as usize).min(w - 1),
+                (y.max(0.0) as usize).min(h - 1),
+            )
+        };
+        let (a, b, c, d) = (
+            at(x0, y0),
+            at(x0 + 1.0, y0),
+            at(x0, y0 + 1.0),
+            at(x0 + 1.0, y0 + 1.0),
+        );
+        [0, 1, 2].map(|k| {
+            (a[k] * (1.0 - fx) + b[k] * fx) * (1.0 - fy) + (c[k] * (1.0 - fx) + d[k] * fx) * fy
+        })
+    };
+    let colors: Vec<Option<[f32; 3]>> = (0..lw * lh)
+        .map(|i| {
+            let at = q(i % lw, i / lw);
+            inside(at).then(|| {
+                finish_pixel_display(bilinear(at), global, &[], 0.0, None, None, None, None)
+            })
+        })
+        .collect();
+    let l: Vec<f32> = colors
+        .iter()
+        .map(|c| c.map_or(f32::NAN, luminance))
+        .collect();
+    // The pixels the taps are held between: the picture's.
+    let xs: Vec<usize> = (0..lw)
+        .filter(|&x| colors[(lh / 2) * lw + x].is_some())
+        .collect();
+    let ys: Vec<usize> = (0..lh)
+        .filter(|&y| colors[y * lw + lw / 2].is_some())
+        .collect();
+    let (x0, x1) = (xs[0], *xs.last().unwrap());
+    let (y0, y1) = (ys[0], *ys.last().unwrap());
+    let s = sigma.max(1e-3);
+    let blur_line = |len_lo: usize, len_hi: usize, at: &dyn Fn(usize) -> f32, c: usize| {
+        let (mut acc, mut sum) = (0.0f32, 0.0f32);
+        for i in -(n as i64)..=n as i64 {
+            let d = i as f32 * z;
+            let j = (c as i64 + i * zoom as i64).clamp(len_lo as i64, len_hi as i64) as usize;
+            let wgt = (-(d * d) / (2.0 * s * s)).exp();
+            acc += wgt * at(j);
+            sum += wgt;
+        }
+        acc / sum
+    };
+    let mut across = vec![f32::NAN; lw * lh];
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            across[y * lw + x] = blur_line(x0, x1, &|j| l[y * lw + j], x);
+        }
+    }
+    (0..vw * vh)
+        .map(|i| {
+            let (x, y) = (i % vw + m, i / vw + m);
+            let c = colors[y * lw + x]?;
+            let b = blur_line(y0, y1, &|j| across[j * lw + x], y);
+            Some(finish_pixel_output(
+                apply(c, l[y * lw + x], b, &p),
+                global,
+                None,
+                to_out,
+            ))
+        })
+        .collect()
+}
+
+/// The output sharpen at the window's edge is the interior's: at 1:1
+/// to 4:1, panned so the picture runs past three sides of the window
+/// and its own edge shows on the fourth, on and off the pixel grid, the
+/// border pixels are as close to the CPU as the interior's, within a
+/// level.
+///
+/// The pans are eighths and quarters of a pixel at zooms of powers of
+/// two, so the view's own bilinear falls on weights every texture unit
+/// holds exactly. A real card's filter keeps the weights to about
+/// 1/256: with the sharpen all but off, the view alone strays from this
+/// exact CPU bilinear by 1.1 levels at a pan of 77/256 and 1.9 at 3:1,
+/// and at a pan of 0.3 the sharpen carries it to 4. That is the view's
+/// resampling, not the sharpen; the sharpen's edges at 3:1 and 1.5:1
+/// are the flat picture's test.
+#[test]
+fn the_output_sharpen_holds_at_the_windows_edge_at_any_zoom() {
+    let Some((device, queue)) = device("the output sharpen's edge check") else {
+        return;
+    };
+    let image = parity_frame();
+    let (w, h) = (image.width, image.height);
+    let seen = WorkingImage {
+        width: w,
+        height: h,
+        data: image
+            .data
+            .iter()
+            .map(|v| half::f16::from_f32(*v).to_f32())
+            .collect(),
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let to_out = greycard_render::export::Space::Srgb.matrix();
+    let (vw, vh) = (40usize, 30usize);
+    for (zoom, radius, shift) in [
+        (1usize, 3.0f32, 0.0f32),
+        (2, 1.5, 0.0),
+        (4, 3.0, 0.0),
+        (4, 0.5, 0.0),
+        (1, 3.0, 0.25),
+        (1, 1.0, 0.5),
+        (2, 3.0, 0.375),
+        (4, 2.0, 0.375),
+        (4, 1.0, 0.125),
+    ] {
+        // The picture's left edge in the window, the rest past it, the
+        // edge off the pixel grid by `shift` of a picture's pixel.
+        let center = (
+            vw as f32 / (2.0 * zoom as f32) - 2.0 + shift,
+            h as f32 / 2.0 + 1.0 - shift,
+        );
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.exposure = 0.4;
+        edit.output_sharpen.amount = 1.5;
+        edit.output_sharpen.radius = radius;
+        let global = Baked::global(&edit, Source::SCENE);
+        let view = View {
+            zoom: zoom as f32,
+            center,
+            plane: (w as f32, h as f32),
+            frame_size: (w as f32, h as f32),
+            ..View::with_look(&edit)
+        };
+        let shown = {
+            let target = renderer.render(vw as u32, vh as u32, &view).0;
+            renderer.read_back(&target).expect("read back")
+        };
+        let cpu = osharp_view_on_the_cpu(&seen, &global, zoom, center, (vw, vh), &to_out);
+        let (mut border, mut interior, mut picture) = (0.0f32, 0.0f32, 0usize);
+        for y in 0..vh {
+            for x in 0..vw {
+                let Some(c) = cpu[y * vw + x] else { continue };
+                picture += 1;
+                let g = shown.get_pixel(x as u32, y as u32);
+                let d = (0..3)
+                    .map(|k| (c[k] - f32::from(g[k]) / 255.0).abs())
+                    .fold(0.0f32, f32::max);
+                if x < 3 || y < 3 || x >= vw - 3 || y >= vh - 3 {
+                    border = border.max(d);
+                } else {
+                    interior = interior.max(d);
+                }
+            }
+        }
+        eprintln!(
+            "zoom {zoom}, radius {radius}, shift {shift}: border worst {:.2} levels, \
+             interior worst {:.2} levels, {picture} pixels of picture",
+            border * 255.0,
+            interior * 255.0
+        );
+        assert!(picture > vw * vh / 2, "the picture is on show");
+        assert!(
+            border < 1.0 / 255.0 && interior < 1.0 / 255.0,
+            "zoom {zoom}: border {border}, interior {interior}"
+        );
+    }
+}
+
+/// Fit view, under 1:1: the viewport at half over the parity frame is
+/// the CPU's export at half its size, the frame boxed down two by two
+/// as the view's footprint averages it and finished at that reach, the
+/// sharpen's radius halved with it.
+#[test]
+fn the_output_sharpen_at_half_is_the_half_size_exports() {
+    use greycard_render::finish::finish_reaching;
+    let Some((device, queue)) = device("the output sharpen at half") else {
+        return;
+    };
+    let image = parity_frame();
+    let (w, h) = (image.width, image.height);
+    let seen: Vec<f32> = image
+        .data
+        .iter()
+        .map(|v| half::f16::from_f32(*v).to_f32())
+        .collect();
+    let (hw, hh) = (w / 2, h / 2);
+    let mut half_image = WorkingImage::new(hw, hh);
+    for y in 0..hh {
+        for x in 0..hw {
+            for k in 0..3 {
+                let at = |xx: usize, yy: usize| seen[(yy * w + xx) * 3 + k];
+                half_image.data[(y * hw + x) * 3 + k] = (at(2 * x, 2 * y)
+                    + at(2 * x + 1, 2 * y)
+                    + at(2 * x, 2 * y + 1)
+                    + at(2 * x + 1, 2 * y + 1))
+                    / 4.0;
+            }
+        }
+    }
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let to_out = greycard_render::export::Space::Srgb.matrix();
+    for (amount, radius) in [(1.0f32, 1.0f32), (2.0, 3.0), (0.5, 2.0)] {
+        let mut edit = greycard_edit::Edit::default();
+        edit.output_sharpen.amount = amount;
+        edit.output_sharpen.radius = radius;
+        let global = Baked::global(&edit, Source::SCENE);
+        let view = View {
+            zoom: 0.5,
+            center: (w as f32 / 2.0, h as f32 / 2.0),
+            plane: (w as f32, h as f32),
+            frame_size: (w as f32, h as f32),
+            ..View::with_look(&edit)
+        };
+        let shown = {
+            let target = renderer.render(hw as u32, hh as u32, &view).0;
+            renderer.read_back(&target).expect("read back")
+        };
+        let cpu = finish_reaching(
+            &half_image,
+            0.5,
+            None,
+            &global,
+            &[],
+            |x, y| ((x as f32 + 0.5) / hw as f32, (y as f32 + 0.5) / hw as f32),
+            |_, _| (0.0, None),
+            None,
+            None,
+            None,
+            &to_out,
+            |v: f32| v,
+        );
+        let mut worst = 0.0f32;
+        for y in 0..hh {
+            for x in 0..hw {
+                let g = shown.get_pixel(x as u32, y as u32);
+                for k in 0..3 {
+                    worst = worst.max((cpu[(y * hw + x) * 3 + k] - f32::from(g[k]) / 255.0).abs());
+                }
+            }
+        }
+        eprintln!(
+            "half, amount {amount}, radius {radius}: worst {:.2} levels",
+            worst * 255.0
+        );
+        assert!(
+            worst < 1.0 / 255.0,
+            "amount {amount}, radius {radius}: {worst}"
+        );
+    }
+}
+
+/// A flat picture sharpens to itself in the viewport, whatever its
+/// edges land on: every edge in view, at zooms under 1:1 and over it,
+/// in odd windows and off the pixel grid, the sharpen at its strongest
+/// moves no pixel. The edges land between pixels, on a pixel's center
+/// (a pan of half a pixel), and on whole and half target positions on
+/// each side in turn: where the edge falls on a texel's center, the
+/// shader's own call of picture or canvas is the one the taps keep,
+/// on any device's arithmetic.
+#[test]
+fn a_flat_picture_keeps_its_edges_in_the_viewport() {
+    let Some((device, queue)) = device("the output sharpen on a flat picture") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let windows = [
+        (141u32, 97u32),
+        (77, 51),
+        (61, 43),
+        (255, 171),
+        (41, 29),
+        (40, 31),
+        (33, 33),
+    ];
+    let mut cases = 0;
+    for &(vw, vh) in &windows {
+        for zoom in [0.37f32, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0] {
+            // A picture well inside the window, every edge in view.
+            let w = ((vw as f32 * 0.8 / zoom) as usize).max(4);
+            let h = ((vh as f32 * 0.8 / zoom) as usize).max(4);
+            let image = WorkingImage {
+                width: w,
+                height: h,
+                data: vec![0.18; w * h * 3],
+            };
+            renderer.upload(&Halves::from_image(&image, None));
+            let (fw, fh) = (w as f32, h as f32);
+            let (hw, hh) = (vw as f32 / 2.0, vh as f32 / 2.0);
+            // Panned off the grid, both ways at once.
+            let mut centers: Vec<(String, (f32, f32))> = [0.0f32, 0.3, 0.5, 0.71]
+                .iter()
+                .map(|&s| (format!("shift {s}"), (fw / 2.0 + s, fh / 2.0 - s)))
+                .collect();
+            // One edge at a time on a whole or a half target position
+            // a tenth of the window in from its side: the left edge is
+            // at `(0 - cx) * zoom + vw / 2`, the right at
+            // `(w - cx) * zoom + vw / 2`, and so down.
+            let (ix, iy) = ((vw as f32 * 0.1).round(), (vh as f32 * 0.1).round());
+            for frac in [0.0f32, 0.5] {
+                let (left, top) = (ix + frac, iy + frac);
+                let (right, bottom) = (vw as f32 - ix + frac, vh as f32 - iy + frac);
+                centers.extend([
+                    (format!("left at {left}"), ((hw - left) / zoom, fh / 2.0)),
+                    (
+                        format!("right at {right}"),
+                        (fw - (right - hw) / zoom, fh / 2.0),
+                    ),
+                    (format!("top at {top}"), (fw / 2.0, (hh - top) / zoom)),
+                    (
+                        format!("bottom at {bottom}"),
+                        (fw / 2.0, fh - (bottom - hh) / zoom),
+                    ),
+                ]);
+            }
+            for (what, center) in centers {
+                let view = |amount: f32| {
+                    let mut edit = greycard_edit::Edit::default();
+                    edit.output_sharpen.amount = amount;
+                    edit.output_sharpen.radius = 3.0;
+                    edit.output_sharpen.threshold = 0.0;
+                    View {
+                        zoom,
+                        center,
+                        plane: (w as f32, h as f32),
+                        frame_size: (w as f32, h as f32),
+                        ..View::with_look(&edit)
+                    }
+                };
+                let draw = |renderer: &mut Renderer, v: &View| {
+                    let target = renderer.render(vw, vh, v).0;
+                    renderer.read_back(&target).expect("read back")
+                };
+                let off = draw(&mut renderer, &view(0.0));
+                let on = draw(&mut renderer, &view(2.0));
+                let worst = off
+                    .pixels()
+                    .zip(on.pixels())
+                    .flat_map(|(a, b)| (0..3).map(move |k| a[k].abs_diff(b[k])))
+                    .max()
+                    .unwrap_or(0);
+                assert_eq!(
+                    worst, 0,
+                    "{vw}x{vh} at zoom {zoom}, {what}: a pixel moved {worst} levels"
+                );
+                cases += 1;
+            }
+        }
+    }
+    eprintln!("{cases} flat cases, none moved");
+}
+
+/// A flat picture turned, as crop mode shows the turned source whole
+/// with canvas in the frame's corners, sharpens to itself: a row holds
+/// picture and canvas both, so a column the blur down reads can be
+/// canvas in one row and picture in the next, and the blur across
+/// keeps the canvas's mark there for the blur down to stop at.
+#[test]
+fn a_flat_picture_turned_keeps_its_edges_in_the_viewport() {
+    let Some((device, queue)) = device("the output sharpen on a turned flat picture") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let (w, h) = (90usize, 60usize);
+    renderer.upload(&Halves::from_image(
+        &WorkingImage {
+            width: w,
+            height: h,
+            data: vec![0.18; w * h * 3],
+        },
+        None,
+    ));
+    let mut cases = 0;
+    for degrees in [3.0f32, 10.0, 30.0, 45.0, 60.0] {
+        let (s, c) = degrees.to_radians().sin_cos();
+        // The turned source's bounds: the frame crop mode shows.
+        let (bw, bh) = (w as f32 * c + h as f32 * s, w as f32 * s + h as f32 * c);
+        for zoom in [0.5f32, 1.0, 1.5, 3.0] {
+            let (vw, vh) = ((bw * zoom) as u32 + 9, (bh * zoom) as u32 + 9);
+            let view = |amount: f32| {
+                let mut edit = greycard_edit::Edit::default();
+                edit.output_sharpen.amount = amount;
+                edit.output_sharpen.radius = 3.0;
+                edit.output_sharpen.threshold = 0.0;
+                View {
+                    zoom,
+                    center: (bw / 2.0, bh / 2.0),
+                    plane: (bw, bh),
+                    frame_size: (bw, bh),
+                    matrix: [[c, -s], [s, c]],
+                    ..View::with_look(&edit)
+                }
+            };
+            let draw = |renderer: &mut Renderer, v: &View| {
+                let target = renderer.render(vw, vh, v).0;
+                renderer.read_back(&target).expect("read back")
+            };
+            let off = draw(&mut renderer, &view(0.0));
+            let on = draw(&mut renderer, &view(2.0));
+            let worst = off
+                .pixels()
+                .zip(on.pixels())
+                .flat_map(|(a, b)| (0..3).map(move |k| a[k].abs_diff(b[k])))
+                .max()
+                .unwrap_or(0);
+            assert_eq!(
+                worst, 0,
+                "turned {degrees} degrees at zoom {zoom}: a pixel moved {worst} levels"
+            );
+            cases += 1;
+        }
+    }
+    eprintln!("{cases} turned flat cases, none moved");
+}
+
+/// The sharpen's targets: one pair a size, kept while it is on so the
+/// scopes' drawing does not make the viewport's again, and let go of
+/// once it is off.
+#[test]
+fn the_output_sharpens_targets_are_kept_by_size_and_let_go_of() {
+    let Some((device, queue)) = device("the output sharpen's targets") else {
+        return;
+    };
+    let image = parity_frame();
+    let (w, h) = (image.width, image.height);
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let mut edit = greycard_edit::Edit::default();
+    edit.output_sharpen.amount = 1.0;
+    let view = |edit: &greycard_edit::Edit| View {
+        zoom: 1.0,
+        center: (w as f32 / 2.0, h as f32 / 2.0),
+        plane: (w as f32, h as f32),
+        frame_size: (w as f32, h as f32),
+        ..View::with_look(edit)
+    };
+    renderer.render(w as u32, h as u32, &view(&edit));
+    renderer.render(20, 14, &view(&edit));
+    edit.output_sharpen.amount = 1.2;
+    renderer.render(w as u32, h as u32, &view(&edit));
+    let kept = renderer.osharp.kept();
+    assert_eq!(kept.len(), 2, "{kept:?}");
+    edit.output_sharpen.amount = 0.0;
+    renderer.render(w as u32, h as u32, &view(&edit));
+    assert!(renderer.osharp.kept().is_empty());
 }
 
 /// A merge's pull on its kept range on the GPU is the CPU's: the
@@ -3265,6 +3891,98 @@ fn a_masks_detail_on_both_sides() {
     let (off, off_gpu) = both_sides_with(&device, &queue, &image, &edit, Some(&planes));
     assert_eq!(off, bare);
     assert_eq!(off_gpu, bare_gpu);
+}
+
+/// A mask's Opacity on both sides: a look with every section moved,
+/// its Detail from the planes, over an inverted feathered linear
+/// shape, the shader the CPU's to two levels at every opacity; at none
+/// each side is the mask switched off, to the bit.
+#[test]
+fn a_masks_opacity_on_both_sides() {
+    let Some((device, queue)) = device("the masks' Opacity check") else {
+        return;
+    };
+    let image = parity_frame();
+    let planes = greycard_render::detail::DetailPlanes::make(
+        &image,
+        None,
+        1.0,
+        greycard_edit::DetailWants {
+            texture: true,
+            clarity: true,
+            haze: true,
+            structure: true,
+            sharpen: false,
+            sample: false,
+        },
+    )
+    .map(Arc::new)
+    .expect("planes");
+    let mut look = Look::default();
+    look.light.exposure = 0.7;
+    look.light.tone.contrast = 1.2;
+    look.light.tone.highlights = -0.4;
+    look.light.tone.shadows = 0.5;
+    look.white_balance = greycard_edit::LocalWhite::Relative {
+        mired: -30.0,
+        tint: 0.003,
+    };
+    look.curves.parametric.lights = 0.3;
+    look.mixer.enabled = true;
+    look.mixer.saturation[3] = 0.5;
+    look.color.enabled = true;
+    look.color.saturation = 0.3;
+    look.tint.hue = 40.0;
+    look.tint.amount = 0.3;
+    look.detail = greycard_edit::Detail {
+        enabled: true,
+        texture: 0.6,
+        clarity: 0.4,
+        structure: 0.0,
+        dehaze: 0.3,
+        sharpen: 0.0,
+    };
+    let mut edit = greycard_edit::Edit::default();
+    edit.adjustments.push(greycard_edit::Adjustment {
+        id: 1,
+        mask: Mask {
+            components: vec![Component {
+                shape: Shape::Linear {
+                    from: [0.3, 0.0],
+                    to: [0.7, 0.0],
+                },
+                ..Default::default()
+            }],
+            invert: true,
+            ..Default::default()
+        },
+        look,
+        ..Default::default()
+    });
+    let mut off = edit.clone();
+    off.adjustments[0].enabled = false;
+    let (off_cpu, off_gpu) = both_sides_with(&device, &queue, &image, &off, Some(&planes));
+    let mut last = 0.0f64;
+    for opacity in [0.0f32, 0.3, 0.6, 1.0] {
+        edit.adjustments[0].opacity = opacity;
+        let (cpu, gpu) = both_sides_with(&device, &queue, &image, &edit, Some(&planes));
+        let worst = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+        assert!(worst <= Some(2), "at {opacity}: {worst:?}");
+        let moved = gpu
+            .iter()
+            .zip(&off_gpu)
+            .map(|(a, b)| f64::from(a.abs_diff(*b)))
+            .sum::<f64>()
+            / gpu.len() as f64;
+        eprintln!("opacity {opacity}: worst {worst:?}, mean moved {moved:.3}");
+        if opacity == 0.0 {
+            assert_eq!(cpu, off_cpu, "none is off on the CPU");
+            assert_eq!(gpu, off_gpu, "none is off on the GPU");
+        } else {
+            assert!(moved > last, "at {opacity}: {moved} after {last}");
+        }
+        last = moved;
+    }
 }
 
 /// A mask's Sharpen on both sides: the sharpen's delta of the picture

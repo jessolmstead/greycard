@@ -24,9 +24,10 @@ pub(crate) struct Window {
     /// it. A sidecar already written keeps its own.
     pub(crate) lens_on_new: bool,
     /// The author and copyright every export carries, over the
-    /// camera's: `settings.author` and `settings.copyright`, as read
-    /// at the start.
-    pub(crate) rights: greycard_render::export::Rights,
+    /// camera's: `settings.author` and `settings.copyright`, as the
+    /// Settings sheet's fields last took them. Empty for none.
+    pub(crate) author: String,
+    pub(crate) copyright: String,
     /// Whether anything may be deleted from disk: only in a session
     /// someone is at. A snapshot, a screenshot, an export or a timing
     /// run never deletes, whatever it is asked, and a test's state
@@ -50,6 +51,11 @@ impl Window {
     /// off: what a read that may take a Lightroom develop is told.
     pub(crate) fn sidecars(&self) -> Option<greycard_edit::Placement> {
         self.write_sidecars.then_some(self.placement)
+    }
+
+    /// The author and copyright the next export writes.
+    pub(crate) fn rights(&self) -> greycard_render::export::Rights {
+        greycard_render::export::Rights::new(&self.author, &self.copyright)
     }
 
     /// What a raw with no sidecar starts with, by the setting.

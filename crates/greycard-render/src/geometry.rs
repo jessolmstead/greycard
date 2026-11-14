@@ -59,7 +59,7 @@ fn sample_cubic_of<const N: usize>(
 
 /// The frame of `geometry` cut from `image`.
 pub fn apply(image: &WorkingImage, geometry: &Geometry) -> WorkingImage {
-    if geometry.is_identity() {
+    if geometry.is_identity_on(image.width as f32, image.height as f32) {
         return image.clone();
     }
     let (data, width, height) = frame_of::<3>(&image.data, image.width, image.height, geometry);
@@ -78,7 +78,7 @@ pub fn apply_plane(
     height: usize,
     geometry: &Geometry,
 ) -> (Vec<f32>, usize, usize) {
-    if geometry.is_identity() {
+    if geometry.is_identity_on(width as f32, height as f32) {
         return (data.to_vec(), width, height);
     }
     frame_of::<1>(data, width, height, geometry)

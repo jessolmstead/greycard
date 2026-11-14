@@ -464,7 +464,8 @@ pub struct Demosaiced {
 #[derive(Debug, Clone)]
 pub struct Prepared {
     /// One sample per pixel for a CFA frame, interleaved RGB for a
-    /// linear one; white balance applied.
+    /// linear one, and for a monochrome one its plane three times;
+    /// white balance applied.
     pub samples: Vec<f32>,
     pub width: usize,
     pub height: usize,
@@ -490,6 +491,9 @@ pub struct Prepared {
     /// The orientation the move into the working space shows the frame
     /// in: the settings' or the file's own tag.
     pub orientation: Orientation,
+    /// A monochrome sensor's: its three channels are one plane, which
+    /// the denoise takes as one ([`denoise::denoise_picture`]).
+    pub monochrome: bool,
 }
 
 impl Prepared {
@@ -668,6 +672,7 @@ fn prepare_inner(
         sharpen_radius,
         demosaic: settings.demosaic,
         orientation: settings.orientation.unwrap_or(frame.orientation),
+        monochrome: frame.layout == SensorLayout::Monochrome,
     })
 }
 
@@ -695,8 +700,13 @@ pub fn demosaic_prepared(
         None => (prepared.samples.clone(), None),
     };
     let denoise_stats = match (&settings.denoise, prepared.noise_model()) {
-        (Some(options), Some(model)) => Some(denoise::denoise_profiled(
-            &mut rgb, width, height, &model, options,
+        (Some(options), Some(model)) => Some(denoise::denoise_picture(
+            &mut rgb,
+            width,
+            height,
+            &model,
+            options,
+            prepared.monochrome,
         )?),
         _ => None,
     };
@@ -833,12 +843,13 @@ pub fn demosaic(frame: &RawFrame, settings: &DevelopSettings) -> Result<Demosaic
         None => samples,
     };
     if let (Some(options), Some(estimate)) = (&settings.denoise, &noise) {
-        denoise::denoise_profiled(
+        denoise::denoise_picture(
             &mut rgb,
             width,
             height,
             &estimate.model.after_gains(gains),
             options,
+            frame.layout == SensorLayout::Monochrome,
         )?;
     }
     // A linear DNG carries no opcode list: the lens's warp goes in.
@@ -932,7 +943,8 @@ type BalancedSamples = (
 ///
 /// Returns the samples, the crop's dimensions and, for a CFA frame, the
 /// pattern as seen from the crop's origin. Linear frames come back
-/// interleaved RGB with no pattern. With `estimate_noise`, a Bayer or
+/// interleaved RGB with no pattern, and monochrome ones as three equal
+/// channels. With `estimate_noise`, a Bayer or
 /// X-Trans frame's noise is measured before the gains go on, and with
 /// `hot_pixels` the defects are repaired against it.
 fn balanced_samples(
@@ -997,9 +1009,37 @@ fn balanced_samples(
             None
         }
         SensorLayout::Monochrome => {
-            return Err(Error::Unsupported(
-                "monochrome sensors are not developed yet".into(),
-            ));
+            // One plane, every photosite the same color: an RGGB
+            // mosaic's same-color neighbors two apart are its neighbors
+            // two apart, so the Bayer measure and repair read it as one.
+            //
+            // A merge of ours is taken at its `NoiseProfile` and left
+            // unrepaired, as a linear merge is: its noise is the weighted
+            // mean of several frames', and its photosites no one frame's.
+            let plane = CfaPattern::rggb();
+            let merged = frame.dng.merged.is_some();
+            if estimate_noise && merged {
+                noise = frame.dng.noise_profile.map(|model| noise::NoiseEstimate {
+                    model,
+                    blocks: [0; 3],
+                    bins: [0; 3],
+                });
+            } else if estimate_noise {
+                noise = Some(noise::estimate_noise(&samples, width, height, &plane)?.pooled());
+            }
+            if let (Some(options), Some(estimate), false) = (hot_pixels, &noise, merged) {
+                hot = Some(hotpixels::fix_hot_pixels(
+                    &mut samples,
+                    width,
+                    height,
+                    &plane,
+                    &estimate.model,
+                    &options,
+                )?);
+            }
+            samples = samples.par_iter().flat_map_iter(|&v| [v; 3]).collect();
+            apply_gains_rgb(&mut samples, gains);
+            None
         }
     };
     Ok((samples, width, height, pattern, noise, hot))
@@ -1476,6 +1516,167 @@ pub(crate) mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
+    }
+
+    /// A monochrome sensor's frame as its DNG decodes: one channel,
+    /// black 100, white 1100, no calibration, its photosites `at`.
+    pub(crate) fn mono_frame(
+        width: usize,
+        height: usize,
+        at: impl Fn(usize, usize) -> u16,
+    ) -> RawFrame {
+        let at = &at;
+        RawFrame {
+            make: "Test".into(),
+            model: "Mono".into(),
+            other_names: Vec::new(),
+            width,
+            height,
+            channels: 1,
+            layout: SensorLayout::Monochrome,
+            samples: Samples::U16(
+                (0..height)
+                    .flat_map(|y| (0..width).map(move |x| at(y, x)))
+                    .collect(),
+            ),
+            levels: Levels {
+                black: LevelPattern::uniform(100.0, 1),
+                white: LevelPattern::uniform(1100.0, 1),
+                black_deltas: None,
+            },
+            as_shot_coefficients: Some([1.0; 3]),
+            calibrations: Vec::new(),
+            crop: None,
+            orientation: Orientation::Normal,
+            shot: Default::default(),
+            dng: Default::default(),
+        }
+    }
+
+    /// A monochrome frame develops to a neutral grey: three equal
+    /// channels, each its photosite's normalized level, at the neutral
+    /// white balance its as-shot is.
+    #[test]
+    fn a_monochrome_frame_develops_to_its_levels_in_grey() {
+        let frame = mono_frame(8, 6, |y, x| 100 + ((y * 8 + x) * 17 % 1000) as u16);
+        let developed = develop(&frame, &DevelopSettings::default()).unwrap();
+        assert_eq!(developed.white_balance.coefficients_f32(), [1.0; 3]);
+        assert!((developed.white_balance.temp_tint.cct - 6504.0).abs() < 10.0);
+        assert_eq!(developed.demosaic, None);
+        let levels = normalize_levels(&frame);
+        for (px, want) in developed.image.pixels().zip(levels) {
+            for v in px {
+                assert!((v - want).abs() < 1e-6, "{px:?} for {want}");
+            }
+        }
+        // The reduced develop has nothing to bin: the full one.
+        let reduced =
+            reduced::develop_reduced_by(&frame, &DevelopSettings::default(), None, 2).unwrap();
+        assert_eq!(reduced.bin, 1);
+        assert_eq!(reduced.developed.image.data, developed.image.data);
+        // The camera space develop is the same plane, three times.
+        let camera = demosaic(&frame, &DevelopSettings::default()).unwrap();
+        for (a, b) in camera.image.data.iter().zip(&developed.image.data) {
+            assert!((a - b).abs() < 1e-6);
+        }
+    }
+
+    /// No white tints a monochrome frame: a 3000 K light with a tint,
+    /// or a color camera's profile, and it develops grey at its levels,
+    /// as at As shot. A color frame under the same white still moves.
+    #[test]
+    fn no_white_tints_a_monochrome_frame() {
+        let frame = mono_frame(8, 6, |y, x| 150 + ((y * 8 + x) * 23 % 900) as u16);
+        let warm = WhitePoint::TempTint(rawcolor::TempTint {
+            cct: 3000.0,
+            duv: 0.01,
+        });
+        let shot = develop(&frame, &DevelopSettings::default()).unwrap();
+        let color_profile =
+            std::sync::Arc::new(crate::color::Profile::from_frame(&flat_frame()).unwrap());
+        for settings in [
+            DevelopSettings {
+                white_point: warm,
+                ..Default::default()
+            },
+            DevelopSettings {
+                white_point: WhitePoint::Coefficients([2.0, 1.0, 1.5]),
+                profile: Some(color_profile.clone()),
+                ..Default::default()
+            },
+        ] {
+            let got = develop(&frame, &settings).unwrap();
+            assert_eq!(got.white_balance.coefficients_f32(), [1.0; 3]);
+            assert_eq!(got.image.data, shot.image.data);
+        }
+        let color = flat_frame();
+        let at_shot = develop(&color, &DevelopSettings::default()).unwrap();
+        let at_warm = develop(
+            &color,
+            &DevelopSettings {
+                white_point: warm,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_ne!(at_warm.image.data, at_shot.image.data);
+    }
+
+    /// Its noise is measured on the plane, the same in each channel at
+    /// a photosite's variance; the denoise takes it down and keeps the
+    /// channels equal. A hot photosite is repaired against it.
+    #[test]
+    fn a_monochrome_frame_is_measured_denoised_and_repaired() {
+        let (w, h, level, sigma) = (128, 128, 0.2f32, 0.01f32);
+        let mut g = noise::tests::Gauss(11);
+        let noisy: Vec<u16> = (0..w * h)
+            .map(|_| (100.0 + 1000.0 * (level + sigma * g.next())).round() as u16)
+            .collect();
+        let mut frame = mono_frame(w, h, |y, x| noisy[y * w + x]);
+        let Samples::U16(v) = &mut frame.samples else {
+            unreachable!()
+        };
+        v[60 * w + 60] = 1100;
+
+        let prepared = prepare(&frame, &DevelopSettings::default(), true).unwrap();
+        let model = prepared.noise.unwrap().model;
+        let photosite = sigma * sigma;
+        for c in 0..3 {
+            let got = model.variance(c, level);
+            assert!(
+                (got / photosite - 1.0).abs() < 0.2,
+                "channel {c}: {got} for {photosite}"
+            );
+        }
+        assert_eq!(model.a[0], model.a[1]);
+        assert_eq!(prepared.hot_pixels.unwrap().hot, 1);
+        let at = (60 * w + 60) * 3;
+        assert!(prepared.samples[at] < level + 6.0 * sigma);
+
+        let plain = develop(&frame, &DevelopSettings::default()).unwrap();
+        let denoised = develop(
+            &frame,
+            &DevelopSettings {
+                denoise: Some(denoise::DenoiseOptions::default()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let spread = |image: &WorkingImage| {
+            let n = (image.width * image.height) as f32;
+            let mean = image.pixels().map(|p| p[1]).sum::<f32>() / n;
+            (image.pixels().map(|p| (p[1] - mean).powi(2)).sum::<f32>() / n).sqrt()
+        };
+        assert!(denoised.denoise.is_some());
+        assert!(
+            spread(&denoised.image) < 0.5 * spread(&plain.image),
+            "{} of {}",
+            spread(&denoised.image),
+            spread(&plain.image)
+        );
+        for px in denoised.image.pixels() {
+            assert!((px[0] - px[1]).abs() < 1e-6 && (px[2] - px[1]).abs() < 1e-6);
+        }
     }
 
     #[test]

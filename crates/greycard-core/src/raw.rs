@@ -178,7 +178,9 @@ pub enum SensorLayout {
     /// Three interleaved camera-RGB samples per pixel, already demosaiced
     /// (linear DNG, some medium format backs, sRAW).
     Linear,
-    /// One sample per pixel, no color.
+    /// One sample per pixel, no color: a monochrome sensor's (DNG's
+    /// LinearRaw with one sample a pixel). Developed as three equal
+    /// channels.
     Monochrome,
 }
 

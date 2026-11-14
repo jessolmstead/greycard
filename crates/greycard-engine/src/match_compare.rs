@@ -523,11 +523,13 @@ fn stages(m: &Model) -> [Model; 3] {
             matrix: m.matrix,
             curves: None,
             lattice: None,
+            monochrome: m.monochrome,
         },
         Model {
             matrix: m.matrix,
             curves: m.curves.clone(),
             lattice: None,
+            monochrome: m.monochrome,
         },
         m.clone(),
     ]

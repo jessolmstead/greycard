@@ -7055,3 +7055,24 @@ fn a_develop_aside_leaves_the_frames_own_develop() {
         "the default edit's base is the same"
     );
 }
+
+/// A monochrome sensor's raw with no preview of its own gets a
+/// thumbnail developed from its plane: grey, and the ramp across it.
+#[test]
+fn a_monochrome_raw_gets_a_grey_thumbnail() {
+    let dir = crate::testing::scratch_dir("mono-thumb");
+    let path = dir.join("mono.dng");
+    crate::testing::monochrome_dng(&path, 96, 64);
+    let thumb = thumbnail(&path, 48);
+    crate::testing::remove_dir_retry(&dir);
+    let (w, h, rgb) = thumb.unwrap();
+    assert_eq!((w, h), (48, 32));
+    for px in rgb.as_chunks::<3>().0 {
+        assert!(
+            px[0].abs_diff(px[1]) <= 1 && px[2].abs_diff(px[1]) <= 1,
+            "{px:?}"
+        );
+    }
+    let at = |x: u32| rgb[((h / 2 * w + x) * 3 + 1) as usize];
+    assert!(at(w - 1) > at(0) + 50, "{} to {}", at(0), at(w - 1));
+}

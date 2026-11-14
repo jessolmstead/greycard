@@ -190,6 +190,11 @@ pub struct Settings {
     /// Off by default: a folder's own frames are the cheap way into a
     /// large archive. Written as the switch is flipped.
     pub folder_tree_subfolders: bool,
+    /// Whether the CAMERA PROFILE list shows every camera's profiles,
+    /// grouped by camera, or only the open frame's camera's. Off by
+    /// default. A view of the list, not part of any edit. Written as
+    /// the switch is flipped.
+    pub profiles_all_cameras: bool,
     /// The most the thumbnail cache under the user's cache directory
     /// may hold, in megabytes; past it the least recently used
     /// pictures go. Zero turns the cache off.
@@ -764,6 +769,7 @@ impl Default for Settings {
             start_view: START_VIEWS[0].into(),
             filter_bar: true,
             folder_tree_subfolders: false,
+            profiles_all_cameras: false,
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
             preview_cache_mb: greycard_library::thumbs::DEFAULT_PREVIEW_CAP / (1024 * 1024),
             network_poll_minutes: 10,
@@ -1194,6 +1200,7 @@ mod tests {
             start_view: "Library".into(),
             filter_bar: false,
             folder_tree_subfolders: true,
+            profiles_all_cameras: true,
             thumb_cache_mb: 1024,
             preview_cache_mb: 20000,
             network_poll_minutes: 30,
@@ -1305,6 +1312,8 @@ mod tests {
         assert!(read.preset_folds.is_empty());
         // And from before the folder tree, a folder's own frames.
         assert!(!read.folder_tree_subfolders);
+        // And from before every camera's profiles, this camera's.
+        assert!(!read.profiles_all_cameras);
         // And from before the previews' own cap, 8 GB of them.
         assert_eq!(read.preview_cache_mb, 8192);
         assert_eq!(read.thumb_cache_mb, 300);

@@ -633,6 +633,7 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
         a.enabled = app.get_adjustment_enabled();
         a.mask.invert = app.get_mask_invert();
         a.mask.refine = app.get_mask_refine().clamp(0.0, 1.0);
+        a.opacity = app.get_mask_opacity().clamp(0.0, 1.0);
         let name = app.get_adjustment_name();
         if !name.trim().is_empty() {
             a.name = name.trim().to_string();
@@ -721,6 +722,12 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
         size: app.get_grain_size(),
         kind: greycard_edit::grain::Kind::from_name(app.get_grain_kind().as_str())
             .unwrap_or_default(),
+    };
+    edit.output_sharpen = greycard_edit::OutputSharpen {
+        enabled: app.get_output_sharpen_enabled(),
+        amount: app.get_output_sharpen_amount(),
+        radius: app.get_output_sharpen_radius(),
+        threshold: app.get_output_sharpen_threshold(),
     };
     edit.detail = greycard_edit::Detail {
         enabled: app.get_detail_enabled(),
@@ -872,6 +879,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
         app.set_adjustment_enabled(a.enabled);
         app.set_mask_invert(a.mask.invert);
         app.set_mask_refine(a.mask.refine);
+        app.set_mask_opacity(a.strength());
         app.set_adjustment_name(a.name.as_str().into());
         app.set_target_name(heading_name(&a.name, i).into());
         app.set_component_names(component_names(&a.mask));
@@ -941,6 +949,10 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_grain_amount(edit.grain.amount);
     app.set_grain_size(edit.grain.size);
     app.set_grain_kind(edit.grain.kind.name().into());
+    app.set_output_sharpen_enabled(edit.output_sharpen.enabled);
+    app.set_output_sharpen_amount(edit.output_sharpen.amount);
+    app.set_output_sharpen_radius(edit.output_sharpen.radius);
+    app.set_output_sharpen_threshold(edit.output_sharpen.threshold);
     app.set_mixer_enabled(look.mixer.enabled);
     app.set_mixer_hues(band_model(&look.mixer.hue));
     app.set_mixer_saturations(band_model(&look.mixer.saturation));
@@ -1031,7 +1043,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     crate::panel::parts_all::shown(st, edit, app);
     // The look as the panel now holds it, the baseline for the next
     // change (see `mask::look_edited`).
-    *st.develop.look_seen.borrow_mut() = Some(read_look(app));
+    *st.develop.look_seen.borrow_mut() = Some((read_look(app), app.get_mask_opacity()));
 }
 
 /// The panel's sections that fold, by the names the settings keep
@@ -1113,6 +1125,11 @@ pub(crate) const FOLDS: &[Fold] = &[
         "sharpen",
         App::get_collapsed_sharpen,
         App::set_collapsed_sharpen,
+    ),
+    (
+        "output-sharpen",
+        App::get_collapsed_output_sharpen,
+        App::set_collapsed_output_sharpen,
     ),
     (
         "vignette",

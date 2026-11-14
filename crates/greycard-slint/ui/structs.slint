@@ -454,6 +454,24 @@ export struct LookRow {
     indented: bool,
 }
 
+/// A row of the CAMERA PROFILE list: a profile, or, with every camera
+/// shown, a camera's heading over its profiles.
+export struct ProfileRow {
+    heading: bool,
+    /// A profile: what the edit stores. A heading: the group's key,
+    /// which a click toggles.
+    name: string,
+    label: string,
+    /// A heading: its count of profiles.
+    note: string,
+    /// A heading folded.
+    folded: bool,
+    /// A heading for the open frame's own camera.
+    own: bool,
+    /// A profile under a heading, set in under its text.
+    indented: bool,
+}
+
 /// One set of the export queue as the export sheet lists it: the
 /// preset it was queued under (the format when none), its frames, and
 /// where it goes; `running` while it is the set the queue is on.

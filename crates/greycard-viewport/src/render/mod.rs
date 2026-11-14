@@ -13,7 +13,9 @@ use crate::scope::{self, Scope};
 use greycard_core::lut;
 use greycard_edit::curve::LUT_SIZE;
 use greycard_edit::mask::Shape;
-use greycard_edit::{BlackWhite, Color, CurveLut, Grain, Light, Mixer, Tint, Vignette};
+use greycard_edit::{
+    BlackWhite, Color, CurveLut, Grain, Light, Mixer, OutputSharpen, Tint, Vignette,
+};
 use greycard_gpu::wgpu as gpu;
 use greycard_render::finish::{Local, MAX_LOCALS, RasterRef, Source};
 
@@ -21,6 +23,7 @@ mod draw;
 mod inputs;
 mod locals;
 pub(crate) mod minify;
+mod osharp;
 mod peaking;
 mod sample;
 mod scopes;
@@ -134,6 +137,9 @@ pub struct View {
     pub weigh_by: Option<usize>,
     pub vignette: Vignette,
     pub grain: Grain,
+    /// The unsharp mask on the finished picture, its radius in the
+    /// full-size picture's pixels (`osharp`).
+    pub output_sharpen: OutputSharpen,
     /// The clipping warnings to paint over the picture.
     pub warn: Warn,
     /// Focus peaking: the sharpest parts of the picture as displayed
@@ -211,6 +217,7 @@ impl View {
             weigh_by: None,
             vignette: Vignette::default(),
             grain: Grain::default(),
+            output_sharpen: OutputSharpen::default(),
             warn: Warn::default(),
             peaking: None,
             canvas: [0.0; 3],
@@ -236,6 +243,7 @@ impl View {
             display_curve: edit.display_curve,
             vignette: edit.vignette,
             grain: edit.grain,
+            output_sharpen: edit.output_sharpen,
             ..View::blank()
         }
     }
@@ -320,6 +328,8 @@ pub struct Renderer {
     /// (`minify::MOST_TAPS`); one draws the single tap at its center
     /// at every zoom, which the tests compare against.
     most_taps: u32,
+    /// The output sharpen's passes and targets.
+    osharp: osharp::OutputSharpen,
 }
 
 /// The scopes: the whole image drawn small through the same shader,
@@ -524,6 +534,18 @@ impl Renderer {
                     },
                     count: None,
                 },
+                // The output sharpen's luminance blurred across, full
+                // floats read by load.
+                gpu::BindGroupLayoutEntry {
+                    binding: 16,
+                    visibility: gpu::ShaderStages::FRAGMENT,
+                    ty: gpu::BindingType::Texture {
+                        sample_type: gpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
                 // The look table. Read by node, not sampled: the
                 // interpolation is tetrahedral, so it needs no
                 // sampler and takes no filtering.
@@ -565,6 +587,7 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        let osharp = osharp::OutputSharpen::new(device, &shader, &pipeline_layout);
         let sampler = device.create_sampler(&gpu::SamplerDescriptor {
             label: Some("viewport"),
             mag_filter: gpu::FilterMode::Linear,
@@ -612,6 +635,7 @@ impl Renderer {
             peaking: None,
             gamut_marks: false,
             most_taps: minify::MOST_TAPS,
+            osharp,
             device: device.clone(),
             queue: queue.clone(),
             pipeline,

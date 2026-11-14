@@ -12,7 +12,7 @@ export { Theme, ScrollBars } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys, ButtonKeys } from "controls.slint";
-import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
+import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, ProfileRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -20,7 +20,7 @@ import { PresetsSection, PresetWords } from "panel/presets.slint";
 export { PresetWords }
 import { WhiteBalanceSection, ColorSection, MixerSection, BlackWhiteSection, GradingSection, TintSection } from "panel/color.slint";
 import { CurvesSection } from "panel/curve.slint";
-import { LightSection, NoiseSection, DetailSection, SharpenSection, VignetteSection, GrainSection, DemosaicSection } from "panel/edit.slint";
+import { LightSection, NoiseSection, DetailSection, OutputSharpenSection, SharpenSection, VignetteSection, GrainSection, DemosaicSection } from "panel/edit.slint";
 export { DetailWords, NoiseWords } from "panel/edit.slint";
 import { LensSection } from "panel/lens.slint";
 import { ProofSection, MonitorSection } from "panel/display.slint";
@@ -202,6 +202,11 @@ export component App inherits Window {
     in property <[string]> edit-in-list: [];
     callback edit-in-add();
     callback edit-in-remove(int);
+    /// The Settings sheet's Author and Copyright, as typed; Rust takes
+    /// them on `rights-changed` and ignores a pair that did not change.
+    in-out property <string> settings-author: "";
+    in-out property <string> settings-copyright: "";
+    callback rights-changed();
     /// Whether a Control+click is a right-click: a Mac's.
     in property <bool> ctrl-click-menu: false;
     /// The name of the frame right-clicked, whose settings the menu's
@@ -1213,6 +1218,7 @@ export component App inherits Window {
             root.collapsed-noise = true;
             root.collapsed-lens = true;
             root.collapsed-sharpen = true;
+            root.collapsed-output-sharpen = true;
             root.collapsed-vignette = true;
             root.collapsed-grain = true;
             root.collapsed-proof = true;
@@ -1239,6 +1245,7 @@ export component App inherits Window {
             root.collapsed-lens = true;
             root.collapsed-detail = true;
             root.collapsed-sharpen = true;
+            root.collapsed-output-sharpen = true;
             root.collapsed-vignette = true;
             root.collapsed-grain = true;
             root.collapsed-proof = true;
@@ -1266,6 +1273,8 @@ export component App inherits Window {
     in-out property <bool> mask-invert: false;
     // The chosen mask's Refine edge, 0 to 1 (`Mask::refine`).
     in-out property <float> mask-refine: 0;
+    // The chosen mask's Opacity, 0 to 1 (`Adjustment::opacity`).
+    in-out property <float> mask-opacity: 1;
     in-out property <bool> has-feather: false;
     in-out property <float> mask-feather: 0.5;
     // The chosen shape's window when it is a luminance or a color
@@ -1291,6 +1300,7 @@ export component App inherits Window {
     in-out property <bool> lens-enabled: true;
     in-out property <bool> vignette-enabled: true;
     in-out property <bool> grain-enabled: true;
+    in-out property <bool> output-sharpen-enabled: true;
     in-out property <bool> retouch-enabled: true;
     // Which sections are folded away; kept between runs.
     in-out property <bool> collapsed-navigator: false;
@@ -1307,6 +1317,7 @@ export component App inherits Window {
     in-out property <bool> collapsed-noise: false;
     in-out property <bool> collapsed-lens: false;
     in-out property <bool> collapsed-detail: false;
+    in-out property <bool> collapsed-output-sharpen: false;
     in-out property <bool> collapsed-sharpen: false;
     in-out property <bool> collapsed-vignette: false;
     in-out property <bool> collapsed-grain: false;
@@ -1658,6 +1669,9 @@ export component App inherits Window {
     in-out property <float> grain-amount: 0;
     in-out property <float> grain-size: 0.5;
     in-out property <string> grain-kind: "Cubic";
+    in-out property <float> output-sharpen-amount: 0;
+    in-out property <float> output-sharpen-radius: 1;
+    in-out property <float> output-sharpen-threshold: 0.01;
     in-out property <float> vignette-amount: 0;
     in-out property <float> vignette-midpoint: 0.5;
     in-out property <float> vignette-feather: 0.5;
@@ -1968,15 +1982,20 @@ export component App inherits Window {
         root.develop-changed();
     }
     // The camera profile: what the edit stores ("embedded" or a DCP's
-    // file name), the names and the labels of what the profile
+    // path under the profile directory), the rows of what the
     // directory holds, a word on the directory, and a warning when the
     // chosen profile was made for another camera.
     in-out property <string> camera-profile: "embedded";
-    in property <[string]> camera-profile-names;
-    in property <[string]> camera-profile-labels;
+    in property <[ProfileRow]> camera-profile-rows;
     in property <string> camera-profile-note;
     in property <string> camera-profile-warning;
+    in property <bool> camera-profiles-any;
+    // Every camera's profiles listed: a view of the list, kept in the
+    // settings file.
+    in-out property <bool> camera-profiles-all;
     callback camera-profile-picked();
+    callback camera-profile-group-toggled(string);
+    callback camera-profiles-all-changed();
     // Asked for when the section is opened, so a profile dropped into
     // the directory while the editor is running is listed without
     // reopening the file.
@@ -2556,6 +2575,7 @@ export component App inherits Window {
             root.network-poll-changed();
             root.grid-cell-typed-changed();
             root.ui-scale-changed();
+            root.rights-changed();
         }
         // A row listening for a chord had the keys: the window's again.
         if (!root.settings-open && !root.sheet-open()) { keys.focus(); }
@@ -2655,6 +2675,10 @@ export component App inherits Window {
     /// The name the key table gives a press, empty when it binds
     /// none: the one way the window's key handler reads a key.
     callback key-chord(string, bool, bool, bool, bool) -> string;
+    /// A Tab (true) or a Shift+Tab (false) sent to the window, from
+    /// whatever has the focus: how a sheet's focus goes round its ends
+    /// (`sheet-before`, `sheet-after`).
+    callback focus-step(bool);
     /// The Settings sheet's Keys section: each action and its chord,
     /// from the same table; a press taken as an action's new chord,
     /// true once the listening is over (false for a modifier alone);
@@ -2879,7 +2903,7 @@ export component App inherits Window {
     changed look-rename-open => { if (!root.look-rename-open && !root.sheet-open()) { keys.focus(); } }
     changed time-shift-open => { if (!root.time-shift-open && !root.sheet-open()) { keys.focus(); } }
     changed overwrite-open => { if (!root.overwrite-open && !root.sheet-open()) { keys.focus(); } }
-    changed archive-open => { if (!root.archive-open && !root.sheet-open()) { keys.focus(); } }
+    changed archive-open => { if (root.archive-open || !root.sheet-open()) { keys.focus(); } }
     changed archive-rejects-open => {
         if (!root.archive-rejects-open && !root.sheet-open()) { keys.focus(); }
     }
@@ -2892,11 +2916,48 @@ export component App inherits Window {
     changed preset-report-open => {
         if (!root.preset-report-open && !root.sheet-open()) { keys.focus(); }
     }
+    // A sheet closed, whichever and however, the last or one of two:
+    // the keys are the window's. The control that had them may have
+    // gone with the sheet, and with nothing focused no key would reach
+    // the window until a click (the preset and root sheets had no
+    // hand-back of their own; a sheet closed from Rust over another
+    // left the one beneath deaf to Escape). The window's Escape serves
+    // every sheet, and Tab goes into the ring from there.
+    property <int> sheets-up: (root.export-open ? 1 : 0) + (root.fetch-open ? 1 : 0)
+        + (root.preset-open ? 1 : 0) + (root.rejects-open ? 1 : 0) + (root.delete-open ? 1 : 0)
+        + (root.look-remove-open ? 1 : 0) + (root.look-rename-open ? 1 : 0)
+        + (root.overwrite-open ? 1 : 0) + (root.archive-open ? 1 : 0)
+        + (root.archive-rejects-open ? 1 : 0) + (root.time-shift-open ? 1 : 0)
+        + (root.settings-open ? 1 : 0) + (root.sync-open ? 1 : 0) + (root.import-open ? 1 : 0)
+        + (root.match-open ? 1 : 0) + (root.root-sheet-open ? 1 : 0)
+        + (root.collection-sheet-open ? 1 : 0) + (root.preset-group-sheet-open ? 1 : 0)
+        + (root.preset-report-open ? 1 : 0) + (root.lr-open ? 1 : 0) + (root.rt-open ? 1 : 0)
+        + (root.keys-open ? 1 : 0);
+    property <int> sheets-were: 0;
+    changed sheets-up => {
+        if (root.sheets-up < root.sheets-were) { keys.focus(); }
+        root.sheets-were = root.sheets-up;
+    }
+    // The sheets that take no focus as they open (import, Lightroom,
+    // RawTherapee, match, model, and backup) are served by the
+    // window's keys, Escape and all: the keys take the focus as one
+    // opens, so a control behind it that had the focus (a button
+    // clicked, a value being typed) cannot keep it, and Tab goes into
+    // the sheet from them.
     changed lr-open => {
-        if (!root.lr-open && !root.sheet-open()) { keys.focus(); }
+        if (root.lr-open || !root.sheet-open()) { keys.focus(); }
     }
     changed rt-open => {
-        if (!root.rt-open && !root.sheet-open()) { keys.focus(); }
+        if (root.rt-open || !root.sheet-open()) { keys.focus(); }
+    }
+    changed import-open => {
+        if (root.import-open || !root.sheet-open()) { keys.focus(); }
+    }
+    changed match-open => {
+        if (root.match-open || !root.sheet-open()) { keys.focus(); }
+    }
+    changed fetch-open => {
+        if (root.fetch-open || !root.sheet-open()) { keys.focus(); }
     }
     // Opened, the whole table, whatever the last search left; closed,
     // the keys back.
@@ -2950,15 +3011,19 @@ export component App inherits Window {
             // (`keys.rs`), empty for a key the table does not bind.
             // Nothing below compares the event's text, so the keys sheet,
             // made from the same table, is every key there is.
+            // Under a sheet, Tab and Shift+Tab go into it, whatever the
+            // table binds them to (`sheet-tab`).
+            if (root.sheet-tab(e)) { return reject; }
             let chord = root.key-chord(e.text, e.modifiers.control, e.modifiers.shift,
                 e.modifiers.alt, e.modifiers.meta);
             if (chord == "") { return reject; }
             // Any key but its own turns the Original back to the edit,
-            // and goes on to do what it does.
-            if (root.original-on && chord != "\\") { root.original-off(); }
+            // and goes on to do what it does. Not under a sheet, whose
+            // keys leave the picture behind it alone.
+            if (root.original-on && chord != "\\" && !root.sheet-open()) { root.original-off(); }
             // The wheel in hand put down, and Esc goes on to mean
-            // what else it means.
-            if (chord == "Esc") { root.wheel-hand = -1; }
+            // what else it means; under a sheet, only that.
+            if (chord == "Esc" && !root.sheet-open()) { root.wheel-hand = -1; }
             if (chord == "Esc" && root.keys-open) { root.keys-open = false; return accept; }
             // The settings sheet is declared last and so drawn over the
             // rest: Escape closes it first.
@@ -3303,7 +3368,7 @@ export component App inherits Window {
                 return accept;
             }
             if (chord == "Ctrl+O") {
-                root.open-folder();
+                if (!root.sheet-open()) { root.open-folder(); }
                 return accept;
             }
             // Sync settings: Lightroom's Ctrl+Shift+S. The bare S is
@@ -3963,6 +4028,7 @@ export component App inherits Window {
                             target <=> root.target;
                             mask-invert <=> root.mask-invert;
                             mask-refine <=> root.mask-refine;
+                            mask-opacity <=> root.mask-opacity;
                             has-feather <=> root.has-feather;
                             mask-feather <=> root.mask-feather;
                             lum-low <=> root.lum-low;
@@ -4095,11 +4161,14 @@ export component App inherits Window {
                             raw-input: root.raw-input;
                             source-note: root.source-note;
                             camera-profile <=> root.camera-profile;
-                            camera-profile-names: root.camera-profile-names;
-                            camera-profile-labels: root.camera-profile-labels;
+                            camera-profile-rows: root.camera-profile-rows;
                             camera-profile-note: root.camera-profile-note;
                             camera-profile-warning: root.camera-profile-warning;
+                            camera-profiles-any: root.camera-profiles-any;
+                            camera-profiles-all <=> root.camera-profiles-all;
                             camera-profile-picked => { root.camera-profile-picked(); }
+                            camera-profile-group-toggled(key) => { root.camera-profile-group-toggled(key); }
+                            camera-profiles-all-changed => { root.camera-profiles-all-changed(); }
                         }
                         if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): LightSection {
                             one-of-panel: !root.grid-open;
@@ -4354,6 +4423,17 @@ export component App inherits Window {
                             sharpen-measured-threshold: root.sharpen-measured-threshold;
                             view-changed => { root.view-changed(); }
                             develop-changed => { root.develop-changed(); }
+                        }
+                        // The unsharp mask on the finished picture,
+                        // after the tone work: the viewport's to draw.
+                        if root.shown-tab == "Develop": OutputSharpenSection {
+                            one-of-panel: !root.grid-open;
+                            output-sharpen-enabled <=> root.output-sharpen-enabled;
+                            collapsed-output-sharpen <=> root.collapsed-output-sharpen;
+                            output-sharpen-amount <=> root.output-sharpen-amount;
+                            output-sharpen-radius <=> root.output-sharpen-radius;
+                            output-sharpen-threshold <=> root.output-sharpen-threshold;
+                            view-changed => { root.view-changed(); }
                         }
                         if root.shown-tab == "Develop": VignetteSection {
                             one-of-panel: !root.grid-open;
@@ -5535,6 +5615,62 @@ export component App inherits Window {
         scroll-event(e) => { return accept; }
     }
 
+    // The open sheet's hold on the focus. Slint's Tab walks the whole
+    // window's tree, so from a sheet's last control it went on onto
+    // the panels behind, where the arrows then changed the edit. Two
+    // stops bracket the sheets, live only while one is up: Tab past
+    // the last control lands on the stop after them, which goes round
+    // to the first; Shift+Tab past the first lands on the stop before,
+    // which goes round to the last. Each goes round by sending the
+    // window a Tab from the other stop, so Slint's own walk, which
+    // skips what is hidden, picks the control. Neither is a stop of
+    // its own: no click reaches them and the window never shows them.
+    property <bool> sheet-entering: false;
+    // Tab or Shift+Tab under a sheet, at the window's keys, which hold
+    // the focus under the sheets that take none: Slint's own walk from
+    // there would go on onto the panels behind. The focus goes to the
+    // stop at the sheets' near end, so the walk the key goes on to
+    // start reaches their first control (or last). True when it did.
+    function sheet-tab(e: KeyEvent) -> bool {
+        if (!root.sheet-open() || e.modifiers.control || e.modifiers.alt || e.modifiers.meta) {
+            return false;
+        }
+        if (e.text == Key.Backtab || (e.text == Key.Tab && e.modifiers.shift)) {
+            sheet-after.focus();
+            return true;
+        }
+        if (e.text == Key.Tab) {
+            sheet-before.focus();
+            return true;
+        }
+        return false;
+    }
+    // The walk round the ring ended on a stop: no control in the sheet
+    // takes the focus (all disabled, say, while it works). A stop has
+    // no keys, so the window's hold it, Escape and all. (A stop the
+    // walk reaches twice hears only the first: Slint does not call a
+    // handler from inside itself, so this looks rather than waits.)
+    function sheet-ring-empty() {
+        if (sheet-before.has-focus || sheet-after.has-focus) { keys.focus(); }
+    }
+    sheet-before := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0;
+        height: 0;
+        enabled: root.sheet-open();
+        focus-on-click: false;
+        focus-gained(reason) => {
+            if (reason == FocusReason.tab-navigation && !root.sheet-entering) {
+                root.sheet-entering = true;
+                sheet-after.focus();
+                root.focus-step(false);
+                root.sheet-entering = false;
+                root.sheet-ring-empty();
+            }
+        }
+    }
+
     // The model sheet: a download offered, with its license, until
     // answered.
     if root.fetch-open: ModelSheet {
@@ -5960,6 +6096,9 @@ export component App inherits Window {
         edit-in-list: root.edit-in-list;
         edit-in-add => { root.edit-in-add(); }
         edit-in-remove(i) => { root.edit-in-remove(i); }
+        author <=> root.settings-author;
+        copyright <=> root.settings-copyright;
+        rights-changed => { root.rights-changed(); }
         ui-scale <=> root.ui-scale;
         ui-scale-percent: root.ui-scale-percent;
         ui-scale-started: root.ui-scale-started;
@@ -6030,6 +6169,25 @@ export component App inherits Window {
         open <=> root.keys-open;
         rows: root.keys-rows;
         searched(t) => { root.keys-searched(t); }
+    }
+
+    // The far end of the sheets' ring (`sheet-before`).
+    sheet-after := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0;
+        height: 0;
+        enabled: root.sheet-open();
+        focus-on-click: false;
+        focus-gained(reason) => {
+            if (reason == FocusReason.tab-navigation && !root.sheet-entering) {
+                root.sheet-entering = true;
+                sheet-before.focus();
+                root.focus-step(true);
+                root.sheet-entering = false;
+                root.sheet-ring-empty();
+            }
+        }
     }
 
     // The frame menu: one for the window, opened where the

@@ -785,16 +785,16 @@ pub(crate) fn tool_in_hand(st: &mut State, app: &App) {
 }
 
 /// A panel control has changed with a mask chosen: if it was one of the
-/// mask's look sliders and the overlay is showing, the overlay goes off
-/// so the edit is seen. Shape and range controls leave the look as it
-/// was and so leave the overlay alone.
+/// mask's look sliders, or its Opacity, and the overlay is showing, the
+/// overlay goes off so the edit is seen. Shape and range controls leave
+/// the look as it was and so leave the overlay alone.
 ///
 /// Every look change hides it, not only the first: the toggle turned on
 /// by hand is for a look, and the next drag hides it again. A tool in
 /// hand has its kept toggle dropped, so the tool going down does not
 /// bring the overlay back over the edit.
 pub(crate) fn look_edited(st: &mut State, app: &App) {
-    let now = crate::panel::edit::read_look(app);
+    let now = (crate::panel::edit::read_look(app), app.get_mask_opacity());
     let before = st.develop.look_seen.borrow_mut().replace(now.clone());
     if st.develop.target.is_some() && before.is_some_and(|b| b != now) && app.get_show_mask() {
         app.set_show_mask(false);
@@ -1017,6 +1017,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     ..Default::default()
                 },
                 look: Look::default(),
+                opacity: 1.0,
             });
             st.develop.target = Some(st.develop.edit.adjustments.len() - 1);
             st.develop.fresh_mask = Some(id);
@@ -1808,7 +1809,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 // name and its "Add" from, goes with it — and only
                 // while it is still exactly as "New mask" left it: no
                 // shape landed (or once did), no look moved, its name
-                // still the placeholder and its own Invert still off.
+                // still the placeholder, its own Invert still off, and
+                // its Refine edge and Opacity where they start.
                 // Any one of those is deliberate work on this mask,
                 // never taken back for an unrelated abandoned drag.
                 let id = a.id;
@@ -1816,6 +1818,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     && a.look == Look::default()
                     && a.name == placeholder_name(id)
                     && !a.mask.invert
+                    && a.mask.refine == 0.0
+                    && a.opacity == 1.0
                     && st.develop.fresh_mask == Some(id);
                 if fresh {
                     st.develop.edit.adjustments.remove(placing.index);
@@ -2059,6 +2063,42 @@ mod tests {
         app.invoke_view_changed();
         assert!(!app.get_show_mask(), "every look change hides it");
         assert!(state.borrow().develop.show_mask_kept.is_none());
+    }
+
+    /// A mask's Opacity: a new mask's is whole; the slider reads into
+    /// the mask and not its look, hides the overlay as a look slider
+    /// does, is named in the history, and is shown again from the
+    /// edit; another mask shows its own.
+    #[test]
+    fn a_masks_opacity_reads_into_the_mask_and_is_a_look_control() {
+        use greycard_edit::history::describe;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        let edit = || {
+            let st = state.borrow();
+            read_edit(&app, &st.develop.edit, st.develop.target)
+        };
+        let before = edit();
+        assert_eq!(before.adjustments[0].opacity, 1.0);
+        assert_eq!(app.get_mask_opacity(), 1.0);
+        app.set_show_mask(true);
+        app.set_mask_opacity(0.7);
+        app.invoke_view_changed();
+        assert!(!app.get_show_mask(), "Opacity hides the overlay");
+        let after = edit();
+        assert_eq!(after.adjustments[0].opacity, 0.7);
+        assert_eq!(after.adjustments[0].look, before.adjustments[0].look);
+        assert_eq!(after.adjustments[1].opacity, 1.0, "the other mask's own");
+        let name = app.get_adjustment_name().to_string();
+        assert_eq!(describe(&before, &after, &[]), format!("{name}: Opacity"));
+        app.invoke_target_changed(2);
+        assert_eq!(app.get_mask_opacity(), 1.0, "the second mask's");
+        app.invoke_target_changed(1);
+        assert_eq!(app.get_mask_opacity(), 0.7, "shown again from the edit");
     }
 
     /// A mask's Detail: its sliders read into the mask's look and not
@@ -2356,6 +2396,7 @@ mod tests {
                 ..Default::default()
             },
             look: Default::default(),
+            opacity: 1.0,
         });
         st.develop.edit = edit.clone();
         let held = |st: &mut State| {
@@ -3202,6 +3243,40 @@ mod tests {
         assert_eq!(st.develop.edit.adjustments[0].look.light.exposure, 1.5);
     }
 
+    /// The same abandoned first shape, the mask's Opacity or its Refine
+    /// edge moved first: the mask stays, with what was set on it.
+    #[test]
+    fn a_masks_opacity_or_refine_set_before_an_abandoned_first_shape_keeps_the_mask() {
+        for refine in [false, true] {
+            let app = window(1);
+            let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+            app.set_panel_tab("Masks".into());
+            app.invoke_new_mask();
+            if refine {
+                app.set_mask_refine(0.4);
+            } else {
+                app.set_mask_opacity(0.6);
+            }
+            app.invoke_add_shape("Linear".into(), "Add".into());
+            app.invoke_place_pressed(300.0, 200.0, false);
+            app.invoke_place_released();
+            let st = state.borrow();
+            assert_eq!(
+                st.develop.edit.adjustments.len(),
+                1,
+                "the mask stays: its {} was set",
+                if refine { "Refine edge" } else { "Opacity" }
+            );
+            let a = &st.develop.edit.adjustments[0];
+            assert!(a.mask.components.is_empty());
+            if refine {
+                assert_eq!(a.mask.refine, 0.4);
+            } else {
+                assert_eq!(a.opacity, 0.6);
+            }
+        }
+    }
+
     /// A mask that once had a shape, emptied again by deleting it
     /// (not by an abandoned drag), is never taken by a later abandoned
     /// shape: `fresh_mask` cleared the moment the first shape landed,
@@ -3633,9 +3708,8 @@ mod tests {
     /// same button that used to double Subject, Sky and the rest.
     #[test]
     fn the_shape_buttons_and_new_mask_each_appear_once() {
+        use i_slint_backend_testing::ElementHandle;
         let app = window(1);
-        // A tall desktop window, the whole of the mask's section on it
-        // with Refine edge under the toggles.
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 1000.0));
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
@@ -3645,6 +3719,40 @@ mod tests {
         // a control already there, finding nothing (a quirk of the
         // testing backend's element cache, not of the layout).
         app.invoke_new_mask();
+        assert_eq!(count_labeled(&app, "New mask"), 1, "New mask once");
+        settle_layout(&app);
+        let bounds = |id: &str| {
+            let e = ElementHandle::find_by_element_id(&app, id)
+                .next()
+                .unwrap_or_else(|| panic!("{id}"));
+            (e.absolute_position().y, e.size().height)
+        };
+        // The panel scrolled as a wheel would, until the MASK
+        // section's foot, where the shape buttons are, is in view:
+        // the buttons are counted whatever the section's height.
+        let (view_top, view_height) = bounds("App::panel-view");
+        let (section_top, section_height) = bounds("App::mask-section");
+        let over = section_top + section_height - (view_top + view_height);
+        if over > 0.0 {
+            app.set_panel_scroll(app.get_panel_scroll() - over);
+            settle_layout(&app);
+        }
+        // Counted over the whole window, by what they are: panel
+        // buttons carrying the word, so a second way to the same shape
+        // anywhere (the list, a menu) is caught, and the mixer's
+        // Luminance slider is not one.
+        let buttons = |label: &str| {
+            let label = slint::SharedString::from(label);
+            ElementHandle::find_by_element_type_name(&app, "PanelButton")
+                .filter(|b| {
+                    let label = label.clone();
+                    b.query_descendants()
+                        .match_predicate(move |e| e.accessible_label().as_ref() == Some(&label))
+                        .find_first()
+                        .is_some()
+                })
+                .count()
+        };
         for label in [
             "Linear",
             "Radial",
@@ -3655,9 +3763,8 @@ mod tests {
             "Object",
             "Luminance",
             "Color",
-            "New mask",
         ] {
-            assert_eq!(count_labeled(&app, label), 1, "{label} should appear once");
+            assert_eq!(buttons(label), 1, "{label} should appear once");
         }
     }
 

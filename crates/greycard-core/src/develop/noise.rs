@@ -89,6 +89,28 @@ pub struct NoiseEstimate {
     pub bins: [usize; 3],
 }
 
+impl NoiseEstimate {
+    /// One model for all three channels: each channel's line weighted
+    /// by the blocks it rests on. A monochrome plane measured as a
+    /// mosaic measures one noise three times.
+    pub fn pooled(&self) -> NoiseEstimate {
+        let total: usize = self.blocks.iter().sum();
+        if total == 0 {
+            return *self;
+        }
+        let mean =
+            |v: [f32; 3]| (0..3).map(|c| v[c] * self.blocks[c] as f32).sum::<f32>() / total as f32;
+        NoiseEstimate {
+            model: NoiseModel {
+                a: [mean(self.model.a); 3],
+                b: [mean(self.model.b); 3],
+            },
+            blocks: [total; 3],
+            bins: [self.bins.iter().copied().max().unwrap_or(0); 3],
+        }
+    }
+}
+
 const BLOCK: usize = 16;
 /// Per channel, per level bin: each block's (mean level, noise variance,
 /// samples).

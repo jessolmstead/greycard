@@ -102,10 +102,6 @@ export component CarryList inherits VerticalLayout {
     callback toggled(int);
     callback all(bool);
     callback join-chosen(bool);
-    /// Check all, the list's first stop for Tab: where a sheet's Tab
-    /// goes round to, and whether it has the keys.
-    out property <bool> first-focused: check-all.focused;
-    public function focus-first() { check-all.focus(); }
 
     property <length> pitch: 24px;
     property <length> col-gap: Theme.space-4;

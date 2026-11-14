@@ -24,8 +24,9 @@
 #                        tarball's bin/: both binaries look for ONNX
 #                        Runtime beside themselves and it finds Dawn
 #                        through $ORIGIN
-#   usr/share/           the tarball's share/, and the license and
-#                        README under doc/greycard
+#   usr/share/           the tarball's share/, and the license, the
+#                        third-party notices and README under
+#                        doc/greycard
 #
 # What is not bundled, and why. The binaries link, at exec, glibc
 # (libc, libm, and ld-linux), libgcc_s, and fontconfig (both of them:
@@ -110,7 +111,8 @@ fi
 for f in "$stage/bin/greycard-ui" "$stage/bin/greycard" \
     "$stage/bin/libonnxruntime.so" "$stage/bin/libwebgpu_dawn.so" \
     "$stage/share/applications/greycard.desktop" \
-    "$stage/share/icons/hicolor/scalable/apps/greycard.svg"; do
+    "$stage/share/icons/hicolor/scalable/apps/greycard.svg" \
+    "$stage/THIRD-PARTY-NOTICES"; do
     if [ ! -f "$f" ]; then
         echo "appimage.sh: $f is missing; run scripts/package.sh first" >&2
         exit 1
@@ -144,7 +146,8 @@ cp "$stage/bin/greycard-ui" "$stage/bin/greycard" \
     "$stage/bin/libonnxruntime.so" "$stage/bin/libwebgpu_dawn.so" \
     "$appdir/usr/bin/"
 cp -R "$stage/share/." "$appdir/usr/share/"
-cp "$stage/LICENSE" "$stage/README.md" "$appdir/usr/share/doc/greycard/"
+cp "$stage/LICENSE" "$stage/THIRD-PARTY-NOTICES" "$stage/README.md" \
+    "$appdir/usr/share/doc/greycard/"
 cp packaging/linux/AppRun "$appdir/AppRun"
 chmod 0755 "$appdir/AppRun" "$appdir/usr/bin/greycard-ui" "$appdir/usr/bin/greycard"
 chmod 0644 "$appdir/usr/bin/libonnxruntime.so" "$appdir/usr/bin/libwebgpu_dawn.so"

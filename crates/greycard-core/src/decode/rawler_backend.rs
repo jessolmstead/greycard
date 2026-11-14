@@ -1020,9 +1020,9 @@ pub(crate) fn iso_of(exif: &::rawler::exif::Exif) -> Option<u32> {
 /// Reshape a decoded rawler image into the engine's frame.
 pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
     let layout = match &image.photometric {
+        _ if is_monochrome(&image) => SensorLayout::Monochrome,
         RawPhotometricInterpretation::Cfa(config) => SensorLayout::Cfa(cfa_pattern(&config.cfa)?),
-        RawPhotometricInterpretation::LinearRaw => SensorLayout::Linear,
-        RawPhotometricInterpretation::BlackIsZero => SensorLayout::Monochrome,
+        _ => SensorLayout::Linear,
     };
 
     let black = {
@@ -1033,7 +1033,7 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
     let black_deltas = black_deltas(&image);
     let white = white_pattern(&image.whitelevel.0, image.cpp)?;
 
-    let as_shot_coefficients = as_shot(image.wb_coeffs);
+    let as_shot_coefficients = as_shot_of(&image);
     let calibrations = calibrations_of(&image);
 
     let crop = image.crop_area.or(image.active_area).map(|r| Rect {
@@ -1091,6 +1091,26 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
     };
     frame.validate()?;
     Ok(frame)
+}
+
+/// Whether the image is a monochrome sensor's: DNG's form of one is
+/// LinearRaw with one sample a pixel, rawler's own BlackIsZero.
+fn is_monochrome(image: &RawImage) -> bool {
+    match image.photometric {
+        RawPhotometricInterpretation::LinearRaw => image.cpp == 1,
+        RawPhotometricInterpretation::BlackIsZero => true,
+        RawPhotometricInterpretation::Cfa(_) => false,
+    }
+}
+
+/// The as-shot gains: the file's, or the neutral for a monochrome
+/// sensor, whose one channel has no white of its own to record.
+fn as_shot_of(image: &RawImage) -> Option<[f64; 3]> {
+    if is_monochrome(image) {
+        Some([1.0; 3])
+    } else {
+        as_shot(image.wb_coeffs)
+    }
 }
 
 /// A DNG's column and row differences of the black level, counted from
@@ -2062,6 +2082,36 @@ mod tests {
         assert!(!white.calibrations.is_empty());
     }
 
+    /// A monochrome sensor's DNG (LinearRaw, one sample a pixel) is a
+    /// monochrome frame, neutral as shot with no matrix, whether read
+    /// whole, for its white alone, or for the index.
+    #[test]
+    fn a_monochrome_dng_is_a_monochrome_frame() {
+        let frame = crate::develop::tests::mono_frame(16, 12, |y, x| 100 + (y + x) as u16 * 30);
+        let out = crate::develop::demosaic(&frame, &Default::default()).unwrap();
+        let mut dng = std::io::Cursor::new(Vec::new());
+        crate::dng::write_linear_dng(&mut dng, &frame, &out.image, [1.0; 3], &Default::default())
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("greycard-mono-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mono.dng");
+        std::fs::write(&path, dng.into_inner()).unwrap();
+        let decoded = RawlerDecoder.decode_path(&path);
+        let white = white_path(&path);
+        let index = index_read_path(&path);
+        crate::testing::remove_dir_retry(&dir);
+        let decoded = decoded.unwrap();
+        assert_eq!(decoded.layout, SensorLayout::Monochrome);
+        assert_eq!(decoded.as_shot_coefficients, Some([1.0; 3]));
+        let white = white.unwrap();
+        assert_eq!(white.as_shot_coefficients, Some([1.0; 3]));
+        assert!(white.calibrations.is_empty() && white.monochrome);
+        let profile = white.profile().unwrap();
+        let tt = crate::color::temp_tint_of_gains(&profile, [1.0; 3]).unwrap();
+        assert!((tt.cct - 6504.0).abs() < 10.0);
+        assert_eq!(index.unwrap().1, MosaicRead::NotMosaic);
+    }
+
     #[test]
     fn white_levels_take_the_shapes_rawler_produces() {
         assert_eq!(
@@ -2965,6 +3015,20 @@ fn stance_unguarded(path: &Path) -> Result<RawStance> {
 pub struct CameraWhite {
     pub as_shot_coefficients: Option<[f64; 3]>,
     pub calibrations: Vec<Calibration>,
+    /// A monochrome sensor's, whose calibrations are none.
+    pub monochrome: bool,
+}
+
+impl CameraWhite {
+    /// The profile its white is read through: the calibrations', or a
+    /// monochrome sensor's own ([`crate::color::monochrome_profile`]),
+    /// as [`crate::color::profile_from_frame`] gives the decoded frame.
+    pub fn profile(&self) -> Result<rawcolor::CameraProfile> {
+        if self.monochrome {
+            return Ok(crate::color::monochrome_profile());
+        }
+        crate::color::profile_from_calibrations(&self.calibrations)
+    }
 }
 
 /// The camera's as-shot white and its calibrations, from rawler's
@@ -2984,9 +3048,13 @@ fn white_unguarded(path: &Path) -> Result<CameraWhite> {
     let mut calibrations = calibrations_of(&image);
     with_forward_matrices(&mut calibrations, &forward_matrices(decoder.as_ref()));
     Ok(CameraWhite {
-        as_shot_coefficients: white_xy_gains(decoder.as_ref(), &calibrations)
-            .or(as_shot(image.wb_coeffs)),
+        as_shot_coefficients: if is_monochrome(&image) {
+            as_shot_of(&image)
+        } else {
+            white_xy_gains(decoder.as_ref(), &calibrations).or(as_shot(image.wb_coeffs))
+        },
         calibrations,
+        monochrome: is_monochrome(&image),
     })
 }
 

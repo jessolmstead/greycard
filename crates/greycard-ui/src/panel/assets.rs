@@ -10,7 +10,7 @@ use crate::panel::cull::{control_over_frame, leave_cull};
 use crate::panel::edit::{develop_soon, read_edit, schedule_save};
 use crate::panel::sync;
 use crate::worker::{Job, LensReport, Worker};
-use crate::{App, Fetch, LookRow, STATE, Shared, State, chooser, settings};
+use crate::{App, Fetch, LookRow, ProfileRow, STATE, Shared, State, chooser, settings};
 
 /// Whether to offer the lens profiles unprompted: only with no
 /// database on the machine, never after a Not now, and once a launch.
@@ -928,58 +928,120 @@ fn body_of(st: &State) -> greycard_edit::camera::Body<'_> {
     greycard_edit::camera::Body::new(&d.camera.0, &d.camera.1, &d.other_names)
 }
 
+/// A profile's row on the CAMERA PROFILE list.
+fn profile_row(name: &str, label: String, indented: bool) -> ProfileRow {
+    ProfileRow {
+        heading: false,
+        name: name.into(),
+        label: label.into(),
+        note: Default::default(),
+        folded: false,
+        own: false,
+        indented,
+    }
+}
+
 /// What the CAMERA PROFILE section lists for the open file: the
 /// file's own calibrations first, then the profiles in the profile
 /// directory that were made for this camera, one row a profile however
-/// many files hold it, then the chosen one when it is neither.
+/// many files hold it, then the chosen one when it is neither. With
+/// every camera shown (the switch at the list's foot), every profile,
+/// grouped by camera (`greycard_edit::camera::grouped`). The switch is
+/// a view of the list: the edit and its picture are the same either
+/// way, and a profile the edit names is listed either way.
 pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileChoice, app: &App) {
+    use greycard_edit::camera;
     let body = body_of(st);
-    let mut names = vec![slint::SharedString::from(greycard_edit::camera::EMBEDDED)];
-    // Camera profile picker: the raw's own embedded profile
-    let mut labels = vec![slint::SharedString::from(tr!("Embedded"))];
     let embedded = chosen.is_embedded();
     let chosen_name = chosen.name().to_string();
     let chosen = chosen_name.as_str();
+    // Camera profile picker: the raw's own embedded profile
+    let mut rows = vec![profile_row(camera::EMBEDDED, tr!("Embedded"), false)];
     let mut hidden = 0;
-    let mut rows = Vec::new();
-    // One row a profile: a file that is the same profile as another is
-    // left out, and the one the edit names stands for its pair.
-    for e in greycard_edit::camera::listed(&st.develop.profiles, chosen) {
-        if e.fits(body) || e.name == chosen {
-            rows.push(e);
-        } else {
-            hidden += 1;
-            // The name each side goes by, so a profile hidden by a
-            // spelling the maker and the decoder disagree on can be
-            // told from one made for another camera.
+    if app.get_camera_profiles_all() {
+        let listing = camera::Listing {
+            chosen,
+            body,
+            open: &st.develop.profile_groups_open,
+        };
+        rows.extend(
+            camera::grouped(&st.develop.profiles, listing)
+                .into_iter()
+                .map(|r| match r {
+                    camera::Row::Heading {
+                        key,
+                        label,
+                        count,
+                        folded,
+                        own,
+                        ..
+                    } => ProfileRow {
+                        heading: true,
+                        name: key.into(),
+                        label: label.into(),
+                        note: count.to_string().into(),
+                        folded,
+                        own,
+                        indented: false,
+                    },
+                    camera::Row::Profile {
+                        name,
+                        label,
+                        indented,
+                    } => profile_row(&name, label, indented),
+                }),
+        );
+    } else {
+        let mut shown = Vec::new();
+        // One row a profile: a file that is the same profile as another
+        // is left out, and the one the edit names stands for its pair.
+        for e in camera::listed(&st.develop.profiles, chosen) {
+            if e.fits(body) || e.name == chosen {
+                shown.push(e);
+            } else {
+                hidden += 1;
+                // The name each side goes by, so a profile hidden by a
+                // spelling the maker and the decoder disagree on can be
+                // told from one made for another camera.
+                tracing::debug!(
+                    "camera profile {}: made for {:?}, not listed for {:?}",
+                    e.name,
+                    e.unique_camera_model.as_deref().unwrap_or("no camera"),
+                    body.names()
+                );
+            }
+        }
+        // The count, once a listing, so a profile a spelling hides (an
+        // alias the body does not know) can be looked for in a default
+        // log; each one's names are at debug.
+        if hidden > 0 {
             tracing::info!(
-                "camera profile {}: made for {:?}, not listed for {:?}",
-                e.name,
-                e.unique_camera_model.as_deref().unwrap_or("no camera"),
+                "camera profiles: {hidden} not listed for {:?}, made for other cameras",
                 body.names()
             );
         }
-    }
-    // Two different profiles can go by one name on the same rows: two
-    // files made for one body, or for the body under each of its
-    // names. The file name beside each tells them apart.
-    for e in &rows {
-        let label = e.label();
-        let twin = rows.iter().filter(|o| o.label() == label).count() > 1;
-        names.push(e.name.as_str().into());
-        labels.push(match twin && label != e.name {
-            true => format!("{label} ({})", e.name).into(),
-            false => label.into(),
-        });
+        // Two different profiles can go by one name on the same rows:
+        // two files made for one body, or for the body under each of
+        // its names. The file name beside each tells them apart.
+        let labels = camera::told_apart(&shown);
+        rows.extend(
+            shown
+                .iter()
+                .zip(labels)
+                .map(|(e, label)| profile_row(&e.name, label, false)),
+        );
     }
     // A profile the edit names and the directory does not have is
     // still shown, and chosen, so the panel says what the edit says.
-    if !embedded && !names.iter().any(|n| n.as_str() == chosen) {
-        names.push(chosen.into());
-        labels.push(tr!("{name} (missing)", name = chosen).into());
+    if !embedded && !st.develop.profiles.iter().any(|e| e.name == chosen) {
+        rows.push(profile_row(
+            chosen,
+            tr!("{name} (missing)", name = chosen),
+            false,
+        ));
     }
-    app.set_camera_profile_names(ModelRc::new(VecModel::from(names)));
-    app.set_camera_profile_labels(ModelRc::new(VecModel::from(labels)));
+    app.set_camera_profile_rows(ModelRc::new(VecModel::from(rows)));
+    app.set_camera_profiles_any(!st.develop.profiles.is_empty());
     app.set_camera_profile(chosen.into());
     app.set_camera_profile_note(
         match (st.develop.profiles.len(), hidden) {
@@ -1333,8 +1395,72 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let mut st = state.borrow_mut();
             st.develop.edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            // Another camera's profile is the user's to choose, and is
+            // applied as any is; the log says so.
+            if let greycard_edit::camera::ProfileChoice::Named(name) =
+                &st.develop.edit.camera.profile
+                && let Some(e) = st.develop.profiles.iter().find(|e| &e.name == name)
+                && !e.fits(body_of(&st))
+            {
+                tracing::info!(
+                    "camera profile {name}: made for {:?}, chosen for {} {}",
+                    e.unique_camera_model.as_deref().unwrap_or_default(),
+                    st.develop.camera.0,
+                    st.develop.camera.1
+                );
+            }
             show_profiles(&st, &st.develop.edit.camera.profile, &app);
             develop_soon(&mut st, state.clone(), worker.clone(), app.as_weak());
+        });
+    }
+    // A camera's group of the profile list folded or opened: kept for
+    // as long as the editor runs, as the look list's are. A click on
+    // the group holding the chosen profile, which is open whatever it
+    // was set to, changes nothing and is not kept.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_camera_profile_group_toggled(move |key| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let key = key.to_string();
+            let listing = greycard_edit::camera::Listing {
+                chosen: st.develop.edit.camera.profile.name(),
+                body: body_of(&st),
+                open: &st.develop.profile_groups_open,
+            };
+            let shown = greycard_edit::camera::grouped(&st.develop.profiles, listing)
+                .into_iter()
+                .find_map(|r| match r {
+                    greycard_edit::camera::Row::Heading {
+                        key: k,
+                        folded,
+                        locked,
+                        ..
+                    } if k == key => Some((folded, locked)),
+                    _ => None,
+                });
+            let Some((folded, false)) = shown else {
+                return;
+            };
+            st.develop.profile_groups_open.insert(key, folded);
+            show_profiles(&st, &st.develop.edit.camera.profile, &app);
+        });
+    }
+    // Every camera's profiles shown, or only this camera's: the list
+    // drawn again and the switch kept in the settings file. The edit
+    // and its picture are not touched.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_camera_profiles_all_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = state.borrow();
+            let on = app.get_camera_profiles_all();
+            crate::panel::prefs::keep(&st, |s| s.profiles_all_cameras = on);
+            show_profiles(&st, &st.develop.edit.camera.profile, &app);
         });
     }
     // The LOOK section opened: read the directory again, as the
@@ -3057,10 +3183,259 @@ mod tests {
         }
         let choice = greycard_edit::camera::ProfileChoice::from_name(chosen);
         show_profiles(&state.borrow(), &choice, &app);
-        let strings = |m: ModelRc<slint::SharedString>| m.iter().map(|s| s.to_string()).collect();
-        let names = strings(app.get_camera_profile_names());
-        let labels = strings(app.get_camera_profile_labels());
+        let rows: Vec<ProfileRow> = app.get_camera_profile_rows().iter().collect();
+        let names = rows.iter().map(|r| r.name.to_string()).collect();
+        let labels = rows.iter().map(|r| r.label.to_string()).collect();
         (names, labels, app)
+    }
+
+    /// The profile list's rows as a line each: a heading as `[label]`
+    /// with `+` folded and `*` own, a profile as its name, `  ` before
+    /// one set in.
+    fn profile_lines(app: &App) -> Vec<String> {
+        app.get_camera_profile_rows()
+            .iter()
+            .map(|r| match r.heading {
+                true => format!(
+                    "[{}]{}{}",
+                    r.label,
+                    if r.folded { "+" } else { "" },
+                    if r.own { "*" } else { "" }
+                ),
+                false => format!("{}{}", if r.indented { "  " } else { "" }, r.name),
+            })
+            .collect()
+    }
+
+    /// A profile in a folder of Adobe's shape.
+    fn adobe(folder: &str, title: &str, camera: Option<&str>) -> greycard_edit::camera::Entry {
+        greycard_edit::camera::Entry {
+            name: format!("Camera/{folder}/{title}"),
+            path: std::path::PathBuf::new(),
+            title: Some(title.into()),
+            unique_camera_model: camera.map(str::to_string),
+            copyright: None,
+            same_as: None,
+        }
+    }
+
+    /// Three cameras' profiles in Adobe's shape, and one naming none.
+    fn three_cameras() -> Vec<greycard_edit::camera::Entry> {
+        let mut entries = vec![
+            adobe("Nikon Z 8", "Adobe Standard", Some("NIKON Z 8")),
+            adobe("Canon EOS R5", "Adobe Standard", Some("Canon EOS R5")),
+            adobe("Canon EOS R5", "Camera Neutral", Some("Canon EOS R5")),
+            adobe(
+                "Canon EOS Rebel T8i",
+                "Adobe Standard",
+                Some("Canon EOS Rebel T8i"),
+            ),
+            adobe("Canon EOS 850D", "Camera Standard", Some("Canon EOS 850D")),
+        ];
+        entries.push(greycard_edit::camera::Entry {
+            name: "Anything".into(),
+            title: None,
+            unique_camera_model: None,
+            ..adobe("x", "Anything", None)
+        });
+        entries.sort_by_key(|e| e.label().to_lowercase());
+        entries
+    }
+
+    /// The window with the Develop panel's CAMERA PROFILE list for an
+    /// EOS 850D, also sold as the Rebel T8i, over [`three_cameras`].
+    fn profile_window() -> (App, Rc<Shared>, Rc<Worker>) {
+        let app = crate::testing::window(1);
+        let (state, worker) = crate::testing::retouch_state(&app);
+        // Tall enough that the section and its switch are in the
+        // panel's view, which builds only what it shows.
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 1600.0));
+        // Opened first: opening the section reads the (empty) profile
+        // directory again.
+        app.set_raw_input(true);
+        app.set_collapsed_camera(false);
+        app.set_panel_tab("Develop".into());
+        crate::testing::settle(&app);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.camera = ("Canon".into(), "EOS 850D".into());
+            st.develop.other_names = vec!["EOS Rebel T8i".into()];
+            st.develop.profiles = three_cameras();
+        }
+        show_profiles(
+            &state.borrow(),
+            &state.borrow().develop.edit.camera.profile,
+            &app,
+        );
+        crate::testing::settle(&app);
+        (app, state, worker)
+    }
+
+    /// A click on the switch at the profile list's foot, the panel
+    /// scrolled down to it a step at a time and drawn between steps:
+    /// the panel builds only what is in its view.
+    fn click_all_cameras(app: &App) {
+        use i_slint_backend_testing::ElementHandle;
+        app.set_panel_scroll(0.0);
+        for _ in 0..40 {
+            crate::testing::settle(app);
+            let found = ElementHandle::find_by_element_id(app, "Toggle::root").find(|root| {
+                root.query_descendants()
+                    .match_id("Toggle::lbl")
+                    .find_first()
+                    .and_then(|l| l.accessible_label())
+                    .is_some_and(|l| l == "Show all cameras")
+            });
+            if let Some(root) = found {
+                let (at, size) = crate::testing::toggle_parts(&root).switch;
+                if at.y > 300.0 {
+                    crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+                    return;
+                }
+            }
+            app.set_panel_scroll(app.get_panel_scroll() - 100.0);
+        }
+        panic!("no Show all cameras switch");
+    }
+
+    /// Off, the list is this camera's, under each of its names, and
+    /// the profiles naming no camera; on, every camera's, grouped: this
+    /// camera's groups first and open, the rest by name and folded, the
+    /// ones naming no camera last under no heading. A group opens and
+    /// folds; the switch is the window's, flipped at the list's foot.
+    #[test]
+    fn show_all_cameras_groups_every_profile_by_camera() {
+        let (app, _state, _worker) = profile_window();
+        assert!(!app.get_camera_profiles_all(), "off by default");
+        assert_eq!(
+            profile_lines(&app),
+            [
+                "embedded",
+                "Camera/Canon EOS Rebel T8i/Adobe Standard",
+                "Anything",
+                "Camera/Canon EOS 850D/Camera Standard",
+            ]
+        );
+        assert!(app.get_camera_profiles_any());
+        assert!(!app.get_camera_profile_note().is_empty(), "three hidden");
+
+        click_all_cameras(&app);
+        assert!(app.get_camera_profiles_all());
+        assert_eq!(
+            profile_lines(&app),
+            [
+                "embedded",
+                "[Canon EOS 850D]*",
+                "  Camera/Canon EOS 850D/Camera Standard",
+                "[Canon EOS Rebel T8i]*",
+                "  Camera/Canon EOS Rebel T8i/Adobe Standard",
+                "[Canon EOS R5]+",
+                "[NIKON Z 8]+",
+                "Anything",
+            ]
+        );
+        assert!(app.get_camera_profile_note().is_empty(), "nothing hidden");
+        // The labels under a heading are the profiles' own names.
+        let labels: Vec<String> = app
+            .get_camera_profile_rows()
+            .iter()
+            .map(|r| r.label.to_string())
+            .collect();
+        assert_eq!(labels[2], "Camera Standard");
+
+        // A group opened, and folded again.
+        app.invoke_camera_profile_group_toggled("canoneosr5".into());
+        assert!(profile_lines(&app).contains(&"  Camera/Canon EOS R5/Camera Neutral".to_string()));
+        app.invoke_camera_profile_group_toggled("canoneosr5".into());
+        assert!(profile_lines(&app).contains(&"[Canon EOS R5]+".to_string()));
+
+        click_all_cameras(&app);
+        assert!(!app.get_camera_profiles_all());
+        assert_eq!(profile_lines(&app).len(), 4);
+    }
+
+    /// Another camera's profile chosen with every camera shown is the
+    /// edit's, applied as any profile is; the switch flipped either way
+    /// changes nothing in the edit or its picture, and off, the list
+    /// still shows the profile the edit names, chosen.
+    #[test]
+    fn another_cameras_profile_is_chosen_and_stays_shown() {
+        let (app, state, _worker) = profile_window();
+        let nikon = "Camera/Nikon Z 8/Adobe Standard";
+        app.set_camera_profiles_all(true);
+        app.invoke_camera_profiles_all_changed();
+        app.invoke_camera_profile_group_toggled("nikonz8".into());
+        assert!(profile_lines(&app).contains(&format!("  {nikon}")));
+        app.set_camera_profile(nikon.into());
+        app.invoke_camera_profile_picked();
+        let edit = state.borrow().develop.edit.clone();
+        assert_eq!(
+            edit.camera.profile,
+            greycard_edit::camera::ProfileChoice::Named(nikon.into())
+        );
+        assert!(edit.camera.applies_look_table(), "applied as any DCP is");
+        let generation = state.borrow().develop.generation;
+
+        // Off: the chosen profile is still a row, and chosen.
+        app.set_camera_profiles_all(false);
+        app.invoke_camera_profiles_all_changed();
+        assert!(profile_lines(&app).contains(&nikon.to_string()));
+        assert_eq!(app.get_camera_profile(), nikon);
+        // On again: its group open whatever it was set to.
+        app.invoke_camera_profile_group_toggled("nikonz8".into());
+        app.set_camera_profiles_all(true);
+        app.invoke_camera_profiles_all_changed();
+        assert!(profile_lines(&app).contains(&"[NIKON Z 8]".to_string()));
+        assert!(profile_lines(&app).contains(&format!("  {nikon}")));
+        // Neither flip touched the edit or asked for a develop.
+        let st = state.borrow();
+        assert_eq!(st.develop.edit, edit);
+        assert_eq!(st.develop.generation, generation);
+        let read = read_edit(&app, &st.develop.edit, st.develop.target);
+        assert_eq!(read.camera, edit.camera);
+    }
+
+    /// Every camera of a copy of Adobe's folder: hundreds of headings
+    /// in the list, which keeps to twelve rows' height and scrolls,
+    /// and is drawn again quickly.
+    #[test]
+    fn every_camera_of_a_large_folder_keeps_the_list_in_bounds() {
+        let (app, state, _worker) = profile_window();
+        let mut many: Vec<greycard_edit::camera::Entry> = (0..800)
+            .flat_map(|c| {
+                let camera = format!("Maker Camera {c:03}");
+                [
+                    "Adobe Standard",
+                    "Camera Neutral",
+                    "Camera Vivid",
+                    "Camera Flat",
+                ]
+                .map(|t| adobe(&camera, t, Some(&camera)))
+            })
+            .collect();
+        many.extend(three_cameras());
+        state.borrow_mut().develop.profiles = many;
+        app.set_camera_profiles_all(true);
+        let t = std::time::Instant::now();
+        app.invoke_camera_profiles_all_changed();
+        crate::testing::settle(&app);
+        let shown = t.elapsed();
+        assert_eq!(
+            app.get_camera_profile_rows().row_count(),
+            1 + 2 + 2 + 802 + 1
+        );
+        let list = i_slint_backend_testing::ElementHandle::find_by_element_id(
+            &app,
+            "CameraSection::profile-box",
+        )
+        .next()
+        .expect("the list is there");
+        // Twelve rows of a control's height or so, not eight hundred.
+        assert!(list.size().height < 13.0 * 40.0, "{:?}", list.size());
+        // Generous: a debug build on a loaded machine.
+        assert!(shown < std::time::Duration::from_secs(5), "{shown:?}");
+        println!("800 cameras listed and drawn in {shown:?}");
     }
 
     /// An Adobe Standard made for `camera`, in a file named `name`.

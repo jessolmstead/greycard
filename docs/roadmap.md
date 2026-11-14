@@ -7,6 +7,20 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The capture sharpen's early stop sits on a knife edge: the
+      device and the CPU can stop a 32x32 block an iteration apart,
+      and the block moves by up to 3% (§668). A margin past an
+      epsilon, or a stop that is continuous across the crossing
+- [ ] The noise estimate reads up to twice a plane's own
+      neighbor-difference variance in deep shadows, on a Bayer frame
+      as on a monochrome one (§668); waits on a measurement across
+      cameras
+- [ ] Texture alone differs by 1.9e-4 between the device and the CPU
+      on one monochrome file: the CPU's running sums against the
+      shader's window sums, most likely (§668)
+- [ ] A monochrome frame: Temperature and Tint do nothing and are not
+      dimmed (§668); waits on a decision. Untested there: the camera
+      match, and HDR, panorama, and focus merges
 - [ ] Dehaze alone still collapses the capture sharpen's threshold
       on a noisy frame (ISO 3200, Dehaze +50: to zero). The guide
       could be taken before Dehaze too, at the cost of changing
@@ -47,16 +61,16 @@ the reasoning lives in `docs/notes.md`.
       (`RECONCILED`, matched by prefix and hashed into the state's
       id), so a reworded or translated label changes the merge across
       machines: a kind on the step instead (review, 2026-11-11)
-- [ ] Packages ship no third-party notices: LICENSE and the README
-      only, beside ONNX Runtime, Dawn, DXC, and several hundred
-      crates; cargo-about and cargo-deny (review, 2026-11-11)
-- [ ] The 31 model URLs name `resolve/main`: the hash pin keeps them
-      safe, but a re-upload breaks every shipped version; pin each to
-      its commit (review, 2026-11-11)
-- [ ] Release hygiene: `contents: write` given to the whole release
-      workflow, no checksums beside the release's files, and split
-      symbols kept for each release so a stripped build's backtrace
-      can be named (review, 2026-11-11)
+- [ ] dxil.dll's own terms in the notices: ours is 1.8.2502.11,
+      signed by Windows and in no DXC release on GitHub, so likely the
+      Windows SDK's; the notices say whose it is and no more (§660)
+- [ ] cargo-about from a pinned prebuilt binary where one exists, in
+      place of a build from source behind a cache (§660)
+- [ ] cargo-deny over the tree: advisories and bans beside the
+      licenses cargo-about checks (review, 2026-11-11)
+- [ ] Split symbols kept for each release, so a stripped build's
+      backtrace can be named (review, 2026-11-11; the read-only tokens
+      and SHA256SUMS are §657)
 - [ ] An edit's pictures made from bytes since written over can be
       kept: a save that changes a file only past its hashed 64 KB head
       at the same length, landing while a keeping or a reduced develop
@@ -248,6 +262,29 @@ the reasoning lives in `docs/notes.md`.
       blank room under a short one, double-click back to automatic;
       same weights, one rule in the layout. Pick it up if the live
       gaps turn out too rare (2026-11-08)
+- [ ] A sheet's close gives the focus back to the control that had
+      it, not the window: a field under a second sheet stops taking
+      text until clicked. And Escape closes the top sheet first, where
+      today the model sheet over another outlives it (§664)
+- [ ] `sheet-open()` defined from `sheets-up`, one list in place of
+      two; the every-sheet focus test made cheaper, 45 s today (§664)
+- [ ] A toned monochrome style (sepia, cyanotype) fitted along its
+      one toning curve: detected as not monochrome today, so it takes
+      the color fit and can leak color where the set has no samples
+      (issue 144, §665)
+- [ ] Toning under a monochrome look: the tint, grading, and color
+      curves run before the look table, so at full Strength a grey
+      look erases them; a stage after the table, or the look routed
+      through the black and white section (§665)
+- [ ] A sidecar's history stored without repeating what did not
+      change: each of the 50 steps of each version is a whole edit
+      today, so a frame with brush masks and one virtual copy wrote
+      28 MB, 1,021 mask shapes of which 39 differ. Each mask once, or
+      steps as changes; a format change (pixls, 2026-11-13)
+- [ ] A frame opened at the aspect chosen in the camera: Olympus
+      records it (ImageProcessing AspectRatio 0x1112 and AspectFrame
+      0x1113) and nothing reads it, so an ORF shot at 3:2 opens at
+      the sensor's 4:3. Waits on a 3:2 sample (issue 145, 2026-11-13)
 - [ ] The window's size and place are written at a close or a quit
       only, so an editor ended by a signal, a force quit, or a logout
       opens as it was the time before (§623). Low priority
@@ -740,7 +777,8 @@ clears or a tester asks for it.
       snapshot under a wipe the pointer drags; and the last render
       kept when a section is switched off or on, so Denoise's toggle
       shows its difference at once under the wipe instead of after
-      the whole chain runs again (pixls, 2026-11-01)
+      the whole chain runs again; two snapshots side by side asked
+      for too (pixls, 2026-11-01; issue 100, 2026-11-13)
 - [ ] Bezier handles on a curve's points, so a point's reach along
       the curve can be set
 - [ ] The crop's grid: its lines' count and spacing chosen, so a line
@@ -1149,9 +1187,6 @@ clears or a tester asks for it.
       for each, and chroma as a range rather than a floor, as ART's
       parametric mask; today it is a Luminance and a Color shape under
       Intersect (discussion 59, 2026-10-30)
-- [ ] A mask's opacity: one slider, 0 to 100%, that scales the whole
-      of its adjustments and leaves their balance alone, as Nik Color
-      Efex's filter opacity (issue 141, 2026-11-12)
 - [ ] A pivot for Contrast, so it turns about a chosen grey rather
       than the middle (issue 56, 2026-10-30)
 - [ ] A preset dragged onto a group's header or into its rows moves it
@@ -1214,13 +1249,15 @@ clears or a tester asks for it.
       a release leg on GitHub's ARM runner, ONNX Runtime's
       linux-aarch64 build in the registry, the AppImage tooling for
       ARM (issue 105, 2026-11-09)
-- [ ] Author and copyright fields on the Settings sheet (the engine
-      half is §652: `settings.json` and `greycard export --author
-      --copyright`); wants their words and place. Then the IPTC
-      fields kept per frame in the sidecar and written into exports,
-      GPS with them (issue 106, 2026-11-09). The fields asked for:
-      title, headline, caption, copyright, usage terms, copyright
-      URL, creator, and the creator's address, email, and web address
+- [ ] The IPTC fields kept per frame in the sidecar and written into
+      exports, GPS with them (issue 106, 2026-11-09; the author and
+      the copyright for every export are §652 and §658). The fields
+      asked for: title, headline, caption, copyright, usage terms,
+      copyright URL, creator, and the creator's address, email, and
+      web address
+- [ ] "Edit in" another program reads the export sheet's Metadata
+      choice: today it takes the sheet's defaults, so its TIFF carries
+      everything under None too (§658)
 - [ ] `.greycard` off the name of an export written beside its raw
       (issue 116, 2026-11-10). Today the tag is also what keeps
       `IMG_0001.jpg` from being paired with `IMG_0001.CR3` as the
@@ -1268,15 +1305,13 @@ clears or a tester asks for it.
 - [ ] Presets given more room on the left: a tab of its own or a
       list dragged taller, judged after the left pane's rework (issue
       133, 2026-11-12)
-- [ ] The profile folder read with its subfolders, as Adobe ships
-      them (issue 135, 2026-11-12)
-- [ ] A profile made for another camera chosen on purpose: a "Show
-      all cameras" switch at the foot of the profile list, off by
-      default, the profiles grouped under their cameras (issue 135)
-- [ ] An output sharpen after the tone work, beside the capture
-      sharpen: a section of its own, OUTPUT SHARPEN, with Amount,
-      Radius, and Threshold, off by default, after Detail; the whole
-      picture first (issue 135)
+- [ ] Lens profiles (`.lcp`) read from the profile folder's
+      subfolders too, as the camera profiles are since §662
+- [ ] The output sharpen's Radius in output pixels, or a choice: it
+      scales with an export's size today, so a web-size export barely
+      sharpens (§663)
+- [ ] The clipping warning under focus peaking reads the picture
+      before the output sharpen (§663)
 - [ ] The output sharpen in a mask's look, after the picture's has
       landed (issue 135)
 - [ ] A DCP's tone curve in place of ours: a "Profile tone curve"

@@ -65,7 +65,8 @@ try {
     Run (Resolve-Path $Setup).Path @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$log`"")
 
     foreach ($f in 'greycard-ui.exe', 'greycard.exe', 'application-x-greycard-edit.ico',
-        'register.cmd', 'unregister.cmd', 'LICENSE', 'README.md', 'unins000.exe') {
+        'register.cmd', 'unregister.cmd', 'LICENSE', 'THIRD-PARTY-NOTICES', 'README.md',
+        'unins000.exe') {
         if (-not (Test-Path (Join-Path $app $f))) { Fail "$app\$f is missing" }
     }
     Get-ChildItem $app -File | ForEach-Object { Write-Host "  $($_.Name)" }

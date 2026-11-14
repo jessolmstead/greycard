@@ -130,6 +130,20 @@ jobs:
             echo "MACOS_NOTARY_KEYCHAIN=$keychain"
           } >> "$GITHUB_ENV"
 
+      # For package.sh's THIRD-PARTY-NOTICES; see release.yml.
+      - name: cargo-about from the cache
+        id: cargo-about
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-about
+            ~/.cargo/bin/cargo-about.exe
+          key: cargo-about-0.9.3-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-about
+        if: steps.cargo-about.outputs.cache-hit != 'true'
+        run: cargo install cargo-about --locked --version 0.9.3 --features cli
+
       # No argument: the version is the workspace's, from cargo
       # metadata.
       - name: Package
@@ -147,6 +161,7 @@ jobs:
           ls -la "$mnt"
           test -f "$mnt/.DS_Store"
           test -f "$mnt/.background/background.tiff"
+          test -f "$mnt/greycard.app/Contents/Resources/THIRD-PARTY-NOTICES"
           spctl --assess --type execute --verbose=2 "$mnt/greycard.app"
           "$mnt/greycard.app/Contents/MacOS/greycard" --version
           hdiutil detach -quiet "$mnt"

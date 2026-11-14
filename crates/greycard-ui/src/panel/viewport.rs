@@ -5155,6 +5155,42 @@ pub(crate) mod tests {
         assert_eq!(in_panel, 0);
     }
 
+    /// A monochrome raw's masks' whites and the global slider's preview
+    /// move nothing: every white is the identity on it.
+    #[test]
+    fn no_white_moves_a_monochrome_raw_on_the_panel() {
+        use greycard_core::color::{WhitePoint, profile_from_frame, resolve_white_balance};
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        let frame = greycard_core::RawFrame {
+            layout: greycard_core::raw::SensorLayout::Monochrome,
+            as_shot_coefficients: Some([1.0; 3]),
+            calibrations: Vec::new(),
+            ..daylight_frame()
+        };
+        let profile = profile_from_frame(&frame).unwrap();
+        let shot = resolve_white_balance(&frame, &profile, WhitePoint::AsShot).unwrap();
+        let mut st = state.borrow_mut();
+        st.develop.base_white = Some(WhiteBase::from(&shot, 1.0));
+        st.develop.frame = Some((Arc::new(frame), Box::new(profile)));
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let shift = crate::panel::color::local_white_shift(&mut st, (false, 3000.0, 0.01)).unwrap();
+        let lamp = greycard_edit::white::LocalWhite::Absolute {
+            temperature: 2500.0,
+            tint: -0.01,
+        };
+        assert_eq!(shift.local(&lamp), Some(identity));
+        let preview = crate::panel::color::preview_white(&mut st, (false, 3000.0, 0.01));
+        for (r, row) in preview.iter().enumerate() {
+            for (c, v) in row.iter().enumerate() {
+                assert!(
+                    (v - if r == c { 1.0 } else { 0.0 }).abs() < 1e-6,
+                    "{preview:?}"
+                );
+            }
+        }
+    }
+
     /// A picture held up while the next frame develops keeps its own
     /// masks' white balances: the frame, its profile and the develop's
     /// white move on to the next file before its develop lands, and the

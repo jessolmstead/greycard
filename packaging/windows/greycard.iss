@@ -87,10 +87,11 @@ SignTool=greycard
 
 [Files]
 ; bin\ lands as the install directory itself, as install.ps1 copies
-; it, and the four files install.ps1 copies beside it. ignoreversion:
+; it, and the five files install.ps1 copies beside it. ignoreversion:
 ; the script overwrites whatever is there, and so does this.
 Source: "{#Stage}\bin\*"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#Stage}\THIRD-PARTY-NOTICES"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\register.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\unregister.cmd"; DestDir: "{app}"; Flags: ignoreversion

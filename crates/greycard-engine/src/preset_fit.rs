@@ -124,9 +124,25 @@ pub fn as_shot_at(path: &Path, camera: &camera::Camera) -> Option<greycard_core:
     let white = greycard_core::decode::white_path(path)
         .inspect_err(|e| tracing::warn!("{name}: its as-shot white: {e}"))
         .ok()?;
-    let profile = match camera.profile(&greycard_edit_io::Stores::user()) {
-        Some(p) => p.camera.clone(),
-        None => greycard_core::color::profile_from_calibrations(&white.calibrations).ok()?,
+    as_shot_through(&white, || {
+        camera
+            .profile(&greycard_edit_io::Stores::user())
+            .map(|p| p.camera.clone())
+    })
+}
+
+/// The light `white` recorded, read through the profile `chosen` gives
+/// (a DCP's) or, with none, the raw's own. A monochrome sensor's is
+/// read through its own whatever is chosen, as its develop and the
+/// panel read it (`color::resolve_white_balance`), so a fitted white
+/// is the one the panel shows.
+pub fn as_shot_through(
+    white: &greycard_core::decode::CameraWhite,
+    chosen: impl FnOnce() -> Option<greycard_core::CameraProfile>,
+) -> Option<greycard_core::TempTint> {
+    let profile = match chosen().filter(|_| !white.monochrome) {
+        Some(p) => p,
+        None => white.profile().ok()?,
     };
     greycard_core::color::temp_tint_of_gains(&profile, white.as_shot_coefficients?).ok()
 }
@@ -212,6 +228,47 @@ mod tests {
                 [Section::Light]
             );
         }
+    }
+
+    /// A monochrome raw's As shot, as a fit reads it, is the one the
+    /// panel shows, whatever DCP is stored for its body; a color raw's
+    /// is still read through the DCP.
+    #[test]
+    fn a_monochrome_raw_s_as_shot_is_the_panel_s_whatever_the_dcp() {
+        use greycard_core::color::{
+            as_shot_temp_tint, profile_from_calibrations, profile_from_frame,
+        };
+        let dir = crate::testing::scratch_dir("mono-as-shot");
+        let mono = dir.join("mono.dng");
+        crate::testing::monochrome_dng(&mono, 32, 24);
+        let color = dir.join("color.dng");
+        crate::testing::linear_dng(&color, 32, 24, "Test", "Cam");
+        let read = |path: &Path| {
+            (
+                greycard_core::decode::white_path(path).unwrap(),
+                greycard_core::decode::decode_path(path).unwrap(),
+            )
+        };
+        let ((mono_white, mono_frame), (color_white, color_frame)) = (read(&mono), read(&color));
+        crate::testing::remove_dir_retry(&dir);
+        let dcp = profile_from_calibrations(&[greycard_core::raw::Calibration {
+            illuminant: 17,
+            color_matrix: vec![0.9, -0.3, -0.1, -0.4, 1.2, 0.2, -0.05, 0.13, 0.5],
+            forward_matrix: None,
+        }])
+        .unwrap();
+
+        let panel =
+            as_shot_temp_tint(&mono_frame, &profile_from_frame(&mono_frame).unwrap()).unwrap();
+        assert!((panel.cct - 6504.0).abs() < 10.0);
+        for chosen in [None, Some(dcp.clone())] {
+            assert_eq!(as_shot_through(&mono_white, || chosen), Some(panel));
+        }
+        let own =
+            as_shot_temp_tint(&color_frame, &profile_from_frame(&color_frame).unwrap()).unwrap();
+        assert_eq!(as_shot_through(&color_white, || None), Some(own));
+        let through = as_shot_through(&color_white, || Some(dcp)).unwrap();
+        assert!((through.cct - own.cct).abs() > 10.0, "{through:?} {own:?}");
     }
 
     /// A preset's white balance as each frame takes it: a light onto a

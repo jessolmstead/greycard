@@ -709,9 +709,12 @@ impl Sidecar {
         self.revise(stamp);
     }
 
-    /// The sidecar as it is written: pretty-printed JSON.
+    /// The sidecar as it is written: pretty-printed JSON, a list of
+    /// numbers kept on one line ([`crate::layout`]). Only the file
+    /// takes this form; an edit's own JSON, which keys develop, does
+    /// not.
     pub fn to_json(&self) -> String {
-        serde_json::to_string_pretty(self).expect("a sidecar serializes")
+        crate::layout::lay_out(&serde_json::to_string(self).expect("a sidecar serializes"))
     }
 
     /// Write the sidecar as it is to `path`, through a temporary file
@@ -1954,5 +1957,126 @@ mod before_versions {
         let again = Sidecar::from_json(&written).unwrap();
         assert_eq!(again, read);
         assert_eq!(again.to_json(), written);
+    }
+
+    /// The file's text against `serde_json`'s pretty form of the same
+    /// sidecar: the same document read back, the compact form's bytes
+    /// once the whitespace is taken out, and no line a lone number.
+    fn laid_out_as_pretty(s: &Sidecar) {
+        let ours = s.to_json();
+        let pretty = serde_json::to_string_pretty(s).unwrap();
+        assert_eq!(
+            Sidecar::from_json(&ours).unwrap(),
+            Sidecar::from_json(&pretty).unwrap()
+        );
+        let tree = |t: &str| serde_json::from_str::<serde_json::Value>(t).unwrap();
+        assert_eq!(tree(&ours), tree(&pretty));
+        let squeezed: String = ours.split('\n').map(str::trim_start).collect();
+        assert_eq!(
+            squeezed.replace("\": ", "\":"),
+            serde_json::to_string(s).unwrap()
+        );
+        assert!(ours.lines().count() <= pretty.lines().count());
+        assert!(
+            !ours
+                .lines()
+                .any(|l| l.trim_end_matches(',').trim().parse::<f64>().is_ok()),
+            "a number on a line of its own"
+        );
+    }
+
+    #[test]
+    fn the_file_keeps_a_list_of_numbers_on_one_line_and_reads_the_same() {
+        use crate::Adjustment;
+        use crate::brush::{Op, Stroke};
+        use crate::mask::{Component, Mask, Pick, Shape};
+        use crate::retouch::{Method, Patch};
+
+        // The fixture, from before versions, as read.
+        let old = Sidecar::from_json(BEFORE_VERSIONS).unwrap();
+        laid_out_as_pretty(&old);
+
+        let stroke = |n: usize, op| Stroke {
+            points: (0..n)
+                .map(|i| [0.05054598 + i as f32 * 1e-3, 0.1175683 - i as f32 * 7e-4])
+                .collect(),
+            radius: 0.031,
+            feather: 0.5,
+            flow: 1.0,
+            op,
+        };
+        let pick = |x, positive| Pick {
+            pos: [x, 0.25],
+            positive,
+        };
+        let shapes = vec![
+            Shape::Linear {
+                from: [0.1, 0.2],
+                to: [0.3, 0.9],
+            },
+            Shape::Radial {
+                center: [0.48, 0.42],
+                radius: [0.12, 0.09],
+                angle: 20.0,
+                feather: 0.5,
+            },
+            Shape::Brush {
+                strokes: vec![stroke(138, Op::Add), stroke(1, Op::Add), stroke(0, Op::Add)],
+            },
+            Shape::Subject {},
+            Shape::Background {},
+            Shape::Sky {
+                picks: vec![pick(0.2, true), pick(0.7, false)],
+            },
+            Shape::Object {
+                picks: vec![pick(0.5, true)],
+                boxes: vec![[[0.1, 0.1], [0.4, 0.6]]],
+            },
+            Shape::LUMINANCE,
+        ];
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.3;
+        edit.adjustments.push(Adjustment {
+            id: 1,
+            name: "Every shape".into(),
+            mask: Mask {
+                components: shapes
+                    .into_iter()
+                    .map(|shape| Component {
+                        shape,
+                        ..Component::default()
+                    })
+                    .collect(),
+                ..Mask::default()
+            },
+            ..Adjustment::default()
+        });
+        for (id, method, source) in [
+            (1, Method::Heal, Some([0.05, -0.03])),
+            (2, Method::Clone, Some([-0.1, 0.2])),
+            (3, Method::Fill, None),
+        ] {
+            edit.retouch.patches.push(Patch {
+                id,
+                method,
+                points: vec![[0.31, 0.77], [0.32, 0.78], [0.33, 0.8]],
+                radius: 0.02,
+                source,
+                ..Patch::default()
+            });
+        }
+        let mut s = old.clone();
+        s.record(edit.clone());
+        s.take_snapshot("Masked", 1_700_000_500);
+        edit.light.exposure = 0.6;
+        s.record(edit);
+        s.new_version(None, None).unwrap();
+        laid_out_as_pretty(&s);
+
+        laid_out_as_pretty(&Sidecar::default());
+
+        // A stroke's points on one line, as the compact form writes them.
+        let points = serde_json::to_string(&stroke(138, Op::Add).points).unwrap();
+        assert!(s.to_json().contains(&format!("\"points\": {points}")));
     }
 }

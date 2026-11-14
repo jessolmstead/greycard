@@ -1743,10 +1743,10 @@ pub(crate) fn start_set(
         preset,
         stems,
     } = set;
-    // The settings' author and copyright, whichever sheet, preset, or
-    // queue entry the set was asked from.
+    // The settings' author and copyright as they stand now, whichever
+    // sheet, preset, or queue entry the set was asked from.
     let settings = export::Settings {
-        rights: st.window.rights.clone(),
+        rights: st.window.rights(),
         ..settings
     };
     st.work.export_choosing = false;

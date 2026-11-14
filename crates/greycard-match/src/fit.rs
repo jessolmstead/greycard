@@ -132,6 +132,10 @@ pub struct Model {
     pub matrix: [[f32; 3]; 3],
     pub curves: Option<Curves>,
     pub lattice: Option<Lattice>,
+    /// Fitted on a monochrome set ([`crate::mono`]): the matrix, curves
+    /// and table are fitted as for color, on the camera's greys, and
+    /// every output is the grey at their lightness, R = G = B.
+    pub monochrome: bool,
 }
 
 impl Default for Model {
@@ -161,6 +165,7 @@ impl Model {
             matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             curves: None,
             lattice: None,
+            monochrome: false,
         }
     }
 
@@ -445,8 +450,19 @@ impl Model {
     }
 
     /// The whole model, encoded in and encoded out, clipped to the
-    /// domain.
+    /// domain. A monochrome model's output is the grey at the
+    /// lightness of what its stages give, exactly R = G = B.
     pub fn apply(&self, x_enc: [f32; 3]) -> [f32; 3] {
+        let out = self.apply_stages(x_enc);
+        if self.monochrome {
+            let l = oklab(decode3(out))[0];
+            return [srgb_encode(crate::mono::grey(l).clamp(0.0, 1.0)); 3];
+        }
+        out
+    }
+
+    /// Matrix, curves and table, encoded in and out, clipped.
+    fn apply_stages(&self, x_enc: [f32; 3]) -> [f32; 3] {
         let out = match &self.lattice {
             None => self.base(x_enc),
             Some(_) => {
@@ -458,8 +474,27 @@ impl Model {
         out.map(|v| v.clamp(0.0, 1.0))
     }
 
-    /// The full fit: matrix, curves, table.
+    /// The full fit: matrix, curves, table. A monochrome set
+    /// ([`crate::mono::is_monochrome`]) is fitted on its camera blocks'
+    /// greys (a camera's slight cast dropped) and renders every color
+    /// as a grey: where no pair reaches, at the lightness the stages
+    /// give, and with no color whatever the develop's was.
     pub fn fit(x_enc: &[[f32; 3]], y_enc: &[[f32; 3]], params: LutParams) -> Model {
+        if crate::mono::is_monochrome(x_enc, y_enc) {
+            let greys: Vec<[f32; 3]> = y_enc
+                .iter()
+                .map(|y| encode3([crate::mono::grey(oklab(decode3(*y))[0]); 3]))
+                .collect();
+            return Model {
+                monochrome: true,
+                ..Model::fit_stages(x_enc, &greys, params)
+            };
+        }
+        Model::fit_stages(x_enc, y_enc, params)
+    }
+
+    /// Matrix, curves and table, as for color.
+    fn fit_stages(x_enc: &[[f32; 3]], y_enc: &[[f32; 3]], params: LutParams) -> Model {
         let x_lin: Vec<[f32; 3]> = x_enc.iter().map(|v| decode3(*v)).collect();
         let y_lin: Vec<[f32; 3]> = y_enc.iter().map(|v| decode3(*v)).collect();
         let mut m = Model::identity();
@@ -957,6 +992,200 @@ mod tests {
                 ]
             })
             .collect()
+    }
+
+    /// A portrait shoot's colors: skin across its lightness, and
+    /// every hue muted to a fifth, so nothing saturated is sampled.
+    fn portrait(n: usize) -> Vec<[f32; 3]> {
+        colors(n)
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let g = (c[0] + c[1] + c[2]) / 3.0;
+                if i % 2 == 0 {
+                    let t = 0.15 + 0.8 * c[0];
+                    [t, t * (0.80 + 0.06 * c[1]), t * (0.68 + 0.08 * c[2])]
+                } else {
+                    c.map(|v| g + 0.2 * (v - g))
+                }
+            })
+            .collect()
+    }
+
+    /// The camera's monochrome: its own channel weights in linear
+    /// light, then an S-curve in the encoding, grey out.
+    fn mono_camera(x: [f32; 3]) -> [f32; 3] {
+        let lin = decode3(x);
+        let e = srgb_encode((0.45 * lin[0] + 0.45 * lin[1] + 0.10 * lin[2]).clamp(0.0, 1.0));
+        [e - 0.3 * e * (1.0 - e) * (1.0 - 2.0 * e); 3]
+    }
+
+    /// Saturated colors no portrait shows.
+    const SATURATED: [[f32; 3]; 6] = [
+        [0.9, 0.15, 0.15],
+        [0.15, 0.15, 0.9],
+        [0.15, 0.8, 0.15],
+        [0.85, 0.2, 0.85],
+        [0.9, 0.8, 0.1],
+        [0.1, 0.8, 0.85],
+    ];
+
+    fn chroma_of(e: [f32; 3]) -> f32 {
+        let l = oklab(decode3(e));
+        l[1].hypot(l[2])
+    }
+
+    fn lightness(e: [f32; 3]) -> f32 {
+        oklab(decode3(e))[0]
+    }
+
+    /// Issue 144: a monochrome style fitted on a portrait shoot, whose
+    /// muted colors say nothing of a saturated red or blue. Fitted as
+    /// color, those kept much of the develop's own color (the matrix's
+    /// ridge toward identity, and the table's pull to the matrix and
+    /// curves where no pair reaches); fitted as monochrome, every node
+    /// is a grey, at the camera's lightness where the shoot has data.
+    #[test]
+    fn a_monochrome_set_renders_every_color_grey() {
+        let x = portrait(6000);
+        let y: Vec<[f32; 3]> = x.iter().map(|c| mono_camera(*c)).collect();
+        let reading = crate::mono::Reading::of(&x, &y);
+        eprintln!("the portrait shoot reads {reading:?}");
+        assert!(reading.monochrome());
+        let before = Model::fit_stages(&x, &y, LutParams::default());
+        let leak: Vec<f32> = SATURATED
+            .iter()
+            .map(|s| chroma_of(before.apply(*s)))
+            .collect();
+        eprintln!("fitted as color, saturated colors keep chroma {leak:.4?}");
+        assert!(leak.iter().all(|c| *c > 0.04), "{leak:?}");
+
+        let m = Model::fit(&x, &y, LutParams::default());
+        assert!(m.monochrome);
+        let n = LUT_SIZE;
+        for i in 0..n * n * n {
+            let o = m.apply(node_color(i, n));
+            assert!(o[0] == o[1] && o[1] == o[2], "node {i}: {o:?}");
+        }
+        assert!(m.apply([1.0; 3]).iter().all(|v| (v - 1.0).abs() < 1e-6));
+        assert!(SATURATED.iter().all(|s| chroma_of(m.apply(*s)) < 1e-4));
+        // Lightness where the shoot has data: the camera's, as closely
+        // as the color fit holds it, under a fifth of a visible step on
+        // average and under one at the 99th percentile.
+        let errors = |m: &Model| {
+            let mut err: Vec<f32> = x
+                .iter()
+                .zip(&y)
+                .map(|(c, t)| (lightness(m.apply(*c)) - lightness(*t)).abs())
+                .collect();
+            err.sort_by(f32::total_cmp);
+            let mean = err.iter().sum::<f32>() / err.len() as f32;
+            (mean, err[err.len() * 99 / 100])
+        };
+        let ((mean, p99), (was, was99)) = (errors(&m), errors(&before));
+        eprintln!(
+            "lightness on the data: mean {mean:.4}, 99th percentile {p99:.4}; \
+             as color {was:.4}, {was99:.4}"
+        );
+        assert!(mean < 0.004 && p99 < 0.02, "{mean} {p99}");
+        assert!(mean < was + 0.0005 && p99 < was99 + 0.002, "{mean} {p99}");
+        // Where it has none, the lightness the color fit would have
+        // given: the monochrome fit changes the color there, not the
+        // lightness.
+        for s in SATURATED {
+            let (o, c) = (lightness(m.apply(s)), lightness(before.apply(s)));
+            eprintln!(
+                "{s:?}: {o:.4}, as color {c:.4}, the camera's {:.4}",
+                lightness(mono_camera(s))
+            );
+            assert!((o - c).abs() < 0.002, "{s:?}: {o} against {c}");
+        }
+        // The grey check: no cast to drift, and the same lightness
+        // along the axis as fitted as color (whose fall at black, where
+        // this shoot has nothing, is the synthetic set's own).
+        let (axis, was) = (m.grey_axis(), before.grey_axis());
+        assert!(axis.drift < 1e-5, "{axis:?}");
+        assert!(
+            (axis.fall - was.fall).abs() < 1e-4,
+            "{axis:?} against {was:?}"
+        );
+    }
+
+    /// A camera's slight cast on its greys is still a monochrome set,
+    /// fitted to the same lightness and rendered neutral.
+    #[test]
+    fn a_slight_cast_is_monochrome_and_dropped() {
+        let x = portrait(3000);
+        let warm: Vec<[f32; 3]> = x
+            .iter()
+            .map(|c| {
+                let l = lightness(mono_camera(*c));
+                encode3(from_oklab([l, 0.002, 0.004]))
+            })
+            .collect();
+        assert!(crate::mono::is_monochrome(&x, &warm));
+        let m = Model::fit(&x, &warm, LutParams::default());
+        assert!(m.monochrome);
+        let o = m.apply([0.5, 0.4, 0.35]);
+        assert!(o[0] == o[1] && o[1] == o[2], "{o:?}");
+    }
+
+    /// A color set takes the color fit, exactly as before.
+    #[test]
+    fn a_color_set_fits_as_before() {
+        let x = portrait(3000);
+        let y: Vec<[f32; 3]> = x
+            .iter()
+            .map(|v| [(v[0] * 1.04).min(1.0), v[1], v[2] * 0.95])
+            .collect();
+        assert!(!crate::mono::is_monochrome(&x, &y));
+        let m = Model::fit(&x, &y, LutParams::default());
+        assert!(!m.monochrome);
+        assert_eq!(m, Model::fit_stages(&x, &y, LutParams::default()));
+    }
+
+    /// A set grey on both sides takes the color fit, as before.
+    #[test]
+    fn a_set_grey_on_both_sides_fits_as_color() {
+        // A color style on fog: the develop's blocks near grey too, and
+        // the camera's a little brighter. Nothing says the style drops
+        // color, so it is not fitted as a grey.
+        let x: Vec<[f32; 3]> = colors(3000)
+            .into_iter()
+            .map(|c| {
+                let g = (c[0] + c[1] + c[2]) / 3.0;
+                c.map(|v| g + 0.02 * (v - g))
+            })
+            .collect();
+        let y: Vec<[f32; 3]> = x.iter().map(|c| c.map(|v| (v * 1.05).min(1.0))).collect();
+        let reading = crate::mono::Reading::of(&x, &y);
+        assert!(
+            reading.camera.unwrap() < crate::mono::MONO_CHROMA,
+            "{reading:?}"
+        );
+        let m = Model::fit(&x, &y, LutParams::default());
+        assert!(!m.monochrome, "{reading:?}");
+        assert_eq!(m, Model::fit_stages(&x, &y, LutParams::default()));
+    }
+
+    /// A sepia set, its chroma a function of lightness along one hue,
+    /// is not monochrome, and fits as a color set does.
+    #[test]
+    fn a_sepia_set_is_not_monochrome() {
+        let x = portrait(3000);
+        let y: Vec<[f32; 3]> = x
+            .iter()
+            .map(|c| {
+                let l = lightness(mono_camera(*c));
+                let s = 4.0 * l * (1.0 - l) * 0.03;
+                encode3(from_oklab([l, 0.4 * s, s]))
+            })
+            .collect();
+        let p = crate::mono::chroma_percentile(&y);
+        assert!(!crate::mono::is_monochrome(&x, &y), "{p:?}");
+        let m = Model::fit(&x, &y, LutParams::default());
+        assert!(!m.monochrome);
+        assert_eq!(m, Model::fit_stages(&x, &y, LutParams::default()));
     }
 
     #[test]

@@ -388,7 +388,7 @@ fn split_at(heights: &[usize]) -> usize {
 
 /// greycard-edit's section and part titles, which the sheet shows
 /// through `text`, marked here for the catalog.
-const _MARK_SECTIONS: [&str; 19] = [
+const _MARK_SECTIONS: [&str; 20] = [
     // Sync sheet: a section of the edit
     crate::marked::tr!("Light"),
     crate::marked::tr!("Display curve"),
@@ -396,6 +396,7 @@ const _MARK_SECTIONS: [&str; 19] = [
     crate::marked::tr!("Noise"),
     crate::marked::tr!("Detail"),
     crate::marked::tr!("Sharpen"),
+    crate::marked::tr!("Output sharpen"),
     crate::marked::tr!("Curves"),
     crate::marked::tr!("Color mixer"),
     crate::marked::tr!("Color"),
@@ -439,7 +440,7 @@ const _MARK_PARTS: [&str; 42] = [
     // Sync sheet: the black and white filter's part
     crate::marked::tr!("Weights"),
     crate::marked::tr!("Strength"),
-    crate::marked::tr!("Mid-tones"),
+    crate::marked::tr!("Midtones"),
     crate::marked::tr!("Balance"),
     crate::marked::tr!("Profile"),
     crate::marked::tr!("Vignetting"),

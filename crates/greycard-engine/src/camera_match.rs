@@ -1310,6 +1310,31 @@ pub(crate) fn fit_group_counted(
     }
 }
 
+/// Say in the log how a group's set reads for the monochrome fit
+/// ([`greycard_match::mono`]): a line when it is fitted as a grey, and
+/// one at debug when either side is near its bound, so a misreading
+/// can be told from the log.
+fn log_monochrome(name: &str, x: &[[f32; 3]], y: &[[f32; 3]]) {
+    let r = greycard_match::mono::Reading::of(x, y);
+    let (camera, develop) = (r.camera.unwrap_or(0.0), r.develop.unwrap_or(0.0));
+    if r.monochrome() {
+        tracing::info!(
+            "camera match {name}: fitted as monochrome; chroma at the 99th percentile {camera:.4} \
+             on the camera's side (under {}), {develop:.4} on the develop's (over {})",
+            greycard_match::mono::MONO_CHROMA,
+            greycard_match::mono::DEVELOP_CHROMA
+        );
+    } else if r.near() {
+        tracing::debug!(
+            "camera match {name}: fitted as color, near the monochrome bounds; chroma at the 99th \
+             percentile {camera:.4} on the camera's side (bound {}), {develop:.4} on the develop's \
+             (bound {})",
+            greycard_match::mono::MONO_CHROMA,
+            greycard_match::mono::DEVELOP_CHROMA
+        );
+    }
+}
+
 /// Whether a fitted table may be written: its greys rendered
 /// alike, one cast or none along the axis, and its lightness rising
 /// ([`greycard_match::grey`]). The log says the numbers either way.
@@ -1557,6 +1582,7 @@ fn run_with(
         if matches!(plans[i], Plan::Donor) {
             if kept.len() >= MIN_FRAMES {
                 let (x, y, _) = stacked(&kept);
+                log_monochrome(&name, &x, &y);
                 let model = Model::fit(&x, &y, LutParams::default());
                 if !greys_hold(&name, &model) {
                     result.outcome = Outcome::Refused(TINTS_GREYS.to_string());
@@ -1592,6 +1618,7 @@ fn run_with(
             && kept.len() >= MIN_FRAMES
         {
             let (x, y, ids) = stacked(&kept);
+            log_monochrome(&name, &x, &y);
             let GroupFit {
                 model,
                 fitted: fitted_de,

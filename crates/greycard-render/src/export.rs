@@ -400,9 +400,9 @@ pub enum Metadata {
     /// All of that but the edit: a picture to hand on without the
     /// recipe.
     NoEdit,
-    /// Nothing but the profile: no EXIF, no XMP. The camera, the time
-    /// and any location stay behind. The user's author and copyright,
-    /// when said ([`Settings::rights`]), are still written, alone.
+    /// Nothing but the profile: no EXIF, no XMP. The camera, the time,
+    /// any location, and the user's own author and copyright
+    /// ([`Settings::rights`]) stay behind.
     None,
 }
 
@@ -445,9 +445,9 @@ pub struct Settings {
     /// border when there is one.
     pub watermark: Option<Mark>,
     /// The user's author and copyright, over the camera's; written
-    /// whatever `metadata` says, since they are the user's own word
-    /// and not a detail of the exposure. Not the sheet's: the
-    /// settings' or the command line's, laid on by the caller.
+    /// under every `metadata` but [`Metadata::None`], which writes
+    /// nothing. Not the sheet's: the settings' or the command line's,
+    /// laid on by the caller.
     pub rights: Rights,
 }
 
@@ -897,10 +897,12 @@ pub fn reads_guide(edit: &greycard_edit::Edit) -> bool {
         t.highlights != 0.0 || t.midtones != 0.0 || t.shadows != 0.0 || t.whites != 0.0
     };
     set(&edit.look().light.effective().tone)
-        || edit
-            .adjustments
-            .iter()
-            .any(|a| a.enabled && !a.mask.is_empty() && set(&a.look.light.effective().tone))
+        || edit.adjustments.iter().any(|a| {
+            a.enabled
+                && a.strength() > 0.0
+                && !a.mask.is_empty()
+                && set(&a.look.light.effective().tone)
+        })
 }
 
 /// The image no larger than `long_edge` on its long side, in linear
@@ -1008,6 +1010,7 @@ impl Settings {
 /// the source's EXIF carried over when `source` gives it, and the
 /// export's own account of itself in the XMP; the settings' rights
 /// over the source's, or alone when there is nothing else to carry.
+/// Under [`Metadata::None`], neither.
 pub fn write(
     rendered: &Rendered,
     settings: &Settings,
@@ -1041,11 +1044,13 @@ pub fn write(
         edit,
         rights: &settings.rights,
     });
-    // With no source's tags to carry (Metadata None, or a source
-    // without them), the user's rights alone, when said.
+    // With no source's tags to carry, the user's rights alone, when
+    // said; under Metadata None nothing, theirs included.
     let tags = match &provenance {
         Some(p) => Tags::Provenance(p),
-        None if !settings.rights.is_empty() => Tags::Rights(&settings.rights),
+        None if settings.metadata != Metadata::None && !settings.rights.is_empty() => {
+            Tags::Rights(&settings.rights)
+        }
         None => Tags::Nothing,
     };
     let payload = match tags {
@@ -1653,6 +1658,163 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// A mask with every section of a look moved, over a feathered
+    /// linear shape, the picture's planes and guide made from it: the
+    /// export, sixteen bits, at an opacity.
+    fn opacity_render(
+        image: &WorkingImage,
+        look: &greycard_edit::Look,
+        opacity: f32,
+        enabled: bool,
+    ) -> Vec<u16> {
+        use greycard_edit::mask::{Component, Mask, Shape};
+        let mut edit = greycard_edit::Edit::default();
+        edit.adjustments.push(greycard_edit::Adjustment {
+            id: 1,
+            enabled,
+            mask: Mask {
+                components: vec![Component {
+                    shape: Shape::Linear {
+                        from: [0.2, 0.0],
+                        to: [0.6, 0.0],
+                    },
+                    ..Component::default()
+                }],
+                invert: true,
+                ..Default::default()
+            },
+            look: look.clone(),
+            opacity,
+            ..Default::default()
+        });
+        let (w, h) = (image.width, image.height);
+        let wants = greycard_edit::DetailWants {
+            texture: true,
+            clarity: true,
+            haze: true,
+            structure: true,
+            sharpen: false,
+            sample: false,
+        };
+        let planes = crate::detail::DetailPlanes::make(image, None, 1.0, wants).unwrap();
+        let bands = planes.to_image();
+        let guide = finish::guide_plane(image);
+        let shift = crate::testing::white_shift();
+        let settings = Settings {
+            format: Format::Tiff,
+            ..Settings::default()
+        };
+        let rendered = render(
+            image,
+            &edit,
+            &greycard_edit::NoStores,
+            (w as u32, h as u32),
+            &settings,
+            &Default::default(),
+            1.0,
+            Some(&guide),
+            finish::Source::SCENE,
+            Some(&shift),
+            Some((&bands, &planes.meta)),
+        );
+        let Pixels::Sixteen(p) = rendered.pixels else {
+            panic!("a TIFF is sixteen bits")
+        };
+        p
+    }
+
+    /// A colored ramp with some texture, for the opacity checks.
+    fn opacity_frame() -> WorkingImage {
+        let (w, h) = (96usize, 48usize);
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let v = 0.02 + 0.5 * x as f32 / w as f32;
+                let t = if (x / 3 + y / 3) % 2 == 0 { 1.1 } else { 0.9 };
+                let c = y as f32 / h as f32;
+                data.extend_from_slice(&[v * t * (0.6 + c), v * t, v * t * (1.4 - c)]);
+            }
+        }
+        WorkingImage {
+            width: w,
+            height: h,
+            data,
+        }
+    }
+
+    /// A mask's Opacity scales the weight its look goes on by, after
+    /// the invert and the feather: at none the export is the mask
+    /// switched off, to the bit, with every section of the look moved
+    /// (Light, white balance, curves and grading, mixer, color, tint,
+    /// Detail); at a share it is between, further from the picture
+    /// without it the more there is; and on exposure alone each pixel
+    /// moves one way as it rises.
+    #[test]
+    fn a_masks_opacity_scales_its_look() {
+        use greycard_edit::grading::Wheel;
+        let image = opacity_frame();
+        let mut look = greycard_edit::Look::default();
+        look.light.exposure = 0.8;
+        look.light.tone.contrast = 1.3;
+        look.light.tone.highlights = -0.5;
+        look.light.tone.midtones = 0.4;
+        look.light.tone.shadows = 0.6;
+        look.light.tone.whites = 0.3;
+        look.light.tone.blacks = -0.1;
+        look.white_balance = greycard_edit::LocalWhite::Relative {
+            mired: -40.0,
+            tint: 0.004,
+        };
+        look.curves.parametric.lights = 0.3;
+        look.grading.enabled = true;
+        look.grading.shadows = Wheel {
+            hue: 220.0,
+            saturation: 0.5,
+        };
+        look.mixer.enabled = true;
+        look.mixer.saturation[3] = 0.5;
+        look.mixer.luminance[0] = -0.4;
+        look.color.enabled = true;
+        look.color.saturation = 0.4;
+        look.color.vibrance = -0.3;
+        look.tint.hue = 40.0;
+        look.tint.amount = 0.3;
+        look.detail = greycard_edit::Detail {
+            enabled: true,
+            texture: 0.6,
+            clarity: 0.5,
+            structure: -0.4,
+            dehaze: 0.4,
+            sharpen: 0.0,
+        };
+        let off = opacity_render(&image, &look, 1.0, false);
+        assert_eq!(opacity_render(&image, &look, 0.0, true), off, "none is off");
+        let mean = |a: &[u16]| {
+            a.iter()
+                .zip(&off)
+                .map(|(a, b)| (f64::from(*a) - f64::from(*b)).abs())
+                .sum::<f64>()
+                / a.len() as f64
+        };
+        let shares: Vec<f64> = [0.25, 0.5, 0.75, 1.0]
+            .iter()
+            .map(|&o| mean(&opacity_render(&image, &look, o, true)))
+            .collect();
+        assert!(shares[0] > 0.0, "{shares:?}");
+        assert!(shares.windows(2).all(|p| p[0] < p[1]), "{shares:?}");
+        // Exposure alone: every channel of every pixel walks one way.
+        let mut lift = greycard_edit::Look::default();
+        lift.light.exposure = 1.0;
+        let steps: Vec<Vec<u16>> = [0.0, 0.3, 0.5, 0.8, 1.0]
+            .iter()
+            .map(|&o| opacity_render(&image, &lift, o, true))
+            .collect();
+        for p in steps.windows(2) {
+            assert!(p[0].iter().zip(&p[1]).all(|(a, b)| a <= b));
+        }
+        assert!(steps[0] != steps[2] && steps[2] != steps[4]);
+    }
+
     /// With the Detail section on, a range mask reads the picture from
     /// before it, handed beside the planes: a Dehaze that moves a ramp's
     /// lightness across a window's edges moves nothing of the window,
@@ -2143,8 +2305,8 @@ mod tests {
     /// The user's author and copyright, in every format and under every
     /// policy, read back by our own picture reader as the EXIF's
     /// `Artist` and `Copyright` and found in the XMP as `dc:creator` and
-    /// `dc:rights`: over the camera's own, and alone under None. With
-    /// none said, the camera's travel as before, and under None nothing.
+    /// `dc:rights`, over the camera's own. With none said, the camera's
+    /// travel as before. Under None nothing, said or not.
     #[test]
     fn the_users_rights_are_in_every_format_under_every_policy() {
         let (w, h) = (24usize, 16usize);
@@ -2229,15 +2391,16 @@ mod tests {
                     "<rdf:li xml:lang=\"x-default\">© 2026 Zoë Ångström</rdf:li>",
                 );
             match (said, policy) {
+                (_, Metadata::None) => {
+                    assert_eq!((artist, copyright), (None, None), "{what}");
+                    assert!(!carries(&bytes, "Camera Owner") && !dc, "{what}");
+                    assert!(!carries(&bytes, "Zoë Ångström"), "{what}");
+                }
                 (true, _) => {
                     assert_eq!(artist, Some("Zoë Ångström"), "{what}");
                     assert_eq!(copyright, Some("© 2026 Zoë Ångström"), "{what}");
                     assert!(dc, "{what}");
                     assert!(!carries(&bytes, "Camera Owner"), "{what}");
-                }
-                (false, Metadata::None) => {
-                    assert_eq!((artist, copyright), (None, None), "{what}");
-                    assert!(!carries(&bytes, "Camera Owner") && !dc, "{what}");
                 }
                 (false, _) => {
                     assert_eq!(artist, Some("Camera Owner"), "{what}");
@@ -2274,7 +2437,119 @@ mod tests {
         write(&rendered, &settings, &path, None, &origin).unwrap();
         let back = greycard_core::picture::decode_picture_path(&path).unwrap();
         assert_eq!(back.metadata.exif.artist.as_deref(), Some("Zoë Ångström"));
+        // And under None, with no source either, nothing.
+        let settings = Settings {
+            metadata: Metadata::None,
+            ..settings
+        };
+        let path = dir.join("no-source-none.jpg");
+        write(&rendered, &settings, &path, None, &origin).unwrap();
+        let back = greycard_core::picture::decode_picture_path(&path).unwrap();
+        assert_eq!(back.metadata.exif.artist, None);
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// An export under Metadata None in `format`, with the user's
+    /// author and copyright said and a camera that names its own, from
+    /// a source and from none: the file carries neither, no EXIF and
+    /// no XMP at all.
+    fn none_carries_no_rights(format: Format) {
+        let (w, h) = (24usize, 16usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: vec![0.2; w * h * 3],
+        };
+        let mut metadata = RawMetadata {
+            exif: Default::default(),
+            model: "EOS R6m2".into(),
+            make: "Canon".into(),
+            lens: None,
+            unique_image_id: None,
+            rating: None,
+        };
+        metadata.exif.artist = Some("Camera Owner".into());
+        metadata.exif.copyright = Some("camera notice".into());
+        let edit = greycard_edit::Edit::default();
+        let dir = scratch(&format!("none-rights-{}", format.extension()));
+        let settings = Settings {
+            metadata: Metadata::None,
+            format,
+            rights: Rights::new("Zoë Ångström", "© 2026 Zoë Ångström"),
+            ..Settings::default()
+        };
+        let rendered = render(
+            &image,
+            &edit,
+            &greycard_edit::NoStores,
+            (w as u32, h as u32),
+            &settings,
+            &Default::default(),
+            1.0,
+            None,
+            finish::Source::SCENE,
+            None,
+            None,
+        );
+        let carries =
+            |bytes: &[u8], what: &str| bytes.windows(what.len()).any(|w| w == what.as_bytes());
+        for (i, source) in [Some(&metadata), None].into_iter().enumerate() {
+            let path = dir.join(format!("none-{i}.{}", format.extension()));
+            write(&rendered, &settings, &path, source, &Origin::default()).unwrap();
+            let what = format!("{} from source {}", format.name(), source.is_some());
+            let bytes = std::fs::read(&path).unwrap();
+            for word in [
+                "Zoë Ångström",
+                "Camera Owner",
+                "camera notice",
+                "dc:creator",
+                "dc:rights",
+                "x:xmpmeta",
+            ] {
+                assert!(!carries(&bytes, word), "{what}: {word}");
+            }
+            let back = greycard_core::picture::decode_picture_path(&path)
+                .unwrap_or_else(|e| panic!("{what}: {e}"));
+            assert_eq!(back.metadata.exif.artist, None, "{what}");
+            assert_eq!(back.metadata.exif.copyright, None, "{what}");
+            if format != Format::Tiff {
+                let mut decoder = image::ImageReader::open(&path)
+                    .unwrap()
+                    .into_decoder()
+                    .unwrap();
+                assert_eq!(
+                    image::ImageDecoder::exif_metadata(&mut decoder).unwrap(),
+                    None,
+                    "{what}"
+                );
+                assert_eq!(
+                    image::ImageDecoder::xmp_metadata(&mut decoder).unwrap(),
+                    None,
+                    "{what}"
+                );
+            }
+        }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    #[test]
+    fn a_jpeg_under_none_carries_no_author_or_copyright() {
+        none_carries_no_rights(Format::Jpeg);
+    }
+
+    #[test]
+    fn a_png_under_none_carries_no_author_or_copyright() {
+        none_carries_no_rights(Format::Png);
+    }
+
+    #[test]
+    fn a_tiff_under_none_carries_no_author_or_copyright() {
+        none_carries_no_rights(Format::Tiff);
+    }
+
+    #[test]
+    fn a_webp_under_none_carries_no_author_or_copyright() {
+        none_carries_no_rights(Format::WebP);
     }
 
     /// A WebP is lossless: every 8-bit value comes back as written,

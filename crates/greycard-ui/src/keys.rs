@@ -1370,6 +1370,22 @@ pub(crate) fn install(app: &App) {
     show(app, "");
     show_bindings(app);
     {
+        // A sheet's focus going round its ends: Slint has no focus
+        // move of its own for the window's code to call, only the
+        // walk a Tab or a Shift+Tab starts.
+        let app_weak = app.as_weak();
+        app.on_focus_step(move |forward| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let text: SharedString = if forward { Key::Tab } else { Key::Backtab }.into();
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::KeyPressed { text: text.clone() });
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::KeyReleased { text });
+        });
+    }
+    {
         let app_weak = app.as_weak();
         app.on_keys_searched(move |query| {
             if let Some(app) = app_weak.upgrade() {
@@ -3640,5 +3656,274 @@ mod tests {
         press(&app, "-");
         assert_eq!(steps.get(), 1, "the grid's tiles");
         assert!((zoom() - 1.0).abs() < 1e-4, "the grid zoomed the Loupe");
+    }
+
+    /// Tab, Shift+Tab, and the arrows `rounds` times over under an
+    /// open sheet, as a hand walking the sheet would: the edit, the
+    /// frame, its history, and the panes behind stay as they were, and
+    /// the sheet stays open. With `reopen`, Escape closes the sheet
+    /// wherever the walk has the focus, at every step: the sheet is
+    /// opened again by it and walked back to the same step.
+    fn walk_holds(
+        app: &App,
+        state: &crate::Shared,
+        open: impl Fn(&App) -> bool,
+        reopen: Option<fn(&App, bool)>,
+        back: bool,
+        rounds: usize,
+    ) {
+        let tab = |app: &App| {
+            if back {
+                let tab: slint::SharedString = Key::Tab.into();
+                shifted(app, &tab);
+            } else {
+                press(app, Key::Tab);
+            }
+        };
+        let look = crate::panel::edit::read_look(app);
+        let current = state.borrow().current;
+        let states = state.borrow().sidecars[0].states();
+        let panes = (
+            app.get_left_hidden(),
+            app.get_right_hidden(),
+            app.get_strip_hidden(),
+        );
+        for i in 0..rounds {
+            tab(app);
+            for key in [
+                Key::UpArrow,
+                Key::RightArrow,
+                Key::DownArrow,
+                Key::LeftArrow,
+            ] {
+                press(app, key);
+            }
+            assert!(open(app), "the sheet closed at Tab {i}");
+            assert_eq!(
+                crate::panel::edit::read_look(app),
+                look,
+                "the edit changed at Tab {i}"
+            );
+            assert_eq!(
+                state.borrow().current,
+                current,
+                "the frame moved at Tab {i}"
+            );
+            assert_eq!(
+                (
+                    app.get_left_hidden(),
+                    app.get_right_hidden(),
+                    app.get_strip_hidden()
+                ),
+                panes,
+                "the panes moved at Tab {i}"
+            );
+            slint::platform::update_timers_and_animations();
+            if let Some(reopen) = reopen {
+                // Afresh, with Tab alone to the same step, so no arrow
+                // has opened a list or a question that Escape answers
+                // first; then again, to go on.
+                let walk_to = |app: &App| {
+                    reopen(app, false);
+                    slint::platform::update_timers_and_animations();
+                    reopen(app, true);
+                    slint::platform::update_timers_and_animations();
+                    for _ in 0..=i {
+                        tab(app);
+                    }
+                };
+                walk_to(app);
+                press(app, Key::Escape);
+                slint::platform::update_timers_and_animations();
+                // A slider lets go of the keys at the first, as a field
+                // does, and the sheet closes at the second.
+                if open(app) {
+                    press(app, Key::Escape);
+                    slint::platform::update_timers_and_animations();
+                }
+                assert!(!open(app), "two Escapes left the sheet open at Tab {i}");
+                walk_to(app);
+            }
+        }
+        // Past the panel's rest, so a change would have been saved.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(2));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(state.borrow().sidecars[0].states(), states, "history");
+    }
+
+    /// Every sheet holds the focus as Settings does, both ways round:
+    /// those that take the focus as they open and those the window's
+    /// keys serve (import, Lightroom, RawTherapee, match, model, and
+    /// backup), whose Tab the keys send into the sheet. Each opens
+    /// over a panel slider holding the focus, as a click leaves it.
+    #[test]
+    fn every_sheet_holds_the_focus() {
+        macro_rules! sheets {
+            ($($name:literal: $set:ident, $get:ident;)*) => {
+                [$(($name, App::$set as fn(&App, bool), App::$get as fn(&App) -> bool)),*]
+            };
+        }
+        let sheets = sheets! {
+            "model": set_fetch_open, get_fetch_open;
+            "rejects": set_rejects_open, get_rejects_open;
+            "delete": set_delete_open, get_delete_open;
+            "look remove": set_look_remove_open, get_look_remove_open;
+            "look rename": set_look_rename_open, get_look_rename_open;
+            "time shift": set_time_shift_open, get_time_shift_open;
+            "overwrite": set_overwrite_open, get_overwrite_open;
+            "backup": set_archive_open, get_archive_open;
+            "archive rejects": set_archive_rejects_open, get_archive_rejects_open;
+            "match": set_match_open, get_match_open;
+            "preset": set_preset_open, get_preset_open;
+            "preset report": set_preset_report_open, get_preset_report_open;
+            "Lightroom": set_lr_open, get_lr_open;
+            "RawTherapee": set_rt_open, get_rt_open;
+            "collection": set_collection_sheet_open, get_collection_sheet_open;
+            "preset group": set_preset_group_sheet_open, get_preset_group_sheet_open;
+            "root": set_root_sheet_open, get_root_sheet_open;
+            "sync": set_sync_open, get_sync_open;
+            "export": set_export_open, get_export_open;
+            "import": set_import_open, get_import_open;
+            "settings": set_settings_open, get_settings_open;
+            "keys": set_keys_open, get_keys_open;
+        };
+        for (name, set, get) in sheets {
+            for back in [false, true] {
+                let (app, state, _worker) = develop_window();
+                let (at, size) = crate::testing::labeled(&app, "Exposure");
+                crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+                set(&app, true);
+                crate::testing::settle(&app);
+                assert!(get(&app), "{name} opened");
+                let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    walk_holds(&app, &state, get, Some(set), back, 8)
+                }));
+                if let Err(e) = held {
+                    let said = e.downcast_ref::<String>().cloned().unwrap_or_default();
+                    panic!("the {name} sheet, back {back}: {said}");
+                }
+                set(&app, false);
+                crate::testing::settle(&app);
+                press(&app, "g");
+                assert!(app.get_grid_open(), "the keys the window's after {name}");
+            }
+        }
+    }
+
+    /// The Settings sheet holds the focus: Tab and Shift+Tab go round
+    /// its controls and never out onto the panel behind, where the
+    /// arrows would move a slider (§658's finding). Escape still
+    /// closes it, and the window has its keys again.
+    #[test]
+    fn the_settings_sheet_holds_the_focus() {
+        for back in [false, true] {
+            let (app, state, _worker) = develop_window();
+            app.set_settings_category("Editing".into());
+            app.invoke_settings_asked();
+            crate::testing::settle(&app);
+            walk_holds(&app, &state, |a| a.get_settings_open(), None, back, 80);
+            press(&app, Key::Escape);
+            assert!(!app.get_settings_open());
+            slint::platform::update_timers_and_animations();
+            press(&app, "g");
+            assert!(app.get_grid_open(), "G is the window's");
+        }
+    }
+
+    /// A sheet closed from Rust over another, with the focus on its
+    /// control: the keys go to the window, so Escape closes the sheet
+    /// beneath, after one Tab into the top sheet or two.
+    #[test]
+    fn a_sheet_closed_over_another_leaves_the_keys_to_the_window() {
+        type Pair = (
+            &'static str,
+            fn(&App, bool),
+            fn(&App) -> bool,
+            fn(&App, bool),
+        );
+        let pairs: [Pair; 4] = [
+            (
+                "settings, model",
+                App::set_settings_open,
+                App::get_settings_open,
+                App::set_fetch_open,
+            ),
+            (
+                "settings, keys",
+                App::set_settings_open,
+                App::get_settings_open,
+                App::set_keys_open,
+            ),
+            (
+                "export, overwrite",
+                App::set_export_open,
+                App::get_export_open,
+                App::set_overwrite_open,
+            ),
+            (
+                "import, model",
+                App::set_import_open,
+                App::get_import_open,
+                App::set_fetch_open,
+            ),
+        ];
+        for (name, below, below_open, top) in pairs {
+            for tabs in 1..=2 {
+                let (app, _state, _worker) = develop_window();
+                below(&app, true);
+                crate::testing::settle(&app);
+                top(&app, true);
+                crate::testing::settle(&app);
+                for _ in 0..tabs {
+                    press(&app, Key::Tab);
+                }
+                top(&app, false);
+                crate::testing::settle(&app);
+                assert!(below_open(&app), "{name}: the sheet beneath stays");
+                press(&app, Key::Escape);
+                crate::testing::settle(&app);
+                assert!(!below_open(&app), "{name}, {tabs} Tabs: Escape closed it");
+            }
+        }
+    }
+
+    /// A sheet with no control the focus can take (the Lightroom
+    /// sheet's every button off while its import runs): Tab goes round
+    /// to nothing and leaves the keys with the window, whose Escape
+    /// serves the sheet once the import lets it.
+    #[test]
+    fn a_sheet_with_no_control_leaves_the_keys_to_the_window() {
+        for back in [false, true] {
+            for tabs in 1..=4 {
+                let (app, _state, _worker) = develop_window();
+                let cancels = Rc::new(std::cell::Cell::new(0));
+                let counted = cancels.clone();
+                app.on_lr_cancel(move || counted.set(counted.get() + 1));
+                app.set_lr_step(1);
+                app.set_lr_busy(true);
+                app.set_lr_running(true);
+                app.set_lr_open(true);
+                crate::testing::settle(&app);
+                for _ in 0..tabs {
+                    if back {
+                        let tab: slint::SharedString = Key::Tab.into();
+                        shifted(&app, &tab);
+                    } else {
+                        press(&app, Key::Tab);
+                    }
+                }
+                // The import over, its buttons on again, untouched.
+                app.set_lr_running(false);
+                app.set_lr_busy(false);
+                crate::testing::settle(&app);
+                press(&app, Key::Escape);
+                crate::testing::settle(&app);
+                assert_eq!(
+                    cancels.get(),
+                    1,
+                    "back {back}, {tabs} Tabs: Escape reached the sheet"
+                );
+            }
+        }
     }
 }

@@ -173,6 +173,7 @@ mod tests {
                 merged: false,
                 headroom: 0.0,
                 lens_corrected: false,
+                monochrome: false,
             },
             identity: Identity {
                 make: "Canon".into(),
@@ -213,6 +214,7 @@ mod tests {
         });
         edit.vignette.amount = -0.3;
         edit.grain.amount = 0.2;
+        edit.output_sharpen.amount = 0.5;
         edit.color.saturation = 15.0;
         let mut a = greycard_edit::Adjustment::default();
         a.mask.components.push(greycard_edit::mask::Component {
@@ -405,6 +407,7 @@ mod tests {
             moved("crop", &|e| e.geometry.crop = None),
             moved("vignette", &|e| e.vignette.amount = 0.0),
             moved("grain", &|e| e.grain.amount = 0.0),
+            moved("output sharpen", &|e| e.output_sharpen.amount = 0.0),
             moved("a mask's adjustment", &|e| {
                 e.adjustments[0].look.light.exposure = 1.0
             }),

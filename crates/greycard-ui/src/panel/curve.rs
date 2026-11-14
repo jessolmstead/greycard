@@ -969,6 +969,7 @@ mod tests {
                     ..Default::default()
                 },
                 look: Default::default(),
+                opacity: 1.0,
             });
             st.develop.bins = Some(bins.to_vec());
         }

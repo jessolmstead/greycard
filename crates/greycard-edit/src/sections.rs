@@ -171,11 +171,11 @@ pub struct Tone {
     /// slider runs ±2.
     pub highlights: f32,
     /// Stops of shift in the middle of the frame, placed by the
-    /// frame's own range: a bell full at the foot of the highlights
-    /// span (the frame's median where the span is its own), nothing
-    /// two stops under it and nothing at the frame's top
+    /// frame's own range: a bell full half a stop under the foot of
+    /// the highlights span (the frame's median where the span is its
+    /// own), nothing 1.75 stops either way from there
     /// (`midtones_weight` in `finish.rs`). By region, as highlights
-    /// is, and ±2, where the middle moves a stop. Left out of a
+    /// is, and ±2, where the middle moves 0.875 of a stop. Left out of a
     /// sidecar at zero, so every sidecar and key written before it is
     /// unchanged and an older build reads a newer file.
     #[serde(skip_serializing_if = "is_zero")]

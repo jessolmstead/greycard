@@ -30,6 +30,9 @@ on:
   schedule:
     - cron: '17 5 * * 1'
 
+permissions:
+  contents: read
+
 # One run a branch or pull request: a newer push to a pull request
 # stops the run of the older one. A branch's own runs, the weekly
 # audit, and a release's call are never stopped, only kept apart.
@@ -181,6 +184,45 @@ jobs:
 
       - name: cargo check
         run: cargo check --locked --manifest-path fuzz/Cargo.toml
+
+  # THIRD-PARTY-NOTICES written as package.sh writes it, so a dependency
+  # under a license about.toml does not accept fails here rather than
+  # at a release. Once, on Linux: the file covers every platform. On the
+  # release's Ubuntu, since the cargo-about it builds is cached for the
+  # release's Linux leg, and one linked on a newer glibc would not run
+  # there.
+  notices:
+    if: github.event_name != 'schedule'
+    name: third-party notices
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # Built from source, pinned and locked, and kept under its version
+      # and the platform; see release.yml. The paths are release.yml's
+      # too, since a cache is found by its paths as well as its key, so
+      # master's copy serves the release's Linux leg.
+      - name: cargo-about from the cache
+        id: cargo-about
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-about
+            ~/.cargo/bin/cargo-about.exe
+          key: cargo-about-0.9.3-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-about
+        if: steps.cargo-about.outputs.cache-hit != 'true'
+        run: cargo install cargo-about --locked --version 0.9.3 --features cli
+
+      - name: scripts/notices.sh
+        run: scripts/notices.sh
 
   # Known advisories against Cargo.lock, from the RustSec database. It
   # runs once, on Linux, since the lock file is the same everywhere. A

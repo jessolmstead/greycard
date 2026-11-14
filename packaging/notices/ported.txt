@@ -1,0 +1,141 @@
+
+
+================================================================================
+3. CODE PORTED INTO GREYCARD'S OWN SOURCE
+================================================================================
+
+These algorithms were ported into greycard's source from the projects
+named, and are part of greycard under its license. Each source file's
+header names what it took, from which file, and whose it is.
+
+From RawTherapee (https://rawtherapee.com), GPL-3.0-or-later:
+  AMaZE demosaic (amaze_demosaic_RT.cc): Copyright (c) 2008-2010 Emil
+    Martinec, optimized by Ingo Weyrich, with ideas of Luis Sanz
+    Rodríguez and Paul Lee. Also on the GPU (greycard-gpu).
+  Chromatic aberration correction (CA_correct_RT.cc), Bayer and
+    X-Trans: Copyright (c) 2008-2010 Emil Martinec; copyright (c) 2018
+    Ingo Weyrich. Also on the GPU.
+  Defringe (PF_correct_RT.cc): copyright 2008-2010 Emil Martinec,
+    optimized by Ingo Weyrich.
+  Dual demosaic and its blend mask (dual_demosaic_RT.cc, rt_algo.cc):
+    copyright 2018 Ingo Weyrich.
+  Capture sharpening (capturesharpening.cc, rt_algo.cc): copyright
+    2019 Ingo Weyrich.
+  VNG4 demosaic (vng4_demosaic_RT.cc): Ingo Weyrich, after Dave
+    Coffin's dcraw.
+  X-Trans demosaic (xtrans_demosaic.cc): Frank Markesteijn's algorithm
+    from Dave Coffin's dcraw, adapted by Ingo Weyrich.
+
+From darktable (https://www.darktable.org), GPL-3.0-or-later,
+copyright the darktable developers:
+  Denoise, wavelets (denoiseprofile.c, eaw.c): Johannes Hanika,
+    Rawfiner.
+  Denoise, non-local means (nlmeans_core.c): Ralph Giles, Rawfiner.
+  Highlight reconstruction, opposed and segmentation based
+    (hlreconstruct/opposed.c, segbased.c, segmentation.c): Hanno
+    Schwalm with garagecoder and Iain of the G'MIC team.
+  Hot pixels (hotpixels.c).
+  Dehaze (hazeremoval.c): copyright 2017 Heiko Bauke.
+  AgX (agx.c): Kofa, 2025, with Blender's parameters (Eary Chow's
+    formation on Troy Sobotka's AgX).
+
+From RCD demosaicing (https://github.com/LuisSR/RCD-Demosaicing),
+GPL-3.0-or-later, copyright Luis Sanz Rodríguez: the RCD demosaic,
+release 2.3.
+
+From Exiv2 (https://github.com/Exiv2/exiv2), GPL-2.0-or-later,
+copyright the Exiv2 authors: the names of the makers' picture styles
+read from maker notes.
+
+From Pillow (https://python-pillow.org), Pillow's bilinear resampling
+(src/libImaging/Resample.c), used to size a picture for the people
+model:
+
+    The Python Imaging Library (PIL) is
+
+    Copyright © 1997-2011 by Secret Labs AB
+
+    Copyright © 1995-2011 by Fredrik Lundh and contributors
+
+    Pillow is the friendly PIL fork. It is
+
+    Copyright © 2010 by Jeffrey 'Alex' Clark and contributors
+
+    Like PIL, Pillow is licensed under the open source MIT-CMU License:
+
+    By obtaining, using, and/or copying this software and/or its
+    associated documentation, you agree that you have read, understood,
+    and will comply with the following terms and conditions:
+
+    Permission to use, copy, modify and distribute this software and
+    its documentation for any purpose and without fee is hereby
+    granted, provided that the above copyright notice appears in all
+    copies, and that both that copyright notice and this permission
+    notice appear in supporting documentation, and that the name of
+    Secret Labs AB or the author not be used in advertising or
+    publicity pertaining to distribution of the software without
+    specific, written prior permission.
+
+    SECRET LABS AB AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD
+    TO THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF
+    MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL SECRET LABS AB OR THE
+    AUTHOR BE LIABLE FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES
+    OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR
+    PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+    TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+    PERFORMANCE OF THIS SOFTWARE.
+
+From OpenColorIO (https://opencolorio.org), the shadows curve of its
+GradingToneTransform (src/OpenColorIO/ops/gradingtone), used by AgX's
+shadows:
+
+    Copyright Contributors to the OpenColorIO Project.
+
+    Redistribution and use in source and binary forms, with or
+    without modification, are permitted provided that the following
+    conditions are met:
+
+    1. Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
+    2. Redistributions in binary form must reproduce the above
+       copyright notice, this list of conditions and the following
+       disclaimer in the documentation and/or other materials provided
+       with the distribution.
+    3. Neither the name of the copyright holder nor the names of its
+       contributors may be used to endorse or promote products derived
+       from this software without specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+    FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+    COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+    OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+    EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+================================================================================
+4. DOWNLOADED ON FIRST USE, NOT SHIPPED
+================================================================================
+
+None of these is in a package. Each is fetched the first time it is
+wanted, into the user's cache or model store, with a note of its
+license written beside it there.
+
+  The AI models (denoise, masks, people, generative remove), each
+    under its own license, which greycard shows before the download.
+  The lensfun lens database (https://lensfun.github.io), CC BY-SA 3.0.
+  Microsoft's CPU-only ONNX Runtime, on Windows ARM64 and on an x86-64
+    processor the shipped runtime cannot run on: MIT License, its
+    LICENSE kept beside it.
+
+
+================================================================================
+5. RUST CRATES
+================================================================================
+

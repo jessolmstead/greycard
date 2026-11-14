@@ -45,6 +45,14 @@ pub fn device(what: &str) -> Option<(gpu::Device, gpu::Queue)> {
     }))
     .ok()
     .and_then(|adapter| {
+        // Which device the tests ran on, once a run: the software
+        // rasterizer and a real card round alike in most places and
+        // not in all.
+        static SAID: std::sync::Once = std::sync::Once::new();
+        SAID.call_once(|| {
+            let info = adapter.get_info();
+            eprintln!("GPU tests on {} ({:?})", info.name, info.backend);
+        });
         pollster::block_on(adapter.request_device(&gpu::DeviceDescriptor {
             label: Some("viewport test"),
             ..Default::default()

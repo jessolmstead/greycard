@@ -599,18 +599,39 @@ fn chosen_profile(name: &str) -> Result<Option<std::sync::Arc<greycard_core::Pro
     let ProfileChoice::Named(name) = ProfileChoice::from_name(name) else {
         return Ok(None);
     };
-    let path = if name.contains(['/', '\\']) || name.to_lowercase().ends_with(".dcp") {
-        PathBuf::from(&name)
-    } else {
-        greycard_edit_io::profiles::path_for(&name)
-            .with_context(|| format!("finding the profile directory for {name:?}"))?
-    };
+    let path = profile_path(&name, greycard_edit_io::profiles::store_dir().as_deref())?;
     let dcp = greycard_core::Dcp::load(&path)
         .with_context(|| format!("reading {} as a camera profile", path.display()))?;
     let profile = dcp
         .profile()
         .with_context(|| format!("using {} as a camera profile", path.display()))?;
     Ok(Some(std::sync::Arc::new(profile)))
+}
+
+/// Where `--camera-profile`'s value is: a file named by its path (one
+/// ending in `.dcp`, or one that is there), else a name in the profile
+/// directory `dir`, its subfolders joined by `/` as an edit names it.
+/// A value that is neither says which it failed to be.
+fn profile_path(name: &str, dir: Option<&std::path::Path>) -> Result<PathBuf> {
+    let as_path = std::path::Path::new(name);
+    if name.to_lowercase().ends_with(".dcp") || as_path.is_file() {
+        return Ok(as_path.to_path_buf());
+    }
+    // A path that is not there, not a name: said once, here.
+    if !greycard_edit_io::profiles::is_name(name) {
+        anyhow::bail!("{name}: no such file");
+    }
+    let Some(dir) = dir else {
+        anyhow::bail!("{name}: no such file, and no profile directory on this machine");
+    };
+    match greycard_edit_io::profiles::path_in(Some(dir), name) {
+        Some(path) if path.is_file() => Ok(path),
+        Some(_) => anyhow::bail!(
+            "{name}: no such file, and no profile of that name in {}",
+            dir.display()
+        ),
+        None => anyhow::bail!("{name}: no such file"),
+    }
 }
 
 /// The lens database a run wants, read before anything long happens,
@@ -1463,6 +1484,42 @@ impl std::str::FromStr for AutoF32 {
 
 #[cfg(test)]
 mod tests {
+    /// `--camera-profile` takes a path to a file, or a name in the
+    /// profile directory; a value that is neither says why.
+    #[test]
+    fn a_camera_profile_is_a_path_or_a_name_in_the_directory() {
+        let dir = std::env::temp_dir().join(format!("greycard-cli-dcp-{}", std::process::id()));
+        greycard_core::testing::remove_dir_retry(&dir);
+        let store = dir.join("profiles");
+        std::fs::create_dir_all(store.join("Camera").join("Body")).unwrap();
+        let file = dir.join("loose profile");
+        std::fs::write(&file, b"x").unwrap();
+        let named = store.join("Camera").join("Body").join("Standard.dcp");
+        std::fs::write(&named, b"x").unwrap();
+        // A path, whatever its extension, and one ending in .dcp as
+        // given (its reading says if it is not there).
+        let path = file.to_str().unwrap();
+        assert_eq!(profile_path(path, Some(&store)).unwrap(), file);
+        assert_eq!(profile_path("x.dcp", None).unwrap(), PathBuf::from("x.dcp"));
+        // A name in the directory, folders and all.
+        assert_eq!(
+            profile_path("Camera/Body/Standard", Some(&store)).unwrap(),
+            named
+        );
+        // A path that is not there, and a name the directory has not.
+        let missing = dir.join("x");
+        for value in ["./x", missing.to_str().unwrap()] {
+            let said = profile_path(value, Some(&store)).unwrap_err().to_string();
+            assert!(said.contains("no such file"), "{said}");
+            assert!(!said.contains("finding the profile directory"), "{said}");
+        }
+        let said = profile_path("Camera/Body/Vivid", Some(&store))
+            .unwrap_err()
+            .to_string();
+        assert!(said.contains("no profile of that name"), "{said}");
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     /// A negative value after a space parses for every signed flag,
     /// as `--tint=-4` always did.
     #[test]

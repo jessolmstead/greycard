@@ -29,7 +29,7 @@ use rawcolor::CalibrationIlluminant;
 use crate::decode::rawler_backend::RawMetadata;
 use crate::error::{Error, Result};
 use crate::image::CameraImage;
-use crate::raw::{Calibration, Orientation, RawFrame};
+use crate::raw::{Calibration, Orientation, RawFrame, SensorLayout};
 
 /// How the samples are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -71,7 +71,8 @@ pub const WHITE_LEVEL: u16 = u16::MAX;
 /// The color matrices come from `frame`'s calibrations: the warmest and
 /// coolest with a known illuminant, the same pair the engine's own profile
 /// uses. The image is written in sensor orientation with the EXIF
-/// `Orientation` tag set, as camera files are.
+/// `Orientation` tag set, as camera files are. A monochrome frame's is
+/// one plane, with neither a white nor a matrix, as its camera's was.
 pub fn write_linear_dng<W: Write + Seek>(
     out: W,
     frame: &RawFrame,
@@ -86,7 +87,7 @@ pub fn write_linear_dng<W: Write + Seek>(
     if !headroom.is_finite() || headroom < 1.0 {
         return Err(Error::Unsupported(format!("headroom {headroom}")));
     }
-    if calibration_pair(&frame.calibrations).is_empty() {
+    if !monochrome(frame) && calibration_pair(&frame.calibrations).is_empty() {
         return Err(Error::NoCalibration);
     }
 
@@ -143,7 +144,7 @@ pub fn write_merged_dng<W: Write + Seek>(
     if !headroom.is_finite() || headroom < 1.0 {
         return Err(Error::Unsupported(format!("headroom {headroom}")));
     }
-    if calibration_pair(&frame.calibrations).is_empty() {
+    if !monochrome(frame) && calibration_pair(&frame.calibrations).is_empty() {
         return Err(Error::NoCalibration);
     }
     let (compression, bits) = MERGED_SAMPLES;
@@ -156,21 +157,20 @@ pub fn write_merged_dng<W: Write + Seek>(
     );
     raw.width = image.width;
     raw.height = image.height;
-    raw.data = RawImageData::Float(
-        image
-            .data
-            .iter()
-            .map(|v| {
-                if v.is_finite() {
-                    (v / headroom).max(0.0)
-                } else {
-                    0.0
-                }
-            })
-            .collect(),
-    );
+    let store = |v: f32| {
+        if v.is_finite() {
+            (v / headroom).max(0.0)
+        } else {
+            0.0
+        }
+    };
+    raw.data = RawImageData::Float(if monochrome(frame) {
+        plane(&image.data).map(store).collect()
+    } else {
+        image.data.iter().map(|&v| store(v)).collect()
+    });
     raw.bps = 32;
-    raw.whitelevel = WhiteLevel::new(vec![1; CameraImage::CHANNELS]);
+    raw.whitelevel = WhiteLevel::new(vec![1; raw.cpp]);
     write_container(
         out,
         frame,
@@ -203,8 +203,15 @@ fn write_container<W: Write + Seek>(
 ) -> Result<()> {
     let (compression, params) = packing;
     let headroom = options.headroom.unwrap_or(1.0);
-    let calibrations = calibration_pair(&frame.calibrations);
-    if calibrations.is_empty() {
+    // A monochrome sensor's file has no color to describe: DNG's form
+    // of it carries neither a white nor a matrix.
+    let mono = monochrome(frame);
+    let calibrations = if mono {
+        Vec::new()
+    } else {
+        calibration_pair(&frame.calibrations)
+    };
+    if calibrations.is_empty() && !mono {
         return Err(Error::NoCalibration);
     }
     let mut dng = DngWriter::new(out, DNG_VERSION_V1_4).map_err(encode)?;
@@ -258,7 +265,9 @@ fn write_container<W: Write + Seek>(
             .software
             .unwrap_or(concat!("greycard ", env!("CARGO_PKG_VERSION"))),
     );
-    root.add_tag(DngTag::AsShotNeutral, neutral(gains).as_slice());
+    if !mono {
+        root.add_tag(DngTag::AsShotNeutral, neutral(gains).as_slice());
+    }
     if let Some(m) = merged {
         root.add_tag(DngTag::DNGPrivateData, m.tag.to_bytes().as_slice());
     }
@@ -308,12 +317,16 @@ fn raw_image_for(
     headroom: f32,
 ) -> RawImage {
     let scale = WHITE_LEVEL as f32 / headroom;
-    let data: Vec<u16> = image
-        .data
-        .iter()
-        .map(|v| (v.clamp(0.0, headroom) * scale).round() as u16)
-        .collect();
-    let cpp = CameraImage::CHANNELS;
+    let store = |v: f32| (v.clamp(0.0, headroom) * scale).round() as u16;
+    // A monochrome frame's three channels are one, and stored as one.
+    let (data, cpp): (Vec<u16>, usize) = if monochrome(frame) {
+        (plane(&image.data).map(store).collect(), 1)
+    } else {
+        (
+            image.data.iter().map(|&v| store(v)).collect(),
+            CameraImage::CHANNELS,
+        )
+    };
     let pixels = PixU16::new_with(data, image.width * cpp, image.height);
 
     let mut camera = Camera::new();
@@ -326,7 +339,7 @@ fn raw_image_for(
     // fourth is unused for three-color images. Rewritten afterwards with
     // more precision, but kept consistent here.
     let wb = [gains[0], gains[1], gains[2], f32::NAN];
-    let black = BlackLevel::new(&[0u16; 3], 1, 1, cpp);
+    let black = BlackLevel::new(&vec![0u16; cpp], 1, 1, cpp);
     let white = WhiteLevel::new_bits(16, cpp);
     RawImage::new(
         camera,
@@ -338,6 +351,17 @@ fn raw_image_for(
         Some(white),
         false,
     )
+}
+
+/// Whether `frame` is a monochrome sensor's, written as one.
+fn monochrome(frame: &RawFrame) -> bool {
+    frame.layout == SensorLayout::Monochrome
+}
+
+/// Interleaved RGB as the one plane its equal channels are: the
+/// green, which is each of them.
+fn plane(rgb: &[f32]) -> impl Iterator<Item = f32> + '_ {
+    rgb.as_chunks::<3>().0.iter().map(|px| px[1])
 }
 
 /// The calibrations to write: warmest and coolest by illuminant temperature,
@@ -405,7 +429,6 @@ mod tests {
     use crate::decode::{Decoder, RawlerDecoder};
     use crate::develop::tests::flat_frame;
     use crate::develop::{DevelopSettings, demosaic, develop};
-    use crate::raw::SensorLayout;
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
@@ -597,6 +620,78 @@ mod tests {
         let bits = v.to_bits();
         let odd = (bits >> 13) & 1;
         f32::from_bits((bits + 0xfff + odd) & !0x1fff)
+    }
+
+    /// A monochrome frame is written as DNG writes one, a single plane
+    /// of LinearRaw with no white and no matrix, and reads back as the
+    /// monochrome frame it was, its plane the developed picture's.
+    #[test]
+    fn a_monochrome_frame_round_trips_as_one_plane() {
+        let frame = crate::develop::tests::mono_frame(16, 12, |y, x| 100 + (y * 16 + x) as u16 * 5);
+        let out = demosaic(&frame, &DevelopSettings::default()).unwrap();
+        for compression in [Compression::Uncompressed, Compression::Lossless] {
+            let mut buf = Cursor::new(Vec::new());
+            let options = LinearDngOptions {
+                compression,
+                ..Default::default()
+            };
+            write_linear_dng(&mut buf, &frame, &out.image, [1.0; 3], &options).unwrap();
+            let back = RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap();
+            assert_eq!(back.layout, SensorLayout::Monochrome, "{compression:?}");
+            assert_eq!((back.width, back.height, back.channels), (16, 12, 1));
+            assert!(back.calibrations.is_empty());
+            assert_eq!(back.as_shot_coefficients, Some([1.0; 3]));
+            assert_eq!(back.levels.white.values, vec![65535.0]);
+            let stored = back.samples.to_f32();
+            for (got, px) in stored.iter().zip(out.image.pixels()) {
+                assert_eq!(*got, (px[1] * 65535.0).round(), "{compression:?}");
+            }
+            // And develops as the source does.
+            let again = develop(&back, &DevelopSettings::default()).unwrap();
+            let first = develop(&frame, &DevelopSettings::default()).unwrap();
+            for (a, b) in again.image.data.iter().zip(&first.image.data) {
+                assert!((a - b).abs() < 1e-4);
+            }
+        }
+        // A merge of monochrome frames is a plane of floats.
+        let mut buf = Cursor::new(Vec::new());
+        let tag = crate::merge::Tag {
+            kind: "hdr".into(),
+            frames: vec!["a.dng".into(), "b.dng".into()],
+            reference: 0,
+            denoised: false,
+            headroom_stops: 1.0,
+            lens_corrected: false,
+            heads: vec![None, None],
+            wholes: vec![None, None],
+            unread: None,
+            recipe: None,
+        };
+        let options = LinearDngOptions {
+            headroom: Some(2.0),
+            ..Default::default()
+        };
+        let merged = Merged {
+            noise_profile: [3e-6, 2e-9],
+            tag: &tag,
+        };
+        write_merged_dng(&mut buf, &frame, &out.image, [1.0; 3], &options, &merged).unwrap();
+        let back = RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap();
+        assert_eq!(
+            (&back.layout, back.channels),
+            (&SensorLayout::Monochrome, 1)
+        );
+        assert_eq!(back.levels.white.values, vec![1.0]);
+        for (got, px) in back.samples.to_f32().iter().zip(out.image.pixels()) {
+            assert_eq!(*got, to_half(px[1] / 2.0));
+        }
+        // And develops as a merge: its noise is its NoiseProfile, not
+        // measured, and no photosite of it is repaired.
+        let prepared = crate::develop::prepare(&back, &DevelopSettings::default(), true).unwrap();
+        let model = prepared.noise.expect("the file's noise").model;
+        assert_eq!((model.a, model.b), ([3e-6f32; 3], [2e-9f32; 3]));
+        assert!(prepared.hot_pixels.is_none());
+        assert!(prepared.monochrome);
     }
 
     /// A merge's file: half-float samples that read back exactly, the

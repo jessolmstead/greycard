@@ -195,12 +195,42 @@ pub struct Frame {
 }
 
 impl Geometry {
-    pub fn is_identity(&self) -> bool {
-        self.turns == 0
-            && !self.flip
-            && self.angle == 0.0
-            && !self.keystoned()
-            && self.crop.is_none()
+    /// Whether the geometry leaves a source `w` by `h` as it is: no
+    /// turn, mirror, angle, keystone, or crop, and no aspect that fits
+    /// a crop of its own ([`Geometry::effective_crop`]) to less than
+    /// the whole of it. A ratio over no crop frames the picture as a
+    /// crop does, so the size is needed to say: 3:2 over a 4:3 source
+    /// cuts it, over a 3:2 one it is the whole frame.
+    pub fn is_identity_on(&self, w: f32, h: f32) -> bool {
+        if self.turns != 0
+            || self.flip
+            || self.angle != 0.0
+            || self.keystoned()
+            || self.crop.is_some()
+        {
+            return false;
+        }
+        if !self.frames_by_aspect() {
+            return true;
+        }
+        let f = self.frame(w, h);
+        f.size == (w.round().max(1.0), h.round().max(1.0))
+            && f.origin.0.abs() < 0.5
+            && f.origin.1.abs() < 0.5
+    }
+
+    /// Whether the aspect may frame the picture with no crop stored,
+    /// as far as that can be said without the size: a ratio, which
+    /// [`Geometry::effective_crop`] fits about the center, or Original
+    /// turned by the Portrait switch. Free, and Original the way the
+    /// frame stands, are the whole plane.
+    pub fn frames_by_aspect(&self) -> bool {
+        self.crop.is_none()
+            && match self.aspect {
+                Aspect::Free => false,
+                Aspect::Original => self.portrait,
+                Aspect::Ratio { .. } => true,
+            }
     }
 
     /// Whether a plane pixel lands between source pixels: the fine
@@ -1263,7 +1293,7 @@ mod tests {
     #[test]
     fn the_whole_frame_is_the_identity() {
         let g = Geometry::default();
-        assert!(g.is_identity());
+        assert!(g.is_identity_on(W, H));
         let f = g.frame(W, H);
         assert_eq!(f.origin, (0.0, 0.0));
         assert_eq!(f.size, (W, H));
@@ -1452,7 +1482,7 @@ mod tests {
         assert_eq!(m.to_source((0.0, 0.0), W, H), (W, 0.0));
         assert_eq!(m.to_source((10.5, 20.5), W, H), (W - 10.5, 20.5));
         assert_eq!(m.to_plane((W - 10.5, 20.5), W, H), (10.5, 20.5));
-        assert!(!m.is_identity() && !m.resamples());
+        assert!(!m.is_identity_on(W, H) && !m.resamples());
         // Four turns are none; a turn and its undoing are none.
         let c = Crop {
             x: 0.6,
@@ -1579,6 +1609,45 @@ mod tests {
         assert!(b.size.0 > W && b.size.1 > H);
     }
 
+    /// A ratio over no crop frames the picture as the crop it fits
+    /// would: not the identity where it cuts the source, the identity
+    /// where it is the source's own shape.
+    #[test]
+    fn an_aspect_over_no_crop_is_the_identity_only_where_it_cuts_nothing() {
+        let three_two = Geometry {
+            aspect: Aspect::Ratio { w: 3.0, h: 2.0 },
+            ..Default::default()
+        };
+        assert!(three_two.frames_by_aspect());
+        assert!(three_two.is_identity_on(W, H), "3:2 over a 3:2 source");
+        assert!(!three_two.is_identity_on(4000.0, 3000.0), "3:2 over 4:3");
+        assert_eq!(three_two.frame(4000.0, 3000.0).size, (4000.0, 2667.0));
+        let original = Geometry {
+            aspect: Aspect::Original,
+            ..Default::default()
+        };
+        assert!(
+            !original.frames_by_aspect(),
+            "the whole plane, as it stands"
+        );
+        assert!(original.is_identity_on(W, H) && original.is_identity_on(4000.0, 3000.0));
+        let stood = Geometry {
+            portrait: true,
+            ..original
+        };
+        assert!(stood.frames_by_aspect());
+        assert!(
+            !stood.is_identity_on(W, H),
+            "the frame's shape stood on end"
+        );
+        // A crop stored is never the identity, as before.
+        let cropped = Geometry {
+            crop: Some(three_two.effective_crop(W, H)),
+            ..three_two
+        };
+        assert!(!cropped.frames_by_aspect() && !cropped.is_identity_on(W, H));
+    }
+
     #[test]
     fn the_keystone_spreads_the_far_edge_and_comes_back_through_to_plane() {
         // A camera that looked up: the source's verticals converge at
@@ -1588,7 +1657,7 @@ mod tests {
             vertical: 20.0,
             ..Default::default()
         };
-        assert!(g.keystoned() && g.resamples() && !g.is_identity());
+        assert!(g.keystoned() && g.resamples() && !g.is_identity_on(W, H));
         let top = g.to_source((0.0, 0.0), W, H);
         let bottom = g.to_source((0.0, H), W, H);
         let t = 20.0f32.to_radians().tan();

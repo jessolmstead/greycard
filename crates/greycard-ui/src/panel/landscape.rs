@@ -294,6 +294,7 @@ mod tests {
                 enabled: true,
                 mask: Mask::default(),
                 look: Default::default(),
+                opacity: 1.0,
             });
             st.develop.target = Some(0);
         }

@@ -993,7 +993,12 @@ pub fn read_back_reduced(
 pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
     let edit = &finish.edit;
     let framed;
-    let image = if edit.geometry.is_identity() {
+    // Whether the geometry frames anything is asked at the full
+    // develop's size, as `fitted_size` asks it, so the two agree.
+    let whole = edit
+        .geometry
+        .is_identity_on(finish.full.0 as f32, finish.full.1 as f32);
+    let image = if whole {
         reduced
     } else {
         framed = greycard_render::geometry::apply(reduced, &edit.geometry);
@@ -1018,7 +1023,7 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
             let (rw, rh) = (reduced.width as u32, reduced.height as u32);
             bands.fit_exact(rw, rh).unwrap_or(bands)
         };
-        if !edit.geometry.is_identity() {
+        if !whole {
             bands = bands.framed(&edit.geometry);
         }
         bands.fit_exact(w, h).unwrap_or(bands)

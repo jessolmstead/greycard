@@ -185,6 +185,19 @@ impl Lens {
         out
     }
 
+    /// The section as it applies over a monochrome sensor's picture,
+    /// its three channels one: a lateral aberration correction, the
+    /// profile's or set by hand, would part them into color fringes.
+    pub fn over_monochrome(&self, monochrome: bool) -> Lens {
+        let mut out = self.clone();
+        if monochrome {
+            out.chromatic_aberration = false;
+            out.ca_red = 0.0;
+            out.ca_blue = 0.0;
+        }
+        out
+    }
+
     /// Whether the edit wants anything of a profile.
     pub fn wants_profile(&self) -> bool {
         self.enabled
@@ -322,6 +335,24 @@ mod tests {
     /// profile gives up its distortion, and its aberration too when the
     /// file corrects each color; the vignetting stays, and a lens picked
     /// by hand and the corrections set by hand are kept.
+    /// Over a monochrome picture the lateral aberration, the profile's
+    /// and the hand's, is off; over any other, the section is as it was.
+    #[test]
+    fn a_monochrome_picture_takes_no_lateral_aberration() {
+        let lens = Lens {
+            ca_red: 0.002,
+            ca_blue: -0.001,
+            ..Lens::default()
+        };
+        assert_eq!(lens.over_monochrome(false), lens);
+        let mono = lens.over_monochrome(true);
+        assert!(!mono.chromatic_aberration && mono.manual_ca().is_none());
+        assert_eq!(
+            (mono.distortion, mono.vignetting),
+            (lens.distortion, lens.vignetting)
+        );
+    }
+
     #[test]
     fn a_file_that_corrects_its_lens_keeps_the_profile_off_it() {
         let profile = LensCorrection {

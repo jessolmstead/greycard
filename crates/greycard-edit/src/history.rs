@@ -2,7 +2,7 @@
 //! one before it, as a row of the panel says it.
 
 use crate::mask::{Component, Mask};
-use crate::{Edit, Look, Snapshot};
+use crate::{Adjustment, Edit, Look, Snapshot};
 
 /// What `after` changed from `before`, in a few words: the one thing
 /// when one thing moved ("Exposure +0.50"), the sections' names when
@@ -150,6 +150,19 @@ fn changes(b: &Edit, a: &Edit) -> Vec<String> {
             (x, y) if x != y => switched("Sharpen", y),
             _ => "Sharpen".to_string(),
         });
+    }
+    if b.output_sharpen != a.output_sharpen {
+        let (x, y) = (&b.output_sharpen, &a.output_sharpen);
+        let rest_same = x.radius == y.radius && x.threshold == y.threshold;
+        out.push(
+            if x.enabled != y.enabled && x.amount == y.amount && rest_same {
+                switched("Output sharpen", y.enabled)
+            } else if x.amount != y.amount && x.enabled == y.enabled && rest_same {
+                format!("Output sharpen {:.0}%", y.amount * 100.0)
+            } else {
+                "Output sharpen".to_string()
+            },
+        );
     }
     if b.geometry != a.geometry {
         out.push(geometry(b, a));
@@ -619,13 +632,30 @@ fn adjustments(b: &Edit, a: &Edit) -> Vec<String> {
         ([one], [], []) => vec![format!("{} added", one.name)],
         ([], [one], []) => vec![format!("{} removed", one.name)],
         ([], [], [(x, y)]) => {
-            if x.enabled != y.enabled && x.mask == y.mask && x.look == y.look && x.name == y.name {
+            if x.opacity != y.opacity
+                && **y
+                    == (Adjustment {
+                        opacity: y.opacity,
+                        ..x.clone()
+                    })
+            {
+                vec![format!("{}: Opacity", y.name)]
+            } else if x.enabled != y.enabled
+                && x.mask == y.mask
+                && x.look == y.look
+                && x.name == y.name
+                && x.opacity == y.opacity
+            {
                 vec![switched(&y.name, y.enabled)]
-            } else if x.name != y.name && x.mask == y.mask && x.look == y.look {
+            } else if x.name != y.name
+                && x.mask == y.mask
+                && x.look == y.look
+                && x.opacity == y.opacity
+            {
                 vec![format!("{} renamed {}", x.name, y.name)]
-            } else if x.mask != y.mask && x.look == y.look {
+            } else if x.mask != y.mask && x.look == y.look && x.opacity == y.opacity {
                 vec![mask(&y.name, &x.mask, &y.mask)]
-            } else if x.look != y.look && x.mask == y.mask {
+            } else if x.look != y.look && x.mask == y.mask && x.opacity == y.opacity {
                 let parts = look(&x.look, &y.look, &format!("{}: ", y.name));
                 if parts.len() == 1 {
                     parts
@@ -746,9 +776,9 @@ fn retouch(b: &Edit, a: &Edit) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WhiteBalance;
     use crate::mask::Shape;
     use crate::retouch::{Method, Patch};
-    use crate::{Adjustment, WhiteBalance};
 
     fn snap(name: &str, edit: &Edit) -> Snapshot {
         Snapshot {
@@ -852,6 +882,15 @@ mod tests {
         e.grain.enabled = !e.grain.enabled;
         assert!(describe(&base, &e, &[]).starts_with("Grain o"));
         let mut e = base.clone();
+        e.output_sharpen.amount = 0.6;
+        assert_eq!(describe(&base, &e, &[]), "Output sharpen 60%");
+        let mut e = base.clone();
+        e.output_sharpen.enabled = false;
+        assert_eq!(describe(&base, &e, &[]), "Output sharpen off");
+        let mut e = base.clone();
+        e.output_sharpen.radius = 2.0;
+        assert_eq!(describe(&base, &e, &[]), "Output sharpen");
+        let mut e = base.clone();
         e.mixer.saturation[0] = 0.3;
         assert_eq!(describe(&base, &e, &[]), "Color mixer");
         let mut e = base.clone();
@@ -898,10 +937,10 @@ mod tests {
         // A grading wheel is named, with what moved on it.
         let mut e = base.clone();
         e.grading.midtones.saturation = 0.25;
-        assert_eq!(describe(&base, &e, &[]), "Color grading mid-tones 25%");
+        assert_eq!(describe(&base, &e, &[]), "Color grading midtones 25%");
         let mut turned = e.clone();
         turned.grading.midtones.hue = 40.0;
-        assert_eq!(describe(&e, &turned, &[]), "Color grading mid-tones 40°");
+        assert_eq!(describe(&e, &turned, &[]), "Color grading midtones 40°");
         let mut both = base.clone();
         both.grading.shadows = crate::grading::Wheel {
             hue: 200.0,
@@ -1157,6 +1196,18 @@ mod tests {
         let mut r = e.clone();
         r.adjustments[0].mask.refine = 0.4;
         assert_eq!(describe(&e, &r, &[]), "Linear 1: Refine edge");
+        let mut o = e.clone();
+        o.adjustments[0].opacity = 0.7;
+        assert_eq!(describe(&e, &o, &[]), "Linear 1: Opacity");
+        o.adjustments[0].look.light.exposure = -0.5;
+        assert_eq!(describe(&e, &o, &[]), "Linear 1", "and the look with it");
+        let mut o = e.clone();
+        o.adjustments[0].opacity = 0.7;
+        o.adjustments[0].enabled = false;
+        assert_eq!(describe(&e, &o, &[]), "Linear 1", "and the switch with it");
+        o.adjustments[0].enabled = true;
+        o.adjustments[0].name = "Sky".into();
+        assert_eq!(describe(&e, &o, &[]), "Sky", "and the name with it");
         let mut f = e.clone();
         f.adjustments[0].enabled = false;
         assert_eq!(describe(&e, &f, &[]), "Linear 1 off");

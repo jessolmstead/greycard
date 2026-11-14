@@ -159,6 +159,9 @@ pub enum InputKind {
         /// panorama): it is in no one frame's geometry, and the lens
         /// profile stands down on it.
         lens_corrected: bool,
+        /// A monochrome sensor's: one channel developed as three equal
+        /// ones, which no lateral aberration correction may part.
+        monochrome: bool,
     },
     /// A picture is turned by its tag at decode, so its size is the
     /// size it stands at. Its white is its color space's, as a
@@ -207,6 +210,7 @@ impl Facts {
                 merged: frame.dng.merged.is_some(),
                 headroom: greycard_edit::baseline::headroom(frame),
                 lens_corrected: frame.dng.merged.as_ref().is_some_and(|m| m.lens_corrected),
+                monochrome: frame.layout == SensorLayout::Monochrome,
             },
             identity: Identity {
                 make: frame.make.clone(),
@@ -257,6 +261,17 @@ impl Facts {
     pub fn measures_ca(&self) -> bool {
         matches!(&self.input, InputKind::Raw { pattern: Some(p), .. } if ca::corrects(p))
             && !self.file_corrects().chromatic_aberration
+    }
+
+    /// Whether the input is a monochrome sensor's raw.
+    pub fn is_monochrome(&self) -> bool {
+        matches!(
+            self.input,
+            InputKind::Raw {
+                monochrome: true,
+                ..
+            }
+        )
     }
 
     /// The orientation the develop shows a raw in: the camera's tag
@@ -1036,7 +1051,8 @@ pub fn stages(
     let mut lens = edit
         .lens
         .over_file(facts.file_corrects())
-        .over_measured_ca(measured);
+        .over_measured_ca(measured)
+        .over_monochrome(facts.is_monochrome());
     if matches!(
         facts.input,
         InputKind::Raw {
@@ -1325,7 +1341,7 @@ pub fn prompted(shape: &greycard_edit::mask::Shape) -> bool {
 /// The size of a develop of `full` once `geometry` has framed it, as
 /// `geometry::apply` cuts it.
 pub fn framed_size(full: (u32, u32), geometry: &Geometry) -> (u32, u32) {
-    if geometry.is_identity() {
+    if geometry.is_identity_on(full.0 as f32, full.1 as f32) {
         return full;
     }
     let frame = geometry.frame(full.0 as f32, full.1 as f32);
@@ -1351,6 +1367,7 @@ mod tests {
                 merged: false,
                 headroom: 0.0,
                 lens_corrected: false,
+                monochrome: false,
             },
             identity: identity(),
             turn,
@@ -1367,6 +1384,7 @@ mod tests {
                 merged: false,
                 headroom: 0.0,
                 lens_corrected: false,
+                monochrome: false,
             },
             ..raw(0)
         }
@@ -1443,6 +1461,7 @@ mod tests {
                 merged: true,
                 headroom: 2.0,
                 lens_corrected: false,
+                monochrome: false,
             },
             ..raw(0)
         };
@@ -1994,6 +2013,38 @@ mod tests {
         assert!(c.distortion.is_some() && c.vignetting.is_some());
     }
 
+    /// A monochrome raw's three channels are one: its profile's lateral
+    /// aberration and one set by hand stand down, and the rest of the
+    /// profile runs.
+    #[test]
+    fn a_monochrome_raw_takes_no_lateral_aberration() {
+        let (db, shot) = rf50();
+        let mut facts = raw(0);
+        facts.identity.shot = shot;
+        if let InputKind::Raw {
+            pattern,
+            monochrome,
+            ..
+        } = &mut facts.input
+        {
+            *pattern = None;
+            *monochrome = true;
+        }
+        let mut edit = Edit::default();
+        edit.lens.ca_red = 0.001;
+        let s = stages(&edit, &Purpose::Viewport, &facts, Some(&db));
+        let lens = s
+            .ops()
+            .find_map(|o| match o {
+                Stage::Lens(c) => c.first().copied(),
+                _ => None,
+            })
+            .expect("the profile's correction");
+        assert!(lens.distortion.is_some() && lens.vignetting.is_some());
+        assert!(lens.chromatic_aberration.is_none());
+        assert!(!s.ops().any(|o| matches!(o, Stage::Ca(_))));
+    }
+
     /// A file that corrects its own lens has the last word on it: under
     /// the file's own lens, its profile gives up the distortion to a
     /// warp, and the lateral aberration (the profile's and the automatic
@@ -2311,6 +2362,7 @@ mod tests {
                 merged,
                 headroom: 0.0,
                 lens_corrected: false,
+                monochrome: false,
             },
             ..raw(0)
         };

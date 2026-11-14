@@ -40,6 +40,10 @@
 #            greycard-<version>-<arch>-windows-setup.exe, from the
 #            same staging directory.
 #
+# Each has LICENSE, THIRD-PARTY-NOTICES (scripts/notices.sh, which
+# needs cargo-about), and README.md at its top; greycard.app has the
+# first two in Contents/Resources as well.
+#
 # The libraries we ship are ONNX Runtime, Dawn and, on Windows, the
 # two DXC ones Dawn loads by name. The binaries link neither ONNX
 # Runtime nor Dawn: greycard-ai loads ONNX Runtime the first time a
@@ -219,6 +223,11 @@ rm -rf "$stage" "target/dist/$name.tar" "target/dist/$name.tar.gz" \
     "target/dist/$name.zip" "target/dist/$name.dmg"
 mkdir -p "$stage"
 
+# The third-party notices, made from this tree by scripts/notices.sh
+# (which needs cargo-about; it says how to get it) and shipped beside
+# LICENSE: at the top of the archive, and inside the app on a Mac.
+scripts/notices.sh "$stage/THIRD-PARTY-NOTICES"
+
 if [ "$os" = macos ]; then
     # The bundle. Both binaries sit in Contents/MacOS beside the one
     # copy of ONNX Runtime and Dawn (no Dawn on an Intel Mac), since
@@ -231,6 +240,10 @@ if [ "$os" = macos ]; then
     chmod 0755 "$app/MacOS/greycard-ui" "$app/MacOS/greycard"
     for l in $libs; do chmod 0644 "$app/MacOS/$l"; done
     sed "s/@VERSION@/$version/g" packaging/Info.plist > "$app/Info.plist"
+
+    # The license and the notices inside the bundle too, since the disk
+    # image carries the app alone; sealed by the signature below.
+    cp LICENSE "$stage/THIRD-PARTY-NOTICES" "$app/Resources/"
 
     # The icon, rasterized from the SVG by sips at each size an icns
     # holds, and folded by iconutil. Both ship with macOS. The sidecar

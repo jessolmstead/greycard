@@ -1,5 +1,6 @@
 // The develop sections that are sliders on the edit and nothing else:
-// light, noise, detail, sharpening, the vignette, grain, the demosaic.
+// light, noise, detail, sharpening, the output sharpen, the vignette,
+// grain, the demosaic.
 
 import { Theme } from "../theme.slint";
 import { Section, EditSlider, Steps, Toggle, Segmented, PanelButton } from "../controls.slint";
@@ -445,6 +446,63 @@ export component SharpenSection inherits Section {
         enabled: root.sharpen;
         checked <=> root.show-sharpen-mask;
         toggled => { root.view-changed(); }
+    }
+}
+
+// The unsharp mask on the finished picture, after the tone work: the
+// viewport's to draw, as the vignette and the grain are, not the
+// develop's. Its radius is in the full-size picture's pixels.
+export component OutputSharpenSection inherits Section {
+    in-out property <bool> output-sharpen-enabled;
+    in-out property <bool> collapsed-output-sharpen;
+    in-out property <float> output-sharpen-amount;
+    in-out property <float> output-sharpen-radius;
+    in-out property <float> output-sharpen-threshold;
+    callback view-changed();
+
+    title: @tr("OUTPUT SHARPEN");
+    icon: @image-url("../icons/focus.svg");
+    collapsed <=> root.collapsed-output-sharpen;
+    switchable: true;
+    on <=> root.output-sharpen-enabled;
+    switched => { root.view-changed(); }
+    EditSlider {
+        label: @tr("Amount");
+        enabled: root.output-sharpen-enabled;
+        minimum: 0;
+        maximum: 2;
+        default: 0;
+        step: 0.01;
+        steps: Steps.percent;
+        value <=> root.output-sharpen-amount;
+        scale: 100;
+        text: round(root.output-sharpen-amount * 100) + "%";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: @tr("Radius");
+        enabled: root.output-sharpen-enabled;
+        minimum: 0.5;
+        maximum: 3;
+        default: 1;
+        step: 0.01;
+        steps: Steps.hundredths;
+        value <=> root.output-sharpen-radius;
+        text: round(root.output-sharpen-radius * 100) / 100;
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: @tr("Threshold");
+        enabled: root.output-sharpen-enabled;
+        minimum: 0;
+        maximum: 0.1;
+        default: 0.01;
+        step: 0.001;
+        steps: Steps.thousandths;
+        value <=> root.output-sharpen-threshold;
+        scale: 100;
+        text: round(root.output-sharpen-threshold * 1000) / 10 + "%";
+        changed(v) => { root.view-changed(); }
     }
 }
 

@@ -16,6 +16,8 @@
 //!   per-channel monotone curves kept only where they help, and a
 //!   residual table on a lattice, solved as a regularized least
 //!   squares.
+//! - [`mono`]: a set whose camera JPEGs are grey, told from the data
+//!   and fitted as a grey, every color of the table with it.
 //! - [`grey`]: the fitted model's grey ramp, the check a table must
 //!   pass to be written: greys kept near neutral, lightness rising.
 //! - [`cube`]: the model written as a `.cube` the engine's look slot
@@ -36,6 +38,7 @@ pub mod cube;
 pub mod exposure;
 pub mod fit;
 pub mod grey;
+pub mod mono;
 pub mod pairs;
 pub mod radial;
 pub mod register;
@@ -61,5 +64,8 @@ pub const LUT_SIZE: usize = 33;
 ///
 /// The hold on greys no pair reaches is not a bump: on sets from
 /// several folders it moves no table by more than a few thousandths,
-/// and a bump would ask every fit-2 table to be refitted.
+/// and a bump would ask every fit-2 table to be refitted. Nor is a
+/// monochrome set fitted as a grey ([`mono`]): a color set's table is
+/// the same to the bit, and a monochrome table fitted before keeps the
+/// develop's color where its frames had none until it is refitted.
 pub const FIT_VERSION: u32 = 2;

@@ -1,0 +1,23 @@
+# Notices some crates keep beside their license texts, in files
+# cargo-about does not read: copyright lines of code they took from
+# others, or of their own authors where the license text has none.
+# scripts/notices.sh copies each file, from the crate's own source as
+# cargo resolves it, into THIRD-PARTY-NOTICES after the crates'
+# licenses. One line a crate version. For a crate named here, the
+# script fails if a version of it is built that has no line, if a line
+# names a version no longer built or a crate no longer in the tree, or
+# if a file's sha256 is not the one here: a bump of a listed crate
+# stops the build until the new file is read and its line updated.
+# It cannot see a crate that is not named here: deleting all of a
+# crate's lines drops its notice without a word, and a crate newly in
+# the tree that keeps such a file is found only by reading it.
+#
+# crate              version   file                  sha256
+crossbeam-channel    0.5.17    LICENSE-THIRD-PARTY   b16db96b93b1d7cf7bea533f572091ec6bca3234fbe0a83038be772ff391a44c
+atomic-waker         1.1.2     LICENSE-THIRD-PARTY   6226d0632e2e1a80c23597e964da9812ae193c535fe058154afb034e94167aa5
+futures-lite         2.6.1     LICENSE-THIRD-PARTY   6226d0632e2e1a80c23597e964da9812ae193c535fe058154afb034e94167aa5
+parking              2.2.1     LICENSE-THIRD-PARTY   9a6d7a3c1b8edcc706c4b6c37f8dae9a77f02c7f9051df603f975db136b55419
+siphasher            1.0.4     COPYING               c962ee4d1d05ddc138b202b2540219ebc57893fcf97b364852094a9a94ce1365
+serde_arrays         0.2.0     COPYRIGHT             1fe2be9825c4477c6e246b0310543c0b98b497a4b53f58d15dd8367d88a69109
+unicode-bidi         0.3.18    COPYRIGHT             edb20b474f6cbd4f4db066b54a9e0f687d0009d309412a63431189b59b8e2a07
+uds_windows          1.2.1     THIRDPARTYNOTICES     943312cc53d8eb84176f7b2a62568bf4fa0d9cf9d66713d7b0cafae0b2086f40

@@ -193,6 +193,17 @@ struct Params {
     // luminance as the highlights and shadows are; `finish.rs` says
     // where it acts.
     tone: vec4<f32>,
+    // The output sharpen (`output_sharpen.rs`): its amount, the blur's
+    // standard deviation in target pixels (the radius at this zoom),
+    // its threshold, and in w the draw's part in it: 0 none, 1 the
+    // first pass, which writes the encoded luminance and stops, 2 the
+    // last, which reads its blur across (`osharp_across`) and sharpens.
+    osharp: vec4<f32>,
+    // The blur's taps: their spacing in target pixels (a source pixel
+    // apart above 1:1, one target pixel below) in x, taps a side in y,
+    // and in z the margin the luminance is drawn with past each side
+    // of the target.
+    osharp_taps: vec4<f32>,
 };
 
 // A local adjustment: its look's parameters as the global ones are
@@ -234,7 +245,8 @@ struct Local {
     mix_sat1: vec4<f32>,
     mix_lum0: vec4<f32>,
     mix_lum1: vec4<f32>,
-    // Its own midtones, in x.
+    // Its own midtones, in x; its Opacity, in y, which scales the
+    // weight its look goes on by and not the mask the overlay shows.
     tone: vec4<f32>,
 };
 
@@ -356,6 +368,10 @@ const LUMA: vec3<f32> = vec3<f32>(0.2627, 0.6780, 0.0593);
 // one from before it, at the source's size, read where the source is
 // (`DetailPlanes::sample`). A texel of nothing when there is none.
 @group(0) @binding(15) var range_src: texture_2d<f32>;
+// The output sharpen's luminance blurred across, at the target's size
+// and a margin past each side, from the first pass (`osharp.w`). A
+// texel of nothing otherwise.
+@group(0) @binding(16) var osharp_across: texture_2d<f32>;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -365,13 +381,23 @@ fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(x, y, 0.0, 1.0);
 }
 
+// The canvas where no picture is drawn; in the output sharpen's first
+// pass the mark of it, `OSHARP_PAST`, so the blurs find the picture's
+// edge where this shader put it.
+fn canvas_out() -> vec4<f32> {
+    if (p.osharp.w > 0.5 && p.osharp.w < 1.5) {
+        return vec4<f32>(OSHARP_PAST, OSHARP_PAST, OSHARP_PAST, 1.0);
+    }
+    return vec4<f32>(p.canvas.rgb, select(1.0, 0.0, p.range.w > 0.5));
+}
+
 @fragment
 fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // Frame pixel under this target pixel, then the source pixel under
     // that through the turn, as `to_source` in the edit crate.
     let q = frame_at(pos.xy);
     if (q.x < 0.0 || q.y < 0.0 || q.x >= p.frame_size.x || q.y >= p.frame_size.y) {
-        return vec4<f32>(p.canvas.rgb, select(1.0, 0.0, p.range.w > 0.5));
+        return canvas_out();
     }
     let at = source_of(q);
     // Below 1:1 the pixel covers a square of source pixels, and the
@@ -384,7 +410,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         // Nothing of the source is here, so nothing of a mask either:
         // the canvas, as outside the frame (the turned source's
         // corners, which crop mode shows).
-        return vec4<f32>(p.canvas.rgb, select(1.0, 0.0, p.range.w > 0.5));
+        return canvas_out();
     }
     // The picture, and in its alpha the sharpen's blend mask. The
     // texture is read where it holds this source position; everything
@@ -497,7 +523,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         let l = locals[k];
         let m = mask_at(l, uv, sample);
         weights[k] = m;
-        let w = m * f32(l.enabled);
+        let w = m * f32(l.enabled) * l.tone.y;
         if (w <= 0.0) { continue; }
         if (any(l.detail != vec4<f32>(0.0))) {
             detail_k = detail_k + w * l.detail;
@@ -656,6 +682,19 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // `finish_pixel_with` has it.
     if (p.look.x > 0.0) {
         c = look_at(c);
+    }
+    // The output sharpen, here between the look table and the output
+    // transform, as `finish_reaching` puts it: the first pass leaves
+    // the luminance it reads, the last its blur down that.
+    if (p.osharp.w > 0.5) {
+        let l = osharp_luminance(c);
+        if (p.osharp.w < 1.5) {
+            return vec4<f32>(l, l, l, 1.0);
+        }
+        let blurred = osharp_down(pos.xy);
+        if (!osharp_past(blurred)) {
+            c = osharp_apply(c, l, blurred);
+        }
     }
     // The proof's gamut mark is looked up at the working-space color,
     // before the output matrix clamps it into its space.
@@ -1070,11 +1109,11 @@ const HIGHLIGHTS_EASE: vec2<f32> = vec2<f32>(0.75, 1.2);
 const HIGHLIGHTS_EASE_DEPTH: f32 = 0.5;
 const HIGHLIGHTS_PEAK: f32 = 0.42;
 // Where midtones acts, by the frame's own range, as `finish.rs` has
-// it: its peak, how far under the span's foot it reaches, the least it
-// reaches over it, and what the summed slider is held to.
-const MIDTONES_PEAK: f32 = 0.5;
-const MIDTONES_BELOW: f32 = 2.0;
-const MIDTONES_ABOVE: f32 = 2.0;
+// it: its peak, how far under the span's foot it is full, how far it
+// reaches either way from there, and what the summed slider is held to.
+const MIDTONES_PEAK: f32 = 0.4375;
+const MIDTONES_UNDER_FOOT: f32 = 0.5;
+const MIDTONES_REACH: f32 = 1.75;
 const MIDTONES_LIMIT: f32 = 2.0;
 
 // The foot of the highlights ramp's span and the span, in stops over
@@ -1097,12 +1136,11 @@ fn highlights_weight(g: f32, span: vec2<f32>) -> f32 {
         * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE.x, HIGHLIGHTS_EASE.y, u));
 }
 // The midtones' share by where a region sits in the span, as
-// `midtones_weight` in `finish.rs`: a bell full at the span's foot,
-// nothing `MIDTONES_BELOW` under it and nothing at the frame's top.
+// `midtones_weight` in `finish.rs`: a bell full `MIDTONES_UNDER_FOOT`
+// under the span's foot, nothing `MIDTONES_REACH` either way from there.
 fn midtones_weight(g: f32, span: vec2<f32>) -> f32 {
-    let d = g - span.x;
-    let reach = select(max(span.y, MIDTONES_ABOVE), MIDTONES_BELOW, d < 0.0);
-    return MIDTONES_PEAK * (1.0 - smoothstep(0.0, 1.0, abs(d) / reach));
+    let d = g - (span.x - MIDTONES_UNDER_FOOT);
+    return MIDTONES_PEAK * (1.0 - smoothstep(0.0, 1.0, abs(d) / MIDTONES_REACH));
 }
 // A merge's kept range as the highlights' negative travel pulls it,
 // as `Kept` in `finish.rs`: the frame's median and top at the
@@ -1453,7 +1491,7 @@ fn shade_full(c: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
     let f = v - f32(i);
     var shift = mix(curves[256u + i].xy, curves[257u + i].xy, f);
     for (var k = 0u; k < count; k = k + 1u) {
-        let w = weights[k] * f32(locals[k].enabled);
+        let w = weights[k] * f32(locals[k].enabled) * locals[k].tone.y;
         if (w <= 0.0 || locals[k].shaded < 0.5) { continue; }
         let base = k * 512u + 256u + i;
         shift = shift + w * mix(local_tables[base].xy, local_tables[base + 1u].xy, f);
@@ -1536,6 +1574,127 @@ fn sample_cubic(tex: texture_2d<f32>, s: vec2<f32>) -> vec4<f32> {
     return out;
 }
 
+// The output sharpen's weight of a tap `d` target pixels out, as
+// `output_sharpen::kernel` has it before it is summed to one.
+fn osharp_weight(d: f32) -> f32 {
+    let s = max(p.osharp.y, 1e-3);
+    return exp(-(d * d) / (2.0 * s * s));
+}
+
+// The encoded luminance the output sharpen reads, as
+// `output_sharpen::luminance`.
+fn osharp_luminance(c: vec3<f32>) -> f32 {
+    return encode(vec3<f32>(clamp(dot(LUMA, c), 0.0, 1.0))).x;
+}
+
+// What the first pass writes past the picture's edge, and the blur
+// across keeps there: the luminance is never below zero, and a texel
+// that is not a number is not this. As `osharp.wgsl`'s.
+const OSHARP_PAST: f32 = -1.0;
+
+fn osharp_past(v: f32) -> bool {
+    return v < -0.5;
+}
+
+fn osharp_load(i: vec2<i32>) -> f32 {
+    let limit = vec2<i32>(textureDimensions(osharp_across)) - vec2<i32>(1, 1);
+    return textureLoad(osharp_across, clamp(i, vec2<i32>(0), limit), 0).r;
+}
+
+// `osharp_across` at a position in pixels, bilinear between the texel
+// centers about it, its edges clamped, read by load: as `tap` in
+// `osharp.wgsl`.
+fn osharp_tap(at: vec2<f32>) -> f32 {
+    let u = at - vec2<f32>(0.5);
+    let base = floor(u);
+    let f = u - base;
+    let i = vec2<i32>(base);
+    var acc = 0.0;
+    if (f.x < 1.0 && f.y < 1.0) { acc = acc + (1.0 - f.x) * (1.0 - f.y) * osharp_load(i); }
+    if (f.x > 0.0 && f.y < 1.0) { acc = acc + f.x * (1.0 - f.y) * osharp_load(i + vec2<i32>(1, 0)); }
+    if (f.x < 1.0 && f.y > 0.0) { acc = acc + (1.0 - f.x) * f.y * osharp_load(i + vec2<i32>(0, 1)); }
+    if (f.x > 0.0 && f.y > 0.0) { acc = acc + f.x * f.y * osharp_load(i + vec2<i32>(1, 1)); }
+    return acc;
+}
+
+// Texels of picture from `c` toward `dir` before the first past the
+// edge, `reach` at most: as `edge` in `osharp.wgsl`.
+fn osharp_edge(c: vec2<i32>, dir: vec2<i32>, reach: i32) -> f32 {
+    if (!osharp_past(osharp_load(c + dir * reach))) {
+        return f32(reach);
+    }
+    var k = 0;
+    while (k < reach && !osharp_past(osharp_load(c + dir * (k + 1)))) {
+        k = k + 1;
+    }
+    return f32(k);
+}
+
+// The first pass's blur across, blurred down about target pixel `pt`:
+// the taps held at the last texel the first pass drew as picture, edge
+// pixels standing in for what is past it, as `output_sharpen::blur`
+// clamps. `OSHARP_PAST` where the pixel itself is past the edge.
+fn osharp_down(target_pt: vec2<f32>) -> f32 {
+    let pt = target_pt + vec2<f32>(p.osharp_taps.z);
+    let c = vec2<i32>(floor(pt));
+    if (osharp_past(osharp_load(c))) {
+        return OSHARP_PAST;
+    }
+    let n = i32(p.osharp_taps.y + 0.5);
+    let step = p.osharp_taps.x;
+    let reach = i32(p.osharp_taps.z + 0.5);
+    let lo = pt.y - osharp_edge(c, vec2<i32>(0, -1), reach);
+    let hi = pt.y + osharp_edge(c, vec2<i32>(0, 1), reach);
+    var acc = 0.0;
+    var sum = 0.0;
+    for (var i = -n; i <= n; i = i + 1) {
+        let d = f32(i) * step;
+        let v = osharp_tap(vec2<f32>(pt.x, clamp(pt.y + d, lo, hi)));
+        // A tap that is not a number gives nothing, as
+        // `output_sharpen::blur` leaves it out.
+        if (abs(v) <= 1e30) {
+            let w = osharp_weight(d);
+            acc = acc + w * v;
+            sum = sum + w;
+        }
+    }
+    return acc / sum;
+}
+
+// The linear luminance under which a pixel is black and stays so, as
+// `output_sharpen::BLACK`.
+const OSHARP_BLACK: f32 = 1e-6;
+
+// `c` sharpened against its luminance's blur, as
+// `output_sharpen::apply`: the soft knee on the difference, the
+// encoded luminance moved by it, and the linear color scaled by what
+// that does to the linear luminance; black stays black, and a
+// brightening stops where the largest channel reaches white.
+fn osharp_apply(c_in: vec3<f32>, l: f32, blurred: f32) -> vec3<f32> {
+    // Every pixel held at zero from below, moved or not.
+    let c = max(c_in, vec3<f32>(0.0));
+    let d = l - blurred;
+    let t = p.osharp.z;
+    var k = d;
+    if (t > 0.0 && d != 0.0) {
+        k = d * d * d / (d * d + t * t);
+    }
+    let delta = p.osharp.x * k;
+    if (delta == 0.0 || !(abs(delta) <= 1e30)) {
+        return c;
+    }
+    let base = decode(vec3<f32>(l)).x;
+    if (base <= OSHARP_BLACK) {
+        return c;
+    }
+    var ratio = decode(vec3<f32>(clamp(l + delta, 0.0, 1.0))).x / base;
+    let top = max(max(c.r, c.g), c.b);
+    if (ratio > 1.0 && top > 0.0) {
+        ratio = min(ratio, max(1.0 / top, 1.0));
+    }
+    return c * ratio;
+}
+
 // The sRGB transfer function.
 fn encode(v: vec3<f32>) -> vec3<f32> {
     let low = v * 12.92;
@@ -1555,7 +1714,7 @@ fn decode(v: vec3<f32>) -> vec3<f32> {
 fn curve(e: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
     var x = e;
     for (var k = 0u; k < count; k = k + 1u) {
-        let w = weights[k] * f32(locals[k].enabled);
+        let w = weights[k] * f32(locals[k].enabled) * locals[k].tone.y;
         if (w <= 0.0) { continue; }
         let v = e * 255.0;
         let i = min(vec3<u32>(v), vec3<u32>(254u));

@@ -369,6 +369,36 @@ pub(crate) fn wheel_resizes_changed(st: &State, app: &App) {
     tracing::info!("grid wheel {}", if on { "resizes" } else { "only scrolls" });
 }
 
+/// The Author and Copyright fields as typed: kept, ends trimmed, when
+/// either changed, for the next export; empty is none and leaves the
+/// key out of the file. The field shows what was kept.
+pub(crate) fn rights_changed(st: &mut State, app: &App) {
+    let author = app.get_settings_author().trim().to_string();
+    let copyright = app.get_settings_copyright().trim().to_string();
+    app.set_settings_author(author.as_str().into());
+    app.set_settings_copyright(copyright.as_str().into());
+    // The sheet closing asks too, changed or not.
+    if (author.as_str(), copyright.as_str())
+        == (st.window.author.as_str(), st.window.copyright.as_str())
+    {
+        return;
+    }
+    st.window.author.clone_from(&author);
+    st.window.copyright.clone_from(&copyright);
+    keep(st, |s| keep_rights(s, &author, &copyright));
+    tracing::info!(
+        "exports' author {}, copyright {}",
+        if author.is_empty() { "none" } else { "set" },
+        if copyright.is_empty() { "none" } else { "set" }
+    );
+}
+
+/// The author and copyright into the settings file's fields.
+fn keep_rights(s: &mut settings::Settings, author: &str, copyright: &str) {
+    s.shared.author = author.to_string();
+    s.shared.copyright = copyright.to_string();
+}
+
 /// A raw's new edit with the lens section on or off: kept as flipped.
 pub(crate) fn lens_on_new_changed(st: &mut State, app: &App) {
     let on = app.get_lens_on_new();
@@ -883,6 +913,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             app.set_jpegs_apart(st.views.jpegs_apart);
             app.set_crop_start(st.develop.crop_start.name().into());
             app.set_lens_on_new(st.window.lens_on_new);
+            app.set_settings_author(st.window.author.as_str().into());
+            app.set_settings_copyright(st.window.copyright.as_str().into());
             crate::panel::retouch::show_patches(&st, &st.develop.edit, &app);
             let kept = settings::Settings::load();
             show_start(&app, &kept.start_folder);
@@ -1017,6 +1049,16 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
         app.on_lens_on_new_changed(move || {
             if let Some(app) = app_weak.upgrade() {
                 lens_on_new_changed(&mut state.borrow_mut(), &app);
+            }
+        });
+    }
+    // The author and copyright every export carries: kept as typed,
+    // and the next export writes them.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_rights_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                rights_changed(&mut state.borrow_mut(), &app);
             }
         });
     }
@@ -2246,6 +2288,211 @@ mod tests {
         open_editing(&app);
         assert_eq!(row_shows(&app, "format-row"), "TIFF 16-bit");
         assert_eq!(row_shows(&app, "space-row"), "Rec.2020");
+    }
+
+    /// The sheet's text field `id`: clicked into, emptied, `text`
+    /// typed, and Enter pressed when `enter`.
+    fn type_into(app: &App, id: &str, text: &str, enter: bool) {
+        use i_slint_backend_testing::ElementHandle;
+        let field = ElementHandle::find_by_element_id(app, &format!("SettingsSheet::{id}"))
+            .next()
+            .unwrap_or_else(|| panic!("{id} on the sheet"));
+        let (at, size) = (field.absolute_position(), field.size());
+        crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        // Select all and type over it.
+        use slint::platform::{Key, WindowEvent};
+        let control: slint::SharedString = Key::Control.into();
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: control.clone(),
+        });
+        crate::testing::press(app, "a");
+        app.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: control });
+        crate::testing::press(app, Key::Backspace);
+        crate::testing::type_text(app, text);
+        if enter {
+            crate::testing::press(app, Key::Return);
+        }
+    }
+
+    /// The Author and Copyright fields, in Editing alone: typed and
+    /// entered, they are the next export's rights; the sheet opened
+    /// again shows them; one typed and not entered is taken as the
+    /// sheet closes; emptied, it is none.
+    #[test]
+    fn the_author_and_copyright_fields_set_the_exports_rights() {
+        let (app, state, _worker) = develop_window();
+        for category in crate::settings::CATEGORIES {
+            app.set_settings_open(false);
+            app.set_settings_category(category.into());
+            app.invoke_settings_asked();
+            let shown = usize::from(category == "Editing");
+            assert_eq!(
+                crate::testing::count_labeled(&app, "Author"),
+                shown,
+                "{category}"
+            );
+            assert_eq!(
+                crate::testing::count_labeled(&app, "Copyright"),
+                shown,
+                "{category}"
+            );
+        }
+        app.set_settings_open(false);
+        open_editing(&app);
+        assert_eq!(app.get_settings_author(), "");
+        assert!(state.borrow().window.rights().is_empty());
+
+        type_into(&app, "author-field", " Zoë Ångström; Jo Doe ", true);
+        type_into(&app, "copyright-field", "© 2026 Zoë Ångström", true);
+        {
+            let st = state.borrow();
+            assert_eq!(st.window.author, "Zoë Ångström; Jo Doe");
+            assert_eq!(st.window.copyright, "© 2026 Zoë Ångström");
+            let rights = st.window.rights();
+            assert_eq!(rights.author.as_deref(), Some("Zoë Ångström; Jo Doe"));
+            assert_eq!(rights.copyright.as_deref(), Some("© 2026 Zoë Ångström"));
+        }
+        assert_eq!(app.get_settings_author(), "Zoë Ångström; Jo Doe", "trimmed");
+
+        // Closed and opened again: shown as kept.
+        app.set_settings_open(false);
+        crate::testing::press(&app, slint::platform::Key::Shift);
+        app.set_settings_author("stale".into());
+        open_editing(&app);
+        assert_eq!(app.get_settings_author(), "Zoë Ångström; Jo Doe");
+        assert_eq!(app.get_settings_copyright(), "© 2026 Zoë Ångström");
+
+        // Emptied and not entered: Escape closes the sheet and takes it,
+        // as none.
+        type_into(&app, "copyright-field", "", false);
+        assert_eq!(state.borrow().window.copyright, "© 2026 Zoë Ångström");
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        crate::testing::press(&app, slint::platform::Key::Shift);
+        assert!(!app.get_settings_open());
+        {
+            let st = state.borrow();
+            assert_eq!(st.window.copyright, "");
+            assert_eq!(st.window.rights().copyright, None);
+            assert_eq!(st.window.author, "Zoë Ångström; Jo Doe");
+        }
+        open_editing(&app);
+        assert_eq!(app.get_settings_copyright(), "");
+        // Tab goes from Author on to Copyright.
+        type_into(&app, "author-field", "Jo Doe", false);
+        crate::testing::press(&app, slint::platform::Key::Tab);
+        crate::testing::type_text(&app, "© Jo");
+        assert_eq!(app.get_settings_copyright(), "© Jo");
+    }
+
+    /// A field on the sheet takes every key, the window's shortcuts
+    /// among them, and the arrows, Home, and End move in its text, not
+    /// the frame or the edit behind the sheet.
+    #[test]
+    fn a_sheets_field_takes_every_key() {
+        use slint::platform::Key;
+        let (app, state, _worker) = develop_window();
+        open_editing(&app);
+        let look = crate::panel::edit::read_look(&app);
+        type_into(&app, "author-field", "gGeLx1[]/?c", false);
+        for key in [
+            Key::Home,
+            Key::RightArrow,
+            Key::Delete,
+            Key::End,
+            Key::LeftArrow,
+        ] {
+            crate::testing::press(&app, key);
+        }
+        crate::testing::press(&app, Key::Backspace);
+        crate::testing::type_text(&app, "z");
+        // On macOS Home is not a move in a line of text, so the Delete
+        // after it finds the end and takes nothing.
+        let typed = if cfg!(target_os = "macos") {
+            "gGeLx1[]/zc"
+        } else {
+            "geLx1[]/zc"
+        };
+        assert_eq!(app.get_settings_author(), typed);
+        assert!(app.get_settings_open());
+        assert!(!app.get_grid_open() && !app.get_lightbox() && !app.get_cull_mode());
+        assert_eq!(state.borrow().current, Some(0));
+        assert_eq!(crate::panel::edit::read_look(&app), look);
+    }
+
+    /// What the fields keep in the file: the text, and an empty one
+    /// left out, as a file that never had it.
+    #[test]
+    fn the_author_and_copyright_kept_in_the_file_are_left_out_empty() {
+        let dir = crate::testing::scratch_dir("rights-kept");
+        let file = dir.join("settings.json");
+        crate::settings::Settings::change_at(&file, |s| {
+            keep_rights(s, "Zoë Ångström", "© 2026 Zoë Ångström")
+        });
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("\"author\": \"Zoë Ångström\""), "{text}");
+        let read = crate::settings::Settings::load_from(&file);
+        assert_eq!(read.shared.copyright, "© 2026 Zoë Ångström");
+        crate::settings::Settings::change_at(&file, |s| keep_rights(s, "", ""));
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            !text.contains("author") && !text.contains("copyright"),
+            "{text}"
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The Editing category with the two fields filled, at 150 % and in
+    /// French as in English: the card in the smallest window, the
+    /// fields inside the card and wide enough to type in.
+    #[test]
+    fn the_author_and_copyright_rows_fit_at_150_percent_in_french() {
+        use i_slint_backend_testing::ElementHandle;
+        for language in ["", "fr"] {
+            let (app, _state, _worker) = develop_window();
+            slint::select_bundled_translation(language).expect("bundled");
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged {
+                    scale_factor: 1.5,
+                });
+            app.window()
+                .set_size(slint::LogicalSize::new(1024.0, 640.0));
+            app.set_settings_author("Zoë Ångström; Jo Doe; A Third Author With A Long Name".into());
+            app.set_settings_copyright("© 2026 Zoë Ångström, all rights reserved".into());
+            open_editing(&app);
+            crate::testing::settle(&app);
+            let done = ElementHandle::find_by_accessible_label(&app, "Done")
+                .chain(ElementHandle::find_by_accessible_label(&app, "Terminé"))
+                .next()
+                .expect("Done");
+            let foot = done.absolute_position().y + done.size().height;
+            assert!(foot <= 640.0, "{language}: Done at {foot}");
+            // The pane scrolled to its foot, where the two rows are: a
+            // row clipped out of view is not found.
+            for _ in 0..10 {
+                app.window()
+                    .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                        position: slint::LogicalPosition::new(600.0, 320.0),
+                        delta_x: 0.0,
+                        delta_y: -200.0,
+                    });
+            }
+            crate::testing::settle(&app);
+            for id in ["author-field", "copyright-field"] {
+                crate::testing::count_labeled(&app, id);
+                let field =
+                    ElementHandle::find_by_element_id(&app, &format!("SettingsSheet::{id}"))
+                        .next()
+                        .unwrap_or_else(|| panic!("{language}: {id} on the sheet"));
+                let (at, size) = (field.absolute_position(), field.size());
+                assert!(
+                    at.x >= 0.0 && at.x + size.width <= 1024.0,
+                    "{language} {id}: {at:?} {size:?}"
+                );
+                assert!(size.width >= 120.0, "{language} {id}: {size:?}");
+            }
+            slint::select_bundled_translation("").expect("English is the source");
+        }
     }
 
     /// In the smallest window the fit allows, each category keeps the

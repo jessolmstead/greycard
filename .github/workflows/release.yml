@@ -68,8 +68,11 @@ on:
     tags:
       - "v*"
 
+# Read-only for every job; the one that publishes the release asks for
+# write itself, so a build step or a script it fetches never holds a
+# token that can change the repository.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -406,6 +409,27 @@ jobs:
           echo "WINDOWS_SIGNING is set, but no signing service is wired into this step" >&2
           exit 1
 
+      # package.sh writes THIRD-PARTY-NOTICES with cargo-about, through
+      # scripts/notices.sh, which wants this version. It is built from
+      # source, pinned and locked, on every runner alike, and the binary
+      # kept in the cache under its version and the runner's platform.
+      # A tag's run reads only its own caches and master's, never a pull
+      # request's, and on master only CI's notices job fills one, on
+      # Linux: so the Linux leg normally finds it, and the other legs
+      # build it unless a package workflow has run on master for theirs.
+      - name: cargo-about from the cache
+        id: cargo-about
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-about
+            ~/.cargo/bin/cargo-about.exe
+          key: cargo-about-0.9.3-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-about
+        if: steps.cargo-about.outputs.cache-hit != 'true'
+        run: cargo install cargo-about --locked --version 0.9.3 --features cli
+
       - name: Package
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -486,6 +510,7 @@ jobs:
           # plain window, and nothing else would say so.
           test -f "$mnt/.DS_Store"
           test -f "$mnt/.background/background.tiff"
+          test -f "$mnt/greycard.app/Contents/Resources/THIRD-PARTY-NOTICES"
           spctl --assess --type execute --verbose=2 "$mnt/greycard.app"
           "$mnt/greycard.app/Contents/MacOS/greycard" --version
           hdiutil detach -quiet "$mnt"
@@ -536,8 +561,14 @@ jobs:
     name: GitHub release
     needs: [version, build, tests]
     runs-on: ubuntu-24.04
+    # To create the release and upload its files.
+    permissions:
+      contents: write
     steps:
+      # Only the changelog is read; the write token stays out of .git.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -576,10 +607,31 @@ jobs:
           cat target/dist/release-notes.md
           ls -l target/dist/greycard-*
 
+      # SHA256SUMS over the files the next step uploads, by the same
+      # globs, in sha256sum's own format so that `sha256sum -c
+      # SHA256SUMS` checks a download (with --ignore-missing for one
+      # file). failglob fails here on a glob that matches nothing, as
+      # fail_on_unmatched_files does below; the -c proves the file reads.
+      - name: Checksums
+        working-directory: target/dist
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          shopt -s failglob
+          sha256sum -- \
+            greycard-"$VERSION"-*.tar.gz \
+            greycard-"$VERSION"-*.zip \
+            greycard-"$VERSION"-*.AppImage \
+            greycard-"$VERSION"-*.dmg \
+            greycard-"$VERSION"-*-setup.exe > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c SHA256SUMS
+
       - name: Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
+            target/dist/SHA256SUMS
             target/dist/greycard-${{ needs.version.outputs.version }}-*.tar.gz
             target/dist/greycard-${{ needs.version.outputs.version }}-*.zip
             target/dist/greycard-${{ needs.version.outputs.version }}-*.AppImage

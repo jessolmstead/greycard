@@ -5962,8 +5962,8 @@ pub fn none_found_note(what: &str, file: Option<&Path>) -> String {
 }
 
 /// What a model sees: the picture under the global look alone, no
-/// geometry, no vignette or grain, in sRGB, no more than `PREVIEW`
-/// on its long side.
+/// geometry, no vignette, grain, or output sharpen, in sRGB, no more
+/// than `PREVIEW` on its long side.
 pub fn preview(image: &WorkingImage, edit: &Edit, kind: greycard_render::finish::Source) -> Rgb8 {
     display(image, edit, kind, Some(PREVIEW))
 }
@@ -6005,6 +6005,7 @@ fn display(
     edit.geometry = Default::default();
     edit.vignette = Default::default();
     edit.grain = Default::default();
+    edit.output_sharpen = Default::default();
     let settings = greycard_render::export::Settings {
         format: greycard_render::export::Format::Jpeg,
         long_edge,

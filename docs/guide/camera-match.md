@@ -166,6 +166,17 @@ The look gives you the camera's color and tone, not its brightness.
 Camera JPEGs come out at their own exposure from scene to scene, so the
 fit leaves brightness to the **Exposure** slider.
 
+A look fitted on frames whose camera JPEGs are black and white (a
+Monochrome or Monotone style) turns every color grey, saturated ones
+too. It keeps the camera's tones, and for the colors your frames show,
+the shade of grey the camera gives each; a color they never show takes
+greycard's own lightness for it. A sepia or other toned style is
+fitted as a color look.
+
+At full **Strength** a black and white look renders grey whatever the
+color controls do: the black and white section, tint, grading, and
+the color curves all come before the look, so any toning is lost.
+
 A look fitted on one body works on another body's frames. It is not
 swapped for that body's own look. When the look was fitted on another
 body than the open frame's, the section says "fitted on" that body.

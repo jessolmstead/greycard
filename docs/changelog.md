@@ -5,6 +5,17 @@ design note behind it.
 
 ## 0.12.0
 
+### Packages
+
+- Every package carries THIRD-PARTY-NOTICES beside LICENSE: the
+  licenses and notices of the libraries, artwork, ported code, and
+  crates greycard is built from
+  ([§660](https://github.com/jessolmstead/greycard/blob/master/docs/notes/660-third-party-notices-in-every-package.md)).
+- Each release carries a SHA256SUMS file over its downloads: check
+  them with `sha256sum -c SHA256SUMS --ignore-missing`, or
+  `shasum -a 256 -c` on a Mac
+  ([§657](https://github.com/jessolmstead/greycard/blob/master/docs/notes/657-read-only-workflow-tokens-and-sha256sums.md)).
+
 ### Windows
 
 - Windows has an installer, `greycard-<version>-x86_64-windows-setup.exe`
@@ -56,10 +67,11 @@ design note behind it.
 ### Export
 
 - An author and a copyright notice written into every export (EXIF
-  and XMP), set for now by two lines in `settings.json` or by
-  `greycard export --author --copyright`; the window's fields come
-  later. They are written under Metadata None too, alone
-  ([§652](https://github.com/jessolmstead/greycard/blob/master/docs/notes/652-an-author-and-a-copyright-in-every-export.md)).
+  and XMP): two fields under Settings, Editing, or
+  `greycard export --author --copyright`. Metadata None writes
+  neither (issue 106,
+  [§652](https://github.com/jessolmstead/greycard/blob/master/docs/notes/652-an-author-and-a-copyright-in-every-export.md),
+  [§658](https://github.com/jessolmstead/greycard/blob/master/docs/notes/658-author-and-copyright-in-the-window.md)).
 - WebP joins JPEG, PNG, and TIFF as an export format: lossless, 8
   bits, with the color profile and metadata the others carry, and
   smaller than a PNG. A side longer than 16383 px is refused
@@ -75,9 +87,10 @@ design note behind it.
   [§656](https://github.com/jessolmstead/greycard/blob/master/docs/notes/656-olympus-and-om-system-styles.md)).
 - Midtones, a slider in Light between Highlights and Shadows (and in
   a mask's Light): it lifts or sinks the middle of the frame's own
-  range by up to a stop and leaves the blacks and the brightest
-  tones where they are
-  ([§644](https://github.com/jessolmstead/greycard/blob/master/docs/notes/644-midtones.md)).
+  range by up to 0.875 of a stop and leaves the blacks and the
+  brightest tones where they are
+  ([§644](https://github.com/jessolmstead/greycard/blob/master/docs/notes/644-midtones.md),
+  [§661](https://github.com/jessolmstead/greycard/blob/master/docs/notes/661-midtones-lower-and-narrower.md)).
 - A camera profile from a DCP file now applies its look table, which
   is where Adobe's Camera Standard, Natural, Vivid, and the rest carry
   their color: they differ from each other, and greens no longer come
@@ -106,9 +119,50 @@ design note behind it.
   took; it sets, never shifts, so a second click changes nothing
   (issue 56,
   [§626](https://github.com/jessolmstead/greycard/blob/master/docs/notes/626-a-middle-click-on-a-frame-syncs-from-it.md)).
+- A mask has an Opacity, under Refine edge: one slider that pulls the
+  whole of its look back, its sliders left as they are. Half is half
+  of each slider (issue 141,
+  [§659](https://github.com/jessolmstead/greycard/blob/master/docs/notes/659-a-masks-opacity.md)).
+- Color grading's middle wheel reads Midtones, as the Light slider
+  does.
+- The camera profile folder is read with its subfolders, so Adobe's
+  CameraProfiles folder can be copied or linked in whole. A Show all
+  cameras switch under the list offers profiles made for other
+  cameras, grouped by camera (issue 135,
+  [§662](https://github.com/jessolmstead/greycard/blob/master/docs/notes/662-profile-subfolders-and-show-all-cameras.md)).
+- OUTPUT SHARPEN, a section after Sharpen: an unsharp mask on the
+  finished picture's brightness, after the tone work, with Amount,
+  Radius, and Threshold. Off until Amount is raised (issue 135,
+  [§663](https://github.com/jessolmstead/greycard/blob/master/docs/notes/663-output-sharpen.md)).
 
 ### Fixes
 
+- DNGs from monochrome sensors open (Leica Monochrom bodies, the
+  Ricoh GR IV Monochrome); before, each failed with "Linear layout
+  with 1 samples per pixel". They develop to a neutral grey, and
+  Temperature and Tint leave them alone; tone them with color grading
+  ([§668](https://github.com/jessolmstead/greycard/blob/master/docs/notes/668-monochrome-sensors-open.md)).
+- A sidecar with brush masks is about a quarter the size: a stroke's
+  points are written on one line, not a number a line. One tester's
+  went from 28 MB to 6.6 MB. A sidecar takes the new layout the next
+  time its frame is saved, and every version reads it
+  ([§667](https://github.com/jessolmstead/greycard/blob/master/docs/notes/667-a-sidecars-numbers-on-one-line.md)).
+- A crop opened at a ratio with the Crop button and closed with Done
+  exports as it shows. Before, with the starting aspect on Last used,
+  the screen showed the ratio and the export and the thumbnail were
+  the whole frame, until the box was moved. Frames saved that way
+  need no redoing (issue 145,
+  [§666](https://github.com/jessolmstead/greycard/blob/master/docs/notes/666-a-ratio-over-no-crop-is-a-crop.md)).
+- A camera look fitted on a monochrome style is grey for every
+  color. Before, colors the shoot never showed kept their own color,
+  so lips could come out pale red. Fit the look again to get it
+  (issue 144,
+  [§665](https://github.com/jessolmstead/greycard/blob/master/docs/notes/665-a-monochrome-style-fits-as-a-grey.md)).
+- Tab stays inside an open sheet. Before, it walked out onto the
+  panel behind, where the arrows then changed the edit under the
+  sheet; and Escape now closes the import and Lightroom sheets from
+  their text fields
+  ([§664](https://github.com/jessolmstead/greycard/blob/master/docs/notes/664-a-sheet-holds-the-focus.md)).
 - One section open at a time holds across the tabs: opening a mask's
   Light, or Metadata while culling, no longer leaves a second section
   open on Develop

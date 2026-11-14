@@ -58,6 +58,21 @@ pub const DEVELOP_RECIPE: u32 = 5;
 /// edit with all three at zero makes the picture it made, to the bit.
 pub const SHARPEN_GUIDE: &str = "sharpen-guide-1";
 
+/// The Midtones bell's shape, by version: taken into the key of an edit
+/// that sets Midtones ([`Edit::sets_midtones`]), so the pictures kept
+/// of such an edit are made again when it changes, and those of every
+/// other edit are kept. 1: full half a stop under the highlights span's
+/// foot, reaching 1.75 stops either way, 2026-11-12.
+pub const MIDTONES_SHAPE: &str = "midtones-1";
+
+/// An aspect over no crop, by version: taken into the key of an edit
+/// whose aspect frames the picture with no crop stored
+/// ([`crate::geometry::Geometry::frames_by_aspect`]), so the pictures
+/// kept of such an edit are made again and those of every other edit
+/// are kept. 1: framed by the aspect as the viewport frames it, where
+/// before the pictures were the whole frame, 2026-11-13.
+pub const ASPECT_FRAME: &str = "aspect-frame-1";
+
 /// The learned masks' stages, by version: raise one when its raster
 /// comes to be another from the same shape. greycard-ui's mask cache
 /// keys its rasters by these, and the develop key of an edit with such
@@ -176,6 +191,16 @@ impl Edit {
             hasher.update(&(SHARPEN_GUIDE.len() as u64).to_le_bytes());
             hasher.update(SHARPEN_GUIDE.as_bytes());
         }
+        if self.sets_midtones() {
+            hasher.update(b"midtones shape\0");
+            hasher.update(&(MIDTONES_SHAPE.len() as u64).to_le_bytes());
+            hasher.update(MIDTONES_SHAPE.as_bytes());
+        }
+        if self.geometry.frames_by_aspect() {
+            hasher.update(b"aspect frame\0");
+            hasher.update(&(ASPECT_FRAME.len() as u64).to_le_bytes());
+            hasher.update(ASPECT_FRAME.as_bytes());
+        }
         for Read { name, contents } in read {
             hasher.update(&(name.len() as u64).to_le_bytes());
             hasher.update(name.as_bytes());
@@ -255,6 +280,72 @@ mod tests {
         edit.detail.enabled = true;
         edit.sharpen.enabled = false;
         assert!(!edit.sharpen_reads_guide(), "nothing to guide");
+    }
+
+    /// The Midtones bell's shape is in the key of an edit that sets
+    /// Midtones, the picture's own or a mask's, and of no other.
+    #[test]
+    fn the_midtones_shape_is_keyed_only_where_midtones_is_set() {
+        let mut edit = Edit::default();
+        edit.light.tone.shadows = 0.5;
+        assert!(!edit.sets_midtones());
+        edit.light.tone.midtones = -0.25;
+        assert!(edit.sets_midtones());
+        edit.light.tone.midtones = 0.0;
+        edit.adjustments.push(crate::Adjustment::default());
+        assert!(!edit.sets_midtones());
+        edit.adjustments[0].look.light.tone.midtones = 1.0;
+        assert!(edit.sets_midtones(), "a mask's");
+    }
+
+    /// The key as it was made before [`ASPECT_FRAME`], for an edit with
+    /// no mask, no file read, no guide, and no Midtones: the recipe, the
+    /// edit, and the lens database while it corrects. The default
+    /// edit's key, equal to it, says it is made as the key is.
+    fn key_before_the_aspect_frame(edit: &Edit) -> u64 {
+        let mut stripped = edit.clone();
+        stripped.version = 0;
+        stripped.frame_pending = false;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"greycard develop key\0");
+        hasher.update(&DEVELOP_RECIPE.to_le_bytes());
+        let json = serde_json::to_vec(&stripped).expect("an edit serializes");
+        hasher.update(&(json.len() as u64).to_le_bytes());
+        hasher.update(&json);
+        if edit.lens.enabled && edit.lens.profile {
+            hasher.update(b"lenses\0");
+            hasher.update(&0u64.to_le_bytes());
+        }
+        let bytes = hasher.finalize();
+        u64::from_le_bytes(bytes.as_bytes()[..8].try_into().unwrap())
+    }
+
+    /// An aspect over no crop, whose kept pictures were the whole frame,
+    /// is keyed anew so they are made again; the default edit, a crop
+    /// stored, Original as the frame stands, and a tone alone keep the
+    /// keys they had.
+    #[test]
+    fn the_aspect_frame_is_keyed_only_where_an_aspect_frames_with_no_crop() {
+        let kept = |edit: &Edit| key(edit, None) == key_before_the_aspect_frame(edit);
+        let mut edit = Edit::default();
+        assert!(kept(&edit), "the default edit");
+        edit.light.exposure = 0.5;
+        assert!(kept(&edit), "a tone alone");
+        edit.geometry.aspect = crate::geometry::Aspect::Original;
+        assert!(kept(&edit), "Original, the whole plane");
+        edit.geometry.aspect = crate::geometry::Aspect::Ratio { w: 3.0, h: 2.0 };
+        assert!(!kept(&edit), "3:2 over no crop");
+        edit.geometry.crop = Some(crate::geometry::Crop {
+            x: 0.0,
+            y: 0.1,
+            w: 1.0,
+            h: 0.8,
+        });
+        assert!(kept(&edit), "a crop stored");
+        edit.geometry.crop = None;
+        edit.geometry.aspect = crate::geometry::Aspect::Original;
+        edit.geometry.portrait = true;
+        assert!(!kept(&edit), "Original stood on end");
     }
 
     #[test]

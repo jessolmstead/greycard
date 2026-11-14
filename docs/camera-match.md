@@ -156,8 +156,13 @@ separates "the fit found Standard" from "the fit found the camera". If
 Standard and Faithful come out as different LUTs whose difference is
 what Canon says those styles do, the fit is reading the style. If they
 come out nearly the same, it is mostly fitting the sensor and tone.
-Two styles need care: Monochrome discards hue, so its fit is trivial
-and the look belongs to the black and white section; Fine Detail
+Two styles need care: Monochrome discards hue, and a color fit of a
+portrait set left saturated colors it never saw at the develop's own
+color. So the fit tells a monochrome set from its data
+(`greycard_match::mono`: the camera's blocks grey at the 99th
+percentile while the develop's show color), fits it on the camera's
+greys, and writes a table whose every node is a grey at the fitted
+lightness; Fine Detail
 differs from Standard mostly in sharpening, which the block averaging
 discards, so it should land on nearly Standard's LUT, a check rather
 than a problem.

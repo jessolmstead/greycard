@@ -133,211 +133,225 @@ export component LightroomSheet inherits Rectangle {
         drop-shadow-color: #00000099;
         clip: true;
         TouchArea { }
-        body := VerticalLayout {
-            padding: Theme.space-5;
-            spacing: Theme.space-2;
-            // The head. Each wrapped note says its height: the sheet is
-            // sized from the body's, which otherwise counts a note in a
-            // layout of its own, as the warning's, one line however many
-            // it wraps to, and cuts the foot.
-            Text {
-                text: root.lr-title;
-                font-size: Theme.font-lg;
-                font-weight: Theme.weight-medium;
-                color: Theme.text;
-                wrap: word-wrap;
-                height: self.preferred-height;
+        // A field has the focus, and the keys it turns away go up from
+        // it to here, never to the window's, which serve this sheet:
+        // Escape is taken here as the window takes it.
+        FocusScope {
+            focus-on-tab-navigation: false;
+            focus-on-click: false;
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    if (!root.lr-running) { root.lr-cancel(); }
+                    return accept;
+                }
+                return reject;
             }
-            if root.lr-subtitle != "": Text {
-                text: root.lr-subtitle;
-                wrap: word-wrap;
-                height: self.preferred-height;
-                font-size: Theme.font-xs;
-                color: Theme.text-secondary;
-            }
-            if root.lr-note != "": Text {
-                text: root.lr-note;
-                wrap: word-wrap;
-                height: self.preferred-height;
-                font-size: Theme.font-sm;
-                color: Theme.warn-red;
-            }
-            // The one thing that can lose work, over the summary.
-            if root.lr-step > 0 && root.lr-warning != "": VerticalLayout {
-                spacing: 2px;
+            body := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-2;
+                // The head. Each wrapped note says its height: the sheet is
+                // sized from the body's, which otherwise counts a note in a
+                // layout of its own, as the warning's, one line however many
+                // it wraps to, and cuts the foot.
                 Text {
-                    text: root.lr-warning;
+                    text: root.lr-title;
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
                     wrap: word-wrap;
                     height: self.preferred-height;
-                    font-size: Theme.font-sm;
-                    color: Theme.warn-red;
                 }
-                Text {
-                    text: root.lr-remedy;
+                if root.lr-subtitle != "": Text {
+                    text: root.lr-subtitle;
                     wrap: word-wrap;
                     height: self.preferred-height;
                     font-size: Theme.font-xs;
                     color: Theme.text-secondary;
                 }
-            }
-            // What the dry run found, or what the write did.
-            if root.lr-step > 0: Text {
-                text: root.lr-step == 1 ? root.lr-summary : root.lr-done;
-                wrap: word-wrap;
-                height: self.preferred-height;
-                font-size: Theme.font-sm;
-                color: Theme.text;
-            }
-            // Details' header and the middle, which scrolls: the roots, or
-            // the details. Folded, the empty scroll takes no spacing.
-            middle := VerticalLayout {
-                vertical-stretch: 1;
-                spacing: root.shows-list ? Theme.space-2 : 0px;
-                if root.lr-step > 0 && root.lr-details.length > 0: Fold {
-                    open <=> root.details-open;
+                if root.lr-note != "": Text {
+                    text: root.lr-note;
+                    wrap: word-wrap;
+                    height: self.preferred-height;
+                    font-size: Theme.font-sm;
+                    color: Theme.warn-red;
                 }
-
-                scroll := ScrollPane {
+                // The one thing that can lose work, over the summary.
+                if root.lr-step > 0 && root.lr-warning != "": VerticalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: root.lr-warning;
+                        wrap: word-wrap;
+                        height: self.preferred-height;
+                        font-size: Theme.font-sm;
+                        color: Theme.warn-red;
+                    }
+                    Text {
+                        text: root.lr-remedy;
+                        wrap: word-wrap;
+                        height: self.preferred-height;
+                        font-size: Theme.font-xs;
+                        color: Theme.text-secondary;
+                    }
+                }
+                // What the dry run found, or what the write did.
+                if root.lr-step > 0: Text {
+                    text: root.lr-step == 1 ? root.lr-summary : root.lr-done;
+                    wrap: word-wrap;
+                    height: self.preferred-height;
+                    font-size: Theme.font-sm;
+                    color: Theme.text;
+                }
+                // Details' header and the middle, which scrolls: the roots, or
+                // the details. Folded, the empty scroll takes no spacing.
+                middle := VerticalLayout {
                     vertical-stretch: 1;
-                    min-height: root.shows-list ? 72px : 0px;
-                    preferred-height: root.shows-list ? list.preferred-height : 0px;
-                    content-height: list.preferred-height;
-                    content-width: self.visible-width;
-                    visible: root.shows-list;
-                    list := VerticalLayout {
-                        width: scroll.visible-width;
-                        // Clear of the scroll bar's band, so a click on
-                        // a row's Choose... is never the bar's.
-                        padding-right: Theme.scrollbar-band;
-                        if root.lr-step == 0: VerticalLayout {
-                            spacing: Theme.space-2;
-                            // A root a line: its folder's name, where it
-                            // stands, and Choose... to say where it is.
-                            for r[i] in root.lr-roots: HorizontalLayout {
+                    spacing: root.shows-list ? Theme.space-2 : 0px;
+                    if root.lr-step > 0 && root.lr-details.length > 0: Fold {
+                        open <=> root.details-open;
+                    }
+
+                    scroll := ScrollPane {
+                        vertical-stretch: 1;
+                        min-height: root.shows-list ? 72px : 0px;
+                        preferred-height: root.shows-list ? list.preferred-height : 0px;
+                        content-height: list.preferred-height;
+                        content-width: self.visible-width;
+                        visible: root.shows-list;
+                        list := VerticalLayout {
+                            width: scroll.visible-width;
+                            // Clear of the scroll bar's band, so a click on
+                            // a row's Choose... is never the bar's.
+                            padding-right: Theme.scrollbar-band;
+                            if root.lr-step == 0: VerticalLayout {
                                 spacing: Theme.space-2;
-                                VerticalLayout {
-                                    horizontal-stretch: 1;
-                                    alignment: center;
-                                    spacing: 2px;
-                                    HorizontalLayout {
-                                        spacing: Theme.space-2;
-                                        Text {
-                                            text: r.name;
-                                            color: Theme.text;
-                                            font-size: Theme.font-sm;
-                                            overflow: elide;
-                                            horizontal-stretch: 0;
-                                            vertical-alignment: center;
+                                // A root a line: its folder's name, where it
+                                // stands, and Choose... to say where it is.
+                                for r[i] in root.lr-roots: HorizontalLayout {
+                                    spacing: Theme.space-2;
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        alignment: center;
+                                        spacing: 2px;
+                                        HorizontalLayout {
+                                            spacing: Theme.space-2;
+                                            Text {
+                                                text: r.name;
+                                                color: Theme.text;
+                                                font-size: Theme.font-sm;
+                                                overflow: elide;
+                                                horizontal-stretch: 0;
+                                                vertical-alignment: center;
+                                            }
+                                            Text {
+                                                text: r.state;
+                                                color: r.taken ? Theme.text-secondary : Theme.warn-red;
+                                                font-size: Theme.font-sm;
+                                                overflow: elide;
+                                                horizontal-stretch: 1;
+                                                vertical-alignment: center;
+                                            }
                                         }
-                                        Text {
-                                            text: r.state;
-                                            color: r.taken ? Theme.text-secondary : Theme.warn-red;
-                                            font-size: Theme.font-sm;
+                                        // Where it was taken, so that a guess at
+                                        // the wrong folder of the name shows here,
+                                        // and the catalog's path when the name
+                                        // alone could be another root's.
+                                        if r.under != "": Text {
+                                            text: r.under;
+                                            color: Theme.text-muted;
+                                            font-size: Theme.font-xs;
                                             overflow: elide;
-                                            horizontal-stretch: 1;
-                                            vertical-alignment: center;
                                         }
                                     }
-                                    // Where it was taken, so that a guess at
-                                    // the wrong folder of the name shows here,
-                                    // and the catalog's path when the name
-                                    // alone could be another root's.
-                                    if r.under != "": Text {
-                                        text: r.under;
-                                        color: Theme.text-muted;
-                                        font-size: Theme.font-xs;
-                                        overflow: elide;
+                                    PanelButton {
+                                        text: @tr("Choose...");
+                                        enabled: !root.lr-busy;
+                                        clicked => { root.lr-choose-root(i); }
                                     }
-                                }
-                                PanelButton {
-                                    text: @tr("Choose...");
-                                    enabled: !root.lr-busy;
-                                    clicked => { root.lr-choose-root(i); }
                                 }
                             }
-                        }
-                        if root.lr-step > 0 && root.details-open: VerticalLayout {
-                            spacing: 2px;
-                            for l in root.lr-details: Line {
-                                label: l.label;
-                                text: l.text;
+                            if root.lr-step > 0 && root.details-open: VerticalLayout {
+                                spacing: 2px;
+                                for l in root.lr-details: Line {
+                                    label: l.label;
+                                    text: l.text;
+                                }
                             }
                         }
                     }
                 }
-            }
-            // The foot: the set and the switches, then the buttons.
-            if root.lr-step == 0: VerticalLayout {
-                spacing: Theme.space-2;
+                // The foot: the set and the switches, then the buttons.
+                if root.lr-step == 0: VerticalLayout {
+                    spacing: Theme.space-2;
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text {
+                            text: @tr("Collection set");
+                            color: Theme.text;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                        }
+                        LineEdit {
+                            horizontal-stretch: 1;
+                            text <=> root.lr-set;
+                            placeholder-text: @tr("None: the collections at the top");
+                        }
+                    }
+                    if root.lr-has-creations: Toggle {
+                        label: @tr("Books, prints, slideshows, and web pages as collections");
+                        checked <=> root.lr-creations;
+                    }
+                    if root.lr-already > 0: Toggle {
+                        label: @tr("Write over the {n} frame with edits here already" | "Write over the {n} frames with edits here already" % root.lr-already);
+                        checked <=> root.lr-force;
+                    }
+                }
+                Rectangle { height: Theme.space-2; }
+                // The bar and its words while the catalog is read or
+                // written; a step that counts nothing keeps the bar's
+                // place and shows the words alone.
+                if root.lr-busy: LoadingCard {
+                    words-lines: 1;
+                    plate: false;
+                    side: 0px;
+                    fraction: root.lr-fraction;
+                    line: root.lr-busy-text;
+                    words-size: Theme.font-xs;
+                    words-align: left;
+                }
                 HorizontalLayout {
                     spacing: Theme.space-2;
-                    Text {
-                        text: @tr("Collection set");
-                        color: Theme.text;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
+                    alignment: end;
+                    if root.lr-step < 2: PanelButton {
+                        text: @tr("Cancel");
+                        enabled: !root.lr-running;
+                        clicked => { root.lr-cancel(); }
                     }
-                    LineEdit {
-                        horizontal-stretch: 1;
-                        text <=> root.lr-set;
-                        placeholder-text: @tr("None: the collections at the top");
+                    if root.lr-step == 1: PanelButton {
+                        // Lightroom import sheet: the buttons
+                        text: @tr("Back");
+                        enabled: !root.lr-busy;
+                        clicked => { root.lr-back(); }
                     }
-                }
-                if root.lr-has-creations: Toggle {
-                    label: @tr("Books, prints, slideshows, and web pages as collections");
-                    checked <=> root.lr-creations;
-                }
-                if root.lr-already > 0: Toggle {
-                    label: @tr("Write over the {n} frame with edits here already" | "Write over the {n} frames with edits here already" % root.lr-already);
-                    checked <=> root.lr-force;
-                }
-            }
-            Rectangle { height: Theme.space-2; }
-            // The bar and its words while the catalog is read or
-            // written; a step that counts nothing keeps the bar's
-            // place and shows the words alone.
-            if root.lr-busy: LoadingCard {
-                words-lines: 1;
-                plate: false;
-                side: 0px;
-                fraction: root.lr-fraction;
-                line: root.lr-busy-text;
-                words-size: Theme.font-xs;
-                words-align: left;
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                alignment: end;
-                if root.lr-step < 2: PanelButton {
-                    text: @tr("Cancel");
-                    enabled: !root.lr-running;
-                    clicked => { root.lr-cancel(); }
-                }
-                if root.lr-step == 1: PanelButton {
-                    // Lightroom import sheet: the buttons
-                    text: @tr("Back");
-                    enabled: !root.lr-busy;
-                    clicked => { root.lr-back(); }
-                }
-                if root.lr-step == 0: PanelButton {
-                    // Lightroom import sheet: the buttons
-                    text: @tr("Check");
-                    primary: true;
-                    enabled: !root.lr-busy && root.lr-roots.length > 0;
-                    clicked => { root.lr-check(); }
-                }
-                if root.lr-step == 1: PanelButton {
-                    // Lightroom import sheet: the buttons
-                    text: @tr("Write");
-                    primary: true;
-                    enabled: !root.lr-busy && root.lr-ready;
-                    clicked => { root.lr-write(); }
-                }
-                if root.lr-step == 2: PanelButton {
-                    // Lightroom import sheet: the buttons
-                    text: @tr("OK");
-                    primary: true;
-                    clicked => { root.lr-open = false; }
+                    if root.lr-step == 0: PanelButton {
+                        // Lightroom import sheet: the buttons
+                        text: @tr("Check");
+                        primary: true;
+                        enabled: !root.lr-busy && root.lr-roots.length > 0;
+                        clicked => { root.lr-check(); }
+                    }
+                    if root.lr-step == 1: PanelButton {
+                        // Lightroom import sheet: the buttons
+                        text: @tr("Write");
+                        primary: true;
+                        enabled: !root.lr-busy && root.lr-ready;
+                        clicked => { root.lr-write(); }
+                    }
+                    if root.lr-step == 2: PanelButton {
+                        // Lightroom import sheet: the buttons
+                        text: @tr("OK");
+                        primary: true;
+                        clicked => { root.lr-open = false; }
+                    }
                 }
             }
         }

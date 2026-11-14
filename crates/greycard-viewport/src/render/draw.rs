@@ -132,6 +132,12 @@ struct Params {
     /// In x the midtones (`Tone::midtones`): stops of shift by the
     /// guide plane's region, as the highlights and shadows are.
     tone: [f32; 4],
+    /// The output sharpen: amount, the blur's standard deviation in
+    /// target pixels, threshold, and the draw's part in it (0 none, 1
+    /// the luminance, 2 the sharpened picture); the taps' spacing and
+    /// count, and the luminance's margin (`osharp`).
+    osharp: [f32; 4],
+    osharp_taps: [f32; 4],
 }
 
 /// What of the picture and its overlays (the clipping paint, the
@@ -406,17 +412,21 @@ impl Renderer {
                 0.0,
             ],
             tone: [v.light.tone.midtones, 0.0, 0.0, 0.0],
+            osharp: [0.0; 4],
+            osharp_taps: [0.0; 4],
         };
-        // Each draw has its own uniform buffer, since two draws share a
-        // submission.
-        let params_buffer = self.device.create_buffer(&gpu::BufferDescriptor {
-            label: Some("viewport params"),
-            size: std::mem::size_of::<Params>() as u64,
-            usage: gpu::BufferUsages::UNIFORM | gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.queue
-            .write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
+        // The output sharpen on the developed picture drawn whole: not
+        // on the camera's JPEG, nor a compare view's tile.
+        let taps = source
+            .filter(|_| !encoded && rect.is_none())
+            .and_then(|_| osharp::Taps::of(v));
+        // Off, its targets are let go of.
+        if v.output_sharpen.acting().is_none() {
+            self.osharp.release();
+        }
+        // The overlays alone keep what they paint and discard every
+        // other pixel: no sharpened picture is wanted of them.
+        let taps = taps.filter(|_| layer != Layer::Overlays);
         // The tables as the shader has them: the tone table, then the
         // color shifts padded to vec4s.
         let mut tables = [[0.0f32; 4]; 2 * LUT_SIZE];
@@ -452,37 +462,45 @@ impl Renderer {
         let local_tables_buffer =
             storage("viewport local tables", bytemuck::cast_slice(&local_tables));
         let shapes_buffer = storage("viewport shapes", bytemuck::cast_slice(&shapes));
-        let view = target.create_view(&Default::default());
-        // A tile is drawn over what the target holds, and so are the
-        // overlays alone; the whole target starts from a clear.
-        let load = if rect.is_some() || layer == Layer::Overlays {
-            gpu::LoadOp::Load
-        } else {
-            gpu::LoadOp::Clear(gpu::Color {
-                r: 0.004,
-                g: 0.004,
-                b: 0.004,
-                a: 1.0,
-            })
-        };
-        let mut pass = encoder.begin_render_pass(&gpu::RenderPassDescriptor {
-            label: Some("viewport"),
-            color_attachments: &[Some(gpu::RenderPassColorAttachment {
-                view: &view,
-                resolve_target: None,
-                ops: gpu::Operations {
-                    load,
-                    store: gpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            ..Default::default()
-        });
-        if rect.is_some() {
-            pass.set_viewport(ox as f32, oy as f32, tw as f32, th as f32, 0.0, 1.0);
-            pass.set_scissor_rect(ox, oy, tw, th);
-        }
-        if let Some(source) = source {
+        // One draw of the shader with `params` through `pipeline` into
+        // `into`, the output sharpen's blur across read from `across`.
+        let shade = |encoder: &mut gpu::CommandEncoder,
+                     params: &Params,
+                     pipeline: &gpu::RenderPipeline,
+                     into: &gpu::Texture,
+                     load: gpu::LoadOp<gpu::Color>,
+                     across: &gpu::Texture| {
+            // Each draw has its own uniform buffer, since two draws
+            // share a submission.
+            let params_buffer = self.device.create_buffer(&gpu::BufferDescriptor {
+                label: Some("viewport params"),
+                size: std::mem::size_of::<Params>() as u64,
+                usage: gpu::BufferUsages::UNIFORM | gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.queue
+                .write_buffer(&params_buffer, 0, bytemuck::bytes_of(params));
+            let view = into.create_view(&Default::default());
+            let mut pass = encoder.begin_render_pass(&gpu::RenderPassDescriptor {
+                label: Some("viewport"),
+                color_attachments: &[Some(gpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: gpu::Operations {
+                        load,
+                        store: gpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                ..Default::default()
+            });
+            if rect.is_some() {
+                pass.set_viewport(ox as f32, oy as f32, tw as f32, th as f32, 0.0, 1.0);
+                pass.set_scissor_rect(ox, oy, tw, th);
+            }
+            let Some(source) = source else {
+                return;
+            };
             let source_view = source.create_view(&Default::default());
             let lut = if encoded {
                 &self.lut_encoded
@@ -497,6 +515,11 @@ impl Renderer {
             let sharpen_view = self.sharpen.create_view(&Default::default());
             let sample_view = self.sample.create_view(&Default::default());
             let look_view = self.look.texture.create_view(&Default::default());
+            let across_view = across.create_view(&Default::default());
+            let texture = |binding: u32, view| gpu::BindGroupEntry {
+                binding,
+                resource: gpu::BindingResource::TextureView(view),
+            };
             let bind_group = self.device.create_bind_group(&gpu::BindGroupDescriptor {
                 label: Some("viewport"),
                 layout: &self.layout,
@@ -505,18 +528,12 @@ impl Renderer {
                         binding: 0,
                         resource: params_buffer.as_entire_binding(),
                     },
-                    gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: gpu::BindingResource::TextureView(&source_view),
-                    },
+                    texture(1, &source_view),
                     gpu::BindGroupEntry {
                         binding: 2,
                         resource: gpu::BindingResource::Sampler(&self.sampler),
                     },
-                    gpu::BindGroupEntry {
-                        binding: 3,
-                        resource: gpu::BindingResource::TextureView(&lut_view),
-                    },
+                    texture(3, &lut_view),
                     gpu::BindGroupEntry {
                         binding: 4,
                         resource: gpu::BindingResource::Sampler(&self.lut_sampler),
@@ -537,39 +554,77 @@ impl Renderer {
                         binding: 8,
                         resource: shapes_buffer.as_entire_binding(),
                     },
-                    gpu::BindGroupEntry {
-                        binding: 9,
-                        resource: gpu::BindingResource::TextureView(&brushes_view),
-                    },
-                    gpu::BindGroupEntry {
-                        binding: 10,
-                        resource: gpu::BindingResource::TextureView(&guide_view),
-                    },
-                    gpu::BindGroupEntry {
-                        binding: 11,
-                        resource: gpu::BindingResource::TextureView(&look_view),
-                    },
-                    gpu::BindGroupEntry {
-                        binding: 12,
-                        resource: gpu::BindingResource::TextureView(&detail_view),
-                    },
-                    gpu::BindGroupEntry {
-                        binding: 13,
-                        resource: gpu::BindingResource::TextureView(&wide_view),
-                    },
-                    gpu::BindGroupEntry {
-                        binding: 14,
-                        resource: gpu::BindingResource::TextureView(&sharpen_view),
-                    },
-                    gpu::BindGroupEntry {
-                        binding: 15,
-                        resource: gpu::BindingResource::TextureView(&sample_view),
-                    },
+                    texture(9, &brushes_view),
+                    texture(10, &guide_view),
+                    texture(11, &look_view),
+                    texture(12, &detail_view),
+                    texture(13, &wide_view),
+                    texture(14, &sharpen_view),
+                    texture(15, &sample_view),
+                    texture(16, &across_view),
                 ],
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.draw(0..3, 0..1);
+        };
+        // A tile is drawn over what the target holds, and so are the
+        // overlays alone; the whole target starts from a clear.
+        let load = if rect.is_some() || layer == Layer::Overlays {
+            gpu::LoadOp::Load
+        } else {
+            gpu::LoadOp::Clear(gpu::Color {
+                r: 0.004,
+                g: 0.004,
+                b: 0.004,
+                a: 1.0,
+            })
+        };
+        match taps {
+            None => shade(
+                encoder,
+                &params,
+                &self.pipeline,
+                target,
+                load,
+                &self.osharp.none,
+            ),
+            // The luminance, its blur across, then the picture with
+            // the blur down read from that.
+            Some(t) => {
+                // The luminance with a margin of the blur's reach past
+                // each side of the target: drawn as the target's own
+                // pixels are, moved in by the margin.
+                let m = t.margin;
+                let (lum, across) = self.osharp.targets(&self.device, tw + 2 * m, th + 2 * m);
+                let first = Params {
+                    osharp: [t.amount, t.sigma, t.threshold, 1.0],
+                    osharp_taps: [t.step, t.n, m as f32, 0.0],
+                    tile: [m as f32, m as f32, params.tile[2], params.tile[3]],
+                    ..params
+                };
+                // Cleared to the mark past the picture's edge, as the
+                // shader writes on the canvas (`OSHARP_PAST`).
+                shade(
+                    encoder,
+                    &first,
+                    &self.osharp.lum_pipeline,
+                    &lum,
+                    gpu::LoadOp::Clear(gpu::Color {
+                        r: -1.0,
+                        ..gpu::Color::BLACK
+                    }),
+                    &self.osharp.none,
+                );
+                self.osharp
+                    .across(&self.device, &self.queue, encoder, (&lum, &across), &t);
+                let last = Params {
+                    osharp: [t.amount, t.sigma, t.threshold, 2.0],
+                    tile: params.tile,
+                    ..first
+                };
+                shade(encoder, &last, &self.pipeline, target, load, &across);
+            }
         }
     }
 
@@ -809,6 +864,7 @@ impl Renderer {
                         weigh_by,
                         vignette,
                         grain,
+                        output_sharpen,
                         warn,
                         peaking,
                         canvas,

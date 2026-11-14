@@ -352,7 +352,12 @@ enum Base {
     /// A picture: no camera, so the adaptation in XYZ from the light
     /// it shows ([`WhiteShift::global`]) to the target.
     Picture,
+    /// A monochrome sensor's raw: no color to balance, so no white
+    /// moves it.
+    Neutral,
 }
+
+const IDENTITY: Matrix3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
 impl WhiteShift {
     /// From the develop's resolved white balance.
@@ -394,11 +399,21 @@ impl WhiteShift {
         }
     }
 
+    /// A monochrome sensor's raw, developed at `global`: every white
+    /// asked of it, the global's or a mask's, is the identity.
+    pub fn neutral(global: TempTint) -> Self {
+        Self {
+            from: Base::Neutral,
+            global,
+        }
+    }
+
     /// A raw's develop gains and camera to working matrix, rows, as
     /// it was made from; none for a picture's.
     pub fn camera(&self) -> Option<([f32; 3], Matrix3)> {
         match &self.from {
             Base::Camera { gains, rows, .. } => Some((*gains, *rows)),
+            Base::Neutral => Some(([1.0; 3], IDENTITY)),
             Base::Picture => None,
         }
     }
@@ -413,6 +428,7 @@ impl WhiteShift {
                 matrix_rows(target),
             ),
             Base::Picture => adaptation(self.global, target.temp_tint),
+            Base::Neutral => Some(IDENTITY),
         }
     }
 
@@ -427,6 +443,7 @@ impl WhiteShift {
                 }
             },
             Base::Picture => adaptation(self.global, tt),
+            Base::Neutral => Some(IDENTITY),
         }
     }
 
@@ -540,6 +557,37 @@ mod tests {
     /// it comes back through an edit's sidecar, reaches no pixel, and a
     /// sidecar from before, with `off` and nothing beside it or no
     /// field at all, comes back off with nothing kept.
+    /// A monochrome raw's shift is the identity to every white: the
+    /// global's, a light, an offset.
+    #[test]
+    fn a_monochrome_raw_s_white_moves_nothing() {
+        let global = TempTint {
+            cct: 6504.0,
+            duv: 0.003,
+        };
+        let shift = WhiteShift::neutral(global);
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        for local in [
+            LocalWhite::Absolute {
+                temperature: 3000.0,
+                tint: 0.01,
+            },
+            LocalWhite::Relative {
+                mired: 100.0,
+                tint: -0.01,
+            },
+        ] {
+            assert_eq!(shift.local(&local), Some(identity));
+        }
+        assert_eq!(
+            shift.to_temp_tint(TempTint {
+                cct: 2500.0,
+                duv: 0.0
+            }),
+            Some(identity)
+        );
+    }
+
     #[test]
     fn a_switched_off_light_is_kept_through_the_sidecar() {
         let kept = LocalWhite::Kept {

@@ -86,188 +86,202 @@ export component ImportSheet inherits Rectangle {
         drop-shadow-color: #00000099;
         clip: true;
         TouchArea { }
-        VerticalLayout {
-            scroll := ScrollPane {
-                min-height: 80px;
-                vertical-stretch: 1;
-                // The rows at their own height, however short the
-                // sheet: left to itself the pane holds them to its
-                // height and squeezes the rows, and nothing scrolls.
-                content-height: body.preferred-height;
-                content-width: self.visible-width;
-                body := VerticalLayout {
-                    width: scroll.visible-width;
-                    padding: Theme.space-5;
-                    padding-right: Theme.space-5 + Theme.scrollbar-band;
-                    padding-bottom: Theme.space-2;
-                    spacing: Theme.space-2;
-                    Text {
-                        text: @tr("Import");
-                        font-size: Theme.font-lg;
-                        font-weight: Theme.weight-medium;
-                        color: Theme.text;
-                    }
-                    Segmented {
-                        options: ["Copy", "Add in place"];
-                        // Import sheet: copy the files in, or add them where they are
-                        labels: [@tr("Copy"), @tr("Add in place")];
-                        current <=> root.import-mode;
-                    }
-                    Text {
-                        text: root.import-mode == "Copy"
-                            ? @tr("Copies are verified; the card is untouched.")
-                            : @tr("Adds a folder and its subfolders to the library where it is; nothing is copied.");
-                        wrap: word-wrap;
-                            height: self.preferred-height;
-                        font-size: Theme.font-xs;
-                        color: Theme.text-secondary;
-                    }
-                    Rectangle { height: Theme.space-1; }
-                    if root.import-mode == "Add in place": VerticalLayout {
+        // A field has the focus, and the keys it turns away go up from
+        // it to here, never to the window's, which serve this sheet:
+        // Escape is taken here as the window takes it.
+        FocusScope {
+            focus-on-tab-navigation: false;
+            focus-on-click: false;
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.import-open = false;
+                    return accept;
+                }
+                return reject;
+            }
+            VerticalLayout {
+                scroll := ScrollPane {
+                    min-height: 80px;
+                    vertical-stretch: 1;
+                    // The rows at their own height, however short the
+                    // sheet: left to itself the pane holds them to its
+                    // height and squeezes the rows, and nothing scrolls.
+                    content-height: body.preferred-height;
+                    content-width: self.visible-width;
+                    body := VerticalLayout {
+                        width: scroll.visible-width;
+                        padding: Theme.space-5;
+                        padding-right: Theme.space-5 + Theme.scrollbar-band;
+                        padding-bottom: Theme.space-2;
                         spacing: Theme.space-2;
-                        FolderRow {
-                            label: @tr("Folder");
-                            path: root.import-place;
-                            empty: @tr("No folder chosen");
-                            choose => { root.import-choose("place"); }
+                        Text {
+                            text: @tr("Import");
+                            font-size: Theme.font-lg;
+                            font-weight: Theme.weight-medium;
+                            color: Theme.text;
                         }
-                        HorizontalLayout {
-                            padding-left: 76px + Theme.space-2;
-                            Text {
-                                text: root.import-place-note;
-                                wrap: word-wrap;
-                            height: self.preferred-height;
-                                font-size: Theme.font-xs;
-                                color: Theme.text-secondary;
-                            }
+                        Segmented {
+                            options: ["Copy", "Add in place"];
+                            // Import sheet: copy the files in, or add them where they are
+                            labels: [@tr("Copy"), @tr("Add in place")];
+                            current <=> root.import-mode;
                         }
-                    }
-                    if root.import-mode == "Copy": VerticalLayout {
-                        spacing: Theme.space-2;
-                        FolderRow {
-                            // Import sheet: the source row
-                            label: @tr("From");
-                            path: root.import-source;
-                            empty: @tr("No card found");
-                            choose => { root.import-choose("source"); }
+                        Text {
+                            text: root.import-mode == "Copy"
+                                ? @tr("Copies are verified; the card is untouched.")
+                                : @tr("Adds a folder and its subfolders to the library where it is; nothing is copied.");
+                            wrap: word-wrap;
+                                height: self.preferred-height;
+                            font-size: Theme.font-xs;
+                            color: Theme.text-secondary;
                         }
-                        HorizontalLayout {
-                            padding-left: 76px + Theme.space-2;
-                            Text {
-                                text: root.import-note;
-                                wrap: word-wrap;
-                            height: self.preferred-height;
-                                font-size: Theme.font-xs;
-                                color: Theme.text-secondary;
-                            }
-                        }
-                        FolderRow {
-                            // Import sheet: the destination row
-                            label: @tr("To");
-                            path: root.import-destination;
-                            empty: @tr("No folder chosen");
-                            choose => { root.import-choose("destination"); }
-                        }
-                        HorizontalLayout {
+                        Rectangle { height: Theme.space-1; }
+                        if root.import-mode == "Add in place": VerticalLayout {
                             spacing: Theme.space-2;
-                            // Import sheet: the subfolder pattern row
-                            Text { text: @tr("Folders"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            LineEdit {
-                                horizontal-stretch: 1;
-                                text <=> root.import-subfolder;
-                                // Import sheet: the subfolder pattern when it is empty
-                                placeholder-text: @tr("none");
+                            FolderRow {
+                                label: @tr("Folder");
+                                path: root.import-place;
+                                empty: @tr("No folder chosen");
+                                choose => { root.import-choose("place"); }
+                            }
+                            HorizontalLayout {
+                                padding-left: 76px + Theme.space-2;
+                                Text {
+                                    text: root.import-place-note;
+                                    wrap: word-wrap;
+                                height: self.preferred-height;
+                                    font-size: Theme.font-xs;
+                                    color: Theme.text-secondary;
+                                }
                             }
                         }
-                        HorizontalLayout {
+                        if root.import-mode == "Copy": VerticalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Name"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            LineEdit {
-                                horizontal-stretch: 1;
-                                text <=> root.import-name;
-                                placeholder-text: "{name}";
+                            FolderRow {
+                                // Import sheet: the source row
+                                label: @tr("From");
+                                path: root.import-source;
+                                empty: @tr("No card found");
+                                choose => { root.import-choose("source"); }
                             }
-                        }
-                        HorizontalLayout {
-                            padding-left: 76px + Theme.space-2;
+                            HorizontalLayout {
+                                padding-left: 76px + Theme.space-2;
+                                Text {
+                                    text: root.import-note;
+                                    wrap: word-wrap;
+                                height: self.preferred-height;
+                                    font-size: Theme.font-xs;
+                                    color: Theme.text-secondary;
+                                }
+                            }
+                            FolderRow {
+                                // Import sheet: the destination row
+                                label: @tr("To");
+                                path: root.import-destination;
+                                empty: @tr("No folder chosen");
+                                choose => { root.import-choose("destination"); }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                // Import sheet: the subfolder pattern row
+                                Text { text: @tr("Folders"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                LineEdit {
+                                    horizontal-stretch: 1;
+                                    text <=> root.import-subfolder;
+                                    // Import sheet: the subfolder pattern when it is empty
+                                    placeholder-text: @tr("none");
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: @tr("Name"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                LineEdit {
+                                    horizontal-stretch: 1;
+                                    text <=> root.import-name;
+                                    placeholder-text: "{name}";
+                                }
+                            }
+                            HorizontalLayout {
+                                padding-left: 76px + Theme.space-2;
+                                Text {
+                                    text: @tr("{}; a / in Folders makes a folder in a folder.", "{date} {yyyy} {mm} {dd} {name} {camera} {seq} {folder}");
+                                    wrap: word-wrap;
+                                height: self.preferred-height;
+                                    font-size: Theme.font-xs;
+                                    color: Theme.text-muted;
+                                }
+                            }
+                            HorizontalLayout {
+                                padding-left: 76px + Theme.space-2;
+                                Text {
+                                    text: root.import-preview;
+                                    wrap: word-wrap;
+                                height: self.preferred-height;
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text;
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: @tr("Preset"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                ComboBox {
+                                    horizontal-stretch: 1;
+                                    model: root.import-presets;
+                                    current-value <=> root.import-preset;
+                                }
+                            }
+                            FolderRow {
+                                // Import sheet: the backup row
+                                label: @tr("Backup");
+                                path: root.import-backup;
+                                empty: @tr("None: one copy only");
+                                clearable: true;
+                                choose => { root.import-choose("backup"); }
+                                clear => { root.import-backup-cleared(); }
+                            }
+                            if root.import-folders-note != "": HorizontalLayout {
+                                padding-left: 76px + Theme.space-2;
+                                Text {
+                                    text: root.import-folders-note;
+                                    wrap: word-wrap;
+                                height: self.preferred-height;
+                                    font-size: Theme.font-xs;
+                                    color: Theme.text-secondary;
+                                }
+                            }
+                            Toggle {
+                                label: @tr("Verify against the card");
+                                checked <=> root.import-verify;
+                            }
                             Text {
-                                text: @tr("{}; a / in Folders makes a folder in a folder.", "{date} {yyyy} {mm} {dd} {name} {camera} {seq} {folder}");
+                                text: @tr("Verify compares every byte (slower).");
                                 wrap: word-wrap;
-                            height: self.preferred-height;
+                                height: self.preferred-height;
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                             }
                         }
-                        HorizontalLayout {
-                            padding-left: 76px + Theme.space-2;
-                            Text {
-                                text: root.import-preview;
-                                wrap: word-wrap;
-                            height: self.preferred-height;
-                                font-size: Theme.font-sm;
-                                color: Theme.text;
-                            }
-                        }
-                        HorizontalLayout {
-                            spacing: Theme.space-2;
-                            Text { text: @tr("Preset"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            ComboBox {
-                                horizontal-stretch: 1;
-                                model: root.import-presets;
-                                current-value <=> root.import-preset;
-                            }
-                        }
-                        FolderRow {
-                            // Import sheet: the backup row
-                            label: @tr("Backup");
-                            path: root.import-backup;
-                            empty: @tr("None: one copy only");
-                            clearable: true;
-                            choose => { root.import-choose("backup"); }
-                            clear => { root.import-backup-cleared(); }
-                        }
-                        if root.import-folders-note != "": HorizontalLayout {
-                            padding-left: 76px + Theme.space-2;
-                            Text {
-                                text: root.import-folders-note;
-                                wrap: word-wrap;
-                            height: self.preferred-height;
-                                font-size: Theme.font-xs;
-                                color: Theme.text-secondary;
-                            }
-                        }
-                        Toggle {
-                            label: @tr("Verify against the card");
-                            checked <=> root.import-verify;
-                        }
-                        Text {
-                            text: @tr("Verify compares every byte (slower).");
-                            wrap: word-wrap;
-                            height: self.preferred-height;
-                            font-size: Theme.font-xs;
-                            color: Theme.text-muted;
-                        }
                     }
                 }
-            }
-            buttons := HorizontalLayout {
-                padding: Theme.space-5;
-                padding-top: Theme.space-2;
-                spacing: Theme.space-2;
-                alignment: end;
-                PanelButton {
-                    text: @tr("Cancel");
-                    clicked => { root.import-open = false; }
-                }
-                PanelButton {
-                    // Add in place copies nothing, and says so.
-                    text: root.import-mode == "Copy"
-                        ? @tr("Import {n} frame" | "Import {n} frames" % root.import-count)
-                        : @tr("Add {n} frame" | "Add {n} frames" % root.import-count);
-                    icon: @image-url("../icons/camera.svg");
-                    primary: true;
-                    enabled: root.import-ready;
-                    clicked => { root.import-started(); }
+                buttons := HorizontalLayout {
+                    padding: Theme.space-5;
+                    padding-top: Theme.space-2;
+                    spacing: Theme.space-2;
+                    alignment: end;
+                    PanelButton {
+                        text: @tr("Cancel");
+                        clicked => { root.import-open = false; }
+                    }
+                    PanelButton {
+                        // Add in place copies nothing, and says so.
+                        text: root.import-mode == "Copy"
+                            ? @tr("Import {n} frame" | "Import {n} frames" % root.import-count)
+                            : @tr("Add {n} frame" | "Add {n} frames" % root.import-count);
+                        icon: @image-url("../icons/camera.svg");
+                        primary: true;
+                        enabled: root.import-ready;
+                        clicked => { root.import-started(); }
+                    }
                 }
             }
         }

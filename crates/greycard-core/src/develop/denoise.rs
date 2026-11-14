@@ -299,7 +299,7 @@ pub fn denoise_profiled(
     // scales, next to nothing at the fine ones.
     let mut band_left = [1.0f32; MAX_BANDS];
     if options.method != DenoiseMethod::Wavelets {
-        let stats = super::nlm::denoise_stabilized(
+        let stats = super::nlm::denoise_stabilized::<3>(
             rgb,
             width,
             height,
@@ -315,7 +315,7 @@ pub fn denoise_profiled(
                 ..nothing
             });
         }
-        band_left = super::nlm::residual_band_ratios(&stats, options.nlm.search_radius);
+        band_left = super::nlm::residual_band_ratios::<3>(&stats, options.nlm.search_radius);
         lap("residual band ratios");
         nlm_stats = Some(stats);
         first_scale = options.hybrid_from;
@@ -335,7 +335,6 @@ pub fn denoise_profiled(
         ..nothing
     };
 
-    let band_var = band_variances();
     let n = width * height;
 
     // The chain runs on three planes rather than the interleaved
@@ -346,47 +345,21 @@ pub fn denoise_profiled(
     let mut planes = vec![0.0f32; 3 * n];
     to_planes(rgb, &mut planes);
     lap("rotation to luma and chroma");
-    let grids = variance_grids(&planes, width, height, scales);
-    lap("variance grids");
     let acc = rgb;
-    acc.par_chunks_mut(CHUNK).for_each(|c| c.fill(0.0));
-    let mut bands = Bands::new(width, height, scales);
-    lap("accumulator and band buffers");
-
     let gain = [
         strength,
         strength * options.chroma.max(0.0),
         strength * options.chroma.max(0.0),
     ];
-    for (scale, &sb2) in band_var.iter().enumerate().take(scales) {
-        // Scales the means already cleaned pass through unshrunk, and
-        // the others are shrunk against the noise the means left.
-        let gain = if scale < first_scale { [0.0; 3] } else { gain };
-        let sb2 = sb2 * band_left[scale];
-        // BayesShrink per channel and per place: threshold = noise
-        // variance over the signal's standard deviation, the latter from
-        // the band's variance around here less the noise's. A tile of
-        // pure noise measures the noise variance give or take sqrt(2/N)
-        // of it; only what clears that margin counts as signal, so flat
-        // areas get an infinite threshold rather than one drawn from the
-        // estimate's own scatter.
-        let shrink = Shrink {
-            grid: &grids[scale],
-            noise_floor: sb2 * (1.0 + 2.0 * (2.0 / LocalVariance::SAMPLES as f32).sqrt()),
-            gain,
-            sb2,
-        };
-        atrous_level(
-            &mut planes,
-            acc,
-            (width, height),
-            scale,
-            sb2,
-            &shrink,
-            &mut bands,
-        );
-        lap(&format!("scale {scale}"));
-    }
+    wavelet_chain(
+        &mut planes,
+        acc,
+        (width, height, scales),
+        gain,
+        first_scale,
+        &band_left,
+        &mut lap,
+    );
 
     // Residue plus detail, then rotated back and unstabilized into the
     // caller's buffer. Two passes: the detail lives in that buffer as
@@ -406,6 +379,227 @@ pub fn denoise_profiled(
         clock.elapsed().as_secs_f64() * 1e3
     );
     Ok(DenoiseStats { scales, ..nothing })
+}
+
+/// Denoise a developed picture in place: interleaved RGB through
+/// [`denoise_profiled`], or, for a monochrome frame (`monochrome`), its
+/// one plane, held in three equal channels, through [`denoise_plane`]
+/// and copied back to the three. The plane is worked in `rgb` itself:
+/// its first third holds the plane and the second the wavelets' sums,
+/// so a monochrome frame takes no more memory than the means' answer.
+pub fn denoise_picture(
+    rgb: &mut [f32],
+    width: usize,
+    height: usize,
+    model: &NoiseModel,
+    options: &DenoiseOptions,
+    monochrome: bool,
+) -> Result<DenoiseStats> {
+    if !monochrome {
+        return denoise_profiled(rgb, width, height, model, options);
+    }
+    let n = width * height;
+    if rgb.len() != n * 3 {
+        return Err(Error::Unsupported(
+            "denoise: RGB buffer size mismatch".into(),
+        ));
+    }
+    // The green of each pixel to the front, in order: pixel `i` comes
+    // from `3i + 1`, which no earlier step has written.
+    for i in 0..n {
+        rgb[i] = rgb[3 * i + 1];
+    }
+    let (plane, rest) = rgb.split_at_mut(n);
+    let stats = denoise_plane_with(plane, &mut rest[..n], width, height, model, options)?;
+    // And back to three, from the end: pixel `i` goes to `3i..3i + 3`,
+    // which no later step reads.
+    for i in (0..n).rev() {
+        let v = rgb[i];
+        rgb[3 * i..3 * i + 3].fill(v);
+    }
+    Ok(stats)
+}
+
+/// The à trous chain over `C` stabilized planes (luma and the two
+/// chromas of a color picture, or a monochrome one's single plane):
+/// each scale's detail soft-thresholded by BayesShrink at `gain` a
+/// plane, from `first_scale` up (the means cleaned the scales below),
+/// against the noise `band_left` says is left in each band, and
+/// collected in `acc`, which it zeroes first. The planes are left the
+/// residue.
+fn wavelet_chain<const C: usize>(
+    planes: &mut [f32],
+    acc: &mut [f32],
+    (width, height, scales): (usize, usize, usize),
+    gain: [f32; C],
+    first_scale: usize,
+    band_left: &[f32; MAX_BANDS],
+    lap: &mut dyn FnMut(&str),
+) {
+    let band_var = band_variances();
+    let grids = variance_grids::<C>(planes, width, height, scales);
+    lap("variance grids");
+    acc.par_chunks_mut(CHUNK).for_each(|c| c.fill(0.0));
+    let mut bands = Bands::new(width, height, scales, C);
+    lap("accumulator and band buffers");
+    for (scale, &sb2) in band_var.iter().enumerate().take(scales) {
+        // Scales the means already cleaned pass through unshrunk, and
+        // the others are shrunk against the noise the means left.
+        let gain = if scale < first_scale { [0.0; C] } else { gain };
+        let sb2 = sb2 * band_left[scale];
+        // BayesShrink per channel and per place: threshold = noise
+        // variance over the signal's standard deviation, the latter from
+        // the band's variance around here less the noise's. A tile of
+        // pure noise measures the noise variance give or take sqrt(2/N)
+        // of it; only what clears that margin counts as signal, so flat
+        // areas get an infinite threshold rather than one drawn from the
+        // estimate's own scatter.
+        let shrink = Shrink {
+            grid: &grids[scale],
+            noise_floor: sb2 * (1.0 + 2.0 * (2.0 / Tiles::SAMPLES as f32).sqrt()),
+            gain,
+            sb2,
+        };
+        atrous_level(
+            planes,
+            acc,
+            (width, height),
+            scale,
+            sb2,
+            &shrink,
+            &mut bands,
+        );
+        lap(&format!("scale {scale}"));
+    }
+}
+
+/// Denoise one plane in place: a monochrome sensor's, its photosites
+/// one channel with `model`'s first line for their noise. The same
+/// methods as [`denoise_profiled`], each made for one channel:
+///
+/// - the transform and its unbiased inverse are the plane's own, at
+///   its true noise;
+/// - the means compare patches of the one channel, over a patch of
+///   about three times the pixels ([`plane_patch_radius`]), so the
+///   dissimilarity rests on as many independent differences as a color
+///   frame's three channels give it;
+/// - the hybrid's wavelets shrink against what the one-channel means
+///   leave in each band, measured as they ran;
+/// - the wavelets shrink the plane as the luma it is, at unit noise.
+pub fn denoise_plane(
+    plane: &mut [f32],
+    width: usize,
+    height: usize,
+    model: &NoiseModel,
+    options: &DenoiseOptions,
+) -> Result<DenoiseStats> {
+    let mut acc = vec![0.0f32; plane.len()];
+    denoise_plane_with(plane, &mut acc, width, height, model, options)
+}
+
+/// [`denoise_plane`] with the wavelets' sums in `acc`, the plane's size.
+fn denoise_plane_with(
+    plane: &mut [f32],
+    acc: &mut [f32],
+    width: usize,
+    height: usize,
+    model: &NoiseModel,
+    options: &DenoiseOptions,
+) -> Result<DenoiseStats> {
+    if plane.len() != width * height || acc.len() != plane.len() {
+        return Err(Error::Unsupported("denoise: plane size mismatch".into()));
+    }
+    let model = NoiseModel {
+        a: [model.a[0]; 3],
+        b: [model.b[0]; 3],
+    };
+    let strength = match (options.method, options.strength) {
+        (DenoiseMethod::Nlm | DenoiseMethod::Hybrid, Strength::Auto) => {
+            super::nlm::auto_strength(model.sigma(0, super::noise::MID_GREY))
+        }
+        (_, strength) => strength.resolve(&model),
+    };
+    let nothing = DenoiseStats {
+        method: options.method,
+        scales: 0,
+        strength,
+        nlm: None,
+    };
+    if strength <= 0.0 || strength.is_nan() || model.is_silent() {
+        return Ok(nothing);
+    }
+    let scales = scale_count(width, height);
+    let room = scales > 0 && width >= 2 << (scales - 1) && height >= 2 << (scales - 1);
+    let vst = Vst::new(model.a[0], model.b[0]);
+    let mut lap = |what: &str| log::debug!("denoise, one plane: {what}");
+    plane.par_iter_mut().for_each(|v| *v = vst.forward(*v));
+    let unstabilize = |plane: &mut [f32]| plane.par_iter_mut().for_each(|v| *v = vst.inverse(*v));
+
+    let mut nlm_stats = None;
+    let mut first_scale = 0;
+    let mut band_left = [1.0f32; MAX_BANDS];
+    if options.method != DenoiseMethod::Wavelets {
+        let radius = options.nlm.patch_radius.unwrap_or_else(|| {
+            super::nlm::auto_patch_radius(model.sigma(0, super::noise::MID_GREY))
+        });
+        let nlm = super::nlm::NlmOptions {
+            patch_radius: Some(plane_patch_radius(radius)),
+            ..options.nlm
+        };
+        let stats = super::nlm::denoise_stabilized::<1>(
+            plane,
+            width,
+            height,
+            model.sigma(0, super::noise::MID_GREY),
+            strength,
+            &nlm,
+        );
+        lap("non-local means");
+        if options.method == DenoiseMethod::Nlm || !room {
+            unstabilize(plane);
+            return Ok(DenoiseStats {
+                nlm: Some(stats),
+                ..nothing
+            });
+        }
+        band_left = super::nlm::residual_band_ratios::<1>(&stats, nlm.search_radius);
+        nlm_stats = Some(stats);
+        first_scale = options.hybrid_from;
+    } else if !room {
+        unstabilize(plane);
+        return Ok(nothing);
+    }
+    let strength = match options.method {
+        DenoiseMethod::Hybrid => Strength::Auto.resolve(&model),
+        _ => strength,
+    };
+    wavelet_chain::<1>(
+        plane,
+        acc,
+        (width, height, scales),
+        [strength],
+        first_scale,
+        &band_left,
+        &mut lap,
+    );
+    plane
+        .par_iter_mut()
+        .zip(acc.par_iter())
+        .for_each(|(v, a)| *v = vst.inverse(*v + a));
+    Ok(DenoiseStats {
+        scales,
+        nlm: nlm_stats,
+        strength,
+        ..nothing
+    })
+}
+
+/// The patch radius the means take on one plane for `radius` on three
+/// channels: the square nearest three times its pixels (3x3 to 5x5,
+/// 5x5 to 9x9), no larger than the means allow.
+pub fn plane_patch_radius(radius: usize) -> usize {
+    let side = (2 * radius + 1) as f32 * 3f32.sqrt();
+    (((side - 1.0) / 2.0).round() as usize).min(super::nlm::MAX_PATCH)
 }
 
 /// darktable's scale count: as many as fit a filter a fifth of the
@@ -541,17 +735,17 @@ fn from_planes(planes: &[f32], rgb: &mut [f32], vst: &[Vst; 3]) {
 }
 
 /// The soft threshold of one band, from its local variance grid.
-struct Shrink<'a> {
-    grid: &'a LocalVariance,
+struct Shrink<'a, const C: usize> {
+    grid: &'a LocalVariance<C>,
     noise_floor: f32,
-    gain: [f32; 3],
+    gain: [f32; C],
     sb2: f32,
 }
 
-impl Shrink<'_> {
+impl<const C: usize> Shrink<'_, C> {
     /// Add the shrunk detail `input - coarse` to `acc`, over a run of
     /// row `y` starting at `x0`: `input`, `coarse` and `acc` are that
-    /// run in each of the three planes.
+    /// run in each plane.
     ///
     /// The grid's vertical interpolation is the row's and is taken
     /// once; its four corner values are a tile column's and are taken
@@ -562,9 +756,9 @@ impl Shrink<'_> {
         &self,
         y: usize,
         x0: usize,
-        input: [&[f32]; 3],
-        coarse: [&[f32]; 3],
-        acc: [&mut [f32]; 3],
+        input: [&[f32]; C],
+        coarse: [&[f32]; C],
+        mut acc: [&mut [f32]; C],
     ) {
         let g = self.grid;
         let n = coarse[0].len();
@@ -581,7 +775,6 @@ impl Shrink<'_> {
             let fx = ((x as f32 + 0.5) / tile - 0.5).max(0.0);
             (fx as usize).min(g.tiles_x - 1)
         };
-        let [a0, a1, a2] = acc;
         let mut i = 0;
         while i < n {
             let tx = column(x0 + i);
@@ -598,7 +791,7 @@ impl Shrink<'_> {
             debug_assert!(end == n || column(x0 + end) == tx + 1);
             let (v00, v10, v01, v11) = (row0[tx], row0[tx1], row1[tx], row1[tx1]);
             let txf = tx as f32;
-            for (c, a) in [&mut *a0, &mut *a1, &mut *a2].into_iter().enumerate() {
+            for (c, a) in acc.iter_mut().enumerate() {
                 let (input, coarse, a) = (&input[c][i..end], &coarse[c][i..end], &mut a[i..end]);
                 let (v00, v10, v01, v11) = (v00[c], v10[c], v01[c], v11[c]);
                 let (gain, sb2, floor) = (self.gain[c], self.sb2, self.noise_floor);
@@ -638,11 +831,11 @@ struct Bands {
 }
 
 impl Bands {
-    fn new(width: usize, height: usize, scales: usize) -> Self {
+    fn new(width: usize, height: usize, scales: usize, planes: usize) -> Self {
         let rows = BAND_ROWS.max(1 << scales).min(height);
         Self {
-            this: vec![0.0; 3 * rows * width],
-            prev: vec![0.0; 3 * rows * width],
+            this: vec![0.0; planes * rows * width],
+            prev: vec![0.0; planes * rows * width],
             rows,
         }
     }
@@ -651,19 +844,28 @@ impl Bands {
 /// Per-worker scratch for the blur: a block's stretch of the five tap
 /// rows in each plane, its weighted sums, one per plane, and its
 /// summed weights.
-#[derive(Default)]
-struct Scratch {
+struct Scratch<const C: usize> {
     /// The tap rows' stretch of the block with the blur's reach either
     /// side, the row's ends repeated past them: `[tap][plane][pixel]`.
     rows: Vec<f32>,
-    sum: [Vec<f32>; 3],
+    sum: [Vec<f32>; C],
     wgt: Vec<f32>,
 }
 
-/// One à trous level in place: `cur` holds the level's input in three
+impl<const C: usize> Default for Scratch<C> {
+    fn default() -> Self {
+        Self {
+            rows: Vec::new(),
+            sum: std::array::from_fn(|_| Vec::new()),
+            wgt: Vec::new(),
+        }
+    }
+}
+
+/// One à trous level in place: `cur` holds the level's input in `C`
 /// planes and, on return, its coarse (the 5x5 B3 spline blur at spacing
 /// `2^scale`, edge-guarded so that pixels many sigmas apart in color do
-/// not mix); the detail `input - coarse`, shrunk, is added to the three
+/// not mix); the detail `input - coarse`, shrunk, is added to the
 /// planes of `acc`.
 ///
 /// The blur of a band of rows reads `reach` rows beyond it, so a row of
@@ -672,13 +874,13 @@ struct Scratch {
 /// detail is shrunk into `acc` in the same sweep; after the next band
 /// is blurred, the rows nothing later reads are copied into `cur`, from
 /// the previous buffer's tail and this one's head.
-fn atrous_level(
+fn atrous_level<const C: usize>(
     cur: &mut [f32],
     acc: &mut [f32],
     (width, height): (usize, usize),
     scale: usize,
     band_variance: f32,
-    shrink: &Shrink,
+    shrink: &Shrink<C>,
     bands: &mut Bands,
 ) {
     let n = width * height;
@@ -701,34 +903,41 @@ fn atrous_level(
         let t = std::time::Instant::now();
         {
             let cur = &*cur;
-            let input: [&[f32]; 3] = [&cur[..n], &cur[n..2 * n], &cur[2 * n..]];
-            let (a0, rest) = acc.split_at_mut(n);
-            let (a1, a2) = rest.split_at_mut(n);
-            let (t0, rest) = bands.this.split_at_mut(stride);
-            let (t1, t2) = rest.split_at_mut(stride);
+            let input: [&[f32]; C] = std::array::from_fn(|c| &cur[c * n..(c + 1) * n]);
+            // Row `i` of the band in each plane, of its coarse and of
+            // the detail's sums, gathered a row at a time.
             let span = y0 * width..y1 * width;
-            t0[..rows * width]
-                .par_chunks_mut(width)
-                .zip(t1[..rows * width].par_chunks_mut(width))
-                .zip(t2[..rows * width].par_chunks_mut(width))
-                .zip(a0[span.clone()].par_chunks_mut(width))
-                .zip(a1[span.clone()].par_chunks_mut(width))
-                .zip(a2[span].par_chunks_mut(width))
-                .enumerate()
-                .for_each_init(
-                    Scratch::default,
-                    |scratch, (i, (((((t0, t1), t2), a0), a1), a2))| {
-                        blur_row(
-                            input,
-                            (width, height),
-                            y0 + i,
-                            (mult, inv_sigma2),
-                            shrink,
-                            scratch,
-                            ([t0, t1, t2], [a0, a1, a2]),
-                        );
-                    },
-                );
+            let mut coarse = bands
+                .this
+                .chunks_mut(stride)
+                .map(|plane| plane[..rows * width].chunks_mut(width));
+            let mut coarse: [_; C] = std::array::from_fn(|_| coarse.next().expect("a plane"));
+            let mut sums = acc
+                .chunks_mut(n)
+                .map(|plane| plane[span.clone()].chunks_mut(width));
+            let mut sums: [_; C] = std::array::from_fn(|_| sums.next().expect("a plane"));
+            let mut lines: Vec<Line<C>> = (0..rows)
+                .map(|_| {
+                    (
+                        std::array::from_fn(|c| coarse[c].next().expect("a row")),
+                        std::array::from_fn(|c| sums[c].next().expect("a row")),
+                    )
+                })
+                .collect();
+            lines.par_iter_mut().enumerate().for_each_init(
+                Scratch::<C>::default,
+                |scratch, (i, line)| {
+                    blur_row(
+                        input,
+                        (width, height),
+                        y0 + i,
+                        (mult, inv_sigma2),
+                        shrink,
+                        scratch,
+                        line,
+                    );
+                },
+            );
         }
         blur_time += t.elapsed();
         let t = std::time::Instant::now();
@@ -774,14 +983,17 @@ fn atrous_level(
 /// out with no index arithmetic or clamp per pixel, so the vectorizer
 /// takes it. The taps come in the order the per-pixel form took them,
 /// so the sums are the same to the bit.
-fn blur_row(
-    input: [&[f32]; 3],
+/// One row of each plane: its coarse, and its detail's sums.
+type Line<'a, const C: usize> = ([&'a mut [f32]; C], [&'a mut [f32]; C]);
+
+fn blur_row<const C: usize>(
+    input: [&[f32]; C],
     (width, height): (usize, usize),
     y: usize,
     (mult, inv_sigma2): (usize, f32),
-    shrink: &Shrink,
-    scratch: &mut Scratch,
-    (mut out, acc): ([&mut [f32]; 3], [&mut [f32]; 3]),
+    shrink: &Shrink<C>,
+    scratch: &mut Scratch<C>,
+    (out, acc): &mut Line<C>,
 ) {
     let m = mult as isize;
     let reach = 2 * mult;
@@ -790,12 +1002,11 @@ fn blur_row(
     });
     // A stretch is the block and the reach either side.
     let ew = BLOCK + 2 * reach;
-    scratch.rows.resize(15 * ew, 0.0);
+    scratch.rows.resize(5 * C * ew, 0.0);
     for s in &mut scratch.sum {
         s.resize(BLOCK, 0.0);
     }
     scratch.wgt.resize(BLOCK, 0.0);
-    let [a0, a1, a2] = acc;
     let mut x0 = 0;
     while x0 < width {
         let x1 = (x0 + BLOCK).min(width);
@@ -804,7 +1015,7 @@ fn blur_row(
         for (jj, &yy) in tap_rows.iter().enumerate() {
             for (c, plane) in input.iter().enumerate() {
                 let row = &plane[yy * width..(yy + 1) * width];
-                let dst = &mut scratch.rows[(jj * 3 + c) * ew..][..len];
+                let dst = &mut scratch.rows[(jj * C + c) * ew..][..len];
                 // Pixels `x0 - reach .. x1 + reach`, clamped to the row.
                 let start = x0 as isize - reach as isize;
                 let left = (-start).max(0) as usize;
@@ -822,13 +1033,13 @@ fn blur_row(
         scratch.wgt[..n].fill(0.0);
         let stretch = |jj: usize, c: usize, off: isize| -> &[f32] {
             let at = (reach as isize + off) as usize;
-            &scratch.rows[(jj * 3 + c) * ew + at..][..n]
+            &scratch.rows[(jj * C + c) * ew + at..][..n]
         };
-        let p: [&[f32]; 3] = std::array::from_fn(|c| stretch(2, c, 0));
+        let p: [&[f32]; C] = std::array::from_fn(|c| stretch(2, c, 0));
         for (jj, fy) in FILTER.iter().enumerate() {
             for (ii, fx) in FILTER.iter().enumerate() {
                 let off = m * (ii as isize - 2);
-                let q: [&[f32]; 3] = std::array::from_fn(|c| stretch(jj, c, off));
+                let q: [&[f32]; C] = std::array::from_fn(|c| stretch(jj, c, off));
                 tap(
                     p,
                     q,
@@ -846,13 +1057,14 @@ fn blur_row(
                 o[i] = s[i] / w[i];
             }
         }
-        let coarse: [&[f32]; 3] = std::array::from_fn(|c| &out[c][x0..x1]);
+        let coarse: [&[f32]; C] = std::array::from_fn(|c| &out[c][x0..x1]);
+        let mut acc = acc.iter_mut();
         shrink.row(
             y,
             x0,
             p,
             coarse,
-            [&mut a0[x0..x1], &mut a1[x0..x1], &mut a2[x0..x1]],
+            std::array::from_fn(|_| &mut acc.next().expect("a plane")[x0..x1]),
         );
         x0 = x1;
     }
@@ -883,28 +1095,32 @@ const FLOOR: f32 = 60.0;
 /// Out of line so the loop holds no `&mut` into the frame: the sums go
 /// to the scratch and the frame is only read (notes §128).
 #[inline(never)]
-fn tap(
-    p: [&[f32]; 3],
-    q: [&[f32]; 3],
+fn tap<const C: usize>(
+    p: [&[f32]; C],
+    q: [&[f32]; C],
     f: f32,
     inv_sigma2: f32,
-    sum: &mut [Vec<f32>; 3],
+    sum: &mut [Vec<f32>; C],
     wgt: &mut [f32],
 ) {
     let k = p[0].len();
-    let (p0, p1, p2) = (&p[0][..k], &p[1][..k], &p[2][..k]);
-    let (q0, q1, q2) = (&q[0][..k], &q[1][..k], &q[2][..k]);
-    let [s0, s1, s2] = sum;
-    let (s0, s1, s2) = (&mut s0[..k], &mut s1[..k], &mut s2[..k]);
+    let p: [&[f32]; C] = std::array::from_fn(|c| &p[c][..k]);
+    let q: [&[f32]; C] = std::array::from_fn(|c| &q[c][..k]);
+    let mut sum = sum.iter_mut();
+    let s: [&mut [f32]; C] = std::array::from_fn(|_| &mut sum.next().expect("a plane")[..k]);
     let wg = &mut wgt[..k];
     for i in 0..k {
-        let dist = sq(p0[i] - q0[i]) + sq(p1[i] - q1[i]) + sq(p2[i] - q2[i]);
+        // The planes summed in order, as three were.
+        let mut dist = sq(p[0][i] - q[0][i]);
+        for c in 1..C {
+            dist += sq(p[c][i] - q[c][i]);
+        }
         let e = (dist * inv_sigma2 - 9.0).min(FLOOR);
         let w = f * super::nlm::weight(e);
         wg[i] += w;
-        s0[i] += w * q0[i];
-        s1[i] += w * q1[i];
-        s2[i] += w * q2[i];
+        for c in 0..C {
+            s[c][i] += w * q[c][i];
+        }
     }
 }
 
@@ -925,14 +1141,17 @@ fn sq(x: f32) -> f32 {
 /// [`Self::SAMPLES`] coefficients. The guard is left out of the
 /// measurement; it only differs from the plain blur at strong edges,
 /// where the variance is large and the threshold small either way.
-pub(crate) struct LocalVariance {
+pub(crate) struct LocalVariance<const C: usize> {
     tiles_x: usize,
     tiles_y: usize,
     tile: usize,
-    pub(crate) values: Vec<[f32; 3]>,
+    pub(crate) values: Vec<[f32; C]>,
 }
 
-impl LocalVariance {
+/// The tile constants, which are no plane count's.
+type Tiles = LocalVariance<1>;
+
+impl<const C: usize> LocalVariance<C> {
     /// Tile side at scale 0, in pixels; at every scale, in coefficients.
     const TILE: usize = 8;
     /// Coefficients averaged per full tile.
@@ -940,23 +1159,23 @@ impl LocalVariance {
 }
 
 /// The local variance of every band, from a decimated pyramid of the
-/// three planes of `planes`: each level is the previous blurred with
+/// `C` planes of `planes`: each level is the previous blurred with
 /// the 5-tap filter and taken every other pixel, which is the unguarded
 /// à trous chain on the lattice of its scale. Costs a third of one plain
 /// blur of the image over all levels, and a quarter of the image in
 /// memory.
-pub(crate) fn variance_grids(
+pub(crate) fn variance_grids<const C: usize>(
     planes: &[f32],
     width: usize,
     height: usize,
     scales: usize,
-) -> Vec<LocalVariance> {
+) -> Vec<LocalVariance<C>> {
     let mut grids = Vec::with_capacity(scales);
     let mut level: Vec<f32> = Vec::new();
     let (mut w, mut h) = (width, height);
     for scale in 0..scales {
         let src = if scale == 0 { planes } else { &level };
-        let (grid, next) = pyramid_level(src, w, h, scale);
+        let (grid, next) = pyramid_level::<C>(src, w, h, scale);
         grids.push(grid);
         level = next;
         w = w.div_ceil(2);
@@ -967,13 +1186,18 @@ pub(crate) fn variance_grids(
 
 /// One pyramid level: the tile variances of `src` minus its blur, and
 /// the blur decimated by two for the next level, plane by plane.
-fn pyramid_level(src: &[f32], w: usize, h: usize, scale: usize) -> (LocalVariance, Vec<f32>) {
-    let tile = LocalVariance::TILE;
+fn pyramid_level<const C: usize>(
+    src: &[f32],
+    w: usize,
+    h: usize,
+    scale: usize,
+) -> (LocalVariance<C>, Vec<f32>) {
+    let tile = Tiles::TILE;
     let tiles_x = w.div_ceil(tile);
     let tiles_y = h.div_ceil(tile);
     let (nw, nh) = (w.div_ceil(2), h.div_ceil(2));
-    let mut next = vec![0.0f32; 3 * nw * nh];
-    let mut values = vec![[0.0f32; 3]; tiles_x * tiles_y];
+    let mut next = vec![0.0f32; C * nw * nh];
+    let mut values = vec![[0.0f32; C]; tiles_x * tiles_y];
     for (c, (plane, next)) in src
         .chunks_exact(w * h)
         .zip(next.chunks_exact_mut(nw * nh))
@@ -1000,8 +1224,8 @@ fn pyramid_level(src: &[f32], w: usize, h: usize, scale: usize) -> (LocalVarianc
 /// blur, and the blur decimated by two into `next`.
 fn pyramid_plane(src: &[f32], w: usize, h: usize, next: &mut [f32]) -> Vec<f32> {
     // Rows per task: a multiple of two and of the tile.
-    const CHUNK: usize = 8 * LocalVariance::TILE;
-    let tile = LocalVariance::TILE;
+    const CHUNK: usize = 8 * Tiles::TILE;
+    let tile = Tiles::TILE;
     let tiles_x = w.div_ceil(tile);
     let nw = w.div_ceil(2);
     next.par_chunks_mut(CHUNK / 2 * nw)
@@ -1158,7 +1382,7 @@ mod tests {
             tile: w,
             values: vec![[1.0; 3]],
         };
-        let mut bands = Bands::new(w, h, scales);
+        let mut bands = Bands::new(w, h, scales, 3);
         for (scale, &sb2) in want.iter().enumerate().take(scales) {
             let shrink = Shrink {
                 grid: &keep,
@@ -1180,7 +1404,7 @@ mod tests {
         let input: Vec<f32> = (0..w * h * 3).map(|_| g.next()).collect();
         let want = band_variances();
         assert!((want[0] - 0.79).abs() < 0.02, "{want:?}");
-        let grids = variance_grids(&input, w, h, 4);
+        let grids = variance_grids::<3>(&input, w, h, 4);
         for (scale, (grid, &want_var)) in grids.iter().zip(&want).enumerate() {
             // The three planes are independent draws of the same unit
             // noise, so their mean is the same estimate on three times
@@ -1263,7 +1487,7 @@ mod tests {
         let mut cur = input.clone();
         let mut acc = vec![0.0f32; w * h * 3];
         let mut plain = input.clone();
-        let mut bands = Bands::new(w, h, scales);
+        let mut bands = Bands::new(w, h, scales, 3);
         for (scale, &sb2) in want.iter().enumerate().take(scales) {
             let shrink = Shrink {
                 grid: &keep,
@@ -1295,6 +1519,90 @@ mod tests {
         assert_eq!(scale_count(6000, 4000), 7);
         assert_eq!(scale_count(768, 512), 6);
         assert_eq!(scale_count(64, 64), 3);
+    }
+
+    /// A flat plane and a color frame of the same noise, through one
+    /// method, over a few noise draws: the plane's and a color
+    /// channel's mean shift from their own input's mean (the draw's
+    /// own mean is no shift of the denoise's), and their residual
+    /// spreads; and whether the plane came back in three equal channels.
+    fn plane_against_color(
+        method: DenoiseMethod,
+        level: f32,
+        model: &NoiseModel,
+    ) -> ([f32; 2], [f32; 2], bool) {
+        let (w, h) = (192, 128);
+        let sigma = model.sigma(0, level);
+        let options = DenoiseOptions {
+            method,
+            ..DenoiseOptions::default()
+        };
+        let mean = |v: &[f32]| (v.iter().map(|&x| x as f64).sum::<f64>() / v.len() as f64) as f32;
+        let spread = |v: &[f32]| {
+            let m = mean(v);
+            (v.iter().map(|x| sq(x - m)).sum::<f32>() / v.len() as f32).sqrt()
+        };
+        let green = |v: &[f32]| v.iter().skip(1).step_by(3).copied().collect::<Vec<f32>>();
+        let (mut shift, mut left, mut equal) = ([0.0f32; 2], [0.0f32; 2], true);
+        const DRAWS: u64 = 4;
+        for draw in 0..DRAWS {
+            let mut g = Gauss(7 + draw);
+            let plane: Vec<f32> = (0..w * h).map(|_| level + sigma * g.next()).collect();
+            let color: Vec<f32> = (0..w * h * 3).map(|_| level + sigma * g.next()).collect();
+            let mut mono: Vec<f32> = plane.iter().flat_map(|&v| [v; 3]).collect();
+            denoise_picture(&mut mono, w, h, model, &options, true).unwrap();
+            let mut out = color.clone();
+            denoise_picture(&mut out, w, h, model, &options, false).unwrap();
+            equal &= mono.chunks(3).all(|px| px[0] == px[1] && px[1] == px[2]);
+            let (m, c) = (green(&mono), green(&out));
+            shift[0] += (mean(&m) / mean(&plane) - 1.0) / DRAWS as f32;
+            shift[1] += (mean(&c) / mean(&green(&color)) - 1.0) / DRAWS as f32;
+            left[0] += spread(&m) / DRAWS as f32;
+            left[1] += spread(&c) / DRAWS as f32;
+        }
+        (shift, left, equal)
+    }
+
+    /// A monochrome plane through each method, against a color frame
+    /// of the same noise model. A color channel's denoised value is
+    /// mostly its luma's, which averages three photosites' noise, so one
+    /// channel's best is about sqrt(3) of a color channel's residual
+    /// spread; the plane is held under 1.75 of it. It gives 1.36 to 1.37
+    /// through the wavelets, 1.61 through the means, and 1.69 through
+    /// the hybrid; three equal channels through the color path gave 1.95
+    /// and 2.07 on the last two. Its mean shift in the shadows: the
+    /// wavelets' within a color frame's (-0.025% against +0.116% at
+    /// 0.004); the means' and the hybrid's 1.43 and 1.34 times it, held
+    /// under 1.5 and 1.4, the unbiased inverse's bias growing with the
+    /// noise left, of which one channel keeps more. And the three
+    /// channels are equal.
+    #[test]
+    fn a_monochrome_plane_denoises_as_one_channel() {
+        let model = NoiseModel {
+            a: [2e-4; 3],
+            b: [4e-6; 3],
+        };
+        for method in DenoiseMethod::ALL {
+            for level in [0.004f32, 0.007, 0.011] {
+                let (shift, left, equal) = plane_against_color(method, level, &model);
+                let at = format!(
+                    "{method:?} at {level}: shift {:+.4}% against {:+.4}%, spread {:.3e} against {:.3e}",
+                    100.0 * shift[0],
+                    100.0 * shift[1],
+                    left[0],
+                    left[1]
+                );
+                assert!(equal, "{at}");
+                assert!(left[0] < 1.75 * left[1], "{at}");
+                assert!(left[0] < 0.35 * model.sigma(0, level), "{at}");
+                let bound = match method {
+                    DenoiseMethod::Wavelets => 1.0,
+                    DenoiseMethod::Nlm => 1.5,
+                    DenoiseMethod::Hybrid => 1.4,
+                };
+                assert!(shift[0].abs() <= bound * shift[1].abs(), "{at}");
+            }
+        }
     }
 
     /// Left half flat, right half a mosaic of 12-pixel tiles at random

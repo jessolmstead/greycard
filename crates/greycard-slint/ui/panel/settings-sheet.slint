@@ -14,7 +14,8 @@
 // both; whether a raw's new edit starts with its lens corrections on;
 // the aspect an uncropped frame's crop opens at; the shipped
 // presets put back; the export sheet's format and color space,
-// bound the same way; and the apps Edit in hands a frame to. Models:
+// bound the same way; the apps Edit in hands a frame to; and the
+// author and copyright every export carries. Models:
 // every model the registry knows, its size and where it stands, and
 // Fetch all, which fetches those this machine runs. Keys:
 // each rebindable action of the key table (`keys.rs`), a click on its
@@ -179,6 +180,11 @@ export component SettingsSheet inherits Rectangle {
     in property <[string]> edit-in-list;
     callback edit-in-add();
     callback edit-in-remove(int);
+    /// The author and copyright every export carries, as typed; taken
+    /// on Enter or as the sheet closes, empty for none.
+    in-out property <string> author;
+    in-out property <string> copyright;
+    callback rights-changed();
     /// The thumbnail cache: whether this run has one, what it holds
     /// in words, and the button that empties it.
     in property <bool> thumb-cache-on;
@@ -1097,6 +1103,26 @@ export component SettingsSheet inherits Rectangle {
                                             clicked => { root.edit-in-add(); }
                                         }
                                     }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                // Editing: the name every export carries
+                                Text { text: @tr("Author"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                author-field := LineEdit {
+                                    horizontal-stretch: 1;
+                                    text <=> root.author;
+                                    accepted => { root.rights-changed(); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                // Editing: the copyright notice every export carries
+                                Text { text: @tr("Copyright"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                copyright-field := LineEdit {
+                                    horizontal-stretch: 1;
+                                    text <=> root.copyright;
+                                    accepted => { root.rights-changed(); }
                                 }
                             }
                         }

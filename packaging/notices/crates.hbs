@@ -1,0 +1,35 @@
+{{!
+  cargo-about's template for the Rust crates part of THIRD-PARTY-NOTICES:
+  each distinct license text once, and the crates under it by name and
+  version. Triple braces throughout, since this is plain text and not
+  HTML. scripts/notices.sh runs it.
+~}}
+The crates compiled into greycard-ui and greycard (the command line),
+for every platform a release is built for, grouped by the license
+greycard takes each under. Where a crate offers a choice, the license
+named is the one taken. Each text below is the crate's own file for
+that license, with the copyright lines it carries; where a crate ships
+none, the license's standard text is given, with its placeholders
+unfilled, and a few crates' own files are that unfilled text. The
+notices some crates keep in other files follow the texts. greycard's
+own crates that the editor links are listed under GPL-3.0-or-later
+for completeness, and greycard-cli, the command line, is under the
+same license; LICENSE beside this file is theirs.
+
+Overview, the number of entries under each license below:
+{{#each overview}}
+  {{{name}}} ({{{id}}}): {{count}}
+{{/each}}
+
+{{#each licenses}}
+================================================================================
+{{{name}}} ({{{id}}})
+
+Used by:
+{{#each used_by}}
+  {{{crate.name}}} {{{crate.version}}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

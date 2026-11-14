@@ -251,6 +251,15 @@ name, in the order you added them. **Add...** picks another; **×**
 takes one off. See
 [Edit in another app](export.md#edit-in-another-app).
 
+#### Author and Copyright
+
+Your name and your copyright notice, written into every export: EXIF
+Artist and Copyright, and the XMP's `dc:creator` and `dc:rights`.
+Separate several authors with `;`. Taken on Enter or as the sheet
+closes; the next export carries them. Empty is none, and the camera's
+own stand. **Metadata: None** writes neither. See [From the command
+line](export.md#from-the-command-line).
+
 ## Models
 
 Every model greycard knows, with its license, its size, and where it

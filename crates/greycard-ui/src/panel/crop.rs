@@ -163,18 +163,70 @@ pub(crate) fn open_under_start(st: &State, app: &App, arrived: bool) -> Laid {
     pick_aspect(app, sw, sh);
     let held = arrived || aspect == Aspect::Original;
     app.set_aspect_held(held);
-    if held { Laid::Held } else { Laid::Taken }
+    if held {
+        return Laid::Held;
+    }
+    // Taken: the crop fitted as a pick from the list fits it, so the
+    // edit stores the crop the box shows, not an aspect alone.
+    refit_crop(app, sw, sh, !st.develop.edit.needs_frame());
+    Laid::Taken
 }
 
 /// A frame opened with crop mode on: its develop has landed and its
 /// shape is known, so the starting aspect goes on the panel, once,
 /// held there until the user acts on this frame's crop.
+///
+/// And a ratio taken with the Crop button before the develop landed
+/// has its crop fitted now, as it would have been had the size been
+/// known, unless the user has acted on the crop since.
 pub(crate) fn start_landed(st: &mut State, app: &App) {
+    fit_taken(st, app);
     if !std::mem::take(&mut st.develop.crop_start_due) {
         return;
     }
     if app.get_crop_mode() && open_under_start(st, app, true) != Laid::No {
         app.window().request_redraw();
+    }
+}
+
+/// A frame as the panel shows it: its file and its version, none for
+/// the file's own.
+pub(crate) type FrameId = (std::path::PathBuf, Option<std::sync::Arc<str>>);
+
+/// The frame on screen, by its file and version.
+fn on_screen(st: &State) -> Option<FrameId> {
+    let cell = st.cells.get(st.current?)?;
+    Some((st.files.get(cell.file)?.clone(), cell.version.clone()))
+}
+
+/// The crop of a ratio taken before the frame's size was known, fitted
+/// once it is, and kept as the Crop button's own act would have been.
+/// Still due, and tried at the next landing, while the size or the
+/// frame's way up is not known.
+fn fit_taken(st: &mut State, app: &App) {
+    let Some(due) = &st.develop.crop_fit_due else {
+        return;
+    };
+    // Due on another frame than the one whose develop landed: the user
+    // went on (by the strip, the grid, or culling) before it landed.
+    if on_screen(st).as_ref() != Some(due) {
+        st.develop.crop_fit_due = None;
+        return;
+    }
+    let geometry = read_geometry(app);
+    if app.get_aspect_held() || !geometry.frames_by_aspect() {
+        st.develop.crop_fit_due = None;
+        return;
+    }
+    let (sw, sh) = (
+        st.develop.source_size.0 as f32,
+        st.develop.source_size.1 as f32,
+    );
+    refit_crop(app, sw, sh, !st.develop.edit.needs_frame());
+    if app.get_geo_has_crop() {
+        st.develop.crop_fit_due = None;
+        app.window().request_redraw();
+        crate::panel::edit::schedule_save(st, app.as_weak());
     }
 }
 
@@ -624,6 +676,15 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
                 Laid::No
             };
             st.develop.crop_start_due = false;
+            // A ratio taken before the develop said the frame's size:
+            // its crop is fitted when it does (`start_landed`).
+            if laid == Laid::Taken {
+                st.develop.crop_fit_due = if app.get_geo_has_crop() {
+                    None
+                } else {
+                    on_screen(&st)
+                };
+            }
             drop(st);
             if laid == Laid::Taken || mid_drag {
                 app.invoke_view_changed();
@@ -2502,5 +2563,274 @@ mod tests {
             app.get_strip_hidden(),
             "the strip's arrow, moved, still works"
         );
+    }
+
+    /// One frame of a 4:3 source, sidecars written, in the Crop tab
+    /// under the starting aspect `start` with `last` the last pick.
+    fn four_three(
+        name: &str,
+        start: &str,
+        last: &str,
+    ) -> (
+        App,
+        Rc<crate::Shared>,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        let dir = crate::testing::scratch_dir(name);
+        let raw = dir.join("P1010001.ORF");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        let other = dir.join("P1010002.ORF");
+        std::fs::write(&other, b"not a raw").unwrap();
+        let app = window(2);
+        let (state, _worker) = crate::testing::state_for(&app, vec![raw.clone(), other]);
+        {
+            let mut st = state.borrow_mut();
+            st.window.write_sidecars = true;
+            st.develop.crop_last = last.to_string();
+        }
+        app.set_panel_tab("Crop".into());
+        choose_start(&app, start);
+        (app, state, raw, dir)
+    }
+
+    /// A 4:3 frame opened with the Crop button under Last used at 3:2,
+    /// then Done with nothing dragged: the edit stores the 3:2 crop the
+    /// box showed, so the screen, the export, the kept pictures, and
+    /// the export sheet's size are all 3:2. It stored the aspect alone,
+    /// which the screen framed and the export did not.
+    #[test]
+    fn a_ratio_opened_with_the_crop_button_stores_the_crop_it_shows() {
+        let (app, state, raw, dir) = four_three("crop-taken-stored", "Last used", "3:2");
+        open_frame(&app, &state, 0, (4000, 3000));
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "3:2");
+        assert!(!app.get_aspect_held());
+        press_done(&app);
+        rest();
+        {
+            let st = state.borrow();
+            let stored = &st.sidecars[0].current.geometry;
+            assert_eq!(stored.aspect, crate::Aspect::Ratio { w: 3.0, h: 2.0 });
+            let c = stored.crop.expect("the crop the box showed");
+            assert!(
+                ((c.w * 4000.0) / (c.h * 3000.0) - 1.5).abs() < 1e-3,
+                "3:2: {c:?}"
+            );
+            assert_eq!(st.sidecars[0].history.len(), 1, "one step");
+            // The screen draws the panel's edit's frame, as the render
+            // step does, and the export sheet's size is the same frame.
+            let shown = super::super::edit::read_edit(&app, &st.develop.edit, None)
+                .geometry
+                .frame(4000.0, 3000.0)
+                .size;
+            assert_eq!(shown, (4000.0, 2667.0));
+            let export = greycard_engine::stages::framed_size((4000, 3000), stored);
+            assert_eq!(export, (4000, 2667));
+            let (tw, th) = greycard_engine::edited_pictures::fitted_size((4000, 3000), stored);
+            assert!(
+                (tw as f32 / th as f32 - 1.5).abs() < 0.01,
+                "the kept picture: {tw}x{th}"
+            );
+        }
+        let saved = greycard_edit::Sidecar::load(&raw)
+            .unwrap()
+            .expect("a sidecar written");
+        assert_eq!(
+            saved.current.geometry,
+            state.borrow().sidecars[0].current.geometry
+        );
+        drop(app);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The Crop button pressed under Last used at 3:2 before the
+    /// frame's develop has said its size, and Done pressed or not: the
+    /// crop is fitted when the develop lands, as it would have been,
+    /// and stored. A crop the user drew in the meantime stands.
+    #[test]
+    fn a_ratio_taken_before_the_develop_lands_is_fitted_when_it_does() {
+        for done_first in [false, true] {
+            let (app, state, _raw, dir) = four_three("crop-taken-early", "Last used", "3:2");
+            app.invoke_select(0);
+            assert_eq!(state.borrow().develop.source_size, (0, 0));
+            press_crop(&app);
+            assert_eq!(app.get_aspect_name(), "3:2");
+            assert!(!app.get_geo_has_crop(), "no size to fit to yet");
+            if done_first {
+                press_done(&app);
+            }
+            {
+                let mut st = state.borrow_mut();
+                st.develop.source_size = (4000, 3000);
+                super::start_landed(&mut st, &app);
+            }
+            assert!(app.get_geo_has_crop(), "done first {done_first}");
+            rest();
+            let st = state.borrow();
+            let stored = &st.sidecars[0].current.geometry;
+            let c = stored.crop.expect("the fitted crop stored");
+            assert!(
+                ((c.w * 4000.0) / (c.h * 3000.0) - 1.5).abs() < 1e-3,
+                "3:2: {c:?}"
+            );
+            assert_eq!(st.sidecars[0].history.len(), 1, "one step");
+            assert!(st.develop.crop_fit_due.is_none());
+            drop(st);
+            drop(app);
+            crate::testing::remove_scratch(state, &dir);
+        }
+        // A crop drawn before the develop lands is the user's.
+        let (app, state, _raw, dir) = four_three("crop-taken-early-drawn", "Last used", "3:2");
+        app.invoke_select(0);
+        press_crop(&app);
+        let drawn = Crop {
+            x: 0.1,
+            y: 0.1,
+            w: 0.3,
+            h: 0.2,
+        };
+        super::set_crop(&app, Some(drawn));
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (4000, 3000);
+            super::start_landed(&mut st, &app);
+        }
+        assert_eq!(super::read_geometry(&app).crop, Some(drawn));
+        drop(app);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A late fit that lands after the save's wait is a second step, and
+    /// both are named as the Crop button's one step is: "Crop", by what
+    /// moved, with no words of their own.
+    #[test]
+    fn a_late_fit_after_the_save_is_named_as_the_crop_buttons_step() {
+        let named = |line: &greycard_edit::Sidecar| -> Vec<(Option<String>, String)> {
+            let mut states: Vec<_> = line
+                .history
+                .iter()
+                .map(|s| (s.label.clone(), s.edit.clone()))
+                .collect();
+            states.push((line.current_label.clone(), line.current.clone()));
+            states
+                .windows(2)
+                .map(|w| {
+                    let label = w[1].0.clone();
+                    let said = greycard_edit::history::describe_step(
+                        &w[0].1,
+                        &w[1].1,
+                        label.as_deref(),
+                        &line.snapshots,
+                    );
+                    (label, said)
+                })
+                .collect()
+        };
+        // The Crop button with the size known: one step.
+        let (app, state, _raw, dir) = four_three("crop-named-now", "Last used", "3:2");
+        open_frame(&app, &state, 0, (4000, 3000));
+        press_crop(&app);
+        rest();
+        let now = named(&state.borrow().sidecars[0]);
+        assert_eq!(now, [(None, "Crop".to_string())]);
+        drop(app);
+        crate::testing::remove_scratch(state, &dir);
+
+        // Before the develop, and it lands after the save: two steps,
+        // each as that one.
+        let (app, state, _raw, dir) = four_three("crop-named-late", "Last used", "3:2");
+        app.invoke_select(0);
+        press_crop(&app);
+        rest();
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (4000, 3000);
+            super::start_landed(&mut st, &app);
+        }
+        rest();
+        let late = named(&state.borrow().sidecars[0]);
+        assert_eq!(late, [now[0].clone(), now[0].clone()]);
+        assert!(state.borrow().sidecars[0].current.geometry.crop.is_some());
+        drop(app);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The Crop button pressed on frame A before its develop lands, then
+    /// Cull entered, moved on to frame B, and left: B's develop landing
+    /// fits nothing onto B, which keeps no crop, no step and no sidecar.
+    /// B holds an aspect over no crop of its own (as 0.11.0 wrote one),
+    /// the edit a fit would take for A's.
+    #[test]
+    fn a_late_fit_due_on_one_frame_is_not_made_on_another() {
+        let (app, state, raw, dir) = four_three("crop-late-other", "Last used", "3:2");
+        let other = raw.with_file_name("P1010002.ORF");
+        state.borrow_mut().sidecars[1].current.geometry.aspect =
+            crate::Aspect::Ratio { w: 3.0, h: 2.0 };
+        app.invoke_select(0);
+        press_crop(&app);
+        assert!(state.borrow().develop.crop_fit_due.is_some());
+        app.invoke_cull_toggled();
+        app.invoke_select(1);
+        app.invoke_cull_leave();
+        assert_eq!(state.borrow().current, Some(1));
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (4000, 3000);
+            super::start_landed(&mut st, &app);
+        }
+        rest();
+        let st = state.borrow();
+        assert!(st.develop.crop_fit_due.is_none(), "let go");
+        assert!(!app.get_geo_has_crop());
+        assert_eq!(st.sidecars[1].current.geometry.crop, None);
+        assert!(st.sidecars[1].history.is_empty(), "no step on B");
+        assert!(!greycard_edit::Sidecar::path_for(&other).exists());
+        drop(st);
+        drop(app);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// Crop and Done under Original or Free, and on a frame arrived at
+    /// with the crop open under any start, store nothing: no step, no
+    /// sidecar, the whole frame on screen and in the export.
+    #[test]
+    fn crop_and_done_with_nothing_taken_stores_nothing() {
+        for (start, arrived) in [
+            ("Original", false),
+            ("Original", true),
+            ("Free", false),
+            ("Free", true),
+            ("Last used", true),
+        ] {
+            let (app, state, raw, dir) = four_three("crop-nothing-taken", start, "3:2");
+            if arrived {
+                open_frame(&app, &state, 1, (4000, 3000));
+                press_crop(&app);
+                open_frame(&app, &state, 0, (4000, 3000));
+            } else {
+                open_frame(&app, &state, 0, (4000, 3000));
+                press_crop(&app);
+            }
+            press_done(&app);
+            rest();
+            {
+                let st = state.borrow();
+                let stored = super::super::edit::read_edit(&app, &st.develop.edit, None);
+                assert_eq!(stored, greycard_edit::Edit::default(), "{start} {arrived}");
+                assert!(st.sidecars[0].history.is_empty(), "{start} {arrived}");
+                assert_eq!(
+                    stored.geometry.frame(4000.0, 3000.0).size,
+                    (4000.0, 3000.0),
+                    "{start} {arrived}"
+                );
+            }
+            assert!(
+                !greycard_edit::Sidecar::path_for(&raw).exists(),
+                "{start} {arrived}: no sidecar"
+            );
+            drop(app);
+            crate::testing::remove_scratch(state, &dir);
+        }
     }
 }
