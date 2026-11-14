@@ -612,7 +612,7 @@ export component GradingSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
-        for name[i] in [@tr("Shadows"), @tr("Mid-tones"), @tr("Highlights")]: VerticalLayout {
+        for name[i] in [@tr("Shadows"), @tr("Midtones"), @tr("Highlights")]: VerticalLayout {
             width: (parent.width - 2 * Theme.space-2) / 3;
             alignment: end;
             if root.grade-big != i && i < root.grade-images.length: GradeWheel {
