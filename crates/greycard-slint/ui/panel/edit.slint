@@ -119,6 +119,7 @@ export component LightSection inherits Section {
     // frame's own histogram.
     if root.auto-shown: HorizontalLayout {
         spacing: Theme.space-2;
+        padding-top: Theme.space-1;
         alignment: end;
         PanelButton {
             text: @tr("Auto");
@@ -136,6 +137,7 @@ export component LightSection inherits Section {
         Segmented {
             options: ["Per channel", "AgX"];
             labels: [@tr("Per channel"), "AgX"];
+            equal-width: true;
             current <=> root.display-curve;
             selected(v) => { root.view-changed(); }
         }
@@ -188,17 +190,20 @@ export component NoiseSection inherits Section {
     // demosaic and the profiled denoise both. Where it rests, a tier
     // already set (a sync from a Bayer frame) can still be turned off,
     // and off and that tier are all it offers: no other is reachable.
-    if !root.again: Segmented {
-        options: root.learned-unavailable == "" ? root.denoise-tiers
-            : root.denoise-learned == "off" ? ["off"] : ["off", root.denoise-learned];
-        // The tiers' names are the values; only the "off" this side
-        // adds is shown in words of its own.
-        labels: root.learned-unavailable == "" ? []
-            // Noise: the learned denoiser's choice when it is off
-            : root.denoise-learned == "off" ? [@tr("off")] : [@tr("off"), root.denoise-learned];
-        enabled: root.unavailable == "" && (root.learned-unavailable == "" || root.denoise-learned != "off");
-        current <=> root.denoise-learned;
-        selected(v) => { root.develop-changed(); }
+    if !root.again: VerticalLayout {
+        padding-bottom: Theme.space-1;
+        Segmented {
+            options: root.learned-unavailable == "" ? root.denoise-tiers
+                : root.denoise-learned == "off" ? ["off"] : ["off", root.denoise-learned];
+            // The tiers' names are the values; only the "off" this side
+            // adds is shown in words of its own.
+            labels: root.learned-unavailable == "" ? []
+                // Noise: the learned denoiser's choice when it is off
+                : root.denoise-learned == "off" ? [@tr("off")] : [@tr("off"), root.denoise-learned];
+            enabled: root.unavailable == "" && (root.learned-unavailable == "" || root.denoise-learned != "off");
+            current <=> root.denoise-learned;
+            selected(v) => { root.develop-changed(); }
+        }
     }
     EditSlider {
         label: @tr("Luma");
@@ -602,6 +607,7 @@ export component GrainSection inherits Section {
         text: round(root.grain-size * 100) / 100 + "\u{2030}";
         changed(v) => { root.view-changed(); }
     }
+    Rectangle { height: Theme.space-1; }
     Segmented {
         options: ["Cubic", "Tabular"];
         // Grain: the two kinds of grain

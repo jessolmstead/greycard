@@ -1,5 +1,5 @@
-// The open root's folders as a tree, in the left pane under the name
-// of what is open: each folder indented under the one it is in, a
+// The open root's folders as a tree in the left pane: each folder
+// indented under the one it is in, a
 // triangle where it has folders of its own, its count muted after its
 // name, the one open lit. A click opens the folder's frames from the
 // index; the switch above takes in the folders under it too. Built
@@ -31,10 +31,6 @@ export component FoldersSection inherits Section {
         toggled => { root.subfolders-changed(); root.focus-keys(); }
     }
     if root.rows.length > 0: Rectangle {
-        border-radius: Theme.radius-md;
-        background: Theme.base;
-        border-width: 1px;
-        border-color: Theme.border;
         // Three rows, or the list when shorter, and as much more of the
         // list as the pane's share gives it (app.slint), the rest a
         // scroll away, so a root of a thousand folders never pushes
@@ -46,7 +42,6 @@ export component FoldersSection inherits Section {
         vertical-stretch: 1;
         folder-pane := ScrollPane {
             folder-list := VerticalLayout {
-                padding: 2px;
                 spacing: 1px;
                 for row[i] in root.rows: Rectangle {
                     height: Theme.control-height - 8px;
@@ -76,12 +71,12 @@ export component FoldersSection inherits Section {
                         // The triangle, or its room, so names at one
                         // depth line up whether or not they fold.
                         Rectangle {
-                            width: 14px;
+                            width: Theme.icon;
                             if row.children: Image {
                                 source: @image-url("../icons/chevron-right.svg");
                                 colorize: fold.has-hover ? Theme.text : Theme.text-muted;
-                                width: 10px;
-                                height: 10px;
+                                width: Theme.icon;
+                                height: Theme.icon;
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
                                 transform-rotation: row.expanded ? 90deg : 0deg;

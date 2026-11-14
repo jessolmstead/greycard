@@ -2163,7 +2163,7 @@ mod tests {
     /// The bin and the Remove as a pointer clicks them: the bin arms
     /// the row and removes nothing, Escape and Cancel disarm it, and
     /// only the Remove removes. Found by sweeping the presets list's
-    /// own strip, top down and never past it: the pane scrolls its
+    /// bin column, top down and never past it: the pane scrolls its
     /// sections at their full height now (no more squeezing one to
     /// fit), so a sweep with no floor of its own could wander past
     /// the list and into what is below the section, or even below the
@@ -2197,13 +2197,13 @@ mod tests {
             "the three shipped presets"
         );
 
-        // The pane is 240px wide, its bins in the right-hand strip;
-        // the list is one of the first things in it with the
-        // navigator folded, so a short sweep finds the first row's
-        // bin well short of anything below the list.
+        // The pane is 240px wide. With the list's frame gone and its
+        // rows shorter, the bin is around x=188; the star is to its
+        // left. Stay in the bin's column so the sweep does not add a
+        // favorite and move the rows before finding the first bin.
         let mut bin = None;
         'sweep: for y in (60..280).step_by(3) {
-            for x in (150..240).step_by(6) {
+            for x in (183..195).step_by(3) {
                 crate::testing::click(&app, x as f32, y as f32);
                 // A section header in the way folds its section:
                 // unfolded again, so the layout holds still.
@@ -2253,15 +2253,15 @@ mod tests {
         // Re-armed on the first row for the removal itself: past
         // 120ms, the section has grown to fit the question and the
         // Cancel/Remove row, so a sweep bounded to a few rows below
-        // the list, in the pane's own width, lands on the list, the
-        // question or the Cancel/Remove row — never the pane's
+        // the list, in Remove's column, lands on the question or the
+        // button — never Cancel or the pane's
         // footer, whatever the settled height turns out to be.
         crate::testing::click(&app, bx, by);
         assert_eq!(app.get_preset_confirm_remove(), 0);
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
         let mut removed = false;
         'remove: for y in (list_bottom as i32..list_bottom as i32 + 150).step_by(3) {
-            for x in (0..240).step_by(6) {
+            for x in (135..180).step_by(6) {
                 crate::testing::click(&app, x as f32, y as f32);
                 if !first.path.exists() {
                     removed = true;

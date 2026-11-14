@@ -282,9 +282,6 @@ export component Section inherits VerticalLayout {
     // other section lets go.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
-    // The hairline along the section's top; off where a rule is drawn
-    // there already (under the Masks tab's pinned list).
-    in property <bool> line-above: true;
     // Whether a fold moves or lands at once: a click on the header
     // moves it, and a fold the view brings, set false around it,
     // lands as the sections around it appear.
@@ -348,23 +345,21 @@ export component Section inherits VerticalLayout {
     // one child of the body that stretches. Its other children must
     // each have a bounded height.
     in property <bool> shares: false;
-    spacing: 6px;
-    padding-top: Theme.space-1;
-    // The header, with a hairline along the section's top, in the
-    // padding above it: a run of folded sections reads as a list of
-    // headers. Drawn outside the header's box, so it takes no room.
+    // The header stays above the body as it folds away.
     Rectangle {
         HorizontalLayout {
-            spacing: Theme.space-2;
+            spacing: Theme.space-3;
+            padding-top: Theme.space-2;
+            padding-bottom: Theme.space-2;
+            padding-right: Theme.space-1;
             Rectangle {
                 horizontal-stretch: 1;
-                height: Theme.icon + Theme.space-1;
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     alignment: start;
                     Image {
                         source: @image-url("icons/chevron-down.svg");
-                        colorize: head.has-hover ? Theme.text : Theme.text-muted;
+                        colorize: Theme.text;
                         width: Theme.icon;
                         height: Theme.icon;
                         y: (parent.height - self.height) / 2;
@@ -373,14 +368,14 @@ export component Section inherits VerticalLayout {
                     }
                     if root.icon.width > 0: Image {
                         source: root.icon;
-                        colorize: Theme.text-secondary;
+                        colorize: Theme.text;
                         width: Theme.icon;
                         height: Theme.icon;
                         y: (parent.height - self.height) / 2;
                     }
                     if root.owner != "": Text {
                         text: root.owner;
-                        color: head.has-hover ? Theme.text : Theme.text-secondary;
+                        color: Theme.text;
                         font-size: Theme.font-xs;
                         font-weight: Theme.weight-semibold;
                         vertical-alignment: center;
@@ -388,7 +383,7 @@ export component Section inherits VerticalLayout {
                     }
                     Text {
                         text: (root.owner == "" ? "" : "\u{00b7}  ") + root.title;
-                        color: head.has-hover ? Theme.text : Theme.text-secondary;
+                        color: head.has-hover ? Theme.accent-text : Theme.text;
                         font-size: Theme.font-xs;
                         font-weight: Theme.weight-semibold;
                         letter-spacing: 0.8px;
@@ -467,21 +462,15 @@ export component Section inherits VerticalLayout {
                 toggled => { root.switched(); }
             }
         }
-        Rectangle {
-            y: -root.padding-top;
-            height: 1px;
-            width: 100%;
-            background: Theme.border;
-            visible: root.line-above;
-        }
     }
-    Rectangle {
-        height: 1px;
-        background: Theme.border;
-    }
-    // The body, clipped to nothing when folded.
+    // The body folds down to a solid 1 px line under the header.
     fold-box := Rectangle {
+        width: 100%;
         clip: true;
+        property <bool> line-only: root.collapsed && self.height <= 1px;
+        background: self.line-only ? Theme.border : Theme.raised;
+        border-color: Theme.border;
+        border-width: self.line-only ? 0px : 1px;
         property <length> full: root.collapsed ? 0px : body.preferred-height;
         animate full { duration: root.fold-time; easing: ease-out; }
         // For the sliders' focus walk alone: closed all the way, the
@@ -505,12 +494,12 @@ export component Section inherits VerticalLayout {
         property <bool> moving: self.open < 1;
         property <bool> folding: self.moving && root.collapsed;
         property <length> span: self.held > 0 ? self.held : body.preferred-height;
-        preferred-height: !root.shares ? self.full
-            : self.folding ? self.open * self.span : self.open * body.preferred-height;
-        max-height: !root.shares ? self.full
-            : self.folding ? self.open * self.span : self.open * body.max-height;
-        min-height: !root.shares ? self.full
-            : self.folding ? self.open * self.span : self.open * body.min-height;
+        preferred-height: max(1px, !root.shares ? self.full
+            : self.folding ? self.open * self.span : self.open * body.preferred-height);
+        max-height: max(1px, !root.shares ? self.full
+            : self.folding ? self.open * self.span : self.open * body.max-height);
+        min-height: max(1px, !root.shares ? self.full
+            : self.folding ? self.open * self.span : self.open * body.min-height);
         // Kept only for a sharing section, so no other lays itself out
         // as it is made (a change handler reads its height at once).
         if root.shares: Rectangle {
@@ -522,6 +511,7 @@ export component Section inherits VerticalLayout {
             changed laid => { if (self.settled && self.laid > 0) { fold-box.held = self.laid; } }
         }
         body := VerticalLayout {
+            padding: Theme.space-2;
             x: parent.shut >= 1 ? -100000px : 0;
             y: 0;
             width: 100%;
@@ -529,7 +519,7 @@ export component Section inherits VerticalLayout {
             // rather than squeezing its list.
             height: !root.shares ? self.preferred-height
                 : max(parent.height, self.preferred-height, parent.folding ? parent.span : 0px);
-            spacing: Theme.space-1;
+            spacing: 0px;
             opacity: root.switchable && (!root.on || root.superseded) ? 0.45 : 1;
             animate opacity { duration: Theme.quick; }
             @children
@@ -1522,6 +1512,9 @@ export component Segmented inherits Rectangle {
     /// Why each option cannot be chosen, by index: one with words is
     /// greyed, takes no click, and says them in place of its tip.
     in property <[string]> why-not;
+    // Whether the options are all the same width, or each just wide
+    // enough for its label.
+    in property <bool> equal-width: false;
     in property <bool> rounded: true;
     in property <bool> bordered: true;
     in property <bool> padded: true;
@@ -1533,7 +1526,7 @@ export component Segmented inherits Rectangle {
     border-color: Theme.border;
     opacity: root.enabled ? 1 : 0.45;
     HorizontalLayout {
-        padding: root.padded ? 2px : 0px;
+        padding: root.padded ? 3px : 0px;
         spacing: 2px;
         for option[i] in root.options: Rectangle {
             property <bool> on: option == root.current;
@@ -1541,7 +1534,9 @@ export component Segmented inherits Rectangle {
             border-radius: root.rounded ? Theme.radius-sm : 0px;
             background: on ? Theme.raised : (t.has-hover && root.enabled && usable ? Theme.hover : transparent);
             animate background { duration: Theme.quick; }
-            Text {
+            min-width: root.equal-width ? 0px : label.preferred-width;
+            preferred-width: root.equal-width ? 0px : label.preferred-width;
+            label := Text {
                 text: i < root.labels.length ? root.labels[i] : option;
                 color: !usable ? Theme.text-muted : on ? Theme.text : Theme.text-secondary;
                 font-size: Theme.font-xs;
@@ -2075,8 +2070,9 @@ export component EdgeArrow inherits Rectangle {
 // track at rest when the bars are set to stay; a press in the band is
 // the bar's and never what is under it.
 export component ScrollBand inherits TouchArea {
-    /// Along the foot rather than down the right edge.
+    /// Along the foot rather than down a vertical edge.
     in property <bool> horizontal;
+    /// Place a vertical thumb against the left edge of its band.
     /// How far the owner is scrolled, and how far it can be.
     in property <length> scroll;
     in property <length> max;
@@ -2368,6 +2364,7 @@ export component ScrollPane {
     }
     ScrollBand {
         horizontal: true;
+        x: 0px;
         y: parent.height - self.height;
         height: ScrollBars.band;
         width: root.max-y > 0 ? parent.width - ScrollBars.band : parent.width;

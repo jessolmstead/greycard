@@ -3786,8 +3786,8 @@ export component App inherits Window {
                 // lone Cull tab would be a mode switch posing as a bar.
                 // In its place, over a frame, a line saying why.
                 tabs := HorizontalLayout {
-                    padding-left: Theme.space-4;
-                    padding-right: Theme.space-4;
+                    padding-left: Theme.space-1;
+                    padding-right: Theme.space-1;
                     padding-top: root.frozen && root.selected < 0 ? 0 : Theme.space-2;
                     spacing: Theme.space-2;
                     if root.frozen && root.selected >= 0: Text {
@@ -3823,6 +3823,9 @@ export component App inherits Window {
                         options: ["Develop", "Crop", "Masks", "Retouch"];
                         // The Loupe's mode buttons at the top of the develop panel
                         labels: [@tr("Develop"), @tr("Crop"), @tr("Masks"), @tr("Retouch")];
+                        rounded: false;
+                        padded: false;
+                        bordered: false;
                         current <=> root.panel-tab;
                         selected(t) => { root.tab-chosen(t); }
                     }
@@ -3833,8 +3836,8 @@ export component App inherits Window {
                 // under it, and the scroll counts from its foot, so
                 // the list's own height never moves what they show.
                 if root.shown-tab == "Masks": VerticalLayout {
-                    padding-left: Theme.space-4;
-                    padding-right: Theme.space-4;
+                    padding-left: Theme.space-1;
+                    padding-right: Theme.space-1;
                     padding-top: Theme.space-2;
                     padding-bottom: Theme.space-2;
                     AdjustmentsList {
@@ -3943,11 +3946,10 @@ export component App inherits Window {
                     min-height: root.shown-tab == "Masks" ? 0px : 50px;
                     panel-sections := VerticalLayout {
                         alignment: start;
-                        padding: Theme.space-4;
+                        padding: Theme.space-1;
                         // Clear of the scroll bar's band, however wide it is.
-                        padding-right: max(Theme.space-4, ScrollBars.band + 2px);
-                        padding-top: Theme.space-2;
-                        spacing: Theme.space-2;
+                        padding-right: max(Theme.space-1, ScrollBars.band + 2px);
+                        padding-top: Theme.space-1;
                         // Culling: what the mode is, the browser's
                         // filter, the compare view, and the two ways
                         // out of it, one of them for the rejects.
@@ -4022,8 +4024,6 @@ export component App inherits Window {
                         }
                         if root.shown-tab == "Masks" && root.target > 0: mask-section := AdjustmentsSection {
                             one-of-panel: !root.grid-open;
-                            // The list's foot above is its line.
-                            line-above: false;
                             adjustment-names <=> root.adjustment-names;
                             target <=> root.target;
                             mask-invert <=> root.mask-invert;
@@ -4602,8 +4602,8 @@ export component App inherits Window {
                     Rectangle { y: 0; height: 1px; width: 100%; background: Theme.border; }
                     HorizontalLayout {
                         padding: Theme.space-3;
-                        padding-left: Theme.space-4;
-                        padding-right: Theme.space-4;
+                        padding-left: Theme.space-2;
+                        padding-right: Theme.space-2;
                         spacing: Theme.space-2;
                         // A click fits; the chevron or a right-click
                         // offers the zooms, each about the view's
@@ -4966,9 +4966,9 @@ export component App inherits Window {
         // finds the way to the other from either. The Loupe comes back
         // in the mode it was left in, Cull or Develop.
         HorizontalLayout {
-            padding: Theme.space-4;
+            padding: Theme.space-2;
             padding-top: Theme.space-3;
-            padding-bottom: 0;
+            padding-bottom: Theme.space-3;
             spacing: Theme.space-2;
             PanelButton {
                 // The view button at the top left: the grid
@@ -5011,49 +5011,56 @@ export component App inherits Window {
                 }
             }
         }
-        // The sections scroll; Settings and Report stay put
-        // beneath them, as the develop panel does on the
-        // right. The lists share the pane's height (see
-        // `share-folders`), each held to three rows at
-        // least, and the navigator is just one thumbnail,
-        // held to the pane's width — so the pane scrolls only
-        // when the floors alone outrun it, on a short or
-        // high-DPI screen. A ScrollPane
+        Rectangle {
+            height: 1px;
+            width: 100%;
+            background: Theme.border;
+        }
+        // The Navigator stays in sight above the scrolling sections,
+        // as Analysis does on the right. It is the Loupe's alone.
+        if !root.grid-open: VerticalLayout {
+            padding-left: Theme.space-1;
+            padding-right: Theme.space-1;
+            padding-top: Theme.space-1;
+            padding-bottom: Theme.space-2;
+            navigator-section := NavigatorSection {
+                zoom-text: root.zoom-text;
+                collapsed-navigator <=> root.collapsed-navigator;
+                navigator: root.navigator;
+                reserve: root.selected >= 0 && !root.culling;
+                nav-partial: root.nav-partial;
+                nav-left: root.nav-left;
+                nav-top: root.nav-top;
+                nav-width: root.nav-width;
+                nav-height: root.nav-height;
+                navigate(a, b) => { root.navigate(a, b); }
+                focus-keys => { keys.focus(); }
+            }
+        }
+        // The lists share the pane's remaining height (see
+        // `share-folders`), each held to three rows at least.
+        // Settings and Report stay put beneath them. A ScrollPane
         // never passes its content's size up to its parent,
         // so nothing here can raise the window's minimum
         // height past the screen's (see the note above about
         // Windows leaving fullscreen).
         ScrollPane {
+            // This pane only scrolls vertically. The Flickable would
+            // otherwise infer a wider content area from its children.
+            content-width: self.visible-width;
             VerticalLayout {
+                width: parent.width;
                 // Stretched, so the lists take the room; all else
                 // here keeps its height (a stretch of none), and the
                 // room the lists leave goes to the foot below them.
-                padding: Theme.space-4;
+                padding: Theme.space-1;
                 // Clear of the scroll bar's band, however wide it is.
-                padding-right: max(Theme.space-4, ScrollBars.band + 2px);
-                padding-top: Theme.space-2;
+                padding-right: max(Theme.space-1, ScrollBars.band + 2px);
+                padding-top: Theme.space-1;
                 // The foot's own gap makes up the rest.
-                padding-bottom: Theme.space-4 - Theme.space-2;
-                spacing: Theme.space-2;
-                // The frame's, and so the loupe's alone: first, so
-                // it keeps the pane's top left corner whatever the
-                // folder sections below it hold.
-                if !root.grid-open: navigator-section := NavigatorSection {
-                    vertical-stretch: 0;
-                    zoom-text: root.zoom-text;
-                    collapsed-navigator <=> root.collapsed-navigator;
-                    navigator: root.navigator;
-                    reserve: root.selected >= 0 && !root.culling;
-                    nav-partial: root.nav-partial;
-                    nav-left: root.nav-left;
-                    nav-top: root.nav-top;
-                    nav-width: root.nav-width;
-                    nav-height: root.nav-height;
-                    navigate(a, b) => { root.navigate(a, b); }
-                    focus-keys => { keys.focus(); }
-                }
-                // The button, and under it the folder it
-                // opened, which offers the ones before it.
+                padding-bottom: Theme.space-1;
+                // The folder entry point stays available when FOLDERS is
+                // folded or no root is open.
                 VerticalLayout {
                     vertical-stretch: 0;
                     spacing: 2px;
@@ -5075,9 +5082,7 @@ export component App inherits Window {
                         tip(t, x, y) => { root.tip-at(t, x, y); }
                         menu-shown => { return root.menu-shown(); }
                     }
-                    // RawTherapee's profiles found beside the folder's
-                    // frames, offered once: Import... opens the sheet,
-                    // Not now asks no more for this folder.
+                    // Profiles found beside the folder's frames, offered once.
                     if root.rt-offer != "": VerticalLayout {
                         spacing: 2px;
                         padding-top: 2px;
@@ -5110,6 +5115,7 @@ export component App inherits Window {
                 if root.grid-open: VerticalLayout {
                     vertical-stretch: 0;
                     spacing: 2px;
+                    padding-top: Theme.space-2;
                     // One button for the ways in: a click opens a menu
                     // of them. While a card import runs it is that
                     // import's Stop, and while a catalog writes its
@@ -5184,7 +5190,7 @@ export component App inherits Window {
                     quiet: root.sheet-open();
                     tip(t, x, y) => { root.tip-at(t, x, y); }
                 }
-                // The open root's folders, from the index.
+                // The open root's folder tree, from the index.
                 // Its share of the pane's height (see `share-folders`):
                 // the section's own bounds, its weight, how it lies now.
                 if root.folder-tree-shown: Rectangle {
@@ -5454,9 +5460,13 @@ export component App inherits Window {
                 Rectangle { vertical-stretch: 0.0001; }
             }
         }
+        // As in the right panel, the footer starts with a full-width rule.
+        Rectangle { height: 1px; background: Theme.border; }
         VerticalLayout {
-            padding: Theme.space-4;
-            padding-top: Theme.space-2;
+            padding: Theme.space-3;
+            padding-top: Theme.space-3 - 1px;
+            padding-left: Theme.space-2;
+            padding-right: Theme.space-2;
             spacing: Theme.space-2;
             // A newer release, when the check found one: the
             // page in the browser, or Not now for this one.
@@ -5541,8 +5551,8 @@ export component App inherits Window {
     // pane's width or the strip's pictures' height, held to its floor
     // and ceiling, and a double-click goes back to the default. Inside
     // the pane, 4 px along its edge, so the viewport keeps every pixel
-    // of its presses; a scroll band's thumb is 4 px in from its outer
-    // edge, so the left pane's keeps its own. Under the arrows,
+    // of its presses. The left pane's scroll band is at its right edge.
+    // Under the arrows,
     // declared after, and the sheets. The Develop panel's and the
     // strip's are the Loupe's: the grid covers both.
     property <length> size-from;

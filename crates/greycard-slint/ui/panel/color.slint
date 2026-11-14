@@ -137,6 +137,7 @@ export component WhiteBalanceSection inherits Section {
         }
     }
     HorizontalLayout {
+        padding-top: Theme.space-1;
         spacing: Theme.space-2;
         alignment: end;
         // Auto, and on a raw the presets in a menu off its chevron, as
@@ -321,6 +322,7 @@ export component MixerSection inherits Section {
         current <=> root.mixer-band;
         selected(i) => { root.mixer-band-changed(); }
     }
+    Rectangle { height: Theme.space-2; }
     EditSlider {
         label: @tr("Hue");
         enabled: root.mixer-acts;
@@ -368,6 +370,7 @@ export component MixerSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
+        padding-top: Theme.space-1;
         alignment: end;
         PanelButton {
             text: @tr("picker" => "Pick");
@@ -431,12 +434,14 @@ export component BlackWhiteSection inherits Section {
         current <=> root.bw-filter;
         selected(v) => { root.bw-filter-changed(); }
     }
+    Rectangle { height: Theme.space-2; }
     Swatches {
         colors: root.band-colors;
         enabled: root.bw-enabled;
         current <=> root.bw-band;
         selected(i) => { root.bw-band-changed(); }
     }
+    Rectangle { height: Theme.space-2; }
     EditSlider {
         // Black & white: the filter's slider
         label: @tr("Weight");
@@ -484,6 +489,7 @@ export component BlackWhiteSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
+        padding-top: Theme.space-1;
         alignment: end;
         PanelButton {
             text: @tr("Reset");
@@ -607,7 +613,7 @@ export component GradingSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         for name[i] in [@tr("Shadows"), @tr("Midtones"), @tr("Highlights")]: VerticalLayout {
-            spacing: Theme.space-1;
+            width: (parent.width - 2 * Theme.space-2) / 3;
             alignment: end;
             if root.grade-big != i && i < root.grade-images.length: GradeWheel {
                 picture: root.grade-images[i];
@@ -622,7 +628,7 @@ export component GradingSection inherits Section {
                 double-clicked(x, y) => { root.grade-double(i); }
             }
             Rectangle {
-                height: Theme.control-height - 6px;
+                height: 2 * Theme.font-xs + 8px;
                 border-radius: Theme.radius-sm;
                 background: name-area.has-hover ? Theme.hover : transparent;
                 accessible-role: button;
@@ -638,6 +644,7 @@ export component GradingSection inherits Section {
                     clicked => { self.choose(); }
                 }
                 HorizontalLayout {
+                    width: parent.width;
                     alignment: center;
                     spacing: Theme.space-1;
                     Text {
@@ -645,6 +652,11 @@ export component GradingSection inherits Section {
                         color: root.grade-range == i ? Theme.accent-text : Theme.text-secondary;
                         font-size: Theme.font-xs;
                         font-weight: root.grade-range == i ? Theme.weight-medium : Theme.weight-regular;
+                        min-width: 0px;
+                        wrap: word-wrap;
+                        overflow: elide;
+                        max-lines: 2;
+                        horizontal-alignment: center;
                         vertical-alignment: center;
                     }
                     Image {
@@ -658,6 +670,7 @@ export component GradingSection inherits Section {
             }
         }
     }
+    Rectangle { height: Theme.space-1; }
     EditSlider {
         label: @tr("Hue");
         enabled: root.grading-enabled;
@@ -698,6 +711,7 @@ export component GradingSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
+        padding-top: Theme.space-1;
         alignment: end;
         PanelButton {
             text: @tr("Reset");
@@ -769,6 +783,7 @@ export component TintSection inherits Section {
             }
         }
     }
+    Rectangle { height: Theme.space-1; }
     EditSlider {
         label: @tr("Hue");
         enabled: root.tint-enabled;
@@ -805,15 +820,15 @@ export component TintSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
+        padding-top: Theme.space-1;
         alignment: end;
         // What a mid grey becomes under the
         // tint as it is set, dimmed with the
         // ring while the switch is off.
         Rectangle {
             width: Theme.control-height;
-            height: Theme.control-height - 6px;
-            y: 3px;
-            border-radius: Theme.radius-sm;
+            height: Theme.control-height;
+            border-radius: Theme.radius-md;
             border-width: 1px;
             border-color: Theme.border-strong;
             background: root.tint-color;

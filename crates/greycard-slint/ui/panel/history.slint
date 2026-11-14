@@ -18,7 +18,7 @@ component SnapshotIcon inherits Rectangle {
     /// rested on the icon for a moment (`TipArea`). The label stays
     /// the screen reader's, with the name in it.
     in property <string> words;
-    width: Theme.control-height - 4px;
+    width: Theme.control-height - 8px;
     accessible-role: button;
     accessible-label: root.label;
     accessible-action-default => { root.clicked(); }
@@ -87,23 +87,20 @@ export component SnapshotsSection inherits Section {
     collapsed <=> root.collapsed-snapshots;
     shares: true;
     if root.snapshot-names.length > 0: Rectangle {
-        border-radius: Theme.radius-md;
-        background: Theme.base;
-        border-width: 1px;
-        border-color: Theme.border;
+
         // As the folders' box: three rows at least, and the pane's
         // share past them up to the whole list, so a long run of
         // snapshots never pushes the pane past the window (and the
         // window past the screen).
-        property <length> floor: min(snapshot-list.preferred-height, 3 * Theme.control-height + 8px);
+        property <length> floor: min(snapshot-list.preferred-height, 3 * (Theme.control-height - 8px) + 6px);
         preferred-height: self.floor;
         min-height: self.floor;
         max-height: snapshot-list.preferred-height;
         vertical-stretch: 1;
-        ScrollPane {
+        snapshot-scroll := ScrollPane {
+            content-width: self.visible-width;
             snapshot-list := VerticalLayout {
-                padding: 2px;
-                spacing: 2px;
+                spacing: 1px;
                 for name[i] in root.snapshot-names: snapshot-box := Rectangle {
                     // What the pointer is over: the row, one of its
                     // icons, or nothing. The status line names what a
@@ -113,7 +110,7 @@ export component SnapshotsSection inherits Section {
                         : bin.hovered ? "remove"
                         : snapshot-row.has-hover ? "row" : "";
                     changed part => { root.snapshot-hovered(self.part == "" ? -1 : i, self.part); }
-                    height: Theme.control-height;
+                    height: Theme.control-height - 8px;
                     border-radius: Theme.radius-sm;
                     background: self.part != "" ? Theme.hover : transparent;
                     animate background { duration: Theme.quick; }
@@ -147,7 +144,10 @@ export component SnapshotsSection inherits Section {
                         if root.snapshot-editing == i: LineEdit {
                             text: name;
                             font-size: Theme.font-xs;
+                            height: snapshot-box.height - 2px;
+                            cross-axis-self-alignment: center;
                             horizontal-stretch: 1;
+                            min-width: 1px;
                             accepted(t) => {
                                 root.snapshot-editing = -1;
                                 root.snapshot-renamed(i, t);
@@ -177,39 +177,42 @@ export component SnapshotsSection inherits Section {
                             horizontal-stretch: 1;
                             overflow: elide;
                         }
-                        // The row is the only way back to a snapshot,
-                        // so what a click does is on it in pictures:
-                        // back to it, a new name, away. The rename
-                        // icon names it without restoring it.
-                        restore := SnapshotIcon {
-                            icon: @image-url("../icons/undo-2.svg");
-                            label: @tr("Restore {}", name);
-                            words: @tr("Restore");
-                            clicked => {
-                                root.hold-restore();
-                                if (root.selected >= 0) { root.snapshot-restored(i); }
+                        HorizontalLayout {
+                            padding-left: Theme.space-1;
+                            // The row is the only way back to a snapshot,
+                            // so what a click does is on it in pictures:
+                            // back to it, a new name, away. The rename
+                            // icon names it without restoring it.
+                            restore := SnapshotIcon {
+                                icon: @image-url("../icons/undo-2.svg");
+                                label: @tr("Restore {}", name);
+                                words: @tr("Restore");
+                                clicked => {
+                                    root.hold-restore();
+                                    if (root.selected >= 0) { root.snapshot-restored(i); }
+                                }
                             }
-                        }
-                        rename := SnapshotIcon {
-                            icon: @image-url("../icons/pencil.svg");
-                            label: @tr("Rename {}", name);
-                            words: @tr("Rename");
-                            // As the double-click: never over another
-                            // row's name being typed.
-                            clicked => {
-                                root.hold-restore();
-                                if (root.snapshot-editing >= 0) { return; }
-                                root.snapshot-editing = i;
+                            rename := SnapshotIcon {
+                                icon: @image-url("../icons/pencil.svg");
+                                label: @tr("Rename {}", name);
+                                words: @tr("Rename");
+                                // As the double-click: never over another
+                                // row's name being typed.
+                                clicked => {
+                                    root.hold-restore();
+                                    if (root.snapshot-editing >= 0) { return; }
+                                    root.snapshot-editing = i;
+                                }
                             }
-                        }
-                        bin := SnapshotIcon {
-                            icon: @image-url("../icons/trash-2.svg");
-                            label: @tr("Remove {}", name);
-                            // Snapshots: remove the snapshot
-                            words: @tr("Remove");
-                            clicked => {
-                                root.hold-restore();
-                                root.snapshot-deleted(i);
+                            bin := SnapshotIcon {
+                                icon: @image-url("../icons/trash-2.svg");
+                                label: @tr("Remove {}", name);
+                                // Snapshots: remove the snapshot
+                                words: @tr("Remove");
+                                clicked => {
+                                    root.hold-restore();
+                                    root.snapshot-deleted(i);
+                                }
                             }
                         }
                     }
@@ -225,6 +228,7 @@ export component SnapshotsSection inherits Section {
         color: Theme.text-muted;
         wrap: word-wrap;
     }
+    Rectangle { height: Theme.space-1; }
     PanelButton {
         // Snapshots: take a snapshot of the edit as it is
         text: @tr("Take");
@@ -252,25 +256,20 @@ export component HistorySection inherits Section {
     collapsed <=> root.collapsed-history;
     shares: true;
     if root.history-rows.length > 0: Rectangle {
-        border-radius: Theme.radius-md;
-        background: Theme.base;
-        border-width: 1px;
-        border-color: Theme.border;
         // As the folders' box: three rows at least, whatever sits
         // below the pane's sections (the pane scrolls before this box
         // shrinks past them), and the pane's share past them up to the
         // whole list, the rest a scroll away.
-        property <length> floor: min(history-list.preferred-height, 3 * (Theme.control-height - 6px) + 8px);
+        property <length> floor: min(history-list.preferred-height, 3 * (Theme.control-height - 8px) + 6px);
         preferred-height: self.floor;
         min-height: self.floor;
         max-height: history-list.preferred-height;
         vertical-stretch: 1;
         ScrollPane {
             history-list := VerticalLayout {
-                padding: 2px;
-                spacing: 2px;
+                spacing: 1px;
                 for row[i] in root.history-rows: Rectangle {
-                    height: Theme.control-height - 6px;
+                    height: Theme.control-height - 8px;
                     border-radius: Theme.radius-sm;
                     background: i == root.history-current ? Theme.selection
                         : history-row.has-hover ? Theme.hover : transparent;

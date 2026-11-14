@@ -23,60 +23,59 @@ export component NavigatorSection inherits Section {
     icon: @image-url("../icons/maximize.svg");
     note: root.zoom-text;
     collapsed <=> root.collapsed-navigator;
-    // One height, the panel's width at 3:2, whatever the frame's
-    // shape and while it is on its way: a frame loading, or a
-    // portrait after a landscape, moves nothing below. The frame
-    // is fitted inside and centered. With nothing chosen, and in
-    // Cull, the header alone.
-    if root.navigator.width > 0 || root.reserve: held := Rectangle {
-        property <bool> has: root.navigator.width > 0;
-        property <float> aspect: self.has ? root.navigator.width / max(1, root.navigator.height) : 1.5;
-        height: self.width / 1.5;
-        property <length> shown-w: min(self.width, self.height * self.aspect);
-        property <length> shown-h: self.shown-w / self.aspect;
-        border-radius: Theme.radius-md;
-        background: Theme.base;
-        border-width: 1px;
-        border-color: Theme.border;
-        clip: true;
-        shown := Rectangle {
-            visible: parent.has;
+    // Keep the preview at the default panel's size when the left panel
+    // grows. The full-width slot centers it and holds the same height
+    // while a frame loads or changes orientation.
+    if root.navigator.width > 0 || root.reserve: slot := Rectangle {
+        width: 100%;
+        height: min(self.width, 260px) / 1.5;
+        held := Rectangle {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: parent.shown-w;
-            height: parent.shown-h;
-            Image {
-                source: root.navigator;
-                width: 100%;
-                height: 100%;
-                image-fit: fill;
-                image-rendering: smooth;
-            }
-            // Always here, drawn only when the view
-            // shows less than the frame: a conditional
-            // element appearing under this clip's
-            // rounded corners would not refresh the
-            // renderer's cached layer of them.
-            Rectangle {
-                x: root.nav-left * parent.width;
-                y: root.nav-top * parent.height;
-                width: root.nav-width * parent.width;
-                height: root.nav-height * parent.height;
-                border-width: root.nav-partial ? 1px : 0px;
-                border-color: Theme.over-text;
-                background: root.nav-partial ? #ffffff1a : transparent;
-            }
-            TouchArea {
-                mouse-cursor: pointer;
-                pointer-event(e) => {
-                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
-                        root.focus-keys();
-                        root.navigate(self.mouse-x / self.width, self.mouse-y / self.height);
-                    }
+            width: min(parent.width, 260px);
+            height: 100%;
+            property <bool> has: root.navigator.width > 0;
+            property <float> aspect: self.has ? root.navigator.width / max(1, root.navigator.height) : 1.5;
+            property <length> shown-w: min(self.width, self.height * self.aspect);
+            property <length> shown-h: self.shown-w / self.aspect;
+            clip: true;
+            shown := Rectangle {
+                visible: parent.has;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: parent.shown-w;
+                height: parent.shown-h;
+                Image {
+                    source: root.navigator;
+                    width: 100%;
+                    height: 100%;
+                    image-fit: fill;
+                    image-rendering: smooth;
                 }
-                moved => {
-                    if (self.pressed) {
-                        root.navigate(self.mouse-x / self.width, self.mouse-y / self.height);
+                // Always here, drawn only when the view
+                // shows less than the frame: a conditional
+                // element appearing under this clip would not refresh
+                // the renderer's cached layer.
+                Rectangle {
+                    x: root.nav-left * parent.width;
+                    y: root.nav-top * parent.height;
+                    width: root.nav-width * parent.width;
+                    height: root.nav-height * parent.height;
+                    border-width: root.nav-partial ? 1px : 0px;
+                    border-color: Theme.over-text;
+                    background: root.nav-partial ? #ffffff1a : transparent;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                            root.focus-keys();
+                            root.navigate(self.mouse-x / self.width, self.mouse-y / self.height);
+                        }
+                    }
+                    moved => {
+                        if (self.pressed) {
+                            root.navigate(self.mouse-x / self.width, self.mouse-y / self.height);
+                        }
                     }
                 }
             }

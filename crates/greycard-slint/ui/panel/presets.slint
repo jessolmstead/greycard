@@ -96,14 +96,10 @@ export component PresetsSection inherits Section {
     // long list scrolls in its own box, as the history does, so the
     // pane below it keeps its place.
     if root.preset-names.length > 0: box := Rectangle {
-        border-radius: Theme.radius-md;
-        background: Theme.base;
-        border-width: 1px;
-        border-color: Theme.border;
         // As the folders' box: three rows at least, and the pane's
         // share past them up to the whole list. The pane scrolls
         // around this section before the box goes under three rows.
-        property <length> floor: min(preset-list.preferred-height, 3 * (Theme.control-height - 6px) + 8px);
+        property <length> floor: min(preset-list.preferred-height, 3 * (Theme.control-height - 8px) + 6px);
         preferred-height: self.floor;
         min-height: self.floor;
         max-height: preset-list.preferred-height;
@@ -145,10 +141,9 @@ export component PresetsSection inherits Section {
             // A row scrolled from under a resting pointer takes its word along.
             changed content-y => { Tips.show("", 0, 0); }
             preset-list := VerticalLayout {
-                padding: 2px;
-                spacing: 2px;
+                spacing: 1px;
                 for row in root.rows: Rectangle {
-                    height: Theme.control-height - 6px;
+                    height: Theme.control-height - 8px;
                     border-radius: Theme.radius-sm;
                     background: !row.header && (preset-row.has-hover || root.confirm-remove == row.index)
                         ? Theme.hover : transparent;
@@ -231,7 +226,7 @@ export component PresetsSection inherits Section {
                         // under the pointer otherwise, and a click
                         // either way.
                         Rectangle {
-                            width: Theme.control-height - 6px;
+                            width: Theme.control-height - 8px;
                             accessible-role: button;
                             accessible-label: row.favorite ? PresetWords.remove-favorite : PresetWords.add-favorite;
                             accessible-checkable: true;
@@ -259,7 +254,7 @@ export component PresetsSection inherits Section {
                             }
                         }
                         Rectangle {
-                            width: Theme.control-height - 6px;
+                            width: Theme.control-height - 8px;
                             accessible-role: button;
                             accessible-label: @tr("Remove {}", row.text);
                             accessible-action-default => { root.confirm-remove = row.index; }
@@ -292,15 +287,20 @@ export component PresetsSection inherits Section {
     }
     // The question names the preset on a line of its own, which wraps,
     // as the pane is too narrow for a long name on a button.
-    if root.confirm-remove >= 0 && root.confirm-remove < root.preset-names.length: Text {
-        text: @tr("Remove {} from the list?", root.preset-names[root.confirm-remove]);
-        max-height: self.preferred-height;
-        font-size: Theme.font-xs;
-        color: Theme.text-secondary;
-        wrap: word-wrap;
+    if root.confirm-remove >= 0 && root.confirm-remove < root.preset-names.length: VerticalLayout {
+        padding-top: Theme.space-1;
+        padding-bottom: Theme.space-1;
+        Text {
+            text: @tr("Remove {} from the list?", root.preset-names[root.confirm-remove]);
+            max-height: self.preferred-height;
+            font-size: Theme.font-xs;
+            color: Theme.text-secondary;
+            wrap: word-wrap;
+        }
     }
     if root.confirm-remove >= 0 && root.confirm-remove < root.preset-names.length: HorizontalLayout {
         spacing: Theme.space-2;
+        padding-top: Theme.space-1;
         PanelButton {
             text: @tr("Cancel");
             clicked => { root.confirm-remove = -1; }
@@ -317,6 +317,7 @@ export component PresetsSection inherits Section {
     }
     if root.confirm-remove < 0 || root.confirm-remove >= root.preset-names.length: HorizontalLayout {
         spacing: Theme.space-2;
+        padding-top: Theme.space-1;
         PanelButton {
             text: @tr("Import...");
             icon: @image-url("../icons/folder-open.svg");
@@ -329,6 +330,7 @@ export component PresetsSection inherits Section {
             clicked => { root.preset-save-open(); }
         }
     }
+    Rectangle { height: Theme.space-1; }
     // The edit's sections onto the rest of the selection: a preset
     // from this frame that is never saved. Ctrl+Shift+S. A row of its
     // own, as the pane is too narrow for a third button beside two.

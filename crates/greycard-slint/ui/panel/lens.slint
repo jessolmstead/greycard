@@ -81,6 +81,7 @@ export component LensSection inherits Section {
             changed has-focus => { Typing.box-focus(self.has-focus); }
         }
     }
+    Rectangle { height: Theme.space-1; }
     HorizontalLayout {
         spacing: Theme.space-2;
         Text { text: @tr("Lens"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
@@ -93,16 +94,24 @@ export component LensSection inherits Section {
             }
         }
     }
-    Text {
-        text: root.lens-profile;
-        color: root.lens-available ? Theme.text : Theme.text-secondary;
-        font-size: Theme.font-sm;
-        wrap: word-wrap;
+    Rectangle { height: Theme.space-2; }
+    VerticalLayout {
+        padding-top: Theme.space-2;
+        padding-bottom: Theme.space-2;
+        Text {
+            text: root.lens-profile;
+            color: root.lens-available ? Theme.text : Theme.text-secondary;
+            font-size: Theme.font-sm;
+            wrap: word-wrap;
+        }
     }
-    if !root.lens-database: PanelButton {
-        text: @tr("Get lens profiles");
-        icon: @image-url("../icons/image-down.svg");
-        clicked => { root.fetch-lenses(); }
+    if !root.lens-database: VerticalLayout {
+        padding-bottom: Theme.space-1;
+        PanelButton {
+            text: @tr("Get lens profiles");
+            icon: @image-url("../icons/image-down.svg");
+            clicked => { root.fetch-lenses(); }
+        }
     }
     Toggle {
         label: @tr("Profile");
@@ -220,6 +229,7 @@ export component LensSection inherits Section {
         text: round(root.lens-defringe-threshold);
         changed(v) => { root.develop-changed(); }
     }
+    Rectangle { height: Theme.space-1; }
     // Which hues count as a fringe. The two
     // windows are the two sides of an axial
     // aberration; a chroma that departs from
@@ -236,6 +246,7 @@ export component LensSection inherits Section {
         vertical-alignment: center;
         horizontal-alignment: left;
     }
+    Rectangle { height: Theme.space-1; }
     EditSlider {
         // Defringe: the slider for the hue it centers on
         label: @tr("Center");
@@ -276,6 +287,7 @@ export component LensSection inherits Section {
         text: round(root.lens-defringe-purple-amount * 100) + "%";
         changed(v) => { root.develop-changed(); }
     }
+    Rectangle { height: Theme.space-1; }
     Text {
         text: @tr("Green");
         color: root.lens-defringe ? Theme.text-secondary : Theme.text-muted;
@@ -284,6 +296,7 @@ export component LensSection inherits Section {
         vertical-alignment: center;
         horizontal-alignment: left;
     }
+    Rectangle { height: Theme.space-1; }
     EditSlider {
         label: @tr("Center");
         enabled: root.lens-defringe;
@@ -325,6 +338,7 @@ export component LensSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
+        padding-top: Theme.space-1;
         alignment: end;
         PanelButton {
             // Defringe: the dropper that reads the hue off the picture

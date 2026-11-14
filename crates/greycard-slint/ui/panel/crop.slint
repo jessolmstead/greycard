@@ -51,82 +51,85 @@ export component CropSection inherits Section {
     title: @tr("CROP");
     icon: @image-url("../icons/crop.svg");
     collapsed <=> root.collapsed-crop;
-    HorizontalLayout {
+    VerticalLayout {
         spacing: Theme.space-2;
-        PanelButton {
-            // Crop section: the button that leaves the crop
-            text: root.crop-mode ? @tr("Done") : @tr("Crop");
-            icon: @image-url("../icons/crop.svg");
-            primary: root.crop-mode;
-            clicked => { root.crop-clicked(); }
-        }
-        // A crop at the whole frame leaves nowhere outside it to
-        // start a drag, and a drag inside moves it: this one shot
-        // makes the next drag draw wherever it starts. As the Level
-        // does, it brings crop mode with it.
-        PanelButton {
-            // Crop section: the button that starts a new crop drawn by hand
-            text: @tr("Draw");
-            icon: @image-url("../icons/pencil.svg");
-            primary: root.crop-draw-armed;
-            clicked => {
-                if (!root.crop-mode) { root.crop-mode = true; root.crop-toggled(); }
-                root.level-mode = false;
-                root.guide-mode = "";
-                root.guide-dropped();
-                root.crop-draw-armed = !root.crop-draw-armed;
-                root.focus-keys();
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            PanelButton {
+                // Crop section: the button that leaves the crop
+                text: root.crop-mode ? @tr("Done") : @tr("Crop");
+                icon: @image-url("../icons/crop.svg");
+                primary: root.crop-mode;
+                clicked => { root.crop-clicked(); }
+            }
+            // A crop at the whole frame leaves nowhere outside it to
+            // start a drag, and a drag inside moves it: this one shot
+            // makes the next drag draw wherever it starts. As the Level
+            // does, it brings crop mode with it.
+            PanelButton {
+                // Crop section: the button that starts a new crop drawn by hand
+                text: @tr("Draw");
+                icon: @image-url("../icons/pencil.svg");
+                primary: root.crop-draw-armed;
+                clicked => {
+                    if (!root.crop-mode) { root.crop-mode = true; root.crop-toggled(); }
+                    root.level-mode = false;
+                    root.guide-mode = "";
+                    root.guide-dropped();
+                    root.crop-draw-armed = !root.crop-draw-armed;
+                    root.focus-keys();
+                }
             }
         }
-    }
-    HorizontalLayout {
-        spacing: Theme.space-2;
-        Text { text: @tr("Aspect"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-        aspect-box := ComboBox {
-            // Crop aspect choices
-            model: [@tr("Free"), @tr("aspect" => "Original"), "1:1", "3:2", "4:3", "5:4", "16:9", "65:24", @tr("Custom")];
-            current-index: root.aspect-index(root.aspect-name);
-            selected(v) => {
-                root.aspect-name = root.aspects[self.current-index];
-                root.geometry-changed();
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            Text { text: @tr("Aspect"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+            aspect-box := ComboBox {
+                // Crop aspect choices
+                model: [@tr("Free"), @tr("aspect" => "Original"), "1:1", "3:2", "4:3", "5:4", "16:9", "65:24", @tr("Custom")];
+                current-index: root.aspect-index(root.aspect-name);
+                selected(v) => {
+                    root.aspect-name = root.aspects[self.current-index];
+                    root.geometry-changed();
+                }
             }
         }
-    }
-    if root.aspect-name == "Custom": HorizontalLayout {
-        spacing: Theme.space-2;
-        Text { text: @tr("Custom"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-        LineEdit {
-            text <=> root.aspect-custom;
-            placeholder-text: "W:H";
-            accessible-label: @tr("Custom aspect");
-            // Enter or Escape gives the keys back to the window.
-            accepted(t) => { root.geometry-changed(); Typing.done += 1; }
-            edited(t) => { root.geometry-changed(); }
-            key-pressed(e) => {
-                if (e.text == Key.Escape) { Typing.done += 1; return accept; }
-                return reject;
-            }
-            changed has-focus => {
-                root.custom-focused = self.has-focus;
-                Typing.box-focus(self.has-focus);
+        if root.aspect-name == "Custom": HorizontalLayout {
+            spacing: Theme.space-2;
+            Text { text: @tr("Custom"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+            LineEdit {
+                text <=> root.aspect-custom;
+                placeholder-text: "W:H";
+                accessible-label: @tr("Custom aspect");
+                // Enter or Escape gives the keys back to the window.
+                accepted(t) => { root.geometry-changed(); Typing.done += 1; }
+                edited(t) => { root.geometry-changed(); }
+                key-pressed(e) => {
+                    if (e.text == Key.Escape) { Typing.done += 1; return accept; }
+                    return reject;
+                }
+                changed has-focus => {
+                    root.custom-focused = self.has-focus;
+                    Typing.box-focus(self.has-focus);
+                }
             }
         }
-    }
-    // Shows whether the crop is tall, which is the stored flag but
-    // under "Original" on a tall plane (see `portrait-shown`). A
-    // click flips the flag, and so what is shown, either way. Under
-    // Free nothing reads the flag, so the switch is greyed and a
-    // click is nothing.
-    Toggle {
-        // Crop section: the toggle that stands the aspect upright
-        label: @tr("Portrait");
-        checked: root.portrait-shown;
-        enabled: root.portrait-live;
-        follows: true;
-        toggled => {
-            if (root.portrait-live) {
-                root.portrait = !root.portrait;
-                root.geometry-changed();
+        // Shows whether the crop is tall, which is the stored flag but
+        // under "Original" on a tall plane (see `portrait-shown`). A
+        // click flips the flag, and so what is shown, either way. Under
+        // Free nothing reads the flag, so the switch is greyed and a
+        // click is nothing.
+        Toggle {
+            // Crop section: the toggle that stands the aspect upright
+            label: @tr("Portrait");
+            checked: root.portrait-shown;
+            enabled: root.portrait-live;
+            follows: true;
+            toggled => {
+                if (root.portrait-live) {
+                    root.portrait = !root.portrait;
+                    root.geometry-changed();
+                }
             }
         }
     }
@@ -153,103 +156,106 @@ export component RotateSection inherits Section {
     title: @tr("ROTATE");
     icon: @image-url("../icons/rotate-cw.svg");
     collapsed <=> root.collapsed-rotate;
-    // The level drawn by hand, and found: the picture's dominant line
-    // leveled as if it had been drawn.
-    HorizontalLayout {
+    VerticalLayout {
         spacing: Theme.space-2;
-        PanelButton {
-            // Rotate section: the button that takes the level tool in hand
-            text: @tr("Level");
-            icon: @image-url("../icons/ruler.svg");
-            primary: root.level-mode;
-            clicked => {
-                if (!root.crop-mode) { root.crop-mode = true; root.crop-toggled(); }
-                root.guide-mode = "";
-                root.guide-dropped();
-                root.level-mode = !root.level-mode;
-                root.focus-keys();
+        // The level drawn by hand, and found: the picture's dominant line
+        // leveled as if it had been drawn.
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            PanelButton {
+                // Rotate section: the button that takes the level tool in hand
+                text: @tr("Level");
+                icon: @image-url("../icons/ruler.svg");
+                primary: root.level-mode;
+                clicked => {
+                    if (!root.crop-mode) { root.crop-mode = true; root.crop-toggled(); }
+                    root.guide-mode = "";
+                    root.guide-dropped();
+                    root.level-mode = !root.level-mode;
+                    root.focus-keys();
+                }
+            }
+            PanelButton {
+                text: @tr("Auto level");
+                clicked => { root.straightened(); }
             }
         }
-        PanelButton {
-            text: @tr("Auto level");
-            clicked => { root.straightened(); }
+        // Quarter turns and mirrors.
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            PanelButton {
+                text: "";
+                icon: @image-url("../icons/rotate-ccw.svg");
+                words: @tr("Rotate left: part of the edit");
+                accessible-role: button;
+                accessible-label: @tr("Rotate left");
+                clicked => { root.geometry-turned(1); }
+            }
+            PanelButton {
+                text: "";
+                icon: @image-url("../icons/rotate-cw.svg");
+                words: @tr("Rotate right: part of the edit");
+                accessible-role: button;
+                accessible-label: @tr("Rotate right");
+                clicked => { root.geometry-turned(-1); }
+            }
+            PanelButton {
+                text: "";
+                icon: @image-url("../icons/flip-horizontal.svg");
+                // Rotate section: flip the frame left to right
+                words: @tr("Flip");
+                accessible-role: button;
+                accessible-label: @tr("Flip");
+                clicked => { root.geometry-flipped(false); }
+            }
+            PanelButton {
+                text: "";
+                icon: @image-url("../icons/flip-vertical.svg");
+                // Rotate section: flip the frame top to bottom
+                words: @tr("Flip vertical");
+                accessible-role: button;
+                accessible-label: @tr("Flip vertical");
+                clicked => { root.geometry-flipped(true); }
+            }
         }
-    }
-    // Quarter turns and mirrors.
-    HorizontalLayout {
-        spacing: Theme.space-2;
-        PanelButton {
-            text: "";
-            icon: @image-url("../icons/rotate-ccw.svg");
-            words: @tr("Rotate left: part of the edit");
-            accessible-role: button;
-            accessible-label: @tr("Rotate left");
-            clicked => { root.geometry-turned(1); }
+        EditSlider {
+            label: @tr("Angle");
+            minimum: -45;
+            maximum: 45;
+            default: 0;
+            step: 0.1;
+            steps: Steps.tenths;
+            value <=> root.geo-angle;
+            text: (root.geo-angle >= 0 ? "+" : "") + round(root.geo-angle * 10) / 10 + "°";
+            changed(v) => { root.geometry-changed(); }
+            changed moving => { root.angle-dragging = self.moving; }
         }
-        PanelButton {
-            text: "";
-            icon: @image-url("../icons/rotate-cw.svg");
-            words: @tr("Rotate right: part of the edit");
-            accessible-role: button;
-            accessible-label: @tr("Rotate right");
-            clicked => { root.geometry-turned(-1); }
+        // The frame's own turn, under the edit's.
+        // The four above are a step in developing
+        // the picture; these two say the camera
+        // recorded the wrong way up, so they are
+        // no part of the edit.
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            PanelButton {
+                text: @tr("Turn left");
+                icon: @image-url("../icons/rotate-ccw.svg");
+                words: @tr("Turn the frame left");
+                clicked => { root.frame-turned(-1); }
+            }
+            PanelButton {
+                text: @tr("Turn right");
+                icon: @image-url("../icons/rotate-cw.svg");
+                words: @tr("Turn the frame right");
+                clicked => { root.frame-turned(1); }
+            }
         }
-        PanelButton {
-            text: "";
-            icon: @image-url("../icons/flip-horizontal.svg");
-            // Rotate section: flip the frame left to right
-            words: @tr("Flip");
-            accessible-role: button;
-            accessible-label: @tr("Flip");
-            clicked => { root.geometry-flipped(false); }
+        Text {
+            text: @tr("Not part of the edit.");
+            font-size: Theme.font-xs;
+            color: Theme.text-secondary;
+            wrap: word-wrap;
         }
-        PanelButton {
-            text: "";
-            icon: @image-url("../icons/flip-vertical.svg");
-            // Rotate section: flip the frame top to bottom
-            words: @tr("Flip vertical");
-            accessible-role: button;
-            accessible-label: @tr("Flip vertical");
-            clicked => { root.geometry-flipped(true); }
-        }
-    }
-    EditSlider {
-        label: @tr("Angle");
-        minimum: -45;
-        maximum: 45;
-        default: 0;
-        step: 0.1;
-        steps: Steps.tenths;
-        value <=> root.geo-angle;
-        text: (root.geo-angle >= 0 ? "+" : "") + round(root.geo-angle * 10) / 10 + "°";
-        changed(v) => { root.geometry-changed(); }
-        changed moving => { root.angle-dragging = self.moving; }
-    }
-    // The frame's own turn, under the edit's.
-    // The four above are a step in developing
-    // the picture; these two say the camera
-    // recorded the wrong way up, so they are
-    // no part of the edit.
-    HorizontalLayout {
-        spacing: Theme.space-2;
-        PanelButton {
-            text: @tr("Turn left");
-            icon: @image-url("../icons/rotate-ccw.svg");
-            words: @tr("Turn the frame left");
-            clicked => { root.frame-turned(-1); }
-        }
-        PanelButton {
-            text: @tr("Turn right");
-            icon: @image-url("../icons/rotate-cw.svg");
-            words: @tr("Turn the frame right");
-            clicked => { root.frame-turned(1); }
-        }
-    }
-    Text {
-        text: @tr("Not part of the edit.");
-        font-size: Theme.font-xs;
-        color: Theme.text-secondary;
-        wrap: word-wrap;
     }
 }
 
@@ -265,73 +271,77 @@ export component PerspectiveSection inherits Section {
     callback geometry-reset();
     callback guide-dropped();
     callback focus-keys();
-
     title: @tr("PERSPECTIVE");
     icon: @image-url("../icons/keystone.svg");
     collapsed <=> root.collapsed-perspective;
-    // The guide: two strokes along lines of the
-    // picture that should run one way give the
-    // turn and that way's keystone at once.
-    HorizontalLayout {
+    VerticalLayout {
         spacing: Theme.space-2;
-        PanelButton {
-            // Perspective section: the slider
-            text: @tr("Verticals");
-            icon: @image-url("../icons/ruler.svg");
-            primary: root.guide-mode == "Vertical";
-            clicked => {
-                if (!root.crop-mode) { root.crop-mode = true; root.crop-toggled(); }
-                root.level-mode = false;
-                root.guide-dropped();
-                root.guide-mode = root.guide-mode == "Vertical" ? "" : "Vertical";
-                root.focus-keys();
+        // The guide: two strokes along lines of the
+        // picture that should run one way give the
+        // turn and that way's keystone at once.
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            PanelButton {
+                // Perspective section: the slider
+                text: @tr("Verticals");
+                icon: @image-url("../icons/ruler.svg");
+                primary: root.guide-mode == "Vertical";
+                clicked => {
+                    if (!root.crop-mode) { root.crop-mode = true; root.crop-toggled(); }
+                    root.level-mode = false;
+                    root.guide-dropped();
+                    root.guide-mode = root.guide-mode == "Vertical" ? "" : "Vertical";
+                    root.focus-keys();
+                }
+            }
+            PanelButton {
+                // Perspective section: the slider
+                text: @tr("Horizontals");
+                icon: @image-url("../icons/ruler.svg");
+                primary: root.guide-mode == "Horizontal";
+                clicked => {
+                    if (!root.crop-mode) { root.crop-mode = true; root.crop-toggled(); }
+                    root.level-mode = false;
+                    root.guide-dropped();
+                    root.guide-mode = root.guide-mode == "Horizontal" ? "" : "Horizontal";
+                    root.focus-keys();
+                }
             }
         }
-        PanelButton {
-            // Perspective section: the slider
-            text: @tr("Horizontals");
-            icon: @image-url("../icons/ruler.svg");
-            primary: root.guide-mode == "Horizontal";
-            clicked => {
-                if (!root.crop-mode) { root.crop-mode = true; root.crop-toggled(); }
-                root.level-mode = false;
-                root.guide-dropped();
-                root.guide-mode = root.guide-mode == "Horizontal" ? "" : "Horizontal";
-                root.focus-keys();
+        VerticalLayout {
+            EditSlider {
+                // Perspective section: the slider
+                label: @tr("Vertical");
+                minimum: -40;
+                maximum: 40;
+                default: 0;
+                step: 0.1;
+                steps: Steps.tenths;
+                value <=> root.geo-vertical;
+                text: (root.geo-vertical >= 0 ? "+" : "") + round(root.geo-vertical * 10) / 10 + "°";
+                changed(v) => { root.geometry-changed(); }
+            }
+            EditSlider {
+                // Perspective section: the slider
+                label: @tr("Horizontal");
+                minimum: -40;
+                maximum: 40;
+                default: 0;
+                step: 0.1;
+                steps: Steps.tenths;
+                value <=> root.geo-horizontal;
+                text: (root.geo-horizontal >= 0 ? "+" : "") + round(root.geo-horizontal * 10) / 10 + "°";
+                changed(v) => { root.geometry-changed(); }
             }
         }
-    }
-    EditSlider {
-        // Perspective section: the slider
-        label: @tr("Vertical");
-        minimum: -40;
-        maximum: 40;
-        default: 0;
-        step: 0.1;
-        steps: Steps.tenths;
-        value <=> root.geo-vertical;
-        text: (root.geo-vertical >= 0 ? "+" : "") + round(root.geo-vertical * 10) / 10 + "°";
-        changed(v) => { root.geometry-changed(); }
-    }
-    EditSlider {
-        // Perspective section: the slider
-        label: @tr("Horizontal");
-        minimum: -40;
-        maximum: 40;
-        default: 0;
-        step: 0.1;
-        steps: Steps.tenths;
-        value <=> root.geo-horizontal;
-        text: (root.geo-horizontal >= 0 ? "+" : "") + round(root.geo-horizontal * 10) / 10 + "°";
-        changed(v) => { root.geometry-changed(); }
-    }
-    // The whole of the Crop tab goes back at
-    // once, from the end of it: the three
-    // sections are one edit, and a Reset inside
-    // any one of them would read as that one's.
-    PanelButton {
-        text: @tr("Reset all");
-        icon: @image-url("../icons/undo-2.svg");
-        clicked => { root.geometry-reset(); }
+        // The whole of the Crop tab goes back at
+        // once, from the end of it: the three
+        // sections are one edit, and a Reset inside
+        // any one of them would read as that one's.
+        PanelButton {
+            text: @tr("Reset all");
+            icon: @image-url("../icons/undo-2.svg");
+            clicked => { root.geometry-reset(); }
+        }
     }
 }
