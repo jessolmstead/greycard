@@ -633,15 +633,15 @@ msgstr ""
 msgid "Enlarged wheel"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/color.slint:609
+#: crates/greycard-slint/ui/panel/color.slint:615
 msgid "Highlights"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/color.slint:609
+#: crates/greycard-slint/ui/panel/color.slint:615
 msgid "Midtones"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/color.slint:609
+#: crates/greycard-slint/ui/panel/color.slint:615
 msgid "Shadows"
 msgstr ""
 

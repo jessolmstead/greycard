@@ -59,9 +59,9 @@ export component PanelHead inherits VerticalLayout {
     // room for its circle; the file's name and the undo buttons stay.
     property <bool> shot-folded: !root.culling && root.scope == "Vector";
 
-    padding-left: Theme.space-4;
-    padding-right: Theme.space-4;
-    padding-top: Theme.space-4;
+    padding-left: Theme.space-1;
+    padding-right: Theme.space-1;
+    padding-top: Theme.space-3;
     spacing: Theme.space-2;
     // The file and what it was shot at, as one
     // caption: the name, then the body and its
@@ -75,6 +75,8 @@ export component PanelHead inherits VerticalLayout {
     VerticalLayout {
         spacing: 2px;
         HorizontalLayout {
+            padding-left: Theme.space-1;
+            padding-right: Theme.space-1;
             spacing: Theme.space-2;
             file-text := Text {
                 text: root.file-name;
@@ -123,40 +125,45 @@ export component PanelHead inherits VerticalLayout {
                 clicked => { root.redo(); }
             }
         }
-        if !root.shot-folded: Text {
-            text: root.shot-camera;
-            height: 16px;
-            color: Theme.text-secondary;
-            font-size: Theme.font-sm;
-            overflow: elide;
-        }
-        if !root.shot-folded: Text {
-            text: root.shot-exposure;
-            height: 16px;
-            color: Theme.text-secondary;
-            font-size: Theme.font-sm;
-            overflow: elide;
-        }
-        if !root.shot-folded: Text {
-            text: root.shot-size;
-            height: 16px;
-            color: Theme.text-secondary;
-            font-size: Theme.font-sm;
-            overflow: elide;
-        }
-        if !root.shot-folded && root.shot-time != "": Text {
-            text: root.shot-time;
-            height: 16px;
-            color: Theme.text-secondary;
-            font-size: Theme.font-sm;
-            overflow: elide;
-        }
-        if !root.shot-folded && root.file-companion != "": Text {
-            text: root.file-companion;
-            height: 16px;
-            color: Theme.text-secondary;
-            font-size: Theme.font-sm;
-            overflow: elide;
+        if !root.shot-folded: Rectangle { height: Theme.space-1 + 2px; }
+        VerticalLayout {
+            padding-left: Theme.space-1 - 2px;
+            padding-right: Theme.space-1 - 2px;
+            if !root.shot-folded: Text {
+                text: root.shot-camera;
+                height: 14px;
+                color: Theme.text-secondary;
+                font-size: Theme.font-sm;
+                overflow: elide;
+            }
+            if !root.shot-folded: Text {
+                text: root.shot-exposure;
+                height: 14px;
+                color: Theme.text-secondary;
+                font-size: Theme.font-sm;
+                overflow: elide;
+            }
+            if !root.shot-folded: Text {
+                text: root.shot-size;
+                height: 14px;
+                color: Theme.text-secondary;
+                font-size: Theme.font-sm;
+                overflow: elide;
+            }
+            if !root.shot-folded && root.shot-time != "": Text {
+                text: root.shot-time;
+                height: 14px;
+                color: Theme.text-secondary;
+                font-size: Theme.font-sm;
+                overflow: elide;
+            }
+            if !root.shot-folded && root.file-companion != "": Text {
+                text: root.file-companion;
+                height: 14px;
+                color: Theme.text-secondary;
+                font-size: Theme.font-sm;
+                overflow: elide;
+            }
         }
     }
     // A batch edit, where a hand from Lightroom looks for it: with
@@ -184,10 +191,7 @@ export component PanelHead inherits VerticalLayout {
             // tens of pixels when it is chosen rather than a hundred.
             height: root.scope == "Vector" ? 180px
                 : (root.scope == "RGB" ? 84px : 144px);
-            border-radius: Theme.radius-md;
             background: Theme.base;
-            border-width: 1px;
-            border-color: Theme.border;
             clip: true;
             // What the scope's picture fills, and its marks are placed
             // on as fractions of.
@@ -283,6 +287,9 @@ export component PanelHead inherits VerticalLayout {
             Segmented {
                 horizontal-stretch: 1;
                 options: root.scopes;
+                rounded: false;
+                padded: false;
+                bordered: false;
                 current <=> root.scope;
                 selected(name) => { root.scope-changed(name); }
             }
@@ -294,7 +301,6 @@ export component PanelHead inherits VerticalLayout {
                 horizontal-stretch: 0;
                 width: selection-label.preferred-width + 2 * Theme.space-2;
                 height: Theme.control-height;
-                border-radius: Theme.radius-md;
                 border-width: 1px;
                 border-color: Theme.border;
                 background: self.on ? Theme.raised
