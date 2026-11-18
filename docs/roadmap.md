@@ -1006,6 +1006,7 @@ clears or a tester asks for it.
       machine's Uninstall key, with uninstall.cmd taking the same
       switch; today GREYCARD_PREFIX puts the files there and the rest
       stays the one user's. The setup (§619) is the one user's too.
+      Asked again in discussion 178.
       Asked 2026-10-19. Two testers would rather unzip anywhere,
       as RawTherapee ships, than install: the zip runs in place today
       from bin\, and the guide says so; keep it beside the installer
@@ -1541,6 +1542,20 @@ clears or a tester asks for it.
       Local Contrast curve have it: contrast per detail size past
       Texture, Clarity, and Structure's three fixed bands
       (discussions 45 and 161)
+- [ ] The alignment grid while the Vertical and Horizontal
+      perspective sliders move, as under Angle (issue 176)
+- [ ] Straight strokes for the repair brushes, and a click then a
+      Shift+click joined by a line; Shift on a drag pans today, so
+      the two share the key (issue 177)
+- [ ] Nearest neighbor past 1:1, so single pixels show as blocks
+      (issue 180)
+- [ ] A look named by its file, not the .cube's TITLE, and the looks
+      folder read with its subfolders, shown as a tree (pixls,
+      2026-11-18)
+- [ ] A relative sync: the change, not the value, applied across the
+      selected frames (issue 106)
+- [ ] Leica in camera match: the film style read from an M's DNG,
+      fitted against its JPEG; waits on sample pairs (2026-11-18)
 
 ## Blocked
 
