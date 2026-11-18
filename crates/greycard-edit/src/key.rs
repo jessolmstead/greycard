@@ -68,6 +68,22 @@ pub const SHARPEN_GUIDE: &str = "sharpen-guide-1";
 /// foot, reaching 1.75 stops either way, 2026-11-12.
 pub const MIDTONES_SHAPE: &str = "midtones-1";
 
+/// The whites down, by version: taken into the key of an edit with
+/// Whites under zero, the picture's or a mask's
+/// ([`Edit::sets_whites_down`]), so the pictures kept of such an edit
+/// are made again when it changes, and those of every other edit are
+/// kept: Whites at zero and up makes the picture it made, to the bit.
+/// Keyed on the edit alone, because a key does not read pixels. A
+/// Whites-down edit changes its picture wherever the frame reaches the
+/// band under white the roll makes its room in, lights or none, and a
+/// frame with nothing in the band is the bit it was: a grey 0.12
+/// showed at 254 comes out 0.13, 0.48, 1.8, 5, and 10.9 levels darker
+/// at Whites -0.25, -0.5, -1, -2, and -3.5 (Channels), and the band
+/// starts where 0.12 showed 253, 252, 250, 246, and 237. 3: the
+/// white point and a roll over white after it (issue 132), 2026-11-16,
+/// past the pictures trial builds kept under 1 and 2.
+pub const WHITES_SHAPE: &str = "whites-3";
+
 /// An aspect over no crop, by version: taken into the key of an edit
 /// whose aspect frames the picture with no crop stored
 /// ([`crate::geometry::Geometry::frames_by_aspect`]), so the pictures
@@ -231,6 +247,11 @@ impl Edit {
             hasher.update(&(MIDTONES_SHAPE.len() as u64).to_le_bytes());
             hasher.update(MIDTONES_SHAPE.as_bytes());
         }
+        if self.sets_whites_down() {
+            hasher.update(b"whites shape\0");
+            hasher.update(&(WHITES_SHAPE.len() as u64).to_le_bytes());
+            hasher.update(WHITES_SHAPE.as_bytes());
+        }
         if self.geometry.frames_by_aspect() {
             hasher.update(b"aspect frame\0");
             hasher.update(&(ASPECT_FRAME.len() as u64).to_le_bytes());
@@ -331,6 +352,41 @@ mod tests {
         assert!(!edit.sets_midtones());
         edit.adjustments[0].look.light.tone.midtones = 1.0;
         assert!(edit.sets_midtones(), "a mask's");
+    }
+
+    /// The whites' shape is in the key of an edit with Whites under
+    /// zero, the picture's own or a mask's, and of no other: Whites up,
+    /// Highlights alone, and a mask's Whites at zero leave the key as it
+    /// was. Held against the key made without the shape, so the shape
+    /// itself is what keys a Whites-down edit, not its Whites.
+    #[test]
+    fn the_whites_shape_is_keyed_only_where_whites_is_down() {
+        let mut edit = Edit::default();
+        edit.light.tone.whites = 0.5;
+        edit.light.tone.shadows = 0.5;
+        let up = key(&edit, None);
+        assert_eq!(up, key_before_the_aspect_frame(&edit), "Whites up");
+        edit.light.tone.whites = -0.25;
+        assert_ne!(
+            key(&edit, None),
+            key_before_the_aspect_frame(&edit),
+            "Whites down carries the shape"
+        );
+        edit.light.tone.whites = 0.5;
+        assert!(!edit.sets_whites_down());
+        edit.light.tone.highlights = -1.0;
+        assert!(!edit.sets_whites_down(), "Highlights is master's");
+        edit.light.tone.highlights = 0.0;
+        edit.light.tone.whites = -0.25;
+        assert!(edit.sets_whites_down());
+        assert_ne!(key(&edit, None), up);
+        edit.light.tone.whites = 0.5;
+        edit.adjustments.push(crate::Adjustment::default());
+        assert!(!edit.sets_whites_down());
+        edit.adjustments[0].look.light.tone.whites = -1.0;
+        assert!(edit.sets_whites_down(), "a mask's whites");
+        edit.adjustments.clear();
+        assert_eq!(key(&edit, None), up);
     }
 
     /// The key as it was made before [`ASPECT_FRAME`], for an edit with

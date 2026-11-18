@@ -249,14 +249,6 @@ the reasoning lives in `docs/notes.md`.
       and eased where the picture is out of focus (parallax). CR2
       ignores the index. Wants frames with blown highlights; RawDB
       has R7 dual files (discussion 59, 2026-11-14)
-- [ ] Whites' reach over display white (issue 132): a soft-knee roll
-      over white under Whites down (design D, branch `whites-d`) is
-      reviewed and waits on a trial in the app. It takes lights off
-      white with no texture lost (804 cells: median 1.00, worst 0.85)
-      and is small by design: a light 1 to 2 stops over gets 8 levels.
-      Four wider designs were tried and dropped: each brightened under
-      a shift, flattened bright subjects, or darkened near-white
-      pixels as Exposure rose
 - [ ] Highlights cannot make clipped light visibly come back (issue
       132, fifteen rounds, 2026-11-17). A region pull reaching over
       white recovers large areas (a sun's disc, a sky) but the trade
@@ -272,9 +264,8 @@ the reasoning lives in `docs/notes.md`.
       that hotspots are Whites' to tame, not Highlights'. Measured on
       108 faces: of the 3.4 L* the hotspot's lead grows at Highlights
       -2, 2.6 is the display curve's shoulder and 0.09 the ease
-      (§250); with Whites down design D shrinks the lead on 18 to 37
-      faces and grows it on at most 2. The guide should say to reach
-      for Whites on a hotspot (issue 132)
+      (§250); with Whites down the roll (§711) shrinks the lead on 18
+      to 37 faces and grows it on at most 2 (issue 132)
 - [ ] A kept picture of an angled edit sits up to a quarter pixel off
       the full develop: the reduced develop rounds the frame's size at
       its own scale (`frame_of` in `edited_pictures::make`) where the

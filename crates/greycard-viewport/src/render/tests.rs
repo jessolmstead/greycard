@@ -2316,9 +2316,12 @@ fn the_output_sharpens_targets_are_kept_by_size_and_let_go_of() {
 }
 
 /// A merge's pull on its kept range on the GPU is the CPU's: the
-/// highlights along its negative travel and past it, at three
+/// highlights along its negative travel and past it, at eight
 /// exposures, the guide plane read, on a frame whose top is over
-/// display white once the headroom's exposure is on it.
+/// display white once the headroom's exposure is on it and under it at
+/// the lowest; the whites
+/// down from a light touch to past its slider, its roll after the
+/// pull.
 #[test]
 fn a_merges_pull_on_the_gpu_is_the_cpus() {
     use greycard_render::finish::{Baseline, Kept, finish_with, guide_plane};
@@ -2347,12 +2350,15 @@ fn a_merges_pull_on_the_gpu_is_the_cpus() {
     let to_out = greycard_render::export::Space::Srgb.matrix();
     let mut edit = greycard_edit::Edit::default();
     edit.light.tone.shadows = 0.5;
-    edit.light.tone.whites = -0.5;
     let iw = w as f32;
     let mut pulled = 0;
-    for exposure in [-1.0f32, 0.0, 1.0] {
+    for (exposure, whites) in [-5.0f32, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0]
+        .into_iter()
+        .flat_map(|e| [-0.5f32, -1.86, -3.0].map(|w| (e, w)))
+    {
         for highlights in [-2.0f32, -1.0, -0.4, 0.0, 1.0] {
             edit.light.exposure = exposure;
+            edit.light.tone.whites = whites;
             edit.light.tone.highlights = highlights;
             let global = Baked::global(&edit, source);
             let white = greycard_render::finish::White::of(source, &edit.light);
@@ -2401,16 +2407,67 @@ fn a_merges_pull_on_the_gpu_is_the_cpus() {
                 }
             }
             eprintln!(
-                "exposure {exposure}, highlights {highlights}, pulled {}: {worst:?}",
+                "exposure {exposure}, whites {whites}, highlights {highlights}, pulled {}: {worst:?}",
                 kept.is_some()
             );
             assert!(
                 worst.0 < 1.5 / 255.0,
-                "exposure {exposure}, highlights {highlights}: {worst:?}"
+                "exposure {exposure}, whites {whites}, highlights {highlights}: {worst:?}"
             );
         }
     }
     assert!(pulled >= 6, "the pull acted in {pulled} cases");
+}
+
+/// The same Highlights and Whites reached either way round, one slider
+/// dragged after the other on a renderer that drew the first, draw the
+/// same picture as a fresh renderer handed both at once: the white
+/// point and its roll read nothing the renderer kept from the frame
+/// before.
+#[test]
+fn the_sliders_in_either_order_draw_what_a_fresh_render_draws() {
+    let Some((device, queue)) = device("the sliders' order check") else {
+        return;
+    };
+    let image = parity_frame();
+    let (w, h) = (image.width as u32, image.height as u32);
+    let guide = greycard_render::finish::guide_plane(&image);
+    let draw = |renderer: &mut Renderer, highlights: f32, whites: f32| {
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.tone.highlights = highlights;
+        edit.light.tone.whites = whites;
+        let view = View {
+            center: (w as f32 / 2.0, h as f32 / 2.0),
+            plane: (w as f32, h as f32),
+            frame_size: (w as f32, h as f32),
+            ..View::with_look(&edit)
+        };
+        let target = renderer.render(w, h, &view).0;
+        renderer.read_back(&target).expect("read back")
+    };
+    let fresh = || {
+        let mut r = Renderer::new(&device, &queue);
+        r.upload(&Halves::from_image(&image, None));
+        r.set_guide(&guide);
+        r
+    };
+    for (highlights, whites) in [(-2.0f32, -2.0f32), (-1.0, -1.0), (-2.0, -0.5)] {
+        let mut first_h = fresh();
+        draw(&mut first_h, highlights, 0.0);
+        let a = draw(&mut first_h, highlights, whites);
+        let mut first_w = fresh();
+        draw(&mut first_w, 0.0, whites);
+        let b = draw(&mut first_w, highlights, whites);
+        let c = draw(&mut fresh(), highlights, whites);
+        assert!(
+            a.as_raw() == c.as_raw(),
+            "{highlights} {whites}: Highlights first"
+        );
+        assert!(
+            b.as_raw() == c.as_raw(),
+            "{highlights} {whites}: Whites first"
+        );
+    }
 }
 
 /// A camera profile's tone curve on the GPU is `ProfileTone::apply` on
@@ -2432,6 +2489,89 @@ fn a_profile_tone_curve_on_the_gpu_is_the_cpus() {
     for curve in greycard_edit::DisplayCurve::ALL {
         display_curve_parity(curve, Some(tone.clone()), "the profile's tone curve");
     }
+}
+
+/// The whites down, the white point and its roll over display white
+/// (issue 132): on the GPU it is the CPU's, at the slider's steps and
+/// past its limit as a picture's and its masks' add, under both display
+/// curves and from a body's own white, over the parity frame's lights
+/// up to eight times display white and its saturated channels; at
+/// exposures that put the frame's lights over the reach, inside it,
+/// across the knee, and under it; and with Highlights down.
+#[test]
+fn the_whites_roll_on_the_gpu_is_the_cpus() {
+    let Some((device, queue)) = device("the whites roll's check") else {
+        return;
+    };
+    let image = parity_frame();
+    let (w, h) = (image.width, image.height);
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let seen: Vec<f32> = image
+        .data
+        .iter()
+        .map(|v| half::f16::from_f32(*v).to_f32())
+        .collect();
+    let to_out = greycard_render::export::Space::Srgb.matrix();
+    let (make, model) = greycard_render::testing::GFX;
+    let mut worst = (0.0f32, [0.0f32; 3], [0.0f32; 3], [0.0f32; 3], String::new());
+    for curve in [
+        greycard_edit::DisplayCurve::Channels,
+        greycard_edit::DisplayCurve::Agx,
+    ] {
+        for source in [Source::SCENE, Source::raw(make, model)] {
+            for whites in [-0.25f32, -0.5, -1.0, -2.0, -3.5, -6.0] {
+                for (exposure, highlights) in [-2.0f32, -0.5, 0.0, 1.0, 2.5]
+                    .into_iter()
+                    .flat_map(|e| [(e, 0.0f32), (e, -1.5)])
+                {
+                    let mut edit = greycard_edit::Edit {
+                        display_curve: curve,
+                        ..Default::default()
+                    };
+                    edit.light.exposure = exposure;
+                    edit.light.tone.whites = whites;
+                    edit.light.tone.highlights = highlights;
+                    let view = View {
+                        center: (w as f32 / 2.0, h as f32 / 2.0),
+                        plane: (w as f32, h as f32),
+                        frame_size: (w as f32, h as f32),
+                        source,
+                        ..View::with_look(&edit)
+                    };
+                    let target = renderer.render(w as u32, h as u32, &view).0;
+                    let shown = renderer.read_back(&target).expect("read back");
+                    let global = Baked::global(&edit, source);
+                    for y in 0..h {
+                        for x in 0..w {
+                            let i = (y * w + x) * 3;
+                            let px = [seen[i], seen[i + 1], seen[i + 2]];
+                            let cpu =
+                                greycard_render::finish::finish_pixel(px, &global, &[], &to_out);
+                            let gpu = shown.get_pixel(x as u32, y as u32);
+                            let gpu = [0, 1, 2].map(|k| f32::from(gpu[k]) / 255.0);
+                            for k in 0..3 {
+                                let d = (cpu[k] - gpu[k]).abs();
+                                if d > worst.0 {
+                                    worst = (
+                                        d,
+                                        px,
+                                        cpu,
+                                        gpu,
+                                        format!(
+                                            "{curve:?} {source:?} {whites} {exposure} {highlights}"
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("the whites roll, GPU against CPU: {worst:?}");
+    assert!(worst.0 < 1.5 / 255.0, "{worst:?}");
 }
 
 fn a_display_curve_on_the_gpu_is_the_cpus(curve: greycard_edit::DisplayCurve, what: &str) {

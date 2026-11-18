@@ -10,7 +10,7 @@ use std::time::SystemTime;
 use greycard_edit::camera::ProfileChoice;
 use greycard_edit::key::{
     ASPECT_FRAME, DEVELOP_RECIPE, LANDSCAPE_PIPELINE, MIDTONES_SHAPE, PART_PIPELINE, PERSON_EDGE,
-    Read, SHARPEN_GUIDE, SKY_PIPELINE,
+    Read, SHARPEN_GUIDE, SKY_PIPELINE, WHITES_SHAPE,
 };
 use greycard_edit::look::LutChoice;
 use greycard_edit::{Edit, LensChoice};
@@ -109,7 +109,8 @@ fn contents(path: &Path) -> Option<[u8; 32]> {
 /// What every develop key made now is made under, beside each edit's
 /// own: [`DEVELOP_RECIPE`], the learned masks' stages, the sharpen's
 /// guide ([`SHARPEN_GUIDE`]), the Midtones bell's shape
-/// ([`MIDTONES_SHAPE`]), an aspect's framing with no crop stored
+/// ([`MIDTONES_SHAPE`]), the whites' shape ([`WHITES_SHAPE`]), an
+/// aspect's framing with no crop stored
 /// ([`ASPECT_FRAME`]), the lens database's name as the caller gives
 /// it, and the look and profile directories as they stand (each file's
 /// name, length and modification time; not their contents, which only
@@ -166,7 +167,7 @@ pub fn keys_made_under_in(
     let files = hasher.finalize();
     format!(
         "recipe {DEVELOP_RECIPE}; masks {SKY_PIPELINE} {LANDSCAPE_PIPELINE} {PART_PIPELINE} \
-         {PERSON_EDGE}; {SHARPEN_GUIDE}; {MIDTONES_SHAPE}; {ASPECT_FRAME}; lenses {lenses:?}; files {}",
+         {PERSON_EDGE}; {SHARPEN_GUIDE}; {MIDTONES_SHAPE}; {WHITES_SHAPE}; {ASPECT_FRAME}; lenses {lenses:?}; files {}",
         &files.to_hex()[..16]
     )
 }
@@ -270,7 +271,7 @@ mod tests {
         );
         // Each part some edits alone take into their key: raised, the
         // index's keys are settled again (`settle_develop_keys`).
-        for part in [SHARPEN_GUIDE, MIDTONES_SHAPE, ASPECT_FRAME] {
+        for part in [SHARPEN_GUIDE, MIDTONES_SHAPE, WHITES_SHAPE, ASPECT_FRAME] {
             assert!(first.contains(&format!("; {part};")), "{part}: {first}");
         }
         assert_eq!(under(Some("lensfun 1")), first, "nothing moved");

@@ -378,6 +378,15 @@ impl Edit {
             && (self.sharpen.options().is_some() || self.detail_wants().sharpen)
     }
 
+    /// Whether Whites is under zero anywhere: the picture's own slider
+    /// or a mask's. A pixel's whites is the sum of the picture's and its
+    /// masks', so only there can it come under zero, where the roll over
+    /// white acts.
+    pub fn sets_whites_down(&self) -> bool {
+        let down = |t: &crate::Tone| t.whites < 0.0;
+        down(&self.light.tone) || self.adjustments.iter().any(|a| down(&a.look.light.tone))
+    }
+
     /// Whether Midtones moves anything: the picture's own slider or a
     /// mask's set.
     pub fn sets_midtones(&self) -> bool {

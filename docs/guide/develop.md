@@ -288,6 +288,8 @@ on areas and follows the frame rather than fixed places on the curve.
 **Highlights** reaches down into the upper mid-tones, as Lightroom's
 does, and **Whites** works from the frame's middle tones upward rather
 than from a fixed mid grey, so a face under bright light answers both.
+**Whites** down also brings lights that sit over white back under it,
+so reach for it on a hot spot or a blown sky.
 A frame edited with either before 0.7 opens a little differently.
 
 At **Exposure** 0, each camera body opens at a brightness of its own,

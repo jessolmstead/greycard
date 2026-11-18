@@ -1740,6 +1740,21 @@ fn shape_at(
     kept: Option<Kept>,
     white_stops: f32,
 ) -> [f32; 3] {
+    shape_rolled(c, t, guide, span, kept, white_stops, true)
+}
+
+/// [`shape_at`], its roll over white taken or not: not, it is the white
+/// point alone, as 0.12 had it, which the tests hold the roll against.
+#[inline]
+fn shape_rolled(
+    c: [f32; 3],
+    t: &greycard_edit::Tone,
+    guide: Option<f32>,
+    span: [f32; 2],
+    kept: Option<Kept>,
+    white_stops: f32,
+    roll: bool,
+) -> [f32; 3] {
     let c = c.map(|v| MID_GREY * (v.max(0.0) / MID_GREY).powf(t.contrast));
     let g = guide.unwrap_or_else(|| {
         let y = LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2];
@@ -1764,15 +1779,51 @@ fn shape_at(
     };
     let shifted = read + t.highlights * highlights_weight(read, ramp_span);
     let gain = 2f32.powf(shifted - g);
-    black_point(
-        white_point(
-            c.map(|v| v * gain),
-            t.whites,
-            whites_pivot(span),
-            white_stops,
-        ),
-        t.blacks,
-    )
+    let pointed = white_point(
+        c.map(|v| v * gain),
+        t.whites,
+        whites_pivot(span),
+        white_stops,
+    );
+    let rolled = if roll {
+        whites_roll(pointed, t.whites, white_stops)
+    } else {
+        pointed
+    };
+    black_point(rolled, t.blacks)
+}
+
+/// Whites down's reach over display white (issue 132): after the white
+/// point, what it leaves over white is rolled under it, in order, by
+/// [`greycard_edit::auto::whites_roll_pull`] on the pixel's brightest
+/// channel, its stops from display white. The roll takes nothing from
+/// a channel more than [`greycard_edit::auto::WHITES_ROLL_SOFT`] under
+/// its knee, so what lands there is the white point's to the bit; over
+/// the knee it has a slope of [`greycard_edit::auto::WHITES_ROLL_SLOPE`]
+/// up to the reach, which lands on white. The knee sits under white,
+/// a quarter of the reach: that band is the room the lights come into,
+/// so it darkens what sits there on any frame, lights or none. A grey
+/// 0.12 showed at 254 comes out 0.13, 0.48, 1.8, 5, and 10.9 levels
+/// darker at Whites -0.25, -0.5, -1, -2, and -3.5 (Channels; AgX 0.64,
+/// 1.6, 4.2, 9.4, and 17.8), and the band starts where 0.12 showed 253,
+/// 252, 250, 246, and 237 (AgX 251, 250, 246, 239, and 228). One gain
+/// on all three
+/// channels, so the hue holds. Whites at zero and up is the white point
+/// alone. The whites is held to [`WHITES_RANGE`] as the white point
+/// holds it.
+#[inline]
+fn whites_roll(c: [f32; 3], whites: f32, white_stops: f32) -> [f32; 3] {
+    if whites >= 0.0 {
+        return c;
+    }
+    let n = c[0].max(c[1]).max(c[2]);
+    let t = (n.max(1e-12) / MID_GREY).log2() - white_stops;
+    let pull = greycard_edit::auto::whites_roll_pull(t, -whites.max(WHITES_RANGE.0));
+    if pull == 0.0 {
+        return c;
+    }
+    let gain = 2f32.powf(-pull);
+    c.map(|v| v * gain)
 }
 
 /// The least the contrast summed over a pixel's looks may come to.
@@ -2414,16 +2465,17 @@ mod tests {
                 finish_pixel([0.3; 3], &picture, &[], &m)
             );
         }
-        // Whites at -1 bring a luminance a stop over the curve's white
-        // to white.
+        // Whites at -1: the white point brings a luminance a stop over
+        // the curve's white to white, and the roll over white takes it
+        // under, keeping it over what was under it.
         let mut edit = Edit::default();
         edit.light.tone.whites = -1.0;
         let with = Baked::global(&edit, Source::SCENE).with_profile_tone(Some(tone.clone()));
         let over = 2f32.powf(0.5 + greycard_edit::baseline::ADOBE_GREY_LIFT) * 2.0 / gain;
         let out = finish_pixel([over; 3], &with, &[], &m);
-        assert!((out[1] - 1.0).abs() < 1e-3, "{out:?}");
+        assert!(out[1] < 0.999 && out[1] > 0.9, "{out:?}");
         let under = finish_pixel([over * 0.9; 3], &with, &[], &m);
-        assert!(under[1] < 0.999, "{under:?}");
+        assert!(under[1] < out[1], "{under:?} {out:?}");
         // The dropper.
         let picked = pick(
             [0.1; 3],
@@ -2503,6 +2555,7 @@ mod tests {
         assert_eq!(auto::HIGHLIGHTS_PEAK, HIGHLIGHTS_PEAK);
         assert_eq!(auto::SPAN, HIGHLIGHTS_SPAN);
         assert_eq!(auto::WHITES_PIVOT, WHITES_PIVOT);
+        assert_eq!(auto::WHITES_FLOOR, WHITES_RANGE.0);
     }
 
     /// Auto's reading of a merge's pull is the finish's at contrast
@@ -3980,8 +4033,17 @@ mod tests {
                     whites,
                     ..Tone::default()
                 };
-                let from = shape(grey_at(DISPLAY_WHITE_STOPS - whites), &t, None, span)[1];
+                // The white point's own (down, the roll over white then
+                // takes what it put at white by the roll's pull there).
+                let at_white = grey_at(DISPLAY_WHITE_STOPS - whites);
+                let from = white_point(at_white, whites, pivot, DISPLAY_WHITE_STOPS)[1];
                 assert!((from / white - 1.0).abs() < 1e-4, "{whites}: {from}");
+                let rolled = shape(at_white, &t, None, span)[1];
+                let pull = greycard_edit::auto::whites_roll_pull(0.0, -whites);
+                assert!(
+                    (rolled / from - 2f32.powf(-pull)).abs() < 1e-4,
+                    "{whites}: {rolled}"
+                );
                 for under in [0.0f32, -0.5, -2.0, -6.0] {
                     assert_eq!(
                         shape(grey_at(pivot + under), &t, None, span),
@@ -5922,6 +5984,883 @@ mod tests {
         );
         assert_eq!(px(&out, 0), want(0, 1.0));
         assert_eq!(px(&out, 1), px(&bare, 1));
+    }
+
+    // Issue 132: Whites down as the white point and its roll over white.
+
+    /// The frames the whites' invariants run on, in stops over grey at
+    /// the picture's exposure: a typical one, one whose top is two
+    /// stops over white, a low-key one, and merges (a top four over with
+    /// two kept, three over with four kept) at three exposures. Each as
+    /// its range, exposure, and headroom.
+    fn whites_frames() -> Vec<([f32; 2], f32, f32)> {
+        let w = DISPLAY_WHITE_STOPS;
+        let mut frames = vec![
+            (FRAME_TYPICAL, BASELINE_EXPOSURE, 0.0),
+            ([w - 1.0, w + 2.0], 0.0, 0.0),
+            ([-3.5, -0.5], 0.0, 0.0),
+        ];
+        for (range, headroom) in [([w - 3.0, w + 4.0], 2.0), ([w - 1.0, w + 3.0], 4.0)] {
+            for exposure in [-1.0f32, 0.0, 0.6] {
+                frames.push((range, exposure, headroom));
+            }
+        }
+        frames
+    }
+
+    /// The shifts' corners the invariants run at: Highlights, Midtones,
+    /// and Shadows each at -2, 0, and +2.
+    fn shift_corners() -> Vec<(f32, f32, f32)> {
+        let v = [-2.0f32, 0.0, 2.0];
+        v.iter()
+            .flat_map(|&h| v.iter().flat_map(move |&m| v.map(|s| (h, m, s))))
+            .collect()
+    }
+
+    /// The shape on a frame of [`whites_frames`], rolled or the white
+    /// point alone: a pixel `px` before the exposure, its region `g` (or
+    /// none).
+    fn shape_on_with(
+        frame: ([f32; 2], f32, f32),
+        t: &Tone,
+        px: [f32; 3],
+        g: Option<f32>,
+        roll: bool,
+    ) -> [f32; 3] {
+        let (range, exposure, headroom) = frame;
+        let span = highlights_span(range, exposure, t.contrast);
+        let kept = Kept::of(range, exposure, t.contrast, headroom, DISPLAY_WHITE_STOPS);
+        let px = px.map(|v| v * 2f32.powf(exposure));
+        let g = g.map(|g| t.contrast * (g + exposure));
+        shape_rolled(px, t, g, span, kept, DISPLAY_WHITE_STOPS, roll)
+    }
+
+    fn shape_on(frame: ([f32; 2], f32, f32), t: &Tone, px: [f32; 3], g: Option<f32>) -> [f32; 3] {
+        shape_on_with(frame, t, px, g, true)
+    }
+
+    /// The colors the whites' tests carry: grey, a warm, and the
+    /// saturated yellow, red, neon green, and sky blue of the review.
+    const WHITES_COLORS: [[f32; 3]; 6] = [
+        [1.0, 1.0, 1.0],
+        [1.0, 0.7, 0.4],
+        [1.0, 0.85, 0.05],
+        [1.0, 0.08, 0.05],
+        [0.15, 1.0, 0.1],
+        [0.25, 0.6, 1.0],
+    ];
+
+    fn colored(color: [f32; 3], stops: f32) -> [f32; 3] {
+        let y = LUMA[0] * color[0] + LUMA[1] * color[1] + LUMA[2] * color[2];
+        color.map(|v| v / y * MID_GREY * 2f32.powf(stops))
+    }
+
+    #[test]
+    fn a_brighter_flat_region_never_renders_darker() {
+        // A flat region (its pixels its reading, as a smooth sky's are)
+        // swept up through the frame, plane on and off, at every corner
+        // of the shifts with the whites from past the slider's floor to
+        // its top: the curve across regions never turns back.
+        for frame in whites_frames() {
+            for (h, m, s) in shift_corners() {
+                for whites in [0.0f32, -0.5, -1.0, -2.0, -3.5, 1.0, 2.0] {
+                    let t = Tone {
+                        highlights: h,
+                        midtones: m,
+                        shadows: s,
+                        whites,
+                        ..Tone::default()
+                    };
+                    for plane in [true, false] {
+                        let mut last = f32::MIN;
+                        for i in 0..=700 {
+                            let x = -6.0 + i as f32 * 0.02;
+                            let o = shape_on(frame, &t, grey_at(x), plane.then_some(x))[1]
+                                .max(1e-12)
+                                .log2();
+                            assert!(
+                                o >= last - 1e-4,
+                                "{frame:?} {t:?} plane {plane} region {x}: {o} under {last}"
+                            );
+                            last = o;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_plane_is_the_planed_path_on_a_flat_region() {
+        // A base before its plane exists, and the dropper's pick, read a
+        // pixel's own luminance: on a flat region that is the plane's
+        // reading, so the two agree there, on plain frames and merges.
+        for frame in whites_frames() {
+            for (h, m, s) in shift_corners() {
+                for whites in [0.0f32, -0.5, -1.0, -2.0, -3.5, 1.0] {
+                    let t = Tone {
+                        highlights: h,
+                        midtones: m,
+                        shadows: s,
+                        whites,
+                        ..Tone::default()
+                    };
+                    for i in 0..=120 {
+                        let x = -6.0 + i as f32 * 0.1;
+                        let a = shape_on(frame, &t, grey_at(x), Some(x))[1]
+                            .max(1e-12)
+                            .log2();
+                        let b = shape_on(frame, &t, grey_at(x), None)[1].max(1e-12).log2();
+                        assert!(
+                            (a - b).abs() < 1e-4,
+                            "{frame:?} {t:?} at {x}: planed {a}, unplaned {b}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_pixel_folds_within_a_region_under_the_whites() {
+        // One region, its reading held: a brighter pixel never comes
+        // out darker, saturated or not, wherever the roll compresses.
+        for frame in whites_frames() {
+            for (h, m, s) in shift_corners() {
+                for k in 1..=7 {
+                    let t = Tone {
+                        highlights: h,
+                        midtones: m,
+                        shadows: s,
+                        whites: -(k as f32) * 0.5,
+                        ..Tone::default()
+                    };
+                    for color in [WHITES_COLORS[0], WHITES_COLORS[3]] {
+                        for gi in 0..=6 {
+                            let g = -2.0 + gi as f32;
+                            let mut last = [f32::MIN; 3];
+                            for i in 0..=400 {
+                                let x = g - 3.0 + i as f32 * 0.02;
+                                let o = shape_on(frame, &t, colored(color, x), Some(g));
+                                for c in 0..3 {
+                                    let o = o[c].max(1e-12).log2();
+                                    assert!(
+                                        o >= last[c] - 1e-5,
+                                        "{frame:?} {t:?} {color:?} region {g} pixel {x}: {o} under {}",
+                                        last[c]
+                                    );
+                                    last[c] = o;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_slider_and_the_exposure_move_the_shape_continuously() {
+        // Highlights, Midtones, Shadows, Whites, and the exposure, each
+        // swept over four stops at corners of the others: at the
+        // steepest step a sweep takes, a hundred finer steps take a
+        // hundredth of it each, near enough, so the shape turns there
+        // and never jumps; Whites through zero, where the roll comes in.
+        for frame in whites_frames() {
+            for (a, b, whites) in [
+                (-2.0f32, -2.0f32, -1.0f32),
+                (2.0, -2.0, -2.0),
+                (0.0, 0.0, -0.5),
+                (0.0, 0.0, 0.0),
+            ] {
+                for axis in 0..5 {
+                    let at_v = |v: f32| {
+                        let mut t = Tone {
+                            highlights: a,
+                            midtones: b,
+                            shadows: -a,
+                            whites,
+                            ..Tone::default()
+                        };
+                        let mut f = frame;
+                        match axis {
+                            0 => t.highlights = v,
+                            1 => t.midtones = v,
+                            2 => t.shadows = v,
+                            3 => t.whites = v,
+                            _ => f.1 = frame.1 + v,
+                        }
+                        (f, t)
+                    };
+                    for gi in 0..=9 {
+                        let g = -3.0 + gi as f32;
+                        for x in [g - 0.5, g, g + 0.5] {
+                            let at = |v: f32| {
+                                let (f, t) = at_v(v);
+                                shape_on(f, &t, grey_at(x), Some(g))[1].max(1e-12).log2()
+                            };
+                            let (mut worst, mut at_w) = (0.0f32, 0.0f32);
+                            let mut last = at(-2.0);
+                            for i in 1..=400 {
+                                let v = -2.0 + i as f32 * 0.01;
+                                let o = at(v);
+                                if (o - last).abs() > worst {
+                                    (worst, at_w) = ((o - last).abs(), v);
+                                }
+                                last = o;
+                            }
+                            let mut last = at(at_w - 0.01);
+                            let mut fine = 0.0f32;
+                            for i in 1..=100 {
+                                let o = at(at_w - 0.01 + i as f32 * 1e-4);
+                                fine = fine.max((o - last).abs());
+                                last = o;
+                            }
+                            assert!(
+                                fine <= worst / 20.0 + 1e-4,
+                                "{frame:?} axis {axis} at {at_w}, region {g} pixel {x}: \
+                                 {worst} a step, {fine} a hundredth of one"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The slope of the shape where the roll starts, in the pixel and in
+    /// Whites: either side of the knee's band and of each corner, and
+    /// either side of Whites zero, the one-sided slopes agree, so there
+    /// is no kink; printed for the record.
+    #[test]
+    fn the_roll_has_no_kink_in_the_pixel_or_in_whites() {
+        let span = typical();
+        let at = |stops: f32, whites: f32| {
+            let t = Tone {
+                whites,
+                ..Tone::default()
+            };
+            shape(grey_at(stops), &t, None, span)[1].max(1e-12).log2()
+        };
+        let h = 2e-3f32;
+        let mut most = 1.0f32;
+        for whites in [-0.25f32, -0.5, -1.0, -2.0] {
+            let down = -whites;
+            let reach = greycard_edit::auto::whites_roll_reach(down);
+            let knee = greycard_edit::auto::whites_roll_knee(down);
+            let w = greycard_edit::auto::WHITES_ROLL_SOFT;
+            // The white point's input that lands a channel at `t` from
+            // white, found by halving.
+            let input = |t: f32| {
+                let (mut lo, mut hi) = (-4.0f32, 12.0f32);
+                for _ in 0..60 {
+                    let mid = 0.5 * (lo + hi);
+                    let y = white_point(
+                        grey_at(mid),
+                        whites,
+                        whites_pivot(span),
+                        DISPLAY_WHITE_STOPS,
+                    )[1];
+                    if (y / MID_GREY).log2() - DISPLAY_WHITE_STOPS > t {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                lo
+            };
+            for edge in [knee - w, knee + w, reach - w, reach + w] {
+                let x = input(edge);
+                let below = (at(x, whites) - at(x - h, whites)) / h;
+                let above = (at(x + h, whites) - at(x, whites)) / h;
+                let ratio = above / below;
+                eprintln!(
+                    "whites {whites}, the roll's edge {edge:+.3}: slopes {below:.4} {above:.4}, ratio {ratio:.4}"
+                );
+                most = most.max(ratio.max(1.0 / ratio));
+            }
+        }
+        assert!(most < 1.03, "a kink: {most}");
+        // Whites through zero, at lights from under the knee to over the
+        // reach.
+        for stops in [
+            DISPLAY_WHITE_STOPS - 0.5,
+            DISPLAY_WHITE_STOPS,
+            DISPLAY_WHITE_STOPS + 1.0,
+        ] {
+            let hw = 1e-3f32;
+            let below = (at(stops, 0.0) - at(stops, -hw)) / hw;
+            let above = (at(stops, hw) - at(stops, 0.0)) / hw;
+            eprintln!("Whites through zero at {stops}: slopes {below:.4} {above:.4}");
+            assert!(
+                (below - above).abs() < 0.02 * below.abs().max(0.1),
+                "{stops}: {below} {above}"
+            );
+        }
+    }
+
+    #[test]
+    fn whites_zero_and_up_is_the_white_point_alone_to_the_bit() {
+        // No roll at zero and up: every pixel, under white to far over
+        // it, saturated or not, on every frame and corner, is the white
+        // point's alone, to the bit.
+        for frame in whites_frames() {
+            for (h, m, s) in shift_corners() {
+                for whites in [0.0f32, 0.25, 1.0, 2.0, 3.0] {
+                    let t = Tone {
+                        highlights: h,
+                        midtones: m,
+                        shadows: s,
+                        whites,
+                        ..Tone::default()
+                    };
+                    for color in WHITES_COLORS {
+                        for i in 0..=60 {
+                            let x = -4.0 + i as f32 * 0.2;
+                            for g in [None, Some(x - 1.0), Some(x + 1.0)] {
+                                let a = shape_on(frame, &t, colored(color, x), g);
+                                let b = shape_on_with(frame, &t, colored(color, x), g, false);
+                                assert!(
+                                    (0..3).all(|k| a[k].to_bits() == b[k].to_bits()),
+                                    "{frame:?} {t:?} {color:?} {x} {g:?}: {a:?} {b:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn what_lands_under_the_rolls_band_is_the_white_points_to_the_bit() {
+        // Whites down: a pixel whose brightest channel the white point
+        // lands more than the softness under the knee is its alone, to
+        // the bit; over it, the roll takes something and never adds.
+        let w = greycard_edit::auto::WHITES_ROLL_SOFT;
+        let (mut under, mut over) = (0, 0);
+        for frame in whites_frames() {
+            for (h, m, sh) in shift_corners() {
+                for whites in [-0.1f32, -0.5, -1.0, -2.0, -3.5, -5.0] {
+                    let down = -whites.max(WHITES_RANGE.0);
+                    let knee = greycard_edit::auto::whites_roll_knee(down);
+                    let t = Tone {
+                        highlights: h,
+                        midtones: m,
+                        shadows: sh,
+                        whites,
+                        ..Tone::default()
+                    };
+                    for color in WHITES_COLORS {
+                        for i in 0..=60 {
+                            let x = -4.0 + i as f32 * 0.2;
+                            for g in [None, Some(x - 1.0), Some(x + 1.0)] {
+                                let a = shape_on(frame, &t, colored(color, x), g);
+                                let b = shape_on_with(frame, &t, colored(color, x), g, false);
+                                let n = b[0].max(b[1]).max(b[2]);
+                                let at = (n.max(1e-12) / MID_GREY).log2() - DISPLAY_WHITE_STOPS;
+                                if at < knee - w - 1e-4 {
+                                    under += 1;
+                                    assert!(
+                                        (0..3).all(|k| a[k].to_bits() == b[k].to_bits()),
+                                        "{frame:?} {t:?} {color:?} {x} {g:?} at {at}: {a:?} {b:?}"
+                                    );
+                                } else {
+                                    over += 1;
+                                    assert!((0..3).all(|k| a[k] <= b[k]), "{a:?} {b:?}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(under > 1000 && over > 1000, "{under} {over}");
+    }
+
+    #[test]
+    fn the_roll_holds_the_hue_and_never_brightens_a_color() {
+        // One gain on all three channels: a saturated color keeps the
+        // white point's channel ratios to a part in a hundred thousand;
+        // and more whites down never brightens a channel.
+        let span = typical();
+        for color in WHITES_COLORS {
+            for i in 0..=100 {
+                let x = -1.0 + i as f32 * 0.07;
+                let mut last = [f32::MAX; 3];
+                for k in 0..=70 {
+                    let whites = -(k as f32) * 0.05;
+                    let t = Tone {
+                        whites,
+                        ..Tone::default()
+                    };
+                    let a = shape_rolled(
+                        colored(color, x),
+                        &t,
+                        None,
+                        span,
+                        None,
+                        DISPLAY_WHITE_STOPS,
+                        true,
+                    );
+                    let b = shape_rolled(
+                        colored(color, x),
+                        &t,
+                        None,
+                        span,
+                        None,
+                        DISPLAY_WHITE_STOPS,
+                        false,
+                    );
+                    for c in 0..3 {
+                        let (ra, rb) = (
+                            a[c] / a[0].max(a[1]).max(a[2]),
+                            b[c] / b[0].max(b[1]).max(b[2]),
+                        );
+                        assert!(
+                            (ra - rb).abs() < 1e-5,
+                            "{color:?} {x} {whites}: {a:?} {b:?}"
+                        );
+                        assert!(a[c] <= last[c] * (1.0 + 1e-5), "{color:?} {x} {whites}");
+                    }
+                    last = a;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn more_whites_down_never_brightens_a_pixel_through_the_finish() {
+        // The whole finish, display curve and all, both curves, plane on
+        // and off: a grey and a warm pixel from four stops under grey to
+        // six over, its region two stops either side, never encodes
+        // brighter as the whites goes a step further down, on plain
+        // frames and merges, at every corner of the shifts.
+        let to_out = crate::export::Space::Srgb.matrix();
+        for (headroom, range) in [
+            (0.0f32, [-1.7f32, 1.1f32]),
+            (0.0, [1.0, 4.5]),
+            (2.0, [-1.0, 6.5]),
+            (4.0, [1.0, 5.5]),
+        ] {
+            let source = Source::Scene(Baseline::DEFAULT.with_headroom(headroom));
+            for curve in greycard_edit::DisplayCurve::ALL {
+                for (h, m, s) in shift_corners() {
+                    let baked: Vec<Baked> = (0..=14)
+                        .map(|k| {
+                            let mut edit = greycard_edit::Edit {
+                                display_curve: curve,
+                                ..Default::default()
+                            };
+                            edit.light.tone = Tone {
+                                highlights: h,
+                                midtones: m,
+                                shadows: s,
+                                whites: -(k as f32) * 0.25,
+                                ..Tone::default()
+                            };
+                            Baked::global(&edit, source)
+                        })
+                        .collect();
+                    for i in 0..=20 {
+                        let x = -4.0 + i as f32 * 0.5;
+                        for tint in [[1.0f32, 1.0, 1.0], [1.0, 0.7, 0.4]] {
+                            let px = grey_at(x - 0.8);
+                            let px = [px[0] * tint[0], px[1] * tint[1], px[2] * tint[2]];
+                            for g in [None, Some(x - 2.0), Some(x), Some(x + 2.0)] {
+                                let guide = g.map(|g| (g - 0.8, range));
+                                let mut last = [f32::MAX; 3];
+                                for b in &baked {
+                                    let o = finish_pixel_with(
+                                        px,
+                                        b,
+                                        &[],
+                                        0.0,
+                                        None,
+                                        None,
+                                        guide,
+                                        None,
+                                        None,
+                                        &to_out,
+                                    );
+                                    for k in 0..3 {
+                                        assert!(
+                                            o[k] <= last[k] + 1e-5,
+                                            "{range:?} {headroom} {curve:?} ({h}, {m}, {s}) \
+                                             whites {}: pixel {x} region {g:?}: {} after {}",
+                                            b.light.tone.whites,
+                                            o[k],
+                                            last[k]
+                                        );
+                                    }
+                                    last = o;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn more_whites_down_never_brightens_under_blacks_contrast_exposure_or_a_mask() {
+        // The same through the finish with Blacks crushing and lifting,
+        // Contrast either way, the exposure either way, and the whites
+        // carried by a mask over a picture at zero and at plus one: a
+        // pixel never encodes brighter as the whites goes further down.
+        let to_out = crate::export::Space::Srgb.matrix();
+        for (headroom, range) in [(0.0f32, [-1.7f32, 1.1f32]), (2.0, [-1.0, 6.5])] {
+            let source = Source::Scene(Baseline::DEFAULT.with_headroom(headroom));
+            for curve in greycard_edit::DisplayCurve::ALL {
+                for (blacks, contrast, exposure) in [
+                    (-0.2f32, 1.0f32, 0.0f32),
+                    (0.2, 1.0, 0.0),
+                    (0.0, 0.7, 0.0),
+                    (0.0, 1.4, 0.0),
+                    (0.0, 1.0, -1.5),
+                    (0.0, 1.0, 1.5),
+                ] {
+                    for by_mask in [None, Some(0.0f32), Some(1.0)] {
+                        let baked: Vec<(Baked, Option<Baked>)> = (0..=12)
+                            .map(|k| {
+                                let whites = -(k as f32) * 0.25;
+                                let mut edit = greycard_edit::Edit {
+                                    display_curve: curve,
+                                    ..Default::default()
+                                };
+                                edit.light.exposure = exposure;
+                                edit.light.tone = Tone {
+                                    blacks,
+                                    contrast,
+                                    whites: by_mask.unwrap_or(whites),
+                                    highlights: -1.0,
+                                    ..Tone::default()
+                                };
+                                let mask = by_mask.map(|_| {
+                                    let mut look = greycard_edit::Look::default();
+                                    look.light.tone.whites = whites;
+                                    Baked::of(&look)
+                                });
+                                (Baked::global(&edit, source), mask)
+                            })
+                            .collect();
+                        for i in 0..=24 {
+                            let x = -4.0 + i as f32 * 0.5;
+                            for tint in [[1.0f32, 1.0, 1.0], [1.0, 0.3, 0.1]] {
+                                let px = grey_at(x - 0.8);
+                                let px = [px[0] * tint[0], px[1] * tint[1], px[2] * tint[2]];
+                                for g in [None, Some(x - 1.0), Some(x + 1.0)] {
+                                    let guide = g.map(|g| (g - 0.8, range));
+                                    let mut last = [f32::MAX; 3];
+                                    for (b, mask) in &baked {
+                                        let locals: Vec<(&Baked, f32)> =
+                                            mask.iter().map(|m| (m, 1.0)).collect();
+                                        let o = finish_pixel_with(
+                                            px, b, &locals, 0.0, None, None, guide, None, None,
+                                            &to_out,
+                                        );
+                                        for k in 0..3 {
+                                            assert!(
+                                                o[k] <= last[k] + 1e-5,
+                                                "{range:?} {curve:?} {blacks} {contrast} {exposure} \
+                                                 mask {by_mask:?}: pixel {x} region {g:?}: {} after {}",
+                                                o[k],
+                                                last[k]
+                                            );
+                                        }
+                                        last = o;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_masks_whites_down_rolls_as_the_pictures_does() {
+        // A mask at full weight carrying Whites -1 over a picture at zero
+        // renders what the picture at -1 does, over white and under it.
+        let to_out = crate::export::Space::Srgb.matrix();
+        let mut edit = Edit::default();
+        let plain = Baked::global(&edit, Source::SCENE);
+        edit.light.tone.whites = -1.0;
+        let down = Baked::global(&edit, Source::SCENE);
+        let mut look = greycard_edit::Look::default();
+        look.light.tone.whites = -1.0;
+        let mask = Baked::of(&look);
+        for color in WHITES_COLORS {
+            for i in 0..=40 {
+                let x = -2.0 + i as f32 * 0.2;
+                let px = colored(color, x);
+                let a = finish_pixel_with(
+                    px,
+                    &plain,
+                    &[(&mask, 1.0)],
+                    0.0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    &to_out,
+                );
+                let b =
+                    finish_pixel_with(px, &down, &[], 0.0, None, None, None, None, None, &to_out);
+                for k in 0..3 {
+                    assert!((a[k] - b[k]).abs() < 1e-5, "{color:?} {x}: {a:?} {b:?}");
+                }
+            }
+        }
+    }
+
+    /// Lights over white through the shape: they come under display
+    /// white in order up to the reach, which is Auto's model of it
+    /// (`auto::whites_lands`) to a thousandth of a stop; the white point
+    /// alone brings only the stops Whites names.
+    #[test]
+    fn lights_come_under_white_in_order_to_the_reach() {
+        let span = typical();
+        let f = whites_pivot(span);
+        let white = DISPLAY_WHITE_STOPS;
+        for (whites, least) in [(-0.5f32, 0.9f32), (-1.0, 2.0), (-2.0, 4.85)] {
+            let t = Tone {
+                whites,
+                ..Tone::default()
+            };
+            let lands = |x: f32, roll: bool| {
+                (shape_rolled(grey_at(x), &t, None, span, None, white, roll)[1] / MID_GREY).log2()
+                    - white
+            };
+            let mut last = f32::MIN;
+            let mut reach = 0.0f32;
+            for i in 0..=600 {
+                let over = i as f32 * 0.01;
+                let o = lands(white + over, true);
+                assert!(o > last, "{whites} {over}: {o} after {last}");
+                last = o;
+                if o <= 0.0 {
+                    reach = over;
+                }
+                // Auto reads stops before the baseline.
+                let model = greycard_edit::auto::whites_lands(
+                    white + over - BASELINE_EXPOSURE,
+                    whites,
+                    f - BASELINE_EXPOSURE,
+                );
+                assert!(
+                    (o - model).abs() < 1e-3,
+                    "{whites} {over}: {o} against {model}"
+                );
+            }
+            let alone = (0..=600)
+                .map(|i| i as f32 * 0.01)
+                .filter(|&over| lands(white + over, false) <= 0.0)
+                .fold(0.0f32, f32::max);
+            eprintln!(
+                "whites {whites}: under white to {reach} over it, the white point alone to {alone}"
+            );
+            assert!(reach >= least, "{whites}: {reach}");
+            assert!((alone + whites).abs() < 0.02, "{whites}: {alone}");
+            // A saturated light is rolled by its brightest channel: what
+            // the white point leaves of it within the reach comes under
+            // white, its channels in order.
+            let reach_after = greycard_edit::auto::whites_roll_reach(-whites);
+            for color in WHITES_COLORS {
+                for i in 0..=80 {
+                    let x = white - 2.0 + i as f32 * 0.1;
+                    let px = colored(color, x);
+                    let pointed = shape_rolled(px, &t, None, span, None, white, false);
+                    let n = pointed[0].max(pointed[1]).max(pointed[2]);
+                    let at = (n / MID_GREY).log2() - white;
+                    let o = shape_rolled(px, &t, None, span, None, white, true);
+                    let m = (o[0].max(o[1]).max(o[2]) / MID_GREY).log2() - white;
+                    if at <= reach_after - greycard_edit::auto::WHITES_ROLL_SOFT {
+                        assert!(m <= 1e-5, "{whites} {color:?} {x}: {at} lands at {m}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Texture through the finish: a textured patch the white point lands
+    /// under the roll's band keeps the white point's spread exactly; one
+    /// over white past what the white point alone brings under it, which
+    /// that clips flat, gains spread up to the roll's reach: a little,
+    /// at the roll's slope and the display curve's shoulder.
+    #[test]
+    fn a_textured_patch_keeps_its_spread_under_white_and_gains_it_over() {
+        let span = typical();
+        let white = White::of(Source::SCENE, &Light::default());
+        let spread = |x: f32, whites: f32, roll: bool| {
+            let t = Tone {
+                whites,
+                ..Tone::default()
+            };
+            let v: Vec<f32> = (-5..=5)
+                .map(|d| {
+                    let px = grey_at(x + d as f32 * 0.02);
+                    let shaped = shape_rolled(px, &t, Some(x), span, None, white.stops, roll);
+                    encode(
+                        Source::SCENE.curve_at(shaped, DisplayCurve::Channels, &white)[1]
+                            .clamp(0.0, 1.0),
+                    )
+                })
+                .collect();
+            let m = v.iter().sum::<f32>() / v.len() as f32;
+            (v.iter().map(|a| (a - m) * (a - m)).sum::<f32>() / v.len() as f32).sqrt()
+        };
+        for whites in [-1.0f32, -2.0] {
+            for under in [-3.0f32, -2.0, -1.5] {
+                let x = white.stops + under;
+                assert_eq!(
+                    spread(x, whites, true),
+                    spread(x, whites, false),
+                    "{whites} {under}"
+                );
+            }
+            let t = Tone {
+                whites,
+                ..Tone::default()
+            };
+            let lands = |over: f32| {
+                let px = grey_at(white.stops + over);
+                (shape_at(px, &t, None, span, None, white.stops)[1] / MID_GREY).log2() - white.stops
+            };
+            let reach = (0..=600)
+                .map(|i| i as f32 * 0.01)
+                .filter(|&over| lands(over) <= 0.0)
+                .fold(0.0f32, f32::max);
+            let mut gained = 0;
+            for over in [1.25f32, 1.5, 2.0, 3.0, 4.0] {
+                if over <= -whites + 0.15 || over >= reach - 0.15 {
+                    continue;
+                }
+                let x = white.stops + over;
+                let (rolled, alone) = (spread(x, whites, true), spread(x, whites, false));
+                eprintln!(
+                    "whites {whites}, a patch {over} over white: spread {rolled} against {alone}"
+                );
+                assert_eq!(
+                    alone, 0.0,
+                    "{whites} {over}: the white point alone clips it"
+                );
+                assert!(rolled > 1e-4, "{whites} {over}: {rolled}");
+                gained += 1;
+            }
+            assert!(gained >= 1, "{whites}: reach {reach}");
+        }
+    }
+
+    /// A merge's region as the whites and the exposure move it, the
+    /// exposure across where its top comes under white: no step.
+    #[test]
+    fn a_merge_never_steps_as_the_whites_and_the_exposure_cross_its_white() {
+        let white = DISPLAY_WHITE_STOPS;
+        let range = [white - 3.0, white + 4.0];
+        let headroom = 2.0;
+        let tone = |whites: f32| Tone {
+            highlights: -2.0,
+            whites,
+            ..Tone::default()
+        };
+        let out = |exposure: f32, whites: f32| {
+            let span = highlights_span(range, exposure, 1.0);
+            let kept = Kept::of(range, exposure, 1.0, headroom, white);
+            let g = 3.77 + exposure;
+            shape_at(grey_at(g), &tone(whites), Some(g), span, kept, white)[1]
+                .max(1e-9)
+                .log2()
+        };
+        for exposure in [-1.0f32, -0.3, 0.0, 0.6] {
+            let mut last = out(exposure, 0.0);
+            for i in 1..=5000 {
+                let w = -(i as f32) * 1e-3;
+                let o = out(exposure, w);
+                assert!(
+                    o - last < 1e-5 && last - o < 0.01,
+                    "{exposure} {w}: {last} to {o}"
+                );
+                last = o;
+            }
+        }
+        for whites in [0.0f32, -0.5, -1.0, -1.86, -2.0, -3.0] {
+            let mut last = out(-3.0, whites);
+            for i in 1..=6000 {
+                let e = -3.0 + i as f32 * 1e-3;
+                let o = out(e, whites);
+                assert!(
+                    o - last > -0.01 && o - last < 0.01,
+                    "{whites} {e}: {last} to {o}"
+                );
+                last = o;
+            }
+        }
+    }
+
+    /// The droppers read a pixel by its own luminance, as a render with
+    /// no plane does: on a flat region, where the plane reads the same,
+    /// what they read is what the render shows, with the whites down
+    /// after Highlights, Midtones, and Shadows and either alone.
+    #[test]
+    fn the_dropper_reads_what_the_render_shows_on_a_flat_region() {
+        let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        for (h, mid, sh, wh) in [
+            (-2.0f32, 0.0f32, 0.0f32, -2.0f32),
+            (-1.0, 0.0, 0.0, -1.0),
+            (0.0, 2.0, 0.0, -2.0),
+            (0.0, 0.0, 1.0, -0.5),
+            (0.0, 0.0, 0.0, -1.0),
+            (-2.0, 0.0, 0.0, 0.0),
+        ] {
+            let mut edit = Edit::default();
+            edit.light.tone = Tone {
+                highlights: h,
+                midtones: mid,
+                shadows: sh,
+                whites: wh,
+                ..Tone::default()
+            };
+            let global = Baked::global(&edit, Source::SCENE);
+            for i in 0..=48 {
+                let stops = -5.0 + i as f32 * 0.25;
+                let px = [MID_GREY * 2f32.powf(stops); 3];
+                let picked = pick(
+                    px,
+                    &global.light,
+                    &global.mixer,
+                    &global.color,
+                    &global.bw,
+                    &global.tint,
+                    &global.curves,
+                    Source::SCENE,
+                    DisplayCurve::Channels,
+                    None,
+                    FRAME_TYPICAL,
+                );
+                let planed = finish_pixel_with(
+                    px,
+                    &global,
+                    &[],
+                    0.0,
+                    None,
+                    None,
+                    Some((stops, FRAME_TYPICAL)),
+                    None,
+                    None,
+                    &m,
+                );
+                for k in 0..3 {
+                    assert!(
+                        (picked.encoded[k] - planed[k]).abs() < 1e-4,
+                        "({h}, {mid}, {sh}, {wh}) at {stops}: {picked:?} {planed:?}"
+                    );
+                }
+            }
+        }
     }
 }
 

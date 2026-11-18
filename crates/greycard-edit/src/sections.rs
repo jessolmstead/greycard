@@ -192,8 +192,12 @@ pub struct Tone {
     /// it, by a power on the luminance; nothing at or under the pivot
     /// moves. Positive clips
     /// earlier and stretches the top, negative puts the clip further
-    /// out and compresses the top towards mid grey. Global, not by
-    /// region: `white_point` in `finish.rs`. The slider runs ±2.
+    /// out and compresses the top towards mid grey; down, a roll after
+    /// it then brings what is still over display white under it, in
+    /// order, about as many stops again (`whites_roll_pull` in
+    /// `auto.rs`), touching nothing more than a tenth of a stop under
+    /// its knee. Global, not by region: `white_point` and `whites_roll`
+    /// in `finish.rs`. The slider runs ±2.
     pub whites: f32,
     /// The black point, ±0.3. Negative crushes: that fraction of mid
     /// grey goes to zero, with scene white held. Positive lifts the

@@ -722,3 +722,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§708. The profile listing held between opens](notes/708-the-profile-listing-held-between-opens.md) (2026-11-17)
 - [§709. A focus stack read in passes](notes/709-a-focus-stack-read-in-passes.md) (2026-11-17)
 - [§710. A reset on each section's header](notes/710-a-reset-on-each-sections-header.md) (2026-11-17)
+- [§711. Whites down reaches over white](notes/711-whites-down-reaches-over-white.md) (2026-11-17)

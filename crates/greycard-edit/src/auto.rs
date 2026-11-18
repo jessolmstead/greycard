@@ -105,6 +105,89 @@ const BLACKS_LIMIT: f32 = 0.3;
 /// foot hangs from the top by (`HIGHLIGHTS_SPAN`).
 pub const WHITES_PIVOT: (f32, f32) = (-2.5, 0.0);
 pub const SPAN: (f32, f32) = (1.6, 3.5);
+/// Whites down's roll over display white (issue 132), shared by the
+/// finish (`whites_roll`), the shader, and Auto's model: the slope over
+/// its knee, how soft its two corners are, in stops either side, and the
+/// ease its reach comes in with.
+pub const WHITES_ROLL_SLOPE: f32 = 0.2;
+pub const WHITES_ROLL_SOFT: f32 = 0.1;
+pub const WHITES_ROLL_EASE: f32 = 0.1;
+
+/// The stops Whites down's roll takes off a channel `t` stops from
+/// display white, after the white point, with the whites `down` stops
+/// under zero (held as the finish holds it).
+///
+/// A light `reach` stops over white lands on it, within a fiftieth of a
+/// stop (the rounded corner's), where the reach is
+/// `down` eased in ([`whites_roll_reach`]), so it starts with no slope
+/// at zero. Under white the
+/// roll makes room by a knee `s / (1 - s)` of the reach under white
+/// ([`WHITES_ROLL_SLOPE`] `s`), over which the slope is `s` up to the
+/// reach; past it the slope is one again and the pull its most, the
+/// reach, so a light the roll cannot bring under white stays where the
+/// white point put it, less the reach, over white. Both corners are
+/// rounded over [`WHITES_ROLL_SOFT`] either side, by a parabola, so the
+/// pull and its slope are continuous in the channel and in `down`.
+///
+/// Zero at `down` zero and for any channel more than the softness under
+/// the knee; never more than the reach, so it falls to nothing with
+/// `down`; its slope in `t` between zero and `1 - s`, so the roll never
+/// turns a light back; and never less as `down` grows: the knee goes
+/// down and the reach up.
+pub fn whites_roll_pull(t: f32, down: f32) -> f32 {
+    if down <= 0.0 {
+        return 0.0;
+    }
+    let (s, w) = (WHITES_ROLL_SLOPE, WHITES_ROLL_SOFT);
+    let reach = whites_roll_reach(down);
+    let knee = whites_roll_knee(down);
+    // A ramp from zero with a slope of one, its corner at `w`, rounded.
+    let ramp = |z: f32| {
+        if z <= 0.0 {
+            0.0
+        } else if z < 2.0 * w {
+            z * z / (4.0 * w)
+        } else {
+            z - w
+        }
+    };
+    (1.0 - s) * (ramp(t - knee + w) - ramp(t - reach + w))
+}
+
+/// The stops over display white Whites `down` stops under zero brings
+/// to white by its roll: `down` eased in, `down^3 / (down^2 + e^2)` with
+/// `e` [`WHITES_ROLL_EASE`], which is `down` within a fiftieth of a stop
+/// from a half and has neither value nor slope at zero.
+pub fn whites_roll_reach(down: f32) -> f32 {
+    let e = WHITES_ROLL_EASE;
+    down * down * down / (down * down + e * e)
+}
+
+/// Where the roll's slope starts, in stops from display white: the
+/// room the reach needs at the roll's slope, under white.
+pub fn whites_roll_knee(down: f32) -> f32 {
+    let s = WHITES_ROLL_SLOPE;
+    -s * whites_roll_reach(down) / (1.0 - s)
+}
+
+/// Where the whites `w` puts a grey `x` stops over mid grey (after the
+/// exposure), in stops from display white: the finish's white point
+/// about a pivot `f` (its power past the first stop, where it is exact)
+/// and, down, its roll over white ([`whites_roll_pull`]).
+pub fn whites_lands(x: f32, w: f32, f: f32) -> f32 {
+    let reach = SCENE_WHITE - f;
+    let y = if x > f {
+        f + (x - f) * reach / (reach - w)
+    } else {
+        x
+    };
+    let t = y - SCENE_WHITE;
+    t - whites_roll_pull(t, -w)
+}
+
+/// The least whites the finish acts on (`WHITES_RANGE` there).
+pub const WHITES_FLOOR: f32 = -3.5;
+
 /// The range, in stops from the 0.5th to the 99.5th percentile, over
 /// which the pair comes in from nothing to whole when it stretches:
 /// a grey card has no ends to put at white and black.
@@ -508,6 +591,13 @@ pub fn auto_light_kept(h: &Histogram, baseline: f32, headroom: Option<Headroom>)
     // that takes `top - f` to `(top - f) * reach / (reach - w)`. A
     // merge's top as Highlights pulls it; the pivot on the span as the
     // frame has it, as the finish keeps it.
+    // The white point alone: down, the roll over white after it then
+    // takes the top a little further under white (`whites_lands`) and
+    // brings the lights over it under white too. Aimed through the roll
+    // a tenth under white, the top sat in its band, where a warm
+    // subject's brightest channel came within a hundredth of a stop of
+    // white and showed flat white; aimed under the band, a merge's Auto
+    // took a stop off its exposure.
     let top = pulled(hi + exposure, exposure, highlights) + highlights * HIGHLIGHTS_AT_TOP;
     let median = q(0.5) + exposure;
     let p99 = q(0.99) + exposure;
@@ -669,6 +759,93 @@ mod tests {
             h.share_over(SCENE_WHITE - a.exposure - a.whites) <= 1e-6,
             "{a:?}"
         );
+    }
+
+    /// Whites down is set by the white point alone, as 0.12 set it: the
+    /// top a tenth under white by the power. The roll after it then takes
+    /// the top further under white, never over, on frames whose top is
+    /// from half a stop to three over white: by 0.02, 0.10, 0.28, and 0.31
+    /// stops at Whites -0.45, -0.92, -1.84, and -2, so the top lands 0.12
+    /// to 0.42 under white. Aiming through the roll was tried and left a
+    /// bright subject in the roll's band at flat white (`auto_light`).
+    #[test]
+    fn whites_down_lands_the_top_through_the_roll() {
+        for (over, lands) in [
+            (0.5f32, -0.1248),
+            (1.0, -0.2022),
+            (2.0, -0.3878),
+            (3.0, -0.4221),
+        ] {
+            let mut h = spread(-5.0, SCENE_WHITE - 0.8, 9_000);
+            for i in 0..1_000 {
+                let at = SCENE_WHITE - 0.8 + (0.8 + over) * (i as f32 + 0.5) / 1_000.0;
+                h.add(MID_GREY * 2f32.powf(at));
+            }
+            let a = auto_light(&h, 0.8);
+            assert!(a.whites < 0.0, "{over}: {a:?}");
+            let (median, p99) = (h.quantile(0.5) + a.exposure, h.quantile(0.99) + a.exposure);
+            let f =
+                (p99 - (p99 - median).clamp(SPAN.0, SPAN.1)).clamp(WHITES_PIVOT.0, WHITES_PIVOT.1);
+            let top = h.quantile(WHITES_AT) + a.exposure + a.highlights * HIGHLIGHTS_AT_TOP;
+            let alone = top - SCENE_WHITE
+                + (top - f) * (SCENE_WHITE - f) / (SCENE_WHITE - f - a.whites)
+                - (top - f);
+            let rolled = whites_lands(top, a.whites, f);
+            assert!(
+                alone <= -WHITE_MARGIN + 0.02 && alone > -WHITE_MARGIN - 0.1,
+                "{over}: {alone} {a:?}"
+            );
+            assert!(rolled <= alone, "{over}: {rolled} {alone}");
+            assert!(
+                (rolled - lands).abs() < 0.003,
+                "{over}: {rolled} for {lands}"
+            );
+        }
+    }
+
+    /// The roll: nothing at zero and under its knee's band; the reach
+    /// lands on white; the slope in the channel between `s` and one;
+    /// never less as the whites goes down; never more than the reach.
+    #[test]
+    fn the_whites_roll_holds_its_shape() {
+        let (s, w) = (WHITES_ROLL_SLOPE, WHITES_ROLL_SOFT);
+        for i in -300..=600 {
+            assert_eq!(whites_roll_pull(i as f32 * 0.01, 0.0), 0.0);
+        }
+        // The reach, eased in under a tenth.
+        for (down, reach) in [(0.1f32, 0.05), (0.25, 0.2155), (1.0, 0.9901)] {
+            let r = whites_roll_reach(down);
+            assert!((r - reach).abs() < 1e-4, "{down}: {r}");
+        }
+        for k in 1..=350 {
+            let down = k as f32 * 0.01;
+            let reach = whites_roll_reach(down);
+            let knee = whites_roll_knee(down);
+            assert_eq!(whites_roll_pull(knee - w - 1e-4, down), 0.0, "{down}");
+            assert!(whites_roll_pull(knee - w + 1e-3, down) > 0.0, "{down}");
+            let mut last = whites_roll_pull(-4.0, down);
+            for i in 1..=1000 {
+                let t = -4.0 + i as f32 * 0.01;
+                let p = whites_roll_pull(t, down);
+                let slope = (p - last) / 0.01;
+                assert!(
+                    slope >= -1e-3 && slope <= 1.0 - s + 1e-3,
+                    "{down} {t}: {slope}"
+                );
+                assert!(p <= reach + 1e-5, "{down} {t}: {p} past {reach}");
+                assert!(p >= whites_roll_pull(t, down - 0.01) - 1e-6, "{down} {t}");
+                last = p;
+            }
+            // Under white to the reach's corner, a fiftieth of a stop
+            // over it at the reach.
+            let landed = |t: f32| t - whites_roll_pull(t, down);
+            assert!(landed(reach - w) <= 1e-5, "{down}: {}", landed(reach - w));
+            assert!(
+                landed(reach) <= (1.0 - s) * w / 4.0 + 1e-5,
+                "{down}: {}",
+                landed(reach)
+            );
+        }
     }
 
     #[test]

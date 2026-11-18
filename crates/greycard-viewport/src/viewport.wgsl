@@ -1257,6 +1257,46 @@ fn white_point(c: vec3<f32>, whites: f32, pivot: f32) -> vec3<f32> {
     return c * exp2(u * (power - 1.0));
 }
 
+// Whites down's roll over display white, as `whites_roll` in
+// `finish.rs` and `whites_roll_pull` in Auto: after the white point,
+// what it leaves over white comes under it in order, by a pull on the
+// brightest channel's stops from display white: nothing more than the
+// softness under the knee, a slope of `WHITES_ROLL.x` over it to the
+// reach, which lands on white, and one again past it, both corners
+// rounded. The knee is under white, the room the lights come into, so
+// the band under white darkens on any frame. One gain on all three
+// channels, so hue holds.
+const WHITES_ROLL: vec3<f32> = vec3<f32>(0.2, 0.1, 0.1);
+
+fn roll_ramp(z: f32, w: f32) -> f32 {
+    if (z <= 0.0) {
+        return 0.0;
+    }
+    if (z < 2.0 * w) {
+        return z * z / (4.0 * w);
+    }
+    return z - w;
+}
+
+fn whites_roll(c: vec3<f32>, whites: f32) -> vec3<f32> {
+    if (whites >= 0.0) {
+        return c;
+    }
+    let s = WHITES_ROLL.x;
+    let w = WHITES_ROLL.y;
+    let down = -max(whites, WHITES_RANGE.x);
+    let e = WHITES_ROLL.z;
+    let reach = down * down * down / (down * down + e * e);
+    let knee = -s * reach / (1.0 - s);
+    let n = max(c.r, max(c.g, c.b));
+    let t = log2(max(n, 1e-12) / MID_GREY) - p.white.y;
+    let pull = (1.0 - s) * (roll_ramp(t - knee + w, w) - roll_ramp(t - reach + w, w));
+    if (pull == 0.0) {
+        return c;
+    }
+    return c * exp2(-pull);
+}
+
 // The edit's shape of the scene before the curve, as `shape` in
 // `finish.rs`: contrast as a power about mid grey per channel, before
 // the shoulder, so the mid-tone slope changes and the top still rolls
@@ -1266,7 +1306,7 @@ fn white_point(c: vec3<f32>, whites: f32, pivot: f32) -> vec3<f32> {
 // shadows first, midtones on where shadows put the region, and
 // highlights on where midtones put it, so the three never turn the
 // curve back; then the white point, pivoted at
-// the foot of the frame's span; then the
+// the foot of the frame's span, and down, its roll over white; then the
 // black point with scene white held.
 fn shape(x: vec3<f32>, look: Look, g: f32, has_guide: bool, span: vec2<f32>, kept: vec4<f32>) -> vec3<f32> {
     let c = MID_GREY * pow(max(x, vec3<f32>(0.0)) / MID_GREY, vec3<f32>(look.contrast));
@@ -1289,7 +1329,7 @@ fn shape(x: vec3<f32>, look: Look, g: f32, has_guide: bool, span: vec2<f32>, kep
     }
     let shifted = read + look.highlights * highlights_weight(read, ramp_span);
     let pivot = clamp(span.x, WHITES_PIVOT.x, WHITES_PIVOT.y);
-    return black_point(white_point(c * exp2(shifted - l), look.whites, pivot), look.blacks);
+    return black_point(whites_roll(white_point(c * exp2(shifted - l), look.whites, pivot), look.whites), look.blacks);
 }
 
 // The blacks, as `black_point` in `finish.rs`: a crush is an offset

@@ -111,6 +111,9 @@ design note behind it.
 
 ### Develop
 
+- Whites down now also brings lights over white back under it, so it recovers blown highlights as well as flattening
+  (issue 132,
+  [§711](https://github.com/jessolmstead/greycard/blob/master/docs/notes/711-whites-down-reaches-over-white.md)).
 - Each section's header has a reset arrow that puts that section back to its defaults as one step, on Develop, Crop, and a mask's sections
   ([§710](https://github.com/jessolmstead/greycard/blob/master/docs/notes/710-a-reset-on-each-sections-header.md)).
 - Lightroom's older `.lrtemplate` presets import as its `.xmp` ones do, from
