@@ -67,7 +67,7 @@ editor:
 ## Before you start
 
 - **Raw files.** Tested with Canon, Fujifilm GFX and X-Trans, Sony,
-  Panasonic and Nikon raws. X-Trans raws develop without the learned
+  Panasonic, Nikon, and Olympus and OM System raws. X-Trans raws develop without the learned
   denoiser for now ([Fujifilm X-Trans](guide/develop.md#fujifilm-x-trans)).
   Nikon's High Efficiency raws (TicoRAW) don't open yet; only a build
   from source with the `nikon-he` feature reads them

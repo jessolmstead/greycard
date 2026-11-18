@@ -61,8 +61,8 @@ complete, battle-tested editor.
 
 It opens what [rawler](https://github.com/dnglab/dnglab) decodes
 ([camera list](https://github.com/dnglab/dnglab/blob/main/SUPPORTED_CAMERAS.md)),
-and I test on Canon, Fujifilm GFX and X-Trans, Nikon, Sony and
-Panasonic raws.
+and it's tested on Canon, Fujifilm GFX and X-Trans, Nikon, Sony,
+Panasonic, and Olympus and OM System raws.
 
 ## Not there yet
 

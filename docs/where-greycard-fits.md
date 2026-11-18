@@ -131,8 +131,8 @@ who wants the camera's own rendering as a starting point rather than
 Adobe's. People who print, since the display path is color managed
 with soft proofing. Developers who want a raw engine as a library
 with no interface toolkit, tone-mapping choice or edit schema in it.
-Tested with Canon, Fujifilm GFX and X-Trans, Sony, Panasonic and
-Nikon bodies.
+Tested with Canon, Fujifilm GFX and X-Trans, Sony, Panasonic, Nikon,
+and Olympus and OM System bodies.
 
 Not yet for anyone whose camera rawler does not decode; support
 goes upstream to rawler, not into a fork. A phone app, cloud sync and a preset marketplace are not
