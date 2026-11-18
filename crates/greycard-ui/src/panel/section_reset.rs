@@ -738,12 +738,20 @@ mod tests {
         let mut expect = edit.clone();
         expect.grading = Default::default();
         resets_through_the_window(&app, &state, "COLOR GRADING", "grading", &expect);
-        let buttons = crate::testing::buttons(&app, "Reset");
-        let (header, _) = header_reset(&app, "COLOR GRADING");
-        assert!(
-            buttons.iter().any(|(at, _)| at.y > header.y + 20.0),
-            "the section's own Reset is still in its body"
-        );
+        // The panel builds only what is in its view, and what sits
+        // above a section depends on the machine, so the button is
+        // looked for by its id down the whole panel, never by where
+        // it falls. (Its label is its text's, so it is no button named
+        // "Reset" to a screen reader's search.)
+        use i_slint_backend_testing::ElementHandle;
+        let (_, end) = crate::testing::panel_scroll_and_end(&app);
+        let own = (0..=(end / 200.0).ceil() as usize).find_map(|step| {
+            app.set_panel_scroll(-(step as f32 * 200.0).min(end));
+            crate::testing::settle(&app);
+            ElementHandle::find_by_element_id(&app, "GradingSection::own-reset").next()
+        });
+        let own = own.expect("the section's own Reset is still in its body");
+        assert!(own.size().width > 0.0 && own.size().height > 0.0);
     }
 
     /// The Crop tab's CROP: the crop, its aspect and its Portrait back,
