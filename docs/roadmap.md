@@ -1578,6 +1578,10 @@ release when the wait clears.
 
 #### Upstream
 
+- [ ] A merged DNG's embedded preview past 1024 px: rawler's
+      `DngWriter::preview` shrinks anything wider to fit 1024x768, by
+      nearest neighbor; wants a size in dnglab's writer, then a pin
+      bump (`merge::PREVIEW_SIDE`)
 - [ ] Drop the rawler `[patch.crates-io]`. Waits on a rawler release
       carrying dnglab/dnglab#896 (the Deflate float writer) and #835
       (Nikon HE); the pin is the fork's float-deflate-pin, upstream

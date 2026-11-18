@@ -992,7 +992,7 @@ pub fn hdr_of(
             geometry: Geometry::Bracket(registration),
         }),
     };
-    let preview = merge::preview(&image, &r.white_balance, 1024)?;
+    let preview = merge::preview(&image, &r.white_balance, merge::PREVIEW_SIDE)?;
     let software = concat!("greycard ", env!("CARGO_PKG_VERSION"));
     let dng = LinearDngOptions {
         metadata: Some(&ref_meta),

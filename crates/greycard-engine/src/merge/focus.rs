@@ -252,7 +252,11 @@ pub fn write_dng<W: std::io::Write + std::io::Seek>(
     stacked: &Stacked,
     uncompressed: bool,
 ) -> Result<()> {
-    let preview = greycard_core::merge::preview(&stacked.merged, &stacked.balance, 1024)?;
+    let preview = greycard_core::merge::preview(
+        &stacked.merged,
+        &stacked.balance,
+        greycard_core::merge::PREVIEW_SIDE,
+    )?;
     let options = LinearDngOptions {
         compression: if uncompressed {
             Compression::Uncompressed
@@ -401,7 +405,9 @@ mod tests {
         let (merged, by_hand) = stack::stack_camera(&images, &stack::Options::default()).unwrap();
         assert_eq!(by_hand.reference, report.stack.reference);
         let (frame, metadata, balance) = &sources[by_hand.reference];
-        let preview = greycard_core::merge::preview(&merged, balance, 1024).unwrap();
+        let preview =
+            greycard_core::merge::preview(&merged, balance, greycard_core::merge::PREVIEW_SIDE)
+                .unwrap();
         let mut want = std::io::Cursor::new(Vec::new());
         write_linear_dng(
             &mut want,

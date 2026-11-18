@@ -1210,6 +1210,75 @@ fn stands_for(st: &State, app: &App, cell: usize) -> Option<(u32, u32)> {
     Some((fw as u32, fh as u32))
 }
 
+/// The size the camera's picture of `cell` stands for while it stands
+/// in for a develop, in that picture's own orientation: its own size
+/// grown by the one scale that makes it the develop's footprint, once
+/// the worker's open has said the frame's size. A camera JPEG may be
+/// far smaller than the raw (our merges write one of 1024 px, some
+/// cameras 1620), and a fit never enlarges, so drawn at its own size it
+/// sat small in the view and grew when the develop landed; drawn as the
+/// develop's size it fits as the develop will, and 1:1 is the
+/// develop's. A picture of the develop's shape, either way up, takes
+/// its size, cut as the picture is; one of another shape is the largest
+/// of its shape inside the develop, scaled by `min(dw / sw, dh / sh)`,
+/// so a full-size one stays its own size. None for the edit's picture
+/// (`stands_for`), in Cull, where the camera's picture is the picture,
+/// and before the open has said.
+fn camera_stands_for(st: &State, cell: usize) -> Option<(u32, u32)> {
+    if st.culling.cull.is_some() {
+        return None;
+    }
+    // The picture the loupe draws, as `draw_cull` takes it.
+    let loupe = st.culling.cull.as_ref().or(st.culling.hold.as_ref())?;
+    let preview = loupe.cache.best(cell)?;
+    if preview.edited {
+        return None;
+    }
+    let (w, h) = opened_size(st, cell)??;
+    let (sw, sh) = preview.source;
+    if w == 0 || h == 0 || sw == 0 || sh == 0 {
+        return None;
+    }
+    let (fw, fh) = if preview.cut || preview.companion {
+        crate::edited_pictures::camera_known(st.path_of(cell)).map_or((1.0, 1.0), |c| {
+            let [_, _, fw, fh] = c.shown();
+            (f64::from(fw), f64::from(fh))
+        })
+    } else {
+        (1.0, 1.0)
+    };
+    // The develop, cut as the picture is, lying the way nearer the
+    // picture's shape. The cut's fractions lie as the develop does, so
+    // they turn with it.
+    let seen = f64::from(sw) / f64::from(sh);
+    let off = |(dw, dh): (f64, f64)| (dw / dh / seen).ln().abs();
+    let (dw, dh) = [(w, h, fw, fh), (h, w, fh, fw)]
+        .map(|(dw, dh, fw, fh)| (f64::from(dw) * fw, f64::from(dh) * fh))
+        .into_iter()
+        .min_by(|a, b| off(*a).total_cmp(&off(*b)))?;
+    // Of its shape: the develop's own size, exactly its footprint.
+    if (dw / dh - seen).abs() <= 0.01 * seen {
+        return Some((dw.round().max(1.0) as u32, dh.round().max(1.0) as u32));
+    }
+    // Of another shape (a camera set to 1:1, 4:3, or 16:9 on a 3:2
+    // sensor), the picture is the largest of its shape inside the
+    // develop: scaled until it meets the develop's nearer side, so a
+    // full-size one stays its own size.
+    let k = (dw / f64::from(sw)).min(dh / f64::from(sh));
+    Some((
+        (f64::from(sw) * k).round().max(1.0) as u32,
+        (f64::from(sh) * k).round().max(1.0) as u32,
+    ))
+}
+
+/// The size the picture of `cell` standing in for its develop is
+/// drawn as: the frame's for the edit's picture, the develop's for
+/// the camera's, once the open has said it; None while it is drawn as
+/// its own pixels.
+fn drawn_as(st: &State, app: &App, cell: usize) -> Option<(u32, u32)> {
+    stands_for(st, app, cell).or_else(|| camera_stands_for(st, cell))
+}
+
 /// The edit's picture of `cell` standing in, which is drawn as the
 /// frame it is a copy of: never in Cull, where the copy is the
 /// picture, nor for a frame standing in from its row, which has no
@@ -1242,24 +1311,42 @@ fn opened_size(st: &State, cell: usize) -> Option<Option<(u32, u32)>> {
 /// would stand at its own 2048 px and grow when the size came. The
 /// picture on screen stays meanwhile, as it does for a decode.
 fn waits_for_size(st: &State, app: &App, cell: usize) -> bool {
-    let Some(preview) = edit_copy(st, cell) else {
-        return false;
-    };
     if opened_size(st, cell).is_some() {
         return false;
     }
-    // A zoom other than the fit is let go as the picture goes up,
-    // unless it stands (`placeholder_arrived`).
-    if st.launch.zoom_stands && st.develop.zoom > 0.0 {
-        return true;
-    }
+    let (w, h) = if let Some(preview) = edit_copy(st, cell) {
+        // A zoom other than the fit is let go as the picture goes up,
+        // unless it stands (`placeholder_arrived`).
+        if st.launch.zoom_stands && st.develop.zoom > 0.0 {
+            return true;
+        }
+        (preview.width, preview.height)
+    } else {
+        // The camera's picture read from a raw waits as the edit's
+        // does (`camera_stands_for`); a local preview, made because
+        // the file is out of reach or slow, goes up at once.
+        let Some(preview) = st.culling.hold.as_ref().and_then(|h| h.cache.best(cell)) else {
+            return false;
+        };
+        let from_file = matches!(
+            preview.origin(),
+            cull::Origin::Camera | cull::Origin::Companion
+        );
+        if st.culling.cull.is_some()
+            || !from_file
+            || !greycard_core::decode::is_raw_path(st.path_of(cell))
+        {
+            return false;
+        }
+        preview.source
+    };
     let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, cell, app, true);
     let (cw, ch) = Geometry {
         turns,
         flip,
         ..Geometry::default()
     }
-    .plane_size(preview.width as f32, preview.height as f32);
+    .plane_size(w as f32, h as f32);
     let view = (
         app.get_view_width().max(1) as u32,
         app.get_view_height().max(1) as u32,
@@ -1272,13 +1359,19 @@ fn waits_for_size(st: &State, app: &App, cell: usize) -> bool {
     (room.0 as f32 / cw).min(room.1 as f32 / ch) > 1.0
 }
 
-/// The worker's open has said the selected frame's size: the edit's
-/// picture waiting on it goes up.
+/// The worker's open has said the selected frame's size: the picture
+/// waiting on it goes up, or the one already up is drawn as the size
+/// from now on, with a zoom on it kept where it is on screen.
 pub(crate) fn size_opened(st: &mut State, app: &App) {
     let Some(cell) = st.current else {
         return;
     };
-    if edit_copy(st, cell).is_some()
+    if standing_in(st) == Some(cell) {
+        resize_standing(st, app, cell);
+        return;
+    }
+    let waiting = edit_copy(st, cell).is_some() || camera_stands_for(st, cell).is_some();
+    if waiting
         && st
             .culling
             .placeholder
@@ -1287,6 +1380,229 @@ pub(crate) fn size_opened(st: &mut State, app: &App) {
     {
         placeholder_arrived(st, app, cell);
     }
+}
+
+/// The picture of `cell` on screen as it stands in, as the view takes
+/// it (`draw_cull`'s): the size it is drawn as, in its own orientation
+/// (its own, or the frame's or the develop's for a stand-in,
+/// `drawn_as`), and that size turned as it is drawn. `panel`: the
+/// frame's turns are the panel's, as for the selected frame outside
+/// Cull.
+fn standing_plane(
+    st: &State,
+    app: &App,
+    cell: usize,
+    panel: bool,
+) -> Option<((u32, u32), (f32, f32))> {
+    let cull = st.culling.cull.as_ref().or(st.culling.hold.as_ref())?;
+    let preview = cull.cache.best(cell)?;
+    let source = drawn_as(st, app, cell).unwrap_or(preview.source);
+    let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, cell, app, panel);
+    let full = Geometry {
+        turns,
+        flip,
+        ..Geometry::default()
+    }
+    .plane_size(source.0 as f32, source.1 as f32);
+    Some((source, full))
+}
+
+/// The loupe's current frame `c` laid out for the view: its picture's
+/// size as drawn (`standing_plane`) is the view's image size, and a
+/// new frame, or a fit view, is centered; a zoomed view of the same
+/// frame keeps its place. The size drawn and turned, for its tile
+/// (`tile_view`) and for the other tiles to follow.
+fn lay_out_current(
+    st: &mut State,
+    app: &App,
+    c: usize,
+    panel: bool,
+) -> Option<((u32, u32), (f32, f32))> {
+    let (source, full) = standing_plane(st, app, c, panel)?;
+    let size = (full.0.round() as u32, full.1.round() as u32);
+    if size != st.develop.image_size {
+        st.develop.image_size = size;
+        st.develop.center = (full.0 / 2.0, full.1 / 2.0);
+    }
+    Some((source, full))
+}
+
+/// A loupe tile's view of the GPU's `copy` of a picture drawn as
+/// `drawn` (its own size, or the frame's or the develop's for a
+/// stand-in) under `geometry`'s quarter turns and mirror, in `room`:
+/// at `zoom` display pixels per drawn pixel, or for 0 the fit, which
+/// never enlarges, about `center` in drawn pixels. The zoom and the
+/// center are in the drawn picture's pixels, so 1:1 means 1:1 whichever
+/// copy is on the GPU; the shader works in the copy's, so the zoom
+/// grows by the copy's scale and the center shrinks by it. With the
+/// drawn size turned.
+fn tile_view(
+    copy: (u32, u32),
+    drawn: (u32, u32),
+    geometry: &Geometry,
+    room: (u32, u32),
+    zoom: f32,
+    center: (f32, f32),
+    canvas: [f32; 3],
+) -> (View, (f32, f32)) {
+    let (tw, th) = (copy.0 as f32, copy.1 as f32);
+    let (fw, fh) = (drawn.0 as f32, drawn.1 as f32);
+    let scale = tw / fw;
+    let full = geometry.plane_size(fw, fh);
+    // The camera's picture comes cut to the camera's frame
+    // (`thumbs::cut_to_camera`), so it is drawn whole.
+    let frame = geometry.frame(tw, th, None);
+    let zoom = if zoom > 0.0 {
+        zoom
+    } else {
+        (room.0 as f32 / full.0)
+            .min(room.1 as f32 / full.1)
+            .min(1.0)
+    };
+    let view = View {
+        zoom: zoom / scale,
+        center: (center.0 * scale, center.1 * scale),
+        matrix: geometry.matrix(),
+        plane: geometry.plane_size(tw, th),
+        frame_origin: frame.origin,
+        frame_size: frame.size,
+        canvas,
+        ..View::blank()
+    };
+    (view, full)
+}
+
+/// The loupe's tiles planned on the copies they are drawn from: at a
+/// fit the full-size copies, which a frame needs only while it is
+/// looked at 1:1 (`ask_whole`), and their textures are let go first,
+/// so each tile is planned on the screen-size copy left in their place.
+fn plan_tiles(
+    st: &mut State,
+    app: &App,
+    c: usize,
+    current: Option<((u32, u32), (f32, f32))>,
+    rows: &[usize],
+    rects: &[(u32, u32, u32, u32)],
+    canvas: [f32; 3],
+) -> Vec<Option<TileView>> {
+    if st.develop.zoom <= 0.0
+        && let Some(cull) = st.culling.cull.as_mut().or(st.culling.hold.as_mut())
+    {
+        let dropped = cull.cache.drop_full();
+        cull.full_said = None;
+        cull.let_go(dropped);
+    }
+    tile_views(st, app, c, current, rows, rects, canvas)
+}
+
+/// A tile's view, and the size its line names (`tile_views`).
+type TileView = (View, (u32, u32));
+
+/// The views of the loupe's tiles, one a row of `rows` in `rects`, for
+/// the pictures in hand (None for a tile with none): each fitted or at
+/// the zoom, turned as its frame is, the current frame `c` drawn as its
+/// layout (`current`, `lay_out_current`) took it, and the others
+/// following its center as a fraction of the frame, so a 1:1 of four
+/// shows the same corner of each. With each drawn size turned, and the
+/// tile's turns.
+fn tile_views(
+    st: &State,
+    app: &App,
+    c: usize,
+    current: Option<((u32, u32), (f32, f32))>,
+    rows: &[usize],
+    rects: &[(u32, u32, u32, u32)],
+    canvas: [f32; 3],
+) -> Vec<Option<TileView>> {
+    let holding = st.culling.cull.is_none();
+    // The camera's picture is named by its own size, though it is drawn
+    // as the develop's; the edit's picture by the frame's.
+    let edit_stands = stands_for(st, app, c).is_some();
+    let Some(cull) = st.culling.cull.as_ref().or(st.culling.hold.as_ref()) else {
+        return vec![None; rows.len()];
+    };
+    rows.iter()
+        .zip(rects)
+        .map(|(&row, rect)| {
+            let file = st.views.shown[row];
+            let preview = cull.cache.best(file)?;
+            // The panel holds the selected frame's edit and nothing
+            // else's, so only that frame's turns are read off it.
+            let panel = holding && Some(file) == st.current;
+            let (turns, flip) =
+                thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, file, app, panel);
+            let geometry = Geometry {
+                turns,
+                flip,
+                ..Geometry::default()
+            };
+            // The copy's own size, which the view is in whatever the
+            // GPU holds of it (`Renderer::encoded_texture` reduces one
+            // past the device's textures, and the tile says the size it
+            // stands for).
+            let drawn = match current {
+                Some((source, _)) if file == c => source,
+                _ => preview.source,
+            };
+            let full = geometry.plane_size(drawn.0 as f32, drawn.1 as f32);
+            // One frame alone fits inside the mat, as the develop's does
+            // (`effective_zoom`): the camera's picture standing in for
+            // it must not jump when the develop lands.
+            let room = if st.develop.mat && rows.len() <= 1 {
+                crate::zoom::matted((rect.2, rect.3))
+            } else {
+                (rect.2, rect.3)
+            };
+            let center = match current {
+                Some((_, cur)) if file != c => (
+                    st.develop.center.0 / cur.0.max(1.0) * full.0,
+                    st.develop.center.1 / cur.1.max(1.0) * full.1,
+                ),
+                _ => st.develop.center,
+            };
+            let (view, full) = tile_view(
+                (preview.width, preview.height),
+                drawn,
+                &geometry,
+                room,
+                st.develop.zoom,
+                center,
+                canvas,
+            );
+            // The size as shown, so the line follows the frame's turn
+            // as the picture does.
+            let named = if file == c && edit_stands {
+                full
+            } else {
+                geometry.plane_size(preview.source.0 as f32, preview.source.1 as f32)
+            };
+            Some((view, (named.0.round() as u32, named.1.round() as u32)))
+        })
+        .collect()
+}
+
+/// The picture standing in for `cell` was up in its own pixels when
+/// the open said the frame's size: a zoom on it is taken into the new
+/// units, so the next draw neither re-centers it nor moves it. A named
+/// level stays that level, now of the develop's pixels, as it lands
+/// anyway (§697); a free zoom keeps its scale on screen.
+fn resize_standing(st: &mut State, app: &App, cell: usize) {
+    let Some((_, full)) = standing_plane(st, app, cell, true) else {
+        return;
+    };
+    let size = (full.0.round() as u32, full.1.round() as u32);
+    let (iw, ih) = st.develop.image_size;
+    if size == (iw, ih) || iw == 0 || ih == 0 {
+        return;
+    }
+    let (rx, ry) = (full.0 / iw as f32, full.1 / ih as f32);
+    let (cx, cy) = st.develop.center;
+    st.develop.center = (cx * rx, cy * ry);
+    if st.develop.zoom > 0.0 && st.develop.zoom_free {
+        st.develop.zoom /= rx;
+    }
+    st.develop.image_size = size;
+    app.window().request_redraw();
 }
 
 /// What the camera's picture is, in the culling loupe's words.
@@ -1627,7 +1943,12 @@ pub(crate) fn loupe_focus_center(st: &State, app: &App) -> Option<(f32, f32)> {
     // camera JPEG beside the raw shot at 16:9, 1:1, or 4:3 while the
     // point is of the raw's 3:2. Within 1%, as the reader holds a
     // decode's crop to the maker's picture.
-    let (sw, sh) = (preview.source.0 as f32, preview.source.1 as f32);
+    // In the develop's pixels where the picture is drawn as the
+    // develop's size (`camera_stands_for`).
+    let source = camera_stands_for(st, c)
+        .filter(|_| holding)
+        .unwrap_or(preview.source);
+    let (sw, sh) = (source.0 as f32, source.1 as f32);
     let seen = sw / sh;
     let same =
         shape.is_finite() && seen.is_finite() && (shape - seen).abs() <= 0.01 * shape.max(seen);
@@ -1707,13 +2028,32 @@ fn draw_cull(st: &mut State, app: &App, state: &Rc<Shared>) {
         Some(file) if holding => file,
         _ => selected,
     };
-    // The panel holds the selected frame's edit and nothing else's,
-    // so only that frame's turns are read off it.
-    let from_panel = |file: usize| holding && Some(file) == st.current;
     // `--cull-develop` is about to leave: no capture of this picture.
     let leave_next = st.launch.cull_develop;
-    // The edit's picture standing in is drawn as the frame it stands for.
-    let stand_in = stands_for(st, app, c);
+    // The picture standing in is drawn as the frame it stands for: the
+    // edit's as its frame, the camera's as the develop's size. The
+    // current frame's picture, which the others' centers follow.
+    let current = lay_out_current(st, app, c, holding && Some(c) == st.current);
+    let Some(rows) = st
+        .culling
+        .cull
+        .as_ref()
+        .or(st.culling.hold.as_ref())
+        .map(|cull| {
+            if holding {
+                cull::row_of_shown(&st.views.shown, c).into_iter().collect()
+            } else {
+                cull.rows(&st.views.shown)
+            }
+        })
+    else {
+        return;
+    };
+    let rects = cull::tile_rects(vw, vh, rows.len().max(1));
+    if st.develop.renderer.is_none() {
+        return;
+    }
+    let planned = plan_tiles(st, app, c, current, &rows, &rects, canvas);
     let Some(cull) = st.culling.cull.as_mut().or(st.culling.hold.as_mut()) else {
         return;
     };
@@ -1727,46 +2067,11 @@ fn draw_cull(st: &mut State, app: &App, state: &Rc<Shared>) {
         app,
         renderer,
     );
-    let rows = if holding {
-        cull::row_of_shown(&st.views.shown, c).into_iter().collect()
-    } else {
-        cull.rows(&st.views.shown)
-    };
-    let rects = cull::tile_rects(vw, vh, rows.len().max(1));
-    // The current frame's picture, which the others' centers follow.
-    let current_full = cull.cache.best(c).map(|p| {
-        let source = stand_in.unwrap_or(p.source);
-        let (turns, flip) =
-            thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, c, app, from_panel(c));
-        Geometry {
-            turns,
-            flip,
-            ..Geometry::default()
-        }
-        .plane_size(source.0 as f32, source.1 as f32)
-    });
-    // A new frame, or a fit view, is centered; a zoomed view of the
-    // same frame keeps its place.
-    if let Some(full) = current_full {
-        let size = (full.0.round() as u32, full.1.round() as u32);
-        if size != st.develop.image_size {
-            st.develop.image_size = size;
-            st.develop.center = (full.0 / 2.0, full.1 / 2.0);
-        }
-    }
-    // A frame needs its full-size copy only while it is looked at
-    // 1:1 (`ask_whole`); at a fit those copies and their textures are
-    // let go.
     let whole = if holding {
         vec![c]
     } else {
         cull.whole(c, &st.views.shown)
     };
-    if st.develop.zoom <= 0.0 {
-        let dropped = cull.cache.drop_full();
-        cull.full_said = None;
-        cull.let_go(dropped);
-    }
     let mut tiles = Vec::new();
     let mut overlay = Vec::new();
     let mut ready = true;
@@ -1807,75 +2112,10 @@ fn draw_cull(st: &mut State, app: &App, state: &Rc<Shared>) {
             let texture = renderer.encoded_texture(preview.width, preview.height, &preview.rgba);
             cull.textures.insert(file, (preview.id, texture));
         }
-        let (turns, flip) = thumb_turns_of(
-            &st.sidecars,
-            &st.from_row,
-            &st.cells,
-            file,
-            app,
-            from_panel(file),
-        );
-        let geometry = Geometry {
-            turns,
-            flip,
-            ..Geometry::default()
+        let Some((view, named)) = planned[k].clone() else {
+            continue;
         };
-        // The copy's own size, which the view is in whatever the GPU
-        // holds of it (`Renderer::encoded_texture` reduces one past the
-        // device's textures, and the tile says the size it stands for).
-        let (tw, th) = (preview.width as f32, preview.height as f32);
-        let source = stand_in.filter(|_| file == c).unwrap_or(preview.source);
-        let (fw, fh) = (source.0 as f32, source.1 as f32);
-        // The zoom and the center are in the JPEG's own pixels (the
-        // frame's, for the edit's picture standing in for it), so
-        // 1:1 means 1:1 whichever copy is on the GPU; the shader
-        // works in the copy's, so the zoom (display pixels per pixel)
-        // grows by the copy's scale and the center shrinks by it.
-        let scale = tw / fw;
-        let full = geometry.plane_size(fw, fh);
-        // The camera's picture comes cut to the camera's frame
-        // (`thumbs::cut_to_camera`), so it is drawn whole.
-        let frame = geometry.frame(tw, th, None);
-        // One frame alone fits inside the mat, as the develop's does
-        // (`effective_zoom`): the camera's picture standing in for it
-        // must not jump when the develop lands.
-        let room = if st.develop.mat && rows.len() <= 1 {
-            crate::zoom::matted((rect.2, rect.3))
-        } else {
-            (rect.2, rect.3)
-        };
-        let zoom = if st.develop.zoom > 0.0 {
-            st.develop.zoom
-        } else {
-            (room.0 as f32 / full.0)
-                .min(room.1 as f32 / full.1)
-                .min(1.0)
-        };
-        // The compared frames share the selection's center as a
-        // fraction of the frame, so a 1:1 of four shows the same
-        // corner of each.
-        let center = match current_full {
-            Some(cur) if file != c => (
-                st.develop.center.0 / cur.0.max(1.0) * full.0,
-                st.develop.center.1 / cur.1.max(1.0) * full.1,
-            ),
-            _ => st.develop.center,
-        };
-        tiles.push((
-            file,
-            (preview.width, preview.height),
-            View {
-                zoom: zoom / scale,
-                center: (center.0 * scale, center.1 * scale),
-                matrix: geometry.matrix(),
-                plane: geometry.plane_size(tw, th),
-                frame_origin: frame.origin,
-                frame_size: frame.size,
-                canvas,
-                ..View::blank()
-            },
-            rect,
-        ));
+        tiles.push((file, (preview.width, preview.height), view, rect));
         // At 1:1 a capture waits for every pixel of each tile held whole.
         if whole.contains(&file)
             && st.develop.zoom > 0.0
@@ -1884,12 +2124,9 @@ fn draw_cull(st: &mut State, app: &App, state: &Rc<Shared>) {
         {
             ready = false;
         }
-        // The size as shown, so the line follows the frame's turn as
-        // the picture does; the JPEG's own pixels either way, since
-        // the only geometry here is quarter turns and the mirror.
         names.push(Named {
             file,
-            size: (full.0.round() as u32, full.1.round() as u32),
+            size: named,
             small: preview.small(),
             own: preview.own_size(),
             local: preview.origin(),
@@ -3697,7 +3934,8 @@ pub(crate) mod tests {
         to_develop(&mut kept.state.borrow_mut(), &kept.app, &kept.worker);
         kept.plant("planted");
         kept.app.invoke_select(2);
-        let picture = camera_picture(&kept.state.borrow(), 2, (8, 6));
+        // No smaller than the view, so up before the open says the size.
+        let picture = camera_picture(&kept.state.borrow(), 2, (8192, 5464));
         deliver_preview(&kept.app, picture);
         {
             let mut st = kept.state.borrow_mut();
@@ -4631,15 +4869,20 @@ pub(crate) mod tests {
     /// A window with frame 0 developed and its white known, so the
     /// next frame chosen holds it while it develops.
     fn developed_window(count: usize, names: Option<&str>) -> (App, Rc<Shared>, Rc<Worker>) {
-        let app = window(count);
-        app.window()
-            .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let files = match names {
             Some(dir) => (0..count)
                 .map(|i| format!("/nowhere/{dir}/IMG_{i:04}.CR3").into())
                 .collect(),
             None => folder(count),
         };
+        developed_window_of(files)
+    }
+
+    /// The same, of `files`.
+    fn developed_window_of(files: Vec<PathBuf>) -> (App, Rc<Shared>, Rc<Worker>) {
+        let app = window(files.len());
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (state, worker) = state_for(&app, files);
         app.invoke_select(0);
         land_and_lay_out(&app, &state, (6000, 4000));
@@ -4729,6 +4972,471 @@ pub(crate) mod tests {
             view_of(&state),
             (z / 4.0, (cx * 4.0, cy * 4.0)),
             "the wheel's scale on screen",
+        );
+    }
+
+    /// The worker's open of `file` says the frame is `size`, as
+    /// `deliver`'s `Opened` arm records it.
+    fn open_said(app: &App, state: &Rc<Shared>, file: usize, size: (u32, u32)) {
+        let mut st = state.borrow_mut();
+        let path = st.path_of(file).clone();
+        st.develop.opened_sizes.push((path, Some(size)));
+        size_opened(&mut st, app);
+    }
+
+    /// The loupe's current picture laid out as `draw_cull` lays it.
+    fn lay_out_stand_in(app: &App, state: &Rc<Shared>) {
+        let mut st = state.borrow_mut();
+        let c = standing_in(&st).expect("a picture stands in");
+        let panel = Some(c) == st.current;
+        lay_out_current(&mut st, app, c, panel);
+    }
+
+    /// The tile `draw_cull` draws a small camera picture standing in
+    /// with (`tile_views`) covers on screen what the develop will,
+    /// fitted and at 1:1: it is drawn as the develop's size, not its
+    /// own.
+    #[test]
+    fn the_stand_ins_tile_covers_what_the_develop_will() {
+        let (app, state, _worker) = developed_window(4, Some("small-tile"));
+        app.invoke_select(1);
+        open_said(&app, &state, 1, (5912, 2896));
+        focus_frame(&mut state.borrow_mut(), 1, (400, 196), None);
+        let mut st = state.borrow_mut();
+        st.develop.mat = false;
+        let current = lay_out_current(&mut st, &app, 1, true);
+        let rows = cull::row_of_shown(&st.views.shown, 1)
+            .into_iter()
+            .collect::<Vec<_>>();
+        // A room 1000 by 600, where the develop fits at 1000 / 5912; the
+        // copy on the GPU is 8 by 6 (`focus_frame`).
+        let mut on_screen = |zoom: f32| {
+            st.develop.zoom = zoom;
+            let planned = tile_views(&st, &app, 1, current, &rows, &[(0, 0, 1000, 600)], [0.0; 3]);
+            let (view, named) = planned[0].clone().expect("a tile");
+            // The line names the camera's picture by its own size.
+            assert_eq!(named, (400, 196));
+            view.zoom * 8.0
+        };
+        assert!((on_screen(0.0) - 1000.0).abs() < 0.5, "fitted");
+        assert!((on_screen(1.0) - 5912.0).abs() < 0.5, "1:1");
+    }
+
+    /// A camera JPEG far smaller than its raw (a merge's DNG carries
+    /// one of 1024 px) stands in at the develop's footprint: it
+    /// waits for the open to say the frame's size rather than go up at
+    /// its own pixels, which a fit never enlarges, and is then laid out
+    /// at the develop's size, so the develop lands fitted where it
+    /// stood. It once sat small in the view and grew when the develop
+    /// landed.
+    #[test]
+    fn a_small_camera_picture_stands_in_at_the_develops_size() {
+        let (app, state, _worker) = developed_window(4, Some("small-camera"));
+        app.invoke_select(1);
+        let loaded = camera_picture(&state.borrow(), 1, (400, 196));
+        deliver_preview(&app, loaded);
+        assert_ne!(
+            standing_in(&state.borrow()),
+            Some(1),
+            "the small picture waits for the frame's size"
+        );
+        open_said(&app, &state, 1, (5912, 2896));
+        assert_eq!(standing_in(&state.borrow()), Some(1), "then goes up");
+        lay_out_stand_in(&app, &state);
+        let stood = view_of(&state);
+        assert_eq!(state.borrow().develop.image_size, (5912, 2896));
+        assert_eq!(stood.0, 0.0, "fitted");
+        land_and_lay_out(&app, &state, (5912, 2896));
+        assert_eq!(state.borrow().develop.image_size, (5912, 2896));
+        near_view(view_of(&state), stood, "the develop landed");
+    }
+
+    /// Space on a small camera JPEG standing in, its frame's size
+    /// known, goes to 1:1 of the develop on the focus point, so the
+    /// develop lands with nothing moving.
+    #[test]
+    fn space_on_a_small_camera_picture_is_the_develops_one_to_one() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let (app, state, _worker) = developed_window(4, Some("small-space"));
+        app.invoke_select(1);
+        open_said(&app, &state, 1, (5912, 2896));
+        let point = FocusPoint {
+            area: [0.7, 0.2, 0.1, 0.1],
+            aspect: 400.0 / 196.0,
+        };
+        focus_frame(
+            &mut state.borrow_mut(),
+            1,
+            (400, 196),
+            Some((point, Orientation::Normal)),
+        );
+        lay_out_stand_in(&app, &state);
+        assert_eq!(state.borrow().develop.image_size, (5912, 2896));
+        press(&app, " ");
+        let stood = view_of(&state);
+        near_view(stood, (1.0, (4434.0, 724.0)), "Space");
+        land_and_lay_out(&app, &state, (5912, 2896));
+        near_view(view_of(&state), stood, "the develop landed");
+    }
+
+    /// A camera picture already up in its own pixels when the open says
+    /// the frame's size is taken into the develop's: a wheel's zoom on
+    /// it keeps its scale and its place on screen through the change and
+    /// through the develop.
+    #[test]
+    fn a_wheel_zoom_on_the_camera_picture_stays_as_the_size_comes() {
+        let (app, state, _worker) = developed_window(4, Some("small-wheel"));
+        app.invoke_select(1);
+        let loaded = camera_picture(&state.borrow(), 1, (3000, 2000));
+        deliver_preview(&app, loaded);
+        assert_eq!(
+            standing_in(&state.borrow()),
+            Some(1),
+            "no room to spare: up at once"
+        );
+        lay_out_stand_in(&app, &state);
+        assert_eq!(state.borrow().develop.image_size, (3000, 2000));
+        app.invoke_zoom(1.25, 500.0, 300.0);
+        app.invoke_zoom(4.0, 500.0, 300.0);
+        let (z, (cx, cy)) = view_of(&state);
+        assert!(z > 0.0, "the wheel zoomed");
+        open_said(&app, &state, 1, (6000, 4000));
+        lay_out_stand_in(&app, &state);
+        assert_eq!(state.borrow().develop.image_size, (6000, 4000));
+        let want = (z / 2.0, (cx * 2.0, cy * 2.0));
+        near_view(view_of(&state), want, "the size came");
+        land_and_lay_out(&app, &state, (6000, 4000));
+        near_view(view_of(&state), want, "the develop landed");
+    }
+
+    /// The size frame 1's camera picture of `source` is laid out at in
+    /// Develop once the open has said `opened`: cut by the camera's
+    /// `frame` where one is given, on a file of the kind that has one.
+    fn stood_size(
+        dir: &str,
+        source: (u32, u32),
+        opened: (u32, u32),
+        frame: Option<greycard_core::raw::CameraFrame>,
+    ) -> (u32, u32) {
+        let ext = if frame.is_some() { "ORF" } else { "CR3" };
+        let files = (0..3)
+            .map(|i| format!("/nowhere/{dir}/IMG_{i:04}.{ext}").into())
+            .collect();
+        let (app, state, _worker) = developed_window_of(files);
+        app.invoke_select(1);
+        open_said(&app, &state, 1, opened);
+        {
+            let mut st = state.borrow_mut();
+            focus_frame(&mut st, 1, source, None);
+            if let Some(frame) = frame {
+                let path = st.path_of(1).clone();
+                crate::edited_pictures::note_decoded(&path, Some(frame));
+                let hold = st.culling.hold.as_mut().unwrap();
+                let mut preview = cull::Preview::new(8, 6, vec![0; 192], source, false);
+                preview.cut = true;
+                hold.cache.insert(1, Arc::new(preview));
+            }
+        }
+        lay_out_stand_in(&app, &state);
+        state.borrow().develop.image_size
+    }
+
+    /// In Cull the camera's picture is the picture, and 1:1 is its own
+    /// pixels: a small JPEG is laid out at its own size there, though
+    /// the open has said the frame's.
+    #[test]
+    fn in_cull_a_small_camera_picture_keeps_its_own_size() {
+        let (app, state, _worker) = developed_window(4, Some("small-cull"));
+        app.invoke_select(1);
+        open_said(&app, &state, 1, (5912, 2896));
+        let mut st = state.borrow_mut();
+        enter_cull(&mut st, &app, 1);
+        assert!(st.culling.cull.is_some());
+        focus_frame(&mut st, 1, (400, 196), None);
+        lay_out_current(&mut st, &app, 1, false);
+        assert_eq!(st.develop.image_size, (400, 196));
+    }
+
+    /// A camera picture of another shape than its raw (the camera set
+    /// to 16:9, 1:1, or 4:3 on a 3:2 sensor) is the largest of its shape
+    /// inside the develop: a small one grows until it meets the
+    /// develop's nearer side, and a full-size one stays its own size,
+    /// so 1:1 on it is the develop's 1:1.
+    #[test]
+    fn a_camera_picture_of_another_shape_keeps_its_shape() {
+        let open = (6000, 4000);
+        assert_eq!(
+            stood_size("shape-small", (1600, 900), open, None),
+            (6000, 3375)
+        );
+        for (dir, own) in [
+            ("shape-wide", (6000, 3375)),
+            ("shape-square", (4000, 4000)),
+            ("shape-four-three", (5328, 4000)),
+        ] {
+            assert_eq!(stood_size(dir, own, open, None), own, "{dir}");
+        }
+    }
+
+    /// A portrait frame, its picture lying as the develop does or the
+    /// other way, takes the develop's size as the picture lies.
+    #[test]
+    fn a_portrait_camera_picture_takes_the_develops_size() {
+        assert_eq!(
+            stood_size("portrait", (400, 600), (4000, 6000), None),
+            (4000, 6000)
+        );
+        assert_eq!(
+            stood_size("portrait-across", (400, 600), (6000, 4000), None),
+            (4000, 6000)
+        );
+    }
+
+    /// A camera picture cut to the camera's frame (the middle 3:2 band of
+    /// a 4:3 sensor) takes the develop cut the same way, lying as the
+    /// develop does or the other way.
+    #[test]
+    fn a_cut_camera_picture_takes_the_develop_cut_alike() {
+        use greycard_core::raw::{CameraFrame, Orientation, Rect};
+        let band = |orientation| CameraFrame {
+            area: Rect {
+                x: 0,
+                y: 0,
+                width: 4000,
+                height: 3000,
+            },
+            frame: Rect {
+                x: 0,
+                y: 166,
+                width: 4000,
+                height: 2667,
+            },
+            orientation,
+        };
+        assert_eq!(
+            stood_size(
+                "cut",
+                (1000, 667),
+                (4000, 3000),
+                Some(band(Orientation::Normal))
+            ),
+            (4000, 2667)
+        );
+        // Turned by the tag: the develop and the cut stand, the picture
+        // lies across them.
+        assert_eq!(
+            stood_size(
+                "cut-across",
+                (1000, 667),
+                (3000, 4000),
+                Some(band(Orientation::Rotate90))
+            ),
+            (4000, 2667)
+        );
+    }
+
+    /// Each tile's view as `draw_cull` worked it out before the tiles
+    /// were planned apart from the draw (at f8af2e05), for
+    /// `tiles_are_planned_as_they_were_drawn`.
+    fn views_as_drawn_before(
+        st: &State,
+        app: &App,
+        c: usize,
+        rows: &[usize],
+        rects: &[(u32, u32, u32, u32)],
+    ) -> Vec<Option<View>> {
+        let holding = st.culling.cull.is_none();
+        let from_panel = |file: usize| holding && Some(file) == st.current;
+        let stand_in = stands_for(st, app, c);
+        let cull = st
+            .culling
+            .cull
+            .as_ref()
+            .or(st.culling.hold.as_ref())
+            .unwrap();
+        let current_full = cull.cache.best(c).map(|p| {
+            let source = stand_in.unwrap_or(p.source);
+            let (turns, flip) =
+                thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, c, app, from_panel(c));
+            Geometry {
+                turns,
+                flip,
+                ..Geometry::default()
+            }
+            .plane_size(source.0 as f32, source.1 as f32)
+        });
+        rows.iter()
+            .zip(rects)
+            .map(|(&row, rect)| {
+                let file = st.views.shown[row];
+                let preview = cull.cache.best(file)?;
+                let (turns, flip) = thumb_turns_of(
+                    &st.sidecars,
+                    &st.from_row,
+                    &st.cells,
+                    file,
+                    app,
+                    from_panel(file),
+                );
+                let geometry = Geometry {
+                    turns,
+                    flip,
+                    ..Geometry::default()
+                };
+                let (tw, th) = (preview.width as f32, preview.height as f32);
+                let source = stand_in.filter(|_| file == c).unwrap_or(preview.source);
+                let (fw, fh) = (source.0 as f32, source.1 as f32);
+                let scale = tw / fw;
+                let full = geometry.plane_size(fw, fh);
+                let frame = geometry.frame(tw, th, None);
+                let room = if st.develop.mat && rows.len() <= 1 {
+                    crate::zoom::matted((rect.2, rect.3))
+                } else {
+                    (rect.2, rect.3)
+                };
+                let zoom = if st.develop.zoom > 0.0 {
+                    st.develop.zoom
+                } else {
+                    (room.0 as f32 / full.0)
+                        .min(room.1 as f32 / full.1)
+                        .min(1.0)
+                };
+                let center = match current_full {
+                    Some(cur) if file != c => (
+                        st.develop.center.0 / cur.0.max(1.0) * full.0,
+                        st.develop.center.1 / cur.1.max(1.0) * full.1,
+                    ),
+                    _ => st.develop.center,
+                };
+                Some(View {
+                    zoom: zoom / scale,
+                    center: (center.0 * scale, center.1 * scale),
+                    matrix: geometry.matrix(),
+                    plane: geometry.plane_size(tw, th),
+                    frame_origin: frame.origin,
+                    frame_size: frame.size,
+                    canvas: [0.1, 0.2, 0.3],
+                    ..View::blank()
+                })
+            })
+            .collect()
+    }
+
+    /// Ordinary frames in Cull, one, two, and four to a compare, fitted
+    /// and zoomed off the middle, the mat on and off, turned and not,
+    /// with a full-size copy in hand: each tile is planned exactly as
+    /// it was drawn before the tiles were planned apart from the draw,
+    /// the shared center, the mat, and the fit with them.
+    #[test]
+    fn tiles_are_planned_as_they_were_drawn() {
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, folder(6));
+        let mut st = state.borrow_mut();
+        st.current = Some(1);
+        let mut checked = 0;
+        for compare in [1usize, 2, 4] {
+            st.culling.cull = None;
+            enter_cull(&mut st, &app, compare);
+            st.sidecars[2].turn = 1;
+            st.sidecars[3].turn = 2;
+            {
+                let cull = st.culling.cull.as_mut().unwrap();
+                let sizes = [
+                    (6000, 4000),
+                    (4000, 6000),
+                    (5328, 4000),
+                    (6000, 3375),
+                    (1616, 1080),
+                    (3000, 3000),
+                ];
+                for (f, s) in sizes.iter().enumerate() {
+                    let preview = cull::Preview::new(8, 6, vec![0; 192], *s, false);
+                    cull.cache.insert(f, Arc::new(preview));
+                }
+                // And frame 1's full-size copy.
+                let full = cull::Preview::new(16, 12, vec![0; 768], (6000, 4000), true);
+                cull.cache.insert(1, Arc::new(full));
+            }
+            for c in [1usize, 2] {
+                for mat in [false, true] {
+                    for (zoom, off) in [
+                        (0.0, (0.0, 0.0)),
+                        (1.0, (-700.0, 333.0)),
+                        (2.5, (911.0, -42.0)),
+                    ] {
+                        st.develop.mat = mat;
+                        st.develop.zoom = zoom;
+                        st.develop.image_size = (0, 0);
+                        let current = lay_out_current(&mut st, &app, c, false);
+                        let (cx, cy) = st.develop.center;
+                        st.develop.center = (cx + off.0, cy + off.1);
+                        let rows = st.culling.cull.as_ref().unwrap().rows(&st.views.shown);
+                        let rects = cull::tile_rects(1400, 900, rows.len().max(1));
+                        let planned =
+                            tile_views(&st, &app, c, current, &rows, &rects, [0.1, 0.2, 0.3]);
+                        let before = views_as_drawn_before(&st, &app, c, &rows, &rects);
+                        assert_eq!(planned.len(), before.len());
+                        for (now, then) in planned.iter().zip(&before) {
+                            let now = now.as_ref().map(|(view, _)| view);
+                            assert_eq!(
+                                now,
+                                then.as_ref(),
+                                "{compare} to a compare, frame {c}, mat {mat}, zoom {zoom}"
+                            );
+                            checked += usize::from(now.is_some());
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 30, "{checked}");
+    }
+
+    /// The first fit after 1:1 lets the full-size copy go before the
+    /// tiles are planned (`plan_tiles`), so the tile is planned on the
+    /// screen-size copy it is drawn from: fitted, which never enlarges,
+    /// an 80 px picture is 80 px on screen. It was once planned on the
+    /// full copy and drawn from the small one, a tenth the size.
+    #[test]
+    fn a_fit_after_one_to_one_plans_the_copy_it_draws() {
+        let app = window(4);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, folder(4));
+        let mut st = state.borrow_mut();
+        st.current = Some(1);
+        enter_cull(&mut st, &app, 1);
+        {
+            let cull = st.culling.cull.as_mut().unwrap();
+            let small = cull::Preview::new(8, 6, vec![0; 192], (80, 60), false);
+            cull.cache.insert(1, Arc::new(small));
+            let full = cull::Preview::new(80, 60, vec![0; 19200], (80, 60), true);
+            cull.cache.insert(1, Arc::new(full));
+        }
+        st.develop.mat = false;
+        st.develop.zoom = 0.0;
+        let current = lay_out_current(&mut st, &app, 1, false);
+        let rows = st.culling.cull.as_ref().unwrap().rows(&st.views.shown);
+        let rects = cull::tile_rects(1000, 600, rows.len().max(1));
+        let planned = plan_tiles(&mut st, &app, 1, current, &rows, &rects, [0.0; 3]);
+        let drawn = st
+            .culling
+            .cull
+            .as_ref()
+            .unwrap()
+            .cache
+            .best(1)
+            .unwrap()
+            .clone();
+        let (view, _) = planned[0].clone().unwrap();
+        let on_screen = view.zoom * drawn.width as f32;
+        assert!(
+            (on_screen - 80.0).abs() < 0.5,
+            "{on_screen} px on screen from a copy {} x {}",
+            drawn.width,
+            drawn.height
         );
     }
 
@@ -5448,19 +6156,21 @@ pub(crate) mod tests {
             // were still on screen.
             assert_eq!(opened_size(&st, 1), Some(Some((60, 40))));
         }
-        // The camera's picture is the frame's own size, up at once,
-        // and what the open says does not change it.
+        // The camera's picture smaller than the view waits for the
+        // open too, and is then drawn as the develop's size, fitted
+        // as the develop will be; one of another shape (4:3 of a 3:2
+        // frame) keeps its own, grown to meet the develop's height.
         app.invoke_select(3);
         let loaded = camera_picture(&state.borrow(), 3, (8, 6));
         deliver_preview(&app, loaded);
         frame(&state);
-        assert_eq!(standing_in(&state.borrow()), Some(3));
+        assert_ne!(standing_in(&state.borrow()), Some(3));
         open(&state, (60, 40));
         frame(&state);
         let st = state.borrow();
         assert_eq!(standing_in(&st), Some(3));
-        assert_eq!(st.develop.image_size, (8, 6));
-        assert_eq!(effective_zoom(&st, 30, 20), 1.0);
+        assert_eq!(st.develop.image_size, (53, 40));
+        assert!((effective_zoom(&st, 30, 20) - 0.5).abs() < 1e-6);
     }
 
     /// A frame whose camera picture is kept, chosen while another

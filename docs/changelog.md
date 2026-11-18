@@ -11,6 +11,8 @@ design note behind it.
   with Try again to bring them back, and greycard no longer quits
   (discussion 168,
   [§712](https://github.com/jessolmstead/greycard/blob/master/docs/notes/712-a-learned-denoiser-that-loses-the-card-rests-there.md)).
+- A camera picture smaller than its raw, as in our merged panoramas,
+  no longer stands in small while the frame develops.
 
 ## 0.12.0, 2026-11-17
 

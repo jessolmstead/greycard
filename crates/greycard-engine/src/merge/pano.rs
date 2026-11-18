@@ -1108,7 +1108,7 @@ fn laid(
             })),
         }),
     };
-    let preview = merge::preview(&image, &ref_walked.white_balance, 1024)?;
+    let preview = merge::preview(&image, &ref_walked.white_balance, merge::PREVIEW_SIDE)?;
     let software = concat!("greycard ", env!("CARGO_PKG_VERSION"));
     let (ref_frame, ref_meta) = frame_tags[reference].take().expect("every frame walked");
     let metadata = without_lens(&ref_meta);

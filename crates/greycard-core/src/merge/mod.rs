@@ -743,6 +743,14 @@ pub fn noise_profile(frames: &[(f64, Noise)], headroom: f32) -> [f64; 2] {
     best.1
 }
 
+/// The long edge our merged DNGs' embedded preview is reduced to, at
+/// most. [`preview`] reduces by a whole step, so the edge lands between
+/// half this and this. Not larger: rawler's `DngWriter::preview` fits
+/// anything wider than 1024 into 1024 by 768 by nearest neighbor, so a
+/// 2048 preview came out the same size and coarser. A larger one waits
+/// on that writer taking a size.
+pub const PREVIEW_SIDE: usize = 1024;
+
 /// An 8-bit sRGB rendering of camera RGB on the reference's scale, for
 /// a DNG's preview and thumbnail: the gains, the camera matrix, sRGB,
 /// clipped, box-averaged down to `max_side` on the long edge.
