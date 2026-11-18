@@ -105,7 +105,7 @@ Every rule was taken out on a scratch copy, one at a time, and a test failed for
 
 ## What remains of issue 132
 
-Highlights at Whites zero: a hotspot's lead over its skin still grows as Highlights comes down, by +3.4 L* at the median on the 108-face grid. Measured, it splits: +2.6 is the display shoulder (one gain moves both down to where the curve is steeper), +0.1 the ramp's ease (up to +5 on large faces). A region reach over white for Highlights was measured and not built.
+Highlights at Whites zero: a hotspot's lead over its skin still grows as Highlights comes down, by +3.4 L* at the median on the 108-face grid. Measured, it splits: +2.6 is the display shoulder (one gain moves both down to where the curve is steeper), +0.1 the ramp's ease (up to +5 on large faces). A region reach over white for Highlights was measured and not built. Hotspots are Whites' to tame, not Highlights': with Whites down the roll shrinks the lead on 18 to 37 of the 108 faces and grows it on at most 2.
 
 ## The Lightroom importer
 
