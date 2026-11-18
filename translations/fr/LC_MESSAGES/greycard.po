@@ -5989,16 +5989,16 @@ msgstr "pas de réduction du bruit : {why}"
 #: crates/greycard-ui/src/panel/deliver.rs:801
 msgid "{names} left as it was until the fill model is fetched"
 msgid_plural "{names} left as they were until the fill model is fetched"
-msgstr[0] "Aucune modification de {names} en attendant le modèle de remplissage"
-msgstr[1] "Aucune modification de {names} en attendant le modèle de remplissage"
+msgstr[0] "aucune modification de {names} en attendant le modèle de remplissage"
+msgstr[1] "aucune modification de {names} en attendant le modèle de remplissage"
 
 #: crates/greycard-ui/src/panel/deliver.rs:833
 msgid "{name} left as it was: the remove needs a GPU"
-msgstr "Aucune modification de {name} : la suppression nécessite un GPU"
+msgstr "aucune modification de {name} : la suppression nécessite un GPU"
 
 #: crates/greycard-ui/src/panel/deliver.rs:844
 msgid "{name} left as it was: the fill model failed ({why})"
-msgstr "Aucune modification de {name} : échec du modèle de remplissage ({why})"
+msgstr "aucune modification de {name} : échec du modèle de remplissage ({why})"
 
 #: crates/greycard-ui/src/panel/deliver.rs:987
 msgid "developing... the fill model is at work on {name}, {at} of {of}"
