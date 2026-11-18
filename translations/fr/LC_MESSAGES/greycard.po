@@ -408,12 +408,11 @@ msgstr "cet appareil"
 
 #: crates/greycard-slint/ui/panel/assets.slint:140
 msgid "Profile tone curve"
-msgstr ""
+msgstr "Courbe de tonalité du profil"
 
 #: crates/greycard-slint/ui/panel/assets.slint:147
-#, fuzzy
 msgid "Show all cameras"
-msgstr "Afficher le masque"
+msgstr "Montrer tous les appareils"
 
 #: crates/greycard-slint/ui/panel/assets.slint:204
 msgid "LOOK"
@@ -532,35 +531,33 @@ msgstr "Auto"
 
 #. White balance preset: sunlight
 #: crates/greycard-slint/ui/panel/color.slint:185
-#, fuzzy
 msgid "Daylight"
-msgstr "Droite"
+msgstr "Lumière du jour"
 
 #. White balance preset: an overcast sky
 #: crates/greycard-slint/ui/panel/color.slint:190
 msgid "Cloudy"
-msgstr ""
+msgstr "Nuageux"
 
 #. White balance preset: in the shade on a sunny day
 #: crates/greycard-slint/ui/panel/color.slint:195
-#, fuzzy
 msgid "Shade"
-msgstr "Ombres"
+msgstr "Ombragé"
 
 #. White balance preset: incandescent light bulbs
 #: crates/greycard-slint/ui/panel/color.slint:200
 msgid "Tungsten"
-msgstr ""
+msgstr "Tungstène"
 
 #. White balance preset: fluorescent tubes
 #: crates/greycard-slint/ui/panel/color.slint:205
 msgid "Fluorescent"
-msgstr ""
+msgstr "Fluorescent"
 
 #. White balance preset: a camera's flash
 #: crates/greycard-slint/ui/panel/color.slint:210
 msgid "Flash"
-msgstr ""
+msgstr "Flash"
 
 #. White balance: the dropper's button, click something neutral
 #: crates/greycard-slint/ui/panel/color.slint:218
@@ -1412,9 +1409,8 @@ msgid "Show mask"
 msgstr "Afficher le masque"
 
 #: crates/greycard-slint/ui/panel/edit.slint:470
-#, fuzzy
 msgid "OUTPUT SHARPEN"
-msgstr "NETTETÉ"
+msgstr "NETTETÉ DE SORTIE"
 
 #: crates/greycard-slint/ui/panel/edit.slint:525
 msgid "VIGNETTE"
@@ -1720,7 +1716,6 @@ msgid "by {}"
 msgstr "par {}"
 
 #: crates/greycard-slint/ui/panel/grid.slint:501
-#, fuzzy
 msgid "Tile size"
 msgstr "Taille des vignettes"
 
@@ -1756,7 +1751,6 @@ msgstr "Défilement de la grille"
 
 #. language.
 #: crates/greycard-slint/ui/panel/grid.slint:1314
-#, fuzzy
 msgid "Close lightbox"
 msgstr "Quitter la table lumineuse"
 
@@ -2491,9 +2485,8 @@ msgstr "Suppression complète"
 
 #. Retouch section: makes the Fill's painted strokes
 #: crates/greycard-slint/ui/panel/retouch.slint:145
-#, fuzzy
 msgid "Generate"
-msgstr "sans note"
+msgstr "Générer"
 
 #. Fill: another variation of the fill
 #: crates/greycard-slint/ui/panel/retouch.slint:191
@@ -2701,9 +2694,8 @@ msgstr "Une seule section ouverte à la fois"
 
 #. their first order, after dragging them
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:591
-#, fuzzy
 msgid "Reset section order"
-msgstr "Rétablir les valeurs par défaut"
+msgstr "Rétablir l'ordre des sections par défaut"
 
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:609
 msgid "LIBRARY"
@@ -2905,13 +2897,12 @@ msgstr "Ajouter..."
 #. Editing: the name every export carries
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:1125
 msgid "Author"
-msgstr ""
+msgstr "Auteur"
 
 #. Editing: the copyright notice every export carries
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:1135
-#, fuzzy
 msgid "Copyright"
-msgstr "En haut à droite"
+msgstr "Copyright"
 
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:1154
 msgid "MODELS"
@@ -3085,32 +3076,28 @@ msgstr[0] "{n} octet"
 msgstr[1] "{n} octets"
 
 #: crates/greycard-ui/src/archive/rejects.rs:134
-#, fuzzy
 msgid "its head could not be read"
-msgstr "impossible de lire le RAW"
+msgstr "impossible de lire le début du fichier"
 
 #: crates/greycard-ui/src/archive/rejects.rs:496
-#, fuzzy
 msgid "no copy of it was found there"
-msgstr "; aucune copie trouvée là-bas : {}"
+msgstr "aucune copie trouvée"
 
 #: crates/greycard-ui/src/archive/rejects.rs:498
-#, fuzzy
 msgid "its copy there could not be told from it without reading both whole"
-msgstr "impossible de lire le dossier : aucun fil d'exécution disponible"
+msgstr "impossible de vérifier la copie sans lire les deux fichiers en entier"
 
 #: crates/greycard-ui/src/archive/rejects.rs:547
-#, fuzzy
 msgid "not moved"
-msgstr "non ouvert"
+msgstr "non déplacé"
 
 #: crates/greycard-ui/src/archive/rejects.rs:732
 msgid "an entry with no archive's path"
-msgstr ""
+msgstr "une entrée sans chemin d'archive"
 
 #: crates/greycard-ui/src/archive/rejects.rs:785
 msgid "the whole file, which is not a queue (set aside as {})"
-msgstr ""
+msgstr "le fichier entier, qui n'est pas une file d'attente (mis de côté sous le nom {})"
 
 #: crates/greycard-ui/src/carry.rs:77
 msgid "Mask {}"
@@ -3135,7 +3122,7 @@ msgstr "Détail"
 
 #: crates/greycard-ui/src/carry.rs:399
 msgid "Output sharpen"
-msgstr ""
+msgstr "Netteté de sortie"
 
 #: crates/greycard-ui/src/carry.rs:400
 msgid "Curves"
@@ -5988,36 +5975,30 @@ msgid "picture"
 msgstr "image"
 
 #: crates/greycard-ui/src/panel/deliver.rs:783
-#, fuzzy
 msgid "the engine's denoise until the model is fetched"
-msgstr ", réduction du bruit intégrée en attendant le modèle"
+msgstr "réduction du bruit intégrée en attendant le modèle"
 
 #: crates/greycard-ui/src/panel/deliver.rs:788
-#, fuzzy
 msgid "the engine's denoise: the learned one failed ({message})"
-msgstr ", réduction du bruit intégrée : échec du modèle appris ({message})"
+msgstr "réduction du bruit intégrée : échec du modèle appris ({message})"
 
 #: crates/greycard-ui/src/panel/deliver.rs:793
-#, fuzzy
 msgid "no denoise: {why}"
-msgstr ", pas de réduction du bruit : {why}"
+msgstr "pas de réduction du bruit : {why}"
 
 #: crates/greycard-ui/src/panel/deliver.rs:801
-#, fuzzy
 msgid "{names} left as it was until the fill model is fetched"
 msgid_plural "{names} left as they were until the fill model is fetched"
-msgstr[0] ", {names} laissé tel quel en attendant le modèle de remplissage"
-msgstr[1] ", {names} laissés tels quels en attendant le modèle de remplissage"
+msgstr[0] "Aucune modification de {names} en attendant le modèle de remplissage"
+msgstr[1] "Aucune modification de {names} en attendant le modèle de remplissage"
 
 #: crates/greycard-ui/src/panel/deliver.rs:833
-#, fuzzy
 msgid "{name} left as it was: the remove needs a GPU"
-msgstr ", {name} laissé tel quel : la suppression nécessite un GPU"
+msgstr "Aucune modification de {name} : la suppression nécessite un GPU"
 
 #: crates/greycard-ui/src/panel/deliver.rs:844
-#, fuzzy
 msgid "{name} left as it was: the fill model failed ({why})"
-msgstr ", {name} laissé tel quel : échec du modèle de remplissage ({why})"
+msgstr "Aucune modification de {name} : échec du modèle de remplissage ({why})"
 
 #: crates/greycard-ui/src/panel/deliver.rs:987
 msgid "developing... the fill model is at work on {name}, {at} of {of}"
@@ -7551,7 +7532,7 @@ msgstr ""
 #. memory, whole or free now, in GiB to a tenth.
 #: crates/greycard-ui/src/panel/retouch.rs:28
 msgid "Needs {need} GiB VRAM, {have} available. Use Patch."
-msgstr ""
+msgstr "Nécessite {need} Gio de mémoire vidéo, {have} disponibles. Utilisez « Correctif »."
 
 #: crates/greycard-ui/src/panel/sort.rs:24 crates/greycard-ui/src/sort.rs:185
 msgid "Hand order"
