@@ -79,12 +79,13 @@ with a learned model, before demosaic, on your machine.
 **darktable.** Scene-referred since 2019, with proper chromatic
 adaptation, a database plus sidecars, and more modules than anyone
 uses. Its controls never felt like anything a photographer
-recognized, and culling is slow. greycard takes the pipeline.
+recognized, and culling is slow. greycard takes the pipeline, and its
+profiled denoiser is a port of darktable's.
 
 **RawTherapee.** The best demosaicing and detail tools anywhere, and
 no library beyond a file browser. greycard takes the most: the
-demosaic, the capture sharpen, the defringe and the profiled denoiser
-are ports, with attribution in each file.
+demosaic, the capture sharpen, and the defringe are ports, with
+attribution in each file.
 
 **RapidRAW.** A Rust and React editor with AI masks and a good-looking
 interface, built for a quick, pleasing picture. greycard differs in
