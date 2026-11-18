@@ -3,130 +3,30 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.12.0
+## 0.12.0, 2026-11-17
 
-### Packages
-
-- Every package carries THIRD-PARTY-NOTICES beside LICENSE, for the
-  libraries, artwork, ported code, and crates greycard is built from
-  ([§660](https://github.com/jessolmstead/greycard/blob/master/docs/notes/660-third-party-notices-in-every-package.md)).
-- A build from source shows its commit after the version, in the log,
-  `--version`, Settings, and a problem report
-  ([§700](https://github.com/jessolmstead/greycard/blob/master/docs/notes/700-the-builds-commit-in-its-version.md)).
-- Each release carries a SHA256SUMS file: check downloads with
-  `sha256sum -c SHA256SUMS --ignore-missing`, or `shasum -a 256 -c` on
-  a Mac
-  ([§657](https://github.com/jessolmstead/greycard/blob/master/docs/notes/657-read-only-workflow-tokens-and-sha256sums.md)).
-
-### Windows
-
-- Windows has an installer that needs no administrator,
-  `greycard-<version>-x86_64-windows-setup.exe` (and `-aarch64-`),
-  beside the zip
-  ([§619](https://github.com/jessolmstead/greycard/blob/master/docs/notes/619-a-windows-installer.md),
-  [§684](https://github.com/jessolmstead/greycard/blob/master/docs/notes/684-a-setup-that-starts-no-shell.md)).
-
-### Window
-
-- Margins and gaps are evened across the panels, and paired choices such
-  as Parametric and Point are equal in width
-  ([§703](https://github.com/jessolmstead/greycard/blob/master/docs/notes/703-spacing-evened-across-the-panels.md)).
-- Drag a section's title to reorder a pane, and **Reset section order**
-  in Settings, Interface puts it back. Thanks to Joulss (PR 156,
-  [§689](https://github.com/jessolmstead/greycard/blob/master/docs/notes/689-sections-keep-the-order-they-are-dragged-into.md)).
-- The left pane's sections sit in boxes like the right panel's, and
-  the Export queue is a header you can drag like the rest (discussion 59,
-  [§699](https://github.com/jessolmstead/greycard/blob/master/docs/notes/699-the-left-panes-sections-boxed-as-the-rights.md)).
-- The Navigator stays in sight however far the left pane's lists
-  scroll. Thanks to Joulss (PR 138,
-  [§669](https://github.com/jessolmstead/greycard/blob/master/docs/notes/669-the-left-pane-navigator-pinned-lists-unframed.md)).
-- Quit in full screen and greycard starts in full screen
-  ([§649](https://github.com/jessolmstead/greycard/blob/master/docs/notes/649-the-window-opens-full-screen-as-it-was-closed.md)).
-- A switch sits right beside its label, and only the label and the
-  switch flip it
-  ([§642](https://github.com/jessolmstead/greycard/blob/master/docs/notes/642-a-switch-beside-its-label.md)).
-- greycard speaks French, chosen under Settings, Interface, Language or
-  followed from the system (issue 75,
-  [§641](https://github.com/jessolmstead/greycard/blob/master/docs/notes/641-french-translation.md)).
-  Some of the newest wording is still in English, and more languages
-  are welcome
-  ([how to add one](https://github.com/jessolmstead/greycard/blob/master/docs/translating.md)).
-- The line over the foot of the picture says only what an edit went
-  without (discussion 117,
-  [§629](https://github.com/jessolmstead/greycard/blob/master/docs/notes/629-the-develop-summary-leaves-the-window.md)).
-- The window opens as it was closed: its size, whether it was
-  maximized, and, except on Wayland, its place (issue 114,
-  [§623](https://github.com/jessolmstead/greycard/blob/master/docs/notes/623-the-window-opens-as-it-was-closed.md)).
-- Language offers English, so a translated system can switch back to
-  the source wording
-  ([§637](https://github.com/jessolmstead/greycard/blob/master/docs/notes/637-english-in-the-language-picker.md)).
-- The right panel's sections sit in raised boxes, and Crop, Rotate, and
-  Perspective group their tools. Thanks to Joulss (PR 136,
-  [§670](https://github.com/jessolmstead/greycard/blob/master/docs/notes/670-the-right-panels-sections-and-tools.md)).
-- Widening the right panel gives long slider labels room first, and
-  the panel starts wider, at 334 px
-  ([§672](https://github.com/jessolmstead/greycard/blob/master/docs/notes/672-the-panels-label-column-grows-with-the-panel.md),
-  [§675](https://github.com/jessolmstead/greycard/blob/master/docs/notes/675-the-develop-panel-starts-at-334-px.md)).
-- The lightbox has a bar with a close button, the frame count, and a
-  tile size slider, and the grid a slider too
-  ([§676](https://github.com/jessolmstead/greycard/blob/master/docs/notes/676-the-lightboxs-bar-the-tile-size-slider-and-the-canvas-surround.md)).
-- A screen reader names the panel's toggles, buttons, and section
-  switches, and their state
-  ([§673](https://github.com/jessolmstead/greycard/blob/master/docs/notes/673-white-balance-rests-on-a-monochrome-frame.md)).
-
-### Library
-
-- **Space** and **Z** zoom to where the camera focused, on Canon,
-  Nikon, Sony, Fujifilm, Panasonic, and Olympus and OM System raws
-  ([§688](https://github.com/jessolmstead/greycard/blob/master/docs/notes/688-the-cameras-focus-point.md),
-  [§692](https://github.com/jessolmstead/greycard/blob/master/docs/notes/692-the-focus-point-from-five-more-makers.md)).
-- ISO and focal length filter by a range with two handles, in the
-  Cull panel and the grid's header, in place of a chip for every value
-  ([§695](https://github.com/jessolmstead/greycard/blob/master/docs/notes/695-iso-and-focal-length-as-ranges.md)).
-- Several chosen frames each wear a ring in the filmstrip, the current
-  one the strongest
-  ([§687](https://github.com/jessolmstead/greycard/blob/master/docs/notes/687-a-set-that-shows-in-the-strip.md)).
-- In Cull, the mouse's back and forward buttons step to the previous
-  and next frame
-  ([§685](https://github.com/jessolmstead/greycard/blob/master/docs/notes/685-back-and-forward-step-culls-frames.md)).
-- An Olympus or OM System High Res Shot's `.ORI` is a raw like any
-  other, with its own `NAME.ORI.xmp` (issue 139,
-  [§671](https://github.com/jessolmstead/greycard/blob/master/docs/notes/671-olympus-ori-files-and-gradation-auto.md)).
-- The Cull panel's Stars, Flag, and Label filters take one row each.
-  Thanks to Joulss (PR 137,
-  [§655](https://github.com/jessolmstead/greycard/blob/master/docs/notes/655-the-cull-panels-filters-a-row-each.md)).
-- Alt+← and Alt+→ go back and forward through the folders visited in
-  the grid, rebindable under Settings, Keys (discussion 59,
-  [§624](https://github.com/jessolmstead/greycard/blob/master/docs/notes/624-alt-arrows-go-back-and-forward.md)).
-
-### Export
-
-- Every export can carry an author and a copyright, set under Settings,
-  Editing, or `greycard export --author --copyright` (issue 106,
-  [§652](https://github.com/jessolmstead/greycard/blob/master/docs/notes/652-an-author-and-a-copyright-in-every-export.md),
-  [§658](https://github.com/jessolmstead/greycard/blob/master/docs/notes/658-author-and-copyright-in-the-window.md)).
-- WebP joins JPEG, PNG, and TIFF as a lossless export format, smaller
-  than a PNG (issue 121,
-  [§632](https://github.com/jessolmstead/greycard/blob/master/docs/notes/632-lossless-webp-export.md)).
+A much-requested Windows installer, French as the first translation, Whites that
+better recover blown highlights, UI polish and improvements, Midtones control, output
+sharpening, white balance presets, and many tester fixes.
+Sidecars from this build are refused by 0.11.x.
 
 ### Develop
 
-- Whites down now also brings lights over white back under it, so it recovers blown highlights as well as flattening
-  (issue 132,
+- Improvements to highlight recovery with the Whites slider (issue 132,
   [§711](https://github.com/jessolmstead/greycard/blob/master/docs/notes/711-whites-down-reaches-over-white.md)).
-- Each section's header has a reset arrow that puts that section back to its defaults as one step, on Develop, Crop, and a mask's sections
-  ([§710](https://github.com/jessolmstead/greycard/blob/master/docs/notes/710-a-reset-on-each-sections-header.md)).
-- Lightroom's older `.lrtemplate` presets import as its `.xmp` ones do, from
-  the window, a folder, or the command line
+- Each section's header has a reset arrow that puts that section back
+  to its defaults with one click
+  (discussion 59,
+  [§710](https://github.com/jessolmstead/greycard/blob/master/docs/notes/710-a-reset-on-each-sections-header.md)).
+- Lightroom's older `.lrtemplate` presets import as its `.xmp` ones do
   ([§705](https://github.com/jessolmstead/greycard/blob/master/docs/notes/705-lightrooms-lrtemplate-presets.md)).
 - "Fit this camera's look" reads Olympus and OM System raws, taking an
-  ORF's Picture Mode as its style. Thanks to the tester who shot the
+  ORF's Picture Mode as its style. Thanks to @variance who shot the
   five modes (issue 139,
   [§656](https://github.com/jessolmstead/greycard/blob/master/docs/notes/656-olympus-and-om-system-styles.md)).
 - The profiled denoise's Strength goes down to 0.1, for a lighter
   touch than the old minimum of 0.5
-  ([§691](https://github.com/jessolmstead/greycard/blob/master/docs/notes/691-the-profiled-denoises-strength-from-0-1.md)).
-- Midtones, a slider in Light and a mask's Light, lifts or sinks the
+- By popular demand: Midtones, a slider in Light and a mask's Light, lifts or sinks the
   middle tones and leaves the blacks and brightest tones in place
   ([§644](https://github.com/jessolmstead/greycard/blob/master/docs/notes/644-midtones.md),
   [§661](https://github.com/jessolmstead/greycard/blob/master/docs/notes/661-midtones-lower-and-narrower.md)).
@@ -149,8 +49,6 @@ design note behind it.
 - A mask has an Opacity slider, under Refine edge, that pulls its
   whole look back (issue 141,
   [§659](https://github.com/jessolmstead/greycard/blob/master/docs/notes/659-a-masks-opacity.md)).
-- Color grading's middle wheel reads Midtones, as the Light slider
-  does.
 - The camera profile folder is read with its subfolders, and Show all
   cameras offers other cameras' profiles (issue 135,
   [§662](https://github.com/jessolmstead/greycard/blob/master/docs/notes/662-profile-subfolders-and-show-all-cameras.md)).
@@ -162,8 +60,8 @@ design note behind it.
   59,
   [§678](https://github.com/jessolmstead/greycard/blob/master/docs/notes/678-fill-waits-for-generate.md)).
 - The histogram behind a tone curve shows what that curve takes in, and
-  holds still while a point is dragged. Thanks to Cristian Figueiredo
-  dos Santos, whose first pull request this was (PR 150,
+  holds still while a point is dragged. Thanks to @eusouocristian!
+  (PR 150,
   [§679](https://github.com/jessolmstead/greycard/blob/master/docs/notes/679-the-curve-editors-histogram-is-what-the-curve-takes-in.md)).
 - Profile tone curve, a switch under the CAMERA PROFILE list, renders
   with the profile's own tone curve (issue 135,
@@ -174,6 +72,109 @@ design note behind it.
 - On the grading wheels and the Tint ring, Shift and Ctrl keep the hue
   or the strength whenever held during the drag
   ([§682](https://github.com/jessolmstead/greycard/blob/master/docs/notes/682-wheel-holds-that-follow-the-keys-and-their-guide.md)).
+
+### Library
+
+- **Space** and **Z** zoom to where the camera focused, on Canon,
+  Nikon, Sony, Fujifilm, Panasonic, and Olympus and OM System raws
+  ([§688](https://github.com/jessolmstead/greycard/blob/master/docs/notes/688-the-cameras-focus-point.md),
+  [§692](https://github.com/jessolmstead/greycard/blob/master/docs/notes/692-the-focus-point-from-five-more-makers.md)).
+- ISO and focal length filter by a range with two handles, in the
+  Cull panel and the grid's header, in place of a chip for every value
+  ([§695](https://github.com/jessolmstead/greycard/blob/master/docs/notes/695-iso-and-focal-length-as-ranges.md)).
+- Improved readability of selected frames in the filmstrip
+  ([§687](https://github.com/jessolmstead/greycard/blob/master/docs/notes/687-a-set-that-shows-in-the-strip.md)).
+- In Cull, the mouse's back and forward buttons step to the previous
+  and next frame
+  ([§685](https://github.com/jessolmstead/greycard/blob/master/docs/notes/685-back-and-forward-step-culls-frames.md)).
+- An Olympus or OM System High Res Shot's `.ORI` is a raw like any
+  other, with its own `NAME.ORI.xmp` (issue 139,
+  [§671](https://github.com/jessolmstead/greycard/blob/master/docs/notes/671-olympus-ori-files-and-gradation-auto.md)).
+- The Cull panel's Stars, Flag, and Label filters take one row each.
+  Thanks to @Joulss (PR 137,
+  [§655](https://github.com/jessolmstead/greycard/blob/master/docs/notes/655-the-cull-panels-filters-a-row-each.md)).
+- Alt+← and Alt+→ go back and forward through the folders visited in
+  the grid, rebindable under Settings, Keys (discussion 59,
+  [§624](https://github.com/jessolmstead/greycard/blob/master/docs/notes/624-alt-arrows-go-back-and-forward.md)).
+
+### The window
+
+- Margins and gaps are evened across the panels, and paired choices such
+  as Parametric and Point are equal in width
+  ([§703](https://github.com/jessolmstead/greycard/blob/master/docs/notes/703-spacing-evened-across-the-panels.md)).
+- Drag a section's title to reorder a pane, and **Reset section order**
+  in Settings, Interface puts it back. Thanks to @Joulss (PR 156,
+  [§689](https://github.com/jessolmstead/greycard/blob/master/docs/notes/689-sections-keep-the-order-they-are-dragged-into.md)).
+- The left pane's sections sit in boxes like the right panel's, and
+  the Export queue is a header you can drag like the rest (discussion 59,
+  [§699](https://github.com/jessolmstead/greycard/blob/master/docs/notes/699-the-left-panes-sections-boxed-as-the-rights.md)).
+- The Navigator stays in sight however far the left pane's lists
+  scroll. Thanks to @Joulss (PR 138,
+  [§669](https://github.com/jessolmstead/greycard/blob/master/docs/notes/669-the-left-pane-navigator-pinned-lists-unframed.md)).
+- Quit in full screen and greycard starts in full screen
+  ([§649](https://github.com/jessolmstead/greycard/blob/master/docs/notes/649-the-window-opens-full-screen-as-it-was-closed.md)).
+- A switch sits right beside its label, and only the label and the
+  switch flip it
+  ([§642](https://github.com/jessolmstead/greycard/blob/master/docs/notes/642-a-switch-beside-its-label.md)).
+- greycard speaks French, chosen under Settings, Interface, Language or
+  followed from the system (issue 75,
+  [§641](https://github.com/jessolmstead/greycard/blob/master/docs/notes/641-french-translation.md)).
+  Thanks to @Joulss for completing it (PR 173). More languages translations
+  are welcome!
+  ([how to add one](https://github.com/jessolmstead/greycard/blob/master/docs/translating.md)).
+- Cleaned up the status messages on the bottom left of the viewport
+  (discussion 117,
+  [§629](https://github.com/jessolmstead/greycard/blob/master/docs/notes/629-the-develop-summary-leaves-the-window.md)).
+- The window opens as it was closed: its size, whether it was
+  maximized, and, except on Wayland, its place (issue 114,
+  [§623](https://github.com/jessolmstead/greycard/blob/master/docs/notes/623-the-window-opens-as-it-was-closed.md)).
+- Language offers English, so a translated system can switch back to
+  the source wording
+  ([§637](https://github.com/jessolmstead/greycard/blob/master/docs/notes/637-english-in-the-language-picker.md)).
+- The right panel's sections sit in raised boxes, and Crop, Rotate, and
+  Perspective group their tools. Thanks to @Joulss (PR 136,
+  [§670](https://github.com/jessolmstead/greycard/blob/master/docs/notes/670-the-right-panels-sections-and-tools.md)).
+- Widening the right panel gives long slider labels room first, and
+  the panel starts slightly wider, at 334 px
+  ([§672](https://github.com/jessolmstead/greycard/blob/master/docs/notes/672-the-panels-label-column-grows-with-the-panel.md),
+  [§675](https://github.com/jessolmstead/greycard/blob/master/docs/notes/675-the-develop-panel-starts-at-334-px.md)).
+- The lightbox has a bar with a close button, the frame count, and a
+  tile size slider, and the grid a slider too
+  ([§676](https://github.com/jessolmstead/greycard/blob/master/docs/notes/676-the-lightboxs-bar-the-tile-size-slider-and-the-canvas-surround.md)).
+- A screen reader names the panel's toggles, buttons, and section
+  switches, and their state
+  ([§673](https://github.com/jessolmstead/greycard/blob/master/docs/notes/673-white-balance-rests-on-a-monochrome-frame.md)).
+
+### Export
+
+- Every export can carry an author and a copyright, set under Settings,
+  Editing, or `greycard export --author --copyright` (issue 106,
+  [§652](https://github.com/jessolmstead/greycard/blob/master/docs/notes/652-an-author-and-a-copyright-in-every-export.md),
+  [§658](https://github.com/jessolmstead/greycard/blob/master/docs/notes/658-author-and-copyright-in-the-window.md)).
+- WebP joins JPEG, PNG, and TIFF as a lossless export format, smaller
+  than a PNG (issue 121,
+  [§632](https://github.com/jessolmstead/greycard/blob/master/docs/notes/632-lossless-webp-export.md)).
+
+### Windows
+
+- Windows has an installer that needs no administrator,
+  `greycard-<version>-x86_64-windows-setup.exe` (and `-aarch64-`),
+  beside the zip
+  ([§619](https://github.com/jessolmstead/greycard/blob/master/docs/notes/619-a-windows-installer.md),
+  [§684](https://github.com/jessolmstead/greycard/blob/master/docs/notes/684-a-setup-that-starts-no-shell.md)).
+
+### Packages
+
+- Every package carries THIRD-PARTY-NOTICES beside LICENSE, for the
+  libraries, artwork, ported code, and crates greycard is built from
+  ([§660](https://github.com/jessolmstead/greycard/blob/master/docs/notes/660-third-party-notices-in-every-package.md)).
+- A build from source shows its commit after the version, in the log,
+  `--version`, Settings, and a problem report
+  ([§700](https://github.com/jessolmstead/greycard/blob/master/docs/notes/700-the-builds-commit-in-its-version.md)).
+- Each release carries a SHA256SUMS file: check downloads with
+  `sha256sum -c SHA256SUMS --ignore-missing`, or `shasum -a 256 -c` on
+  a Mac
+  ([§657](https://github.com/jessolmstead/greycard/blob/master/docs/notes/657-read-only-workflow-tokens-and-sha256sums.md)).
 
 ### Fixes
 

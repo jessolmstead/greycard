@@ -368,10 +368,13 @@ the reasoning lives in `docs/notes.md`.
 
 ## Next
 
-0.12.0: a Windows installer, and the first translation.
+0.13.0: Canon highlights that hold more, and a learned denoiser that
+steps aside on a card it cannot run on.
 
-- [ ] The Windows installer (§619) compiled and installed on CI: a
-      run of windows-package.yml, before the tag
+- [ ] Canon raws keep the headroom over their declared white level
+- [ ] The learned denoiser is disabled on a card that lost it, with a
+      way back
+- [ ] An edit from a newer version opens in an older one
 
 ### Speed
 

@@ -3,7 +3,7 @@
 A raw editor that works on the light the camera caught, keeps your
 folders in charge, and runs on Linux, macOS and Windows. This page
 says what the other editors chose and what greycard does differently,
-and ends with what is built and what is planned. Updated for 0.11.0,
+and ends with what is built and what is planned. Updated for 0.12.0,
 November 2026.
 
 ## The short version
@@ -87,12 +87,14 @@ demosaic, the capture sharpen, the defringe and the profiled denoiser
 are ports, with attribution in each file.
 
 **RapidRAW.** A Rust and React editor with AI masks and a good-looking
-interface. Its pipeline is sRGB throughout and applies white balance
-in the wrong space; its
-[README](https://github.com/CyberTimon/RapidRAW/tree/b4b2bbeaa77f24c3bd54522171a4ed79d98b3a95)
-says it is "not for users who seek absolute, perfect color accuracy".
-AGPL with one owner, so its code can neither take from darktable and
-RawTherapee nor go anywhere else.
+interface, built for a quick, pleasing picture. greycard differs in
+four ways. It edits in linear Rec.2020, not sRGB, so the saturated
+color cameras catch (flowers, sunsets, stage lights) isn't squeezed
+in before the first edit. It aims for accuracy, true to the scene,
+rather than a look. Like RapidRAW it is tested by hand, but also by
+about 5,000 automated tests on every push. And its interface is
+native, built on Linux first; RapidRAW's is a web page in Tauri,
+which on Linux runs in WebKitGTK, its weakest platform.
 
 **Others.** digiKam is a library without a developer. Photo Mechanic
 and FastRawViewer are cullers. ON1 and Luminar sell looks. ART is a
@@ -138,7 +140,7 @@ planned.
 
 ## Where it stands
 
-Built, as of 0.11.0:
+Built, as of 0.12.0:
 
 - **Pipeline.** rawler decoding. Linear Rec.2020 from the camera
   matrix to the monitor profile, soft proofing, AgX as a second
@@ -192,7 +194,7 @@ Built, as of 0.11.0:
   tentative. A Report a
   problem button that fills in the version, OS and GPU. A release
   check that can be turned off. Every word of the window in a
-  translator's catalog, English shipped so far.
+  translator's catalog, English and French shipped so far.
 
 Planned, in order: tethering, and the learned denoiser for X-Trans.
 
