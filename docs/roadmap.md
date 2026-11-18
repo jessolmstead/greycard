@@ -1531,6 +1531,8 @@ clears or a tester asks for it.
       the width of F's mat a setting (discussion 59, 2026-11-10)
 - [ ] White balance presets from the camera's own, where a maker
       note carries them (Canon, Nikon), under the fixed six (§636)
+- [ ] An icon beside each white balance preset (sun, cloud, shade,
+      bulb, tube, flash) in the menu (§636)
 - [ ] Remove from a collection in any view: the frame menu lists the
       collections the frame is in, not only the open one (discussion
       59, 2026-11-15)
