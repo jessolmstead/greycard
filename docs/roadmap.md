@@ -833,11 +833,17 @@ brackets and the panorama to shoot for testing are in
       (found on the first real hand-stepped stack, 2026-11-08)
 - [ ] A bracket finder: a burst whose EXIF exposures step marked as a
       bracket, so the merge can be asked of a whole card (§523)
-- [ ] A vignette that darkens what is on screen: today's is an
-      exposure falloff in the scene, so a corner far over white stays
-      bright where other editors' darken it evenly; a choice of the
-      two, or tonal control on the Vignette (shadows only), and a
-      lift of the middle to go with it (discussion 170)
+- [ ] A vignette that darkens what is on screen: a switch on the
+      Vignette to apply it after the display curve, as most editors
+      do, beside today's exposure falloff in the scene, under which a
+      bright edge stays bright; the tester's view is that a vignette
+      is for effect, not optics. Then tonal control (shadows only),
+      and a lift of the middle to go with it (discussion 170)
+- [ ] A vignette's Amount is never reached in the frame at a high
+      Feather: at Midpoint 0.5 and Feather 1.0 the corners get half
+      of it and the edges' middles a tenth. Decide whether the corner
+      should always get the full Amount; that changes existing edits
+      (discussion 170)
 - [ ] A center for the vignette: two sliders or a drag on the picture
       to move the shape off the frame's middle, as darktable has and
       Lightroom has not; the center kept as fractions of the frame so
