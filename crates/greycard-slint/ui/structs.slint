@@ -461,6 +461,35 @@ export struct HistoryRow {
     undone: bool,
 }
 
+/// Which sections the header's reset has something to do in: true
+/// where the panel holds something other than what a new edit has for
+/// that section (the chosen mask's, on the Masks tab). One field a
+/// section, by the name its order keeps it under; Rust fills them
+/// (`panel::section_reset::show_section_resets`).
+export struct SectionResets {
+    look: bool,
+    white-balance: bool,
+    camera: bool,
+    light: bool,
+    color: bool,
+    curves: bool,
+    mixer: bool,
+    black-and-white: bool,
+    grading: bool,
+    tint: bool,
+    detail: bool,
+    noise: bool,
+    lens: bool,
+    sharpen: bool,
+    output-sharpen: bool,
+    vignette: bool,
+    grain: bool,
+    demosaic: bool,
+    crop: bool,
+    rotate: bool,
+    perspective: bool,
+}
+
 /// One group on the camera match sheet: its look's name, the line that
 /// says what the fit will do with it, and whether it is checked.
 export struct MatchGroup {

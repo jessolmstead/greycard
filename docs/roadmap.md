@@ -1304,9 +1304,6 @@ clears or a tester asks for it.
       with masks. Today it takes the last sync's or paste's checks:
       all, none, or the clicked frame's masks of the same names as
       the ones last checked
-- [ ] A reset on each section's header, on Develop, Crop, and a
-      mask's sections (discussion 59, 2026-11-12); double-click
-      resets one slider and Reset all the tab today
 - [ ] Refine edge steps between 0 and 1%: off, then the edge fit over
       its smallest reach, which smooths a speckled range mask at once
       (discussion 59, 2026-11-12); waits on a measurement

@@ -111,6 +111,8 @@ design note behind it.
 
 ### Develop
 
+- Each section's header has a reset arrow that puts that section back to its defaults as one step, on Develop, Crop, and a mask's sections
+  ([§710](https://github.com/jessolmstead/greycard/blob/master/docs/notes/710-a-reset-on-each-sections-header.md)).
 - Lightroom's older `.lrtemplate` presets import as its `.xmp` ones do, from
   the window, a folder, or the command line
   ([§705](https://github.com/jessolmstead/greycard/blob/master/docs/notes/705-lightrooms-lrtemplate-presets.md)).

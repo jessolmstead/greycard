@@ -39,6 +39,7 @@ pub(crate) mod recent;
 pub(crate) mod reset;
 pub(crate) mod retouch;
 pub(crate) mod saves;
+pub(crate) mod section_reset;
 pub(crate) mod shares;
 pub(crate) mod side_buttons;
 pub(crate) mod sizes;

@@ -1088,6 +1088,8 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     // The look as the panel now holds it, the baseline for the next
     // change (see `mask::look_edited`).
     *st.develop.look_seen.borrow_mut() = Some((read_look(app), app.get_mask_opacity()));
+    // The headers' resets, by this edit against the frame's Original.
+    crate::panel::section_reset::show_section_resets(st, app, edit, target);
 }
 
 /// The panel's sections that fold, by the names the settings keep

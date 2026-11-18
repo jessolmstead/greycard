@@ -34,6 +34,7 @@ pub(crate) fn show_history(st: &State, app: &App) {
         app.set_can_undo(false);
         app.set_can_redo(false);
         app.set_history_resettable(false);
+        app.set_section_resets(Default::default());
         return;
     };
     // Which version the history is of, after its title: none for the
@@ -42,6 +43,10 @@ pub(crate) fn show_history(st: &State, app: &App) {
     app.set_can_undo(!sidecar.history.is_empty());
     app.set_can_redo(!sidecar.redo.is_empty());
     app.set_history_resettable(!crate::panel::reset::at_original(st, c));
+    // The headers' resets by the panel, which a frame's open puts its
+    // edit on before the frame is the current one.
+    let panel = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
+    crate::panel::section_reset::show_section_resets(st, app, &panel, st.develop.target);
     // Whatever moved the history (a save, a reset, an undo, an export
     // landing) moved what the frame's cell says of its edit and its
     // exports; the cell is written only if it differs.

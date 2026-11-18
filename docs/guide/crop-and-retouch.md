@@ -8,7 +8,8 @@ never copy the crop, the straighten or the retouch to other frames.
 ## The Crop tab
 
 The tab has three sections: **CROP**, **ROTATE** and **PERSPECTIVE**.
-**Reset all**, at the bottom, puts all three back at once.
+**Reset all**, at the bottom, puts all three back at once; the reset
+arrow in a section's header puts back that section alone.
 
 ### Cropping
 

@@ -12,7 +12,7 @@ export { Theme, ScrollBars, LabelColumn } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge, HeldKeys, SectionStack, SectionSlot, SectionDrag } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys, ButtonKeys } from "controls.slint";
-import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, WheelGuide, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetRange, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, ProfileRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
+import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, WheelGuide, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetRange, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, SectionResets, LookRow, ProfileRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -1491,6 +1491,11 @@ export component App inherits Window {
     /// history's Reset to Original; and the reset, as one step.
     in property <bool> history-resettable: false;
     callback history-reset();
+    /// The sections whose header's reset has something to do, and a
+    /// click on one: the section by its order's name, put back to what
+    /// a new edit has (the chosen mask's own, on the Masks tab).
+    in property <SectionResets> section-resets;
+    callback section-reset(string);
     in-out property <bool> collapsed-snapshots: false;
     in-out property <bool> collapsed-history: false;
     /// The left pane's lists, FOLDERS, COLLECTIONS, PRESETS, SNAPSHOTS,
@@ -4437,6 +4442,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.look;
+                                    reset-clicked => { root.section-reset(section); }
                                     collapsed-look <=> root.collapsed-look;
                                     look-name <=> root.look-name;
                                     look-strength <=> root.look-strength;
@@ -4463,6 +4471,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.white-balance;
+                                    reset-clicked => { root.section-reset(section); }
                                     as-shot <=> root.as-shot;
                                     collapsed-wb <=> root.collapsed-wb;
                                     opened-alone => { root.alone-with-masks(); }
@@ -4496,6 +4507,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.white-balance;
+                                    reset-clicked => { root.section-reset(section); }
                                     local: true;
                                     owner: root.target-name;
                                     switchable: true;
@@ -4521,6 +4535,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.camera;
+                                    reset-clicked => { root.section-reset(section); }
                                     collapsed-camera <=> root.collapsed-camera;
                                     raw-input: root.raw-input;
                                     source-note: root.source-note;
@@ -4543,6 +4560,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.light;
+                                    reset-clicked => { root.section-reset(section); }
                                     exposure <=> root.exposure;
                                     contrast <=> root.contrast;
                                     highlights <=> root.highlights;
@@ -4568,6 +4588,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.color;
+                                    reset-clicked => { root.section-reset(section); }
                                     color-enabled <=> root.color-enabled;
                                     saturation <=> root.saturation;
                                     vibrance <=> root.vibrance;
@@ -4584,6 +4607,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.curves;
+                                    reset-clicked => { root.section-reset(section); }
                                     curves-enabled <=> root.curves-enabled;
                                     curve-mode <=> root.curve-mode;
                                     para-highlights <=> root.para-highlights;
@@ -4623,6 +4649,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.mixer;
+                                    reset-clicked => { root.section-reset(section); }
                                     collapsed-mixer <=> root.collapsed-mixer;
                                     opened-alone => { root.alone-with-masks(); }
                                     picking <=> root.picking;
@@ -4650,6 +4679,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.black-and-white;
+                                    reset-clicked => { root.section-reset(section); }
                                     collapsed-bw <=> root.collapsed-bw;
                                     band-colors: root.band-colors;
                                     dull: root.dull;
@@ -4670,6 +4702,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.grading;
+                                    reset-clicked => { root.section-reset(section); }
                                     collapsed-grading <=> root.collapsed-grading;
                                     opened-alone => { root.alone-with-masks(); }
                                     target-name <=> root.target-name;
@@ -4703,6 +4738,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.tint;
+                                    reset-clicked => { root.section-reset(section); }
                                     collapsed-tint <=> root.collapsed-tint;
                                     opened-alone => { root.alone-with-masks(); }
                                     target-name <=> root.target-name;
@@ -4734,6 +4772,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.detail;
+                                    reset-clicked => { root.section-reset(section); }
                                     collapsed-detail <=> root.collapsed-detail;
                                     opened-alone => { root.alone-with-masks(); }
                                     target-name <=> root.target-name;
@@ -4752,6 +4793,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.noise;
+                                    reset-clicked => { root.section-reset(section); }
                                     noise-enabled <=> root.noise-enabled;
                                     collapsed-noise <=> root.collapsed-noise;
                                     denoise <=> root.denoise;
@@ -4774,6 +4818,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.lens;
+                                    reset-clicked => { root.section-reset(section); }
                                     lens-enabled <=> root.lens-enabled;
                                     collapsed-lens <=> root.collapsed-lens;
                                     picking <=> root.picking;
@@ -4822,6 +4869,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.detail;
+                                    reset-clicked => { root.section-reset(section); }
                                     collapsed-detail <=> root.collapsed-detail;
                                     opened-alone => { root.alone-with-masks(); }
                                     detail-enabled <=> root.detail-enabled;
@@ -4837,6 +4887,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.sharpen;
+                                    reset-clicked => { root.section-reset(section); }
                                     collapsed-sharpen <=> root.collapsed-sharpen;
                                     show-sharpen-mask <=> root.show-sharpen-mask;
                                     sharpen <=> root.sharpen;
@@ -4858,6 +4911,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.output-sharpen;
+                                    reset-clicked => { root.section-reset(section); }
                                     output-sharpen-enabled <=> root.output-sharpen-enabled;
                                     collapsed-output-sharpen <=> root.collapsed-output-sharpen;
                                     output-sharpen-amount <=> root.output-sharpen-amount;
@@ -4871,6 +4927,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.vignette;
+                                    reset-clicked => { root.section-reset(section); }
                                     vignette-enabled <=> root.vignette-enabled;
                                     collapsed-vignette <=> root.collapsed-vignette;
                                     vignette-amount <=> root.vignette-amount;
@@ -4885,6 +4944,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.grain;
+                                    reset-clicked => { root.section-reset(section); }
                                     grain-enabled <=> root.grain-enabled;
                                     collapsed-grain <=> root.collapsed-grain;
                                     grain-amount <=> root.grain-amount;
@@ -4931,6 +4993,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { develop-stack.move(x, y); }
                                     reorder-ended(commit) => { return develop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.demosaic;
+                                    reset-clicked => { root.section-reset(section); }
                                     collapsed-demosaic <=> root.collapsed-demosaic;
                                     raw-input: root.raw-input;
                                     source-note: root.source-note;
@@ -4999,6 +5064,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { crop-stack.move(x, y); }
                                     reorder-ended(commit) => { return crop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.crop;
+                                    reset-clicked => { root.section-reset(section); }
                                     crop-mode <=> root.crop-mode;
                                     level-mode <=> root.level-mode;
                                     guide-mode <=> root.guide-mode;
@@ -5021,6 +5089,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { crop-stack.move(x, y); }
                                     reorder-ended(commit) => { return crop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.rotate;
+                                    reset-clicked => { root.section-reset(section); }
                                     frame-turned(a) => { root.frame-turned(a); }
                                     crop-mode <=> root.crop-mode;
                                     level-mode <=> root.level-mode;
@@ -5045,6 +5116,9 @@ export component App inherits Window {
                                     reorder-moved(x, y) => { crop-stack.move(x, y); }
                                     reorder-ended(commit) => { return crop-stack.end(commit); }
                                     one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.perspective;
+                                    reset-clicked => { root.section-reset(section); }
                                     crop-mode <=> root.crop-mode;
                                     level-mode <=> root.level-mode;
                                     guide-mode <=> root.guide-mode;

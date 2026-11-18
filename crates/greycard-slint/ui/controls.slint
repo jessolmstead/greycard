@@ -56,6 +56,8 @@ export component TipArea inherits TouchArea {
     /// left, another took the pointer).
     callback canceled();
     changed has-hover => { if (!root.has-hover) { root.untip(); } }
+    // Words taken away while up (the control gone quiet): the tip too.
+    changed words => { if (root.words == "") { root.untip(); } }
     pointer-event(e) => {
         if (e.kind == PointerEventKind.down) {
             root.untip();
@@ -301,6 +303,20 @@ export component Section inherits VerticalLayout {
     // the section folded too. Empty for none.
     in property <string> action;
     callback action-clicked();
+    // A reset at the header's right, left of the switch or of its
+    // room: a click puts the whole section back to what a new edit
+    // has, as one step, and leaves the fold and the section's place as
+    // they are. Hidden, its room kept, while the section stands there
+    // already (`reset-live` false) and while its switch is dead; the
+    // empty room is then the header's. Not in the keys' focus walk, as
+    // the header's other picture-only parts are not. Never dropped for
+    // want of room: at the panel's narrowest (280 px) the header holds
+    // it with a few letters of the title, which is cut instead.
+    in property <bool> has-reset: false;
+    in property <bool> reset-live: true;
+    callback reset-clicked();
+    property <length> reset-width: Theme.icon + 2 * Theme.space-1;
+    property <length> switch-width: 28px;
     // Whether the focused slider is in this section, by where it last
     // said it was (it says so at each move).
     pure function holds-the-keys() -> bool {
@@ -531,6 +547,8 @@ export component Section inherits VerticalLayout {
                     }
                     if root.owner != "": Text {
                         text: root.owner;
+                        min-width: 0px;
+                        horizontal-stretch: 1;
                         color: Theme.text;
                         font-size: Theme.font-xs;
                         font-weight: Theme.weight-semibold;
@@ -547,7 +565,9 @@ export component Section inherits VerticalLayout {
                         // A long title is cut, not the panel widened;
                         // after an owner, the owner is cut instead.
                         overflow: elide;
-                        min-width: root.owner == "" ? 0px : self.preferred-width;
+                        // Never under a few letters, so a narrow header
+                        // still names its section.
+                        min-width: root.owner == "" ? 0px : min(self.preferred-width, 56px);
                     }
                     // Cut first, so a long one (a version's name) never
                     // pushes the header's action off the panel.
@@ -588,6 +608,40 @@ export component Section inherits VerticalLayout {
                     clicked => { root.action-clicked(); }
                 }
             }
+            // Its room is kept while there is nothing to reset, so
+            // nothing moves as it comes and goes; a click on the empty
+            // room is the header's: its touch area is switched off, so
+            // the header's row under it takes the press.
+            if root.has-reset: reset-slot := Rectangle {
+                property <bool> live: root.reset-live && !root.superseded;
+                width: root.reset-width;
+                if reset-slot.live: Rectangle {
+                    border-radius: Theme.radius-sm;
+                    background: reset-area.pressed ? Theme.pressed : reset-area.has-hover ? Theme.hover : transparent;
+                    animate background { duration: Theme.quick; }
+                    accessible-role: button;
+                    accessible-label: @tr("Reset");
+                    accessible-description: root.title;
+                    accessible-action-default => { root.reset-clicked(); }
+                    Image {
+                        source: @image-url("icons/rotate-ccw.svg");
+                        colorize: reset-area.has-hover ? Theme.text : Theme.text-secondary;
+                        width: Theme.icon;
+                        height: Theme.icon;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+                // Made once and only switched off, so a tip up as the
+                // section reaches its defaults (an undo by a key, say)
+                // goes down with its words rather than staying up.
+                reset-area := TipArea {
+                    enabled: reset-slot.live;
+                    words: reset-slot.live ? @tr("Reset") : "";
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => { if (reset-slot.live) { root.reset-clicked(); } }
+                }
+            }
             if root.switchable: Switch {
                 label: root.title;
                 checked <=> root.on;
@@ -595,6 +649,11 @@ export component Section inherits VerticalLayout {
                 force-off: root.superseded;
                 y: (parent.height - self.height) / 2;
                 toggled => { root.switched(); }
+            }
+            // A reset with no switch beside it keeps the switch's room,
+            // so the resets stand in one column down the panel.
+            if root.has-reset && !root.switchable: Rectangle {
+                width: root.switch-width;
             }
         }
     }

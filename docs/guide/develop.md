@@ -84,8 +84,11 @@ panel". The word goes when you click, press a key or scroll.
 - Most sections have a **switch** at the right of the title. Off, the
   picture is as if the section were not there. Its settings stay, dimmed,
   for when you turn it back on. Use it to compare before and after.
-- Some sections have a **Reset** button that puts the whole section
-  back to its defaults.
+- The **reset** arrow at the right of a header puts the whole section,
+  its switch too, back to what a new edit has, as one step. It shows only
+  while the section is off its defaults. On the Masks tab it resets the
+  chosen mask's section, never the mask itself.
+- Some sections also have a **Reset** button in their body.
 - A section marked "raw only" does nothing on a JPEG, PNG, or TIFF.
 
 ## Look

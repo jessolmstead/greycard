@@ -297,6 +297,24 @@ pub(crate) fn count_labeled(app: &App, label: &str) -> usize {
 /// scrolled into the panel's view first: its top left and its size,
 /// in logical pixels from the window's top left.
 pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
+    labeled_where(app, label, |_| true)
+}
+
+/// The reset in the header of the section titled `title` (as its
+/// header shows it, in capitals), scrolled into the panel's view as
+/// [`labeled`] scrolls.
+pub(crate) fn header_reset(app: &App, title: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
+    labeled_where(app, "Reset", |e| {
+        e.accessible_description().as_deref() == Some(title)
+    })
+}
+
+/// [`labeled`] of the first element labeled `label` that `pick` takes.
+pub(crate) fn labeled_where(
+    app: &App,
+    label: &str,
+    pick: impl Fn(&i_slint_backend_testing::ElementHandle) -> bool,
+) -> (slint::LogicalPosition, slint::LogicalSize) {
     use i_slint_backend_testing::ElementHandle;
     let find = || {
         // A control a property has just brought in is built on the
@@ -304,7 +322,7 @@ pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint:
         app.window().dispatch_event(WindowEvent::PointerMoved {
             position: slint::LogicalPosition::new(0.0, 0.0),
         });
-        ElementHandle::find_by_accessible_label(app, label).next()
+        ElementHandle::find_by_accessible_label(app, label).find(|e| pick(e))
     };
     // The panel's view, measured rather than guessed: it starts under
     // the tab bar and, on the Masks tab, the Adjustments list pinned

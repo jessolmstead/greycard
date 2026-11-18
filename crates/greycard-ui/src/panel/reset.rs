@@ -73,6 +73,8 @@ pub(crate) fn show_panel_resettable(st: &State, app: &App) {
     };
     let edit = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
     app.set_history_resettable(edit != original);
+    // And each header's reset, by the same panel.
+    crate::panel::section_reset::show_section_resets(st, app, &edit, st.develop.target);
 }
 
 /// Record cell `c`'s Original as its current state, one step named
