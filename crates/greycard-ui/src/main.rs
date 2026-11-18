@@ -492,6 +492,12 @@ struct Cli {
     /// them, for checking the one against the other
     #[arg(long)]
     cpu_ops: bool,
+    /// Started again after a model lost the GPU: a loss in this run
+    /// starts no other. Read from the arguments themselves by
+    /// `gpu_lost::start_again`, which hands them on; here so the
+    /// parser takes it.
+    #[arg(long = "after-model-loss", hide = true)]
+    _after_model_loss: bool,
     /// Once the first develop is on screen, move the sharpen's radius
     /// this many times, logging the time from each move to its frame,
     /// then quit with the mean

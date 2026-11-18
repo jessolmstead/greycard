@@ -526,8 +526,15 @@ fn develop_learned(
     let mut denoiser = match *model {
         Some(model) => {
             let store = greycard_ai::Store::user().context("finding the model store")?;
+            // In a test, the off-card check is a test's: no user's
+            // store, ONNX Runtime, or adapter asked for it.
+            #[cfg(test)]
+            greycard_ai::runtime::off_card_for_tests();
             greycard_ai::Denoiser::from_store(&store, model, &providers)
         }
+        // A model file named by hand is not gated by the off-card
+        // record: it names no registered tier, and a developer asking
+        // for that file on this card means it.
         None => greycard_ai::Denoiser::load(path, &providers),
     }
     .with_context(|| format!("loading {}", path.display()))?;

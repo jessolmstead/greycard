@@ -254,10 +254,7 @@ pub(super) fn walk_for_export(
         tracing::info!("{name} stood down: {why}");
     }
     let learned = match (&walked.meta.stood_in, unavailable) {
-        (Some(NoLearned::Missing(model)), _) => LearnedReport::Missing(model),
-        (Some(NoLearned::Failed(why) | NoLearned::Short(why)), _) => {
-            LearnedReport::Failed(why.clone())
-        }
+        (Some(no), _) => super::develop::stood_in_report(no),
         (None, Some(why)) => LearnedReport::Unavailable(why),
         (None, None) => learned,
     };

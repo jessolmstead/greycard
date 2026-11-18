@@ -12,6 +12,10 @@ the reasoning lives in `docs/notes.md`.
       view, so what it finds depends on the window's height. One failed
       on CI alone at the 0.12.0 cut; the rest want an audit, and ids
       (2026-11-17)
+- [ ] A denoiser named by path (`--denoiser <path>`) is not refused on
+      a card the record says lost the learned tiers (§712)
+- [ ] The first read of the lost-card record can load ONNX Runtime on
+      the window's thread (§712)
 - [ ] The XMP beside a raw is read whole, with no bound, by the
       open's adoption (`xmp::adopt_own`) and the index's pass; the
       take's own read stops at 64 MB (§705)
@@ -227,8 +231,6 @@ the reasoning lives in `docs/notes.md`.
 steps aside on a card it cannot run on.
 
 - [ ] Canon raws keep the headroom over their declared white level
-- [ ] The learned denoiser is disabled on a card that lost it, with a
-      way back
 - [ ] An edit from a newer version opens in an older one
 - [ ] Slint 1.19, with the Slint and femtovg pins dropped
 - [ ] The editor's crate broken up, its first steps

@@ -275,11 +275,12 @@ fn said_pano(report: &greycard_engine::merge::pano::Report) -> u8 {
     if let Some(gb) = peak_gb() {
         println!("memory        peak {gb:.2} GB");
     }
-    for w in &report.warnings {
+    let notes = notes(&report.warnings, report.learned_skipped);
+    for w in &notes {
         println!("note          {w}");
     }
     println!("wrote         {}", report.out.display());
-    if report.warnings.is_empty() { 0 } else { 2 }
+    if notes.is_empty() { 0 } else { 2 }
 }
 
 fn hdr(args: HdrArgs) -> Result<u8> {
@@ -352,11 +353,22 @@ fn said_hdr(report: &merge::Report) -> u8 {
         Some(gb) => println!("took          {total:.1} s, peak memory {gb:.2} GB"),
         None => println!("took          {total:.1} s"),
     }
-    for w in &report.warnings {
+    let notes = notes(&report.warnings, report.learned_skipped);
+    for w in &notes {
         println!("note          {w}");
     }
     println!("wrote         {}", report.out.display());
-    if report.warnings.is_empty() { 0 } else { 2 }
+    if notes.is_empty() { 0 } else { 2 }
+}
+
+/// A merge's note lines: its warnings, then why frames that asked for
+/// a learned tier went without it, in one line.
+fn notes(warnings: &[String], skipped: Option<merge::LearnedSkipped>) -> Vec<String> {
+    warnings
+        .iter()
+        .cloned()
+        .chain(skipped.map(|why| why.words().to_string()))
+        .collect()
 }
 
 /// The process's peak resident memory, where the system says it.
@@ -370,4 +382,30 @@ fn peak_gb() -> Option<f64> {
         .parse::<f64>()
         .ok()
         .map(|kb| kb / 1024.0 / 1024.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A merge whose frames went without the learned tier asked says
+    /// why in one note, after its warnings; with nothing skipped, its
+    /// warnings alone.
+    #[test]
+    fn a_skipped_learned_denoise_is_one_note() {
+        let warnings = vec!["frame 2 resampled".to_string()];
+        assert_eq!(
+            notes(&warnings, Some(merge::LearnedSkipped::OffCard)),
+            vec![
+                "frame 2 resampled",
+                "no learned denoise on this graphics card"
+            ]
+        );
+        assert_eq!(
+            notes(&[], Some(merge::LearnedSkipped::XTrans)),
+            vec!["no learned denoise on X-Trans"]
+        );
+        assert_eq!(notes(&warnings, None), warnings);
+        assert!(notes(&[], None).is_empty());
+    }
 }

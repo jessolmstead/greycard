@@ -61,8 +61,9 @@ const READ_WAIT: Duration = Duration::from_secs(5);
 const TOKENS: [&str; 2] = ["XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID"];
 
 /// Whether this command line takes part: a path alone, or nothing,
-/// with `-v` as often as it likes and `--cpu-ops`, which the start
-/// again after a lost GPU adds. Any other flag is a run the command
+/// with `-v` as often as it likes, `--cpu-ops`, which the start
+/// again after a lost GPU adds, and `--after-model-loss`, which one
+/// after a model lost it adds too. Any other flag is a run the command
 /// line arranges (an export, a capture, a measurement), which keeps
 /// its own window, or none, and never hands over or listens.
 pub fn plain_launch(args: &[OsString]) -> bool {
@@ -77,6 +78,7 @@ pub fn plain_launch(args: &[OsString]) -> bool {
             }
             if bytes == b"--verbose"
                 || bytes == b"--cpu-ops"
+                || bytes == b"--after-model-loss"
                 || (bytes.len() > 1 && bytes[0] == b'-' && bytes[1..].iter().all(|&b| b == b'v'))
             {
                 continue;

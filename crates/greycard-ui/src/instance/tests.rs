@@ -48,6 +48,12 @@ fn a_path_alone_or_nothing_takes_part_and_any_flag_does_not() {
     assert!(plain_launch(&os(&["--verbose", "--", "-odd.CR3"])));
     // The start again after a lost GPU.
     assert!(plain_launch(&os(&["/photos/a.CR3", "--cpu-ops"])));
+    // And after a model lost it.
+    assert!(plain_launch(&os(&[
+        "/photos/a.CR3",
+        "--cpu-ops",
+        "--after-model-loss"
+    ])));
     assert!(!plain_launch(&os(&["a.CR3", "b.CR3"])));
     assert!(!plain_launch(&os(&["a.CR3", "--export", "out.jpg"])));
     assert!(!plain_launch(&os(&["--export", "out.jpg", "a.CR3"])));

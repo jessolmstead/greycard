@@ -45,7 +45,18 @@ use ort::session::Session;
 use ort::session::builder::{GraphOptimizationLevel, SessionBuilder};
 
 mod dylib;
+mod on_card;
 mod record;
+
+#[cfg(test)]
+pub(crate) use on_card::flag_lock;
+pub use on_card::{
+    HELD, Held, OnCard, denoisers_off_card, denoisers_off_here, forget_off_card,
+    let_denoisers_back_on, off_card_path, on_card_now, put_off_card, read_denoisers_off_card,
+    runs_held, set_build_label,
+};
+#[cfg(any(test, feature = "testing"))]
+pub use on_card::{off_card_for_tests, off_card_is_for_tests, set_test_here, set_test_store};
 
 pub use dylib::{FETCH_RUNTIME, LIBRARY, SHIPS, Unavailable};
 
@@ -465,8 +476,9 @@ pub fn webgpu_shader_f16() -> Option<(bool, String)> {
     }
 }
 
-/// The bytes of the WebGPU adapter's own memory: the sum of its
-/// device-local heaps on Vulkan, its dedicated video memory on DX12.
+/// The bytes of the WebGPU adapter's own memory: its largest
+/// device-local heap on Vulkan ([`card_heap`]), its dedicated video
+/// memory on DX12.
 /// `None` when no adapter answers, on Metal (a Mac's GPU has the
 /// machine's memory, which the caller reads), and on any backend that
 /// will not say. On an integrated GPU it is the share the driver sets
@@ -478,7 +490,7 @@ pub fn webgpu_memory() -> Option<u64> {
 }
 
 /// [`webgpu_memory`], with what it was read from, for the log:
-/// Vulkan's device-local heaps or DXGI's dedicated video memory.
+/// Vulkan's largest device-local heap or DXGI's dedicated video memory.
 pub fn webgpu_memory_read() -> Option<(u64, &'static str)> {
     #[cfg(webgpu_ep)]
     {
@@ -556,6 +568,14 @@ pub fn webgpu_name() -> Option<String> {
     }
 }
 
+/// An adapter's identity, as the provider and off-card records key on
+/// it: its name, backend, and driver with the driver's own words, so a
+/// driver update makes it another adapter to them.
+#[cfg_attr(not(webgpu_ep), allow(dead_code))]
+fn adapter_identity_of(name: &str, backend: &str, driver: &str, driver_info: &str) -> String {
+    format!("{name}|{backend}|{driver} {driver_info}")
+}
+
 /// What the WebGPU probe learned of the adapter.
 #[cfg(webgpu_ep)]
 struct Adapter {
@@ -575,6 +595,35 @@ struct Adapter {
     /// The bytes of its own memory, and what said so
     /// ([`webgpu_memory_read`]).
     memory: Option<(u64, &'static str)>,
+}
+
+/// Which of a Vulkan device's heaps, each its size and whether it is
+/// device-local, is the card's own memory: the largest device-local
+/// one. A second, the 256 MB BAR window (NVIDIA's, AMD's with
+/// resizable BAR the whole card), is a view into the same memory, so
+/// summed it counts some of the card twice: a tester's 2 GB card read
+/// as 2.2 GiB.
+#[cfg_attr(not(webgpu_ep), allow(dead_code))]
+fn card_heap(heaps: &[(u64, bool)]) -> Option<usize> {
+    (0..heaps.len())
+        .filter(|&i| heaps[i].1)
+        .max_by_key(|&i| heaps[i].0)
+}
+
+/// The bytes of a Vulkan card's own memory, from its heaps as
+/// [`card_heap`] takes them: what [`webgpu_memory`] says on Vulkan.
+#[cfg_attr(not(webgpu_ep), allow(dead_code))]
+fn vulkan_card_bytes(heaps: &[(u64, bool)]) -> u64 {
+    card_heap(heaps).map_or(0, |i| heaps[i].0)
+}
+
+/// [`adapter_memory`]'s answer on Vulkan from the device's heaps, each
+/// its size and whether it is device-local: the whole of what it does
+/// with them, so its test is the reading's.
+#[cfg_attr(not(webgpu_ep), allow(dead_code))]
+fn vulkan_card_memory(heaps: &[(u64, bool)]) -> Option<(u64, &'static str)> {
+    let bytes = vulkan_card_bytes(heaps);
+    (bytes > 0).then_some((bytes, "Vulkan's largest device-local heap"))
 }
 
 /// The bytes of `adapter`'s own memory, asked of the backend under
@@ -599,12 +648,11 @@ fn adapter_memory(adapter: &wgpu::Adapter) -> Option<(u64, &'static str)> {
                     .get_physical_device_memory_properties(vk.raw_physical_device())
             };
             let count = (props.memory_heap_count as usize).min(props.memory_heaps.len());
-            let bytes: u64 = props.memory_heaps[..count]
+            let heaps: Vec<(u64, bool)> = props.memory_heaps[..count]
                 .iter()
-                .filter(|h| h.flags.as_raw() & DEVICE_LOCAL != 0)
-                .map(|h| h.size)
-                .sum();
-            return (bytes > 0).then_some((bytes, "Vulkan's device-local heaps"));
+                .map(|h| (h.size, h.flags.as_raw() & DEVICE_LOCAL != 0))
+                .collect();
+            return vulkan_card_memory(&heaps);
         }
     }
     #[cfg(windows)]
@@ -665,13 +713,11 @@ fn adapter_free_memory(adapter: &wgpu::Adapter) -> Option<(u64, &'static str)> {
             // twice.
             let heaps = props.memory_properties;
             let count = (heaps.memory_heap_count as usize).min(heaps.memory_heaps.len());
-            let largest = (0..count)
-                .filter(|&i| {
-                    heaps.memory_heaps[i]
-                        .flags
-                        .contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
-                })
-                .max_by_key(|&i| heaps.memory_heaps[i].size)?;
+            let sized: Vec<(u64, bool)> = heaps.memory_heaps[..count]
+                .iter()
+                .map(|h| (h.size, h.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL)))
+                .collect();
+            let largest = card_heap(&sized)?;
             let (budget, used) = (budget.heap_budget[largest], budget.heap_usage[largest]);
             return (budget > 0).then_some((budget.saturating_sub(used), "Vulkan's memory budget"));
         }
@@ -781,10 +827,7 @@ fn webgpu_adapter() -> Option<&'static Adapter> {
                 .ok()?;
             let info = adapter.get_info();
             Some(Adapter {
-                identity: format!(
-                    "{}|{:?}|{} {}",
-                    info.name, info.backend, info.driver, info.driver_info
-                ),
+                identity: adapter_identity_of(&info.name, &format!("{:?}", info.backend), &info.driver, &info.driver_info),
                 name: info.name.clone(),
                 device_type: info.device_type,
                 shader_f16: adapter.features().contains(wgpu::Features::SHADER_F16),
@@ -861,6 +904,11 @@ pub enum Error {
     /// Not begun: the card had not the memory free for it.
     #[error("{0}")]
     Short(String),
+    /// Not loaded: the card was lost while the model ran on it, and it
+    /// is on record as off this card, driver, and build
+    /// ([`denoisers_off_here`]). WORDING PENDING the user's approval.
+    #[error("the learned denoiser is not on this graphics card")]
+    OffCard,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -2429,5 +2477,42 @@ mod tests {
         assert_eq!(*heard.lock().unwrap(), [true, false]);
         drop(loads.begin());
         assert_eq!(*heard.lock().unwrap(), [true, false, true, false]);
+    }
+
+    /// An adapter's identity carries its driver, its version and its
+    /// words: a driver update is another adapter to the records, which
+    /// is how it clears a card's off-card entry.
+    #[test]
+    fn an_adapters_identity_carries_its_driver() {
+        let id = |driver, info| adapter_identity_of("NVIDIA GeForce 830A", "Vulkan", driver, info);
+        assert_eq!(
+            id("NVIDIA", "582.66"),
+            "NVIDIA GeForce 830A|Vulkan|NVIDIA 582.66"
+        );
+        assert_ne!(id("NVIDIA", "582.66"), id("NVIDIA", "591.44"));
+        assert_ne!(id("NVIDIA", "582.66"), id("nouveau", "582.66"));
+    }
+
+    /// The card's own memory is its largest device-local heap: NVIDIA's
+    /// BAR window beside a 2 GB card's VRAM is not added to it, nor a
+    /// resizable BAR's view of the whole card; a host heap never counts.
+    #[test]
+    fn the_cards_memory_is_its_largest_device_local_heap() {
+        const MIB: u64 = 1 << 20;
+        // A 2 GB NVIDIA card on Vulkan: VRAM, the host's, the BAR.
+        let nvidia = [(2048 * MIB, true), (16384 * MIB, false), (224 * MIB, true)];
+        assert_eq!(card_heap(&nvidia), Some(0));
+        // What the card is said to have: 2 GiB, not the 2.2 the sum read.
+        assert_eq!(vulkan_card_bytes(&nvidia), 2048 * MIB);
+        assert_eq!(
+            vulkan_card_memory(&nvidia),
+            Some((2048 * MIB, "Vulkan's largest device-local heap"))
+        );
+        assert_eq!(vulkan_card_memory(&[(16384 * MIB, false)]), None);
+        // Resizable BAR: two device-local heaps of the card's size.
+        let rebar = [(8192 * MIB, true), (32768 * MIB, false), (8192 * MIB, true)];
+        assert_eq!(vulkan_card_bytes(&rebar), 8192 * MIB);
+        assert_eq!(vulkan_card_bytes(&[(16384 * MIB, false)]), 0);
+        assert_eq!(card_heap(&[]), None);
     }
 }

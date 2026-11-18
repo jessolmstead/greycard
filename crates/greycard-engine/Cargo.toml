@@ -59,9 +59,11 @@ greycard-core = { path = "../greycard-core", features = ["testing"] }
 pollster.workspace = true
 greycard-render = { path = "../greycard-render", features = ["testing"] }
 greycard-library = { path = "../greycard-library", features = ["fixtures"] }
+# The off-card record's seam: no test reads the user's store.
+greycard-ai = { path = "../greycard-ai", features = ["testing"] }
 
 [features]
 # The test helpers and the test hooks the window's tests share with
 # these: the worker for a test, the camera picture's reads, the
 # prefetch's quiet. Turned on by greycard-ui's dev-dependency only.
-testing = ["dep:dunce", "greycard-render/testing"]
+testing = ["dep:dunce", "greycard-render/testing", "greycard-ai/testing"]

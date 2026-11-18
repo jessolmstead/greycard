@@ -40,6 +40,8 @@ tracing-log.workspace = true
 greycard-core = { path = "../greycard-core", features = ["testing"] }
 # Frames with real EXIF for the listing's tests.
 greycard-library = { path = "../greycard-library", features = ["fixtures"] }
+# The off-card record's seam: no test reads the user's store.
+greycard-ai = { path = "../greycard-ai", features = ["testing"] }
 
 [features]
 # Nikon High Efficiency raws; off by default, see greycard-core.

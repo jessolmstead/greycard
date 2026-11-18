@@ -488,11 +488,21 @@ fn learned_report(
     });
     match (&walked.meta.stood_in, unavailable) {
         (_, Some(why)) => LearnedReport::Unavailable(why),
-        (Some(NoLearned::Missing(model)), _) => LearnedReport::Missing(model),
-        (Some(NoLearned::Failed(why) | NoLearned::Short(why)), _) => {
-            LearnedReport::Failed(why.clone())
-        }
+        (Some(no), _) => stood_in_report(no),
         (None, None) => ran,
+    }
+}
+
+/// What the window and an export are told of the learned denoiser's
+/// standing down: its model missing, or its failure, which the engine's
+/// denoise stood in for; or the card it lost, where nothing stood in, so
+/// it is said as the no denoise it is (`NoLearned::off_card`), never as
+/// a failure with the engine's denoise in its place.
+pub(super) fn stood_in_report(no: &NoLearned) -> LearnedReport {
+    match no {
+        no if no.off_card() => LearnedReport::Unavailable(crate::stages::OFF_CARD),
+        NoLearned::Missing(model) => LearnedReport::Missing(model),
+        NoLearned::Failed(why) | NoLearned::Short(why) => LearnedReport::Failed(why.clone()),
     }
 }
 
@@ -718,6 +728,40 @@ fn developed_line(log: &DevelopLog<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The card the learned denoiser lost is said as no denoise, in the
+    /// window and an export, never as a failure the engine's denoise
+    /// stood in for (nothing ran); every other standing down is said as
+    /// it always was. A merge's warning keeps its old wording but for
+    /// this one, which it says in words.
+    #[test]
+    fn the_card_it_lost_is_said_as_no_denoise() {
+        let off = NoLearned::Failed(crate::stages::OFF_CARD.to_string());
+        let report = stood_in_report(&off);
+        assert!(matches!(
+            report,
+            LearnedReport::Unavailable(why) if why == crate::stages::OFF_CARD
+        ));
+        let said = super::super::engine::left_out_words(&report, None, &FillReport::default());
+        assert_eq!(
+            said,
+            vec!["the denoise: the learned denoiser is not on this graphics card; none ran"]
+        );
+        assert!(matches!(
+            stood_in_report(&NoLearned::Failed("bad input".into())),
+            LearnedReport::Failed(why) if why == "bad input"
+        ));
+        assert!(matches!(
+            stood_in_report(&NoLearned::Short("1.0 GiB free".into())),
+            LearnedReport::Failed(why) if why == "1.0 GiB free"
+        ));
+        assert!(matches!(
+            stood_in_report(&NoLearned::Missing(&greycard_ai::DENOISE_BEST)),
+            LearnedReport::Missing(_)
+        ));
+        assert!(!NoLearned::Failed("bad input".into()).off_card());
+        assert!(!NoLearned::Short(crate::stages::OFF_CARD.into()).off_card());
+    }
 
     /// What the frame could not take is read for the log: a panorama's
     /// lens profile, not the learned denoiser (its own report says it)

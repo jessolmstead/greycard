@@ -2171,6 +2171,10 @@ export component PanelButton inherits Rectangle {
     accessible-role: button;
     accessible-label: root.text != "" ? "" : root.words;
     accessible-enabled: root.enabled;
+    // A screen reader's press is a click.
+    accessible-action-default => {
+        if (root.enabled) { root.clicked(); }
+    }
     /// A menu of its own: a chevron at the right edge, which a click
     /// opens it from, as a right-click anywhere on the button does.
     in property <bool> has-menu: false;

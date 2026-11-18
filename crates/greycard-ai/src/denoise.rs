@@ -175,6 +175,10 @@ pub struct Denoiser {
     /// Whether the session runs the tier's fp16 file: Core ML handed
     /// it ([`Denoiser::from_store`]) and kept.
     fp16: bool,
+    /// The session on the card, as the provider record names it: a
+    /// device lost while it runs puts it off the card
+    /// ([`runtime::HELD`]).
+    on_card: Option<runtime::OnCard>,
 }
 
 /// The variable that keeps Core ML on a tier's own fp32 file when
@@ -266,6 +270,7 @@ impl Denoiser {
         )?;
         let fixed = (loaded.provider == Provider::CoreMl).then_some(packed);
         let fp16 = core_ml.is_some() && loaded.provider == Provider::CoreMl;
+        let on_card = runtime::OnCard::of(remember, loaded.provider, providers);
         let version = loaded
             .session
             .metadata()
@@ -278,6 +283,7 @@ impl Denoiser {
             fixed,
             tiling,
             fp16,
+            on_card,
         })
     }
 
@@ -289,7 +295,34 @@ impl Denoiser {
     /// tier's own. What is remembered of a load is kept under both
     /// files' hashes when the fp16 file is in it, so neither load
     /// settles on the other's record.
+    ///
+    /// Any tier is refused ([`Error::OffCard`]) while any learned
+    /// denoiser is on the off-card record for the card this launch runs
+    /// on ([`runtime::denoisers_off_here`]): not loaded there, and not on
+    /// the CPU after it (§646 cut that rung). Every caller passes here:
+    /// the window's develop, an export, a merge, and the CLI.
     pub fn from_store(store: &Store, model: &Model, providers: &[Provider]) -> Result<Self> {
+        Self::from_store_gated(store, model, providers, |root| {
+            runtime::denoisers_off_here(root, providers)
+        })
+    }
+
+    /// [`Denoiser::from_store`] with the off-card gate's answer for the
+    /// store's root given (`off`), so a test names the card.
+    fn from_store_gated(
+        store: &Store,
+        model: &Model,
+        providers: &[Provider],
+        off: impl FnOnce(&Path) -> bool,
+    ) -> Result<Self> {
+        if off(store.root()) {
+            log::info!(
+                "{}: a learned denoiser is on record as off this card; not loaded ({})",
+                model.name,
+                runtime::off_card_path(store.root()).display()
+            );
+            return Err(Error::OffCard);
+        }
         if !store.have(model) {
             return Err(Error::Missing(model.name));
         }
@@ -352,6 +385,13 @@ impl Denoiser {
         } else {
             self.provider().label()
         }
+    }
+
+    /// Hold its runs as under way on the card `on` names, whatever it
+    /// was loaded on: for a test of the hold, which has no card.
+    #[doc(hidden)]
+    pub fn hold_on_card(&mut self, on: runtime::OnCard) {
+        self.on_card = Some(on);
     }
 
     /// Whether the session runs the tier's fp16 file.
@@ -420,65 +460,77 @@ impl Denoiser {
                 self.loaded.provider.name()
             )));
         }
-        let mut ty = -2 * dy as isize;
-        while ty < height as isize {
-            let mut tx = -2 * dx as isize;
-            while tx < width as isize {
-                // The tile's input window, in sample coordinates.
-                let y_in = ty + dy as isize - margin as isize;
-                let x_in = tx + dx as isize - margin as isize;
-                let mut packed = vec![0.0f32; 4 * half * half];
-                for yy in 0..side {
-                    let sy = mirror.y(y_in + yy as isize);
-                    for xx in 0..side {
-                        let sx = mirror.x(x_in + xx as isize);
-                        // The training data is what `normalize_levels`
-                        // makes: nothing below black. A consumer that
-                        // puts on noise of its own must not hand the
-                        // network what it never saw.
-                        let v = samples[sy * width + sx].max(0.0);
-                        let (c, plane) = match (yy & 1, xx & 1) {
-                            (0, 0) => (0, 0),
-                            (0, _) => (1, 1),
-                            (_, 0) => (1, 2),
-                            _ => (2, 3),
-                        };
-                        packed[plane * half * half + (yy / 2) * half + xx / 2] = vst[c].forward(v);
+        // The tile it runs at, which the card's free memory may have
+        // made smaller than the one chosen at the load.
+        log::info!(
+            "denoiser runs {width}x{height} at a tile of {tile} on {}",
+            self.label()
+        );
+        // Held as under way on the card while it runs, so a device lost
+        // meanwhile, or the run failing on one, puts this model off it.
+        let on_card = self.on_card.clone();
+        runtime::HELD.run(on_card.as_ref(), || {
+            let mut ty = -2 * dy as isize;
+            while ty < height as isize {
+                let mut tx = -2 * dx as isize;
+                while tx < width as isize {
+                    // The tile's input window, in sample coordinates.
+                    let y_in = ty + dy as isize - margin as isize;
+                    let x_in = tx + dx as isize - margin as isize;
+                    let mut packed = vec![0.0f32; 4 * half * half];
+                    for yy in 0..side {
+                        let sy = mirror.y(y_in + yy as isize);
+                        for xx in 0..side {
+                            let sx = mirror.x(x_in + xx as isize);
+                            // The training data is what `normalize_levels`
+                            // makes: nothing below black. A consumer that
+                            // puts on noise of its own must not hand the
+                            // network what it never saw.
+                            let v = samples[sy * width + sx].max(0.0);
+                            let (c, plane) = match (yy & 1, xx & 1) {
+                                (0, 0) => (0, 0),
+                                (0, _) => (1, 1),
+                                (_, 0) => (1, 2),
+                                _ => (2, 3),
+                            };
+                            packed[plane * half * half + (yy / 2) * half + xx / 2] =
+                                vst[c].forward(v);
+                        }
                     }
-                }
-                // The tile's input stays for the check on its answer.
-                let input = Tensor::from_array(([1usize, 4, half, half], packed.clone()))?;
-                let outputs = self.loaded.session.run(ort::inputs!["packed" => input])?;
-                let (shape, rgb) = outputs["rgb"].try_extract_tensor::<f32>()?;
-                if rgb.len() != 3 * side * side {
-                    return Err(Error::Shape(shape.to_string()));
-                }
-                if let Some(why) = implausible(&packed, rgb, side, margin) {
-                    return Err(Error::Implausible(why));
-                }
-                // Write the tile's core: samples the margin does not cover.
-                for yy in margin..side - margin {
-                    let sy = y_in + yy as isize;
-                    if sy < 0 || sy >= height as isize {
-                        continue;
+                    // The tile's input stays for the check on its answer.
+                    let input = Tensor::from_array(([1usize, 4, half, half], packed.clone()))?;
+                    let outputs = self.loaded.session.run(ort::inputs!["packed" => input])?;
+                    let (shape, rgb) = outputs["rgb"].try_extract_tensor::<f32>()?;
+                    if rgb.len() != 3 * side * side {
+                        return Err(Error::Shape(shape.to_string()));
                     }
-                    for xx in margin..side - margin {
-                        let sx = x_in + xx as isize;
-                        if sx < 0 || sx >= width as isize {
+                    if let Some(why) = implausible(&packed, rgb, side, margin) {
+                        return Err(Error::Implausible(why));
+                    }
+                    // Write the tile's core: samples the margin does not cover.
+                    for yy in margin..side - margin {
+                        let sy = y_in + yy as isize;
+                        if sy < 0 || sy >= height as isize {
                             continue;
                         }
-                        let o = (sy as usize * width + sx as usize) * 3;
-                        for c in 0..3 {
-                            out[o + c] =
-                                vst[c].inverse_clean(rgb[c * side * side + yy * side + xx]);
+                        for xx in margin..side - margin {
+                            let sx = x_in + xx as isize;
+                            if sx < 0 || sx >= width as isize {
+                                continue;
+                            }
+                            let o = (sy as usize * width + sx as usize) * 3;
+                            for c in 0..3 {
+                                out[o + c] =
+                                    vst[c].inverse_clean(rgb[c * side * side + yy * side + xx]);
+                            }
                         }
                     }
+                    tx += tile as isize;
                 }
-                tx += tile as isize;
+                ty += tile as isize;
             }
-            ty += tile as isize;
-        }
-        Ok(out)
+            Ok(out)
+        })
     }
 }
 
@@ -555,6 +607,54 @@ impl Mirror {
 mod tests {
     use super::*;
     use greycard_core::raw::CfaColor;
+
+    /// The nine pairs at `from_store`, the load every caller passes: any tier asked
+    /// is refused while any tier is on the off-card record for this
+    /// card; with nothing there, the load goes on (to its own error
+    /// here: the store holds no files).
+    #[test]
+    fn every_tier_asked_is_refused_while_any_is_off_the_card() {
+        use crate::registry::{DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST};
+        let tiers = [&DENOISE_FAST, &DENOISE_BALANCED, &DENOISE_BEST];
+        let _flag = runtime::flag_lock();
+        runtime::set_test_here(Some(("Test GPU|Vulkan|1.2.3", "b")));
+        for recorded in tiers {
+            let root = std::env::temp_dir().join(format!(
+                "greycard-denoise-off-{}-{}",
+                recorded.id,
+                std::process::id()
+            ));
+            greycard_core::testing::remove_dir_retry(&root);
+            let store = Store::at(&root);
+            // The real load, its own gate: the card named for this
+            // thread, as a launch would name its own.
+            let load = |asked: &Model| Denoiser::from_store(&store, asked, &[Provider::Cpu]);
+            for asked in tiers {
+                assert!(
+                    matches!(load(asked), Err(Error::Missing(_))),
+                    "nothing on record"
+                );
+            }
+            runtime::Held::new().put_off(&[runtime::OnCard::new(
+                &root,
+                recorded.id,
+                recorded.files[0].sha256,
+                "Test GPU|Vulkan|1.2.3",
+                "b",
+            )]);
+            for asked in tiers {
+                assert!(
+                    matches!(load(asked), Err(Error::OffCard)),
+                    "{} asked, {} on record",
+                    asked.id,
+                    recorded.id
+                );
+            }
+            runtime::forget_off_card(&root, &[]);
+            greycard_core::testing::remove_dir_retry(&root);
+        }
+        runtime::set_test_here(None);
+    }
 
     #[test]
     fn the_default_tiling_gives_the_fixed_side() {

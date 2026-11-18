@@ -2735,7 +2735,7 @@ mod tests {
         Some(Machine {
             memory: Some((gib * (1u64 << 30) as f64) as u64),
             unified: Some(unified),
-            source: (!unified).then_some("Vulkan's device-local heaps"),
+            source: (!unified).then_some("Vulkan's largest device-local heap"),
         })
     }
 
@@ -2853,7 +2853,7 @@ mod tests {
         );
         assert_eq!(
             policy(machine(15.9, false), None, Some("0")).why,
-            "a discrete card's 15.9 GiB from Vulkan's device-local heaps, held to one at a time, GREYCARD_REMOVE_TILED=0"
+            "a discrete card's 15.9 GiB from Vulkan's largest device-local heap, held to one at a time, GREYCARD_REMOVE_TILED=0"
         );
         let unread = Some(Machine {
             memory: None,

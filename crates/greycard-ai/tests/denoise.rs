@@ -102,6 +102,41 @@ fn every_phase_and_an_odd_size_come_back_as_the_block_samples() {
     }
 }
 
+/// A run on the card is held as under way while it runs and let go
+/// when it ends with its answer: a loss after it blames nothing.
+#[test]
+fn a_run_on_the_card_is_held_while_it_runs_and_let_go_after() {
+    let Some(mut net) = fixture() else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("greycard-held-run-{}", std::process::id()));
+    let on = greycard_ai::runtime::OnCard::new(
+        &root,
+        "held-run-test",
+        "held-run-hash",
+        "Test GPU|Vulkan|1.2.3",
+        "WebGPU,CPU greycard 0.1.0",
+    );
+    net.hold_on_card(on);
+    let held = greycard_ai::runtime::runs_held();
+    let model = NoiseModel {
+        a: [3e-4, 2.9e-4, 3.1e-4],
+        b: [6e-8, 7e-8, 8e-8],
+    };
+    let pattern = CfaPattern::rggb();
+    let (_, cfa) = scene(37, 29, &pattern);
+    net.run(&cfa, 37, 29, &pattern, &model, Tiling::default())
+        .unwrap();
+    assert!(greycard_ai::runtime::runs_held() > held, "the run was held");
+    assert!(
+        !greycard_ai::runtime::on_card_now()
+            .iter()
+            .any(|r| r.model() == "held-run-test"),
+        "let go when it ended"
+    );
+    assert!(!root.exists(), "nothing put on record");
+}
+
 #[test]
 fn small_tiles_give_the_same_answer_as_one() {
     let Some(mut net) = fixture() else {

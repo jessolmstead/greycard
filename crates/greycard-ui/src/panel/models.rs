@@ -120,10 +120,17 @@ pub(crate) fn probe(st: &mut State, app: &App) {
     {
         let generation = all.probe_generation;
         let weak = app.as_weak();
+        let store = st.develop.store.as_ref().map(|s| s.root().to_path_buf());
         let spawned = std::thread::Builder::new()
             .name("models probe".into())
             .spawn(move || {
                 let here = Here::now();
+                // Whether the learned denoiser lost this card on an
+                // earlier run, for this driver and build: its tiers rest
+                // (the read logs it, with the record's path).
+                if let Some(root) = store {
+                    greycard_ai::runtime::read_denoisers_off_card(&root, crate::ai::providers);
+                }
                 let _ = weak.upgrade_in_event_loop(move |app| probed(&app, here, generation));
             });
         if let Err(e) = spawned {
@@ -165,6 +172,9 @@ fn probed(app: &App, here: Here, generation: u64) {
     // The card is known now: the Fill's choices greyed where it can
     // never hold the remove.
     crate::panel::retouch::show_patches(&st, &st.develop.edit, app);
+    // And the record read: the learned tiers rest on a card the
+    // denoiser lost.
+    crate::panel::deliver::show_learned_unavailable(&st, app);
     if st.current.is_some() {
         offer_once(&mut st, app);
     }

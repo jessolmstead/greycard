@@ -62,6 +62,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         }
         return Ok(std::process::ExitCode::SUCCESS);
     }
+    // The off-card record keys on the build, its commit too
+    // (`greycard_ai::runtime::set_build_label`).
+    greycard_ai::runtime::set_build_label(greycard_version::LABEL);
     // Before anything is said. The line is for the person at the
     // terminal, not the log, which knows where it is.
     if let Some(log) = log::start(cli.verbose, greycard_version::LABEL) {

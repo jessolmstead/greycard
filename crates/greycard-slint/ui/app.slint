@@ -2079,6 +2079,10 @@ export component App inherits Window {
     // Why the learned denoiser's tiers rest while the profiled
     // denoise works, or "" when they do not: an X-Trans raw.
     in property <string> learned-unavailable: "";
+    // The card was lost under the learned denoiser: the section offers
+    // Try again beside its hint, which takes the card's record off.
+    in property <bool> learned-retry: false;
+    callback retry-learned();
     // The Noise section's row that makes a merge again: shown on a
     // merge of ours whose frames are beside it, in a session that
     // writes sidecars; and whether a merge is running, which holds it.
@@ -4806,6 +4810,8 @@ export component App inherits Window {
                                     denoise-learned-chroma-strength <=> root.denoise-learned-chroma-strength;
                                     unavailable: root.noise-unavailable;
                                     learned-unavailable: root.learned-unavailable;
+                                    learned-retry: root.learned-retry;
+                                    retry-learned => { root.retry-learned(); }
                                     again-shown: root.merge-again-shown;
                                     again-tier <=> root.merge-again-tier;
                                     merging: root.merge-running;

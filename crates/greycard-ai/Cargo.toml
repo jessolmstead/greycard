@@ -33,6 +33,9 @@ webgpu = ["ort/webgpu", "dep:wgpu", "dep:pollster", "dep:ash"]
 # only where `target_os = "macos"`, whose library carries it.
 coreml = ["ort/coreml"]
 cuda = ["ort/cuda"]
+# Test-only seams for the crates that build on this one: the card the
+# off-card record takes as this launch's (`runtime::set_test_here`).
+testing = []
 
 [dependencies]
 log.workspace = true

@@ -17,12 +17,7 @@ pub(super) fn left_out_of(outcome: &Outcome, base: Option<&FrameKept>) -> Vec<St
     };
     let stood_in = base
         .and_then(|b| b.meta.stood_in.as_ref())
-        .map(|why| match why {
-            crate::walk::NoLearned::Missing(model) => LearnedReport::Missing(model),
-            crate::walk::NoLearned::Failed(why) | crate::walk::NoLearned::Short(why) => {
-                LearnedReport::Failed(why.clone())
-            }
-        });
+        .map(super::develop::stood_in_report);
     let learned = match (learned, stood_in.as_ref()) {
         (LearnedReport::Kept, Some(stood_in)) => stood_in,
         (report, _) => report,
@@ -91,7 +86,14 @@ pub(super) fn run(
     let (lock, cv) = &*queue;
     let mut ai = Ai::new();
     match greycard_ai::Store::user() {
-        Ok(store) => tracing::info!("model store {}", store.root().display()),
+        Ok(store) => {
+            tracing::info!("model store {}", store.root().display());
+            // Before the first develop: a learned denoiser that lost
+            // this card on an earlier run is skipped from the start (the
+            // read logs it, with the record's path).
+            crate::ai::off_card_seam();
+            greycard_ai::runtime::read_denoisers_off_card(store.root(), crate::ai::providers);
+        }
         Err(e) => tracing::warn!("no model store: {e}"),
     }
     let mut lenses: Option<Arc<greycard_lens::Database>> = greycard_lens::Store::user()

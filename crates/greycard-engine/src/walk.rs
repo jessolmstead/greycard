@@ -353,6 +353,16 @@ pub enum NoLearned {
     Short(String),
 }
 
+impl NoLearned {
+    /// Whether it is the card the learned denoiser lost: its load was
+    /// refused for the off-card record (`crate::stages::OFF_CARD`).
+    /// Nothing ran in its place, so it is said as no denoise, never as a
+    /// failure the engine's denoise stood in for.
+    pub fn off_card(&self) -> bool {
+        matches!(self, Self::Failed(why) if why == crate::stages::OFF_CARD)
+    }
+}
+
 /// The picture with its retouch applied, beside the base the learned
 /// masks are made on.
 #[derive(Clone, Copy)]

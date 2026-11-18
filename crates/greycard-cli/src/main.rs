@@ -218,6 +218,8 @@ enum Command {
 /// which could crash after the output was written (exit 139 to a
 /// script). An error is said as `main` returning it would say it.
 fn main() -> std::process::ExitCode {
+    // The off-card record keys on the build, its commit too.
+    greycard_ai::runtime::set_build_label(greycard_version::LABEL);
     let code = match run() {
         Ok(code) => code,
         Err(e) => {

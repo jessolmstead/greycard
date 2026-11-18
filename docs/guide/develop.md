@@ -451,6 +451,13 @@ that sensor yet. **Denoise**, the profiled one, works as on any raw. A
 tier already set on an X-Trans frame (by a sync from another camera,
 say) can still be turned off. See [Demosaic](#demosaic).
 
+On a graphics card that was lost while the learned denoiser ran, the
+section says "learned: not on this graphics card" and the tiers rest
+there, so greycard keeps working. **Try again**, beside that line,
+gives the tiers back: use it after a driver update, or with other
+programs closed. A merge whose frames asked for a tier says "no
+learned denoise on this graphics card" after its finished line.
+
 ### The learned denoiser
 
 The buttons along the top choose it: **off** (the default), **fast**,

@@ -3,6 +3,15 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.13.0
+
+### Fixes
+
+- A graphics card that the learned denoiser crashes rests its tiers,
+  with Try again to bring them back, and greycard no longer quits
+  (discussion 168,
+  [§712](https://github.com/jessolmstead/greycard/blob/master/docs/notes/712-a-learned-denoiser-that-loses-the-card-rests-there.md)).
+
 ## 0.12.0, 2026-11-17
 
 A much-requested Windows installer, French as the first translation, Whites that

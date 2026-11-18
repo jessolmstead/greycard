@@ -780,6 +780,17 @@ pub enum Step {
 /// The name a list's skips give the learned denoiser.
 pub const LEARNED_DENOISER: &str = "the learned denoiser";
 
+/// Why the learned denoiser is skipped on a card it lost
+/// (`greycard_ai::runtime::denoisers_off_card`): the status line's
+/// "no denoise: …" and an export's "the denoise: …; none ran". The
+/// same words as the model's refusal to load there
+/// (`greycard_ai::runtime::Error::OffCard`). WORDING PENDING the
+/// user's approval.
+pub const OFF_CARD: &str = "the learned denoiser is not on this graphics card";
+
+/// Why the learned denoiser is skipped on an X-Trans mosaic.
+pub const NO_XTRANS: &str = "the learned denoiser has no X-Trans version yet";
+
 /// Why a stage the edit asks for is not in a list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Skip {
@@ -1033,10 +1044,7 @@ pub fn stages(
                     None
                 }
                 Some(_) if xtrans => {
-                    s.skip(
-                        LEARNED_DENOISER,
-                        Skip::Unavailable("the learned denoiser has no X-Trans version yet"),
-                    );
+                    s.skip(LEARNED_DENOISER, Skip::Unavailable(NO_XTRANS));
                     None
                 }
                 Some(_) if pattern.is_none() => {
@@ -1046,6 +1054,12 @@ pub fn stages(
                             "the learned denoiser needs a mosaic, and this file has none",
                         ),
                     );
+                    None
+                }
+                // On record as off this card: it lost the card while it
+                // ran. Skipped as on X-Trans, which comes first.
+                Some(_) if crate::ai::learned_off_card() => {
+                    s.skip(LEARNED_DENOISER, Skip::Unavailable(OFF_CARD));
                     None
                 }
                 tier => tier,
@@ -1302,7 +1316,15 @@ fn merge_input(edit: &Edit, merge: &MergeInput, facts: &Facts) -> Steps {
         .as_ref()
         .is_some_and(greycard_core::develop::rcd::is_bayer);
     match merge.denoiser {
+        // On a card a learned denoiser lost, every tier is skipped as on
+        // a mosaic it has no version for; that one's words first.
+        Some(_) if bayer && crate::ai::learned_off_card() => {
+            s.skip(LEARNED_DENOISER, Skip::Unavailable(OFF_CARD))
+        }
         Some(model) if bayer => s.op(Stage::Learned(model)),
+        Some(_) if pattern.as_ref().is_some_and(CfaPattern::is_xtrans) => {
+            s.skip(LEARNED_DENOISER, Skip::Unavailable(NO_XTRANS))
+        }
         Some(_) => s.skip(
             LEARNED_DENOISER,
             Skip::Unavailable("the learned denoiser needs a 2x2 Bayer mosaic"),
@@ -2294,6 +2316,68 @@ mod tests {
             }));
     }
 
+    /// A learned tier on a card the denoiser lost is skipped as on
+    /// X-Trans, in its own words, in the window and an export alike; on
+    /// X-Trans, X-Trans's words win. Off the record, it runs.
+    ///
+    /// The nine pairs: the off-card flag is the same for a record of any
+    /// tier (greycard-ai's `a_record_of_any_tier_puts_the_denoiser_off`),
+    /// and each tier asked is skipped against it, in the window, an
+    /// export, and a merge's frame; the merge again's check declines it.
+    #[test]
+    fn a_learned_tier_on_a_card_it_lost_is_skipped_as_on_x_trans() {
+        use greycard_edit::Learned;
+        let tiers = [Learned::Fast, Learned::Balanced, Learned::Best];
+        let ai = crate::ai::Ai::for_test(greycard_ai::Store::at("no-store"), Vec::new());
+        crate::ai::set_test_off_card(Some(true));
+        for recorded in tiers {
+            for asked in tiers {
+                let mut edit = everything();
+                edit.noise.learned = asked;
+                let model = asked
+                    .tier()
+                    .and_then(greycard_ai::denoiser)
+                    .expect("a tier's model");
+                let merge = Purpose::MergeInput(MergeInput {
+                    white: None,
+                    reconstruct: false,
+                    denoiser: Some(model),
+                    ca: MergeCa::Own,
+                    lens: Vec::new(),
+                });
+                for purpose in [Purpose::Viewport, export(), merge] {
+                    let off = stages(&edit, &purpose, &raw(0), None);
+                    assert!(
+                        !off.ops().any(|o| matches!(o, Stage::Learned(_))),
+                        "{asked:?} asked, {recorded:?} on record"
+                    );
+                    assert_eq!(
+                        off.skipped,
+                        vec![(LEARNED_DENOISER, Skip::Unavailable(OFF_CARD))]
+                    );
+                }
+                assert!(matches!(
+                    ai.denoiser_there(model),
+                    Err(crate::ai::NoDenoiser::Failed(why)) if why == OFF_CARD
+                ));
+            }
+        }
+        let mut edit = everything();
+        edit.noise.learned = Learned::Best;
+        let x = stages(&edit, &Purpose::Viewport, &xtrans(), None);
+        assert_eq!(
+            x.skipped,
+            vec![(
+                LEARNED_DENOISER,
+                Skip::Unavailable("the learned denoiser has no X-Trans version yet")
+            )]
+        );
+        crate::ai::set_test_off_card(Some(false));
+        let on = stages(&edit, &Purpose::Viewport, &raw(0), None);
+        assert!(on.ops().any(|o| matches!(o, Stage::Learned(_))));
+        crate::ai::set_test_off_card(None);
+    }
+
     #[test]
     fn a_learned_tier_makes_a_pair_and_blends_it() {
         let mut edit = everything();
@@ -2414,10 +2498,10 @@ mod tests {
         );
         let x = stages(&edit, &merge(None, false, Some(model)), &xtrans(), None);
         assert_eq!(names(&x), ["prepare", "CA", "demosaic"]);
-        assert!(matches!(
-            x.skipped[..],
-            [(LEARNED_DENOISER, Skip::Unavailable(_))]
-        ));
+        assert_eq!(
+            x.skipped,
+            vec![(LEARNED_DENOISER, Skip::Unavailable(NO_XTRANS))]
+        );
 
         // A panorama's frame: the lens's vignetting in camera space,
         // after the demosaic, before anything leaves camera RGB.

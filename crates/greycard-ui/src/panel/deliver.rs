@@ -438,6 +438,44 @@ pub(crate) fn take_thumbnails(
     }
 }
 
+/// Why the learned denoiser's tiers rest on a raw, or nothing: it has
+/// no X-Trans version yet, or it lost this graphics card while it ran
+/// (on record for this card, driver, and build), X-Trans's first. The
+/// section says so and its tiers rest, while the profiled denoise works
+/// as on any raw.
+pub(crate) fn learned_unavailable(xtrans: bool, off_card: bool) -> String {
+    if xtrans {
+        tr!("learned: not on X-Trans yet")
+    } else if off_card {
+        // WORDING PENDING the user's approval.
+        tr!("learned: not on this graphics card")
+    } else {
+        String::new()
+    }
+}
+
+/// [`learned_unavailable`] for the raw open now, shown: at its open, and
+/// again when the card's record may have changed (the models probe has
+/// read it, or a develop's run put the denoiser off the card). Not on a
+/// picture, which says "raw only" of the whole section.
+pub(crate) fn show_learned_unavailable(st: &State, app: &App) {
+    if !app.get_raw_input() {
+        return;
+    }
+    let xtrans = st.develop.frame.as_ref().is_some_and(
+        |(f, _)| matches!(&f.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans()),
+    );
+    let off_card = crate::ai::learned_off_card();
+    app.set_learned_unavailable(learned_unavailable(xtrans, off_card).into());
+    app.set_learned_retry(retry_offered(xtrans, off_card));
+}
+
+/// Whether Try again sits beside the hint: where the card is why, and
+/// not on X-Trans, whose hint it is and which has no version to try.
+fn retry_offered(xtrans: bool, off_card: bool) -> bool {
+    off_card && !xtrans
+}
+
 /// A result from the worker, on the UI thread.
 pub(crate) fn deliver(app: &App, outcome: Outcome) {
     let Some(state) = STATE.with(|s| s.borrow().clone()) else {
@@ -574,21 +612,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 SourceKind::Raw => {
                     app.set_raw_input(true);
                     app.set_source_note("".into());
-                    // The learned denoiser has no X-Trans version yet:
-                    // the section says so and its tiers rest, while the
-                    // profiled denoise works as on any raw.
-                    let xtrans = st.develop.frame.as_ref().is_some_and(|(f, _)| {
-                        matches!(&f.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans())
-                    });
                     app.set_noise_unavailable("".into());
-                    app.set_learned_unavailable(
-                        if xtrans {
-                            tr!("learned: not on X-Trans yet")
-                        } else {
-                            String::new()
-                        }
-                        .into(),
-                    );
+                    show_learned_unavailable(&st, app);
                     // The raw's mosaic, now known from its pixels: the
                     // menu, if the worker's read ahead had not said.
                     let mosaic = match st.develop.frame.as_ref().map(|(f, _)| &f.layout) {
@@ -606,6 +631,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     app.set_raw_input(false);
                     app.set_noise_unavailable(tr!("raw only").into());
                     app.set_learned_unavailable("".into());
+                    app.set_learned_retry(false);
                     app.set_source_note(
                         tr!(
                             "{bits}-bit {kind} read as {space}; already rendered",
@@ -770,6 +796,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 };
                 crate::panel::assets::runtime_first(&mut st, app, next);
             }
+            // A run that lost the card in this develop put the denoiser
+            // off it: its tiers rest from now.
+            show_learned_unavailable(&st, app);
             match learned {
                 LearnedReport::Off
                 | LearnedReport::Kept
@@ -2732,6 +2761,130 @@ mod tests {
         // Nothing to say on the next: an empty line.
         let status = land_develop(&app, &state, LearnedReport::Off, FillReport::default());
         assert_eq!(status, "");
+    }
+
+    /// The learned denoiser on record as off this card rests its tiers
+    /// on a raw, with the section's hint; X-Trans's hint wins; off the
+    /// record, nothing rests; a picture's section is left as it says.
+    #[test]
+    fn a_card_the_denoiser_lost_rests_its_tiers() {
+        use crate::testing::{folder, state_for, window};
+        assert_eq!(
+            learned_unavailable(false, true),
+            "learned: not on this graphics card"
+        );
+        assert_eq!(
+            learned_unavailable(true, true),
+            "learned: not on X-Trans yet"
+        );
+        assert_eq!(learned_unavailable(false, false), "");
+        let app = window(1);
+        let (state, _worker) = state_for(&app, folder(1));
+        app.set_raw_input(true);
+        crate::ai::set_test_off_card(Some(true));
+        show_learned_unavailable(&state.borrow(), &app);
+        assert_eq!(
+            app.get_learned_unavailable(),
+            "learned: not on this graphics card"
+        );
+        crate::ai::set_test_off_card(Some(false));
+        show_learned_unavailable(&state.borrow(), &app);
+        assert_eq!(app.get_learned_unavailable(), "");
+        app.set_raw_input(false);
+        crate::ai::set_test_off_card(Some(true));
+        show_learned_unavailable(&state.borrow(), &app);
+        assert_eq!(app.get_learned_unavailable(), "");
+        crate::ai::set_test_off_card(None);
+    }
+
+    /// Try again sits beside the hint, only where the card is why; a
+    /// press takes this card's entry off the record (another card's
+    /// stays), lets the tiers back on, and hint and button go.
+    #[test]
+    fn try_again_takes_this_cards_record_off_and_brings_the_tiers_back() {
+        use crate::testing::{folder, state_for, window};
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(1);
+        let (state, _worker) = state_for(&app, folder(1));
+        let root = std::env::temp_dir().join(format!("greycard-try-again-{}", std::process::id()));
+        crate::testing::remove_dir_retry(&root);
+        state.borrow_mut().develop.store = Some(greycard_ai::Store::at(&root));
+        let (here, build) = ("Test GPU|Vulkan|1.2.3", "b");
+        greycard_ai::runtime::set_test_here(Some((here, build)));
+        let entry = |adapter| {
+            greycard_ai::runtime::OnCard::new(
+                &root,
+                // Not a denoiser's id: the process's flag, which other
+                // tests' workers read, is left alone; this thread's is set.
+                "try-again-test",
+                "h",
+                adapter,
+                build,
+            )
+        };
+        let held = greycard_ai::runtime::Held::new();
+        held.put_off(&[entry(here), entry("Other GPU|Vulkan|9.9.9")]);
+        // The Develop tab, tall enough that the panel, which builds
+        // only what it shows, builds the Noise section.
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 6000.0));
+        app.set_panel_tab("Develop".into());
+        app.set_raw_input(true);
+        app.set_collapsed_noise(false);
+        crate::ai::set_test_off_card(Some(true));
+        show_learned_unavailable(&state.borrow(), &app);
+        crate::testing::settle(&app);
+        assert_eq!(
+            app.get_learned_unavailable(),
+            "learned: not on this graphics card"
+        );
+        assert!(app.get_learned_retry());
+        let button =
+            || ElementHandle::find_by_element_id(&app, "NoiseSection::learned-retry-button").next();
+        assert!(!state.borrow().develop.debounce.running());
+        button()
+            .expect("Try again beside the hint")
+            .invoke_accessible_default_action();
+        // The frame is asked to develop again, as a change on the panel
+        // asks it.
+        assert!(state.borrow().develop.debounce.running(), "a develop asked");
+        crate::testing::settle(&app);
+        assert_eq!(app.get_learned_unavailable(), "");
+        assert!(!app.get_learned_retry());
+        assert!(button().is_none(), "the button goes with the hint");
+        let record = std::fs::read_to_string(greycard_ai::runtime::off_card_path(&root)).unwrap();
+        assert!(!record.contains(here), "{record}");
+        assert!(record.contains("Other GPU"), "{record}");
+        // X-Trans keeps its own hint, and has no Try again.
+        assert_eq!(
+            learned_unavailable(true, true),
+            "learned: not on X-Trans yet"
+        );
+        assert!(!retry_offered(true, true));
+        assert!(!retry_offered(true, false));
+        assert!(!retry_offered(false, false));
+        assert!(retry_offered(false, true));
+        // An X-Trans raw open on a recorded card: its hint, and no
+        // button in the window.
+        let xtrans = greycard_core::RawFrame {
+            width: 6,
+            height: 6,
+            layout: greycard_core::raw::SensorLayout::Cfa(greycard_core::raw::CfaPattern::xtrans()),
+            samples: greycard_core::raw::Samples::U16(vec![500; 36]),
+            ..crate::panel::viewport::tests::daylight_frame()
+        };
+        let profile = greycard_core::color::profile_from_frame(&xtrans).unwrap();
+        state.borrow_mut().develop.frame = Some((std::sync::Arc::new(xtrans), Box::new(profile)));
+        crate::ai::set_test_off_card(Some(true));
+        show_learned_unavailable(&state.borrow(), &app);
+        crate::testing::settle(&app);
+        assert_eq!(app.get_learned_unavailable(), "learned: not on X-Trans yet");
+        assert!(!app.get_learned_retry());
+        assert!(button().is_none(), "no Try again on X-Trans");
+        state.borrow_mut().develop.frame = None;
+        crate::ai::set_test_off_card(None);
+        greycard_ai::runtime::set_test_here(None);
+        crate::testing::remove_dir_retry(&root);
     }
 
     /// A removal waiting on its model, on a card under the remove's

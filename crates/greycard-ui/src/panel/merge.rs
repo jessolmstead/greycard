@@ -166,6 +166,9 @@ enum Lands {
 
 struct Made {
     out: PathBuf,
+    /// Why frames that asked for a learned tier went without it: the
+    /// finished line says so.
+    learned_skipped: Option<merge::LearnedSkipped>,
     /// Its content hash, for the stack; none when it would not read.
     hash: Option<String>,
     /// Its edit, when no sidecar was written for it.
@@ -359,130 +362,135 @@ impl Merge {
                 })
             };
             let progress = |step: Step| said(step_line(step));
-            let (out, headroom_stops, seconds, warnings, merged_edit) = match self.kind {
-                Kind::Focus => {
-                    // The stack finds its own reference: its edit is
-                    // taken after.
-                    let r = focus::stack(&self.files, &focus::Options::default(), &progress)?;
-                    let left_out = r
-                        .stack
-                        .frames
-                        .iter()
-                        .filter_map(|f| {
-                            let why = f.dropped.as_ref()?;
-                            Some(format!(
-                                "{} was left out of the stack: {why}",
-                                r.names[f.index]
-                            ))
-                        })
-                        .collect();
-                    (
-                        r.out,
-                        0.0,
-                        r.seconds,
-                        left_out,
-                        focus::edit_for_stack(&edit_of(r.stack.reference)),
-                    )
-                }
-                Kind::Hdr => {
-                    let edit = &edit_of(merge::reference_of(&self.files, None)?);
-                    let r = merge::hdr(
-                        &self.files,
-                        edit,
-                        &Options::default(),
-                        &mut greycard_engine::walk::NoModels,
-                        &progress,
-                    )?;
-                    (
-                        r.out,
-                        r.headroom_stops,
-                        r.seconds,
-                        r.warnings,
-                        merge::edit_for_merge(edit),
-                    )
-                }
-                Kind::Pano => {
-                    let reference = pano::reference_of(self.files.len(), None)?;
-                    let edit = &edit_of(reference);
-                    // Each run is written under the name held and the
-                    // one kept renamed onto it, so a second run that
-                    // fails leaves the first to keep.
-                    let held = merge::hold(
-                        &merge::Files(&self.files),
-                        &pano::default_output(&self.files[0]),
-                        Default::default(),
-                    )?;
-                    // Under `edit`, the learned denoiser on each frame
-                    // when it has it, walked from frame `from` when
-                    // given, as file `name` under the folder.
-                    let run = |edit: &Edit, from: Option<usize>, name: &str| {
-                        let denoiser = edit.noise.tier().and_then(greycard_ai::denoiser);
-                        let options = pano::Options {
-                            denoiser,
-                            reference: from,
-                            ..pano::Options::default()
+            let (out, headroom_stops, seconds, warnings, merged_edit, learned_skipped) =
+                match self.kind {
+                    Kind::Focus => {
+                        // The stack finds its own reference: its edit is
+                        // taken after.
+                        let r = focus::stack(&self.files, &focus::Options::default(), &progress)?;
+                        let left_out = r
+                            .stack
+                            .frames
+                            .iter()
+                            .filter_map(|f| {
+                                let why = f.dropped.as_ref()?;
+                                Some(format!(
+                                    "{} was left out of the stack: {why}",
+                                    r.names[f.index]
+                                ))
+                            })
+                            .collect();
+                        (
+                            r.out,
+                            0.0,
+                            r.seconds,
+                            left_out,
+                            focus::edit_for_stack(&edit_of(r.stack.reference)),
+                            // A stack asks for no learned tier.
+                            None,
+                        )
+                    }
+                    Kind::Hdr => {
+                        let edit = &edit_of(merge::reference_of(&self.files, None)?);
+                        let r = merge::hdr(
+                            &self.files,
+                            edit,
+                            &Options::default(),
+                            &mut greycard_engine::walk::NoModels,
+                            &progress,
+                        )?;
+                        (
+                            r.out,
+                            r.headroom_stops,
+                            r.seconds,
+                            r.warnings,
+                            merge::edit_for_merge(edit),
+                            r.learned_skipped,
+                        )
+                    }
+                    Kind::Pano => {
+                        let reference = pano::reference_of(self.files.len(), None)?;
+                        let edit = &edit_of(reference);
+                        // Each run is written under the name held and the
+                        // one kept renamed onto it, so a second run that
+                        // fails leaves the first to keep.
+                        let held = merge::hold(
+                            &merge::Files(&self.files),
+                            &pano::default_output(&self.files[0]),
+                            Default::default(),
+                        )?;
+                        // Under `edit`, the learned denoiser on each frame
+                        // when it has it, walked from frame `from` when
+                        // given, as file `name` under the folder.
+                        let run = |edit: &Edit, from: Option<usize>, name: &str| {
+                            let denoiser = edit.noise.tier().and_then(greycard_ai::denoiser);
+                            let options = pano::Options {
+                                denoiser,
+                                reference: from,
+                                ..pano::Options::default()
+                            };
+                            match denoiser {
+                                Some(_) => pano::pano_under(
+                                    &self.files,
+                                    &held,
+                                    name,
+                                    edit,
+                                    &options,
+                                    &mut merge::DenoiseModels::new(),
+                                    &progress,
+                                ),
+                                None => pano::pano_under(
+                                    &self.files,
+                                    &held,
+                                    name,
+                                    edit,
+                                    &options,
+                                    &mut greycard_engine::walk::NoModels,
+                                    &progress,
+                                ),
+                            }
                         };
-                        match denoiser {
-                            Some(_) => pano::pano_under(
-                                &self.files,
-                                &held,
-                                name,
-                                edit,
-                                &options,
-                                &mut merge::DenoiseModels::new(),
-                                &progress,
-                            ),
-                            None => pano::pano_under(
-                                &self.files,
-                                &held,
-                                name,
-                                edit,
-                                &options,
-                                &mut greycard_engine::walk::NoModels,
-                                &progress,
-                            ),
-                        }
-                    };
-                    let first = run(edit, None, FIRST)?;
-                    // The reference is the middle of the turn, which the
-                    // list's middle need not be. One frame walks the
-                    // panorama and gives it its edit: when the two
-                    // frames' edits walk differently, it is merged
-                    // again from the reference, under its edit. Should
-                    // that fail, the first is kept, with the anchor's.
-                    let (r, look) = if first.reference == reference {
-                        (first, edit.clone())
-                    } else {
-                        let other = edit_of(first.reference);
-                        if pano::walks_alike(edit, &other) {
-                            (first, other)
+                        let first = run(edit, None, FIRST)?;
+                        // The reference is the middle of the turn, which the
+                        // list's middle need not be. One frame walks the
+                        // panorama and gives it its edit: when the two
+                        // frames' edits walk differently, it is merged
+                        // again from the reference, under its edit. Should
+                        // that fail, the first is kept, with the anchor's.
+                        let (r, look) = if first.reference == reference {
+                            (first, edit.clone())
                         } else {
-                            match run(&other, Some(first.reference), SECOND) {
-                                // The first goes with the folder.
-                                Ok(second) => (second, other),
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "merge: the panorama again from {}, under its edit, \
+                            let other = edit_of(first.reference);
+                            if pano::walks_alike(edit, &other) {
+                                (first, other)
+                            } else {
+                                match run(&other, Some(first.reference), SECOND) {
+                                    // The first goes with the folder.
+                                    Ok(second) => (second, other),
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "merge: the panorama again from {}, under its edit, \
                                          failed, so it keeps {}'s: {e:#}",
-                                        first.frames[first.reference],
-                                        first.frames[reference]
-                                    );
-                                    (first, edit.clone())
+                                            first.frames[first.reference],
+                                            first.frames[reference]
+                                        );
+                                        (first, edit.clone())
+                                    }
                                 }
                             }
-                        }
-                    };
-                    let out = held.promote(&r.out)?;
-                    drop(held);
-                    (
-                        out,
-                        r.headroom_stops,
-                        r.seconds,
-                        r.warnings,
-                        pano::edit_for_pano(&look),
-                    )
-                }
-            };
+                        };
+                        let out = held.promote(&r.out)?;
+                        drop(held);
+                        (
+                            out,
+                            r.headroom_stops,
+                            r.seconds,
+                            r.warnings,
+                            pano::edit_for_pano(&look),
+                            r.learned_skipped,
+                        )
+                    }
+                };
             for w in &warnings {
                 tracing::warn!("merge: {w}");
             }
@@ -512,6 +520,7 @@ impl Merge {
                 .ok();
             Ok(Made {
                 out,
+                learned_skipped,
                 hash,
                 edit: kept,
             })
@@ -555,14 +564,14 @@ impl Remerge {
                     &progress,
                 ),
             }?;
-            let (out, warnings, seconds) = match again {
+            let (out, warnings, seconds, learned_skipped) = match again {
                 merge::Again::Hdr(r) => {
                     frames = r.frames.len();
-                    (r.out, r.warnings, r.seconds)
+                    (r.out, r.warnings, r.seconds, r.learned_skipped)
                 }
                 merge::Again::Pano(r) => {
                     frames = r.frames.len();
-                    (r.out, r.warnings, r.seconds)
+                    (r.out, r.warnings, r.seconds, r.learned_skipped)
                 }
             };
             for w in &warnings {
@@ -582,6 +591,7 @@ impl Remerge {
                 .ok();
             Ok(Made {
                 out,
+                learned_skipped,
                 hash,
                 edit: None,
             })
@@ -711,6 +721,15 @@ thread_local! {
     static HEARD: RefCell<Option<Hear>> = const { RefCell::new(None) };
 }
 
+/// The finished line's tail for frames that asked for a learned tier
+/// and went without it.
+fn skipped_words(why: merge::LearnedSkipped) -> String {
+    match why {
+        merge::LearnedSkipped::OffCard => tr!("no learned denoise on this graphics card"),
+        merge::LearnedSkipped::XTrans => tr!("no learned denoise on X-Trans"),
+    }
+}
+
 /// A merge done: the file given to the indexer and stacked on top of
 /// its sources, the list read again, the status said.
 fn land(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, done: Done) {
@@ -731,6 +750,11 @@ fn land(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, done: Done) {
         "merged {n} frame into {name}" | "merged {n} frames into {name}" % done.frames,
         name = name
     );
+    let said = match made.learned_skipped.map(skipped_words) {
+        // The finished line, then why the learned denoise did not run.
+        Some(why) => tr!("{line}; {why}", line = said, why = why),
+        None => said,
+    };
     let stack = match done.lands {
         Lands::Beside { stack } => stack,
         Lands::Over { old } => {
@@ -876,6 +900,43 @@ mod tests {
     use greycard_core::merge::testing::{mosaic, write_dng};
     use slint::Model;
 
+    /// A finished merge whose frames went without the learned tier
+    /// asked says why after its line, the card's or X-Trans; one with
+    /// nothing skipped says its line alone.
+    #[test]
+    fn a_merge_that_went_without_the_tier_says_why() {
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        let out = std::env::temp_dir().join("IMG_0-HDR.dng");
+        let landed = |learned_skipped| {
+            land(
+                &state,
+                &app,
+                &worker,
+                Done {
+                    frames: 3,
+                    made: Ok(Made {
+                        out: out.clone(),
+                        learned_skipped,
+                        hash: None,
+                        edit: None,
+                    }),
+                    lands: Lands::Beside { stack: None },
+                },
+            );
+            app.get_status().to_string()
+        };
+        assert_eq!(
+            landed(Some(merge::LearnedSkipped::OffCard)),
+            "merged 3 frames into IMG_0-HDR.dng; no learned denoise on this graphics card"
+        );
+        assert_eq!(
+            landed(Some(merge::LearnedSkipped::XTrans)),
+            "merged 3 frames into IMG_0-HDR.dng; no learned denoise on X-Trans"
+        );
+        assert_eq!(landed(None), "merged 3 frames into IMG_0-HDR.dng");
+    }
+
     /// A frame the window has not read takes the setting for new edits
     /// when it has no sidecar, sidecars on or off, and its own when it
     /// has one.
@@ -967,10 +1028,13 @@ mod tests {
         app.invoke_merge_hdr();
         assert_eq!(app.get_status(), "choose two frames or more to merge");
 
-        // All three.
+        // All three, on a card the learned denoiser lost: an HDR asks
+        // for no tier, so its line says nothing of it.
         let all = vec![cell(0), cell(1), cell(2)];
         state.borrow_mut().views.picked = all;
+        crate::ai::set_test_off_card(Some(true));
         app.invoke_merge_hdr();
+        crate::ai::set_test_off_card(None);
         let out = shoot.join("IMG_0-HDR.dng");
         assert_eq!(app.get_status(), "merged 3 frames into IMG_0-HDR.dng");
         assert!(out.is_file());

@@ -47,6 +47,36 @@ thread_local! {
     static SHOWN: RefCell<Shown> = const { RefCell::new(Shown(Vec::new())) };
 }
 
+/// The off-card checks a test's, before any test of this process runs,
+/// whichever runs and whether it opens a window: no test reads the
+/// user's model store, ONNX Runtime, or an adapter for them
+/// (`greycard_ai::runtime::off_card_for_tests`). A constructor the
+/// system loader runs at the test binary's start, as the `ctor` crate
+/// makes one; only the test binary has it, so a binary keeps the real
+/// path.
+#[used]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android", target_os = "freebsd"),
+    unsafe(link_section = ".init_array")
+)]
+#[cfg_attr(
+    target_vendor = "apple",
+    unsafe(link_section = "__DATA,__mod_init_func")
+)]
+#[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+static OFF_CARD_FOR_TESTS: extern "C" fn() = {
+    extern "C" fn off_card_for_tests() {
+        greycard_ai::runtime::off_card_for_tests();
+    }
+    off_card_for_tests
+};
+
+/// Whether the process start ran [`OFF_CARD_FOR_TESTS`].
+#[test]
+fn every_test_of_this_binary_starts_with_the_off_card_checks_a_tests() {
+    assert!(greycard_ai::runtime::off_card_is_for_tests());
+}
+
 /// The testing backend, on a thread that has none yet: once a
 /// thread, whether the tests run one at a time or all at once, since
 /// the backend is a thread's own and setting it twice panics.

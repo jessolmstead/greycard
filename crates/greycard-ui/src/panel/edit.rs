@@ -1287,6 +1287,27 @@ pub(crate) fn read_folds(app: &App) -> Vec<String> {
 }
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
+    // Try again on a card the learned denoiser lost: this card's record
+    // taken off, the tiers back in this process, and the frame
+    // developed again, as a change on the panel is. A loss after it is
+    // put on record again as any is.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_retry_learned(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let root = state
+                .borrow()
+                .develop
+                .store
+                .as_ref()
+                .map(|s| s.root().to_path_buf());
+            crate::ai::forget_learned_off_card(root.as_deref());
+            crate::panel::deliver::show_learned_unavailable(&state.borrow(), &app);
+            app.invoke_develop_changed();
+        });
+    }
     // A change the engine must see: the viewport previews what it can
     // at once, and the develop waits until the sliders rest.
     {

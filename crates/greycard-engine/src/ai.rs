@@ -76,6 +76,56 @@ pub fn set_test_webgpu(on: Option<bool>) {
     TEST_WEBGPU.with(|t| t.set(on));
 }
 
+/// Whether the learned denoiser is on record as off this card: it lost
+/// the card while it ran (`greycard_ai::runtime::denoisers_off_card`),
+/// or what a test set with [`set_test_off_card`].
+pub fn learned_off_card() -> bool {
+    off_card_seam();
+    #[cfg(any(test, feature = "testing"))]
+    if let Some(off) = TEST_OFF_CARD.with(|t| t.get()) {
+        return off;
+    }
+    greycard_ai::runtime::denoisers_off_card()
+}
+
+#[cfg(any(test, feature = "testing"))]
+thread_local! {
+    static TEST_OFF_CARD: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// In this crate's tests, the off-card checks are a test's
+/// (`greycard_ai::runtime::off_card_for_tests`): none reads the user's
+/// store, ONNX Runtime, or an adapter. Nothing in a binary, which runs
+/// the real path; a crate built on this one opts its tests out itself.
+pub(crate) fn off_card_seam() {
+    #[cfg(test)]
+    greycard_ai::runtime::off_card_for_tests();
+}
+
+/// Try the learned denoiser on this card again (the Noise section's Try
+/// again): this card's entries taken off the record under `store_root`
+/// and the denoiser let back on in this process
+/// (`greycard_ai::runtime::forget_off_card`); a test's answer on this
+/// thread ([`set_test_off_card`]) goes with it.
+pub fn forget_learned_off_card(store_root: Option<&std::path::Path>) {
+    off_card_seam();
+    match store_root {
+        Some(root) => {
+            greycard_ai::runtime::forget_off_card(root, providers());
+        }
+        None => greycard_ai::runtime::let_denoisers_back_on(),
+    }
+    #[cfg(any(test, feature = "testing"))]
+    TEST_OFF_CARD.with(|t| t.set(None));
+}
+
+/// [`learned_off_card`]'s answer on this thread, for a test; `None`
+/// asks the record's again.
+#[cfg(any(test, feature = "testing"))]
+pub fn set_test_off_card(off: Option<bool>) {
+    TEST_OFF_CARD.with(|t| t.set(off));
+}
+
 /// Whether the GPU the models run on shares the machine's memory
 /// (`runtime::webgpu_unified`), false when it is not known.
 pub fn unified() -> bool {
@@ -1515,6 +1565,7 @@ pub fn warm_core_ml(store: &Store, model: &'static Model) {
         {
             log::info!("{}: its file for Core ML did not arrive: {e}", model.name);
         }
+        off_card_seam();
         Denoiser::from_store(store, model, providers())
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -2327,6 +2378,11 @@ impl Ai {
     /// runtime and the model in the store. Asked without loading it, so
     /// a develop that keeps the network's answer never pays for a load.
     pub fn denoiser_there(&self, model: &'static Model) -> Result<(), NoDenoiser> {
+        // Any tier on a card a learned denoiser lost: not run there, nor
+        // fetched for it. A merge made again declines on it up front.
+        if learned_off_card() {
+            return Err(NoDenoiser::Failed(crate::stages::OFF_CARD.to_string()));
+        }
         // No runtime here: fetching the model would not help.
         greycard_ai::runtime::status().map_err(|why| NoDenoiser::Failed(why.to_string()))?;
         let store = self.store.as_ref().ok_or(NoDenoiser::Missing)?;
@@ -2357,6 +2413,7 @@ impl Ai {
             // lands while the tier loads is then still awaited, and the
             // tier loads again at the next develop.
             let had = store.core_ml_path(model).is_some();
+            off_card_seam();
             let denoiser = Denoiser::from_store(&store, model, &self.providers)
                 .map_err(|e| NoDenoiser::Failed(e.to_string()))?;
             core_ml_loaded(model.id);
@@ -10944,6 +11001,32 @@ mod tests {
             left.take().unwrap_or_default()
         })));
         (ai, calls)
+    }
+
+    /// A tester's 2 GB card, 1.5 GiB free with nothing of the engine's
+    /// to let go: short of 512's 1.95, the denoiser runs at 384 (1.05),
+    /// and the tiling the run is handed is 384, whatever the session
+    /// reloaded after the give-back chose for the card's whole. The
+    /// floor (short at every tile) is not reached there; it is under
+    /// 256's 0.95.
+    #[test]
+    fn a_two_gigabyte_cards_denoiser_runs_at_the_smaller_tile() {
+        let (mut ai, _) = denoiser_on_card(15 * GIB / 10, 0);
+        ai.card_by_test = Some(Some(2 * GIB));
+        let on = ai.denoise_room_at(512).unwrap();
+        assert_eq!(on, DenoiseOn::Tile(384));
+        let reloaded = greycard_ai::denoise::Tiling {
+            tile: 512,
+            margin: greycard_ai::denoise::DEFAULT_MARGIN,
+        };
+        assert_eq!(crate::worker::run_tiling(on, reloaded).tile, 384);
+        assert!(ai.take_short().is_none());
+        // Under the smallest tile's need: refused, the engine's own
+        // denoise in its place.
+        let (mut ai, _) = denoiser_on_card(9 * GIB / 10, 0);
+        ai.card_by_test = Some(Some(2 * GIB));
+        assert!(ai.denoise_room_at(512).is_err());
+        assert_eq!(gib_said(denoise_needs(256)), "0.95");
     }
 
     /// The learned denoiser short of the card at its tile of 512, as on

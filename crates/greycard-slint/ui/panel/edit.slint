@@ -171,6 +171,11 @@ export component NoiseSection inherits Section {
     // Why the learned tiers rest (an X-Trans raw), or "" when they do
     // not; the profiled denoise is unaffected.
     in property <string> learned-unavailable;
+    // The learned tiers rest because the card was lost under one: Try
+    // again, beside the hint, takes the card's record off and develops
+    // again.
+    in property <bool> learned-retry;
+    callback retry-learned();
     // A merge of ours whose frames are beside it as merged, and that
     // the learned denoiser takes: it can be made again from its recipe,
     // the frames denoised at `again-tier`, the window's and not the
@@ -209,6 +214,14 @@ export component NoiseSection inherits Section {
             enabled: root.unavailable == "" && (root.learned-unavailable == "" || root.denoise-learned != "off");
             current <=> root.denoise-learned;
             selected(v) => { root.develop-changed(); }
+        }
+        if root.learned-retry: VerticalLayout {
+            padding-top: Theme.space-1;
+            learned-retry-button := PanelButton {
+                text: @tr("Try again");
+                enabled: root.unavailable == "";
+                clicked => { root.retry-learned(); }
+            }
         }
     }
     EditSlider {

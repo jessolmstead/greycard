@@ -188,6 +188,54 @@ pub struct FrameReport {
     pub noise: Noise,
 }
 
+/// Why a merge whose frames asked for a learned tier made them without
+/// it: said on the finished line and as a CLI note, and logged. The
+/// card's wins when both apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LearnedSkipped {
+    /// A frame is X-Trans, which the learned denoiser has no version for.
+    XTrans,
+    /// The learned denoiser is off this graphics card: it lost it.
+    OffCard,
+}
+
+impl LearnedSkipped {
+    /// The CLI's note, and the log's.
+    pub fn words(self) -> &'static str {
+        match self {
+            Self::XTrans => "no learned denoise on X-Trans",
+            Self::OffCard => "no learned denoise on this graphics card",
+        }
+    }
+
+    /// Why a frame's walk skipped the learned denoiser, from its list's
+    /// skips: one of these two, or none.
+    fn of(skipped: &[(&'static str, crate::stages::Skip)]) -> Option<Self> {
+        skipped.iter().find_map(|(name, why)| match why {
+            crate::stages::Skip::Unavailable(w) if *name == crate::stages::LEARNED_DENOISER => {
+                if *w == crate::stages::OFF_CARD {
+                    Some(Self::OffCard)
+                } else if *w == crate::stages::NO_XTRANS {
+                    Some(Self::XTrans)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+    }
+
+    /// The reason for the whole merge, from its frames': the card's
+    /// first, then X-Trans, logged once.
+    pub(crate) fn of_frames(frames: impl IntoIterator<Item = Option<Self>>) -> Option<Self> {
+        let worst = frames.into_iter().flatten().max();
+        if let Some(why) = worst {
+            tracing::info!("merge: {}", why.words());
+        }
+        worst
+    }
+}
+
 /// What a merge did.
 #[derive(Debug, Clone)]
 pub struct Report {
@@ -209,6 +257,8 @@ pub struct Report {
     /// not need, each in words: a frame resampled, an exposure not
     /// measured, a denoiser not had.
     pub warnings: Vec<String>,
+    /// Why frames that asked for a learned tier went without it.
+    pub learned_skipped: Option<LearnedSkipped>,
 }
 
 /// `<first frame>-HDR.dng`, beside the first frame.
@@ -415,6 +465,9 @@ struct Walked {
     white_balance: WhiteBalance,
     denoised: bool,
     stood_in: Option<String>,
+    /// Why the learned denoiser was skipped on it, of the two a merge
+    /// says.
+    learned_skipped: Option<LearnedSkipped>,
     /// The CA's fit, when the frame was asked to hand it back.
     ca_fit: Option<Arc<CaFit>>,
 }
@@ -473,7 +526,19 @@ fn walk_loaded(
         bail!("{name}: {why}, and nothing was made");
     }
     let learned = steps.ops().any(|s| matches!(s, Stage::Learned(_)));
-    let stood_in = walked.meta.stood_in.as_ref().map(|w| format!("{w:?}"));
+    // The card's refusal at the load (the plan did not skip it) is said
+    // as the plan's skip is, the merge's note, not a stood-down warning.
+    let refused_off_card = walked
+        .meta
+        .stood_in
+        .as_ref()
+        .is_some_and(crate::walk::NoLearned::off_card);
+    let stood_in = walked
+        .meta
+        .stood_in
+        .as_ref()
+        .filter(|_| !refused_off_card)
+        .map(|w| format!("{w:?}"));
     let (prepared, rgb, plain) = match walked.buf {
         Buf::Camera { prepared, rgb } => (prepared, rgb, None),
         Buf::CameraPair {
@@ -511,8 +576,10 @@ fn walk_loaded(
         noise,
         gains,
         white_balance: prepared.white_balance,
-        denoised: learned && stood_in.is_none(),
+        denoised: learned && stood_in.is_none() && !refused_off_card,
         stood_in,
+        learned_skipped: LearnedSkipped::of(&steps.skipped)
+            .max(refused_off_card.then_some(LearnedSkipped::OffCard)),
         ca_fit: walked.ca_fit,
     };
     drop(prepared);
@@ -626,6 +693,7 @@ pub fn hdr_of(
     let size = Some((ref_frame.width, ref_frame.height));
     let white = r.gains.map(f64::from);
     let mut denoised = r.denoised;
+    let mut skipped = vec![r.learned_skipped];
     let ref_rgb = r.rgb;
     let ref_mask = r.mask;
     // Every other frame takes the reference's CA fit; where the
@@ -708,6 +776,7 @@ pub fn hdr_of(
             warnings.push(format!("the learned denoiser stood down: {why}"));
         }
         denoised |= f.denoised;
+        skipped.push(f.learned_skipped);
         let walked_s = t.elapsed().as_secs_f64();
 
         let given = options.registration.as_ref().map(|g| g[k]);
@@ -976,6 +1045,7 @@ pub fn hdr_of(
         denoised,
         seconds,
         warnings,
+        learned_skipped: LearnedSkipped::of_frames(skipped),
     })
 }
 
@@ -1093,7 +1163,8 @@ pub fn take_learned(frames: &[PathBuf]) -> Result<()> {
 /// again with its frames denoised: [`frames_of`] finds them, and the
 /// learned denoiser takes them ([`take_learned`]).
 pub fn can_denoise_again(file: &Path, tag: &merge::Tag) -> bool {
-    frames_of(file, tag).is_ok_and(|(_, frames)| take_learned(&frames).is_ok())
+    !crate::ai::learned_off_card()
+        && frames_of(file, tag).is_ok_and(|(_, frames)| take_learned(&frames).is_ok())
 }
 
 /// The merged file `file` made again from the recipe its tag keeps,
@@ -2044,6 +2115,300 @@ mod tests {
         );
         assert!(steps.into_inner().is_empty());
         assert_eq!(std::fs::read(&report.out).unwrap(), before);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Why a merge's frames went without the learned tier, from each
+    /// frame's skips: the card's or X-Trans, the card's first when both
+    /// apply; any other skip, or none, says nothing.
+    #[test]
+    fn a_merge_says_why_its_frames_went_without_the_tier() {
+        use crate::stages::{LEARNED_DENOISER, NO_XTRANS, OFF_CARD, Skip};
+        let off = [(LEARNED_DENOISER, Skip::Unavailable(OFF_CARD))];
+        let xtrans = [(LEARNED_DENOISER, Skip::Unavailable(NO_XTRANS))];
+        let other = [(
+            LEARNED_DENOISER,
+            Skip::Unavailable("the learned denoiser needs a 2x2 Bayer mosaic"),
+        )];
+        assert_eq!(LearnedSkipped::of(&off), Some(LearnedSkipped::OffCard));
+        assert_eq!(LearnedSkipped::of(&xtrans), Some(LearnedSkipped::XTrans));
+        assert_eq!(LearnedSkipped::of(&other), None);
+        assert_eq!(LearnedSkipped::of(&[]), None);
+        let frames = |f: &[Option<LearnedSkipped>]| LearnedSkipped::of_frames(f.to_vec());
+        assert_eq!(
+            frames(&[
+                Some(LearnedSkipped::XTrans),
+                Some(LearnedSkipped::OffCard),
+                None
+            ]),
+            Some(LearnedSkipped::OffCard)
+        );
+        assert_eq!(
+            frames(&[None, Some(LearnedSkipped::XTrans)]),
+            Some(LearnedSkipped::XTrans)
+        );
+        assert_eq!(frames(&[None, None]), None);
+        assert_eq!(
+            LearnedSkipped::OffCard.words(),
+            "no learned denoise on this graphics card"
+        );
+        assert_eq!(
+            LearnedSkipped::XTrans.words(),
+            "no learned denoise on X-Trans"
+        );
+    }
+
+    /// A merge asked for no tier, or whose tier ran, says nothing of it.
+    #[test]
+    fn a_merge_with_no_tier_or_its_tier_run_says_nothing_of_it() {
+        let (dir, files) = bracket("tier-ran", [0; 3]);
+        let none = hdr(
+            &files,
+            &Edit::default(),
+            &Options::default(),
+            &mut crate::walk::NoModels,
+            &|_: Step| {},
+        )
+        .unwrap();
+        assert_eq!(none.learned_skipped, None);
+        crate::ai::set_test_off_card(Some(false));
+        let ran = hdr(
+            &files,
+            &Edit::default(),
+            &Options {
+                denoiser: Some(&greycard_ai::DENOISE_FAST),
+                ..Options::default()
+            },
+            &mut crate::testing::PlainDenoiser,
+            &|_: Step| {},
+        )
+        .unwrap();
+        crate::ai::set_test_off_card(None);
+        assert!(ran.denoised);
+        assert_eq!(ran.learned_skipped, None);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// The learned denoiser had, but every frame's run refused as its
+    /// reason says.
+    struct Refused(crate::walk::NoLearned);
+    impl Models for Refused {
+        fn can_denoise(
+            &mut self,
+            _: &'static greycard_ai::Model,
+        ) -> Result<(), crate::walk::NoLearned> {
+            Ok(())
+        }
+        fn denoise(
+            &mut self,
+            _: &'static greycard_ai::Model,
+            _: &RawFrame,
+            _: &greycard_core::develop::Prepared,
+        ) -> Result<Vec<f32>, crate::walk::NoLearned> {
+            Err(self.0.clone())
+        }
+        fn fill(
+            &mut self,
+            _: &greycard_edit::retouch::Patch,
+            _: &greycard_core::develop::retouch::Region,
+            _: &greycard_core::image::WorkingImage,
+        ) -> Option<Vec<f32>> {
+            None
+        }
+        fn could_fill_more(
+            &mut self,
+            _: &greycard_edit::retouch::Retouch,
+            _: &greycard_core::image::WorkingImage,
+        ) -> bool {
+            false
+        }
+        fn rasters(
+            &mut self,
+            _: crate::stages::Masks,
+            _: &std::sync::Arc<greycard_core::image::WorkingImage>,
+            _: Option<crate::walk::Patched<'_>>,
+            _: &crate::walk::Meta,
+        ) -> crate::walk::Rasters {
+            crate::walk::Rasters::new()
+        }
+    }
+
+    /// A merge's "stood down" warning says what it always said; the
+    /// card's refusal at the load (its plan did not skip the tier) is
+    /// said as the plan's skip is, the merge's note, and no warning.
+    #[test]
+    fn a_refusal_for_the_card_at_the_load_is_the_merges_note() {
+        use crate::walk::NoLearned;
+        let (dir, files) = bracket("refused-load", [0; 3]);
+        crate::ai::set_test_off_card(Some(false));
+        let run = |why: NoLearned| {
+            hdr(
+                &files,
+                &Edit::default(),
+                &Options {
+                    denoiser: Some(&greycard_ai::DENOISE_BEST),
+                    on_exists: greycard_core::output::OnExists::Overwrite,
+                    ..Options::default()
+                },
+                &mut Refused(why),
+                &|_: Step| {},
+            )
+            .unwrap()
+        };
+        let off = run(NoLearned::Failed(crate::stages::OFF_CARD.into()));
+        assert_eq!(off.learned_skipped, Some(LearnedSkipped::OffCard));
+        assert!(!off.denoised);
+        assert!(
+            !off.warnings.iter().any(|w| w.contains("stood down")),
+            "{:?}",
+            off.warnings
+        );
+        let other = run(NoLearned::Failed("bad input".into()));
+        assert_eq!(other.learned_skipped, None);
+        assert!(
+            other
+                .warnings
+                .iter()
+                .any(|w| w == "the learned denoiser stood down: Failed(\"bad input\")"),
+            "{:?}",
+            other.warnings
+        );
+        crate::ai::set_test_off_card(None);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// On a recorded card, a merge that asked for no tier says nothing
+    /// of it: nothing was skipped.
+    #[test]
+    fn a_merge_with_no_tier_on_a_recorded_card_says_nothing_of_it() {
+        let (dir, files) = bracket("no-tier-off", [0; 3]);
+        crate::ai::set_test_off_card(Some(true));
+        let r = hdr(
+            &files,
+            &Edit::default(),
+            &Options::default(),
+            &mut crate::walk::NoModels,
+            &|_: Step| {},
+        )
+        .unwrap();
+        crate::ai::set_test_off_card(None);
+        assert_eq!(r.learned_skipped, None);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// On a card a learned denoiser lost, a merge asked for any tier
+    /// walks its frames as it walks X-Trans ones: the network skipped,
+    /// the plain demosaic, no tier in the recipe, and no word of it
+    /// among the warnings. Made again at any tier, it is declined up
+    /// front in the existing words, the merge left as it was, and the
+    /// window's row is not offered.
+    #[test]
+    fn a_merge_on_a_card_the_denoiser_lost_skips_it_and_is_not_made_again() {
+        /// A merge's models as `DenoiseModels` asks them (the check is
+        /// the engine's), never run.
+        struct OffCard(crate::ai::Ai);
+        impl Models for OffCard {
+            fn can_denoise(
+                &mut self,
+                model: &'static greycard_ai::Model,
+            ) -> Result<(), crate::walk::NoLearned> {
+                self.0
+                    .denoiser_there(model)
+                    .map_err(|e| no_learned(e, model))
+            }
+            fn denoise(
+                &mut self,
+                _: &'static greycard_ai::Model,
+                _: &RawFrame,
+                _: &greycard_core::develop::Prepared,
+            ) -> Result<Vec<f32>, crate::walk::NoLearned> {
+                panic!("the network is never asked on a card it lost")
+            }
+            fn fill(
+                &mut self,
+                _: &greycard_edit::retouch::Patch,
+                _: &greycard_core::develop::retouch::Region,
+                _: &greycard_core::image::WorkingImage,
+            ) -> Option<Vec<f32>> {
+                None
+            }
+            fn could_fill_more(
+                &mut self,
+                _: &greycard_edit::retouch::Retouch,
+                _: &greycard_core::image::WorkingImage,
+            ) -> bool {
+                false
+            }
+            fn rasters(
+                &mut self,
+                _: crate::stages::Masks,
+                _: &std::sync::Arc<greycard_core::image::WorkingImage>,
+                _: Option<crate::walk::Patched<'_>>,
+                _: &crate::walk::Meta,
+            ) -> crate::walk::Rasters {
+                crate::walk::Rasters::new()
+            }
+        }
+        let models = || {
+            OffCard(crate::ai::Ai::for_test(
+                greycard_ai::Store::at("no-store"),
+                Vec::new(),
+            ))
+        };
+        crate::ai::set_test_off_card(Some(true));
+        let (dir, files) = bracket("off-card", [0; 3]);
+        let mut made = None;
+        for tier in ["fast", "balanced", "best"] {
+            let report = hdr(
+                &files,
+                &Edit::default(),
+                &Options {
+                    denoiser: greycard_ai::denoiser(tier),
+                    ..Options::default()
+                },
+                &mut models(),
+                &|_: Step| {},
+            )
+            .unwrap();
+            assert!(!report.denoised, "{tier}");
+            assert_eq!(report.learned_skipped, Some(LearnedSkipped::OffCard));
+            assert!(
+                !report.warnings.iter().any(|w| w.contains("stood down")),
+                "{:?}",
+                report.warnings
+            );
+            let (_, tag) = samples_and_tag(&report.out);
+            assert_eq!(tag.recipe.unwrap().denoise, None);
+            made = Some(report.out);
+        }
+        let out = made.expect("a merge");
+        let (_, tag) = samples_and_tag(&out);
+        assert!(!can_denoise_again(&out, &tag));
+        let before = std::fs::read(&out).unwrap();
+        for tier in ["fast", "balanced", "best"] {
+            let refused = again(
+                &out,
+                &Overrides {
+                    denoise: Some(Some(tier.into())),
+                    ..Default::default()
+                },
+                &Edit::default(),
+                &mut models(),
+                &|_: Step| panic!("nothing is walked"),
+            )
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+            assert_eq!(
+                refused,
+                format!(
+                    "the learned denoiser's {tier} tier cannot run (the learned denoiser is \
+                     not on this graphics card), and nothing was made again"
+                )
+            );
+            assert_eq!(std::fs::read(&out).unwrap(), before);
+        }
+        crate::ai::set_test_off_card(None);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

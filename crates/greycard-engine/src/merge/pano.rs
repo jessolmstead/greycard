@@ -184,6 +184,8 @@ pub struct Report {
     pub bands_bytes: usize,
     pub seconds: Vec<(&'static str, f64)>,
     pub warnings: Vec<String>,
+    /// Why frames that asked for a learned tier went without it.
+    pub learned_skipped: Option<super::LearnedSkipped>,
 }
 
 /// `<first frame>-pano.dng`, beside the first frame.
@@ -418,6 +420,7 @@ fn laid(
     // the file.
     let mut frame_tags: Vec<Option<(RawFrame, RawMetadata)>> = (0..n).map(|_| None).collect();
     let mut denoised = false;
+    let mut skipped = Vec::new();
     let mut links: Vec<Link> = Vec::new();
     let mut pairs: Vec<PairReport> = Vec::new();
     let mut walk_s = 0.0;
@@ -502,6 +505,7 @@ fn laid(
             }
         }
         denoised |= f.denoised;
+        skipped.push(f.learned_skipped);
         if k == anchor {
             ca = match &f.ca_fit {
                 Some(fit) => MergeCa::Take(CaFitRef(fit.clone())),
@@ -1161,6 +1165,7 @@ fn laid(
         bands_bytes,
         seconds,
         warnings,
+        learned_skipped: super::LearnedSkipped::of_frames(skipped),
     })
 }
 
@@ -1543,6 +1548,49 @@ mod tests {
             lenses: Some(lenses()),
             ..Options::default()
         }
+    }
+
+    /// A panorama whose frames asked for a learned tier on a card the
+    /// denoiser lost says so (the card's reason, as a value); with no
+    /// tier, or the tier run, it says nothing.
+    #[test]
+    fn a_panorama_says_its_frames_went_without_the_tier() {
+        let (dir, files) = frames("off-card", &[-0.45, 0.0, 0.45]);
+        let run = |denoiser, models: &mut dyn crate::walk::Models| {
+            pano(
+                &files,
+                &Edit::default(),
+                &Options {
+                    denoiser,
+                    on_exists: greycard_core::output::OnExists::Overwrite,
+                    ..options()
+                },
+                models,
+                &|_: Step| {},
+            )
+            .unwrap()
+        };
+        crate::ai::set_test_off_card(Some(true));
+        let off = run(
+            Some(&greycard_ai::DENOISE_BEST),
+            &mut crate::testing::PlainDenoiser,
+        );
+        assert!(!off.denoised);
+        assert_eq!(
+            off.learned_skipped,
+            Some(super::super::LearnedSkipped::OffCard)
+        );
+        crate::ai::set_test_off_card(Some(false));
+        let ran = run(
+            Some(&greycard_ai::DENOISE_BEST),
+            &mut crate::testing::PlainDenoiser,
+        );
+        assert!(ran.denoised);
+        assert_eq!(ran.learned_skipped, None);
+        let none = run(None, &mut crate::walk::NoModels);
+        assert_eq!(none.learned_skipped, None);
+        crate::ai::set_test_off_card(None);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Three frames turned 26 degrees apart, a field of 114 degrees:
