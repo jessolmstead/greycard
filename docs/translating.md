@@ -63,7 +63,7 @@ The file alone places most of them:
 | `ui/panel/*-sheet.slint` | The other sheets, named after what they do |
 | `ui/panel/grid.slint`, `strip.slint`, `filter.slint`, `folders.slint`, `roots.slint`, `collections.slint`, `recent.slint`, `navigator.slint` | The Library: the grid, the filmstrip, the filter bar, and the left pane's lists |
 | `ui/panel/frame-menu.slint` | A frame's right-click menu |
-| `ui/panel/history.slint`, `presets.slint`, `meta.slint`, `scopes.slint` | The right pane's other sections |
+| `ui/panel/history.slint`, `presets.slint`, `meta.slint`, `scopes.slint` | The other sections: history and snapshots, presets, metadata, and the scopes |
 | `src/panel/*.rs` | The status line at the bottom and a sheet's own sentences, for the part the file is named after |
 | `src/keys.rs` | The keys sheet: each action's words and the headings |
 | `src/rows.rs`, `src/tags.rs`, `src/sort.rs`, `src/filter.rs` | The status line's words for a change of rating, flag, label, order, or filter |

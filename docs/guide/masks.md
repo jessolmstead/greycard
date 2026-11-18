@@ -35,7 +35,7 @@ editing.
 With a mask chosen, you see, top to bottom:
 
 1. **MASK**, headed with the mask's name: its name field, **Show
-   mask**, **Invert**, and **Refine edge**, then **Shapes**, one row
+   mask**, **Invert**, **Refine edge**, and **Opacity**, then **Shapes**, one row
    per shape in the mask, the chosen shape's settings when it has
    any, and **Add a shape**, the buttons that add another shape.
 2. **The mask's own sliders:** **WHITE BALANCE**, **LIGHT**,
@@ -43,7 +43,7 @@ With a mask chosen, you see, top to bottom:
    **TINT** and **DETAIL**, each headed with the mask's name as you typed
    it ("Sky 1 · LIGHT").
 
-### Naming, Show mask, Invert, and Refine edge
+### Naming, Show mask, Invert, Refine edge, and Opacity
 
 A mask is named for its first shape ("Subject 1", "Linear 2"). Type
 in the name field to call it something you'll recognize; a name you
@@ -86,6 +86,11 @@ The edge is found on the masks' own grid, 2048 across whatever the
 picture's size: about 4 pixels a step on a 45 MP frame, so at 1:1 the
 refined edge is that soft at the least. A Sky made at twice the size
 is read at that grid too once it is refined.
+
+**Opacity**, under **Refine edge**, pulls the mask's whole look back:
+at 50%, every slider under the mask does half as much, and the mask
+itself, as **Show mask** paints it, is unchanged. It goes with the mask
+in a copy, a paste, a sync, and a preset.
 
 ### The shapes list
 
@@ -338,7 +343,8 @@ Develop tab, but only where the mask reaches. **BLACK & WHITE** and
 the **Display curve** switch are global only. A mask's tone sliders
 act even when the global **LIGHT** section is switched off. Each of
 the mask's sections has its own switch, **TINT** included, so you can
-compare the mask with and without it.
+compare the mask with and without it, and its own reset arrow
+([Sections](develop.md#sections)).
 
 A mask's curve editor shows the picture's histogram behind the curve,
 as the global one does.

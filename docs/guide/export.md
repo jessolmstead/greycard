@@ -275,7 +275,7 @@ frame it sent.
 
 ### The queue in the grid
 
-Click **Export queue** under the roots in the grid's left pane to see
+Click **EXPORT QUEUE** in the grid's left pane to see
 every queued frame as a tile. The tiles are grouped under a heading
 for each destination, such as "JPEG quality 92, long edge 2048, sRGB,
 to edited beside each original", with how many frames go there. Sets

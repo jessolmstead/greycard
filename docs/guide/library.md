@@ -164,9 +164,10 @@ The roots are in the left pane while the grid is up, under **ROOTS**:
   under it. Click a row to open the root as a click on it in the
   folder tree does: its own frames with **With subfolders** off,
   everything under it with the switch on.
-- **Export queue**, always last, shows the frames waiting in the
-  export queue, with their count. See
-  [The queue in the grid](export.md#the-queue-in-the-grid).
+
+**EXPORT QUEUE**, a header of its own under **COLLECTIONS**, counts
+the frames waiting to be exported; click it to see them (see
+[The queue in the grid](export.md#the-queue-in-the-grid)).
 
 To add a root, click **+ Add a root...** at the foot of the section
 and choose a folder. When the open folder is in no root,
@@ -425,7 +426,8 @@ portfolio, a set for a client, the frames for a print sale. The frames
 stay where they are; a collection only points at them.
 
 The collections are in the left pane while the grid is up, under
-**COLLECTIONS**, below **ROOTS** and **FOLDERS**. Each row shows the
+**COLLECTIONS**, below **ROOTS** and **FOLDERS** until you drag them
+elsewhere. Each row shows the
 collection's name and how many frames it holds. Click a row to open
 it; the grid, the filmstrip and the lightbox then show its frames.
 
@@ -525,9 +527,9 @@ a raw.
 A frame's versions live in the same `.gcd` (see
 [Versions of a frame](presets-and-history.md#versions-of-a-frame)).
 
-greycard 0.7 writes its `.gcd` files in a newer form, which 0.6 and
-earlier can't read, and 0.8 in a newer one again, which 0.7 can't
-read. An older version leaves such a frame's edit alone rather than
+A newer greycard may write its `.gcd` files in a form an older one
+can't read: 0.12's are refused by 0.11, as 0.11's were by 0.10. An
+older version leaves such a frame's edit alone rather than
 write over it: it shows the camera's picture, and its
 log says why. Once a version has saved a frame, open it with that
 version or a later one. A damaged `.gcd` is left alone the same way;

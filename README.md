@@ -70,14 +70,15 @@ Panasonic raws.
 - Nikon High Efficiency raws only open in a build from source with the
   `nikon-he` feature. The format is licensed, and shipping its decoder
   means royalties. I'm working on it.
-- The Windows build isn't signed yet, so you have to click past a
-  warning the first time.
+- The Windows installer and zip aren't signed yet, so you have to
+  click past a warning the first time.
 - The Intel Mac build is new, and the generative remove is not
   available on it.
-- There is a Windows on ARM build, though a release can still go out
-  without it while it's new. Its AI features run on the CPU alone,
-  through a runtime it offers to download the first time you use one,
-  and I haven't run it on an ARM laptop myself yet.
+- There is a Windows on ARM build and installer, though a release
+  can still go out without them while they're new. Its AI features
+  run on the CPU alone, through a runtime it offers to download the
+  first time you use one, and I haven't run it on an ARM laptop
+  myself yet.
 
 ## Install
 
@@ -90,9 +91,10 @@ Unpack it, unless it's the Windows setup, which you just run.
 - **macOS:** open the `.dmg` and drag greycard to Applications (Apple
   silicon or Intel, macOS 13.4 or newer); the `.tar.gz`'s `sh install.sh` also
   adds the `greycard` command. [Step by step](docs/testing-on-a-mac.md).
-- **Windows:** run the `-setup.exe`. The `.zip` is the portable
-  build: unpack it and run `bin\greycard-ui.exe`. The
-  `aarch64-windows` files are for Windows on ARM.
+- **Windows:** run the `-setup.exe`, which needs no administrator.
+  The `.zip` is the portable build: unpack it and run
+  `bin\greycard-ui.exe`. The `aarch64-windows` files are for Windows
+  on ARM.
 
 You'll want a GPU with Vulkan, or Metal on a Mac. Without one it
 still opens, drawing in software and developing on the CPU, but

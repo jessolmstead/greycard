@@ -125,7 +125,7 @@ panel shows the **CULLING** section in place of the develop tools.
 
 Leave the loupe in Cull for the grid and come back (**Loupe**, **G**,
 **E** or **Enter**), and it is still in Cull; greycard remembers the
-mode for the next session too. **D** goes straight to Develop, from
+mode, and the frame you were on, for the next session too. **D** goes straight to Develop, from
 the grid or the loupe.
 
 The grid has no culling mode of its own. The rating, flag and label

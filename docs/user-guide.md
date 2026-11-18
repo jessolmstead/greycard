@@ -85,11 +85,10 @@ editor:
 ## Installing
 
 Download the file for your system from the
-[releases page](https://github.com/jessolmstead/greycard/releases) and
-unpack it.
+[releases page](https://github.com/jessolmstead/greycard/releases).
 
-- **Linux:** run `sh install.sh` in the unpacked folder. `sh
-  uninstall.sh` removes it.
+- **Linux:** unpack the `.tar.gz` and run `sh install.sh` in its
+  folder. `sh uninstall.sh` removes it.
 - **Linux, without installing:** `greycard-<version>-linux-x86_64.AppImage`
   is the editor in one file, nothing to unpack. Make it executable
   (`chmod +x`) and run it, with a folder or a raw after it if you like;
@@ -116,6 +115,10 @@ unpack it.
 - **Windows, without installing:** take
   `greycard-<version>-x86_64-windows.zip` (or `-aarch64-windows.zip`),
   unpack it anywhere, and run `bin\greycard-ui.exe`.
+
+To check a download, put the release's `SHA256SUMS` beside it and run
+`sha256sum -c SHA256SUMS --ignore-missing` there (`shasum -a 256 -c
+SHA256SUMS` on a Mac).
 
 ## The basics
 
@@ -211,7 +214,7 @@ shows your own.
 In the grid, **Alt+←** and **Alt+→**, or a mouse's back and forward
 buttons, go to the folders visited, as a browser's do: back returns
 to the folder a subfolder was opened from, and forward goes there
-again.
+again. In Cull, the mouse's buttons step the frames instead.
 
 ### Views
 
@@ -228,8 +231,8 @@ again.
 | Tab | Hide the panels and the filmstrip, and bring them back (in the grid, the left pane) |
 | F6, F7, F8 | The filmstrip, the left pane or the develop panel alone |
 | F11 | Full screen, and back (on a Mac, the window's green button) |
-| Space | Fit or 1:1 |
-| Z | Fit or 3:1 |
+| Space | Fit or 1:1, where the camera focused when the raw says |
+| Z | Fit or 3:1, the same way |
 | F | A mat of the canvas around the picture at Fit, or none |
 | J | In the Loupe, shadow and highlight clipping warnings; in the lightbox, the badges |
 | Shift+J | In the Loupe, focus peaking: the sharpest parts painted over the picture |

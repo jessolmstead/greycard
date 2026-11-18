@@ -8,7 +8,8 @@ to give one edit to many frames at once.
 
 **NAVIGATOR** shows the whole frame. When you are zoomed in, a
 rectangle marks the part in view. Click or drag in it to move the view.
-The section's heading shows the zoom.
+The section's heading shows the zoom. It stays at the top of the left
+pane, in sight however far the lists under it scroll.
 
 ## Presets
 

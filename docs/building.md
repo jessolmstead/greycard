@@ -13,8 +13,8 @@ tarball does not suit, or to get a fix before it is released.
 ## What the machine needs
 
 - **A GPU.** Vulkan on Linux and Windows, Metal on a Mac. The
-  viewport is wgpu through Slint and there is no software renderer
-  behind it.
+  viewport is wgpu through Slint. Without one it draws on a software
+  adapter, such as Mesa's lavapipe, and develops on the CPU, slowly.
 - **Disk.** A debug and a release build of the workspace together
   come to around ten gigabytes under `target/`.
 - **Network, once.** The build fetches around 700 crates, and
@@ -208,7 +208,8 @@ nikon-he`. It is off in the published builds because JPEG XS is
 licensed by its patent holders per copy of a decoder.
 
 A build from a git checkout shows its commit after the version
-(`0.11.0 (79527a9)`) in `--version`, the log, and About, unless HEAD
+(`0.12.0 (95de0a0)`) in `--version`, the log, Settings' About, and
+a problem report, unless HEAD
 is the release's tag and the tree is clean. A `+` marks a tree with
 uncommitted changes at the first build after HEAD last moved; a later
 edit does not add it. A packager can set `GREYCARD_COMMIT` at build
@@ -290,7 +291,7 @@ the desktop entry and icon under `~/.local/share` on Linux, or
 `greycard.app` in `~/Applications` on a Mac. `sh uninstall.sh` takes
 it back out.
 
-On a Mac it also writes `greycard-<version>-aarch64-macos.dmg`, the
+On a Mac it also writes `greycard-<version>-<arch>-macos.dmg`, the
 app and a link to Applications. Both are signed ad hoc unless
 `MACOS_SIGN_IDENTITY` names a Developer ID, and notarized and stapled
 when `MACOS_NOTARY_PROFILE` also names a notarytool keychain profile,
@@ -421,10 +422,10 @@ the `-dev`/`-devel` packages from step 1, and `pkg-config` itself.
 **`package requires rustc 1.98`** — `rustup update`, or your
 distribution's Rust is in front of rustup's on `PATH`.
 
-**The editor starts and exits, or says no adapter** — no usable
-Vulkan driver. `vulkaninfo --summary` from `vulkan-tools` says
-whether the system has one at all. Inside a VM or over plain SSH
-there usually is not.
+**The editor says "no Vulkan adapter wgpu can use"** — not even a
+software one. `vulkaninfo --summary` from `vulkan-tools` says what
+the system has; Mesa's lavapipe (`mesa-vulkan-drivers`) gives a slow
+one. Inside a VM or over plain SSH there usually is none.
 
 **"the AI features are off: no libonnxruntime.so beside greycard"**
 — `scripts/ort-dylib.sh` has not run for this profile, or

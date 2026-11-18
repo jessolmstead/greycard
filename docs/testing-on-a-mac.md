@@ -60,7 +60,7 @@ picture opens, developed; the strip along the bottom is the rest of
 the folder, and **G** lays the whole folder out as a contact sheet.
 
 The panel on the right has the controls. **Export…** at its foot
-writes a JPEG or TIFF, and asks where.
+writes a JPEG, PNG, TIFF, or WebP, and asks where.
 
 Some things fetch themselves on first use, after showing you their
 license: the lens database (under a megabyte), and the learned
@@ -88,8 +88,9 @@ The most useful things you can send, in order:
    and the newest file starting with `greycard-ui`. Attach that too.
    The Console app (in Applications, Utilities) keeps the last words
    of anything that quit, too: type `greycard-ui` in its search box.
-5. Which version: it is in the name of the folder you downloaded,
-   or `greycard-ui --version` in a terminal.
+5. Which version: it is under **About** in greycard's Settings (⌘,),
+   in the name of the file you downloaded, or `greycard-ui --version`
+   in a terminal.
 
 If the learned denoise looks wrong, the log's develop lines say where
 it ran: "CoreML (fp16)" is the half-precision copy of the model that

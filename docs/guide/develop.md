@@ -262,7 +262,7 @@ always brings its look table.
 | **Highlights** | −2 to +2 EV | Darkens or brightens the bright areas. Pull it down to bring back a sky. |
 | **Midtones** | −2 to +2 EV | Lifts or sinks the middle of the picture and leaves its black and its brightest areas where they are. |
 | **Shadows** | −2 to +2 EV | Lifts or deepens the dark areas. |
-| **Whites** | −2 to +2 EV | Moves the white point: where the brightest tones reach white. |
+| **Whites** | −2 to +2 EV | Moves the white point: where the brightest tones reach white. Down, it also brings lights over white back under it. |
 | **Blacks** | −30% to +30% | Moves the black point. |
 
 **Auto** sets Exposure, Highlights, Shadows, Whites, and Blacks from
@@ -276,7 +276,7 @@ single pixels, so the texture inside a sky or a shadow keeps its
 contrast.
 
 **Midtones** finds the middle of the frame from the frame itself, as
-**Highlights** does: full half a stop under its middle tone, it fades
+**Highlights** does: strongest half a stop under its middle tone, it fades
 to nothing a stop and three quarters either side, short of where
 **Highlights** is strongest. At ±2 the middle moves 0.875 of a stop.
 It is not **Exposure**, which moves every tone alike,
@@ -288,8 +288,7 @@ on areas and follows the frame rather than fixed places on the curve.
 **Highlights** reaches down into the upper mid-tones, as Lightroom's
 does, and **Whites** works from the frame's middle tones upward rather
 than from a fixed mid grey, so a face under bright light answers both.
-**Whites** down also brings lights that sit over white back under it,
-so reach for it on a hot spot or a blown sky.
+Reach for **Whites** down on a hot spot or a blown sky.
 A frame edited with either before 0.7 opens a little differently.
 
 At **Exposure** 0, each camera body opens at a brightness of its own,
@@ -324,7 +323,8 @@ fitted look is made for one display curve; see [LOOK](#look).
 ## Curves
 
 Choose **Parametric** or **Point** at the top. **Reset** puts back
-the curve you are looking at.
+the curve you are looking at. The histogram behind the curve is the
+picture as that curve takes it in, so it holds still while you drag.
 
 ### Parametric
 
@@ -621,7 +621,7 @@ already been sharpened once.
 
 An unsharp mask on the finished picture, after the tone curve, the
 curves, and the look. It crisps edges as they will be seen, where
-**SHARPEN** above restores what the camera lost. It is off until
+**SHARPEN** above restores what the camera lost. It does nothing until
 **Amount** is above zero, and it sharpens brightness only, so colors
 do not fringe.
 

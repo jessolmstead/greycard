@@ -1,7 +1,7 @@
 # Settings
 
 The Settings sheet holds the choices that belong to your computer
-rather than to a picture, in five categories down its left side:
+rather than to a picture, in six categories down its left side:
 Interface, Library, Editing, Models, Keys, and About. Click one, or press the
 up and down arrows or Ctrl+Tab, to show it; Tab goes on into its
 rows. The sheet opens at the category you left it at. It also lists
@@ -60,8 +60,8 @@ frames.
 ### Language
 
 The window's language: **System** (default) follows your system's, or
-pick **English** or one of the translated languages, each shown in its
-own name. An unknown saved language falls back to the system's language.
+pick **English** or a translation, each shown in its own name, such
+as **Français**. An unknown saved language falls back to the system's language.
 The change takes effect the next time greycard starts.
 
 ### One section open at a time
@@ -139,7 +139,7 @@ Where a frame's edit file (its `.gcd`) is written.
 
 Both travel with the shoot when you copy the folder. greycard reads an
 edit from either place, so changing this loses nothing. An edit file
-saved by greycard 0.8 can't be read by 0.7 or earlier (see
+saved by a newer greycard may not open in an older one (see
 [Where your edits live](library.md#where-your-edits-live)).
 
 Changing it moves nothing by itself. Each frame's edit moves to the
@@ -214,6 +214,12 @@ The profile and the intent, **Perceptual** or **Relative**, the soft
 proof shows the picture through: the same choices as the **SOFT
 PROOF** section's, which still turns the proof on and off.
 
+### Lens corrections on new edits
+
+On by default: whether a raw's new edit starts with the **LENS**
+section on. A raw that already has a sidecar keeps its own. See
+[Lens](develop.md#lens).
+
 ### Crop
 
 #### Aspect
@@ -235,6 +241,14 @@ ratio, pressing **Crop** crops the frame to it at once. A frame you
 move to while cropping is not cropped until you touch its crop. A
 frame you have already cropped keeps its crop and its aspect. See
 [Cropping](crop-and-retouch.md#cropping).
+
+### Retouch
+
+#### Fill
+
+What makes a new Fill, **Patch**, **Fast**, or **Best**: the same
+choice as the buttons above the Retouch tab's list. See
+[Fill and its model](crop-and-retouch.md#fill-and-its-model).
 
 ### Presets
 
