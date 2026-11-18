@@ -12,6 +12,11 @@ the reasoning lives in `docs/notes.md`.
       corrupt or crafted raw can take the decode down. Wants raising
       upstream with a bound against the file's length (found fuzzing
       the Canon mode reader, 2026-11-17)
+- [ ] A window test that finds a control by its label or its place can
+      pass for the wrong reason: the panel builds only the sections in
+      view, so what it finds depends on the window's height. One failed
+      on CI alone at the 0.12.0 cut; the rest want an audit, and ids
+      (2026-11-17)
 - [ ] The XMP beside a raw is read whole, with no bound, by the
       open's adoption (`xmp::adopt_own`) and the index's pass; the
       take's own read stops at 64 MB (§705)
@@ -375,6 +380,12 @@ steps aside on a card it cannot run on.
 - [ ] The learned denoiser is disabled on a card that lost it, with a
       way back
 - [ ] An edit from a newer version opens in an older one
+- [ ] Slint 1.19, with the Slint and femtovg pins dropped
+- [ ] The editor's crate broken up, its first steps
+- [ ] The window's tests find a control by its id
+- [ ] The GPU marker gives up on a backend that keeps dying, and is
+      written by rename
+- [ ] A failed save tells the user
 
 ### Speed
 
