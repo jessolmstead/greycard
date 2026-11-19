@@ -731,3 +731,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§717. Splitting greycard-ui, measured first](notes/717-splitting-greycard-ui-measured-first.md) (2026-11-18)
 - [§718. A linear gradient eases out of both ends](notes/718-a-linear-gradient-eases-out-of-both-ends.md) (2026-11-18)
 - [§719. A learned highlight fill: the design](notes/719-a-learned-highlight-fill-the-design.md) (2026-11-19)
+- [§720. The panels stay one crate](notes/720-the-panels-stay-one-crate.md) (2026-11-19)

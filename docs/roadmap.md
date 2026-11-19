@@ -852,30 +852,15 @@ clears or a tester asks for it.
 - [ ] The long `run` and `develop_job` in `worker/` and `Look::run` in
       `roots/` cut into functions, a later round after the splits
       (§316, §318, §321)
-- [ ] The window's crate split further, in mechanical passes each
-      landing green and alone, after §341, §344, §351, §356, and §361:
-      a thin views crate with only the shared types
-      (`versions::{Key, Cell}`, `rows::FromRow`, `file_name`, called
-      from 51 places outside), depending on the Slint and render
-      crates and never the window; the model modules with no outward
-      edge (filter, sort, grid, selection, tags, mounts, placeholder:
-      3,800 lines, 60 tests); then those with one seam each
-      (collections, culling's prefetcher, previews, thumbpool and
-      `worker/thumbs.rs` behind a thumbnails handle the views crate
-      defines and the worker implements: 6,900 lines, 68 tests);
-      measured again. The bindings (browser, culling, roots, tree,
-      library, lightbox, rows, cells, the small panels) wait behind
-      three seams: opening a frame (`open_frame`, `open_row`,
-      `pick_pending` reach two dozen develop functions and 70 develop
-      fields; a small Develop trait, the mosaic tracking moved to the
-      develop side), culling drawing through the develop's viewport
-      (`st.develop.zoom` 15 times, the renderer, `lut_for`,
-      `render::Tile`; the loupe and compare drawing stay in the
-      window), and the thumbnails on the worker handle. `cargo build
-      -p greycard-slint` alone still compiles a wasted second copy,
-      closed only by a workspace-hack list. The crate tree otherwise
-      stays as it is: core knows nothing, edit and library sit on it,
-      the window on everything
+- [ ] The window's files cut by moves inside the crate (§720): the
+      capture driver out of `panel/viewport.rs`, then the browser's
+      opening path into a file of its own; the sidecar writes go
+      first
+- [ ] A `State` built without a window, so a test that touches only
+      it runs off the window: unmeasured, a study first (§720)
+- [ ] "Write the XMP, then the sidecar" is written four times:
+      `write_file`, culling's unreject, the batch save, and sync
+      (§720)
 - [ ] A cancel token through the develop: the worker drops a stale
       result by generation but never interrupts the develop making
       it, so a big frame or an export batch runs to the end after
