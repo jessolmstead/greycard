@@ -159,9 +159,11 @@ plain demosaic, and applied to both halves before the Blend.
   0.987·gain whatever the gain.
 - The picture does, so the fill follows the white balance.
 
-**Headroom (§716).** The trial branch predates §716. **A:** dividing
-`x` and the clips by `ceiling·headroom` reproduces the trial's input.
-A fixture with headroom shows it.
+**Headroom (§716).** The trial never trained or scored with headroom
+above 1. `x` is read as `x / (ceiling·headroom)`, and a photosite
+clips at `gain·headroom·0.987`, so the clips carry no headroom. Run
+that way on 18 Canon frames with headroom up to 0.17 stop, the fill
+rises with the clip level and shows no new failure.
 
 **The clip level is unchanged.** `Developed::clip_level` stays
 `ceiling·0.98` (`develop/mod.rs:971`).
@@ -417,6 +419,12 @@ eye on 24 frames.
 - the dual demosaic and AMaZE;
 - the denoised half.
 **A:** they move the band little.
+
+**The codes' frame.** The codes are read in the full-size, unwarped,
+unoriented mosaic frame (`develop/clipcodes.rs`), and the fill runs
+after the Warp. Step 6 either carries the codes through the warp or
+runs the fill's analysis before it; the trial had no warp, so neither
+is measured.
 
 **Crops.** A crop must give its frame's fill. A frame cropped at decode
 is its own frame, and its pixels match.

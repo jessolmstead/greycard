@@ -10,6 +10,7 @@ pub mod amaze;
 pub mod bad_pixels;
 pub mod ca;
 pub mod ca_xtrans;
+pub mod clipcodes;
 pub mod defringe;
 pub mod dehaze;
 pub mod denoise;
@@ -92,6 +93,11 @@ pub struct DevelopSettings {
     /// tag with the frame's quarter turns composed onto it, for the
     /// frames a camera got wrong.
     pub orientation: Option<Orientation>,
+    /// Whether the prepare reads the mosaic's clip codes
+    /// ([`Prepared::clip_codes`]) for a learned highlight fill. Off by
+    /// default: nothing else reads them, and nothing they are read
+    /// for changes the picture.
+    pub clip_codes: bool,
 }
 
 // The editor's thumbnail of a raw with no preview is a develop under
@@ -113,6 +119,7 @@ impl Default for DevelopSettings {
             denoise: None,
             hot_pixels: Some(hotpixels::HotPixelOptions::default()),
             orientation: None,
+            clip_codes: false,
         }
     }
 }
@@ -508,6 +515,13 @@ pub struct Prepared {
     /// A monochrome sensor's: its three channels are one plane, which
     /// the denoise takes as one ([`denoise::denoise_picture`]).
     pub monochrome: bool,
+    /// Per cell, how many colors clipped, read before the highlight
+    /// reconstruction ([`clipcodes::clip_codes`]): only when the
+    /// settings ask ([`DevelopSettings::clip_codes`]) and the frame has
+    /// a mosaic, else `None`. In the full-size mosaic's frame
+    /// ([`clipcodes::ClipCodes`]): a binned develop carries them as they
+    /// were, for its consumer to pool.
+    pub clip_codes: Option<clipcodes::ClipCodes>,
 }
 
 impl Prepared {
@@ -651,6 +665,12 @@ fn prepare_inner(
         )
     });
 
+    // Read before opposed rewrites the clipped photosites, at its clips.
+    let clip_codes = pattern
+        .as_ref()
+        .filter(|_| settings.clip_codes)
+        .map(|p| clipcodes::clip_codes(&samples, width, height, p, gains, headroom));
+
     // A DNG whose warps correct each color has corrected its lateral
     // aberration itself: the warp after the demosaic is the authority.
     let file_corrects_ca = frame.dng.warps_each_color();
@@ -754,6 +774,7 @@ fn prepare_inner(
         demosaic: settings.demosaic,
         orientation: settings.orientation.unwrap_or(frame.orientation),
         monochrome: frame.layout == SensorLayout::Monochrome,
+        clip_codes,
     };
     if let (Some(pattern), Some(options)) = (&prepared.pattern, &settings.chromatic_aberration)
         && ca_runs(pattern)
@@ -3191,6 +3212,97 @@ pub(crate) mod tests {
             let b = demosaic(&without, &DevelopSettings::default()).unwrap();
             assert_eq!(a.image.data, b.image.data);
         }
+    }
+
+    /// The clip codes are read only when the settings ask, change
+    /// nothing else the prepare makes, and are the codes of the balanced
+    /// mosaic before opposed: with headroom, at its clips, so a
+    /// photosite read as light past the white is not clipped.
+    #[test]
+    fn clip_codes_are_read_only_when_asked_and_change_nothing() {
+        let off = DevelopSettings {
+            hot_pixels: None,
+            ..Default::default()
+        };
+        let on = DevelopSettings {
+            clip_codes: true,
+            ..off.clone()
+        };
+        for (black, white) in CANON_LEVELS {
+            // Sides no cell divides, and a ramp on which every color
+            // clips somewhere, each at its own light.
+            let (w, h) = (97, 63);
+            let ramp = ramp_light(w);
+            let light = |x, y, c| ramp(x, y, 1) * [1.0, 1.1, 0.9][c];
+            let with = lit_frame(w, h, black, white, true, light);
+            let without = RawFrame {
+                levels: Levels {
+                    saturation: None,
+                    ..with.levels.clone()
+                },
+                ..with.clone()
+            };
+            let mut seen = Vec::new();
+            for frame in [&without, &with] {
+                let a = prepare(frame, &off, false).unwrap();
+                let b = prepare(frame, &on, false).unwrap();
+                assert!(a.clip_codes.is_none());
+                let bits = |s: &[f32]| s.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(&a.samples), bits(&b.samples));
+                assert_eq!(
+                    (a.gains, a.ceiling, a.headroom),
+                    (b.gains, b.ceiling, b.headroom)
+                );
+                let pattern = b.pattern.clone().unwrap();
+                let mut balanced = normalize_levels_to(frame, b.headroom);
+                apply_gains_cfa(&mut balanced, w, &pattern, b.gains);
+                let want = clipcodes::clip_codes(&balanced, w, h, &pattern, b.gains, b.headroom);
+                let codes = b.clip_codes.unwrap();
+                assert_eq!(codes, want);
+                assert!(codes.codes.contains(&3) && codes.codes.contains(&1));
+                seen.push((b.headroom, codes));
+            }
+            // The headroom raises the clip: fewer clipped colors, never
+            // more, and the clips over the ceiling are the same.
+            let (old, new) = (&seen[0].1, &seen[1].1);
+            assert!(seen[1].0 > 1.0);
+            assert_eq!(old.clips, new.clips);
+            assert!(old.codes.iter().zip(&new.codes).all(|(o, n)| n <= o));
+            assert!(old.codes.iter().zip(&new.codes).any(|(o, n)| n < o));
+            // Develops with them asked for are the develops without.
+            let a = develop(&with, &off).unwrap();
+            let b = develop(&with, &on).unwrap();
+            assert_eq!(a.image.data, b.image.data);
+        }
+    }
+
+    /// A frame with no mosaic, linear or monochrome, has no cells and
+    /// so no codes.
+    #[test]
+    fn a_frame_with_no_mosaic_has_no_clip_codes() {
+        let on = DevelopSettings {
+            clip_codes: true,
+            ..Default::default()
+        };
+        let mono = mono_frame(6, 4, |_, _| 1100);
+        assert!(prepare(&mono, &on, false).unwrap().clip_codes.is_none());
+        let mut linear = flat_frame();
+        linear.layout = SensorLayout::Linear;
+        linear.channels = 3;
+        linear.levels = Levels {
+            black: LevelPattern::uniform(0.0, 3),
+            white: LevelPattern::uniform(1000.0, 3),
+            black_deltas: None,
+            saturation: None,
+        };
+        linear.samples = Samples::U16(vec![1000; 4 * 4 * 3]);
+        assert!(prepare(&linear, &on, false).unwrap().clip_codes.is_none());
+        // And a mosaic has them.
+        let codes = prepare(&flat_frame(), &on, false)
+            .unwrap()
+            .clip_codes
+            .unwrap();
+        assert_eq!((codes.cells_wide, codes.cells_high), (2, 2));
     }
 
     /// With highlights rebuilt, a photosite between the white and the

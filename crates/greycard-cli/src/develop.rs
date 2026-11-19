@@ -394,6 +394,7 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
         // The file's own tag: the CLI develops a frame, not a
         // sidecar, so there are no quarter turns to put on it.
         orientation: None,
+        clip_codes: false,
     };
     let ai_denoise = ai_denoise.as_deref().map(denoiser_for).transpose()?;
     // The model named, and then whether anything can run it:

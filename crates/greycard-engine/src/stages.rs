@@ -430,6 +430,7 @@ impl PartialEq for PrepareOptions {
             denoise,
             hot_pixels,
             orientation,
+            clip_codes,
         } = &self.settings;
         let b = &other.settings;
         same_profile(profile, &b.profile)
@@ -444,6 +445,7 @@ impl PartialEq for PrepareOptions {
             && *denoise == b.denoise
             && *hot_pixels == b.hot_pixels
             && *orientation == b.orientation
+            && *clip_codes == b.clip_codes
             && self.measure_noise == other.measure_noise
             && self.clip == other.clip
             && self.ca_follows == other.ca_follows

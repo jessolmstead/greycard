@@ -167,6 +167,7 @@ fn develop_prepared_binned(
         width,
         height,
         pattern: None,
+        // The clip codes, when read, stay the full-size mosaic's.
         ..prepared
     };
     let developed = finish(binned, rgb, None, None, settings)?;

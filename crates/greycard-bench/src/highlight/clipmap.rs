@@ -381,6 +381,8 @@ fn chessboard(width: usize, height: usize, inside: impl Fn(usize) -> bool + Sync
 #[cfg(test)]
 mod tests {
     use super::*;
+    use greycard_core::develop::clipcodes::clip_codes;
+    use greycard_core::develop::highlights::CLIP_MAGIC;
 
     /// A 40x40 RGGB mosaic with one 6x6 patch where green alone clipped
     /// and one 4x4 where everything did, and one unreliable photosite.
@@ -418,6 +420,99 @@ mod tests {
         assert_eq!(counts[0][0], 36);
         assert_eq!(counts[2][0], 16);
         assert_eq!(map.scored_clipped(), 18 + 16);
+    }
+
+    /// A mosaic of `w` by `h` normalized levels (white 1, saturation
+    /// `headroom`), noise from a fixed seed, about a quarter of it at or
+    /// past the clip, none within a hair of it.
+    fn levels(w: usize, h: usize, headroom: f32, seed: u64) -> Vec<f32> {
+        let mut state = seed;
+        (0..w * h)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let u = (state >> 40) as f32 / (1u64 << 24) as f32;
+                let mut n = u * 1.3 * headroom;
+                if (n / headroom - CLIP_MAGIC).abs() < 1e-4 {
+                    n += 2e-4 * headroom;
+                }
+                n.min(headroom)
+            })
+            .collect()
+    }
+
+    /// Core's codes are this map's: on Bayer at its four phases and
+    /// X-Trans at several, at sizes no cell divides, with and without
+    /// headroom, every cell's code is the count of its clipped colors.
+    /// The map is built as the trial's data builder builds it, a
+    /// normalized level over the headroom at or past the magic; core
+    /// reads the white-balanced samples at opposed's clips.
+    #[test]
+    fn core_clip_codes_are_the_maps_cell_counts() {
+        let gains = [2.1f32, 1.0, 1.6];
+        let mut patterns: Vec<CfaPattern> = [(0, 0), (1, 0), (0, 1), (1, 1)]
+            .into_iter()
+            .map(|(dx, dy)| CfaPattern::rggb().shifted(dx, dy))
+            .collect();
+        patterns.extend(
+            [(0, 0), (2, 1), (5, 3)]
+                .into_iter()
+                .map(|(dx, dy)| CfaPattern::xtrans().shifted(dx, dy)),
+        );
+        let mut seed = 1;
+        for p in &patterns {
+            for (w, h) in [(37, 23), (36, 24), (1, 1), (4, 7)] {
+                for headroom in [1.0f32, 1.1231] {
+                    seed += 1;
+                    let n = levels(w, h, headroom, seed);
+                    let color = |i: usize| p.color_at(i / w, i % w).rgb_index().unwrap();
+                    let samples: Vec<f32> = (0..w * h).map(|i| n[i] * gains[color(i)]).collect();
+                    let map = ClipMap::build(w, h, p, |i| n[i] / headroom >= CLIP_MAGIC, |_| false);
+                    let codes = clip_codes(&samples, w, h, p, gains, headroom);
+                    assert_eq!(codes.cell, map.cell);
+                    assert_eq!(
+                        (codes.cells_wide, codes.cells_high),
+                        (map.cells_wide, map.cells_high)
+                    );
+                    let counts: Vec<u8> = map
+                        .cell_colors
+                        .iter()
+                        .map(|c| c.count_ones() as u8)
+                        .collect();
+                    assert_eq!(codes.codes, counts, "{p} {w}x{h} headroom {headroom}");
+                    assert!((0..w * h).all(|i| codes.at(i % w, i / w) == counts[map.cell_of(i)]));
+                }
+            }
+        }
+    }
+
+    /// At the threshold itself the two agree when the map reads the
+    /// samples as opposed does: a photosite exactly at its clip, a step
+    /// under, and a step over.
+    #[test]
+    fn core_clip_codes_agree_with_the_map_at_the_threshold() {
+        let gains = [2.1f32, 1.0, 1.6];
+        let p = CfaPattern::rggb();
+        let (w, h) = (6, 2);
+        for headroom in [1.0f32, 1.1231] {
+            let clip = gains.map(|g| g * headroom * CLIP_MAGIC);
+            // Cells: red at, under, and over its clip.
+            let mut samples = vec![0.0f32; w * h];
+            samples[0] = clip[0];
+            samples[2] = clip[0].next_down();
+            samples[4] = clip[0].next_up();
+            let color = |i: usize| p.color_at(i / w, i % w).rgb_index().unwrap();
+            let map = ClipMap::build(w, h, &p, |i| samples[i] >= clip[color(i)], |_| false);
+            let codes = clip_codes(&samples, w, h, &p, gains, headroom);
+            let counts: Vec<u8> = map
+                .cell_colors
+                .iter()
+                .map(|c| c.count_ones() as u8)
+                .collect();
+            assert_eq!(codes.codes, counts);
+            assert_eq!(codes.codes, vec![1, 0, 1]);
+        }
     }
 
     #[test]

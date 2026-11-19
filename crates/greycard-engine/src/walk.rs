@@ -1955,6 +1955,8 @@ fn cpu_op(
                     width,
                     height,
                     pattern: None,
+                    // The clip codes, when read, stay the full-size
+                    // mosaic's.
                     ..prepared
                 },
                 rgb,
