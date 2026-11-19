@@ -89,11 +89,6 @@ fn short_is_its(raw: &Path) -> bool {
         )
 }
 
-/// The most of an XMP beside a raw read: one with many brush strokes
-/// or masks runs to some megabytes, and this is read on every open of
-/// a folder, from files anyone may have put there.
-const BESIDE_MOST: usize = 64 << 20;
-
 /// An XMP beside a raw that holds `crs:` settings, read.
 struct Beside {
     path: PathBuf,
@@ -106,14 +101,10 @@ struct Beside {
 fn read_beside(raw: &Path) -> Option<Beside> {
     let mut found: Vec<(Option<std::time::SystemTime>, Beside)> = Vec::new();
     for path in candidates(raw) {
-        let bytes = match crate::preset::bytes_at_most(&path, BESIDE_MOST) {
-            Ok(Some(b)) => b,
-            Ok(None) => {
-                log::warn!(
-                    "{}: larger than {} MB, not read",
-                    path.display(),
-                    BESIDE_MOST >> 20
-                );
+        let bytes = match crate::xmp::bytes_of(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::FileTooLarge => {
+                log::warn!("{}: {e}", path.display());
                 continue;
             }
             Err(e) => {
@@ -828,7 +819,7 @@ pub(crate) mod tests {
         // no panic.
         let long = raw_in(&dir, "long.CR2");
         let file = std::fs::File::create(xmp::long_path(&long)).unwrap();
-        file.set_len(BESIDE_MOST as u64 + 1).unwrap();
+        file.set_len(xmp::BESIDE_MOST as u64 + 1).unwrap();
         drop(file);
         assert!(!waits(&long));
         assert_eq!(path_for(&long), None);

@@ -73,8 +73,10 @@ All errors, never panics:
   checks the length again on its text, for callers that hand it one.
 - The XMP beside a raw, as the take reads it (`beside.rs`): 64 MB, past
   which it is not read, a warning logged, and nothing taken. The
-  open's own adoption of that file (`xmp::adopt_own`) and the index's
-  read are not bounded yet.
+  open's own adoption of that file (`xmp::adopt_own`), the index's
+  read, and the culling tool's shared XMP go through the same read
+  since 2026-11-19 (`xmp::bytes_of`); the save's reread of an XMP it
+  is about to rewrite (`xmp::stage_dated`) is still whole.
 - Tables nested past 64; a long bracket with more than 16 `=`; more than
   250,000 entries in all tables together (strict mode only).
 - A number too large for a float is a number, read as absent, as an

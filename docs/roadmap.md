@@ -22,9 +22,9 @@ the reasoning lives in `docs/notes.md`.
       vignetting data (the Nikkor Z DX 16-50mm f/3.5-6.3 VR), and does
       nothing; the switch should show there is nothing to apply
       (issue 182)
-- [ ] The XMP beside a raw is read whole, with no bound, by the
-      open's adoption (`xmp::adopt_own`) and the index's pass; the
-      take's own read stops at 64 MB (§705)
+- [ ] A save rereads the XMP it is about to rewrite whole, with no
+      bound (`xmp::stage_dated`); every other read stops at 64 MB
+      (§705). Bounding it makes the save of a larger one fail
 - [ ] lavapipe is 2.7 to 3.8 levels off the CPU on three of the
       widened parity sweep's 8,000 edits (seeds 2, 17, and 20), all
       under a profile tone curve flat at black and at white; a real

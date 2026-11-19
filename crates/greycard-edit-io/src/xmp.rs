@@ -1088,6 +1088,24 @@ fn escape(text: &str, attribute: bool) -> String {
 
 // -- the files beside a frame ----------------------------------------
 
+/// The most of an XMP beside a frame read: one with many brush strokes
+/// or masks runs to some megabytes, and this is read on every open of
+/// a folder, from files anyone may have put there (§705).
+pub const BESIDE_MOST: usize = 64 << 20;
+
+/// The bytes of the XMP at `path`, the one place an XMP beside a frame
+/// is read: no further than a byte past [`BESIDE_MOST`], and a larger
+/// one is an error of kind `FileTooLarge`, whatever its size says, so
+/// a caller treats it as it treats a file it cannot read.
+pub fn bytes_of(path: &Path) -> std::io::Result<Vec<u8>> {
+    crate::preset::bytes_at_most(path, BESIDE_MOST)?.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            format!("larger than {} MB, not read", BESIDE_MOST >> 20),
+        )
+    })
+}
+
 /// Lightroom's and Bridge's name: `IMG.CR3` keeps its XMP in
 /// `IMG.xmp`.
 pub fn short_path(frame: &Path) -> PathBuf {
@@ -1263,7 +1281,7 @@ fn culled_for(frame: &Path, short: PathBuf, others: &[PathBuf]) -> Option<Shared
     if !greycard_core::decode::is_raw_path(frame) || !others.iter().all(jpeg) {
         return None;
     }
-    let bytes = std::fs::read(&short).ok()?;
+    let bytes = bytes_of(&short).ok()?;
     let text = String::from_utf8_lossy(&bytes);
     let doc = roxmltree::Document::parse(&text).ok()?;
     let extension = frame.extension().and_then(|x| x.to_str()).unwrap_or("");
@@ -1560,7 +1578,7 @@ fn adopt_own(
         sidecar.xmp = None;
         return took;
     };
-    let bytes = match std::fs::read(path) {
+    let bytes = match bytes_of(path) {
         Ok(b) => b,
         Err(e) => {
             crate::on_disk::said(
@@ -1996,6 +2014,33 @@ mod tests {
         .unwrap();
         adopt(&frame, &mut mirrored, || Some(Orientation::Rotate90));
         assert_eq!(mirrored.turn, 1);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// An XMP past the most read is not read by the open's adoption:
+    /// the sidecar's meta stands, nothing is marked, no panic. One
+    /// exactly at the most still reads. Sparse files, so no 64 MB is
+    /// written.
+    #[test]
+    fn an_xmp_past_the_most_is_not_adopted() {
+        let dir = tempdir("most");
+        let frame = dir.join("IMG_0001.CR3");
+        std::fs::write(&frame, b"raw").unwrap();
+        let sized = |len: usize| {
+            let file = std::fs::File::create(short_path(&frame)).unwrap();
+            file.set_len(len as u64).unwrap();
+        };
+        sized(BESIDE_MOST + 1);
+        let err = bytes_of(&short_path(&frame)).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::FileTooLarge);
+        let mut sidecar = greycard_edit::Sidecar::default();
+        sidecar.meta.rating = 2;
+        assert!(!adopt(&frame, &mut sidecar, || None).moved());
+        assert_eq!(sidecar.meta.rating, 2);
+        assert!(sidecar.xmp.is_none());
+
+        sized(BESIDE_MOST);
+        assert_eq!(bytes_of(&short_path(&frame)).unwrap().len(), BESIDE_MOST);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

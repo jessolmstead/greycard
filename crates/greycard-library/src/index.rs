@@ -973,7 +973,9 @@ fn sidecar_of(raw: &Path, looks: bool) -> Option<SidecarNow> {
         return None;
     }
     let json = path.as_deref().and_then(|p| std::fs::read(p).ok());
-    let xmp_bytes = xmp.as_deref().and_then(|p| std::fs::read(p).ok());
+    let xmp_bytes = xmp
+        .as_deref()
+        .and_then(|p| greycard_edit_io::xmp::bytes_of(p).ok());
     if json.is_none() && xmp_bytes.is_none() && shared.is_none() {
         return None;
     }
@@ -7938,6 +7940,36 @@ pub(crate) mod tests {
         // The `.gcd` has no mark, so the XMP is taken over it, as the
         // editor would take it on opening.
         assert_eq!(row(&lib, &only).meta.rating, 5);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// An XMP past the most read is passed over by the pass as an
+    /// unreadable one is: the frame alone is as bare, the `.gcd`
+    /// beside one is what the row reads. Sparse, so no 64 MB is
+    /// written.
+    #[test]
+    fn a_row_passes_over_an_xmp_past_the_most_read() {
+        use greycard_edit_io::xmp;
+        let dir = scratch("xmp-most");
+        let alone = dir.join("alone.tif");
+        let rated = dir.join("rated.tif");
+        for (i, p) in [&alone, &rated].iter().enumerate() {
+            write_frame(p, &R6, i as u16 + 1);
+            let file = std::fs::File::create(xmp::short_path(p)).unwrap();
+            file.set_len(xmp::BESIDE_MOST as u64 + 1).unwrap();
+        }
+        let mut s = Sidecar::default();
+        s.meta.rating = 2;
+        s.save(&rated).unwrap();
+        assert!(sidecar_of(&alone, true).is_none());
+        let now = sidecar_of(&rated, true).expect("the .gcd");
+        assert!(now.json.is_some());
+
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let row = |p: &Path| lib.by_path(p).unwrap().unwrap();
+        assert_eq!(row(&alone).meta.rating, 0);
+        assert_eq!(row(&rated).meta.rating, 2);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
