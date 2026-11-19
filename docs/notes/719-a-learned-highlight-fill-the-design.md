@@ -197,6 +197,32 @@ Their span hangs from the guide plane's 99th percentile
 - Rejected: a third `HighlightMode` in core. It would make core's
   settings name a model.
 
+## 1a. Corrected by the engine's plan
+
+Reading the engine for step 6 changed four things above:
+- **The fill is its own stage, in camera space, before the Warp**
+  (a DNG's rectilinear warp, the only one before `finish`). The codes
+  are in the unwarped mosaic frame, so the fill must be too. The stage
+  forms `x = M·rgb/(ceiling·headroom)`, fills, and writes back through
+  `M⁻¹` only where the fields reached. With no warp this equals the
+  fill after the matrix to rounding, and `finish` stays untouched.
+  Rejected: warping the code map (a per-plane warp has no one map, and
+  the network never saw warped shapes), and moving the matrix before
+  the warp (every warped picture's bits would move).
+- **The edit's field is a string**, not an enum, so a version name a
+  build lacks still parses, renders without the fill, and is kept.
+  The key's tag is the implementation's version, taken only when the
+  build has the named model; the name itself is already in the key
+  through the edit.
+- **The reduced develops bin by 2**, not 4, so they run look-scaled at
+  f = 2, where a binned pixel is exactly one Bayer cell.
+- **The range** is carried as a shift: the fill stage measures the
+  guide's range before and after, and the guide's tap adds the
+  difference back, so Highlights and Whites read the frame as it was.
+
+The masks see the filled base, so the mask cache's print takes the
+field.
+
 ## 2. Everything in Rust
 
 The procedural part and the network's forward pass are both plain
