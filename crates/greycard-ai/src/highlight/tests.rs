@@ -129,3 +129,94 @@ fn hl_1_runs_as_the_oracle() {
     let theirs: Vec<f32> = points.iter().flat_map(|&p| stored.sample(p)).collect();
     assert!(max_abs(&theirs, &read(&expected, "ctx").1) <= 2e-5);
 }
+
+/// A rawio directory's u8 array (the codes).
+fn read_u8(dir: &Path, name: &str) -> Vec<u8> {
+    let manifest = std::fs::read_to_string(dir.join("manifest.txt")).unwrap();
+    assert!(
+        manifest
+            .lines()
+            .any(|l| l.split_whitespace().take(2).eq([name, "u8"])),
+        "{name} u8 in {}",
+        dir.display()
+    );
+    std::fs::read(dir.join(format!("{name}.bin"))).unwrap()
+}
+
+/// The whole fill with the built-in weights and look, on two fixture
+/// scenes' inputs (one at the look scale 2.5), against the oracle run
+/// with the same weights, read from the blob, written by
+///
+/// ```sh
+/// CUDA_VISIBLE_DEVICES="" python -I -B scripts/highlight-fill-oracle/run_blob.py \
+///     crates/greycard-ai/src/highlight/hl-1.bin crates/greycard-ai/src/highlight/hl-1-fill \
+///     crates/greycard-core/tests/fixtures/highlight_fill/lamp \
+///     crates/greycard-core/tests/fixtures/highlight_fill/depth_tie_f2_5
+/// ```
+///
+/// SPEC.md's tolerances: 1e-5 for gain_h, 5e-6 for dab_h, and 5e-6
+/// relative to max(|v|, 1) for the picture; every pixel the oracle
+/// leaves as x is x to the bit.
+#[test]
+fn hl_1_fills_as_the_oracle() {
+    use greycard_core::develop::highlight_fill::fill_fields;
+    use greycard_core::develop::highlight_fill::half::CodePlane;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for scene in ["lamp", "depth_tie_f2_5"] {
+        let dir = root
+            .join("../greycard-core/tests/fixtures/highlight_fill")
+            .join(scene);
+        let expected = root.join("src/highlight/hl-1-fill").join(scene);
+        let (shape, x) = read(&dir, "x");
+        let (h, w) = (shape[0], shape[1]);
+        let codes = read_u8(&dir, "codes");
+        let clips: [f32; 3] = read(&dir, "clips").1.try_into().unwrap();
+        let f = read(&dir, "f").1[0] as f64;
+        let plane = CodePlane {
+            codes: &codes,
+            width: w,
+        };
+        let fields = fill_fields(&x, w, h, &plane, clips, HL_1.weights(), &HL_1.look, f).unwrap();
+        let (hh, wh) = (h.div_ceil(2), w.div_ceil(2));
+        let cells: Vec<[f32; 3]> = (0..hh * wh).map(|i| fields.cell(i % wh, i / wh)).collect();
+        let gain: Vec<f32> = cells.iter().map(|c| c[0]).collect();
+        let dab: Vec<f32> = [1, 2]
+            .iter()
+            .flat_map(|&k| cells.iter().map(move |c| c[k]))
+            .collect();
+        let e_gain = max_abs(&gain, &read(&expected, "gain_h").1);
+        let e_dab = max_abs(&dab, &read(&expected, "dab_h").1);
+        let mut out = x.clone();
+        fields.apply(&mut out, &plane);
+        let (_, want) = read(&expected, "out_clipped");
+        let mut e_pic = 0.0f32;
+        let mut k = 0;
+        for p in 0..w * h {
+            let (o, xp) = (&out[3 * p..3 * p + 3], &x[3 * p..3 * p + 3]);
+            if codes[p] & 0x7F == 0 {
+                assert!(o.iter().zip(xp).all(|(a, b)| a.to_bits() == b.to_bits()));
+                continue;
+            }
+            let wp = &want[3 * k..3 * k + 3];
+            k += 1;
+            if wp.iter().zip(xp).all(|(a, b)| a.to_bits() == b.to_bits()) {
+                assert!(
+                    o.iter().zip(xp).all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "{scene}: pixel {p}"
+                );
+            } else {
+                for (&g, &w) in o.iter().zip(wp) {
+                    e_pic = e_pic.max((g - w).abs() / w.abs().max(1.0));
+                }
+            }
+        }
+        assert_eq!(3 * k, want.len());
+        eprintln!(
+            "hl-1 on {scene}: gain_h {e_gain:.2e}, dab_h {e_dab:.2e}, picture {e_pic:.2e} relative"
+        );
+        assert!(e_gain <= 1e-5, "{scene}: gain_h {e_gain}");
+        assert!(e_dab <= 5e-6, "{scene}: dab_h {e_dab}");
+        assert!(e_pic <= 5e-6, "{scene}: picture {e_pic}");
+    }
+}

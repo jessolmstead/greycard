@@ -374,8 +374,21 @@ In total: about 0.5–1 s at 24 MP, 1–1.5 s at 45 MP, and 2–4 s at
 at 24 MP and 0.14 s on all; 2.0 s and 0.5 s at 100 MP. The network
 adds 0.05 s on four threads.
 
-**Memory:** the analysis peaks about 660 MB over the input at 100 MP,
-and keeps about 430 MB for the synthesis.
+**Measured in Rust, the whole fill** (analysis, network, synthesis,
+and apply; all threads / one thread; peak over the input):
+
+| frame | clipping | time | peak |
+|---|---|---|---|
+| 24 MP | one small spot | 0.10 s / 0.66 s | 0.15 GB |
+| 24 MP | 401 lamps | 0.34 s / 1.9 s | 0.26 GB |
+| 24 MP | a sky across the frame | 0.25 s / 1.4 s | 0.18 GB |
+| 100 MP | one small spot | 0.35 s / 2.2 s | 0.58 GB |
+| 100 MP | 401 lamps | 1.1 s / 7.9 s | 1.1 GB |
+| 100 MP | a sky across the frame | 0.85 s / 5.4 s | 0.62 GB |
+
+The synthesis runs window by window, a window being regions within a
+blur's reach of each other, so scattered small highlights cost what
+they cover. The fields are kept sparse, in tiles.
 
 **Card:** none. The fill never touches the GPU, so the denoiser's card
 policy (`greycard-engine/src/ai.rs:1687`, `:2050`; §712) is not

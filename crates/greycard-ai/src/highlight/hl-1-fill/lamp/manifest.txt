@@ -1,0 +1,3 @@
+out_clipped f32 2068 3
+gain_h f32 40 48
+dab_h f32 2 40 48

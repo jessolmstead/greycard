@@ -11,6 +11,9 @@ use crate::develop::clipcodes::ClipCodes;
 /// fill.
 pub trait PixelCodes: Sync {
     fn code(&self, x: usize, y: usize) -> u8;
+
+    /// The picture the codes are for: (width, height).
+    fn size(&self) -> (usize, usize);
 }
 
 /// The full-size develop's codes, read through each pixel's cell.
@@ -18,6 +21,10 @@ impl PixelCodes for ClipCodes {
     #[inline]
     fn code(&self, x: usize, y: usize) -> u8 {
         self.at(x, y)
+    }
+
+    fn size(&self) -> (usize, usize) {
+        (self.width, self.height)
     }
 }
 
@@ -33,6 +40,13 @@ impl PixelCodes for CodePlane<'_> {
     #[inline]
     fn code(&self, x: usize, y: usize) -> u8 {
         self.codes[y * self.width + x]
+    }
+
+    fn size(&self) -> (usize, usize) {
+        (
+            self.width,
+            self.codes.len().checked_div(self.width).unwrap_or(0),
+        )
     }
 }
 

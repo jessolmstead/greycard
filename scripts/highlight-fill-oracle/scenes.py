@@ -242,8 +242,27 @@ def tiny():
     return dict(x=x, codes=c, clips=CLIPS, about="hl-1's small-frame rule: under 8 px a side the harmonic is 0")
 
 
+def tiles():
+    """The port's sparse fields (core keeps them in tiles of 16 half-size
+    cells, 32 px): a small lamp straddling the corner where four tiles meet
+    (px 32, 32), and a large one whose light stops at a hard edge on px row
+    64, a tile row's start, so its clipped pixels on row 63 read a tile
+    with no field beside one with a field."""
+    w, h = 96, 72
+    xx, yy = grid(w, h)
+    small = np.hypot(xx - 30, yy - 30)
+    large = np.hypot(xx - 70, yy - 52)
+    t = (surround(w, h, 0.18, 0.5)
+         + (3.0 * np.exp(-(small / 7.0) ** 2))[..., None] * np.array([1.0, 0.8, 0.55])
+         + (3.5 * np.exp(-(large / 14.0) ** 2) * (yy < 64))[..., None] * np.array([0.9, 1.0, 0.7]))
+    x, c = make(t)
+    return dict(x=x, codes=c, clips=CLIPS, about="the port's tiles: a four-tile corner, a field beside an empty tile")
+
+
 # hl-1's departures from the trial: scenes the trial's code cannot match.
-DEPARTURE = dict(nonfinite=nonfinite, tiny=tiny)
+# (`tiles` is no departure, but is written after them so every other
+# scene's fixture keeps its bytes.)
+DEPARTURE = dict(nonfinite=nonfinite, tiny=tiny, tiles=tiles)
 # Reduced develops: (name, source scene, box-downsampling factor, look
 # scale f). depth_tie_f2_5 stands for a frame 2.5x its input's long edge:
 # a non-integer f, so sigma 2.4 and the tie (4.8, 19.2).

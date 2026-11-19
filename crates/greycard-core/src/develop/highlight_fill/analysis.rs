@@ -157,15 +157,20 @@ impl Analysis {
 /// The analysis of `x` (`width` × `height`, linear Rec.2020 over the
 /// ceiling and headroom, RGB interleaved) with its codes and clips,
 /// whole frame (SPEC stages 1 to 6 and 9's features). Non-finite
-/// channels read as 0 (hl-1). The look scale does not enter here.
+/// channels read as 0 (hl-1). Of the look, only `harmonic_bright` (the
+/// version's [`FillLook::harmonic_bright`], rounded to f32) enters
+/// here; the look scale does not.
+///
+/// [`FillLook::harmonic_bright`]: super::net::FillLook::harmonic_bright
 pub fn analyze(
     x: &[f32],
     width: usize,
     height: usize,
     codes: &impl PixelCodes,
     clips: [f32; 3],
+    harmonic_bright: f32,
 ) -> Analysis {
-    analyze_traced(x, width, height, codes, clips).0
+    analyze_traced(x, width, height, codes, clips, harmonic_bright).0
 }
 
 /// [`analyze`], with the planes it drops: each cell's ring owner as a
@@ -176,6 +181,7 @@ pub(crate) fn analyze_traced(
     height: usize,
     codes: &impl PixelCodes,
     clips: [f32; 3],
+    harmonic_bright: f32,
 ) -> (Analysis, Vec<u32>, Vec<f32>) {
     assert_eq!(x.len(), width * height * 3, "x is RGB interleaved");
     let (wh, hh) = half::half_size(width, height);
@@ -190,7 +196,7 @@ pub(crate) fn analyze_traced(
         },
     );
     let ring = regions::ring(&fa, &labels, wh, hh, RING);
-    let fixed = harmonic::fixed(&cells, &yh);
+    let fixed = harmonic::fixed(&cells, &yh, harmonic_bright);
     drop(fa);
     let mut harmonic = harmonic::start(&abh, &fixed, wh, hh);
     drop(fixed);

@@ -2,19 +2,125 @@
 //! CPU reference of `scripts/highlight-fill-oracle/oracle.py`, stage by
 //! stage as its `SPEC.md` pins them, tested against the oracle's
 //! fixtures.
+//!
+//! [`fill_fields`] runs the whole fill on a picture up to its two
+//! half-size fields, which [`Fields::apply`] applies to it or to
+//! another picture of its size; [`fill`] does both.
 
 pub mod analysis;
+pub mod apply;
 pub mod blur;
 pub mod constants;
 pub mod half;
 pub mod harmonic;
 pub mod net;
 pub mod oklab;
+pub mod reduced;
 pub mod regions;
+pub mod synthesis;
 pub mod thumbnail;
 
+pub use apply::Fields;
 pub use constants::*;
+pub use reduced::{down, down_codes};
 
+use half::PixelCodes;
+use net::{FillLook, FillWeights, RegionRow};
+
+/// The fill's fields for `x` (`width` × `height`, RGB interleaved,
+/// linear Rec.2020 over the ceiling and headroom; SPEC.md "Inputs"),
+/// with its codes, its clips, the version's weights and look, and the
+/// look scale `f` (the frame's long edge over the input's; 1 at full
+/// size). The whole frame: the box (0, 0), the frame the input's size,
+/// the thumbnail the input's own (SPEC stages 1 to 10).
+///
+/// None when no half-size cell is fa (nothing clipped enough to make a
+/// region, or an empty picture): the oracle's fields are then zero
+/// everywhere and it returns x, as applying nothing does. The analysis
+/// is dropped before this returns; only the fields outlive it.
+///
+/// # Panics
+/// If `x` is not `width · height · 3` long, the codes are not
+/// `width` × `height`, or `f` is not a positive number.
+#[allow(clippy::too_many_arguments)]
+pub fn fill_fields(
+    x: &[f32],
+    width: usize,
+    height: usize,
+    codes: &impl PixelCodes,
+    clips: [f32; 3],
+    weights: &FillWeights,
+    look: &FillLook,
+    f: f64,
+) -> Option<Fields> {
+    assert_eq!(x.len(), width * height * 3, "x is RGB interleaved");
+    assert_eq!(
+        codes.size(),
+        (width, height),
+        "the codes are the picture's size"
+    );
+    let look_scaled = synthesis::Scaled::new(look, f);
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let a = analysis::analyze(x, width, height, codes, clips, look.harmonic_bright as f32);
+    let outputs = region_outputs(&a, x, codes, weights)?;
+    Some(synthesis::fields(&a, &outputs, look_scaled))
+}
+
+/// The network's outputs a row of the analysis's region table (SPEC
+/// stages 7 to 9): the input's thumbnail, the encoder, and the MLP at
+/// each row's point, the outside row's zeroed. None when the table is
+/// empty.
+pub(crate) fn region_outputs(
+    a: &analysis::Analysis,
+    x: &[f32],
+    codes: &impl PixelCodes,
+    weights: &FillWeights,
+) -> Option<Vec<[f32; net::OUTPUTS]>> {
+    if a.regions.is_empty() {
+        return None;
+    }
+    let t = thumbnail::thumbnail(x, a.width, a.height, codes, THUMB_LONG);
+    let map = weights.encode(&t.data, t.height, t.width);
+    let rows: Vec<RegionRow> = a
+        .regions
+        .iter()
+        .zip(&a.features)
+        .zip(&a.grid)
+        .map(|((r, &features), &point)| RegionRow {
+            outside: r.id == 0,
+            features,
+            point,
+        })
+        .collect();
+    Some(weights.region_outputs(&map, &rows))
+}
+
+/// [`fill_fields`], then [`Fields::apply`] to `x` itself. Returns
+/// whether any field was made (false: `x` is untouched).
+#[allow(clippy::too_many_arguments)]
+pub fn fill(
+    x: &mut [f32],
+    width: usize,
+    height: usize,
+    codes: &impl PixelCodes,
+    clips: [f32; 3],
+    weights: &FillWeights,
+    look: &FillLook,
+    f: f64,
+) -> bool {
+    match fill_fields(x, width, height, codes, clips, weights, look, f) {
+        Some(fields) => {
+            fields.apply(x, codes);
+            true
+        }
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod fill_tests;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]

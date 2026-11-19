@@ -1,9 +1,31 @@
 //! The oracle's fixtures (`scripts/highlight-fill-oracle/`): a
 //! directory a scene, `manifest.txt` with a line an array (`name dtype
-//! dim …`), and each array raw little-endian in C order.
+//! dim …`), and each array raw little-endian in C order (SPEC.md,
+//! "Fixture format and layouts"). The one reader every highlight_fill
+//! test uses.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+use super::net::{FillWeights, TENSORS, Tensor};
+
+/// The fixtures' random-seeded checkpoint (`weights/`), as tensors.
+pub fn random_tensors() -> Vec<Tensor> {
+    let a = Fixture::load("weights");
+    TENSORS
+        .iter()
+        .map(|(name, _)| Tensor {
+            name: (*name).to_string(),
+            shape: a.dims(name).to_vec(),
+            data: a.f32(name),
+        })
+        .collect()
+}
+
+/// The fixtures' random-seeded checkpoint.
+pub fn random_weights() -> FillWeights {
+    FillWeights::from_tensors(random_tensors()).unwrap()
+}
 
 const ROOT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),

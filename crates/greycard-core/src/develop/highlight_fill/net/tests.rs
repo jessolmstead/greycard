@@ -2,97 +2,13 @@
 //! (`tests/fixtures/highlight_fill/`, SPEC.md's tolerances), and the
 //! weights blob's round trip and refusals.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-
 use super::*;
+use crate::develop::highlight_fill::fixtures::{Fixture, random_tensors, random_weights};
 
 /// SPEC.md's tolerances, random weights.
 const TOL_CMAP: f32 = 2e-5;
 const TOL_CTX: f32 = 2e-5;
 const TOL_OUTPUTS: f32 = 5e-6;
-
-fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/highlight_fill")
-}
-
-/// One fixture directory: `manifest.txt` and a raw little-endian file
-/// an array (SPEC.md, "Fixture format and layouts").
-struct Arrays {
-    dir: PathBuf,
-    shapes: HashMap<String, (String, Vec<usize>)>,
-}
-
-impl Arrays {
-    fn open(dir: &Path) -> Self {
-        let text = std::fs::read_to_string(dir.join("manifest.txt")).unwrap();
-        let shapes = text
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| {
-                let mut it = l.split_whitespace();
-                let name = it.next().unwrap().to_string();
-                let kind = it.next().unwrap().to_string();
-                (name, (kind, it.map(|d| d.parse().unwrap()).collect()))
-            })
-            .collect();
-        Self {
-            dir: dir.to_path_buf(),
-            shapes,
-        }
-    }
-
-    fn has(&self, name: &str) -> bool {
-        self.shapes.contains_key(name)
-    }
-
-    fn shape(&self, name: &str) -> &[usize] {
-        &self.shapes[name].1
-    }
-
-    fn bytes(&self, name: &str, kind: &str) -> Vec<u8> {
-        assert_eq!(self.shapes[name].0, kind, "{name}");
-        std::fs::read(self.dir.join(format!("{name}.bin"))).unwrap()
-    }
-
-    fn f32s(&self, name: &str) -> Vec<f32> {
-        self.bytes(name, "f32")
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|&b| f32::from_le_bytes(b))
-            .collect()
-    }
-
-    fn i32s(&self, name: &str) -> Vec<i32> {
-        self.bytes(name, "i32")
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|&b| i32::from_le_bytes(b))
-            .collect()
-    }
-
-    fn u8s(&self, name: &str) -> Vec<u8> {
-        self.bytes(name, "u8")
-    }
-}
-
-fn random_tensors() -> Vec<Tensor> {
-    let a = Arrays::open(&fixtures().join("weights"));
-    TENSORS
-        .iter()
-        .map(|(name, _)| Tensor {
-            name: (*name).to_string(),
-            shape: a.shape(name).to_vec(),
-            data: a.f32s(name),
-        })
-        .collect()
-}
-
-fn random_weights() -> FillWeights {
-    FillWeights::from_tensors(random_tensors()).unwrap()
-}
 
 fn max_abs(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len());
@@ -100,15 +16,6 @@ fn max_abs(a: &[f32], b: &[f32]) -> f32 {
         .zip(b)
         .map(|(x, y)| (x - y).abs())
         .fold(0.0, f32::max)
-}
-
-fn scenes() -> Vec<String> {
-    let index = std::fs::read_to_string(fixtures().join("scenes.txt")).unwrap();
-    index
-        .lines()
-        .filter(|l| !l.starts_with('#'))
-        .map(|l| l.split('\t').next().unwrap().to_string())
-        .collect()
 }
 
 /// SPEC stage 7, the thumbnail, for the scenes that store none: f64
@@ -174,8 +81,8 @@ fn centroids(regions: &[i32], hh: usize, wh: usize, ids: &[i32]) -> Vec<[f32; 2]
         .collect()
 }
 
-fn rows(a: &Arrays, name: &str, k: usize) -> Vec<Vec<f32>> {
-    a.f32s(name).chunks_exact(k).map(<[f32]>::to_vec).collect()
+fn rows(a: &Fixture, name: &str, k: usize) -> Vec<Vec<f32>> {
+    a.f32(name).chunks_exact(k).map(<[f32]>::to_vec).collect()
 }
 
 #[test]
@@ -192,29 +99,29 @@ fn random_weights_load_with_every_parameter() {
 #[test]
 fn encoder_sampling_and_mlp_match_lamp_f3() {
     let w = random_weights();
-    let a = Arrays::open(&fixtures().join("lamp_f3"));
-    let ts = a.shape("thumb");
-    let map = w.encode(&a.f32s("thumb"), ts[0], ts[1]);
-    assert_eq!(a.shape("cmap"), [CONTEXT, map.height(), map.width()]);
-    let e_cmap = max_abs(map.data(), &a.f32s("cmap"));
+    let a = Fixture::load("lamp_f3");
+    let ts = a.dims("thumb");
+    let map = w.encode(&a.f32("thumb"), ts[0], ts[1]);
+    assert_eq!(a.dims("cmap"), [CONTEXT, map.height(), map.width()]);
+    let e_cmap = max_abs(map.data(), &a.f32("cmap"));
 
     // `where` and the grid from the stored centroids, to the bit.
-    let frame = a.i32s("frame");
-    let regions = a.shape("regions");
+    let frame = a.i32("frame");
+    let regions = a.dims("regions");
     let where_ = frame_where(
         [0, 0],
         [frame[0] as u32, frame[1] as u32],
         [regions[1], regions[0]],
     );
-    assert_eq!(where_.to_vec(), a.f32s("where"));
+    assert_eq!(where_.to_vec(), a.f32("where"));
     let grid = rows(&a, "grid", 2);
     for (c, g) in rows(&a, "centroid", 2).iter().zip(&grid) {
         assert_eq!(grid_point(where_, [c[0], c[1]]).to_vec(), *g);
     }
 
     // Sampling the oracle's own map isolates grid_sample.
-    let stored = ContextMap::new(map.height(), map.width(), a.f32s("cmap")).unwrap();
-    let ctx = a.f32s("ctx");
+    let stored = ContextMap::new(map.height(), map.width(), a.f32("cmap")).unwrap();
+    let ctx = a.f32("ctx");
     let ours: Vec<f32> = grid.iter().flat_map(|g| map.sample([g[0], g[1]])).collect();
     let theirs: Vec<f32> = grid
         .iter()
@@ -229,7 +136,7 @@ fn encoder_sampling_and_mlp_match_lamp_f3() {
         .zip(ours.as_chunks::<CONTEXT>().0)
         .flat_map(|(f, c)| w.outputs(f.as_slice().try_into().unwrap(), c))
         .collect();
-    let e_out = max_abs(&ours_out, &a.f32s("outputs"));
+    let e_out = max_abs(&ours_out, &a.f32("outputs"));
     eprintln!(
         "lamp_f3: cmap {e_cmap:.2e}, sample of the stored map {e_sample:.2e}, ctx {e_ctx:.2e}, outputs {e_out:.2e}"
     );
@@ -239,7 +146,7 @@ fn encoder_sampling_and_mlp_match_lamp_f3() {
     assert!(e_out <= TOL_OUTPUTS, "outputs {e_out}");
 
     // The rows' pass zeroes the outside row and gives the others as is.
-    let ids = a.i32s("ids");
+    let ids = a.i32("ids");
     let table: Vec<RegionRow> = feats
         .iter()
         .zip(&grid)
@@ -263,8 +170,8 @@ fn encoder_sampling_and_mlp_match_lamp_f3() {
 fn mlp_matches_every_scene() {
     let w = random_weights();
     let mut checked = 0;
-    for scene in scenes() {
-        let a = Arrays::open(&fixtures().join(&scene));
+    for scene in Fixture::scenes() {
+        let a = Fixture::load(&scene);
         if !a.has("feats") {
             continue;
         }
@@ -278,7 +185,7 @@ fn mlp_matches_every_scene() {
                 )
             })
             .collect();
-        let e = max_abs(&ours, &a.f32s("outputs"));
+        let e = max_abs(&ours, &a.f32("outputs"));
         eprintln!(
             "{scene}: outputs {e:.2e} over {} rows",
             ours.len() / OUTPUTS
@@ -286,7 +193,7 @@ fn mlp_matches_every_scene() {
         assert!(e <= TOL_OUTPUTS, "{scene}: outputs {e}");
         checked += 1;
     }
-    assert_eq!(checked, 15);
+    assert_eq!(checked, 16);
 }
 
 /// The encoder and the sampling on every scene whose regions the
@@ -294,28 +201,28 @@ fn mlp_matches_every_scene() {
 #[test]
 fn context_matches_every_scene_with_regions() {
     let w = random_weights();
-    let lamp = Arrays::open(&fixtures().join("lamp"));
+    let lamp = Fixture::load("lamp");
     let mut checked = 0;
-    for scene in scenes() {
-        let a = Arrays::open(&fixtures().join(&scene));
+    for scene in Fixture::scenes() {
+        let a = Fixture::load(&scene);
         if !a.has("ctx") {
             continue;
         }
         // headroom's x is the lamp's over its scalar, its codes and so
         // its regions the lamp's.
         let (x, codes, src) = if scene == "headroom" {
-            let k = a.f32s("headroom")[0];
-            let x: Vec<f32> = lamp.f32s("x").iter().map(|v| v / k).collect();
-            (x, lamp.u8s("codes"), &lamp)
+            let k = a.f32("headroom")[0];
+            let x: Vec<f32> = lamp.f32("x").iter().map(|v| v / k).collect();
+            (x, lamp.u8("codes"), &lamp)
         } else {
-            (a.f32s("x"), a.u8s("codes"), &a)
+            (a.f32("x"), a.u8("codes"), &a)
         };
-        let xs = src.shape("x");
+        let xs = src.dims("x");
         let (h, wd) = (xs[0], xs[1]);
         let (hh, wh) = (h.div_ceil(2), wd.div_ceil(2));
-        let ids = a.i32s("ids");
+        let ids = a.i32("ids");
         let regions = if src.has("regions") {
-            src.i32s("regions")
+            src.i32("regions")
         } else if ids.len() == 1 && ids[0] == (hh * wh) as i32 {
             // all_clipped: one region over every cell, its id the
             // largest flat index plus one.
@@ -326,13 +233,13 @@ fn context_matches_every_scene_with_regions() {
         };
         let (thumb, th, tw) = thumbnail(&x, &codes, h, wd);
         let map = w.encode(&thumb, th, tw);
-        let frame = a.i32s("frame");
+        let frame = a.i32("frame");
         let where_ = frame_where([0, 0], [frame[0] as u32, frame[1] as u32], [wh, hh]);
         let ours: Vec<f32> = centroids(&regions, hh, wh, &ids)
             .iter()
             .flat_map(|&c| map.sample(grid_point(where_, c)))
             .collect();
-        let e = max_abs(&ours, &a.f32s("ctx"));
+        let e = max_abs(&ours, &a.f32("ctx"));
         eprintln!("{scene}: ctx {e:.2e} over {} rows", ids.len());
         assert!(e <= TOL_CTX, "{scene}: ctx {e}");
         checked += 1;

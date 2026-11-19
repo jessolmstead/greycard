@@ -22,14 +22,14 @@ pub struct Harmonic {
 }
 
 /// The cells the continuation is fixed on: outside every region and
-/// brighter than [`HARM_BRIGHT`](super::HARM_BRIGHT) by the raw yh, not
-/// by exp2(ly) as the features judge brightness (SPEC stage 6, and its
-/// trial behavior 1).
-pub fn fixed(cells: &[super::half::Cell], yh: &[f32]) -> Vec<bool> {
+/// brighter than `bright` (the look's `harmonic_bright`, 0.25 in hl-1)
+/// by the raw yh, not by exp2(ly) as the features judge brightness (SPEC
+/// stage 6, and its trial behavior 1).
+pub fn fixed(cells: &[super::half::Cell], yh: &[f32], bright: f32) -> Vec<bool> {
     cells
         .iter()
         .zip(yh)
-        .map(|(c, &y)| !c.fa() && y > super::HARM_BRIGHT)
+        .map(|(c, &y)| !c.fa() && y > bright)
         .collect()
 }
 

@@ -9,7 +9,10 @@ use super::blur::{blur, blur_normalized};
 use super::fixtures::{Fixture, Inputs};
 use super::half::{self, Cell, CodePlane};
 use super::net::FEATURES;
-use super::{HARM_BRIGHT, HARM_ITERS, OFF, REACH_HALF, RING, SIGMA_MIX, THUMB_LONG};
+use super::{HARM_ITERS, OFF, REACH_HALF, RING, SIGMA_MIX, THUMB_LONG};
+
+/// hl-1's look's `harmonic_bright`.
+pub(super) const HARM_BRIGHT: f32 = 0.25;
 use super::{harmonic, regions, thumbnail};
 
 /// SPEC's tolerance for the thumbnail: numpy's float32 log2 is up to 2
@@ -19,11 +22,11 @@ use super::{harmonic, regions, thumbnail};
 const THUMB_ULPS: u32 = 2;
 /// SPEC's tolerance for dd, dc, depth, and cdepth: relative to
 /// max(|v|, 1), since depths reach 512.
-const DEPTH_REL: f32 = 1e-6;
+pub(super) const DEPTH_REL: f32 = 1e-6;
 
 /// The largest difference relative to max(|want|, 1), asserted within
 /// `rel`.
-fn close_rel(scene: &str, what: &str, got: &[f32], want: &[f32], rel: f32) {
+pub(super) fn close_rel(scene: &str, what: &str, got: &[f32], want: &[f32], rel: f32) {
     assert_eq!(got.len(), want.len(), "{scene}/{what}: length");
     let worst = got
         .iter()
@@ -38,7 +41,7 @@ fn close_rel(scene: &str, what: &str, got: &[f32], want: &[f32], rel: f32) {
 }
 
 /// The largest absolute difference, asserted within `tol`; NaN-free.
-fn close(scene: &str, what: &str, got: &[f32], want: &[f32], tol: f32) -> f32 {
+pub(super) fn close(scene: &str, what: &str, got: &[f32], want: &[f32], tol: f32) -> f32 {
     assert_eq!(got.len(), want.len(), "{scene}/{what}: length");
     let mut worst = 0.0f32;
     let mut at = 0;
@@ -63,7 +66,7 @@ fn close(scene: &str, what: &str, got: &[f32], want: &[f32], tol: f32) -> f32 {
     worst
 }
 
-fn exact(scene: &str, what: &str, got: &[f32], want: &[f32]) {
+pub(super) fn exact(scene: &str, what: &str, got: &[f32], want: &[f32]) {
     assert_eq!(got.len(), want.len(), "{scene}/{what}: length");
     let bad = got
         .iter()
@@ -79,7 +82,7 @@ fn exact(scene: &str, what: &str, got: &[f32], want: &[f32]) {
     eprintln!("{scene:>16} {what:<12} exact");
 }
 
-fn ulps(scene: &str, what: &str, got: &[f32], want: &[f32], tol: u32) {
+pub(super) fn ulps(scene: &str, what: &str, got: &[f32], want: &[f32], tol: u32) {
     assert_eq!(got.len(), want.len());
     let ord = |v: f32| {
         let b = v.to_bits() as i32;
@@ -106,7 +109,7 @@ fn as_f32(v: impl IntoIterator<Item = impl Into<f64>>) -> Vec<f32> {
 }
 
 /// A channels-first (2, h, w) plane from per-cell pairs.
-fn planar(v: &[[f32; 2]]) -> Vec<f32> {
+pub(super) fn planar(v: &[[f32; 2]]) -> Vec<f32> {
     v.iter()
         .map(|p| p[0])
         .chain(v.iter().map(|p| p[1]))
@@ -119,7 +122,14 @@ fn run(inp: &Inputs) -> (Analysis, Vec<u32>, Vec<f32>) {
         codes: &inp.codes,
         width: inp.width,
     };
-    analyze_traced(&inp.x, inp.width, inp.height, &codes, inp.clips)
+    analyze_traced(
+        &inp.x,
+        inp.width,
+        inp.height,
+        &codes,
+        inp.clips,
+        HARM_BRIGHT,
+    )
 }
 
 /// The synthesis's normalized depth field from a distance plane and its
@@ -158,7 +168,7 @@ fn mix(a: &Analysis, sigma: f64) -> Vec<f32> {
 #[test]
 fn every_scene_matches_the_oracle() {
     let scenes = Fixture::scenes();
-    assert_eq!(scenes.len(), 16, "{scenes:?}");
+    assert_eq!(scenes.len(), 17, "{scenes:?}");
     for name in &scenes {
         let fx = Fixture::load(name);
         let inp = fx.inputs();
@@ -283,7 +293,7 @@ fn every_stage(fx: &Fixture, inp: &Inputs, a: &Analysis, ring: &[u32], yh: &[f32
     close(s, "yh", yh, &fx.f32("yh"), 2e-6);
     let ly: Vec<f32> = yh.iter().map(|&y| half::ly(y)).collect();
     close(s, "ly", &ly, &fx.f32("ly"), 2e-6);
-    let fixed = harmonic::fixed(&a.cells, yh);
+    let fixed = harmonic::fixed(&a.cells, yh, HARM_BRIGHT);
     exact(
         s,
         "harm_fixed",
@@ -389,7 +399,10 @@ fn clip_codes_read_through_their_cells() {
         clips: inp.clips,
     };
     if (0..w * h).all(|i| cc.at(i % w, i / w) == inp.codes[i]) {
-        assert_eq!(analyze(&inp.x, w, h, &cc, inp.clips), run(&inp).0);
+        assert_eq!(
+            analyze(&inp.x, w, h, &cc, inp.clips, HARM_BRIGHT),
+            run(&inp).0
+        );
     } else {
         // Not cell-aligned: the same codes through a plane and through
         // the trait give the same analysis all the same.
@@ -397,13 +410,16 @@ fn clip_codes_read_through_their_cells() {
             codes: &inp.codes,
             width: w,
         };
-        assert_eq!(analyze(&inp.x, w, h, &plane, inp.clips), run(&inp).0);
+        assert_eq!(
+            analyze(&inp.x, w, h, &plane, inp.clips, HARM_BRIGHT),
+            run(&inp).0
+        );
     }
 }
 
 /// A synthetic frame: a gradient, `small` clipped disks with bands of
 /// one and two colors scattered over it, and one large one.
-fn synthetic(w: usize, h: usize, small: usize, seed: u64) -> (Vec<f32>, Vec<u8>) {
+pub(super) fn synthetic(w: usize, h: usize, small: usize, seed: u64) -> (Vec<f32>, Vec<u8>) {
     let mut x = vec![0.0f32; w * h * 3];
     let mut codes = vec![0u8; w * h];
     for y in 0..h {
@@ -464,7 +480,7 @@ fn the_analysis_is_the_same_on_any_thread_count() {
             .num_threads(threads)
             .build()
             .unwrap()
-            .install(|| analyze_traced(&x, w, h, &plane, [1.0, 0.98, 0.95]))
+            .install(|| analyze_traced(&x, w, h, &plane, [1.0, 0.98, 0.95], HARM_BRIGHT))
     };
     let one = on(1);
     assert!(one.0.regions.len() > 20, "{} rows", one.0.regions.len());
@@ -496,6 +512,7 @@ fn a_frame_too_small_for_the_quarter_grid_has_no_harmonic() {
             width: w,
         },
         [1.0; 3],
+        HARM_BRIGHT,
     );
     assert_eq!((a.harmonic.width, a.harmonic.height), (0, 0));
     assert_eq!(a.harm(0), [0.0, 0.0]);
@@ -597,6 +614,7 @@ fn the_harmonic_runs_three_hundred_rounds() {
             width: w,
         },
         [1.0; 3],
+        HARM_BRIGHT,
     );
     let hm = &a.harmonic;
     assert_eq!((hm.width, hm.height), (40, 40));
@@ -661,7 +679,10 @@ fn brightness_is_judged_two_ways() {
     let cells = vec![Cell::new(4, 0, 1), Cell::new(0, 0, 0), Cell::new(0, 0, 0)];
     for (rim, bright) in [(0.25f32, false), (above, true)] {
         let yh = [0.9, rim, rim];
-        assert_eq!(harmonic::fixed(&cells, &yh), [false, bright, bright]);
+        assert_eq!(
+            harmonic::fixed(&cells, &yh, HARM_BRIGHT),
+            [false, bright, bright]
+        );
         let (a, ring) = hand_made(3, 1, cells.clone(), &yh, [0.01, 0.02]);
         assert_eq!(ring, [0, 1, 1]);
         assert_eq!(a.regions[1].cbr, 2 * bright as u64);
@@ -674,7 +695,7 @@ fn cells_refuse_counts_no_block_has() {
     Cell::new(2, 3, 3);
 }
 
-fn peak_rss_mb() -> f64 {
+pub(super) fn peak_rss_mb() -> f64 {
     std::fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|s| {
@@ -708,7 +729,7 @@ fn timing() {
                 // leaves is its own over the input's.
                 let before = peak_rss_mb();
                 let all = Instant::now();
-                let a = analyze(&x, w, h, &plane, [1.0, 0.98, 0.95]);
+                let a = analyze(&x, w, h, &plane, [1.0, 0.98, 0.95], HARM_BRIGHT);
                 eprintln!(
                     "  {threads:>2} threads analyze    {:>8.1} ms, {} rows, peak RSS {:.0} MB (+{:.0})",
                     all.elapsed().as_secs_f64() * 1e3,
@@ -739,7 +760,7 @@ fn timing() {
                 lap("distances");
                 let _ring = regions::ring(&fa, &labels, wh, hh, RING);
                 lap("ring");
-                let fixed = harmonic::fixed(&cells, &yh);
+                let fixed = harmonic::fixed(&cells, &yh, HARM_BRIGHT);
                 let mut hm = harmonic::start(&abh, &fixed, wh, hh);
                 harmonic::iterate(&mut hm, HARM_ITERS);
                 lap("harmonic");

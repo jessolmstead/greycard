@@ -15,3 +15,4 @@ depth_tie_f3	45x29	f=3	46811	depth_tie box-downsampled 3x, its codes pooled; run
 depth_tie_f2_5	68x44	f=2.5	85805	depth_tie box-downsampled 2x, its codes pooled; run look-scaled at f = 2.5 (as a reduced input of a frame 2.5x its long edge)
 nonfinite	32x26	f=1	18146	hl-1's guard: NaN and infinite pixels pass through untouched
 tiny	7x6	f=1	2442	hl-1's small-frame rule: under 8 px a side the harmonic is 0
+tiles	96x72	f=1	127877	the port's tiles: a four-tile corner, a field beside an empty tile

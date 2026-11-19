@@ -70,8 +70,8 @@ Every stage up to the features matches the trial at 0. The f64 sums move
 the features by at most 3.5e-6 (sky), the outputs by 6.3e-7, gain_h by
 6.0e-7, dab_h by 2.8e-8, and the final picture by 3.6e-6, with the
 random checkpoint at f = 1, 2.5, and 3 (`compare_trial.py`, run with the
-trial's thumbnail convention). The `nonfinite` and `tiny` scenes have no
-trial counterpart.
+trial's thumbnail convention). The `nonfinite`, `tiny`, and `tiles` scenes
+have no trial counterpart.
 
 ## Inputs
 
@@ -420,11 +420,16 @@ taken over all scenes with both checkpoints (`compare_trial.py`).
 - **2e-5:** feats, cmap, and ctx. Measured up to 7e-6.
 - **outputs and params:** 5e-6 with the random weights and 5e-5 with
   r6e-s1. Measured 1.1e-6 and 1.5e-5.
+  - L and L2 are relative to max(|v|, 1), as the depths they scale
+    (they reach 4096, where one ulp is 2.4e-4). Every other parameter is
+    absolute.
 - **1e-6 relative to max(|v|, 1):** dd, dc, depth, and cdepth (values
   reach 512). Measured up to 3e-5 abs on the fixtures, and 1.5e-4 abs at
   values near 469 (3.2e-7 relative) on a 2400×1600 case in review.
 - **1e-5:** gain_h. Measured 2.6e-6.
-- **Final picture: 2e-5 abs.** Measured 7.7e-6, on values up to about 4.
+- **Final picture: 5e-6 relative to max(|v|, 1).** Measured 7.7e-6 abs
+  on values up to about 4 (1.9e-6 relative), and 1.4e-6 relative in the
+  port; the error is flat in the value.
 - **The thumbnail:** 2 ulp. Its f64 sums reproduce exactly, but numpy's
   float32 log2 is up to 2 ulp from the correctly rounded one (log2 of
   0.92012054 is −0.12010523; numpy 2.5 gives −0.120105214), and a
@@ -477,6 +482,10 @@ taken over all scenes with both checkpoints (`compare_trial.py`).
   - NaN and infinite x: nonfinite.
   - Bit 7 ignored: xtrans.
   - Headroom: headroom.
+- **The port's tiles** (core keeps the fields in tiles of 16 half-size
+  cells): a region on four tiles, and filled pixels reading an empty tile
+  beside a stored one: tiles. It is no departure from the trial, but is
+  written after the departures so every other fixture keeps its bytes.
 - **Not covered:**
   - regions large enough for the f64 sums to differ from f32 ones by
     more than the tolerances (core tests a 3000 × 2000-cell region of its

@@ -16,6 +16,8 @@ tolerances, the coverage, and where hl-1 departs from the trial.
 - `make_fixtures.py`: writes the fixtures; its docstring lists each array.
 - `export_weights.py`: a checkpoint to the single weights blob greycard
   builds in, and the check arrays its test compares against.
+- `run_blob.py`: the oracle with a built-in blob's weights on fixture
+  scenes, the expected fills of greycard-ai's end-to-end test.
 - `compare_trial.py`: the oracle against the trial's own code, the whole
   frame against the trial's box, and float32 against float64.
 

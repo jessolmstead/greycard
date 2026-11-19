@@ -71,11 +71,11 @@ pub fn blur_normalized(v: &[f32], m: &[bool], width: usize, height: usize) -> Ve
         .map(|(&a, &b)| a * b as u32 as f32)
         .collect();
     let mf: Vec<f32> = m.iter().map(|&b| b as u32 as f32).collect();
-    let top = blur(&vm, width, height, super::SIGMA_DEPTH);
+    let mut top = blur(&vm, width, height, super::SIGMA_DEPTH);
+    drop(vm);
     let bottom = blur(&mf, width, height, super::SIGMA_DEPTH);
-    top.iter()
-        .zip(&bottom)
-        .zip(&mf)
-        .map(|((&t, &b), &m)| t / b.max(1e-3) * m)
-        .collect()
+    for ((t, &b), &m) in top.iter_mut().zip(&bottom).zip(&mf) {
+        *t = *t / b.max(1e-3) * m;
+    }
+    top
 }

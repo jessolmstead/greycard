@@ -76,6 +76,7 @@ GROUPS = {
     'depth_tie_f3': LABELS + FIELDS + HARM,
     'nonfinite': ('regions',) + FIELDS,
     'tiny': LABELS + FIELDS + HARM,
+    'tiles': FIELDS,
 }
 INTS = ('regions', 'ring', 'ids', 'inv', 'ring_owner', 'harm_known')
 
