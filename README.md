@@ -130,6 +130,11 @@ Bugs, feature requests, things you love or hate: please tell me. Use
 A raw that renders wrong, with the camera model, is the most useful
 thing you can send.
 
+## Support
+
+greycard is free and stays free. Donations are helpful but never
+expected: [ko-fi.com/jessolmstead](https://ko-fi.com/jessolmstead).
+
 ## More
 
 - [User guide](docs/user-guide.md)
