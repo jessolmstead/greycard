@@ -1251,18 +1251,15 @@ clears or a tester asks for it.
       by the Parts mask, and the red pupil goes dark and neutral
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
-- [ ] Learned highlight reconstruction, a trial for 0.13.0: the
-      develop's ceiling raised so a fill may pass the brightest
-      channel's clip, and a small model trained on unclipped frames
-      clipped by the benchmark (§677), scored there before it nears
-      the editor. With one or two channels left we are within 0.002
-      of the best of darktable and RawTherapee; with none left
-      darktable's segmentation with its rebuild is the bar (0.077
-      against our 0.092, one rebuild setting tried), a sixth of what
-      the raised ceiling's oracle shows. Guided laplacians lost to
-      opposed in every one of 103 comparisons and is not ported
-      (§686). It invents, so it is an option, off by
-      default; the classical fill stays the default
+- [ ] Learned highlight reconstruction, for 0.13.0 (§719): a small
+      model trained on unclipped frames clipped by the benchmark
+      (§677), 0.063 there against opposed's 0.093 with no channel
+      left, and preferred by eye in the blind rounds. Ported in steps: a Python
+      oracle with synthetic fixtures, the clip codes, the region
+      analysis, the network, and the synthesis in core, then the
+      engine and the edit, then the UI, which waits on its words. It
+      invents, so it is an option, off by default; the classical fill
+      stays the default
 - [ ] A generative fill trained for clipped highlights: the frame
       darkened two stops so the clip is a flat patch in an ordinary
       picture, a fill model trained to paint it, pairs made by
