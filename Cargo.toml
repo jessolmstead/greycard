@@ -74,6 +74,7 @@ flate2 = "1"
 half = "2"
 lcms2 = "6"
 libc = "0.2"
+libm = "0.2"
 memmap2 = "0.9"
 naga = { version = "30", features = ["wgsl-in"] }
 pollster = "0.4"

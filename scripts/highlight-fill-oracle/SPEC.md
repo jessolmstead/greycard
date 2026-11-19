@@ -117,6 +117,13 @@ These points are pinned by the f = 2.5 fixture.
   - tie = clamp((cdepth − tie_lo₃₂) / den₃₂, 0, 1) in f32.
 - **`where`:** each entry is an f64 division (box_x / fw, and so on),
   rounded to f32.
+- **The look's boost and whitening** (`oracle.py` lines 403 and 422):
+  - the boost enters as 1 + (boost − 1)·tie, with boost − 1 computed in
+    f64 (0.3999999999999999 for hl-1's 1.4) and rounded to f32, which is
+    f32(0.4); then (boost − 1)₃₂·tie, plus 1, in f32;
+  - the whitening is rounded to f32 (0.5, exact) and multiplied left to
+    right in f32: keep = 1 − (((whiten₃₂·mix)·s2)·on)·tie, where `on` is
+    the region's core indicator.
 
 ## Arithmetic order
 
@@ -303,7 +310,8 @@ float32.
 - dc = blurN((dc0 − off)₊ · fc, fc); cdepth = max(max(dc), 1).
 - s2 = log1p(dc / L2) / log1p(cdepth / L2).
 - tie = clamp((cdepth − tie_lo) / (tie_hi − tie_lo), 0, 1).
-- **gain_h** = g + mix · H2 · s2 · (1 + 0.4 · tie).
+- **gain_h** = g + mix · H2 · s2 · (1 + (boost − 1) · tie), with boost 1.4
+  (see "Precision with an arbitrary f").
 - Color, with A = abh:
   - core = β·(harm − A) + [cbn > 0]·γ·(κ·(an, bn) − A) + C·s;
   - bandd = [cbr > 0]·γ_r·(κ_r·(ar, br) − A)·s;
@@ -350,6 +358,16 @@ float32.
 - Weights are PyTorch state-dict tensors, in PyTorch's layouts:
   - conv weights (out, in, 3, 3);
   - linear weights (out, in).
+- The built-in weights are one blob (`export_weights.py`, and core's
+  `FillWeights::to_bytes` and `from_bytes`), all little-endian:
+  - `GCHLFILL`, the format version (u32, 1), and the tensor count (u32);
+  - per tensor, in the state dict's order: the name's length (u16) and
+    its UTF-8 bytes, the number of dimensions (u8), each dimension
+    (u32), then the values (f32, C order).
+  - A reader refuses an unknown, missing, or repeated name, a tensor out
+    of that order, a wrong shape, a value that is not finite, and bytes
+    after the last tensor, so every blob it accepts is the one bytes its
+    writer would write.
 
 ## Tolerances
 

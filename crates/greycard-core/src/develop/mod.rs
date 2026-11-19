@@ -16,6 +16,7 @@ pub mod dehaze;
 pub mod denoise;
 pub mod dual;
 pub mod gain_map;
+pub mod highlight_fill;
 pub mod highlights;
 pub mod hotpixels;
 pub mod lens;

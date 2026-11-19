@@ -233,8 +233,9 @@ the CPU.
 - A newer version is taken only by an explicit choice.
 
 **Determinism.** The op is deterministic on every machine, with or
-without a GPU. GELU uses a real erf (`libm`). **A:** it matches
-torch's to 1e-6.
+without a GPU, and gives the same bits at any thread count. GELU uses
+`libm`'s erf; it is within 1.4e-6 of torch's, the gap being torch's
+vectorized erf in the negative tail.
 
 **The oracle.** The Python oracle is the trial's inference path alone,
 cut down. Synthetic fixtures are made from it and committed beside it.

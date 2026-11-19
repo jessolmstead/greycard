@@ -9,3 +9,7 @@ crates/greycard-slint/ui/icons/LICENSE text eol=lf
 # manifests the tests read the same bytes on every platform.
 crates/greycard-core/tests/fixtures/highlight_fill/**/*.bin binary
 crates/greycard-core/tests/fixtures/highlight_fill/**/*.txt text eol=lf
+# The learned highlight fill's built-in weights and the arrays their
+# test compares against.
+crates/greycard-ai/src/highlight/**/*.bin binary
+crates/greycard-ai/src/highlight/**/*.txt text eol=lf

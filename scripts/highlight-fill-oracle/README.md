@@ -14,6 +14,8 @@ tolerances, the coverage, and hl-1's one departure from the trial.
 - `checkpoint.py`: the fixtures' random-seeded checkpoint and the weights
   format (`manifest.txt` plus one raw little-endian f32 file a tensor).
 - `make_fixtures.py`: writes the fixtures; its docstring lists each array.
+- `export_weights.py`: a checkpoint to the single weights blob greycard
+  builds in, and the check arrays its test compares against.
 - `compare_trial.py`: the oracle against the trial's own code, the whole
   frame against the trial's box, and float32 against float64.
 

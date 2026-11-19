@@ -18,6 +18,8 @@ image.workspace = true
 rawcolor.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
+# erf for the learned highlight fill's exact GELU; std has none.
+libm.workspace = true
 # rawler's table of cameras, for the names a body is sold under.
 toml.workspace = true
 

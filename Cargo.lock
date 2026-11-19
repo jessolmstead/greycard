@@ -2043,6 +2043,7 @@ name = "greycard-core"
 version = "0.12.0"
 dependencies = [
  "image",
+ "libm",
  "log",
  "rawcolor",
  "rawler",
