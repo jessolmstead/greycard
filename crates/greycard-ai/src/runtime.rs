@@ -604,6 +604,7 @@ struct Adapter {
 /// summed it counts some of the card twice: a tester's 2 GB card read
 /// as 2.2 GiB.
 #[cfg_attr(not(webgpu_ep), allow(dead_code))]
+#[cfg(any(test, windows, target_os = "linux", target_os = "android"))]
 fn card_heap(heaps: &[(u64, bool)]) -> Option<usize> {
     (0..heaps.len())
         .filter(|&i| heaps[i].1)
@@ -613,6 +614,7 @@ fn card_heap(heaps: &[(u64, bool)]) -> Option<usize> {
 /// The bytes of a Vulkan card's own memory, from its heaps as
 /// [`card_heap`] takes them: what [`webgpu_memory`] says on Vulkan.
 #[cfg_attr(not(webgpu_ep), allow(dead_code))]
+#[cfg(any(test, windows, target_os = "linux", target_os = "android"))]
 fn vulkan_card_bytes(heaps: &[(u64, bool)]) -> u64 {
     card_heap(heaps).map_or(0, |i| heaps[i].0)
 }
@@ -621,6 +623,7 @@ fn vulkan_card_bytes(heaps: &[(u64, bool)]) -> u64 {
 /// its size and whether it is device-local: the whole of what it does
 /// with them, so its test is the reading's.
 #[cfg_attr(not(webgpu_ep), allow(dead_code))]
+#[cfg(any(test, windows, target_os = "linux", target_os = "android"))]
 fn vulkan_card_memory(heaps: &[(u64, bool)]) -> Option<(u64, &'static str)> {
     let bytes = vulkan_card_bytes(heaps);
     (bytes > 0).then_some((bytes, "Vulkan's largest device-local heap"))
