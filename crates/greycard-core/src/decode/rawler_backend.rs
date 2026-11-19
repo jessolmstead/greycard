@@ -769,6 +769,12 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
         .crop
         .map_or((frame.width, frame.height), |c| (c.width, c.height));
     frame.shot.focus_point = focus_point_of(source, area);
+    // After the shot: the table reads its ISO and exposure, and the
+    // maker note's capture modes.
+    if decoder.format_hint() == ::rawler::decoders::FormatHint::CR3 {
+        let modes = super::style::canon_modes(std::io::Cursor::new(source.buf()));
+        frame.levels.saturation = canon_saturation(&frame, modes.as_ref());
+    }
     log::info!(
         "decoded {} {}: {}x{} {}, black {}, white {}",
         frame.make,
@@ -1135,6 +1141,7 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
             black,
             white,
             black_deltas,
+            saturation: None,
         },
         as_shot_coefficients,
         calibrations,
@@ -1145,6 +1152,134 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
     };
     frame.validate()?;
     Ok(frame)
+}
+
+/// A capture of a Canon body whose CR3 white (Canon's "specular"
+/// level, which rawler reads from the color data) sits under where
+/// every channel saturates: the body, one shutter, and the ISOs at
+/// which a blown frame of it was measured.
+pub(crate) struct CanonCell {
+    /// rawler's clean model name.
+    pub model: &'static str,
+    /// The ShutterMode code (0 mechanical, 1 electronic first curtain,
+    /// 2 electronic).
+    pub shutter: i64,
+    /// The ISO speeds measured, each on its own: no speed between two
+    /// of them is taken on trust.
+    pub isos: &'static [u32],
+    /// The full frame's width and height, as AspectInfo gives them: a
+    /// crop mode or another aspect reads otherwise.
+    pub frame: (i64, i64),
+}
+
+const R6_II: (i64, i64) = (6000, 4000);
+const R5_II: (i64, i64) = (8192, 5464);
+
+/// The captures with headroom over their white. An ISO is in a cell
+/// only when a frame of that body, shutter, and ISO, under a second,
+/// is blown in every channel: each of the four positions of the
+/// pattern has 20 or more samples in the top 32 levels (16351 to
+/// 16383), so each channel's clip was seen at the top. Counted over
+/// the 838 CR3s measured (design.md has the evidence). A saturation set
+/// too high leaves saturated photosites unflagged, which paints them
+/// magenta, so nothing is in on less: the R5, R6, and R7 (no pile),
+/// the R6 II's electronic shutter and the R5 II's mechanical (no
+/// frame), the R5 II's electronic ISO 125 (no blue at the top), and
+/// the R6 II's first curtain 640, 800, 4000, and 5000. At 640 and 800
+/// green piles and red does not (at the top in 2 of 8 frames at 640,
+/// by at most 11 samples at 800); at none does blue reach it. The four
+/// positions share one converter, so a channel short of the top is
+/// the scenes', and the rule errs toward leaving a frame out.
+pub(crate) const CANON_HEADROOM: [CanonCell; 4] = [
+    CanonCell {
+        model: "EOS R6 Mark II",
+        shutter: 0,
+        isos: &[100, 320],
+        frame: R6_II,
+    },
+    CanonCell {
+        model: "EOS R6 Mark II",
+        shutter: 1,
+        isos: &[
+            100, 125, 160, 200, 250, 320, 400, 500, 1250, 1600, 2500, 12800,
+        ],
+        frame: R6_II,
+    },
+    CanonCell {
+        model: "EOS R5 Mark II",
+        shutter: 1,
+        isos: &[100],
+        frame: R5_II,
+    },
+    CanonCell {
+        model: "EOS R5 Mark II",
+        shutter: 2,
+        isos: &[100],
+        frame: R5_II,
+    },
+];
+
+/// The 14-bit top every channel of [`CANON_HEADROOM`]'s bodies clips at.
+const CANON_TOP: f32 = 16383.0;
+
+/// How far from the black to the top the response is trusted. Brackets
+/// of the R6 II at ISO 100 read linear within about 1% to 0.955 of the
+/// way and 1.5 to 2.5% low past 0.96; the saturation pile is the last
+/// 32 levels. At 0.955 nothing past the measured linear range is read
+/// as light, and opposed flags a photosite at 0.987 of it, 0.943 of
+/// the way. 0.98 read greens in the low band as light, which leans
+/// magenta; the margin study (design.md) has what each share costs.
+pub(crate) const SATURATION_SHARE: f32 = 0.955;
+
+/// A CR3's saturation level, for a capture in a cell of
+/// [`CANON_HEADROOM`]: its body, shutter, and an ISO measured, its full frame, no
+/// highlight tone priority, no dual pixel raw, no HDR, no long exposure
+/// noise reduction, and under a second (where Canon would run it); a
+/// white of 14 bits under the top and a black under the white. `None`
+/// for anything else, and for anything the maker note does not say.
+/// Taken from the highest black, so no channel's is over-stated.
+pub(crate) fn canon_saturation(
+    frame: &RawFrame,
+    modes: Option<&super::style::CanonModes>,
+) -> Option<f32> {
+    if frame.make != "Canon" {
+        return None;
+    }
+    let modes = modes?;
+    let iso = frame.shot.iso?;
+    let exposure = frame.shot.exposure_time?;
+    let shutter = modes.shutter?;
+    let measured = CANON_HEADROOM.iter().any(|cell| {
+        cell.model == frame.model
+            && cell.shutter == shutter
+            && cell.isos.contains(&iso)
+            && modes
+                .aspect
+                .is_some_and(|(a, w, h)| a == 0 && (w, h) == cell.frame)
+    }) && exposure < 1.0
+        && modes.highlight_tone_priority == Some(0)
+        && modes.long_exposure_nr == Some(0)
+        && modes.dual_pixel_raw == Some(0)
+        && modes.hdr == Some(0);
+    if !measured {
+        return None;
+    }
+    if !matches!(frame.samples, Samples::U16(_)) || frame.levels.black_deltas.is_some() {
+        return None;
+    }
+    let levels = &frame.levels;
+    let white = levels
+        .white
+        .values
+        .iter()
+        .copied()
+        .fold(f32::INFINITY, f32::min);
+    let top_white = levels.white.values.iter().copied().fold(0.0f32, f32::max);
+    let black = levels.black.values.iter().copied().fold(0.0f32, f32::max);
+    if !(white > 8191.0 && top_white < CANON_TOP && black < white) {
+        return None;
+    }
+    Some(black + SATURATION_SHARE * (CANON_TOP - black))
 }
 
 /// Whether the image is a monochrome sensor's: DNG's form of one is
@@ -2164,6 +2299,278 @@ mod tests {
         let tt = crate::color::temp_tint_of_gains(&profile, [1.0; 3]).unwrap();
         assert!((tt.cct - 6504.0).abs() < 10.0);
         assert_eq!(index.unwrap().1, MosaicRead::NotMosaic);
+    }
+
+    /// The table is the ISOs of each body and shutter measured blown in
+    /// every channel, and its margin is SHARE of the way from the black
+    /// to the 14-bit top: an ISO, a cell, or a margin added or changed
+    /// fails here, on purpose.
+    #[test]
+    fn the_headroom_table_is_the_isos_measured() {
+        let cells: Vec<_> = CANON_HEADROOM
+            .iter()
+            .map(|c| (c.model, c.shutter, c.isos, c.frame))
+            .collect();
+        let (r6, r5) = ((6000, 4000), (8192, 5464));
+        let first_curtain: &[u32] = &[
+            100, 125, 160, 200, 250, 320, 400, 500, 1250, 1600, 2500, 12800,
+        ];
+        assert_eq!(
+            cells,
+            [
+                ("EOS R6 Mark II", 0, &[100u32, 320][..], r6),
+                ("EOS R6 Mark II", 1, first_curtain, r6),
+                ("EOS R5 Mark II", 1, &[100u32][..], r5),
+                ("EOS R5 Mark II", 2, &[100u32][..], r5),
+            ]
+        );
+        assert_eq!(SATURATION_SHARE, SHARE);
+        assert_eq!(CANON_TOP, 16383.0);
+    }
+
+    /// The margin, written out: what the table's share is pinned to.
+    const SHARE: f32 = 0.955;
+
+    /// The modes of a full-frame R6 II capture with every mode said and
+    /// off, first curtain.
+    fn plain(frame: (i64, i64)) -> super::super::style::CanonModes {
+        super::super::style::CanonModes {
+            shutter: Some(1),
+            highlight_tone_priority: Some(0),
+            long_exposure_nr: Some(0),
+            dual_pixel_raw: Some(0),
+            hdr: Some(0),
+            aspect: Some((0, frame.0, frame.1)),
+        }
+    }
+
+    /// A Canon frame of `model` at `black`, `white`, `iso`, and an
+    /// exposure of `t`.
+    fn canon_frame(model: &str, black: f32, white: f32, iso: u32, t: f32) -> RawFrame {
+        let mut frame = crate::develop::tests::flat_frame();
+        frame.make = "Canon".into();
+        frame.model = model.into();
+        frame.levels.black = LevelPattern::uniform(black, 1);
+        frame.levels.white = LevelPattern::uniform(white, 1);
+        frame.shot.iso = Some(iso);
+        frame.shot.exposure_time = Some(t);
+        frame
+    }
+
+    /// A measured capture gets its saturation; another body, ISO,
+    /// shutter, frame, a white of fewer bits, and a white at the top get
+    /// none.
+    #[test]
+    fn a_measured_canon_saturates_under_its_top() {
+        use super::super::style::CanonModes;
+        let r6 = plain((6000, 4000));
+        let canon = |model: &str, black: f32, white: f32, iso: u32, modes: &CanonModes| {
+            canon_saturation(&canon_frame(model, black, white, iso, 0.01), Some(modes))
+        };
+        let top = |black: f32| black + SHARE * (16383.0 - black);
+        assert_eq!(
+            canon("EOS R6 Mark II", 512.0, 14008.0, 100, &r6),
+            Some(top(512.0))
+        );
+        assert_eq!(
+            canon("EOS R6 Mark II", 2048.0, 14888.0, 12800, &r6),
+            Some(top(2048.0))
+        );
+        // Each ISO of each cell in, the ones between out.
+        for cell in &CANON_HEADROOM {
+            let modes = CanonModes {
+                shutter: Some(cell.shutter),
+                aspect: Some((0, cell.frame.0, cell.frame.1)),
+                ..r6
+            };
+            for iso in 50..=25600u32 {
+                let got = canon(cell.model, 512.0, 14888.0, iso, &modes);
+                assert_eq!(
+                    got.is_some(),
+                    cell.isos.contains(&iso),
+                    "{} {} {iso}",
+                    cell.model,
+                    cell.shutter
+                );
+            }
+        }
+        for unmeasured in ["EOS R5", "EOS R6", "EOS R7", "EOS R8", "EOS R3"] {
+            assert_eq!(
+                canon(unmeasured, 512.0, 14008.0, 100, &r6),
+                None,
+                "{unmeasured}"
+            );
+        }
+        let with = |shutter| CanonModes {
+            shutter: Some(shutter),
+            ..r6
+        };
+        assert_eq!(
+            canon("EOS R6 Mark II", 512.0, 14888.0, 400, &with(0)),
+            None,
+            "mechanical 400"
+        );
+        assert_eq!(
+            canon("EOS R6 Mark II", 512.0, 14008.0, 100, &with(2)),
+            None,
+            "R6 II electronic"
+        );
+        let r5 = |shutter| CanonModes {
+            shutter: Some(shutter),
+            ..plain((8192, 5464))
+        };
+        assert_eq!(
+            canon("EOS R5 Mark II", 512.0, 14008.0, 100, &r5(0)),
+            None,
+            "R5 II mechanical"
+        );
+        assert_eq!(
+            canon("EOS R5 Mark II", 512.0, 14888.0, 125, &r5(2)),
+            None,
+            "R5 II 125"
+        );
+        assert!(canon("EOS R5 Mark II", 512.0, 14008.0, 100, &r5(2)).is_some());
+        assert_eq!(
+            canon("EOS R6 Mark II", 128.0, 3500.0, 100, &r6),
+            None,
+            "12-bit"
+        );
+        assert_eq!(
+            canon("EOS R6 Mark II", 512.0, 16383.0, 100, &r6),
+            None,
+            "at the top"
+        );
+        let mut sony = canon_frame("EOS R6 Mark II", 512.0, 14008.0, 100, 0.01);
+        sony.make = "Sony".into();
+        assert_eq!(canon_saturation(&sony, Some(&r6)), None);
+    }
+
+    /// Never a wrong yes: a frame that is in the table in every other
+    /// way gets no saturation when its maker note is missing, when any
+    /// mode that can move the clip is on or not said, when the frame is
+    /// cropped or of another aspect or not said, when its exposure is a
+    /// second or more or not said, and when its ISO is not said.
+    #[test]
+    fn a_mode_on_or_unsaid_gets_no_saturation() {
+        use super::super::style::CanonModes;
+        let r6 = plain((6000, 4000));
+        let frame = canon_frame("EOS R6 Mark II", 512.0, 14008.0, 100, 0.01);
+        assert!(
+            canon_saturation(&frame, Some(&r6)).is_some(),
+            "the frame is in"
+        );
+        assert_eq!(canon_saturation(&frame, None), None, "no maker note");
+        let off: [(&str, CanonModes); 16] = [
+            (
+                "HTP on",
+                CanonModes {
+                    highlight_tone_priority: Some(1),
+                    ..r6
+                },
+            ),
+            (
+                "HTP unsaid",
+                CanonModes {
+                    highlight_tone_priority: None,
+                    ..r6
+                },
+            ),
+            (
+                "LENR auto",
+                CanonModes {
+                    long_exposure_nr: Some(1),
+                    ..r6
+                },
+            ),
+            (
+                "LENR on",
+                CanonModes {
+                    long_exposure_nr: Some(2),
+                    ..r6
+                },
+            ),
+            (
+                "LENR unsaid",
+                CanonModes {
+                    long_exposure_nr: None,
+                    ..r6
+                },
+            ),
+            (
+                "dual pixel raw",
+                CanonModes {
+                    dual_pixel_raw: Some(1),
+                    ..r6
+                },
+            ),
+            (
+                "dual pixel raw unsaid",
+                CanonModes {
+                    dual_pixel_raw: None,
+                    ..r6
+                },
+            ),
+            ("HDR", CanonModes { hdr: Some(1), ..r6 }),
+            ("HDR unsaid", CanonModes { hdr: None, ..r6 }),
+            (
+                "shutter unsaid",
+                CanonModes {
+                    shutter: None,
+                    ..r6
+                },
+            ),
+            (
+                "crop",
+                CanonModes {
+                    aspect: Some((0, 3744, 2496)),
+                    ..r6
+                },
+            ),
+            (
+                "another aspect",
+                CanonModes {
+                    aspect: Some((1, 6000, 4000)),
+                    ..r6
+                },
+            ),
+            ("aspect unsaid", CanonModes { aspect: None, ..r6 }),
+            (
+                "the R5 II's frame",
+                CanonModes {
+                    aspect: Some((0, 8192, 5464)),
+                    ..r6
+                },
+            ),
+            (
+                "a narrower frame",
+                CanonModes {
+                    aspect: Some((0, 5999, 4000)),
+                    ..r6
+                },
+            ),
+            (
+                "a shorter frame",
+                CanonModes {
+                    aspect: Some((0, 6000, 3999)),
+                    ..r6
+                },
+            ),
+        ];
+        for (what, modes) in off {
+            assert_eq!(canon_saturation(&frame, Some(&modes)), None, "{what}");
+        }
+        let second = canon_frame("EOS R6 Mark II", 512.0, 14008.0, 100, 1.0);
+        assert_eq!(canon_saturation(&second, Some(&r6)), None, "a second");
+        let mut no_time = frame.clone();
+        no_time.shot.exposure_time = None;
+        assert_eq!(
+            canon_saturation(&no_time, Some(&r6)),
+            None,
+            "exposure unsaid"
+        );
+        let mut no_iso = frame.clone();
+        no_iso.shot.iso = None;
+        assert_eq!(canon_saturation(&no_iso, Some(&r6)), None, "ISO unsaid");
     }
 
     #[test]

@@ -94,6 +94,12 @@ pub fn print(file: Option<&Path>, edit: &Edit, turn: u8, size: Size) -> Print {
             // window's open and a command line's relative path.
             let file = canonical(file);
             file.hash(&mut h);
+            // A file that may decode with light over its white: the
+            // headroom's version, so its bases are made again when the
+            // table changes, and no other file's are.
+            if greycard_core::decode::may_have_headroom(&file) {
+                greycard_core::decode::HEADROOM.hash(&mut h);
+            }
             let meta = std::fs::metadata(&file).ok();
             meta.as_ref().map(|m| m.len()).hash(&mut h);
             meta.and_then(|m| m.modified().ok())

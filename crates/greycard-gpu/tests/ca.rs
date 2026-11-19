@@ -331,6 +331,62 @@ fn check(
     (cpu_stats, gpu_stats)
 }
 
+/// A frame with headroom: the correction fitted on the mosaic it makes
+/// without it and applied to its own, against the reference's
+/// `fit_ca` and `apply_ca`. The measured mosaic is the samples cut
+/// under their brightest, so the two differ where the light is.
+#[test]
+fn a_correction_measured_on_another_mosaic_matches_the_reference() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let pattern = CfaPattern::rggb();
+    for (w, h) in [(523, 389), (672, 448)] {
+        // The light past one, as a frame read past its white.
+        let samples: Vec<f32> = aberrated(w, h, &pattern, 0.005, -0.004)
+            .iter()
+            .map(|v| v * 1.15)
+            .collect();
+        let measured: Vec<f32> = samples.iter().map(|v| v.min(0.9)).collect();
+        for options in [
+            CaOptions::default(),
+            CaOptions {
+                iterations: 1,
+                avoid_color_shift: false,
+            },
+        ] {
+            let what = format!("{w}x{h} {options:?}");
+            let (_, fit) = reference::fit_ca(&measured, w, h, &pattern, &options).unwrap();
+            let cpu = reference::apply_ca(&samples, w, h, &pattern, &fit).unwrap();
+            let (gpu, stats) = ctx
+                .correct_ca_measured_on(&samples, &measured, w, h, &pattern, &options)
+                .expect("the GPU correction runs");
+            let a = apart(&samples, &cpu, &gpu);
+            println!(
+                "{what}: max {:.3e} (relative {:.3e}) mean {:.3e}, {} of {} samples step; \
+                 stats cpu {:?} gpu {stats:?}",
+                a.max,
+                a.relative,
+                a.mean,
+                a.steps,
+                cpu.len(),
+                fit.stats
+            );
+            assert!(fit.stats.corrected, "{what}");
+            assert_eq!(
+                (stats.corrected, stats.blocks, stats.order),
+                (fit.stats.corrected, fit.stats.blocks, fit.stats.order),
+                "{what}"
+            );
+            assert!(a.steps as f64 / cpu.len() as f64 <= STEP_SHARE, "{what}");
+            assert!(a.mean <= MEAN_TOLERANCE, "{what}");
+            // Not the samples' own correction: the fit is the other's.
+            let (own, _) = correct_ca(&samples, w, h, &pattern, &options).unwrap();
+            assert_ne!(own, cpu, "{what}");
+        }
+    }
+}
+
 /// A synthetic mosaic with radial aberration of each color, at sizes
 /// where the tiles hang off the picture's right and bottom edges by
 /// varying amounts (the tile grid is 112 a step) and the half-size

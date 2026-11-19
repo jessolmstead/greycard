@@ -58,6 +58,9 @@ impl Scene {
         let crop = frame.effective_crop();
         let pattern = pattern.shifted(crop.x, crop.y);
         frame.orientation = Orientation::Normal;
+        // The simulated clip is the lowered white: a saturation over
+        // it would keep what the overexposure is meant to cut.
+        frame.levels.saturation = None;
         let full = normalize_levels(&frame);
         let (normalized, width, height) = crop_samples(&full, frame.width, 1, crop);
         Ok(Self {

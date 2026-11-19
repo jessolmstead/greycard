@@ -24,10 +24,11 @@ on:
     - cron: '41 4 * * 0'
   workflow_dispatch:
     inputs:
-      # A choice, so the longest run (eleven targets at 600 s, 110
-      # minutes) fits the job's timeout below with room for the build
-      # and the upload; a free number could be cancelled before it
-      # uploaded what it found.
+      # A choice, so the longest run (thirteen targets at 600 s, 130
+      # minutes) fits the job's timeout below with room for the
+      # install, the build, and the upload; a free number could be
+      # cancelled before it uploaded what it found. A target added
+      # raises the timeout by its ten minutes.
       seconds:
         description: Seconds each target runs
         type: choice
@@ -46,7 +47,7 @@ jobs:
   fuzz:
     name: cargo fuzz
     runs-on: ubuntu-latest
-    timeout-minutes: 140
+    timeout-minutes: 170
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 

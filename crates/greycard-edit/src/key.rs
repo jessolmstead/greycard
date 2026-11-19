@@ -170,6 +170,26 @@ pub fn framed_key(
     u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("eight bytes"))
 }
 
+/// The key of an edit's picture on a frame that may decode with light
+/// over its white (`headroom`, by
+/// [`greycard_core::decode::may_have_headroom`] of its file): `key`,
+/// the edit's own ([`Edit::develop_key_with`]), with
+/// [`greycard_core::decode::HEADROOM`] taken in. The key is made
+/// without a decode, so every such file's pictures are made again when
+/// the table changes, and those of every other file keep `key`. Taken
+/// before [`framed_key`].
+pub fn headroom_key(key: u64, headroom: bool) -> u64 {
+    if !headroom {
+        return key;
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"greycard headroom\0");
+    hasher.update(&key.to_le_bytes());
+    hasher.update(greycard_core::decode::HEADROOM.as_bytes());
+    let hash = hasher.finalize();
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("eight bytes"))
+}
+
 /// A file the develop of an edit reads outside the sidecar, as the key
 /// takes it: its file name, and BLAKE3 of its contents, `None` for a
 /// file that is not there or will not read.
@@ -663,5 +683,24 @@ mod tests {
             ..frame
         };
         assert_ne!(framed_key(key, true, true, Some(&off)), key);
+    }
+
+    /// The headroom's version is in the key of a file that may have
+    /// headroom, and of no other: every other file keeps its pictures.
+    #[test]
+    fn the_headroom_is_keyed_only_where_a_file_may_have_it() {
+        let key = key(&Edit::default(), None);
+        assert_eq!(headroom_key(key, false), key);
+        let cr3 = headroom_key(key, true);
+        assert_ne!(cr3, key);
+        assert_eq!(headroom_key(key, true), cr3, "the same for the same key");
+        assert_ne!(headroom_key(key ^ 1, true), cr3);
+        use greycard_core::decode::may_have_headroom;
+        use std::path::Path;
+        assert!(may_have_headroom(Path::new("a/IMG_0001.CR3")));
+        assert!(may_have_headroom(Path::new("b.cr3")));
+        for other in ["c.CR2", "d.dng", "e.NEF", "f.cr3.gcd", "cr3"] {
+            assert!(!may_have_headroom(Path::new(other)), "{other}");
+        }
     }
 }

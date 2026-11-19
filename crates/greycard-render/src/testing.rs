@@ -50,6 +50,7 @@ pub fn frame() -> greycard_core::RawFrame {
             black: LevelPattern::uniform(0.0, 1),
             white: LevelPattern::uniform(1.0, 1),
             black_deltas: None,
+            saturation: None,
         },
         as_shot_coefficients: Some([2.0, 1.0, 1.6]),
         calibrations: vec![

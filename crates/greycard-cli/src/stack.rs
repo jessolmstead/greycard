@@ -386,6 +386,7 @@ mod tests {
                 black: LevelPattern::uniform(black as f32, 1),
                 white: LevelPattern::uniform((black + range) as f32, 1),
                 black_deltas: None,
+                saturation: None,
             },
             as_shot_coefficients: Some([2.0, 1.0, 4.0]),
             calibrations: vec![Calibration {

@@ -2748,6 +2748,7 @@ impl Ai {
         if let Some(root) = path.parent() {
             sweep_stale_fills(root);
         }
+        self.let_go_of_earlier(patch, region, size, window);
         let dims = (region.width, region.height);
         let read = read_slot(&path, size, window, dims, |stored| {
             prints_agree(stored, print, PRINT_TOLERANCE, Compare::Every)
@@ -2810,6 +2811,22 @@ impl Ai {
         ))
     }
 
+    /// The slots the patch's fill lived in under an earlier headroom
+    /// version, let go ([`earlier_fill_slots`]).
+    fn let_go_of_earlier(
+        &self,
+        patch: &Patch,
+        region: &Region,
+        size: (usize, usize),
+        window: Window,
+    ) {
+        if let (Some(file), Some(root)) = (self.file.as_ref(), self.fills_root()) {
+            let_go_of_earlier_slots(&earlier_fill_slots(
+                &root, file, patch, region, size, window,
+            ));
+        }
+    }
+
     /// The patch's fill made: kept in memory and on disk, at half
     /// precision in both, so a fill read back is the one first shown.
     fn keep_fill(
@@ -2827,6 +2844,7 @@ impl Ai {
         let size = (image.width, image.height);
         let print = window_print(image, region, window);
         if let Some(path) = self.fill_path(patch, region, size, window) {
+            self.let_go_of_earlier(patch, region, size, window);
             write_slot(
                 &path,
                 engine,
@@ -6732,7 +6750,8 @@ fn read_fill(
 
 /// Where a fill lives on disk under `root`: named by a hash of the
 /// file, the patch as [`same_fill`] compares it, its seed, the
-/// picture's size, the region, the window, and both engines' models.
+/// picture's size, the region, the window, both engines' models, and
+/// for a file that may decode with headroom the headroom's version.
 fn fill_slot(
     root: &Path,
     file: &Path,
@@ -6741,9 +6760,76 @@ fn fill_slot(
     size: (usize, usize),
     window: Window,
 ) -> PathBuf {
+    // A file that may decode with light over its white: the headroom's
+    // version, so its fills are made again when the table changes and
+    // no other file's are.
+    let headroom =
+        greycard_core::decode::may_have_headroom(file).then_some(greycard_core::decode::HEADROOM);
+    fill_slot_under(root, file, patch, region, size, window, headroom)
+}
+
+/// The slots the fill of a file that may decode with headroom lived in
+/// under each earlier version of it, none first: what
+/// [`let_go_of_earlier_slots`] removes. Empty for any other file.
+fn earlier_fill_slots(
+    root: &Path,
+    file: &Path,
+    patch: &Patch,
+    region: &Region,
+    size: (usize, usize),
+    window: Window,
+) -> Vec<PathBuf> {
+    if !greycard_core::decode::may_have_headroom(file) {
+        return Vec::new();
+    }
+    earlier_headrooms()
+        .iter()
+        .map(|h| fill_slot_under(root, file, patch, region, size, window, h.as_deref()))
+        .collect()
+}
+
+/// The headroom versions before [`greycard_core::decode::HEADROOM`],
+/// `headroom-N`: none (before there was one), then 1 to N - 1.
+fn earlier_headrooms() -> Vec<Option<String>> {
+    let now: u32 = greycard_core::decode::HEADROOM
+        .strip_prefix("headroom-")
+        .and_then(|n| n.parse().ok())
+        .expect("HEADROOM is headroom-N");
+    std::iter::once(None)
+        .chain((1..now).map(|k| Some(format!("headroom-{k}"))))
+        .collect()
+}
+
+/// The files of the slots a fill lived in under an earlier headroom
+/// version removed: nothing reads them again, the folder's sweep goes
+/// by the fill's own version, and so it is done where the fill is
+/// looked up or written, a few removals of files mostly not there.
+fn let_go_of_earlier_slots(slots: &[PathBuf]) {
+    for file in slots.iter().flat_map(|s| slot_files(s)) {
+        match std::fs::remove_file(&file) {
+            Ok(()) => tracing::debug!("let go of {} from before the headroom", file.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => tracing::debug!("could not let go of {}: {e}", file.display()),
+        }
+    }
+}
+
+/// [`fill_slot`] with the headroom version given, or none.
+fn fill_slot_under(
+    root: &Path,
+    file: &Path,
+    patch: &Patch,
+    region: &Region,
+    size: (usize, usize),
+    window: Window,
+    headroom: Option<&str>,
+) -> PathBuf {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     file.hash(&mut h);
     "fill".hash(&mut h);
+    if let Some(headroom) = headroom {
+        headroom.hash(&mut h);
+    }
     patch.id.hash(&mut h);
     patch.seed.hash(&mut h);
     for p in &patch.points {
@@ -7283,7 +7369,7 @@ mod tests {
             REMOVE_FAST.id.hash(&mut h);
             root.join(format!("{:016x}.fill", h.finish()))
         };
-        let (root, file) = (Path::new("/cache"), Path::new("/f/IMG_0001.CR3"));
+        let (root, file) = (Path::new("/cache"), Path::new("/f/IMG_0001.NEF"));
         let mut patch = patch_at(3, 0.4, 2);
         patch.points.push([0.45, 0.3]);
         patch.remove = true;
@@ -7292,6 +7378,25 @@ mod tests {
         let (window, _) = window_for(&region, size.0, size.1);
         let slot = fill_slot(root, file, &patch, &region, size, window);
         assert_eq!(slot, old_slot(root, file, &patch, &region, size, window));
+        // A CR3's fills, made on a base the headroom moves, are made
+        // again; no other file's are.
+        let cr3 = Path::new("/f/IMG_0001.CR3");
+        assert_ne!(
+            fill_slot(root, cr3, &patch, &region, size, window),
+            old_slot(root, cr3, &patch, &region, size, window)
+        );
+        // The slot it had is the one let go of; another file has none.
+        let earlier = earlier_fill_slots(root, cr3, &patch, &region, size, window);
+        assert_eq!(
+            earlier[0],
+            old_slot(root, cr3, &patch, &region, size, window)
+        );
+        assert_eq!(
+            earlier[1],
+            fill_slot_under(root, cr3, &patch, &region, size, window, Some("headroom-1"))
+        );
+        assert!(earlier_fill_slots(root, file, &patch, &region, size, window).is_empty());
+        assert_eq!(earlier_headrooms(), [None, Some("headroom-1".to_string())]);
         // The print hashes the patch's JSON, which is as it was.
         let json = serde_json::to_string(&patch).unwrap();
         assert!(!json.contains("more"), "{json}");
@@ -8066,6 +8171,18 @@ mod tests {
         let made: Vec<f32> = (0..region.width * region.height * 3)
             .map(|i| i as f32 * 0.001 + 0.1)
             .collect();
+        // Fills of the CR3's from before the headroom and from under
+        // headroom-1, in their old slots: let go when the new one is
+        // written.
+        let size = (image.width, image.height);
+        let root = ai.fills_root().unwrap();
+        let earlier = earlier_fill_slots(&root, &file, &patch, &region, size, window);
+        assert_eq!(earlier.len(), 2, "none, and headroom-1");
+        let orphans: Vec<PathBuf> = earlier.iter().map(|s| slot_files(s)[1].clone()).collect();
+        for orphan in &orphans {
+            std::fs::create_dir_all(orphan.parent().unwrap()).unwrap();
+            std::fs::write(orphan, b"a fill from before").unwrap();
+        }
         let kept = ai.keep_fill(
             &patch,
             &region,
@@ -8074,10 +8191,12 @@ mod tests {
             Engine::Remove,
             made.clone(),
         );
+        for orphan in &orphans {
+            assert!(!orphan.exists(), "{} let go", orphan.display());
+        }
         for (k, m) in kept.iter().zip(&made) {
             assert!((k - m).abs() <= m * 1e-3, "{k} against {m}");
         }
-        let size = (image.width, image.height);
         let print = window_print(&image, &region, window);
         let slot = ai.fill_path(&patch, &region, size, window).expect("a slot");
         let path = slot_files(&slot)[0].clone();

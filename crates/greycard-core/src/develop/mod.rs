@@ -477,9 +477,23 @@ pub struct Prepared {
     pub white_balance: rawcolor::WhiteBalance,
     /// The noise measured on the frame before the gains, when it was.
     pub noise: Option<noise::NoiseEstimate>,
-    /// The value above which nothing is real: 1.0, or the largest gain
-    /// when highlights were reconstructed.
+    /// 1.0, or the largest gain when highlights were reconstructed:
+    /// times [`Prepared::headroom`], the value above which nothing is
+    /// real; alone, the level a sharpen and the local contrast take as
+    /// clipped ([`Developed::clip_level`]), which the headroom leaves.
     pub ceiling: f32,
+    /// How far over the white the samples may still be real: the
+    /// frame's [`Levels::headroom`](crate::raw::Levels::headroom) when
+    /// highlights were reconstructed and clipped, else 1.0. The
+    /// reconstruction's clips and the cut after it are this many times
+    /// the gains.
+    pub headroom: f32,
+    /// The mosaic the chromatic aberration correction is measured on,
+    /// when it is not `samples`: the frame as it develops without its
+    /// headroom, kept from the prepare until the correction lets it go
+    /// ([`correct_prepared_ca`]). `None` for every frame whose headroom
+    /// rebuilt nothing, and once the correction has run.
+    pub ca_reference: Option<std::sync::Arc<CaReference>>,
     pub highlights: Option<highlights::HighlightStats>,
     pub segments: Option<segments::SegmentStats>,
     pub chromatic_aberration: Option<ca::CaStats>,
@@ -541,7 +555,23 @@ pub fn prepare_with(
     measure_noise: bool,
     ca: Option<CaCorrector<'_>>,
 ) -> Result<Prepared> {
-    prepare_inner(frame, settings, measure_noise, ca, true)
+    prepare_inner(frame, settings, measure_noise, ca, true, false)
+}
+
+/// [`prepare`] for a consumer that corrects the chromatic aberration
+/// itself afterwards, with [`correct_prepared_ca`]: the settings' own
+/// correction is left to it, and the mosaic the correction is measured
+/// on ([`Prepared::ca_reference`]) is kept when it is not the samples.
+pub fn prepare_before_ca(
+    frame: &RawFrame,
+    settings: &DevelopSettings,
+    measure_noise: bool,
+) -> Result<Prepared> {
+    let settings = DevelopSettings {
+        chromatic_aberration: None,
+        ..settings.clone()
+    };
+    prepare_inner(frame, &settings, measure_noise, None, true, true)
 }
 
 /// [`prepare`] with nothing clipped after the gains: what a merge
@@ -554,7 +584,7 @@ pub fn prepare_unclipped(
     settings: &DevelopSettings,
     measure_noise: bool,
 ) -> Result<Prepared> {
-    prepare_inner(frame, settings, measure_noise, None, false)
+    prepare_inner(frame, settings, measure_noise, None, false, false)
 }
 
 fn prepare_inner(
@@ -563,6 +593,7 @@ fn prepare_inner(
     measure_noise: bool,
     ca: Option<CaCorrector<'_>>,
     clip: bool,
+    ca_follows: bool,
 ) -> Result<Prepared> {
     let settings = &resolve_settings(frame, settings);
     // At the door, before the levels are normalized and the frame is
@@ -584,11 +615,27 @@ fn prepare_inner(
     let white_balance = white_balance_for(frame, settings)?;
     let gains = white_balance.coefficients_f32();
 
+    // Light between the white and the frame's saturation is kept only
+    // where it is read as light: rebuilt and cut at the gains' ceiling
+    // times it. Clip mode, a merge's unclipped read, and every frame
+    // with no saturation over its white normalize at 1 as they did.
+    let mut headroom = if clip && settings.highlights.reconstructs() {
+        frame.levels.headroom()
+    } else {
+        1.0
+    };
+    // A frame with nothing where the develop without the headroom
+    // flagged is that develop, to the bit, and pays for nothing more
+    // than this look at its samples.
+    if headroom > 1.0 && !reaches(frame, highlights::CLIP_MAGIC) {
+        headroom = 1.0;
+    }
     let (mut samples, width, height, pattern, noise, hot_pixels) = balanced_samples(
         frame,
         gains,
         measure_noise || wants_noise(settings),
         settings.hot_pixels,
+        headroom,
     )?;
 
     // The mosaic's point spread, from its sharpest green pair, before
@@ -604,59 +651,91 @@ fn prepare_inner(
         )
     });
 
-    let mut stats = None;
-    let mut segment_stats = None;
-    let mut ceiling = 1.0f32;
-    if let Some(pattern) = &pattern
-        && settings.highlights.reconstructs()
-    {
-        let clips = gains.map(|g| g * highlights::CLIP_MAGIC);
-        let (reconstructed, s) =
-            highlights::inpaint_opposed(&samples, width, height, pattern, clips)?;
-        if settings.highlights == HighlightMode::Segments {
-            let (refined, s) = segments::inpaint_segments(
-                &samples,
-                &reconstructed,
-                width,
-                height,
-                pattern,
-                clips,
-                &settings.segments,
-            )?;
-            samples = refined;
-            segment_stats = Some(s);
-        } else {
-            samples = reconstructed;
-        }
-        stats = Some(s);
-        ceiling = gains.iter().copied().fold(1.0, f32::max);
-    }
-    if clip {
-        clip_highlights(&mut samples, ceiling);
-    } else {
-        ceiling = gains.iter().copied().fold(1.0, f32::max);
-    }
-
-    let mut ca_stats = None;
     // A DNG whose warps correct each color has corrected its lateral
     // aberration itself: the warp after the demosaic is the authority.
     let file_corrects_ca = frame.dng.warps_each_color();
     if file_corrects_ca && settings.chromatic_aberration.is_some() {
         log::debug!("the CA correction left to the file's own warps");
     }
-    if let (Some(pattern), Some(options)) = (&pattern, &settings.chromatic_aberration)
-        && ca::corrects(pattern)
-        && !file_corrects_ca
+    let ca_runs = |pattern: &CfaPattern| {
+        (ca_follows || settings.chromatic_aberration.is_some())
+            && ca::corrects(pattern)
+            && !file_corrects_ca
+    };
+
+    let mut stats = None;
+    let mut segment_stats = None;
+    let mut ceiling = 1.0f32;
+    let mut ca_reference = None;
+    if let Some(pattern) = &pattern
+        && settings.highlights.reconstructs()
     {
-        let (corrected, s) = match ca {
-            Some(correct) => correct(&samples, width, height, pattern, options)?,
-            None => ca::correct_ca(&samples, width, height, pattern, options)?,
+        let rebuild = |samples: &[f32], clips: [f32; 3]| -> Result<Rebuilt> {
+            let (reconstructed, s) =
+                highlights::inpaint_opposed(samples, width, height, pattern, clips)?;
+            if settings.highlights == HighlightMode::Segments {
+                let (refined, segments) = segments::inpaint_segments(
+                    samples,
+                    &reconstructed,
+                    width,
+                    height,
+                    pattern,
+                    clips,
+                    &settings.segments,
+                )?;
+                Ok((refined, s, Some(segments)))
+            } else {
+                Ok((reconstructed, s, None))
+            }
         };
-        samples = corrected;
-        ca_stats = Some(s);
+        ceiling = gains.iter().copied().fold(1.0, f32::max);
+        // The CA correction's fit is global: a tile over a blown edge
+        // votes for the whole frame. Measured on the mosaic this frame
+        // makes without its headroom (bit for bit the develop's before
+        // it), the fit is the same, and only what the headroom touched
+        // moves. That mosaic is these samples cut at their gains except
+        // where it rebuilt, which is all that is kept of it.
+        if headroom > 1.0 && ca_runs(pattern) {
+            let clips = gains.map(|g| g * highlights::CLIP_MAGIC);
+            let sites = if settings.highlights == HighlightMode::Segments {
+                let unheaded = without_headroom(&samples, width, pattern, gains);
+                let (mut rebuilt, _, _) = rebuild(&unheaded, clips)?;
+                clip_highlights(&mut rebuilt, ceiling);
+                (0..unheaded.len())
+                    .filter(|&i| {
+                        let c = pattern
+                            .color_at(i / width, i % width)
+                            .rgb_index()
+                            .expect("balanced patterns are RGB");
+                        unheaded[i] >= clips[c]
+                    })
+                    .map(|i| (i as u32, rebuilt[i]))
+                    .collect()
+            } else {
+                let (sites, _) =
+                    highlights::opposed_sites(&samples, width, height, pattern, clips, gains)?;
+                sites
+                    .into_iter()
+                    .map(|(i, v)| (i, v.min(ceiling)))
+                    .collect::<Vec<_>>()
+            };
+            if !sites.is_empty() {
+                ca_reference = Some(std::sync::Arc::new(CaReference { sites }));
+            }
+        }
+        let clips = gains.map(|g| g * headroom * highlights::CLIP_MAGIC);
+        let (rebuilt, s, segments) = rebuild(&samples, clips)?;
+        samples = rebuilt;
+        segment_stats = segments;
+        stats = Some(s);
+    }
+    if clip {
+        clip_highlights(&mut samples, ceiling * headroom);
+    } else {
+        ceiling = gains.iter().copied().fold(1.0, f32::max);
     }
 
-    Ok(Prepared {
+    let mut prepared = Prepared {
         samples,
         width,
         height,
@@ -665,14 +744,150 @@ fn prepare_inner(
         white_balance,
         noise,
         ceiling,
+        headroom,
+        ca_reference,
         highlights: stats,
         segments: segment_stats,
-        chromatic_aberration: ca_stats,
+        chromatic_aberration: None,
         hot_pixels,
         sharpen_radius,
         demosaic: settings.demosaic,
         orientation: settings.orientation.unwrap_or(frame.orientation),
         monochrome: frame.layout == SensorLayout::Monochrome,
+    };
+    if let (Some(pattern), Some(options)) = (&prepared.pattern, &settings.chromatic_aberration)
+        && ca_runs(pattern)
+    {
+        let pattern = pattern.clone();
+        let s = match ca {
+            Some(correct) if prepared.ca_reference.is_none() => {
+                let (corrected, s) = correct(&prepared.samples, width, height, &pattern, options)?;
+                prepared.samples = corrected;
+                s
+            }
+            _ => correct_prepared_ca(&mut prepared, options)?,
+        };
+        prepared.chromatic_aberration = Some(s);
+    }
+    Ok(prepared)
+}
+
+/// A reconstruction's mosaic, what it measured, and what its segment
+/// pass did when one ran.
+type Rebuilt = (
+    Vec<f32>,
+    highlights::HighlightStats,
+    Option<segments::SegmentStats>,
+);
+
+/// The CA correction of a prepared mosaic, as the develop makes it:
+/// fitted on [`Prepared::ca_reference`] when there is one, which it
+/// lets go, and applied to the samples; else [`ca::correct_ca`] on the
+/// samples themselves. What a consumer that runs the CA after
+/// [`prepare_before_ca`] calls, on the CPU, whenever a reference is
+/// kept.
+pub fn correct_prepared_ca(
+    prepared: &mut Prepared,
+    options: &ca::CaOptions,
+) -> Result<ca::CaStats> {
+    let Some(pattern) = prepared.pattern.clone() else {
+        return Err(Error::Unsupported("a CA correction of no mosaic".into()));
+    };
+    let (w, h) = (prepared.width, prepared.height);
+    match prepared.ca_reference.take() {
+        Some(reference) => {
+            let measured = reference.mosaic(&prepared.samples);
+            drop(reference);
+            if pattern.is_xtrans() {
+                let (_, fit) = ca::fit_ca(&measured, w, h, &pattern, options)?;
+                prepared.samples = ca::apply_ca(&prepared.samples, w, h, &pattern, &fit)?;
+                return Ok(fit.stats);
+            }
+            let (corrected, stats) =
+                ca::fit_ca_carrying(&measured, &prepared.samples, w, h, &pattern, options)?;
+            prepared.samples = corrected;
+            Ok(stats)
+        }
+        None => {
+            let (corrected, s) = ca::correct_ca(&prepared.samples, w, h, &pattern, options)?;
+            prepared.samples = corrected;
+            Ok(s)
+        }
+    }
+}
+
+/// A balanced mosaic as it reads with no headroom: each photosite cut
+/// at its gain, which is, to the bit, the gain times its level cut at
+/// one.
+fn without_headroom(
+    samples: &[f32],
+    width: usize,
+    pattern: &CfaPattern,
+    gains: [f32; 3],
+) -> Vec<f32> {
+    let mut out = samples.to_vec();
+    out.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
+        for (x, v) in row.iter_mut().enumerate() {
+            let c = pattern
+                .color_at(y, x)
+                .rgb_index()
+                .expect("balanced patterns are RGB");
+            *v = v.min(gains[c]);
+        }
+    });
+    out
+}
+
+/// The mosaic a frame with headroom makes without it, where that
+/// differs from what it makes with it: the photosites the develop
+/// without it rebuilt, and what it rebuilt them to. Everywhere else
+/// that mosaic is the samples as they are. What the CA correction is
+/// measured on ([`Prepared::ca_reference`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaReference {
+    /// Index and value, in index order.
+    pub sites: Vec<(u32, f32)>,
+}
+
+impl CaReference {
+    /// The whole mosaic: `samples` with the sites written in.
+    pub fn mosaic(&self, samples: &[f32]) -> Vec<f32> {
+        let mut out = samples.to_vec();
+        for &(i, v) in &self.sites {
+            out[i as usize] = v;
+        }
+        out
+    }
+}
+
+/// Whether any sample of the frame's crop sits at or over `share` of
+/// the way from its black to its white, judged at the lowest such level
+/// over the level patterns' positions: never no where one does.
+fn reaches(frame: &RawFrame, share: f32) -> bool {
+    let Samples::U16(raw) = &frame.samples else {
+        return true;
+    };
+    let (black, white) = (&frame.levels.black, &frame.levels.white);
+    let mut lowest = f32::INFINITY;
+    for y in 0..black.height * white.height {
+        for x in 0..black.width * white.width {
+            for c in 0..black.cpp.max(white.cpp) {
+                let b = black.at(y, x, c % black.cpp);
+                let w = white.at(y, x, c % white.cpp);
+                lowest = lowest.min(b + share * (w - b));
+            }
+        }
+    }
+    if !lowest.is_finite() {
+        return true;
+    }
+    let at = lowest.floor().max(0.0) as u16;
+    let crop = frame.effective_crop();
+    let cpp = frame.channels;
+    (crop.y..crop.y + crop.height).into_par_iter().any(|y| {
+        let row =
+            &raw[(y * frame.width + crop.x) * cpp..(y * frame.width + crop.x + crop.width) * cpp];
+        row.iter().any(|&v| v >= at)
     })
 }
 
@@ -826,8 +1041,13 @@ pub fn demosaic(frame: &RawFrame, settings: &DevelopSettings) -> Result<Demosaic
     let white_balance = white_balance_for(frame, settings)?;
     let gains = white_balance.coefficients_f32();
 
-    let (samples, width, height, pattern, noise, _) =
-        balanced_samples(frame, gains, wants_noise(settings), settings.hot_pixels)?;
+    let (samples, width, height, pattern, noise, _) = balanced_samples(
+        frame,
+        gains,
+        wants_noise(settings),
+        settings.hot_pixels,
+        1.0,
+    )?;
     let mut rgb = match &pattern {
         Some(pattern) => {
             demosaic_cfa_with(
@@ -939,7 +1159,8 @@ type BalancedSamples = (
     Option<hotpixels::HotPixelStats>,
 );
 
-/// Levels normalized, cropped, white balance gains applied in camera space.
+/// Levels normalized up to `top` ([`normalize_levels_to`]), cropped,
+/// white balance gains applied in camera space.
 ///
 /// Returns the samples, the crop's dimensions and, for a CFA frame, the
 /// pattern as seen from the crop's origin. Linear frames come back
@@ -952,8 +1173,9 @@ fn balanced_samples(
     gains: [f32; 3],
     estimate_noise: bool,
     hot_pixels: Option<hotpixels::HotPixelOptions>,
+    top: f32,
 ) -> Result<BalancedSamples> {
-    let normalized = normalize_levels(frame);
+    let normalized = normalize_levels_to(frame, top);
     let crop = frame.effective_crop();
     let (mut samples, width, height) = crop_samples(&normalized, frame.width, frame.channels, crop);
     drop(normalized);
@@ -972,21 +1194,45 @@ fn balanced_samples(
                     "CFA with non-RGB filters: {pattern:?}"
                 )));
             }
+            // Past the white, the noise and the hot pixels read the
+            // mosaic cut at one, as the develop without the headroom
+            // does: the estimate is that develop's to the bit, and a
+            // site it repairs takes that repair here.
+            let wants_cut =
+                top > 1.0 && (estimate_noise || hot_pixels.is_some()) && reaches(frame, 1.0);
+            let mut cut: Option<Vec<f32>> =
+                wants_cut.then(|| samples.par_iter().map(|v| v.min(1.0)).collect());
             if estimate_noise && noise::measures(&pattern) {
-                noise = Some(noise::estimate_noise(&samples, width, height, &pattern)?);
+                let read: &[f32] = cut.as_deref().unwrap_or(&samples);
+                noise = Some(noise::estimate_noise(read, width, height, &pattern)?);
             }
             if let (Some(options), Some(estimate)) = (hot_pixels, &noise)
                 && hotpixels::repairs(&pattern)
             {
-                hot = Some(hotpixels::fix_hot_pixels(
-                    &mut samples,
-                    width,
-                    height,
-                    &pattern,
-                    &estimate.model,
-                    &options,
-                )?);
+                hot = Some(match cut.as_mut() {
+                    Some(cut) => {
+                        let stats = hotpixels::fix_hot_pixels(
+                            cut,
+                            width,
+                            height,
+                            &pattern,
+                            &estimate.model,
+                            &options,
+                        )?;
+                        take_repairs(&mut samples, cut);
+                        stats
+                    }
+                    None => hotpixels::fix_hot_pixels(
+                        &mut samples,
+                        width,
+                        height,
+                        &pattern,
+                        &estimate.model,
+                        &options,
+                    )?,
+                });
             }
+            drop(cut);
             apply_gains_cfa(&mut samples, width, &pattern, gains);
             Some(pattern)
         }
@@ -1043,6 +1289,20 @@ fn balanced_samples(
         }
     };
     Ok((samples, width, height, pattern, noise, hot))
+}
+
+/// The repairs made on `cut`, the samples cut at one, taken into the
+/// samples: a site whose cut value moved takes it, every other keeps
+/// its own, past one or not.
+fn take_repairs(samples: &mut [f32], cut: &[f32]) {
+    samples
+        .par_iter_mut()
+        .zip(cut.par_iter())
+        .for_each(|(s, &c)| {
+            if c.to_bits() != s.min(1.0).to_bits() {
+                *s = c;
+            }
+        });
 }
 
 /// The frame's DNG opcodes of its first two lists on its cropped,
@@ -1184,6 +1444,15 @@ fn fix_bad_pixels(
 /// by its one highest black; we keep a scale per pattern position, the
 /// rule without differences carried over to them.
 pub fn normalize_levels(frame: &RawFrame) -> Vec<f32> {
+    normalize_levels_to(frame, 1.0)
+}
+
+/// [`normalize_levels`] clamped to `0..top` in place of `0..1`: a
+/// sample over the white is kept up to `top` times it, every other
+/// sample is what [`normalize_levels`] makes of it, to the bit. A
+/// frame with black deltas, which no frame with headroom has, clamps
+/// at one whatever `top` says.
+pub fn normalize_levels_to(frame: &RawFrame, top: f32) -> Vec<f32> {
     if let Some(deltas) = &frame.levels.black_deltas {
         return normalize_with_deltas(frame, deltas);
     }
@@ -1200,7 +1469,7 @@ pub fn normalize_levels(frame: &RawFrame) -> Vec<f32> {
                     for (ch, s) in px.iter_mut().enumerate() {
                         let b = black.at(y, x, ch);
                         let range = (white.at(y, x, ch) - b).max(f32::EPSILON);
-                        *s = ((*s - b) / range).clamp(0.0, 1.0);
+                        *s = ((*s - b) / range).clamp(0.0, top);
                     }
                 }
             })
@@ -1500,6 +1769,7 @@ pub(crate) mod tests {
                 black: LevelPattern::uniform(100.0, 1),
                 white: LevelPattern::uniform(1100.0, 1),
                 black_deltas: None,
+                saturation: None,
             },
             as_shot_coefficients: Some([2.0, 1.0, 4.0]),
             calibrations: vec![Calibration {
@@ -1543,6 +1813,7 @@ pub(crate) mod tests {
                 black: LevelPattern::uniform(100.0, 1),
                 white: LevelPattern::uniform(1100.0, 1),
                 black_deltas: None,
+                saturation: None,
             },
             as_shot_coefficients: Some([1.0; 3]),
             calibrations: Vec::new(),
@@ -1885,6 +2156,7 @@ pub(crate) mod tests {
             black: LevelPattern::uniform(0.0, 3),
             white: LevelPattern::uniform(1000.0, 3),
             black_deltas: None,
+            saturation: None,
         };
         frame.samples = Samples::U16(vec![500; 4 * 4 * 3]);
         let plain = demosaic(&frame, &settings).unwrap();
@@ -2399,6 +2671,7 @@ pub(crate) mod tests {
                 black: LevelPattern::uniform(0.0, 1),
                 white: LevelPattern::uniform(16383.0, 1),
                 black_deltas: None,
+                saturation: None,
             },
             crop: None,
             ..flat_frame()
@@ -2778,5 +3051,484 @@ pub(crate) mod tests {
         });
         let out = develop(&frame, &DevelopSettings::default()).unwrap();
         assert_eq!((out.image.width, out.image.height), (2, 3));
+    }
+
+    /// The 14-bit top a headroom frame's channels clip at, as Canon's.
+    const TOP: f32 = 16383.0;
+
+    /// A Bayer frame of `w` by `h` whose photosite `(x, y)` of color `c`
+    /// reads `light(x, y, c)` times the range from `black` to `white`
+    /// over the black, clipped at [`TOP`] as an ADC clips; the
+    /// saturation level, when asked for, where the decoder puts it.
+    fn lit_frame(
+        w: usize,
+        h: usize,
+        black: f32,
+        white: f32,
+        saturated: bool,
+        light: impl Fn(usize, usize, usize) -> f32,
+    ) -> RawFrame {
+        let pattern = CfaPattern::rggb();
+        let mut samples = Vec::with_capacity(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let c = pattern.color_at(y, x).rgb_index().unwrap();
+                let v = black + light(x, y, c) * (white - black);
+                samples.push(v.round().clamp(0.0, TOP) as u16);
+            }
+        }
+        let mut frame = flat_frame();
+        frame.width = w;
+        frame.height = h;
+        frame.samples = Samples::U16(samples);
+        frame.levels = Levels {
+            black: LevelPattern::uniform(black, 1),
+            white: LevelPattern::uniform(white, 1),
+            black_deltas: None,
+            saturation: saturated.then_some(black + 0.955 * (TOP - black)),
+        };
+        frame
+    }
+
+    /// The levels each case is tried at: Canon's ISO 100, its ISO 125
+    /// and up at the low black, and at the black of high ISO.
+    const CANON_LEVELS: [(f32, f32); 3] = [(512.0, 14008.0), (512.0, 14888.0), (2048.0, 14888.0)];
+
+    #[test]
+    fn the_headroom_is_the_saturation_over_the_white_from_the_black() {
+        let mut levels = lit_frame(4, 4, 512.0, 14008.0, true, |_, _, _| 0.5).levels;
+        let want = (0.955 * (TOP - 512.0)) / (14008.0 - 512.0);
+        assert_eq!(levels.headroom(), want);
+        assert!((levels.headroom() - 1.1231).abs() < 1e-3);
+        // The least over the pattern's positions.
+        levels.black = LevelPattern::new(2, 2, 1, vec![510.0, 512.0, 512.0, 514.0]).unwrap();
+        let least = (levels.saturation.unwrap() - 510.0) / (14008.0 - 510.0);
+        assert_eq!(levels.headroom(), least);
+        // None, none over the white, and black deltas: none at all.
+        levels.saturation = None;
+        assert_eq!(levels.headroom(), 1.0);
+        levels.saturation = Some(14008.0);
+        assert_eq!(levels.headroom(), 1.0);
+        levels.saturation = Some(16000.0);
+        levels.black_deltas = Some(BlackDeltas {
+            area: Rect {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4,
+            },
+            columns: vec![0.0; 4],
+            rows: vec![0.0; 4],
+        });
+        assert_eq!(levels.headroom(), 1.0);
+    }
+
+    /// Every sample to the white normalizes as it did, to the bit; one
+    /// over it is kept to the top asked for and cut there.
+    #[test]
+    fn normalizing_to_a_top_keeps_what_is_over_the_white_and_nothing_else() {
+        for (black, white) in CANON_LEVELS {
+            // Every level from under the black to the ADC's top.
+            let n = 16384usize;
+            let mut frame = lit_frame(128, 128, black, white, true, |_, _, _| 0.0);
+            frame.samples = Samples::U16((0..n).map(|v| v as u16).collect());
+            let top = frame.levels.headroom();
+            let plain = normalize_levels(&frame);
+            let kept = normalize_levels_to(&frame, top);
+            for (v, (p, k)) in plain.iter().zip(&kept).enumerate() {
+                if v as f32 <= white {
+                    assert_eq!(p.to_bits(), k.to_bits(), "{v} at {black}/{white}");
+                } else {
+                    assert_eq!(*p, 1.0);
+                    let want = ((v as f32 - black) / (white - black)).min(top);
+                    assert_eq!(*k, want, "{v} at {black}/{white}");
+                }
+            }
+            assert_eq!(kept[n - 1], top);
+            assert_eq!(normalize_levels_to(&frame, 1.0), plain);
+        }
+    }
+
+    /// A ramp through the white and the saturation, with each channel
+    /// clipping at its own light: what a blown sky's edge reads.
+    fn ramp_light(w: usize) -> impl Fn(usize, usize, usize) -> f32 {
+        move |x, y, c| {
+            // Under the white on the left, past the top on the right,
+            // a little texture so nothing is flat.
+            let along = x as f32 / w as f32;
+            let base = 0.3 + 1.3 * along + 0.01 * ((x * 7 + y * 13) % 5) as f32;
+            base * [0.55, 1.0, 0.3][c]
+        }
+    }
+
+    /// Clip mode, a merge's unclipped read, and the camera-space
+    /// demosaic never take the headroom: a frame with a saturation level
+    /// develops in them as it does without one, to the bit.
+    #[test]
+    fn clip_mode_and_the_merges_read_as_without_the_headroom() {
+        for (black, white) in CANON_LEVELS {
+            let with = lit_frame(96, 64, black, white, true, ramp_light(96));
+            let without = Levels {
+                saturation: None,
+                ..with.levels.clone()
+            };
+            let without = RawFrame {
+                levels: without,
+                ..with.clone()
+            };
+            let clip = DevelopSettings {
+                highlights: HighlightMode::Clip,
+                ..Default::default()
+            };
+            let a = develop(&with, &clip).unwrap();
+            let b = develop(&without, &clip).unwrap();
+            assert_eq!(a.image.data, b.image.data, "clip at {black}/{white}");
+            let a = prepare_unclipped(&with, &DevelopSettings::default(), true).unwrap();
+            let b = prepare_unclipped(&without, &DevelopSettings::default(), true).unwrap();
+            assert_eq!(a.samples, b.samples);
+            assert_eq!((a.ceiling, a.headroom), (b.ceiling, 1.0));
+            let a = demosaic(&with, &DevelopSettings::default()).unwrap();
+            let b = demosaic(&without, &DevelopSettings::default()).unwrap();
+            assert_eq!(a.image.data, b.image.data);
+        }
+    }
+
+    /// With highlights rebuilt, a photosite between the white and the
+    /// saturation is read as light and not rebuilt; every pixel out of
+    /// the demosaic's reach of what the develop flagged before develops
+    /// to the bit as it did, and the clip level the sharpen reads is
+    /// the same.
+    #[test]
+    fn the_headroom_changes_only_what_was_clipped() {
+        for (black, white) in CANON_LEVELS {
+            let (w, h) = (160, 96);
+            let with = lit_frame(w, h, black, white, true, ramp_light(w));
+            let without = RawFrame {
+                levels: Levels {
+                    saturation: None,
+                    ..with.levels.clone()
+                },
+                ..with.clone()
+            };
+            let settings = DevelopSettings::default();
+            let old = prepare(&without, &settings, false).unwrap();
+            let new = prepare(&with, &settings, false).unwrap();
+            let headroom = with.levels.headroom();
+            assert_eq!((old.headroom, new.headroom), (1.0, headroom));
+            assert_eq!(old.ceiling, new.ceiling);
+            // What the old develop flagged, by position.
+            let clips = old.gains.map(|g| g * highlights::CLIP_MAGIC);
+            let pattern = old.pattern.clone().unwrap();
+            let color = |x: usize, y: usize| pattern.color_at(y, x).rgb_index().unwrap();
+            let raw = match &with.samples {
+                Samples::U16(v) => v.clone(),
+                Samples::F32(_) => unreachable!(),
+            };
+            let mut flagged = vec![false; w * h];
+            let mut kept = 0;
+            for y in 0..h {
+                for x in 0..w {
+                    let i = y * w + x;
+                    let c = color(x, y);
+                    flagged[i] = old.samples[i] >= clips[c] * (1.0 - 1e-6);
+                    // Over the white and under the new clip: read as
+                    // light, its own value times its gain.
+                    let n = (f32::from(raw[i]) - black) / (white - black);
+                    if n > 1.0 && n * new.gains[c] < clips[c] * headroom {
+                        assert_eq!(new.samples[i], n * new.gains[c], "{x},{y}");
+                        kept += 1;
+                    }
+                    if !flagged[i] {
+                        assert_eq!(new.samples[i].to_bits(), old.samples[i].to_bits());
+                    }
+                }
+            }
+            assert!(kept > 100, "{kept} photosites read past the white");
+            let a = develop(&without, &settings).unwrap();
+            let b = develop(&with, &settings).unwrap();
+            assert_eq!(a.clip_level, b.clip_level);
+            // How far from the nearest photosite flagged before a pixel
+            // moved: the default dual demosaic's reach (AMaZE's
+            // neighborhood, the blend's contrast, and its blur of
+            // seven taps), never the picture at large.
+            let flagged_at: Vec<(isize, isize)> = (0..w * h)
+                .filter(|&i| flagged[i])
+                .map(|i| ((i % w) as isize, (i / w) as isize))
+                .collect();
+            let distance = |x: usize, y: usize| {
+                flagged_at
+                    .iter()
+                    .map(|&(fx, fy)| (fx - x as isize).abs().max((fy - y as isize).abs()))
+                    .min()
+                    .unwrap_or(isize::MAX)
+            };
+            let (mut same, mut moved, mut farthest) = (0, 0, 0);
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) * 3;
+                    if a.image.data[i..i + 3] == b.image.data[i..i + 3] {
+                        same += 1;
+                    } else {
+                        moved += 1;
+                        farthest = farthest.max(distance(x, y));
+                    }
+                }
+            }
+            assert!(farthest <= 12, "a pixel {farthest} from the old clip moved");
+            assert!(same > w * h / 3 && moved > 100, "{same} {moved}");
+        }
+    }
+
+    /// A frame with nothing at or over the old clip develops to the
+    /// bit as it did under every default, the CA correction's fit and
+    /// the hot pixel repair included.
+    #[test]
+    fn a_frame_under_the_old_clip_develops_as_it_did() {
+        let (w, h) = (320, 288);
+        let with = lit_frame(w, h, 512.0, 14008.0, true, |x, y, c| {
+            let edge = if (x / 24 + y / 24) % 2 == 0 {
+                0.2
+            } else {
+                0.95
+            };
+            edge * [0.6, 1.0, 0.45][c] + 0.002 * ((x * 3 + y * 5) % 7) as f32
+        });
+        let without = RawFrame {
+            levels: Levels {
+                saturation: None,
+                ..with.levels.clone()
+            },
+            ..with.clone()
+        };
+        let settings = DevelopSettings::default();
+        let a = develop(&without, &settings).unwrap();
+        let b = develop(&with, &settings).unwrap();
+        assert!(b.chromatic_aberration.is_some());
+        assert_eq!(a.image.data, b.image.data);
+        // Nothing rebuilt: no reference is kept.
+        let p = prepare_before_ca(&with, &settings, false).unwrap();
+        assert!(p.ca_reference.is_none());
+    }
+
+    /// With the CA correction on, a frame blown past its white has the
+    /// correction measured on the mosaic it makes without the headroom:
+    /// the fit is the old develop's, and every pixel away from what it
+    /// flagged develops to the bit as it did. A consumer that runs the
+    /// CA itself after [`prepare_before_ca`] makes the same mosaic.
+    #[test]
+    fn the_ca_is_measured_as_without_the_headroom() {
+        let (w, h) = (640, 480);
+        // Squares of shade and light, the light past the white on the
+        // right, red a touch larger than green as a lens leaves it.
+        let with = lit_frame(w, h, 512.0, 14008.0, true, |x, y, c| {
+            let k = [1.004, 1.0, 0.996][c];
+            let (fx, fy) = (
+                320.0 + (x as f32 - 320.0) * k,
+                240.0 + (y as f32 - 240.0) * k,
+            );
+            let lit = (fx as usize / 20 + fy as usize / 20) % 2 == 1;
+            let level = if lit { 0.4 + 1.1 * fx / w as f32 } else { 0.15 };
+            level * [0.55, 1.0, 0.3][c]
+        });
+        let without = RawFrame {
+            levels: Levels {
+                saturation: None,
+                ..with.levels.clone()
+            },
+            ..with.clone()
+        };
+        let settings = DevelopSettings::default();
+        let old = prepare(&without, &settings, false).unwrap();
+        let new = prepare(&with, &settings, false).unwrap();
+        assert_eq!(old.chromatic_aberration, new.chromatic_aberration);
+        assert!(new.chromatic_aberration.is_some_and(|s| s.corrected));
+        assert!(new.ca_reference.is_none(), "let go once it ran");
+        let mut later = prepare_before_ca(&with, &settings, false).unwrap();
+        assert!(later.ca_reference.is_some());
+        let s = correct_prepared_ca(&mut later, settings.chromatic_aberration.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(Some(s), new.chromatic_aberration);
+        assert_eq!(later.samples, new.samples);
+        // Away from what the old develop flagged, the bit.
+        let clips = old.gains.map(|g| g * highlights::CLIP_MAGIC);
+        let pattern = old.pattern.clone().unwrap();
+        let a = develop(&without, &settings).unwrap();
+        let b = develop(&with, &settings).unwrap();
+        let raw = match &with.samples {
+            Samples::U16(v) => v.clone(),
+            Samples::F32(_) => unreachable!(),
+        };
+        let flagged: Vec<bool> = (0..w * h)
+            .map(|i| {
+                let c = pattern.color_at(i / w, i % w).rgb_index().unwrap();
+                let n = ((f32::from(raw[i]) - 512.0) / (14008.0 - 512.0)).min(1.0);
+                n * old.gains[c] >= clips[c]
+            })
+            .collect();
+        assert!(flagged.iter().any(|&f| f));
+        // Within 16 of a flagged photosite, each way.
+        const REACH: usize = 16;
+        let rows: Vec<bool> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                (x.saturating_sub(REACH)..(x + REACH + 1).min(w)).any(|xx| flagged[y * w + xx])
+            })
+            .collect();
+        let near = |x: usize, y: usize| {
+            (y.saturating_sub(REACH)..(y + REACH + 1).min(h)).any(|yy| rows[yy * w + x])
+        };
+        let mut moved = 0;
+        for i in 0..w * h {
+            if a.image.data[i * 3..i * 3 + 3] != b.image.data[i * 3..i * 3 + 3] {
+                moved += 1;
+                assert!(near(i % w, i / w), "{},{} moved", i % w, i / w);
+            }
+        }
+        assert!(moved > 0);
+    }
+
+    /// A frame with headroom and its twin without, as the develop
+    /// before the headroom read it.
+    fn and_without(with: &RawFrame) -> RawFrame {
+        RawFrame {
+            levels: Levels {
+                saturation: None,
+                ..with.levels.clone()
+            },
+            ..with.clone()
+        }
+    }
+
+    /// A grain of its own at each photosite, -1 to 1.
+    fn grain(x: usize, y: usize) -> f32 {
+        let n = (x as u32).wrapping_mul(0x9e37_79b9) ^ (y as u32).wrapping_mul(0x85eb_ca6b);
+        let n = (n ^ (n >> 15)).wrapping_mul(0x2c1b_3c6d);
+        ((n >> 8) & 0xffff) as f32 / 32768.0 - 1.0
+    }
+
+    /// The noise estimate reads what the develop without the headroom
+    /// read, to the bit: a grainy grey sprinkled with photosites past
+    /// the white, each in the two-photosite surround of the blocks
+    /// round it, measures as its twin does.
+    #[test]
+    fn the_noise_is_measured_as_without_the_headroom() {
+        for (black, white) in CANON_LEVELS {
+            // One row of blocks, rows 2 to 17; the two rows each side
+            // are no block's, and every block reads them.
+            let (w, h) = (512, 20);
+            let with = lit_frame(w, h, black, white, true, |x, y, c| {
+                if !(2..18).contains(&y) && x % 3 == 0 {
+                    1.12
+                } else {
+                    (0.45 + 0.02 * grain(x, y)) * [0.6, 1.0, 0.5][c]
+                }
+            });
+            let settings = DevelopSettings {
+                hot_pixels: None,
+                ..Default::default()
+            };
+            let old = prepare(&and_without(&with), &settings, true).unwrap();
+            let new = prepare(&with, &settings, true).unwrap();
+            assert!(new.headroom > 1.0);
+            let (a, b) = (old.noise.unwrap(), new.noise.unwrap());
+            assert!(a.blocks.iter().all(|&n| n > 0), "{a:?}");
+            assert_eq!(format!("{a:?}"), format!("{b:?}"), "at {black}/{white}");
+        }
+    }
+
+    /// A hot photosite past the white is repaired as the develop
+    /// without the headroom repaired it: decided on the mosaic cut at
+    /// one, and the same value written.
+    #[test]
+    fn a_hot_pixel_past_the_white_is_repaired_as_without_the_headroom() {
+        let (w, h) = (96, 96);
+        let with = lit_frame(w, h, 512.0, 14008.0, true, |x, y, c| {
+            if (x, y) == (40, 40) {
+                1.13
+            } else {
+                (0.1 + 0.004 * grain(x, y)) * [0.6, 1.0, 0.5][c]
+            }
+        });
+        let settings = DevelopSettings::default();
+        let old = prepare(&and_without(&with), &settings, false).unwrap();
+        let new = prepare(&with, &settings, false).unwrap();
+        assert!(new.headroom > 1.0);
+        assert!(
+            old.hot_pixels.is_some_and(|s| s.hot > 0),
+            "{:?}",
+            old.hot_pixels
+        );
+        assert_eq!(old.hot_pixels, new.hot_pixels);
+        let i = 40 * w + 40;
+        assert!(old.samples[i] < 0.5, "repaired: {}", old.samples[i]);
+        assert_eq!(old.samples[i].to_bits(), new.samples[i].to_bits());
+        assert_eq!(old.samples, new.samples);
+    }
+
+    /// A Canon frame with nothing at the develop's old flag takes no
+    /// headroom at all: the same prepared mosaic to the bit, its
+    /// headroom one.
+    #[test]
+    fn an_unblown_frame_takes_no_headroom() {
+        let with = lit_frame(64, 64, 512.0, 14008.0, true, |x, y, c| {
+            (0.9 + 0.08 * grain(x, y)) * [0.6, 1.0, 0.5][c]
+        });
+        let settings = DevelopSettings::default();
+        let old = prepare(&and_without(&with), &settings, true).unwrap();
+        let new = prepare(&with, &settings, true).unwrap();
+        assert_eq!(new.headroom, 1.0);
+        assert_eq!(old.samples, new.samples);
+        assert_eq!(format!("{:?}", old.noise), format!("{:?}", new.noise));
+    }
+
+    /// A field every channel of which reached the ADC's top is rebuilt
+    /// neutral, at the brightest gain times the headroom: as bright as
+    /// the recovered edge round it can be, and no cast.
+    #[test]
+    fn a_field_blown_past_the_saturation_stays_neutral() {
+        for (black, white) in CANON_LEVELS {
+            let frame = lit_frame(8, 8, black, white, true, |_, _, _| 2.0);
+            let out = develop(&frame, &DevelopSettings::default()).unwrap();
+            let headroom = frame.levels.headroom();
+            assert_eq!(out.highlights.unwrap().clipped, 64);
+            for px in out.image.pixels() {
+                for v in px {
+                    assert!((v - 4.0 * headroom).abs() < 5e-2 * headroom, "{px:?}");
+                }
+            }
+        }
+    }
+
+    /// A grey bright enough to take green past the white and under the
+    /// saturation, red and blue under theirs: green is light, nothing
+    /// is rebuilt, and the grey comes out grey where without the
+    /// headroom green was flagged and rebuilt.
+    #[test]
+    fn a_channel_over_the_white_and_under_the_saturation_is_read() {
+        for (black, white) in CANON_LEVELS {
+            let gains = [2.0, 1.0, 4.0];
+            // Halfway from the white to where opposed now flags.
+            let headroom = lit_frame(2, 2, black, white, true, |_, _, _| 0.0)
+                .levels
+                .headroom();
+            let level = 1.0 + 0.5 * (headroom * highlights::CLIP_MAGIC - 1.0);
+            let with = lit_frame(16, 16, black, white, true, |_, _, c| level / gains[c]);
+            let out = develop(&with, &DevelopSettings::default()).unwrap();
+            assert_eq!(out.highlights.unwrap().clipped, 0);
+            for px in out.image.pixels() {
+                let spread = px.iter().copied().fold(0.0f32, f32::max)
+                    - px.iter().copied().fold(f32::INFINITY, f32::min);
+                assert!(spread < 2e-3 * level, "{px:?}");
+            }
+            let without = RawFrame {
+                levels: Levels {
+                    saturation: None,
+                    ..with.levels.clone()
+                },
+                ..with.clone()
+            };
+            let old = develop(&without, &DevelopSettings::default()).unwrap();
+            assert!(old.highlights.unwrap().clipped > 0);
+        }
     }
 }

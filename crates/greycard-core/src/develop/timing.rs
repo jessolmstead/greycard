@@ -273,7 +273,10 @@ fn ops_alone() {
         });
     }
     if wants("highlights") || wants("segments") {
-        let clips = prepared.gains.map(|g| g * highlights::CLIP_MAGIC);
+        // The clips the develop rebuilds at, the headroom's included.
+        let clips = prepared
+            .gains
+            .map(|g| g * prepared.headroom * highlights::CLIP_MAGIC);
         if wants("highlights") {
             time("highlights", runs, || {
                 let t = Instant::now();

@@ -257,6 +257,14 @@ pub struct Levels {
     /// active area; `None` for every other raw, and for a DNG with no
     /// such tags.
     pub black_deltas: Option<BlackDeltas>,
+    /// Where the sensor stops being trusted, in the units of the
+    /// samples, when that is above `white`: the white stays the
+    /// exposure scale (a sample at it is 1.0), and what lies between
+    /// it and this level is real light the highlight reconstruction
+    /// reads ([`Levels::headroom`]). `None`, the white: every camera
+    /// but the few whose declared white sits under their clip
+    /// (`decode`'s table).
+    pub saturation: Option<f32>,
 }
 
 impl Levels {
@@ -268,6 +276,42 @@ impl Levels {
         match &self.black_deltas {
             Some(d) => pattern + d.column(col) + d.row(row),
             None => pattern,
+        }
+    }
+
+    /// How far over 1.0 a normalized sample may still be real: the
+    /// saturation level over the white, both from the black, at the
+    /// position where that is least; 1.0 with no saturation level, a
+    /// black with deltas, or a saturation not above every white.
+    pub fn headroom(&self) -> f32 {
+        let Some(saturation) = self.saturation else {
+            return 1.0;
+        };
+        if self.black_deltas.is_some() {
+            return 1.0;
+        }
+        let (black, white) = (&self.black, &self.white);
+        // Every pairing of the two patterns' cells and channels.
+        let (w, h) = (black.width * white.width, black.height * white.height);
+        let cpp = black.cpp.max(white.cpp);
+        let mut least = f32::INFINITY;
+        for y in 0..h {
+            for x in 0..w {
+                for c in 0..cpp {
+                    let b = black.at(y, x, c % black.cpp);
+                    let top = white.at(y, x, c % white.cpp);
+                    let range = top - b;
+                    if !(range > 0.0 && saturation > top) {
+                        return 1.0;
+                    }
+                    least = least.min((saturation - b) / range);
+                }
+            }
+        }
+        if least.is_finite() {
+            least.max(1.0)
+        } else {
+            1.0
         }
     }
 }
@@ -1257,6 +1301,7 @@ mod tests {
                 black: LevelPattern::uniform(100.0, 1),
                 white: LevelPattern::uniform(1000.0, 1),
                 black_deltas: None,
+                saturation: None,
             },
             as_shot_coefficients: None,
             calibrations: Vec::new(),

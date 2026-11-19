@@ -407,6 +407,10 @@ pub struct PrepareOptions {
     /// Whether the samples are clipped at the ceiling after the gains:
     /// every develop but a merge's frames.
     pub clip: bool,
+    /// Whether a CA correction follows in a stage of its own: the
+    /// prepare then keeps the mosaic the correction is measured on
+    /// when it is not the samples (`Prepared::ca_reference`).
+    pub ca_follows: bool,
 }
 
 impl PartialEq for PrepareOptions {
@@ -442,6 +446,7 @@ impl PartialEq for PrepareOptions {
             && *orientation == b.orientation
             && self.measure_noise == other.measure_noise
             && self.clip == other.clip
+            && self.ca_follows == other.ca_follows
     }
 }
 
@@ -873,6 +878,7 @@ impl Steps {
                     settings: p.settings.clone(),
                     measure_noise: p.measure_noise && !p.clip,
                     clip: p.clip,
+                    ca_follows: p.ca_follows,
                 }))),
                 Step::Op(Stage::Learned(_)) => {
                     let Some(Stage::Prepare(p)) = self.ops().next() else {
@@ -1071,6 +1077,12 @@ pub fn stages(
                 s.skip("the denoise", Skip::Reduced);
             }
             let denoise = denoise.filter(|_| !reduced);
+            // A file whose warps correct each color has corrected its
+            // lateral aberration itself, as Adobe's reader takes it: the
+            // automatic correction would move red and blue a second time.
+            let ca = settings
+                .chromatic_aberration
+                .filter(|_| facts.measures_ca());
             s.op(Stage::Prepare(Box::new(PrepareOptions {
                 settings: DevelopSettings {
                     chromatic_aberration: None,
@@ -1080,16 +1092,9 @@ pub fn stages(
                 },
                 measure_noise: learned.is_some(),
                 clip: true,
+                ca_follows: ca.is_some(),
             })));
-            // A file whose warps correct each color has corrected its
-            // lateral aberration itself, as Adobe's reader takes it: the
-            // automatic correction would move red and blue a second time.
-            s.op_if(
-                settings
-                    .chromatic_aberration
-                    .filter(|_| facts.measures_ca())
-                    .map(Stage::Ca),
-            );
+            s.op_if(ca.map(Stage::Ca));
             match (bin, learned) {
                 (b, _) if b > 1 && pattern.is_some() => s.op(Stage::Bin(b)),
                 (_, Some(model)) => s.op(Stage::Learned(model)),
@@ -1300,6 +1305,7 @@ fn merge_input(edit: &Edit, merge: &MergeInput, facts: &Facts) -> Steps {
         },
         measure_noise: true,
         clip: false,
+        ca_follows: false,
     })));
     s.op_if(
         settings

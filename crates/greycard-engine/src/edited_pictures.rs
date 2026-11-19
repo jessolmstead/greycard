@@ -538,7 +538,7 @@ impl Edited {
     /// the develop reads now, the file's camera frame taken in as the
     /// index takes it (`greycard_edit::key::framed_key`).
     pub fn key_of(&self, path: &Path, edit: &Edit) -> u64 {
-        self.key_under(edit, camera_of(path))
+        self.key_under(edit, path, camera_of(path))
     }
 
     /// [`Edited::key_of`] with the camera's frame as known, nothing of
@@ -546,10 +546,15 @@ impl Edited {
     /// read yet gets its edit's own key, a hint the thumbnail's read
     /// corrects.
     pub fn key_known(&self, path: &Path, edit: &Edit) -> u64 {
-        self.key_under(edit, camera_known(path))
+        self.key_under(edit, path, camera_known(path))
     }
 
-    fn key_under(&self, edit: &Edit, camera: Option<greycard_core::raw::CameraFrame>) -> u64 {
+    fn key_under(
+        &self,
+        edit: &Edit,
+        path: &Path,
+        camera: Option<greycard_core::raw::CameraFrame>,
+    ) -> u64 {
         let lenses = self.lenses();
         let key = match &*self.dirs.lock().expect("key dirs") {
             Some((looks, profiles)) => greycard_edit_io::key::develop_key_in(
@@ -560,6 +565,8 @@ impl Edited {
             ),
             None => greycard_edit_io::key::develop_key(edit, lenses.as_deref()),
         };
+        let key =
+            greycard_edit::key::headroom_key(key, greycard_core::decode::may_have_headroom(path));
         greycard_edit::key::framed_key(
             key,
             edit.geometry.crop.is_none(),
@@ -1375,6 +1382,22 @@ pub fn keep(edited: &Edited, job: Keeping, done: impl FnOnce(Key)) {
 pub mod tests {
     use super::*;
     use crate::testing::edited::{Heard, rig};
+
+    /// A CR3's pictures are keyed with the headroom's version, as its
+    /// index row is, and every other file's keep the edit's own key;
+    /// nothing is read for it.
+    #[test]
+    fn a_cr3s_pictures_take_the_headroom_in() {
+        let edited = Edited::new(Arc::new(Mutex::new(None)));
+        let edit = Edit::default();
+        let nef = Path::new("not-there/a.NEF");
+        let cr3 = Path::new("not-there/a.CR3");
+        let own = edited.key_known(nef, &edit);
+        assert_eq!(edited.key_of(nef, &edit), own);
+        let headroom = greycard_edit::key::headroom_key(own, true);
+        assert_eq!(edited.key_known(cr3, &edit), headroom);
+        assert_eq!(edited.key_of(cr3, &edit), headroom);
+    }
 
     /// What the camera's frames are known by: a read only where asked
     /// for one (never for the window's thread, nor a picture from the

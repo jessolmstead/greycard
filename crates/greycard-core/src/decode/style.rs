@@ -669,6 +669,144 @@ fn canon_style_name(code: i64) -> (String, bool) {
     (name.to_string(), code != 0x87)
 }
 
+/// FileInfo, an int16s array; ShutterMode is element 23 (0
+/// mechanical, 1 electronic first curtain, 2 electronic).
+const CANON_FILE_INFO: u16 = 0x0093;
+const CANON_SHUTTER_MODE: usize = 23;
+/// LightingOpt's LongExposureNoiseReduction (0 off, 1 auto, 2 on) and
+/// DualPixelRaw (0 off, 1 on).
+const CANON_LONG_EXPOSURE_NR: usize = 4;
+const CANON_DUAL_PIXEL_RAW: usize = 11;
+/// HDRInfo, an int32s array; HDR is element 1 (0 off).
+const CANON_HDR_INFO: u16 = 0x4025;
+const CANON_HDR: usize = 1;
+/// AspectInfo, an int32u array: the aspect, then the frame's width
+/// and height.
+const CANON_ASPECT_INFO: u16 = 0x009a;
+
+/// The capture modes a CR3's maker note records that can change where
+/// its sensor clips, each `None` when the note does not say. Indexes
+/// as exiv2's CanonFi, CanonLiOp, and CanonHdr groups and its
+/// AspectInfo, checked against exiv2 on R6 II and R5 II files. Public
+/// only as what [`canon_modes_of_note`] answers, for the fuzz target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CanonModes {
+    pub(crate) shutter: Option<i64>,
+    pub(crate) highlight_tone_priority: Option<i64>,
+    pub(crate) long_exposure_nr: Option<i64>,
+    pub(crate) dual_pixel_raw: Option<i64>,
+    pub(crate) hdr: Option<i64>,
+    /// The aspect code, the width, and the height.
+    pub(crate) aspect: Option<(i64, i64, i64)>,
+}
+
+/// [`CanonModes`] of a CR3 in `file`; `None` when it has no maker
+/// note or one [`canon_modes_of_note`] refuses. The note's bytes are
+/// read again through that checked reader, the path the fuzz target
+/// takes, not through the TIFF rawler made of them on its walk.
+pub(crate) fn canon_modes(mut file: impl Read + Seek) -> Option<CanonModes> {
+    let filebox = FileBox::parse(&mut file).ok()?;
+    canon_modes_of_note(&filebox.moov.cr3desc?.cmt3.data)
+}
+
+/// [`CanonModes`] of a CMT3 box's contents, a TIFF, checked
+/// ([`note_fits`]) and then read as rawler reads the box: what
+/// [`canon_modes`] reads a CR3's note by, and what the fuzz target
+/// reaches.
+pub fn canon_modes_of_note(bytes: &[u8]) -> Option<CanonModes> {
+    if !note_fits(bytes) {
+        return None;
+    }
+    let note =
+        ::rawler::formats::tiff::GenericTiffReader::new_with_buffer(bytes, 0, 0, None).ok()?;
+    Some(modes_of(&note))
+}
+
+/// Whether a TIFF's first directory and every value it points to lie
+/// inside `bytes`, and it points to no other directory: rawler's
+/// reader sizes a value by the count it is given, so a count past the
+/// buffer asks it for gigabytes before it reads a byte. Offsets are
+/// summed in u64, so none wraps on a 32-bit target.
+fn note_fits(bytes: &[u8]) -> bool {
+    let range = |at: u64, len: u64| {
+        let start = usize::try_from(at).ok()?;
+        let end = usize::try_from(at.checked_add(len)?).ok()?;
+        bytes.get(start..end)
+    };
+    let u16_at = |at: u64, le: bool| {
+        let b: [u8; 2] = range(at, 2)?.try_into().ok()?;
+        Some(if le {
+            u16::from_le_bytes(b)
+        } else {
+            u16::from_be_bytes(b)
+        })
+    };
+    let u32_at = |at: u64, le: bool| {
+        let b: [u8; 4] = range(at, 4)?.try_into().ok()?;
+        Some(if le {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        })
+    };
+    let le = match bytes.get(..2) {
+        Some(b"II") => true,
+        Some(b"MM") => false,
+        _ => return false,
+    };
+    let fits = || -> Option<bool> {
+        let ifd = u64::from(u32_at(4, le)?);
+        let n = u64::from(u16_at(ifd, le)?);
+        for k in 0..n {
+            let e = ifd + 2 + 12 * k;
+            let size: u64 = match u16_at(e + 2, le)? {
+                1 | 2 | 6 | 7 => 1,
+                3 | 8 => 2,
+                4 | 9 | 11 | 13 => 4,
+                5 | 10 | 12 => 8,
+                _ => return Some(false),
+            };
+            let len = size * u64::from(u32_at(e + 4, le)?);
+            if len > 4 {
+                let at = u64::from(u32_at(e + 8, le)?);
+                if at + len > bytes.len() as u64 {
+                    return Some(false);
+                }
+            }
+            // A directory (type 13, or a tag rawler follows: SubIFDs,
+            // the Exif pointer) points to another: none in a note we
+            // read, so no walk of offsets it was not given.
+            if u16_at(e + 2, le)? == 13 || matches!(u16_at(e, le)?, 0x014a | 0x8769) {
+                return Some(false);
+            }
+        }
+        Some(u32_at(ifd + 2 + 12 * n, le)? == 0)
+    };
+    fits().unwrap_or(false)
+}
+
+/// The modes read off a Canon maker note.
+fn modes_of(note: &::rawler::formats::tiff::GenericTiffReader) -> CanonModes {
+    let at = |tag, index, read: fn(&Value, usize) -> Option<i64>| {
+        note.get_entry(tag).and_then(|e| read(&e.value, index))
+    };
+    let long = |index| {
+        note.get_entry(CANON_ASPECT_INFO)
+            .and_then(|e| i32_at(&e.value, index))
+    };
+    CanonModes {
+        shutter: at(CANON_FILE_INFO, CANON_SHUTTER_MODE, i16_at),
+        highlight_tone_priority: at(CANON_LIGHTING_OPT, CANON_HIGHLIGHT_TONE_PRIORITY, i32_at),
+        long_exposure_nr: at(CANON_LIGHTING_OPT, CANON_LONG_EXPOSURE_NR, i32_at),
+        dual_pixel_raw: at(CANON_LIGHTING_OPT, CANON_DUAL_PIXEL_RAW, i32_at),
+        hdr: at(CANON_HDR_INFO, CANON_HDR, i32_at),
+        aspect: long(0)
+            .zip(long(1))
+            .zip(long(2))
+            .map(|((a, w), h)| (a, w, h)),
+    }
+}
+
 fn canon_cr3(mut file: impl Read + Seek) -> Result<CameraStyle> {
     let filebox = FileBox::parse(&mut file).map_err(boxes_error)?;
     let Some(desc) = filebox.moov.cr3desc else {
@@ -2382,6 +2520,188 @@ mod tests {
             panic!("an IFD past the end is an error");
         };
         assert!(message.starts_with("merge tag: "), "{message}");
+    }
+
+    /// A CMT3 box's TIFF holding the four records the capture modes
+    /// are read from, each value at the index exiv2's tables give it
+    /// and every other element a marker that is never the answer.
+    pub(crate) fn mode_note(shutter: i16, htp: i32, lenr: i32, dpr: i32, hdr: i32) -> Vec<u8> {
+        mode_note_as(true, [shutter, 0], [htp, lenr, dpr, hdr], None, false)
+    }
+
+    /// [`mode_note`] in either byte order (`modes` HTP, LENR, DPR, and
+    /// HDR), with an `extra` entry of the tag and type given, count 1,
+    /// whose value is the offset of a one-entry directory after the data,
+    /// and with the next-directory word pointing to that one when
+    /// `next`. Every offset in it lies inside the note.
+    fn mode_note_as(
+        le: bool,
+        [shutter, _]: [i16; 2],
+        [htp, lenr, dpr, hdr]: [i32; 4],
+        extra: Option<(u16, u16)>,
+        next: bool,
+    ) -> Vec<u8> {
+        let u16b = |v: u16| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+        let u32b = |v: u32| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+        let i16b = |v: i16| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+        let i32b = |v: i32| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+        // (tag, type, count, bytes)
+        let mut file_info = [-7i16; 24];
+        file_info[23] = shutter;
+        let mut lighting = [-7i32; 12];
+        lighting[3] = htp;
+        lighting[4] = lenr;
+        lighting[11] = dpr;
+        let entries: Vec<(u16, u16, u32, Vec<u8>)> = vec![
+            (
+                0x0093,
+                8,
+                24,
+                file_info.iter().flat_map(|&v| i16b(v)).collect(),
+            ),
+            (
+                0x009a,
+                4,
+                5,
+                [0u32, 6000, 4000, 0, 0]
+                    .iter()
+                    .flat_map(|&v| u32b(v))
+                    .collect(),
+            ),
+            (
+                0x4018,
+                9,
+                12,
+                lighting.iter().flat_map(|&v| i32b(v)).collect(),
+            ),
+            (
+                0x4025,
+                9,
+                2,
+                [-7i32, hdr].iter().flat_map(|&v| i32b(v)).collect(),
+            ),
+        ];
+        let n = entries.len() + usize::from(extra.is_some());
+        let ifd_len = 2 + n * 12 + 4;
+        let empty_at = (8 + ifd_len + entries.iter().map(|e| e.3.len()).sum::<usize>()) as u32;
+        let mut out = if le { b"II*\0" } else { b"MM\0*" }.to_vec();
+        out.extend_from_slice(&u32b(8));
+        let mut data_at = 8 + ifd_len;
+        let mut data = Vec::new();
+        out.extend_from_slice(&u16b(n as u16));
+        for (tag, typ, count, bytes) in &entries {
+            out.extend_from_slice(&u16b(*tag));
+            out.extend_from_slice(&u16b(*typ));
+            out.extend_from_slice(&u32b(*count));
+            out.extend_from_slice(&u32b(data_at as u32));
+            data_at += bytes.len();
+            data.extend_from_slice(bytes);
+        }
+        if let Some((tag, typ)) = extra {
+            out.extend_from_slice(&u16b(tag));
+            out.extend_from_slice(&u16b(typ));
+            out.extend_from_slice(&u32b(1));
+            out.extend_from_slice(&u32b(empty_at));
+        }
+        out.extend_from_slice(&u32b(if next { empty_at } else { 0 }));
+        out.extend_from_slice(&data);
+        assert_eq!(out.len(), empty_at as usize);
+        if extra.is_none() && !next {
+            return out;
+        }
+        // The directory pointed to: one short (rawler wants an entry),
+        // no next.
+        out.extend_from_slice(&u16b(1));
+        out.extend_from_slice(&u16b(0x0001));
+        out.extend_from_slice(&u16b(3));
+        out.extend_from_slice(&u32b(1));
+        out.extend_from_slice(&u32b(0));
+        out.extend_from_slice(&u32b(0));
+        out
+    }
+
+    /// A note rawler reads but [`note_fits`] refuses has no modes, so a
+    /// note pointing anywhere but its own values is never walked; one
+    /// in big-endian order is read as the little-endian one. Without
+    /// the check each refused note here would be read.
+    #[test]
+    fn a_note_pointing_past_its_values_is_refused() {
+        let read = |note: &[u8]| {
+            let tiff = GenericTiffReader::new_with_buffer(note, 0, 0, None).unwrap();
+            modes_of(&tiff)
+        };
+        let on = ([2, 0], [1, 2, 1, 1]);
+        let want = canon_modes_of_note(&mode_note(2, 1, 2, 1, 1)).unwrap();
+        let big = mode_note_as(false, on.0, on.1, None, false);
+        assert_eq!(read(&big), want);
+        assert_eq!(canon_modes_of_note(&big), Some(want));
+        for (what, extra, next) in [
+            ("a next directory", None, true),
+            ("SubIFDs", Some((0x014a, 4)), false),
+            ("the Exif pointer", Some((0x8769, 4)), false),
+            ("a directory value", Some((0x7777, 13)), false),
+        ] {
+            for le in [true, false] {
+                let note = mode_note_as(le, on.0, on.1, extra, next);
+                assert_eq!(read(&note), want, "{what}: rawler reads it");
+                assert_eq!(canon_modes_of_note(&note), None, "{what}");
+            }
+        }
+    }
+
+    /// Each mode is read at its own index, as exiv2's tables have it:
+    /// a value moved to a neighbor is read as the marker, never as off.
+    #[test]
+    fn the_capture_modes_are_read_at_their_indexes() {
+        let modes = canon_modes_of_note(&mode_note(2, 1, 2, 1, 1)).unwrap();
+        assert_eq!(
+            modes,
+            CanonModes {
+                shutter: Some(2),
+                highlight_tone_priority: Some(1),
+                long_exposure_nr: Some(2),
+                dual_pixel_raw: Some(1),
+                hdr: Some(1),
+                aspect: Some((0, 6000, 4000)),
+            }
+        );
+        let off = canon_modes_of_note(&mode_note(0, 0, 0, 0, 0)).unwrap();
+        assert_eq!(off.highlight_tone_priority, Some(0));
+        assert_eq!(off.hdr, Some(0));
+        // Not a TIFF, no modes; a TIFF with none of the records, none said.
+        assert_eq!(canon_modes_of_note(b"not a tiff"), None);
+        let empty = canon_modes_of_note(&mode_note(0, 0, 0, 0, 0)[..8]);
+        assert!(empty.is_none_or(|m| m.shutter.is_none() && m.aspect.is_none()));
+    }
+
+    /// The fuzz target's checks on its seed cut short at every length
+    /// and with every byte flipped: never a panic, the same answer twice.
+    #[test]
+    fn mutated_notes_never_panic() {
+        let seed = mode_note(2, 1, 2, 1, 1);
+        for n in 0..seed.len() {
+            let _ = canon_modes_of_note(&seed[..n]);
+        }
+        for i in 0..seed.len() {
+            for bit in 0..8 {
+                let mut m = seed.clone();
+                m[i] ^= 1 << bit;
+                assert_eq!(canon_modes_of_note(&m), canon_modes_of_note(&m));
+            }
+        }
+    }
+
+    /// Writes the fuzz target's seed (a note with every mode on) into the
+    /// folder `GREYCARD_MODES_SEEDS` names.
+    #[test]
+    #[ignore]
+    fn write_mode_seeds() {
+        let Some(dir) = std::env::var_os("GREYCARD_MODES_SEEDS") else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::write(dir.join("seed-note-modes-on"), mode_note(2, 1, 2, 1, 1)).unwrap();
+        std::fs::write(dir.join("seed-note-modes-off"), mode_note(1, 0, 0, 0, 0)).unwrap();
     }
 
     #[test]

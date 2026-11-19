@@ -13,6 +13,12 @@ design note behind it.
   Slint 1.19, no longer a fork
   ([§715](https://github.com/jessolmstead/greycard/blob/master/docs/notes/715-slint-1-19-and-both-forks-gone.md)).
 
+### Develop
+
+- Canon R6 II and R5 II raws keep the light between Canon's white level
+  and the sensor's clip, up to 0.17 stops more highlight
+  ([§716](https://github.com/jessolmstead/greycard/blob/master/docs/notes/716-light-between-canons-white-and-its-clip.md)).
+
 ### Fixes
 
 - A graphics card that the learned denoiser crashes rests its tiers,

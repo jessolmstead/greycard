@@ -21,9 +21,12 @@ crash.
 | `dng_opcodes`        | a DNG's opcode list, its gain maps applied to a buffer       |
 | `dcp`                | a DCP camera profile, its map and look table on pixels       |
 | `focus_point`        | a raw's head to its focus point, every maker read            |
+| `canon_modes`        | a CR3's maker note to the capture modes its decode reads     |
 
 The seeds in `corpus/<target>/seed-*` are taken from the crates' own
-tests and fixtures. What a run adds to a corpus is ignored by git.
+tests and fixtures (`canon_modes`'s notes by the core's ignored
+`write_mode_seeds`, with `GREYCARD_MODES_SEEDS` naming the folder).
+What a run adds to a corpus is ignored by git.
 `dcp` has none: a camera profile is not ours to commit, so the target
 lays each input over a small profile it builds itself
 (`greycard_core::testing::dcp`). Without cargo-fuzz, the same checks

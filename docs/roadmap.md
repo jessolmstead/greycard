@@ -217,7 +217,6 @@ the reasoning lives in `docs/notes.md`.
 0.13.0: Canon highlights that hold more, and a learned denoiser that
 steps aside on a card it cannot run on.
 
-- [ ] Canon raws keep the headroom over their declared white level
 - [ ] An edit from a newer version opens in an older one
 - [ ] The editor's crate broken up, its first steps
 - [ ] The window's tests find a control by its id

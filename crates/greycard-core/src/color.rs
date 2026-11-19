@@ -1101,6 +1101,7 @@ pub(crate) mod tests {
                 black: crate::raw::LevelPattern::uniform(0.0, 1),
                 white: crate::raw::LevelPattern::uniform(1.0, 1),
                 black_deltas: None,
+                saturation: None,
             },
             as_shot_coefficients: Some([1.0, 1.0, 1.0]),
             calibrations,

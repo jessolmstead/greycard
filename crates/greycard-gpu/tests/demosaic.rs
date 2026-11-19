@@ -296,6 +296,50 @@ fn the_amaze_dual_matches_the_reference() {
     }
 }
 
+/// A balanced mosaic as a frame with headroom leaves it: each channel
+/// past its gain, cut at the gain times the headroom (1.15, a little
+/// past Canon's 1.123 at ISO 100), a blown field at the cut beside light under it. The duals
+/// hold to the reference as they do under one: nothing on the device
+/// takes one as a clip. Not the RCD dual's tile threshold: no tile here
+/// is flat enough, so that dual is RCD alone, and RCD on a card parts
+/// from the reference within two photosites of a plateau cut at any
+/// level (on the 5070 Ti, RGGB: 238 samples past 1e-3 cut at 0.8 of
+/// the gains, 115 at 1, 634 at 1.15, 547 at 1.6, none uncut; every one
+/// beside a cut sample). The plateau's, not the headroom's.
+#[test]
+fn the_duals_hold_past_one_as_the_headroom_leaves_the_mosaic() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let (headroom, gains) = (1.15f32, [2.1f32, 1.0, 1.6]);
+    for (k, name) in BAYER.iter().enumerate() {
+        let p = pattern(name);
+        let (w, h) = (300, 270);
+        let mut m = mosaic(w, h, &p, 0.01, 77 + k as u64);
+        for (i, v) in m.iter_mut().enumerate() {
+            let (x, y) = (i % w, i / w);
+            let c = match p.color_at(y, x) {
+                CfaColor::Red => 0,
+                CfaColor::Green => 1,
+                _ => 2,
+            };
+            // Brighter to the right, past every channel's cut there.
+            let lift = 0.6 + 2.0 * x as f32 / w as f32;
+            *v = (*v * lift * gains[c]).min(gains[c] * headroom);
+        }
+        assert!(m.iter().any(|&v| v > 2.1), "{name}: past the largest gain");
+        for contrast in [DualContrast::Fixed(0.2), DualContrast::Tiles] {
+            let (cpu, _) = demosaic_dual(&m, w, h, &p, DemosaicMethod::Amaze, contrast).unwrap();
+            let gpu = ctx.demosaic_amaze_dual(&m, w, h, &p, contrast).unwrap();
+            amaze_dual_holds(&cpu, &gpu, w, &format!("{name} past one {contrast:?}"));
+        }
+        let contrast = DualContrast::Fixed(0.2);
+        let (cpu, _) = demosaic_dual(&m, w, h, &p, DemosaicMethod::Rcd, contrast).unwrap();
+        let gpu = ctx.demosaic_rcd_dual(&m, w, h, &p, contrast).unwrap();
+        real_frame_holds(&cpu, &gpu, w, &format!("{name} past one RCD"));
+    }
+}
+
 /// The AMaZE dual's bound: no more than [`AMAZE_SHARE`] of the samples
 /// past 1e-3 of the reference's largest value, and none past a tenth.
 fn amaze_dual_holds(cpu: &[f32], gpu: &[f32], w: usize, what: &str) {

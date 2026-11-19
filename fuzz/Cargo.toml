@@ -113,3 +113,10 @@ path = "fuzz_targets/focus_point.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "canon_modes"
+path = "fuzz_targets/canon_modes.rs"
+test = false
+doc = false
+bench = false

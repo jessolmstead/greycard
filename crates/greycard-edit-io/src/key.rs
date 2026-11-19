@@ -111,7 +111,8 @@ fn contents(path: &Path) -> Option<[u8; 32]> {
 /// guide ([`SHARPEN_GUIDE`]), the Midtones bell's shape
 /// ([`MIDTONES_SHAPE`]), the whites' shape ([`WHITES_SHAPE`]), an
 /// aspect's framing with no crop stored
-/// ([`ASPECT_FRAME`]), the lens database's name as the caller gives
+/// ([`ASPECT_FRAME`]), the saturation table's version
+/// ([`greycard_core::decode::HEADROOM`]), the lens database's name as the caller gives
 /// it, and the look and profile directories as they stand (each file's
 /// name, length and modification time; not their contents, which only
 /// the files an edit names are read for). A store of keys made under
@@ -167,7 +168,9 @@ pub fn keys_made_under_in(
     let files = hasher.finalize();
     format!(
         "recipe {DEVELOP_RECIPE}; masks {SKY_PIPELINE} {LANDSCAPE_PIPELINE} {PART_PIPELINE} \
-         {PERSON_EDGE}; {SHARPEN_GUIDE}; {MIDTONES_SHAPE}; {WHITES_SHAPE}; {ASPECT_FRAME}; lenses {lenses:?}; files {}",
+         {PERSON_EDGE}; {SHARPEN_GUIDE}; {MIDTONES_SHAPE}; {WHITES_SHAPE}; {ASPECT_FRAME}; {}; \
+         lenses {lenses:?}; files {}",
+        greycard_core::decode::HEADROOM,
         &files.to_hex()[..16]
     )
 }
@@ -271,7 +274,13 @@ mod tests {
         );
         // Each part some edits alone take into their key: raised, the
         // index's keys are settled again (`settle_develop_keys`).
-        for part in [SHARPEN_GUIDE, MIDTONES_SHAPE, WHITES_SHAPE, ASPECT_FRAME] {
+        for part in [
+            SHARPEN_GUIDE,
+            MIDTONES_SHAPE,
+            WHITES_SHAPE,
+            ASPECT_FRAME,
+            greycard_core::decode::HEADROOM,
+        ] {
             assert!(first.contains(&format!("; {part};")), "{part}: {first}");
         }
         assert_eq!(under(Some("lensfun 1")), first, "nothing moved");

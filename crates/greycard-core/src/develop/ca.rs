@@ -216,6 +216,142 @@ pub fn fit_ca(
     Ok((current, fit))
 }
 
+/// [`fit_ca`] on `measured` and [`apply_ca`] of that fit to `samples`,
+/// to the bit, where the two mosaics differ in few places: each pass
+/// resamples `samples` only in the tiles whose reads reach a sample
+/// where the two differ, and takes the measured mosaic's pass
+/// everywhere else, which is the same there. What a frame with
+/// headroom corrects by on the CPU: measured on the mosaic it makes
+/// without the headroom, which differs from its own only where the
+/// develop without it rebuilt. A Bayer mosaic of the same size;
+/// returns `samples` corrected and the stats of `measured`.
+pub fn fit_ca_carrying(
+    measured: &[f32],
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    options: &CaOptions,
+) -> Result<(Vec<f32>, CaStats)> {
+    check(measured, width, height, pattern)?;
+    check(samples, width, height, pattern)?;
+    let mut stats = CaStats::default();
+    if width < MIN_SIDE || height < MIN_SIDE {
+        return Ok((samples.to_vec(), stats));
+    }
+    let mut current_m = measured.to_vec();
+    let mut current_n = samples.to_vec();
+    let mut corrected = false;
+    for it in 0..options.iterations.max(1) {
+        let (next_m, pass, made) = one_pass(&current_m, width, height, pattern)?;
+        if it == 0 {
+            stats.max_shift = pass.max_shift;
+        }
+        stats.corrected = pass.corrected;
+        stats.blocks = pass.blocks;
+        stats.order = pass.order;
+        let Some(made) = made else {
+            break;
+        };
+        let redo = tiles_reaching(&current_m, &current_n, width, height);
+        let image = Image {
+            samples: &current_n,
+            width,
+            height,
+            pattern,
+        };
+        let mut next_n = next_m.clone();
+        resample_tiles(&image, &made, &redo, &mut next_n);
+        current_m = next_m;
+        current_n = next_n;
+        corrected = true;
+    }
+    if corrected && options.avoid_color_shift && stats.corrected {
+        let factors = color_shift_factors(measured, &current_m, width, height, pattern);
+        apply_color_shift(&mut current_n, &factors, width, pattern);
+    }
+    Ok((current_n, stats))
+}
+
+/// Per tile, in [`resample`]'s order, whether anything it reads (its
+/// box of [`TS`], reflected at the edges, so taken a border and one
+/// wider each way) holds a sample where `a` and `b` differ.
+fn tiles_reaching(a: &[f32], b: &[f32], width: usize, height: usize) -> Vec<bool> {
+    // The rows each differing sample sits on, by column: a row's
+    // first and last differing column, enough to test a box.
+    let rows: Vec<Option<(usize, usize)>> = a
+        .par_chunks(width)
+        .zip(b.par_chunks(width))
+        .map(|(ra, rb)| {
+            let differ = |x: &usize| ra[*x].to_bits() != rb[*x].to_bits();
+            let first = (0..width).find(differ)?;
+            let last = (0..width).rev().find(differ)?;
+            Some((first, last))
+        })
+        .collect();
+    // A box test by the row's span is loose for a row whose differing
+    // samples sit apart; loose only redoes a tile, never skips one.
+    let reach = |o: isize, n: usize| {
+        let lo = (o - BORDER as isize - 1).max(0) as usize;
+        let hi = ((o + TS as isize + BORDER as isize + 1).max(0) as usize).min(n);
+        (lo, hi)
+    };
+    let (tops, lefts) = (origins(height), origins(width));
+    tops.iter()
+        .flat_map(|&t| lefts.iter().map(move |&l| (t, l)))
+        .map(|(t, l)| {
+            let (r0, r1) = reach(t, height);
+            let (c0, c1) = reach(l, width);
+            rows[r0..r1]
+                .iter()
+                .flatten()
+                .any(|&(first, last)| first < c1 && last >= c0)
+        })
+        .collect()
+}
+
+/// [`resample`]'s pass of `image` by `fit` in the tiles `redo` names,
+/// each tile's interior written into `out` and kept at or above zero;
+/// every other sample of `out` left as it is.
+fn resample_tiles(image: &Image<'_>, fit: &Fit, redo: &[bool], out: &mut [f32]) {
+    let (width, height) = (image.width, image.height);
+    let block_of = |t: isize, l: isize| {
+        let v = (t + BORDER as isize) as usize / STEP + 1;
+        let h = (l + BORDER as isize) as usize / STEP + 1;
+        (v, h)
+    };
+    let (tops, lefts) = (origins(height), origins(width));
+    let tiles: Vec<(isize, isize)> = tops
+        .iter()
+        .flat_map(|&t| lefts.iter().map(move |&l| (t, l)))
+        .zip(redo)
+        .filter(|(_, r)| **r)
+        .map(|(tile, _)| tile)
+        .collect();
+    let outs: Vec<TileOut> = tiles
+        .par_iter()
+        .map_init(
+            || Scratch::tracing(false),
+            |scratch, &(t, l)| {
+                let (v, h) = block_of(t, l);
+                scratch.correct(image, t, l, fit.shift_at(v, h))
+            },
+        )
+        .collect();
+    for tile in outs.into_iter().filter(|t| t.cols > 0) {
+        for r in 0..tile.rows {
+            let at = (tile.row0 + r) * width + tile.col0;
+            let from = r * tile.cols;
+            for (o, v) in out[at..at + tile.cols]
+                .iter_mut()
+                .zip(&tile.data[from..from + tile.cols])
+            {
+                *o = v.max(0.0);
+            }
+        }
+    }
+}
+
 /// The correction `fit` holds, made on another frame, applied to this
 /// one: each pass's resample in turn, then the other frame's
 /// color-shift factors. The mosaic must be the fit's size and pattern.
@@ -1685,6 +1821,74 @@ pub(crate) mod tests {
             }
         }
         (clean, shifted)
+    }
+
+    /// The carrying correction is the fit on one mosaic applied to the
+    /// other, to the bit, wherever their differences sit: a few
+    /// scattered samples, a patch, the edges and corners (where the
+    /// tiles reflect), none, and everywhere; with the color-shift
+    /// guard and without, one pass and two.
+    #[test]
+    fn carrying_is_the_fit_on_one_applied_to_the_other() {
+        let (w, h) = (523, 389);
+        let (_, measured) = aberrated(w, h, 0.004, -0.003);
+        let lift = |keep: &dyn Fn(usize, usize) -> bool| -> Vec<f32> {
+            (0..w * h)
+                .map(|i| {
+                    let (x, y) = (i % w, i / w);
+                    if keep(x, y) {
+                        measured[i]
+                    } else {
+                        measured[i] * 1.3 + 0.05
+                    }
+                })
+                .collect()
+        };
+        let cases: Vec<(&str, Vec<f32>)> = vec![
+            ("none", measured.clone()),
+            ("scattered", lift(&|x, y| (x * 7 + y * 13) % 997 != 0)),
+            (
+                "a patch",
+                lift(&|x, y| !(200..260).contains(&x) || !(150..190).contains(&y)),
+            ),
+            (
+                "the edges",
+                lift(&|x, y| x > 2 && y > 2 && x < w - 3 && y < h - 3),
+            ),
+            ("a corner", lift(&|x, y| x < w - 5 || y < h - 5)),
+            // Each side of where one tile's interior meets the next's
+            // (every 112): a tile reads its neighbor's edge.
+            ("beside a tile's edge", lift(&|x, y| x != 111 && y != 224)),
+            ("over a tile's edge", lift(&|x, y| x != 336 && y != 113)),
+            ("everywhere", lift(&|_, _| false)),
+        ];
+        let pattern = CfaPattern::rggb();
+        for options in [
+            CaOptions::default(),
+            CaOptions {
+                iterations: 1,
+                avoid_color_shift: false,
+            },
+            CaOptions {
+                iterations: 3,
+                avoid_color_shift: true,
+            },
+        ] {
+            let (_, fit) = fit_ca(&measured, w, h, &pattern, &options).unwrap();
+            assert!(fit.stats.corrected);
+            for (what, samples) in &cases {
+                let want = apply_ca(samples, w, h, &pattern, &fit).unwrap();
+                let (got, stats) =
+                    fit_ca_carrying(&measured, samples, w, h, &pattern, &options).unwrap();
+                assert_eq!(stats, fit.stats, "{what}");
+                assert!(
+                    want.iter()
+                        .zip(&got)
+                        .all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "{what} {options:?}"
+                );
+            }
+        }
     }
 
     fn rms_error(

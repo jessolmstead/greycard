@@ -1849,7 +1849,9 @@ fn cpu_op(
                 unreachable!("a prepare is a raw's")
             };
             st.settings = options.settings.clone();
-            let prepared = if options.clip {
+            let prepared = if options.clip && options.ca_follows {
+                core_develop::prepare_before_ca(frame, &options.settings, options.measure_noise)
+            } else if options.clip {
                 prepare_with(frame, &options.settings, options.measure_noise, None)
             } else {
                 core_develop::prepare_unclipped(frame, &options.settings, options.measure_noise)
@@ -1884,16 +1886,8 @@ fn cpu_op(
             let Buf::Mosaic(prepared) = &mut st.buf else {
                 unreachable!("the CA is the mosaic's")
             };
-            let pattern = prepared.pattern.as_ref().expect("a CA is a mosaic's");
-            let (samples, stats) = ca::correct_ca(
-                &prepared.samples,
-                prepared.width,
-                prepared.height,
-                pattern,
-                options,
-            )
-            .map_err(failed)?;
-            prepared.samples = samples;
+            // Measured on the reference where the prepare kept one.
+            let stats = core_develop::correct_prepared_ca(prepared, options).map_err(failed)?;
             prepared.chromatic_aberration = Some(stats);
             walked.ca = Some(stats);
         }
@@ -2246,14 +2240,32 @@ fn device_run(
             };
             let started = Instant::now();
             let pattern = prepared.pattern.clone().expect("a CA is a mosaic's");
-            let (samples, stats) = ctx.correct_ca(
-                &prepared.samples,
-                prepared.width,
-                prepared.height,
-                &pattern,
-                options,
-            )?;
+            // A frame with headroom is measured on the mosaic it makes
+            // without it, and corrected by that fit. The reference is
+            // let go only once the device has corrected: a device that
+            // declines or fails leaves it for the CPU's run.
+            let (samples, stats) = match prepared.ca_reference.as_ref() {
+                Some(reference) => {
+                    let measured = reference.mosaic(&prepared.samples);
+                    ctx.correct_ca_measured_on(
+                        &prepared.samples,
+                        &measured,
+                        prepared.width,
+                        prepared.height,
+                        &pattern,
+                        options,
+                    )?
+                }
+                None => ctx.correct_ca(
+                    &prepared.samples,
+                    prepared.width,
+                    prepared.height,
+                    &pattern,
+                    options,
+                )?,
+            };
             prepared.samples = samples;
+            prepared.ca_reference = None;
             prepared.chromatic_aberration = Some(stats);
             walked.ca = Some(stats);
             walked.seconds.push(("CA", started.elapsed().as_secs_f64()));
@@ -2870,6 +2882,7 @@ mod tests {
                 black: LevelPattern::uniform(64.0, 1),
                 white: LevelPattern::uniform(4095.0, 1),
                 black_deltas: None,
+                saturation: None,
             },
             as_shot_coefficients: Some([2.0, 1.0, 1.6]),
             calibrations: vec![Calibration {
@@ -2950,7 +2963,41 @@ mod tests {
     fn a_walk_on_the_cpu_is_the_stages_run_by_hand() {
         // Past the CA's smallest side, with an aberration for it to
         // correct, so its half of the split is held too.
-        let raw = frame_of(640, 480, [1.004, 0.996]);
+        walks_as_by_hand(frame_of(640, 480, [1.004, 0.996]));
+    }
+
+    /// A frame with light over its white walks as the core develops
+    /// it, its CA measured on the mosaic it makes without that light
+    /// (`Prepared::ca_reference`), on the CPU.
+    #[test]
+    fn a_frame_with_headroom_walks_as_by_hand() {
+        walks_as_by_hand(headroom_frame());
+        let settings = edit().settings(&greycard_edit_io::Stores::user());
+        let prepared =
+            core_develop::prepare_before_ca(&headroom_frame(), &settings, false).unwrap();
+        assert!(
+            prepared.ca_reference.is_some(),
+            "the reference kept for the CA"
+        );
+    }
+
+    /// [`frame_of`]'s frame with its white under where its samples
+    /// stop (4000) and its saturation there: a disk and a ramp past
+    /// the white.
+    fn headroom_frame() -> Arc<RawFrame> {
+        headroom_frame_of(640, 480)
+    }
+
+    /// [`headroom_frame`] at another size.
+    fn headroom_frame_of(w: usize, h: usize) -> Arc<RawFrame> {
+        let mut raw = (*frame_of(w, h, [1.004, 0.996])).clone();
+        raw.levels.white = LevelPattern::uniform(3300.0, 1);
+        raw.levels.saturation = Some(4000.0);
+        assert!(raw.levels.headroom() > 1.2);
+        Arc::new(raw)
+    }
+
+    fn walks_as_by_hand(raw: Arc<RawFrame>) {
         let edit = edit();
         let walked = walk_cpu(
             &edit,
@@ -3576,6 +3623,101 @@ mod tests {
         assert!(
             kept.picture(Keep::Base).unwrap().data == reference.picture(Keep::Base).unwrap().data
         );
+    }
+
+    /// A device that declines a headroom frame's CA (a side past what
+    /// it takes with the CA's border: 16376 + 16 is over the 16384 any
+    /// device is asked for) leaves the reference to the CPU's run: the
+    /// walk's fit is the one measured without the headroom, not the
+    /// one on the samples.
+    #[test]
+    fn a_declined_device_ca_keeps_the_reference() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        // The disk past the old flag on a frame this narrow: the white
+        // lower, so the disk's top reaches it.
+        let mut raw = (*headroom_frame_of(16376, 256)).clone();
+        raw.levels.white = LevelPattern::uniform(2900.0, 1);
+        let raw = Arc::new(raw);
+        let settings = Edit::default().settings(&greycard_edit_io::Stores::user());
+        let with = core_develop::prepare(&raw, &settings, false)
+            .unwrap()
+            .chromatic_aberration
+            .unwrap();
+        let mut bare = core_develop::prepare_before_ca(&raw, &settings, false).unwrap();
+        assert!(bare.ca_reference.is_some());
+        bare.ca_reference = None;
+        let without = core_develop::correct_prepared_ca(
+            &mut bare,
+            settings.chromatic_aberration.as_ref().unwrap(),
+        )
+        .unwrap();
+        assert_ne!(with, without, "the reference moves the fit here");
+        let input = Input::Raw(raw);
+        let e = Edit::default();
+        let steps = stages::stages(&e, &Purpose::Viewport, &input.facts(0), None);
+        let i = steps
+            .steps
+            .iter()
+            .position(|s| matches!(s, Step::Op(Stage::Ca(_))))
+            .unwrap();
+        let places = plan(&steps, &Purpose::Viewport, true);
+        assert_eq!(places[i], Place::Gpu);
+        let walked = walk(
+            &steps,
+            &places,
+            &input,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut gpu,
+            &NoHold,
+        )
+        .expect("the develop goes on");
+        assert_eq!(walked.places[i], Place::Cpu, "the device declined");
+        assert_eq!(walked.ca, Some(with));
+    }
+
+    /// A device keeps the CA of a frame whose headroom rebuilt
+    /// something, measured on the mosaic it makes without it: the
+    /// tiles that vote and the polynomial's order are the CPU's.
+    #[test]
+    fn a_device_keeps_a_headroom_frames_ca() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        for raw in [headroom_frame(), frame_of(640, 480, [1.004, 0.996])] {
+            let settings = Edit::default().settings(&greycard_edit_io::Stores::user());
+            let cpu = core_develop::prepare(&raw, &settings, false)
+                .unwrap()
+                .chromatic_aberration
+                .unwrap();
+            let input = Input::Raw(raw);
+            let e = Edit::default();
+            let steps = stages::stages(&e, &Purpose::Viewport, &input.facts(0), None);
+            let i = steps
+                .steps
+                .iter()
+                .position(|s| matches!(s, Step::Op(Stage::Ca(_))))
+                .unwrap();
+            let places = plan(&steps, &Purpose::Viewport, true);
+            assert_eq!(places[i], Place::Gpu);
+            let walked = walk(
+                &steps,
+                &places,
+                &input,
+                &mut Kept::new(),
+                &mut NoModels,
+                &mut gpu,
+                &NoHold,
+            )
+            .expect("the develop goes on");
+            assert_eq!(walked.places[i], Place::Gpu);
+            let ca = walked.ca.unwrap();
+            assert!(ca.corrected);
+            assert_eq!((ca.blocks, ca.order), (cpu.blocks, cpu.order));
+            assert!(gpu.is_some(), "the device is kept");
+        }
     }
 
     /// The viewport, the prefetch, and the export make the same

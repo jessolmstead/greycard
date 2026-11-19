@@ -137,6 +137,35 @@ pub fn camera_frame_path(path: impl AsRef<Path>) -> Result<Option<crate::raw::Ca
 /// Olympus's and OM System's. Another maker read later adds its own.
 const FRAMED_EXTENSIONS: [&str; 2] = ["orf", "ori"];
 
+/// Whether the file at `path` may decode with a saturation level above
+/// its white ([`crate::raw::Levels::saturation`]), by its name alone: a
+/// Canon CR3, the one format the table covers. What the keys of the
+/// pictures kept of a frame take [`HEADROOM`] in by, since they are made
+/// without a decode.
+pub fn may_have_headroom(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cr3"))
+}
+
+/// The saturation table's version, for the keys of whatever is kept of
+/// a frame [`may_have_headroom`]: raise it when the table or how the
+/// develop reads the headroom changes. The pictures, fills, and mask
+/// bases kept of every CR3 are then made again (the keys know a file
+/// by its name, not its body, so the R6 II's and the R5 II's and every
+/// other Canon's alike); those of every other file are found again as
+/// they were. The index learns of it through `keys_made_under`, which
+/// takes this in: settling then clears the develop key of every row of
+/// the library, of every make, not only the CR3s', and each is made
+/// again from its sidecar when its folder is next read (an offline
+/// root's rows, when it is back).
+/// 1: the R6 II, R5 II, R5, R6, and R7 by ISO band, trusted to 0.98
+/// of their range (never shipped), 2026-11-17.
+/// 2: Canon's R6 II and R5 II, at the ISOs, shutters, and full frame
+/// measured blown in every channel and with no capture mode that could
+/// move the clip, trusted to 0.955 of their range, 2026-11-17.
+pub const HEADROOM: &str = "headroom-2";
+
 /// Whether the file at `path` is of a kind [`camera_frame_path`] can
 /// find a frame in, by its name alone: what spares every other file a
 /// read of its head.

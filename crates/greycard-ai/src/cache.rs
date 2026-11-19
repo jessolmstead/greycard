@@ -116,6 +116,12 @@ impl Cache {
             h.word(g.to_bits().into());
         }
         h.word(prepared.ceiling.to_bits().into());
+        // Only where there is any, so every other frame keeps its
+        // answers: an answer's white is read back through it.
+        if prepared.headroom != 1.0 {
+            h.str("headroom");
+            h.word(prepared.headroom.to_bits().into());
+        }
         match prepared.noise_model() {
             Some(m) => {
                 for v in m.a.iter().chain(&m.b) {
@@ -233,11 +239,11 @@ impl Cache {
 }
 
 /// What the file's white level stands for in native units: the ceiling
-/// through the smallest gain, so the brightest reconstructed highlight
-/// fits.
+/// (times the frame's headroom over its white) through the smallest
+/// gain, so the brightest reconstructed highlight fits.
 fn headroom(prepared: &Prepared) -> f32 {
     let smallest = prepared.gains.iter().copied().fold(f32::INFINITY, f32::min);
-    (prepared.ceiling / smallest).max(1.0)
+    (prepared.ceiling * prepared.headroom / smallest).max(1.0)
 }
 
 /// The file's samples back in `prepared`'s units, if the file is an
@@ -355,6 +361,7 @@ mod tests {
                 black: LevelPattern::uniform(100.0, 1),
                 white: LevelPattern::uniform(1100.0, 1),
                 black_deltas: None,
+                saturation: None,
             },
             as_shot_coefficients: Some([2.0, 1.0, 4.0]),
             calibrations: vec![Calibration {
@@ -442,7 +449,36 @@ mod tests {
         let mut other = prepared.clone();
         other.ceiling += 1.0;
         assert_ne!(key, Cache::key(&model(), Tiling::default(), &other));
+        let mut other = prepared.clone();
+        other.headroom = 1.15;
+        assert_ne!(key, Cache::key(&model(), Tiling::default(), &other));
         assert_eq!(key.name().len(), 16);
+    }
+
+    /// A frame with headroom over its white keeps an answer as bright
+    /// as its rebuilt highlights reach, and reads it back in its units.
+    #[test]
+    fn an_answer_past_the_white_comes_back_whole() {
+        let mut frame = frame(8);
+        frame.levels.saturation = Some(1250.0);
+        // A photosite past the white, or the frame takes no headroom.
+        if let Samples::U16(v) = &mut frame.samples {
+            v[9] = 1200;
+        }
+        let prepared = prepare(&frame, &DevelopSettings::default(), false).unwrap();
+        assert_eq!(prepared.headroom, 1.15);
+        let n = prepared.width * prepared.height;
+        let top = prepared.ceiling * prepared.headroom;
+        let rgb: Vec<f32> = (0..n * 3).map(|i| [top, top * 0.9, 0.01][i % 3]).collect();
+        let cache = temp_cache();
+        let key = Cache::key(&model(), Tiling::default(), &prepared);
+        cache.write(key, &frame, &prepared, &rgb).unwrap();
+        let back = cache.read(key, &prepared).unwrap();
+        let step = headroom(&prepared) * 4.0 / 65535.0;
+        for (a, b) in back.iter().zip(&rgb) {
+            assert!((a - b).abs() <= step, "{a} vs {b}");
+        }
+        greycard_core::testing::remove_dir_retry(cache.dir());
     }
 
     #[test]

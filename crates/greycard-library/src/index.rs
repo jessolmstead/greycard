@@ -2662,10 +2662,13 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
     // The key is of any edit in the file, so a frame counted as edited
     // at the write (by its blend) has one too; a develop with no edit
     // to read gets the mark that says so.
+    // Keyed with the headroom's version where the raw may decode with
+    // one, as the engine keys what it keeps (`headroom_key`).
+    let headroom = greycard_core::decode::may_have_headroom(raw);
     let develop_key = if p.current.is_some() {
-        Some(greycard_edit_io::key::develop_key(
-            &sidecar.current,
-            crate::lens_database().as_deref(),
+        Some(greycard_edit::key::headroom_key(
+            greycard_edit_io::key::develop_key(&sidecar.current, crate::lens_database().as_deref()),
+            headroom,
         ))
     } else if edited {
         Some(0)
@@ -2685,7 +2688,10 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
                     .is_some_and(|c| !crate::is_default_edit(c, raw, None));
             VersionSummary {
                 develop_key: match &v.current {
-                    Some(c) => Some(greycard_edit_io::key::develop_key(c, lenses.as_deref())),
+                    Some(c) => Some(greycard_edit::key::headroom_key(
+                        greycard_edit_io::key::develop_key(c, lenses.as_deref()),
+                        headroom,
+                    )),
                     None => edited.then_some(0),
                 },
                 blend: v.current.as_ref().map(|c| c.noise.learned_strength),
@@ -7637,6 +7643,27 @@ pub(crate) mod tests {
         assert_eq!((b.edited, b.exported), (false, false));
         drop(lib);
         greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A row's key takes the headroom's version in for a CR3, as the
+    /// engine's does, and for no other raw; its versions' keys too.
+    #[test]
+    fn a_cr3_rows_key_takes_the_headroom_in() {
+        let mut sidecar = greycard_edit::Sidecar::default();
+        sidecar.line.current.light.exposure = 0.5;
+        let json = serde_json::to_vec(&sidecar).unwrap();
+        let own = greycard_edit_io::key::develop_key(
+            &sidecar.line.current,
+            crate::lens_database().as_deref(),
+        );
+        let nef = summary_from_json(&json, Path::new("x.gcd"), Some(Path::new("x.nef")));
+        assert_eq!(nef.develop_key, Some(own));
+        let cr3 = summary_from_json(&json, Path::new("x.gcd"), Some(Path::new("x.CR3")));
+        assert_eq!(
+            cr3.develop_key,
+            Some(greycard_edit::key::headroom_key(own, true))
+        );
+        assert_ne!(cr3.develop_key, nef.develop_key);
     }
 
     /// A sidecar whose edit this build cannot read still gives up its

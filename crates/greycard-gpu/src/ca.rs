@@ -205,23 +205,58 @@ struct Work {
     tiles: [u32; 2],
 }
 
+/// An `R32Float` plane.
+fn plane_texture(
+    device: &wgpu::Device,
+    label: &str,
+    w: u32,
+    h: u32,
+    usage: wgpu::TextureUsages,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Float,
+        usage,
+        view_formats: &[],
+    })
+}
+
+/// A mosaic that takes another's passes: its upload and its two
+/// corrected planes, alternating.
+struct Follower {
+    original: wgpu::Texture,
+    planes: [wgpu::Texture; 2],
+}
+
+impl Follower {
+    fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        use wgpu::TextureUsages as U;
+        let plane = |label: &str, usage: wgpu::TextureUsages| {
+            plane_texture(device, label, width, height, usage)
+        };
+        let corrected = U::STORAGE_BINDING | U::TEXTURE_BINDING | U::COPY_SRC;
+        Self {
+            original: plane("ca follower", U::TEXTURE_BINDING | U::COPY_DST),
+            planes: [
+                plane("ca follower a", corrected),
+                plane("ca follower b", corrected),
+            ],
+        }
+    }
+}
+
 impl Work {
     fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
         let plane = |label: &str, w: u32, h: u32, usage: wgpu::TextureUsages| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R32Float,
-                usage,
-                view_formats: &[],
-            })
+            plane_texture(device, label, w, h, usage)
         };
         use wgpu::TextureUsages as U;
         let (hw, hh) = (width.div_ceil(2), height.div_ceil(2));
@@ -332,7 +367,44 @@ impl Context {
         }
         let (w, h) = self.ca_fits(width, height)?;
         self.scoped("correcting chromatic aberration", || {
-            self.correct_ca_unscoped(samples, w, h, pattern, options)
+            self.correct_ca_unscoped(samples, None, w, h, pattern, options)
+        })
+    }
+
+    /// The reference's `fit_ca` on `measured` and `apply_ca` of that
+    /// fit to `samples`, on the GPU: each pass is measured and fitted
+    /// on the one mosaic and resampled on both, and the color-shift
+    /// factors come from the measured one and multiply the other. What
+    /// a frame with headroom corrects by, measured on the mosaic it
+    /// makes without it. Returns `samples` corrected and the stats of
+    /// `measured`.
+    pub fn correct_ca_measured_on(
+        &self,
+        samples: &[f32],
+        measured: &[f32],
+        width: usize,
+        height: usize,
+        pattern: &CfaPattern,
+        options: &CaOptions,
+    ) -> Result<(Vec<f32>, CaStats)> {
+        if !reference::is_bayer(pattern) {
+            return Err(Error::Unsupported(format!(
+                "CA correction needs a 2x2 Bayer pattern, got {pattern}"
+            )));
+        }
+        if samples.len() != width * height || measured.len() != width * height {
+            return Err(Error::Unsupported(format!(
+                "{width}x{height} mosaics with {} and {} samples",
+                samples.len(),
+                measured.len()
+            )));
+        }
+        if width < reference::MIN_SIDE || height < reference::MIN_SIDE {
+            return Ok((samples.to_vec(), CaStats::default()));
+        }
+        let (w, h) = self.ca_fits(width, height)?;
+        self.scoped("correcting chromatic aberration", || {
+            self.correct_ca_unscoped(measured, Some(samples), w, h, pattern, options)
         })
     }
 
@@ -496,9 +568,13 @@ impl Context {
             .collect())
     }
 
+    /// The passes on `samples`, and when `follow` is given, each pass's
+    /// fit resampled onto it too and the factors multiplying it: the
+    /// result is then `follow` corrected.
     fn correct_ca_unscoped(
         &self,
         samples: &[f32],
+        follow: Option<&[f32]>,
         w: u32,
         h: u32,
         pattern: &CfaPattern,
@@ -507,6 +583,13 @@ impl Context {
         let p = &self.ca;
         let work = &Work::new(&self.device, w, h);
         self.upload_mosaic(&work.original, samples, w, h);
+        // The follower's upload and its two planes, alternating with
+        // the measured mosaic's.
+        let follower = follow.map(|f| {
+            let fw = Follower::new(&self.device, w, h);
+            self.upload_mosaic(&fw.original, f, w, h);
+            fw
+        });
 
         let base = self.ca_params(work, pattern);
         let iterations = options.iterations.max(1);
@@ -567,12 +650,29 @@ impl Context {
                 .collect();
             self.queue
                 .write_buffer(&work.resample, 0, bytemuck::cast_slice(&params));
+            // The follower's pass reads its own green, made after the
+            // measured mosaic's is done with.
+            let follow_bind = follower.as_ref().map(|f| {
+                let cur = current.map_or(&f.original, |i| &f.planes[i]);
+                self.ca_pass_group(work, &uniforms, cur, &f.planes[next_i])
+            });
             let mut encoder = self.encoder("ca");
             {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.set_bind_group(0, &bind, &[uniforms.push(&self.queue, &base)]);
                 pass.set_pipeline(&p.correct);
                 pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
+                if let Some(follow_bind) = &follow_bind {
+                    pass.set_bind_group(0, follow_bind, &[uniforms.push(&self.queue, &base)]);
+                    pass.set_pipeline(&p.interpolate_green);
+                    pass.dispatch_workgroups(
+                        groups(w + 2 * BORDER, 16),
+                        groups(h + 2 * BORDER, 16),
+                        1,
+                    );
+                    pass.set_pipeline(&p.correct);
+                    pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
+                }
             }
             self.queue.submit(Some(encoder.finish()));
             if it == 0 {
@@ -586,7 +686,7 @@ impl Context {
 
         let Some(cur_i) = current else {
             // No pass corrected: the mosaic as it came.
-            return Ok((samples.to_vec(), stats));
+            return Ok((follow.unwrap_or(samples).to_vec(), stats));
         };
 
         if options.avoid_color_shift && stats.corrected {
@@ -620,14 +720,21 @@ impl Context {
                         pass.dispatch_workgroups(groups(lines, 64), 1, 1);
                     }
                 }
-                pass.set_bind_group(0, &bind, &[uniforms.push(&self.queue, &base)]);
+                // The factors multiply the follower when there is one:
+                // the measured mosaic's corrected plane is not read back.
+                let follow_guard = follower.as_ref().map(|f| guard_group(&f.planes[cur_i]));
+                let apply = follow_guard.as_ref().unwrap_or(&bind);
+                pass.set_bind_group(0, apply, &[uniforms.push(&self.queue, &base)]);
                 pass.set_pipeline(&p.apply_factors);
                 pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
             }
             self.queue.submit(Some(encoder.finish()));
         }
 
-        let bytes = self.read_texture(&work.planes[cur_i], 0, 0, w, h, 4)?;
+        let out = follower
+            .as_ref()
+            .map_or(&work.planes[cur_i], |f| &f.planes[cur_i]);
+        let bytes = self.read_texture(out, 0, 0, w, h, 4)?;
         Ok((bytemuck::cast_slice(&bytes).to_vec(), stats))
     }
 

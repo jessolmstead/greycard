@@ -15,8 +15,10 @@
 //! removes the color cast that plain averaging would leave.
 //!
 //! Runs on the white-balanced mosaic, where channel `c` saturates at its
-//! gain. Nothing here decides what to do with values above 1.0 afterwards;
-//! that is [`super::develop`]'s ceiling.
+//! gain times the frame's headroom over its white (one for most
+//! cameras; see `crate::raw::Levels::headroom`). Nothing here decides
+//! what to do with values above that afterwards; that is
+//! [`super::develop`]'s ceiling.
 //!
 //! One departure: where every photosite in the 3x3 neighborhood is
 //! clipped there is nothing to reconstruct from, and the opposed average
@@ -60,131 +62,51 @@ pub fn inpaint_opposed(
     pattern: &CfaPattern,
     clips: [f32; 3],
 ) -> Result<(Vec<f32>, HighlightStats)> {
-    if !pattern.is_rgb() {
-        return Err(Error::Unsupported(format!(
-            "highlight reconstruction needs an RGB pattern, got {pattern:?}"
-        )));
-    }
-    if samples.len() != width * height {
-        return Err(Error::Unsupported(format!(
-            "{width}x{height} mosaic with {} samples",
-            samples.len()
-        )));
-    }
-    let mosaic = Mosaic {
-        samples,
-        width,
-        height,
-        pattern,
-        clips,
+    let mosaic = Mosaic::<false>::new(samples, width, height, pattern, clips, [f32::INFINITY; 3])?;
+    let Some((stats, white)) = mosaic.measure() else {
+        return Ok((samples.to_vec(), mosaic.stats_unclipped()));
     };
-    let color = |x: usize, y: usize| mosaic.color(x, y);
-
-    // Clipped mask per channel on a grid of 3x3 blocks.
-    let mw = width.div_ceil(3);
-    let mh = height.div_ceil(3);
-    let block = |x: usize, y: usize| (y / 3) * mw + x / 3;
-    let mut mask = vec![[false; 3]; mw * mh];
-    let mut clipped = 0usize;
-    for y in 0..height {
-        for x in 0..width {
-            let c = color(x, y);
-            if samples[y * width + x] >= clips[c] {
-                mask[block(x, y)][c] = true;
-                clipped += 1;
-            }
-        }
-    }
-    let mut stats = HighlightStats {
-        clipped,
-        ..Default::default()
-    };
-    if clipped == 0 {
-        return Ok((samples.to_vec(), stats));
-    }
-
-    // Dilate each channel's mask by about three blocks so the photosites
-    // just outside the clipped area are found.
-    let dilated: Vec<[bool; 3]> = (0..mw * mh)
-        .into_par_iter()
-        .map(|i| {
-            let (bx, by) = (i % mw, i / mw);
-            let safe = bx >= 3 && by >= 3 && bx < mw - 3 && by < mh - 3;
-            if !safe {
-                return mask[i];
-            }
-            let mut out = [false; 3];
-            for (c, o) in out.iter_mut().enumerate() {
-                *o = DILATION.iter().any(|&(dx, dy)| {
-                    mask[(by as isize + dy) as usize * mw + (bx as isize + dx) as usize][c]
-                });
-            }
-            out
-        })
-        .collect();
-
-    // Chrominance offset: unclipped photosites near clipped ones, the
-    // difference between what they read and what the opposed average
-    // would have guessed. Each row sums its own in parallel and the
-    // rows are added in order, so the offset is the same to the bit
-    // however the threads shared them.
-    let lo = clips.map(|c| LOW_CLIP * c);
-    let rows = (0..height).into_par_iter().map(|y| {
-        let mut sums = [0.0f64; 3];
-        let mut votes = [0usize; 3];
-        for x in 0..width {
-            let c = color(x, y);
-            let v = samples[y * width + x];
-            if v > lo[c] && v < clips[c] && dilated[block(x, y)][c] {
-                let (ref_avg, _) = mosaic.refavg(x, y, c);
-                sums[c] += f64::from(v - ref_avg);
-                votes[c] += 1;
-            }
-        }
-        (sums, votes)
-    });
-    let (sums, votes) = super::sum::in_order(
-        rows,
-        ([0.0f64; 3], [0usize; 3]),
-        |(mut s, mut v), (row_sums, row_votes)| {
-            for c in 0..3 {
-                s[c] += row_sums[c];
-                v[c] += row_votes[c];
-            }
-            (s, v)
-        },
-    );
-    for c in 0..3 {
-        stats.votes[c] = votes[c];
-        stats.chrominance[c] = if votes[c] > MIN_VOTES {
-            (sums[c] / votes[c] as f64) as f32
-        } else {
-            0.0
-        };
-    }
-
-    // Fill clipped photosites, never below what they read. A neighborhood
-    // with nothing unclipped in it goes to neutral white.
-    let chrominance = stats.chrominance;
-    let white = clips.iter().copied().fold(0.0f32, f32::max) / CLIP_MAGIC;
     let mut out = vec![0.0f32; width * height];
     out.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
         for (x, o) in row.iter_mut().enumerate() {
-            let c = color(x, y);
-            let v = samples[y * width + x];
-            *o = if v >= clips[c] {
-                let (ref_avg, all_clipped) = mosaic.refavg(x, y, c);
-                if all_clipped {
-                    white
-                } else {
-                    v.max(ref_avg + chrominance[c])
-                }
-            } else {
-                v
-            };
+            *o = mosaic.filled(x, y, &stats, white);
         }
     });
     Ok((out, stats))
+}
+
+/// [`inpaint_opposed`] of the mosaic each of whose photosites is cut
+/// at `cut` for its color, given only where it rebuilds: each
+/// photosite at or over its clip and the value it takes, in index
+/// order. Every other photosite of that mosaic is the cut sample.
+/// What the develop with headroom reads the reconstruction without it
+/// by, with no second mosaic made: to the bit what
+/// [`inpaint_opposed`] makes of the cut mosaic there.
+pub fn opposed_sites(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    clips: [f32; 3],
+    cut: [f32; 3],
+) -> Result<(Vec<(u32, f32)>, HighlightStats)> {
+    let mosaic = Mosaic::<true>::new(samples, width, height, pattern, clips, cut)?;
+    let Some((stats, white)) = mosaic.measure() else {
+        return Ok((Vec::new(), mosaic.stats_unclipped()));
+    };
+    let rows: Vec<Vec<(u32, f32)>> = (0..height)
+        .into_par_iter()
+        .map(|y| {
+            (0..width)
+                .filter(|&x| {
+                    let c = mosaic.color(x, y);
+                    mosaic.read(y * width + x, c) >= clips[c]
+                })
+                .map(|x| ((y * width + x) as u32, mosaic.filled(x, y, &stats, white)))
+                .collect()
+        })
+        .collect();
+    Ok((rows.concat(), stats))
 }
 
 /// The reference's dilation footprint: the full 3x3, then a ring out to
@@ -272,15 +194,49 @@ pub(crate) fn opposed_root(
 }
 
 /// The mosaic with what the reconstruction needs to know about it.
-struct Mosaic<'a> {
+/// `CUT` false reads the samples as they are, and the reads cost what
+/// they did before there was a cut.
+struct Mosaic<'a, const CUT: bool> {
     samples: &'a [f32],
     width: usize,
     height: usize,
     pattern: &'a CfaPattern,
     clips: [f32; 3],
+    /// Each color's sample is read cut here: infinite for the mosaic
+    /// as it is.
+    cut: [f32; 3],
 }
 
-impl Mosaic<'_> {
+impl<'a, const CUT: bool> Mosaic<'a, CUT> {
+    fn new(
+        samples: &'a [f32],
+        width: usize,
+        height: usize,
+        pattern: &'a CfaPattern,
+        clips: [f32; 3],
+        cut: [f32; 3],
+    ) -> Result<Self> {
+        if !pattern.is_rgb() {
+            return Err(Error::Unsupported(format!(
+                "highlight reconstruction needs an RGB pattern, got {pattern:?}"
+            )));
+        }
+        if samples.len() != width * height {
+            return Err(Error::Unsupported(format!(
+                "{width}x{height} mosaic with {} samples",
+                samples.len()
+            )));
+        }
+        Ok(Self {
+            samples,
+            width,
+            height,
+            pattern,
+            clips,
+            cut,
+        })
+    }
+
     #[inline]
     fn color(&self, x: usize, y: usize) -> usize {
         self.pattern
@@ -289,10 +245,152 @@ impl Mosaic<'_> {
             .expect("RGB pattern checked by the caller")
     }
 
-    /// The opposed average at a photosite of color `c`: per-channel means
-    /// of the 3x3 neighborhood in cube-root space, the mean of the two
-    /// other channels, cubed back. Also reports whether every photosite in
-    /// the neighborhood was clipped.
+    /// The sample at `i`, of color `c`, cut. A NaN passes as it is.
+    #[inline]
+    fn read(&self, i: usize, c: usize) -> f32 {
+        let v = self.samples[i];
+        if CUT && v > self.cut[c] {
+            self.cut[c]
+        } else {
+            v
+        }
+    }
+
+    /// What nothing clipped measures: no votes, no offset.
+    fn stats_unclipped(&self) -> HighlightStats {
+        HighlightStats::default()
+    }
+
+    /// The clipped count, the votes, and the chrominance offset, and
+    /// the level an all-clipped neighborhood takes; `None` when nothing
+    /// is clipped.
+    fn measure(&self) -> Option<(HighlightStats, f32)> {
+        let (width, height, clips) = (self.width, self.height, self.clips);
+        let color = |x: usize, y: usize| self.color(x, y);
+
+        // Clipped mask per channel on a grid of 3x3 blocks.
+        let mw = width.div_ceil(3);
+        let mh = height.div_ceil(3);
+        let block = |x: usize, y: usize| (y / 3) * mw + x / 3;
+        // A row of blocks at a time, in parallel; the count is a sum
+        // of whole numbers, the same however the rows are shared.
+        let mut mask = vec![[false; 3]; mw * mh];
+        let clipped: usize = mask
+            .par_chunks_mut(mw)
+            .enumerate()
+            .map(|(by, row)| {
+                let mut n = 0;
+                for y in 3 * by..(3 * by + 3).min(height) {
+                    // The pattern's colors along this row, once.
+                    let colors: Vec<usize> = (0..self.pattern.width.min(width))
+                        .map(|x| color(x, y))
+                        .collect();
+                    let line = &self.samples[y * width..(y + 1) * width];
+                    for (x, _) in line.iter().enumerate() {
+                        let c = colors[x % colors.len()];
+                        if self.read(y * width + x, c) >= clips[c] {
+                            row[x / 3][c] = true;
+                            n += 1;
+                        }
+                    }
+                }
+                n
+            })
+            .sum();
+        if clipped == 0 {
+            return None;
+        }
+        let mut stats = HighlightStats {
+            clipped,
+            ..Default::default()
+        };
+
+        // Dilate each channel's mask by about three blocks so the
+        // photosites just outside the clipped area are found.
+        let dilated: Vec<[bool; 3]> = (0..mw * mh)
+            .into_par_iter()
+            .map(|i| {
+                let (bx, by) = (i % mw, i / mw);
+                let safe = bx >= 3 && by >= 3 && bx < mw - 3 && by < mh - 3;
+                if !safe {
+                    return mask[i];
+                }
+                let mut out = [false; 3];
+                for (c, o) in out.iter_mut().enumerate() {
+                    *o = DILATION.iter().any(|&(dx, dy)| {
+                        mask[(by as isize + dy) as usize * mw + (bx as isize + dx) as usize][c]
+                    });
+                }
+                out
+            })
+            .collect();
+
+        // Chrominance offset: unclipped photosites near clipped ones,
+        // the difference between what they read and what the opposed
+        // average would have guessed. Each row sums its own in parallel
+        // and the rows are added in order, so the offset is the same to
+        // the bit however the threads shared them.
+        let lo = clips.map(|c| LOW_CLIP * c);
+        let rows = (0..height).into_par_iter().map(|y| {
+            let mut sums = [0.0f64; 3];
+            let mut votes = [0usize; 3];
+            for x in 0..width {
+                let c = color(x, y);
+                let v = self.read(y * width + x, c);
+                if v > lo[c] && v < clips[c] && dilated[block(x, y)][c] {
+                    let (ref_avg, _) = self.refavg(x, y, c);
+                    sums[c] += f64::from(v - ref_avg);
+                    votes[c] += 1;
+                }
+            }
+            (sums, votes)
+        });
+        let (sums, votes) = super::sum::in_order(
+            rows,
+            ([0.0f64; 3], [0usize; 3]),
+            |(mut s, mut v), (row_sums, row_votes)| {
+                for c in 0..3 {
+                    s[c] += row_sums[c];
+                    v[c] += row_votes[c];
+                }
+                (s, v)
+            },
+        );
+        for c in 0..3 {
+            stats.votes[c] = votes[c];
+            stats.chrominance[c] = if votes[c] > MIN_VOTES {
+                (sums[c] / votes[c] as f64) as f32
+            } else {
+                0.0
+            };
+        }
+        let white = clips.iter().copied().fold(0.0f32, f32::max) / CLIP_MAGIC;
+        Some((stats, white))
+    }
+
+    /// The photosite at `(x, y)` filled: never below what it reads, a
+    /// neighborhood with nothing unclipped in it at neutral `white`;
+    /// one under its clip as it reads.
+    #[inline]
+    fn filled(&self, x: usize, y: usize, stats: &HighlightStats, white: f32) -> f32 {
+        let c = self.color(x, y);
+        let v = self.read(y * self.width + x, c);
+        if v >= self.clips[c] {
+            let (ref_avg, all_clipped) = self.refavg(x, y, c);
+            if all_clipped {
+                white
+            } else {
+                v.max(ref_avg + stats.chrominance[c])
+            }
+        } else {
+            v
+        }
+    }
+
+    /// The opposed average at a photosite of color `c`: per-channel
+    /// means of the 3x3 neighborhood in cube-root space, the mean of
+    /// the two other channels, cubed back. Also reports whether every
+    /// photosite in the neighborhood was clipped.
     #[inline]
     fn refavg(&self, x: usize, y: usize, c: usize) -> (f32, bool) {
         let mut sum = [0.0f32; 3];
@@ -301,7 +399,7 @@ impl Mosaic<'_> {
         for ny in y.saturating_sub(1)..(y + 2).min(self.height) {
             for nx in x.saturating_sub(1)..(x + 2).min(self.width) {
                 let k = self.color(nx, ny);
-                let v = self.samples[ny * self.width + nx];
+                let v = self.read(ny * self.width + nx, k);
                 all_clipped &= v >= self.clips[k];
                 sum[k] += v.max(0.0);
                 cnt[k] += 1;
@@ -336,6 +434,51 @@ mod tests {
                 f(x, y, p.color_at(y, x).rgb_index().unwrap())
             })
             .collect()
+    }
+
+    /// The sites read through a cut are, to the bit, what the opposed
+    /// rebuild makes of the mosaic cut there, and every other photosite
+    /// of it is the cut sample: no second mosaic needed.
+    #[test]
+    fn the_sites_through_a_cut_are_the_cut_mosaics_rebuild() {
+        let (w, h) = (90, 72);
+        let cfa = mosaic(w, h, |x, y, c| {
+            let ramp = 0.3 + 1.6 * x as f32 / w as f32 + 0.03 * ((x * 7 + y * 5) % 9) as f32;
+            ramp * [1.9, 1.0, 2.6][c] * [0.6, 1.0, 0.4][c]
+        });
+        let gains = [1.9f32, 1.0, 2.6];
+        let clips = gains.map(|g| g * CLIP_MAGIC);
+        let p = CfaPattern::rggb();
+        let cut: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let c = p.color_at(i / w, i % w).rgb_index().unwrap();
+                cfa[i].min(gains[c])
+            })
+            .collect();
+        assert!(cfa.iter().zip(&cut).any(|(a, b)| a != b));
+        let (want, want_stats) = inpaint_opposed(&cut, w, h, &p, clips).unwrap();
+        let (sites, stats) = opposed_sites(&cfa, w, h, &p, clips, gains).unwrap();
+        assert_eq!(stats, want_stats);
+        assert!(sites.len() > 100, "{} sites", sites.len());
+        assert!(stats.chrominance.iter().any(|&c| c != 0.0), "{stats:?}");
+        let mut made = cut.clone();
+        for &(i, v) in &sites {
+            made[i as usize] = v;
+        }
+        assert!(
+            made.iter()
+                .zip(&want)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+        assert!(sites.windows(2).all(|s| s[0].0 < s[1].0));
+        // Nothing at the clip, no sites.
+        let dim: Vec<f32> = cfa.iter().map(|v| v * 0.1).collect();
+        assert!(
+            opposed_sites(&dim, w, h, &p, clips, gains)
+                .unwrap()
+                .0
+                .is_empty()
+        );
     }
 
     #[test]
