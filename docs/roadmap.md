@@ -1526,8 +1526,6 @@ clears or a tester asks for it.
       Local Contrast curve have it: contrast per detail size past
       Texture, Clarity, and Structure's three fixed bands
       (discussions 45 and 161)
-- [ ] The alignment grid while the Vertical and Horizontal
-      perspective sliders move, as under Angle (issue 176)
 - [ ] Straight strokes for the repair brushes, and a click then a
       Shift+click joined by a line; Shift on a drag pans today, so
       the two share the key (issue 177)

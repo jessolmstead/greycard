@@ -7,6 +7,8 @@ design note behind it.
 
 ### The window
 
+- The alignment grid also shows while the Vertical and Horizontal
+  perspective sliders move, as it does for Angle (issue 176).
 - Panels scroll smoothly with the wheel and to a focused control, on
   Slint 1.19, no longer a fork
   ([§715](https://github.com/jessolmstead/greycard/blob/master/docs/notes/715-slint-1-19-and-both-forks-gone.md)).

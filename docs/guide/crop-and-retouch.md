@@ -63,10 +63,10 @@ When you pick another ratio or turn **Portrait**, the crop takes the
 new shape around the same center and keeps about the same area, so
 turning **Portrait** twice gives back the crop you had. When you change
 the angle, the crop stays where it is if it still fits; if not, it
-shrinks to fit around the same center. While the **Angle** slider
-moves, by drag, wheel, or key, a grid lies over the picture so a
-horizon or an edge can be brought level against its lines; it goes
-when the slider rests.
+shrinks to fit around the same center. While the **Angle**,
+**Vertical**, or **Horizontal** slider moves, by drag, wheel, or key, a
+grid lies over the picture so a horizon or an edge can be brought
+level or upright against its lines; it goes when the slider rests.
 
 ### Straightening
 

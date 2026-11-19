@@ -216,9 +216,10 @@ export component Viewport inherits Rectangle {
     in property <length> crop-top;
     in property <length> crop-width;
     in property <length> crop-height;
-    /// The Angle slider in a drag: the grid is laid on, over the crop
-    /// when the crop is in hand, else over the whole view.
-    in property <bool> angle-dragging;
+    /// The Angle, Vertical, or Horizontal slider being set: the grid
+    /// is laid on, over the crop when the crop is in hand, else over
+    /// the whole view.
+    in property <bool> geo-moving;
     callback crop-pressed(int);
     callback crop-dragged(int, length, length);
     callback crop-released();
@@ -1154,9 +1155,10 @@ export component Viewport inherits Rectangle {
             middle(e, x, y) => { root.middle-at(e, x, y); }
         }
     }
-    // The grid while the angle is set: over the crop in crop mode,
-    // where the thirds already are, over the whole view otherwise.
-    if root.angle-dragging && !root.bare: AlignGrid {
+    // The grid while the angle or the keystone is set: over the crop
+    // in crop mode, where the thirds already are, over the whole view
+    // otherwise.
+    if root.geo-moving && !root.bare: align-grid := AlignGrid {
         x: root.crop-mode ? root.crop-left : 0;
         y: root.crop-mode ? root.crop-top : 0;
         width: root.crop-mode ? root.crop-width : parent.width;

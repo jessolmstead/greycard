@@ -2994,4 +2994,187 @@ mod tests {
             crate::testing::remove_scratch(state, &dir);
         }
     }
+
+    /// A window on the Crop tab with a frame open, and what keeps it
+    /// wired.
+    fn crop_tab() -> (App, Rc<crate::Shared>, Rc<crate::worker::Worker>) {
+        let app = window(1);
+        let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Crop".into());
+        crate::testing::settle(&app);
+        (app, state, worker)
+    }
+
+    /// How many alignment grids lie over the picture, once the layout
+    /// has caught up.
+    fn grids(app: &App) -> usize {
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        ElementHandle::find_by_element_id(app, "Viewport::align-grid").count()
+    }
+
+    /// Mocked time `ms` on, the timers run every tenth of a second of
+    /// it, as a running window runs them.
+    fn wait(ms: u64) {
+        for _ in 0..ms / 100 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(100));
+            slint::platform::update_timers_and_animations();
+        }
+    }
+
+    type Value = fn(&App) -> f32;
+
+    /// The panel slider with the element id `id` turned one notch of
+    /// the wheel up. A click on its track's middle first, where its
+    /// handle rests near zero, gives it the wheel and moves nothing.
+    fn wheel(app: &App, id: &str, value: Value) {
+        use slint::platform::WindowEvent;
+        let (at, size) = crate::testing::by_id(app, id);
+        let from = at.x + app.global::<crate::LabelColumn>().get_width();
+        let to = at.x + size.width - 60.0;
+        let position = slint::LogicalPosition::new((from + to) / 2.0, at.y + size.height / 2.0);
+        let before = value(app);
+        crate::testing::click(app, position.x, position.y);
+        assert_eq!(value(app), before, "{id}: the click moved it");
+        app.window().dispatch_event(WindowEvent::PointerScrolled {
+            position,
+            delta_x: 0.0,
+            delta_y: 120.0,
+        });
+        assert!(value(app) > before, "{id}: the wheel set it");
+    }
+
+    /// Each of the Crop tab's turn sliders, Angle, Vertical, and
+    /// Horizontal, lays the grid over the picture while the wheel sets
+    /// it, and the grid goes once the slider rests.
+    #[test]
+    fn a_turn_slider_set_lays_the_grid_until_it_rests() {
+        let (app, _state, _worker) = crop_tab();
+        let sliders = [
+            ("RotateSection::angle", App::get_geo_angle as Value),
+            ("PerspectiveSection::vertical", App::get_geo_vertical),
+            ("PerspectiveSection::horizontal", App::get_geo_horizontal),
+        ];
+        for (id, value) in sliders {
+            assert_eq!(grids(&app), 0, "{id}: no grid before the slider moves");
+            wheel(&app, id, value);
+            assert_eq!(grids(&app), 1, "{id}: the grid while it moves");
+            // A whole interval with no step lets it go.
+            wait(2500);
+            assert_eq!(grids(&app), 0, "{id}: the grid goes when it rests");
+            crate::testing::press(&app, slint::platform::Key::Escape);
+        }
+    }
+
+    /// Vertical resting while Horizontal still moves leaves the grid
+    /// on; it goes when both rest.
+    #[test]
+    fn the_grid_stays_while_either_perspective_slider_moves() {
+        let (app, _state, _worker) = crop_tab();
+        wheel(&app, "PerspectiveSection::vertical", App::get_geo_vertical);
+        wait(1500);
+        wheel(
+            &app,
+            "PerspectiveSection::horizontal",
+            App::get_geo_horizontal,
+        );
+        assert_eq!(grids(&app), 1);
+        // Vertical has rested by now, Horizontal not yet.
+        wait(1000);
+        assert_eq!(grids(&app), 1, "the grid while Horizontal moves");
+        wait(2500);
+        assert_eq!(grids(&app), 0, "the grid goes when both rest");
+    }
+
+    /// A slider dropped while it moves, its timer with it, leaves no
+    /// grid behind: the Crop tab left, the panel put away, its own
+    /// section dragged to another place, or the sections' order set
+    /// anew (a reset), each before the slider rests.
+    #[test]
+    fn a_turn_slider_dropped_mid_move_leaves_no_grid() {
+        // Each takes the name of the section that holds the slider.
+        type Step = fn(&App, &str);
+        let drag: Step = |app, section| {
+            let order: Vec<String> = slint::Model::iter(&app.get_crop_order())
+                .map(|n| n.to_string())
+                .collect();
+            let from = order.iter().position(|n| n == section).unwrap();
+            // To the top, or from the top to the end.
+            let slot = if from == 0 { order.len() } else { 0 };
+            assert!(super::super::order::moved(
+                app,
+                "crop",
+                from,
+                slot,
+                from + 1
+            ));
+        };
+        let reset: Step = |app, _| {
+            let mut order: Vec<slint::SharedString> =
+                slint::Model::iter(&app.get_crop_order()).collect();
+            order.reverse();
+            app.set_crop_order(slint::ModelRc::new(slint::VecModel::from(order)));
+        };
+        // The last field: the viewport's own binding drops the grid
+        // with no change handler run yet, as it does for the tab and
+        // the panel.
+        let leaves: [(&str, Step, Step, bool); 4] = [
+            (
+                "another tab",
+                |app, _| app.set_panel_tab("Develop".into()),
+                |app, _| app.set_panel_tab("Crop".into()),
+                true,
+            ),
+            (
+                "the panel put away",
+                |app, _| app.set_right_hidden(true),
+                |app, _| app.set_right_hidden(false),
+                true,
+            ),
+            ("its section dragged", drag, |_, _| {}, false),
+            ("the order set anew", reset, |_, _| {}, false),
+        ];
+        let (app, _state, _worker) = crop_tab();
+        for (how, leave, back, bound) in leaves {
+            for (id, value, section) in [
+                (
+                    "RotateSection::angle",
+                    App::get_geo_angle as Value,
+                    "rotate",
+                ),
+                (
+                    "PerspectiveSection::vertical",
+                    App::get_geo_vertical,
+                    "perspective",
+                ),
+            ] {
+                wheel(&app, id, value);
+                assert_eq!(grids(&app), 1, "{how}, {id}: the grid while it moves");
+                leave(&app, section);
+                // Before any event runs the window's change handlers.
+                if bound {
+                    assert_eq!(
+                        ElementHandle::find_by_element_id(&app, "Viewport::align-grid").count(),
+                        0,
+                        "{how}, {id}: the grid before the handlers"
+                    );
+                }
+                crate::testing::settle(&app);
+                assert_eq!(grids(&app), 0, "{how}, {id}: the grid at once");
+                wait(2500);
+                assert_eq!(grids(&app), 0, "{how}, {id}: the grid after");
+                back(&app, section);
+                crate::testing::settle(&app);
+                assert_eq!(grids(&app), 0, "{how}, {id}: the grid back on Crop");
+                assert!(
+                    !app.get_angle_moving() && !app.get_perspective_moving(),
+                    "{how}, {id}: a flag left on"
+                );
+                crate::testing::press(&app, slint::platform::Key::Escape);
+            }
+        }
+    }
 }

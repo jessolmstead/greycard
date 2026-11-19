@@ -362,6 +362,12 @@ pub(crate) fn moved(app: &App, name: &str, from: usize, slot: usize, next: usize
     let section = order.remove(from);
     order.insert(to, section.clone());
     put(app, view, &order, false, Some(&section));
+    // The moved section is made anew, a turn slider in it and its
+    // timer with it: the grid it laid on is let go here, since moved
+    // rows set no new model for the window to see.
+    if view.pane == "crop" {
+        app.invoke_turn_sliders_gone();
+    }
     keep(app);
     true
 }

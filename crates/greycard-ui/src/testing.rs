@@ -345,6 +345,28 @@ pub(crate) fn labeled_where(
     label: &str,
     pick: impl Fn(&i_slint_backend_testing::ElementHandle) -> bool,
 ) -> (slint::LogicalPosition, slint::LogicalSize) {
+    let what = format!("labeled {label:?}");
+    in_panel_view(app, &what, |app| {
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, label)
+            .find(|e| pick(e))
+    })
+}
+
+/// The bounds of the panel's element `id` (as `Section::name`),
+/// scrolled into the panel's view as [`labeled`] scrolls.
+pub(crate) fn by_id(app: &App, id: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
+    in_panel_view(app, &format!("with the id {id:?}"), |app| {
+        i_slint_backend_testing::ElementHandle::find_by_element_id(app, id).next()
+    })
+}
+
+/// The bounds of the panel's element `pick` finds, scrolled into the
+/// panel's view; `what` names it for a panic.
+fn in_panel_view(
+    app: &App,
+    what: &str,
+    pick: impl Fn(&App) -> Option<i_slint_backend_testing::ElementHandle>,
+) -> (slint::LogicalPosition, slint::LogicalSize) {
     use i_slint_backend_testing::ElementHandle;
     let find = || {
         // A control a property has just brought in is built on the
@@ -352,7 +374,7 @@ pub(crate) fn labeled_where(
         app.window().dispatch_event(WindowEvent::PointerMoved {
             position: slint::LogicalPosition::new(0.0, 0.0),
         });
-        ElementHandle::find_by_accessible_label(app, label).find(|e| pick(e))
+        pick(app)
     };
     // The panel's view, measured rather than guessed: it starts under
     // the tab bar and, on the Masks tab, the Adjustments list pinned
@@ -402,13 +424,13 @@ pub(crate) fn labeled_where(
                 return (at, size);
             }
             scroll_to(app.get_panel_scroll() - (at.y - (top + bottom) / 2.0));
-            let element = find().unwrap_or_else(|| panic!("{label:?} scrolled away"));
+            let element = find().unwrap_or_else(|| panic!("the element {what} scrolled away"));
             return (element.absolute_position(), element.size());
         }
         // Less than the view's height, so nothing falls between steps.
         scroll_to(app.get_panel_scroll() - ((bottom - top) * 0.8).max(40.0));
     }
-    panic!("nothing labeled {label:?}");
+    panic!("nothing {what}");
 }
 
 /// The panel's scroll after the layout has settled, and how far its

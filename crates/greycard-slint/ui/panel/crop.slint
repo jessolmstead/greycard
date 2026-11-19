@@ -144,7 +144,7 @@ export component RotateSection inherits Section {
     in-out property <float> geo-angle;
     /// The Angle slider being set, by drag, wheel, or key: the
     /// viewport lays its grid on.
-    in-out property <bool> angle-dragging;
+    in-out property <bool> angle-moving;
     callback geometry-turned(int);
     callback geometry-flipped(bool);
     callback crop-toggled();
@@ -218,7 +218,7 @@ export component RotateSection inherits Section {
                 clicked => { root.geometry-flipped(true); }
             }
         }
-        EditSlider {
+        angle := EditSlider {
             label: @tr("Angle");
             minimum: -45;
             maximum: 45;
@@ -228,7 +228,7 @@ export component RotateSection inherits Section {
             value <=> root.geo-angle;
             text: (root.geo-angle >= 0 ? "+" : "") + round(root.geo-angle * 10) / 10 + "°";
             changed(v) => { root.geometry-changed(); }
-            changed moving => { root.angle-dragging = self.moving; }
+            changed moving => { root.angle-moving = self.moving; }
         }
         // The frame's own turn, under the edit's.
         // The four above are a step in developing
@@ -266,6 +266,9 @@ export component PerspectiveSection inherits Section {
     in-out property <bool> collapsed-perspective;
     in-out property <float> geo-vertical;
     in-out property <float> geo-horizontal;
+    /// The Vertical or the Horizontal slider being set, as the Angle
+    /// slider's `angle-moving`: the viewport lays its grid on.
+    in-out property <bool> perspective-moving;
     callback crop-toggled();
     callback geometry-changed();
     callback geometry-reset();
@@ -309,7 +312,7 @@ export component PerspectiveSection inherits Section {
             }
         }
         VerticalLayout {
-            EditSlider {
+            vertical := EditSlider {
                 // Perspective section: the slider
                 label: @tr("Vertical");
                 minimum: -40;
@@ -320,8 +323,9 @@ export component PerspectiveSection inherits Section {
                 value <=> root.geo-vertical;
                 text: (root.geo-vertical >= 0 ? "+" : "") + round(root.geo-vertical * 10) / 10 + "°";
                 changed(v) => { root.geometry-changed(); }
+                changed moving => { root.perspective-moving = self.moving || horizontal.moving; }
             }
-            EditSlider {
+            horizontal := EditSlider {
                 // Perspective section: the slider
                 label: @tr("Horizontal");
                 minimum: -40;
@@ -332,6 +336,7 @@ export component PerspectiveSection inherits Section {
                 value <=> root.geo-horizontal;
                 text: (root.geo-horizontal >= 0 ? "+" : "") + round(root.geo-horizontal * 10) / 10 + "°";
                 changed(v) => { root.geometry-changed(); }
+                changed moving => { root.perspective-moving = self.moving || vertical.moving; }
             }
         }
         // The whole of the Crop tab goes back at

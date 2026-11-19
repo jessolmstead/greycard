@@ -1047,6 +1047,7 @@ export component App inherits Window {
         // the keys, which Slint would drop at the next press.
         Typing.close-all();
         root.look-list-gone();
+        root.turn-sliders-gone();
     }
     changed strip-hidden => { root.tip-text = ""; }
     // What a TipArea has to say, from the controls' own global, and the
@@ -1828,8 +1829,21 @@ export component App inherits Window {
     in-out property <float> vignette-feather: 0.5;
     in-out property <float> vignette-roundness: 0;
     in-out property <float> geo-angle: 0;
-    // The Angle slider in a drag, for the viewport's grid.
-    in-out property <bool> angle-dragging: false;
+    // The Angle slider being set, and the Vertical or the Horizontal
+    // one; either lays the viewport's grid on.
+    in-out property <bool> angle-moving: false;
+    in-out property <bool> perspective-moving: false;
+    // Only a slider's own `changed moving` clears these, so a slider
+    // dropped mid-move, its timer with it, would leave the grid on:
+    // the Crop tab left, the panel put away, the sections reordered.
+    // A drag of a section moves its row in the model rather than set
+    // a new one, so `order::moved` calls this itself.
+    public function turn-sliders-gone() {
+        root.angle-moving = false;
+        root.perspective-moving = false;
+    }
+    changed shown-tab => { root.turn-sliders-gone(); }
+    changed crop-order => { root.turn-sliders-gone(); }
     in-out property <float> geo-vertical: 0;
     in-out property <float> geo-horizontal: 0;
     in-out property <int> geo-turns: 0;
@@ -3940,7 +3954,8 @@ export component App inherits Window {
                 mask-dragged(a, b, c, d, e) => { root.mask-dragged(a, b, c, d, e); }
                 mask-dropped => { root.mask-dropped(); }
                 mask-body-at(a, b, c) => { return root.mask-body-at(a, b, c); }
-                angle-dragging: root.angle-dragging;
+                geo-moving: (root.angle-moving || root.perspective-moving)
+                    && root.shown-tab == "Crop" && !root.right-hidden;
                 crop-left: root.crop-left;
                 crop-top: root.crop-top;
                 crop-width: root.crop-width;
@@ -5122,7 +5137,7 @@ export component App inherits Window {
                                     guide-mode <=> root.guide-mode;
                                     collapsed-rotate <=> root.collapsed-rotate;
                                     geo-angle <=> root.geo-angle;
-                                    angle-dragging <=> root.angle-dragging;
+                                    angle-moving <=> root.angle-moving;
                                     geometry-turned(a) => { root.geometry-turned(a); }
                                     geometry-flipped(a) => { root.geometry-flipped(a); }
                                     crop-toggled => { root.crop-toggled(); }
@@ -5149,6 +5164,7 @@ export component App inherits Window {
                                     collapsed-perspective <=> root.collapsed-perspective;
                                     geo-vertical <=> root.geo-vertical;
                                     geo-horizontal <=> root.geo-horizontal;
+                                    perspective-moving <=> root.perspective-moving;
                                     crop-toggled => { root.crop-toggled(); }
                                     geometry-changed => { root.geometry-changed(); }
                                     geometry-reset => { root.geometry-reset(); }
