@@ -4,7 +4,18 @@
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         windows_resource();
+        windows_stack();
     }
+}
+
+// The main thread's stack on Windows, 8 MB as on Linux and macOS: see
+// crates/greycard-ui/build.rs, whose flags overflowed Windows' 1 MB.
+fn windows_stack() {
+    let arg = match std::env::var("CARGO_CFG_TARGET_ENV").as_deref() {
+        Ok("msvc") => "/STACK:8388608",
+        _ => "-Wl,--stack,8388608",
+    };
+    println!("cargo:rustc-link-arg-bins={arg}");
 }
 
 // The same resource the editor carries, so the two binaries sitting

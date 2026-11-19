@@ -22,7 +22,22 @@ fn main() {
     catalogs();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         windows_resource();
+        windows_stack();
     }
+}
+
+/// The main thread's stack on Windows, 8 MB as Linux's and macOS's are.
+/// Windows gives it 1 MB unless the binary says otherwise, and clap's
+/// derived parser for our flags is one function whose frame, built
+/// without optimizing, is past that: the editor died of a stack
+/// overflow before reading a flag, on Windows alone (CI, 2026-11-18;
+/// `ulimit -s 1024` shows it on Linux).
+fn windows_stack() {
+    let arg = match std::env::var("CARGO_CFG_TARGET_ENV").as_deref() {
+        Ok("msvc") => "/STACK:8388608",
+        _ => "-Wl,--stack,8388608",
+    };
+    println!("cargo:rustc-link-arg-bins={arg}");
 }
 
 /// Every `translations/<lang>/LC_MESSAGES/greycard.po` as a static
