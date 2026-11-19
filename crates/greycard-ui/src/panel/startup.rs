@@ -316,6 +316,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings = wgpu_settings();
         selected = select_backend(settings.clone());
     }
+    // The default backends' select an error on their try from a DX12
+    // pin: the pin is kept, whatever draws next.
+    if selected.is_err() {
+        crate::gpu_marker::default_select_failed();
+    }
     let (fit_slot, drawing) = match selected {
         Ok(slot) => (
             slot,
