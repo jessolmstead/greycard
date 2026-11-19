@@ -2141,3 +2141,159 @@ fn a_turn_slider_dropped_mid_move_leaves_no_grid() {
         }
     }
 }
+
+/// A drag of the crop's bottom handle down past the strip's arrow
+/// leaves the arrow where it was until the handle is let go: the
+/// arrow steps off the handles by where the crop is, and read live
+/// it hopped aside and back each time the moving edge crossed its
+/// band. Once the handle is down, it steps off as before.
+#[test]
+fn the_strip_arrow_stays_put_while_a_crop_handle_is_held() {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    let app = window(1);
+    let (_state, _worker) = retouch_state(&app);
+    let view = ElementHandle::find_by_element_type_name(&app, "Viewport")
+        .next()
+        .expect("the viewport is on screen");
+    let (base, size) = (view.absolute_position(), view.size());
+    app.set_crop_mode(true);
+    app.set_crop_left(size.width / 2.0 - 100.0);
+    app.set_crop_top(0.0);
+    app.set_crop_width(200.0);
+    let start = size.height - 100.0;
+    app.set_crop_height(start);
+    // The crop follows the handle, as the render step would set it.
+    {
+        let weak = app.as_weak();
+        app.on_crop_dragged(move |i, _dx, dy| {
+            assert_eq!(i, 5, "the bottom handle is the one dragged");
+            let app = weak.upgrade().unwrap();
+            app.set_crop_height((start + dy).min(size.height));
+        });
+    }
+    app.on_crop_pressed(|_| {});
+    app.on_crop_released(|| {});
+    let arrow_x = || {
+        ElementHandle::find_by_element_id(&app, "App::strip-arrow")
+            .next()
+            .expect("the strip's arrow is on screen")
+            .absolute_position()
+            .x
+    };
+    let rest = arrow_x();
+    let x = base.x + size.width / 2.0;
+    let at = |y: f32| slint::LogicalPosition::new(x, base.y + y);
+    let button = PointerEventButton::Left;
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: at(start),
+    });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at(start),
+        button,
+    });
+    // Down past the foot and back up over it, through the band where
+    // the arrow steps aside, a few pixels at a time.
+    let mut path: Vec<f32> = (0..=30).map(|k| start + 4.0 * k as f32).collect();
+    path.extend((0..=20).map(|k| size.height + 20.0 - 4.0 * k as f32));
+    path.extend((0..=10).map(|k| size.height - 60.0 + 6.0 * k as f32));
+    for &y in &path {
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position: at(y) });
+        assert_eq!(arrow_x(), rest, "the arrow held still at y {y}");
+    }
+    let last = *path.last().unwrap();
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at(last),
+        button,
+    });
+    assert!(
+        (app.get_crop_height() - size.height).abs() < 1.0,
+        "the drag ended at the foot"
+    );
+    assert_ne!(arrow_x(), rest, "let go, the arrow steps off the handle");
+}
+
+/// The handles taken away mid-drag, by the camera's JPEG standing in
+/// or by the Original key, end the drag as a release would: the
+/// held handle is gone and hears no release, and the arrows were
+/// left reading the crop at the press for good. With the handles
+/// back, the strip's arrow steps off the crop as it stands.
+#[test]
+fn a_crop_drag_the_camera_jpeg_ends_lets_the_arrows_go() {
+    handles_leave_mid_drag("placeholder");
+}
+
+/// [`a_crop_drag_the_camera_jpeg_ends_lets_the_arrows_go`] under the
+/// Original key.
+#[test]
+fn a_crop_drag_the_original_ends_lets_the_arrows_go() {
+    handles_leave_mid_drag("original");
+}
+
+fn handles_leave_mid_drag(trigger: &str) {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    let app = window(1);
+    let (_state, _worker) = retouch_state(&app);
+    let view = ElementHandle::find_by_element_type_name(&app, "Viewport")
+        .next()
+        .expect("the viewport is on screen");
+    let (base, size) = (view.absolute_position(), view.size());
+    app.set_crop_mode(true);
+    app.set_crop_left(size.width / 2.0 - 100.0);
+    app.set_crop_top(0.0);
+    app.set_crop_width(200.0);
+    let start = size.height - 100.0;
+    app.set_crop_height(start);
+    let pressed = Rc::new(RefCell::new(0));
+    let released = Rc::new(RefCell::new(0));
+    {
+        let pressed = pressed.clone();
+        app.on_crop_pressed(move |_| *pressed.borrow_mut() += 1);
+    }
+    {
+        let released = released.clone();
+        app.on_crop_released(move || *released.borrow_mut() += 1);
+    }
+    app.on_crop_dragged(|_, _, _| {});
+    let arrow_x = || {
+        ElementHandle::find_by_element_id(&app, "App::strip-arrow")
+            .next()
+            .expect("the strip's arrow is on screen")
+            .absolute_position()
+            .x
+    };
+    let rest = arrow_x();
+    let gone = |on: bool| match trigger {
+        "placeholder" => app.set_placeholder(on),
+        _ => app.set_original_on(on),
+    };
+    let at = slint::LogicalPosition::new(base.x + size.width / 2.0, base.y + start);
+    let button = PointerEventButton::Left;
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at,
+        button,
+    });
+    assert_eq!(*pressed.borrow(), 1, "{trigger}: the bottom handle held");
+    gone(true);
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at });
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at,
+        button,
+    });
+    gone(false);
+    assert_eq!(
+        *released.borrow(),
+        1,
+        "{trigger}: the drag ended once, with the handles"
+    );
+    // The crop's foot onto the strip's arrow: it steps aside.
+    app.set_crop_height(size.height);
+    assert_ne!(
+        arrow_x(),
+        rest,
+        "{trigger}: the arrow reads the crop as it stands"
+    );
+}

@@ -3960,12 +3960,12 @@ export component App inherits Window {
                 crop-top: root.crop-top;
                 crop-width: root.crop-width;
                 crop-height: root.crop-height;
-                crop-pressed(a) => { root.crop-pressed(a); }
+                crop-pressed(a) => { root.hold-crop(); root.crop-pressed(a); }
                 crop-dragged(a, b, c) => { root.crop-dragged(a, b, c); }
-                crop-released => { root.crop-released(); }
-                crop-draw-pressed(a, b) => { root.crop-draw-pressed(a, b); }
+                crop-released => { root.crop-held = false; root.crop-released(); }
+                crop-draw-pressed(a, b) => { root.hold-crop(); root.crop-draw-pressed(a, b); }
                 crop-draw-dragged(a, b) => { root.crop-draw-dragged(a, b); }
-                crop-draw-released => { root.crop-draw-released(); }
+                crop-draw-released => { root.crop-held = false; root.crop-draw-released(); }
                 crop-done => { if (root.crop-mode) { root.crop-in-or-out(); } }
                 crop-draw-armed <=> root.crop-draw-armed;
                 level-end(a, b, c, d) => { root.level-end(a, b, c, d); }
@@ -5350,6 +5350,30 @@ export component App inherits Window {
     // picture; under the grid and the sheets, which are declared
     // after. With all three away they go quiet (see EdgeArrow).
     property <length> view-mid: (root.height - root.strip-h) / 2;
+    // The crop the arrows step off: the crop as it stands, or while a
+    // handle is held or a crop drawn, the crop at the press. Read live,
+    // a dragged edge crossing an arrow's band moved the arrow aside and
+    // back with every pixel of the pointer, so it flashed from side to
+    // side under the drag; held, it moves once, when the drag ends.
+    // The Viewport ends a handle's drag itself when the handles go
+    // mid-drag (its `crop-shown`), and a drawn crop's press area
+    // outlives them, so each hold meets its release.
+    property <bool> crop-held;
+    property <length> held-crop-left;
+    property <length> held-crop-top;
+    property <length> held-crop-width;
+    property <length> held-crop-height;
+    property <length> arrow-crop-left: root.crop-held ? root.held-crop-left : root.crop-left;
+    property <length> arrow-crop-top: root.crop-held ? root.held-crop-top : root.crop-top;
+    property <length> arrow-crop-width: root.crop-held ? root.held-crop-width : root.crop-width;
+    property <length> arrow-crop-height: root.crop-held ? root.held-crop-height : root.crop-height;
+    function hold-crop() {
+        root.held-crop-left = root.crop-left;
+        root.held-crop-top = root.crop-top;
+        root.held-crop-width = root.crop-width;
+        root.held-crop-height = root.crop-height;
+        root.crop-held = true;
+    }
     // With the crop in hand, an arrow over the crop's handles on its
     // edge (a full-width crop's) moves along the edge until it clears
     // them: the arrows are drawn over the viewport, so a handle under
@@ -5359,9 +5383,9 @@ export component App inherits Window {
     pure function arrow-clears(top: length) -> bool {
         if (top < 0 || top + 40px > root.height - root.strip-h) { return false; }
         // A handle is 20 px; 2 px more of air either side.
-        let ct = root.crop-top;
-        let cm = root.crop-top + root.crop-height / 2;
-        let cb = root.crop-top + root.crop-height;
+        let ct = root.arrow-crop-top;
+        let cm = root.arrow-crop-top + root.arrow-crop-height / 2;
+        let cb = root.arrow-crop-top + root.arrow-crop-height;
         return !(ct > top - 12px && ct < top + 52px) && !(cm > top - 12px && cm < top + 52px)
             && !(cb > top - 12px && cb < top + 52px);
     }
@@ -5371,16 +5395,16 @@ export component App inherits Window {
             || root.arrow-clears(rest)) {
             return rest;
         }
-        let cm = root.crop-top + root.crop-height / 2;
+        let cm = root.arrow-crop-top + root.arrow-crop-height / 2;
         if (root.arrow-clears(cm + 12px)) { return cm + 12px; }
         if (root.arrow-clears(cm - 52px)) { return cm - 52px; }
-        if (root.arrow-clears(root.crop-top + root.crop-height + 12px)) { return root.crop-top + root.crop-height + 12px; }
-        if (root.arrow-clears(root.crop-top - 52px)) { return root.crop-top - 52px; }
+        if (root.arrow-clears(root.arrow-crop-top + root.arrow-crop-height + 12px)) { return root.arrow-crop-top + root.arrow-crop-height + 12px; }
+        if (root.arrow-clears(root.arrow-crop-top - 52px)) { return root.arrow-crop-top - 52px; }
         return rest;
     }
     EdgeArrow {
         x: root.width - root.right-w - self.width;
-        y: root.arrow-top(self.x, root.left-w + root.crop-left + root.crop-width);
+        y: root.arrow-top(self.x, root.left-w + root.arrow-crop-left + root.arrow-crop-width);
         width: 16px;
         height: 40px;
         quiet: root.all-hidden();
@@ -5396,28 +5420,28 @@ export component App inherits Window {
     // full-height crop's bottom handles.
     pure function strip-arrow-clears(left: length) -> bool {
         if (left < root.left-w || left + 40px > root.width - root.right-w) { return false; }
-        let cl = root.left-w + root.crop-left;
-        let cm = cl + root.crop-width / 2;
-        let cr = cl + root.crop-width;
+        let cl = root.left-w + root.arrow-crop-left;
+        let cm = cl + root.arrow-crop-width / 2;
+        let cr = cl + root.arrow-crop-width;
         return !(cl > left - 12px && cl < left + 52px) && !(cm > left - 12px && cm < left + 52px)
             && !(cr > left - 12px && cr < left + 52px);
     }
     pure function strip-arrow-left() -> length {
         let rest = root.left-w + (root.width - root.left-w - root.right-w - 40px) / 2;
-        let cb = root.crop-top + root.crop-height;
+        let cb = root.arrow-crop-top + root.arrow-crop-height;
         if (!root.crop-mode || root.grid-open || root.placeholder
             || abs(cb - (root.height - root.strip-h - 8px)) >= 18px || root.strip-arrow-clears(rest)) {
             return rest;
         }
-        let cl = root.left-w + root.crop-left;
-        let cm = cl + root.crop-width / 2;
+        let cl = root.left-w + root.arrow-crop-left;
+        let cm = cl + root.arrow-crop-width / 2;
         if (root.strip-arrow-clears(cm + 12px)) { return cm + 12px; }
         if (root.strip-arrow-clears(cm - 52px)) { return cm - 52px; }
-        if (root.strip-arrow-clears(cl + root.crop-width + 12px)) { return cl + root.crop-width + 12px; }
+        if (root.strip-arrow-clears(cl + root.arrow-crop-width + 12px)) { return cl + root.arrow-crop-width + 12px; }
         if (root.strip-arrow-clears(cl - 52px)) { return cl - 52px; }
         return rest;
     }
-    EdgeArrow {
+    strip-arrow := EdgeArrow {
         x: root.strip-arrow-left();
         y: root.height - root.strip-h - self.height;
         width: 40px;
@@ -6302,7 +6326,7 @@ export component App inherits Window {
     // pictures until the pointer asks; there its ground is the canvas.
     EdgeArrow {
         x: root.left-w;
-        y: root.grid-open ? (root.height - self.height) / 2 : root.arrow-top(self.x, root.left-w + root.crop-left);
+        y: root.grid-open ? (root.height - self.height) / 2 : root.arrow-top(self.x, root.left-w + root.arrow-crop-left);
         width: 16px;
         height: 40px;
         quiet: (root.all-hidden() && !root.grid-open) || (root.lightbox && root.grid-open);

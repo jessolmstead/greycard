@@ -29,10 +29,9 @@ the reasoning lives in `docs/notes.md`.
       widened parity sweep's 8,000 edits (seeds 2, 17, and 20), all
       under a profile tone curve flat at black and at white; a real
       card is within 1.1 on the same edits; cause not found (§702)
-- [ ] Dragging the crop's bottom handle past the filmstrip's
-      hide and show arrow makes the arrow flash from side to side
-      as the pointer crosses it; the arrow should stay put while a
-      crop handle is held
+- [ ] The Rotate slider's refit can carry a crop edge across an edge
+      arrow's band, and the arrow hops aside and back under the drag;
+      a handle's drag holds the arrows still, a slider's does not
 - [ ] Whites down brightens a few pixels on real exports: on 746 of
       750 frame and setting pairs some pixel comes out brighter, up
       to 42 of 65,535 on Channels and 9,663 (about 200 pixels) on AgX

@@ -1059,7 +1059,20 @@ export component Viewport inherits Rectangle {
     property <bool> crop-alt-drawing;
     property <length> crop-alt-x;
     property <length> crop-alt-y;
+    // A crop handle (or the crop's body) held, from its grab to its
+    // drop. The handles live under `crop-shown`, so a frame stepped to
+    // under the camera's JPEG, the Original key, or crop mode left
+    // mid-drag takes the held one away with no release ever heard:
+    // the drag is ended here then, as a release would end it, so
+    // nothing that waits on the drop (the edit's drag in Rust, the
+    // window's hold on the edge arrows) is left holding.
+    property <bool> crop-handle-down;
+    property <bool> crop-shown: root.crop-mode && !root.bare;
+    changed crop-shown => {
+        if (!root.crop-shown && root.crop-handle-down) { root.crop-dropped(); }
+    }
     function crop-grabbed(i: int, alt: bool, x: length, y: length) {
+        root.crop-handle-down = true;
         root.crop-alt-down = alt;
         root.crop-alt-drawing = false;
         if (alt) {
@@ -1091,10 +1104,11 @@ export component Viewport inherits Rectangle {
         }
         root.crop-alt-down = false;
         root.crop-alt-drawing = false;
+        root.crop-handle-down = false;
     }
     // The crop: shade outside, a rule of thirds inside, eight
     // handles and the whole to move.
-    if root.crop-mode && !root.bare: Rectangle {
+    if root.crop-shown: Rectangle {
         property <length> cl: root.crop-left;
         property <length> ct: root.crop-top;
         property <length> cw: root.crop-width;
