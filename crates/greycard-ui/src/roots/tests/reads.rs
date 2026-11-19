@@ -511,10 +511,10 @@ fn a_folder_s_sidecar_that_will_not_read_is_held_and_never_written_over() {
         for f in [0, 1] {
             assert!(!st.from_row[f].read, "{f} held");
             assert!(st.from_row[f].unread.is_some(), "{f} held");
-            assert!(!crate::panel::edit::file_writable(&st, f), "{f}");
+            assert!(!crate::sidecars::file_writable(&st, f), "{f}");
         }
         assert!(st.from_row[2].read);
-        assert!(crate::panel::edit::file_writable(&st, 2));
+        assert!(crate::sidecars::file_writable(&st, 2));
     }
 
     // A rating over the three.

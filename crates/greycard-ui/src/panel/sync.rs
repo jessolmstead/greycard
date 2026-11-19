@@ -48,9 +48,10 @@ use crate::panel::browser::{
     chosen_frames, file_name, migrate_frame, show_badges, show_thumb, thumb_turns,
 };
 use crate::panel::cull::leave_cull;
-use crate::panel::edit::{panel_state, read_edit, save_edit, write_sidecar};
+use crate::panel::edit::{panel_state, read_edit, save_edit};
 use crate::panel::history::{show_history, take_current, take_current_with};
 use crate::settings::SyncShift;
+use crate::sidecars::write_sidecar;
 use crate::worker::Worker;
 use crate::{App, Shared, State, carry, selection, tr};
 
@@ -518,7 +519,7 @@ fn lay_shifted_over_targets(
     let written = selection::union(&moved, &seeded);
     // Each file written once, however many of its lines moved.
     let files = st.files_of(&written);
-    crate::panel::edit::write_files(st, &files);
+    crate::sidecars::write_files(st, &files);
     for &f in &written {
         let (turns, flip) = thumb_turns(st, app, f);
         show_thumb(st, app, f, turns, flip);
@@ -731,11 +732,8 @@ fn sync_now(
                 st.develop.status_after_develop = Some((st.develop.generation, said));
                 return;
             }
-        } else if recorded
-            && !wrote_file_of(&st, &synced, c)
-            && crate::panel::edit::writable(&st, c)
-        {
-            crate::panel::edit::save_sidecar(&mut st, c);
+        } else if recorded && !wrote_file_of(&st, &synced, c) && crate::sidecars::writable(&st, c) {
+            crate::sidecars::save_sidecar(&mut st, c);
         }
     }
     app.set_status(said.into());

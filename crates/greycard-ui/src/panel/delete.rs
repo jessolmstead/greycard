@@ -1152,9 +1152,9 @@ pub(crate) mod tests {
             let mut st = state.borrow_mut();
             assert!(held(&st, 0) && held(&st, 2) && !held(&st, 1));
             st.sidecars[0].meta.rating = 5;
-            crate::panel::edit::write_sidecar(&mut st, 0);
+            crate::sidecars::write_sidecar(&mut st, 0);
             st.sidecars[4].meta.rating = 5;
-            crate::panel::edit::write_sidecar(&mut st, 4);
+            crate::sidecars::write_sidecar(&mut st, 4);
         }
         assert!(!Sidecar::path_for(&files[0]).exists());
         assert!(Sidecar::path_for(&files[4]).exists());

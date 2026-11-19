@@ -13,7 +13,8 @@ use greycard_edit::Edit;
 use slint::{ComponentHandle, Model};
 
 use crate::panel::browser::{file_name, open_row, row_of, show_badges, show_thumb, thumb_turns};
-use crate::panel::edit::{read_edit, save_edit, write_file};
+use crate::panel::edit::{read_edit, save_edit};
+use crate::sidecars::write_file;
 use crate::versions::Key;
 use crate::worker::Worker;
 use crate::{App, Shared, State};

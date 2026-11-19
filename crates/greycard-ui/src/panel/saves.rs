@@ -222,11 +222,11 @@ fn prepare(st: &mut State, files: &[usize]) -> Option<(u64, Vec<Item>)> {
     let stamp = greycard_edit::sync::Stamp::now();
     let mut items = Vec::with_capacity(files.len());
     for &file in files {
-        if !crate::panel::edit::file_writable(st, file) {
+        if !crate::sidecars::file_writable(st, file) {
             continue;
         }
         if crate::sync::followed(st, file) {
-            crate::panel::edit::save_file(st, file);
+            crate::sidecars::save_file(st, file);
             continue;
         }
         let xmp = st.window.xmp_sidecars.then(|| xmp_ask(st, file));
@@ -517,7 +517,7 @@ pub(crate) mod tests {
     use std::rc::Rc;
 
     use super::*;
-    use crate::panel::edit::write_sidecar;
+    use crate::sidecars::write_sidecar;
     use crate::testing::{state_for, window};
     use crate::{App, Shared};
     use greycard_edit::{Edit, Placement};

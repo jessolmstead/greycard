@@ -469,7 +469,7 @@ fn put(
     }
     line.record_as(edit, Some(label.to_string()));
     if let Some(file) = st.file_at(c) {
-        crate::panel::edit::write_file(st, file);
+        crate::sidecars::write_file(st, file);
     }
     let (turns, flip) = thumb_turns(st, app, c);
     show_thumb(st, app, c, turns, flip);

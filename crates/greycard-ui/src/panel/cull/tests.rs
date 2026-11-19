@@ -4283,7 +4283,7 @@ fn the_rows_follow_both_moves_even_out_of_an_emptied_folder() {
         let mut st = state.borrow_mut();
         assert_eq!(st.files[0], files[0]);
         st.sidecars[0].meta.flag = meta::Flag::Reject;
-        crate::panel::edit::write_sidecar(&mut st, 0);
+        crate::sidecars::write_sidecar(&mut st, 0);
     }
     app.invoke_rejects_answered(true);
     let out = rejects.join("c.tif");

@@ -8,9 +8,8 @@ use greycard_render::finish;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::panel::cull::leave_cull;
-use crate::panel::edit::{
-    current_turn, edit_to_develop, read_edit, record_panel, show_edit, write_file, write_sidecar,
-};
+use crate::panel::edit::{current_turn, edit_to_develop, read_edit, record_panel, show_edit};
+use crate::sidecars::{write_file, write_sidecar};
 use crate::worker::{Job, Worker};
 use crate::{App, HistoryRow, Shared, State};
 
@@ -381,8 +380,8 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
     // replaced: an undo of the switch shows the custom white again,
     // and a redo of it gives back nothing.
     crate::panel::color::forget_before_as_shot(st);
-    if save && crate::panel::edit::writable(st, c) {
-        crate::panel::edit::save_sidecar(st, c);
+    if save && crate::sidecars::writable(st, c) {
+        crate::sidecars::save_sidecar(st, c);
     }
     if st.culling.cull.is_some() {
         return;

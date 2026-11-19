@@ -495,7 +495,7 @@ fn write_followed_with(
             Some((c, f.clone(), followed.archive.clone()))
         })
         .filter(|(c, ..)| {
-            crate::panel::edit::file_writable(st, *c) && !st.sidecars[*c].revisions.is_empty()
+            crate::sidecars::file_writable(st, *c) && !st.sidecars[*c].revisions.is_empty()
         })
         .collect();
     if held.is_empty() {
@@ -1251,7 +1251,7 @@ fn bring_home_followed(st: &mut State, offline: &HashSet<PathBuf>) {
         let Some(c) = st.files.iter().position(|f| *f == copy) else {
             continue;
         };
-        if !crate::panel::edit::file_writable(st, c) || st.sidecars[c].revisions.is_empty() {
+        if !crate::sidecars::file_writable(st, c) || st.sidecars[c].revisions.is_empty() {
             continue;
         }
         let Some(hash) = st
@@ -1535,7 +1535,7 @@ fn settle_held(
         .files
         .iter()
         .position(|f| f == frame)
-        .filter(|c| crate::panel::edit::file_writable(&st, *c));
+        .filter(|c| crate::sidecars::file_writable(&st, *c));
     let Some(c) = held else {
         // A frame the window does not hold, or holds as its row
         // standing in, or may not write (held for a delete): the
@@ -1612,7 +1612,7 @@ fn settle_held(
                 crate::panel::history::take_current_settled(&mut state.borrow_mut(), app, worker);
                 st = state.borrow_mut();
             } else {
-                crate::panel::edit::save_file(&mut st, c);
+                crate::sidecars::save_file(&mut st, c);
             }
             // The save failed (the disk gone under the frame, about to
             // follow its copy): the join still goes to the copy from
@@ -1719,7 +1719,7 @@ pub(crate) fn follow_offline(st: &mut State, app: &App) {
         || st.work.sync.checking.contains(&frame)
         || st.work.sync.queued.contains_key(&frame)
         || st.work.sync.in_flight.contains(&frame)
-        || !crate::panel::edit::writable(st, c)
+        || !crate::sidecars::writable(st, c)
         || st.views.library.roots.archive_of(&frame).is_some()
     {
         return;

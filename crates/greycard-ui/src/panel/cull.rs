@@ -2876,8 +2876,8 @@ fn unreject(st: &mut State, i: usize) {
         return;
     }
     st.sidecars[i].meta.flag = meta::Flag::None;
-    if crate::panel::edit::file_writable(st, i) {
-        crate::panel::edit::write_file(st, i);
+    if crate::sidecars::file_writable(st, i) {
+        crate::sidecars::write_file(st, i);
         return;
     }
     if !st.window.write_sidecars {

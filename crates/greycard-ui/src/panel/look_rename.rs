@@ -994,9 +994,9 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
 /// later, or here; one that could not be written is counted stale.
 fn save_window_copy(st: &mut State, i: usize, done: &mut Rewritten) {
     if crate::sync::followed(st, i) {
-        crate::panel::edit::save_file(st, i);
+        crate::sidecars::save_file(st, i);
         done.archived += 1;
-    } else if !(crate::panel::edit::file_writable(st, i) && crate::panel::edit::save_file(st, i)) {
+    } else if !(crate::sidecars::file_writable(st, i) && crate::sidecars::save_file(st, i)) {
         done.pictures -= 1;
         done.stale += 1;
     }
@@ -1271,7 +1271,7 @@ fn take_outcomes(
             written.retain(|p| *p != path);
         }
         if st.sidecars[i].rename_look(&r.old, &r.new)
-            && !(crate::panel::edit::file_writable(st, i) && crate::panel::edit::save_file(st, i))
+            && !(crate::sidecars::file_writable(st, i) && crate::sidecars::save_file(st, i))
             && !late
         {
             if wrote {

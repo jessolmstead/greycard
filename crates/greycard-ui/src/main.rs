@@ -45,6 +45,7 @@ mod runners;
 mod scope;
 mod settings;
 mod shared;
+mod sidecars;
 mod stacks;
 mod sync;
 #[cfg(test)]

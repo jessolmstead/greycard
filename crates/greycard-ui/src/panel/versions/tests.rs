@@ -296,7 +296,7 @@ fn two_versions_deleted_at_once_both_go() {
     let cool = version_of(&state, &app, &worker, 0, "Cool");
     app.invoke_select(1);
     state.borrow_mut().views.picked = vec![1, 2];
-    crate::panel::edit::write_file(&mut state.borrow_mut(), 0);
+    crate::sidecars::write_file(&mut state.borrow_mut(), 0);
     let saved = state.borrow().sidecars[0].saved;
     app.invoke_delete_asked("selection".into());
     assert_eq!(app.get_delete_title(), "Delete 2 versions?");
@@ -698,7 +698,7 @@ fn a_version_s_picture_is_asked_by_its_own_frame() {
         let mut warm = Edit::default();
         warm.light.exposure = 0.5;
         st.line_mut(1).unwrap().record(warm);
-        crate::panel::edit::write_file(&mut st, 0);
+        crate::sidecars::write_file(&mut st, 0);
     }
     let st = state.borrow();
     let frame = frame_of(&st, 1).1;
@@ -770,7 +770,7 @@ fn a_culling_key_on_a_version_marks_the_file_and_writes_it_once() {
     let (state, worker) = state_for(&app, files.clone());
     state.borrow_mut().window.write_sidecars = true;
     version_of(&state, &app, &worker, 0, "Warm");
-    crate::panel::edit::write_file(&mut state.borrow_mut(), 0);
+    crate::sidecars::write_file(&mut state.borrow_mut(), 0);
     app.invoke_select(1);
     assert!(app.invoke_meta_key("3".into()));
     assert!(app.invoke_meta_key("p".into()));
@@ -882,7 +882,7 @@ fn a_read_without_the_version_takes_its_cell_and_writes_nothing() {
     let (state, worker) = state_for(&app, files.clone());
     state.borrow_mut().window.write_sidecars = true;
     let id = version_of(&state, &app, &worker, 0, "Warm");
-    crate::panel::edit::write_file(&mut state.borrow_mut(), 0);
+    crate::sidecars::write_file(&mut state.borrow_mut(), 0);
     let saved = state.borrow().sidecars[0].saved;
     app.invoke_select(1);
     // The other machine's copy, without Warm, landing as a read of
@@ -973,7 +973,7 @@ fn a_paste_a_sync_and_a_preset_onto_a_vanished_version_say_so() {
     let (state, worker) = state_for(&app, files.clone());
     state.borrow_mut().window.write_sidecars = true;
     let id = version_of(&state, &app, &worker, 0, "Warm");
-    crate::panel::edit::write_file(&mut state.borrow_mut(), 0);
+    crate::sidecars::write_file(&mut state.borrow_mut(), 0);
     // The version taken out of the sidecar behind the cells' back.
     state.borrow_mut().sidecars[0].delete_version(&id).unwrap();
     let saved = state.borrow().sidecars[0].saved;
@@ -1145,7 +1145,7 @@ fn a_culling_key_on_a_vanished_version_cell_rates_the_file() {
     let (state, worker) = state_for(&app, files.clone());
     state.borrow_mut().window.write_sidecars = true;
     let id = version_of(&state, &app, &worker, 0, "Warm");
-    crate::panel::edit::write_file(&mut state.borrow_mut(), 0);
+    crate::sidecars::write_file(&mut state.borrow_mut(), 0);
     state.borrow_mut().sidecars[0].delete_version(&id).unwrap();
     {
         let mut st = state.borrow_mut();

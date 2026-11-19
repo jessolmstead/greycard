@@ -851,8 +851,7 @@ clears or a tester asks for it.
       (§316, §318, §321)
 - [ ] The window's files cut by moves inside the crate (§720): the
       capture driver out of `panel/viewport.rs`, then the browser's
-      opening path into a file of its own; the sidecar writes go
-      first
+      opening path into a file of its own
 - [ ] A `State` built without a window, so a test that touches only
       it runs off the window: unmeasured, a study first (§720)
 - [ ] "Write the XMP, then the sidecar" is written four times:

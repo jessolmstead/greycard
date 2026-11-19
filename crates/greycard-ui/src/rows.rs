@@ -37,7 +37,7 @@
 //!   the default edit, so the cells are the same whether or not the
 //!   sidecar was read.
 //! - A sidecar that is standing in is never written
-//!   (`panel::edit::writable`): a save of a stand-in would put the
+//!   (`sidecars::writable`): a save of a stand-in would put the
 //!   default edit over the frame's own.
 //! - A frame under a root that is offline cannot be loaded. A key, a
 //!   turn, a sync, a paste, a preset, an export, a delete or the
@@ -1832,9 +1832,9 @@ mod unreadable {
             st.window.write_sidecars = true;
             st.sidecars[0] = held.sidecar;
             st.from_row[0] = held.from_row;
-            assert!(!crate::panel::edit::file_writable(&st, 0), "{name}");
+            assert!(!crate::sidecars::file_writable(&st, 0), "{name}");
             st.sidecars[0].meta.rating = 3;
-            crate::panel::edit::write_file(&mut st, 0);
+            crate::sidecars::write_file(&mut st, 0);
             assert_eq!(std::fs::read_to_string(&gcd).unwrap(), body, "{name}");
         }
         remove_dir_retry(&dir);
@@ -1856,16 +1856,16 @@ mod unreadable {
             let mut st = state.borrow_mut();
             st.window.write_sidecars = true;
             st.sidecars[0].meta.rating = 2;
-            crate::panel::edit::write_file(&mut st, 0);
+            crate::sidecars::write_file(&mut st, 0);
             assert!(gcd.exists(), "{name}");
             std::fs::write(&gcd, &body).unwrap();
 
             assert!(!reread_file(&mut st, &app, 0), "{name}");
             assert_eq!(st.sidecars[0].meta.rating, 2, "{name}: what it held");
             assert!(st.from_row[0].unread.is_some(), "{name}");
-            assert!(!crate::panel::edit::file_writable(&st, 0), "{name}");
+            assert!(!crate::sidecars::file_writable(&st, 0), "{name}");
             st.sidecars[0].meta.rating = 5;
-            crate::panel::edit::write_file(&mut st, 0);
+            crate::sidecars::write_file(&mut st, 0);
             assert_eq!(std::fs::read_to_string(&gcd).unwrap(), body, "{name}");
         }
         remove_dir_retry(&dir);

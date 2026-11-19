@@ -627,7 +627,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         Box::new(move |st: &mut State, i: usize| {
             if let Some(preset) = preset {
                 // Written only where a save would be (`writable`).
-                let placement = placement.filter(|_| crate::panel::edit::file_writable(st, i));
+                let placement = placement.filter(|_| crate::sidecars::file_writable(st, i));
                 let st = &mut *st;
                 let saved =
                     preset_at_start(&mut st.sidecars[i], None, &st.files[i], &preset, placement);

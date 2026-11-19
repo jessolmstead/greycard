@@ -14,10 +14,9 @@ use crate::panel::crop::read_geometry;
 use crate::panel::cull::{
     cull_select, drop_placeholder, enter_cull, say_if_empty, show_filter, start_placeholder,
 };
-use crate::panel::edit::{
-    current_turn, edit_to_develop, read_edit, save_edit, show_edit, write_sidecar,
-};
+use crate::panel::edit::{current_turn, edit_to_develop, read_edit, save_edit, show_edit};
 use crate::panel::history::show_history;
+use crate::sidecars::write_sidecar;
 use crate::tags::{self, Tags};
 use crate::worker::{self, Job, Worker};
 use crate::{
@@ -713,7 +712,7 @@ fn tags_shown(
     was_shown: &[bool],
     moved: &[usize],
 ) -> Option<usize> {
-    crate::panel::edit::write_files(st, moved);
+    crate::sidecars::write_files(st, moved);
     for &f in moved {
         show_badges_of_file(st, app, f);
     }

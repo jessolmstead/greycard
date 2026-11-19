@@ -164,9 +164,7 @@ pub(crate) fn landed(st: &crate::State, turn: u8) {
     };
     // The sidecar on disk is the frame's own, and holds what was
     // developed: nothing on the panel is unsaved.
-    if !crate::panel::edit::writable(st, c)
-        || line.current != st.develop.edit
-        || sidecar.turn != turn
+    if !crate::sidecars::writable(st, c) || line.current != st.develop.edit || sidecar.turn != turn
     {
         return;
     }
@@ -498,7 +496,7 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.sidecars[0].current.light.exposure = 1.0;
-            assert!(crate::panel::edit::save_sidecar(&mut st, 0));
+            assert!(crate::sidecars::save_sidecar(&mut st, 0));
         }
         pump(
             &|st| shown(st, &app, 0).0 > camera.0 + 20.0,
@@ -515,7 +513,7 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.sidecars[0].current = Edit::for_picture();
-            assert!(crate::panel::edit::save_sidecar(&mut st, 0));
+            assert!(crate::sidecars::save_sidecar(&mut st, 0));
         }
         pump(
             &|st| (shown(st, &app, 0).0 - camera.0).abs() < 1.0,
@@ -525,7 +523,7 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.sidecars[0].current.light.exposure = 1.0;
-            assert!(crate::panel::edit::save_sidecar(&mut st, 0));
+            assert!(crate::sidecars::save_sidecar(&mut st, 0));
         }
         pump(
             &|st| shown(st, &app, 0).0 > camera.0 + 20.0,
