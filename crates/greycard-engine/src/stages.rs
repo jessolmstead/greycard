@@ -2778,4 +2778,43 @@ mod tests {
         );
         assert!(same(&masked(0.0, 0.0), &subject), "a learned shape");
     }
+
+    /// A profile with a NaN in its hue and saturation map and in its
+    /// look table, read again as another pointer, is still the profile
+    /// its base was made under; a finite entry changed is not.
+    #[test]
+    fn a_profile_with_a_nan_in_its_tables_finds_its_base() {
+        use greycard_core::dcp::{Dcp, HueSatMaps};
+        let read = || {
+            let bytes = greycard_core::testing::dcp::synthetic();
+            let mut p = Dcp::from_bytes(&bytes).unwrap().profile().unwrap();
+            let mut maps = HueSatMaps::clone(p.maps.as_deref().expect("a map"));
+            maps.primary.data[1][0] = f32::NAN;
+            p.maps = Some(Arc::new(maps));
+            let mut look = p.look.as_deref().expect("a look table").clone();
+            look.data[2][1] = f32::NAN;
+            p.look = Some(Arc::new(look));
+            Arc::new(p)
+        };
+        let prepare = |profile: Arc<Profile>| PrepareOptions {
+            settings: DevelopSettings {
+                profile: Some(profile),
+                ..DevelopSettings::default()
+            },
+            measure_noise: false,
+            clip: true,
+            ca_follows: false,
+        };
+        let (a, b) = (read(), read());
+        assert!(!Arc::ptr_eq(&a, &b));
+        assert!(*a == *a, "equal to itself");
+        assert!(ProfileRef(a.clone()) == ProfileRef(b.clone()));
+        assert!(prepare(a.clone()) == prepare(b), "matches its base");
+
+        let mut other = Profile::clone(&a);
+        let mut look = other.look.as_deref().unwrap().clone();
+        look.data[0][0] += 1.0;
+        other.look = Some(Arc::new(look));
+        assert!(prepare(a) != prepare(Arc::new(other)));
+    }
 }

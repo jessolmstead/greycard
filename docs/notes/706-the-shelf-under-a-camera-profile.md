@@ -42,8 +42,9 @@ standing in, refused when the card was short or a run failed.
 **Limits.**
 - A profile rewritten with the same tables but another name or
   copyright is another profile.
-- A NaN inside a hue and saturation map or a look table still makes a
-  profile unequal to itself.
+- A NaN inside a hue and saturation map or a look table compares equal
+  to itself since 2026-11-19, so such a profile finds its base; only a
+  profile built in code can hold one, the reader refusing them.
 - No test covers the stand-in and learned replacement in `put`; it
   only evicts, so the cost of a slip is budget, not a picture.
 - (An edited neighbor is developed ahead since §707, and the window

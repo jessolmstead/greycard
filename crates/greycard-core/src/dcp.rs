@@ -132,7 +132,11 @@ impl Encoding {
 /// value run 0 to 1 over `sat_divisions - 1` and `val_divisions - 1`
 /// steps and clamp outside. A `val_divisions` of 1 is a two dimensional
 /// map, which acts the same at every value.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Equal entry by entry as numbers, a NaN equal to a NaN, so a map
+/// holding one is still equal to itself and a profile carrying it
+/// still finds the base it made (§706).
+#[derive(Debug, Clone)]
 pub struct HueSatMap {
     pub hue_divisions: usize,
     pub sat_divisions: usize,
@@ -140,6 +144,22 @@ pub struct HueSatMap {
     pub encoding: Encoding,
     /// Value slowest, then hue, saturation fastest.
     pub data: Vec<[f32; 3]>,
+}
+
+impl PartialEq for HueSatMap {
+    fn eq(&self, other: &Self) -> bool {
+        let same = |a: f32, b: f32| a == b || (a.is_nan() && b.is_nan());
+        self.hue_divisions == other.hue_divisions
+            && self.sat_divisions == other.sat_divisions
+            && self.val_divisions == other.val_divisions
+            && self.encoding == other.encoding
+            && self.data.len() == other.data.len()
+            && self
+                .data
+                .iter()
+                .zip(&other.data)
+                .all(|(a, b)| a.iter().zip(b).all(|(a, b)| same(*a, *b)))
+    }
 }
 
 /// The most nodes an axis of a table may have.

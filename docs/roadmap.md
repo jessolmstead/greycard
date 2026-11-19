@@ -29,9 +29,6 @@ the reasoning lives in `docs/notes.md`.
       widened parity sweep's 8,000 edits (seeds 2, 17, and 20), all
       under a profile tone curve flat at black and at white; a real
       card is within 1.1 on the same edits; cause not found (§702)
-- [ ] A camera profile with a NaN inside a hue and saturation map or
-      a look table is unequal to itself and never matches its
-      shelved base (§706)
 - [ ] Dragging the crop's bottom handle past the filmstrip's
       hide and show arrow makes the arrow flash from side to side
       as the pointer crosses it; the arrow should stay put while a
