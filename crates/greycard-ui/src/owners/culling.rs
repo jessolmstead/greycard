@@ -57,10 +57,12 @@ pub(crate) struct Culling {
     /// of the window, as the handles' are.
     pub(crate) compare_tiles: Rc<VecModel<CompareTile>>,
     /// The file whose camera picture Cull's loupe last drew as the open
-    /// frame, and whether it is owed to the settings' `last_file`: kept
-    /// at the next tick of the choices' timer (once a second) or at the
-    /// close, so held arrows write once a second at most and never per
-    /// frame (`startup::keep_last_file`).
+    /// frame (`startup::loupe_drew`).
     pub(crate) drawn: Option<PathBuf>,
-    pub(crate) drawn_owed: bool,
+    /// The frame chosen and owed to the settings' `last_file`, however
+    /// it was chosen (`startup::chosen`): kept at the next tick of the
+    /// choices' timer (once a second) or at the close, so held arrows
+    /// write once a second at most and never per frame
+    /// (`startup::keep_last_file`).
+    pub(crate) owed: Option<PathBuf>,
 }

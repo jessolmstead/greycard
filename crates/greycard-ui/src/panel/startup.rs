@@ -154,9 +154,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         Some(p) => tracing::info!("settings: {}", p.display()),
         None => tracing::warn!("settings: no configuration directory; nothing is remembered"),
     }
-    let last_file = (!remembered.shared.last_file.is_empty())
-        .then(|| PathBuf::from(&remembered.shared.last_file))
-        .filter(|p| p.is_file());
+    let last_file = last_file(&remembered);
 
     // The library index, on a thread of its own once the window is up:
     // the folder open is indexed there, so the first frame never waits
@@ -2416,7 +2414,7 @@ thread_local! {
     static AT_EXIT: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
 }
 
-/// The choices' last write, and a resting edit's and Cull's frame's,
+/// The choices' last write, a resting edit, and the frame chosen,
 /// as winit's loop exits (`exiting`).
 pub(crate) fn at_exit(app: &App, state: &Rc<Shared>, choices: &Choices) {
     let (app_weak, held, at_exit) = (app.as_weak(), state.clone(), choices.clone());
@@ -2433,9 +2431,9 @@ pub(crate) fn at_exit(app: &App, state: &Rc<Shared>, choices: &Choices) {
                 save_edit(&mut st, edit);
             }
             at_exit.write(&app, &st, true);
-            // The frame Cull rests on, should the timer not have
+            // The frame chosen, should the timer not have
             // kept it yet.
-            keep_last_file(&mut st);
+            keep_last_file(&mut st, &app);
             // The collections' and stacks' copies asked for, a
             // moment's wait: one held up goes at the next launch.
             if let Some(c) = &st.views.collections.carrier {
@@ -2446,12 +2444,12 @@ pub(crate) fn at_exit(app: &App, state: &Rc<Shared>, choices: &Choices) {
 }
 
 /// The writes after the loop returns: the choices once more, and
-/// Cull's frame, for a loop whose exit hook did not run (a panic on a
+/// the frame chosen, for a loop whose exit hook did not run (a panic on a
 /// lost device, `gpu_lost::survive`): the start again opens on the
 /// frame last open. Spent by the hook if it ran.
 pub(crate) fn after_loop(app: &App, state: &Rc<Shared>, choices: &Choices) {
     choices.write(app, &state.borrow(), true);
-    keep_last_file(&mut state.borrow_mut());
+    keep_last_file(&mut state.borrow_mut(), app);
 }
 
 /// The loop is exiting: the choices are written while the window is
@@ -2682,7 +2680,7 @@ pub(crate) fn keep_choices(app: &App, state: &Rc<Shared>, choices: &Choices) -> 
             return;
         };
         choices.write(&app, &st, false);
-        keep_last_file(&mut st);
+        keep_last_file(&mut st, &app);
     });
     timer
 }
@@ -2908,11 +2906,9 @@ pub(crate) fn remember_last_file(st: &mut State) {
     let Ok(path) = std::fs::canonicalize(path) else {
         return;
     };
-    // The develop's file is the last one now: a frame the loupe drew
-    // before it is owed no more, and the loupe drawing it again owes
-    // it again.
-    st.culling.drawn = None;
-    st.culling.drawn_owed = false;
+    // The develop's file is the last one now: a frame chosen before it
+    // is owed no more.
+    st.culling.owed = None;
     // Every develop lands here; the file only writes when the file
     // open has changed.
     // Noted before its picture goes up, should putting it up be what
@@ -2931,59 +2927,87 @@ fn leaves_settings_alone(st: &State) -> bool {
     st.window.batch || st.launch.screenshot.is_some() || st.launch.snapshot.is_some()
 }
 
+/// The frame a launch restores: the settings' last file while it is
+/// still a file. One moved or deleted since is none, and the launch
+/// falls back as with no last file.
+pub(crate) fn last_file(remembered: &settings::Settings) -> Option<PathBuf> {
+    let last = &remembered.shared.last_file;
+    (!last.is_empty())
+        .then(|| PathBuf::from(last))
+        .filter(|p| p.is_file())
+}
+
+/// The current frame changed to `file` (or went): owed to the last file
+/// for the next run, written once it settles (`keep_last_file`). Every
+/// way of choosing a frame passes here (`browser::current_moved`): the
+/// grid, the lightbox's sheet, the strip, Cull's loupe, Home and End,
+/// an open. With a set chosen it is the current frame, the one the
+/// loupe shows. A draw of another frame no longer counts: the loupe's
+/// draw settles the frame only once it is of this choice
+/// (`loupe_drew`).
+pub(crate) fn chosen(st: &mut State, file: Option<PathBuf>) {
+    if st.culling.drawn != file {
+        st.culling.drawn = None;
+    }
+    st.culling.owed = file;
+}
+
 /// A loupe drew the open frame's picture. In Cull (its own view, or
-/// the Loupe under the lightbox in Cull) that is the frame to keep as
-/// the last file, Cull landing no develop: owed, and written once it
-/// settles (`keep_last_file`). Not in Develop, where the camera's
+/// the Loupe under the lightbox in Cull) the frame's picture is then up
+/// and drawn, past what the open note guards, and the frame owed may be
+/// written (`keep_last_file`). Not in Develop, where the camera's
 /// picture stands in for a develop not landed yet: the last file moves
 /// there as the develop lands (`remember_last_file`), noted as it does.
-/// Not noted as opening (`open_note`) in Cull either: its picture is up
-/// and drawn already, and the next launch that restores it notes it as
-/// it opens.
+/// Not noted as opening (`open_note`) in Cull either: the next launch
+/// that restores it notes it as it opens.
 pub(crate) fn loupe_drew(st: &mut State) {
     if st.culling.cull.is_none() {
         return;
     }
-    let Some(path) = st.current.and_then(|i| st.path_at(i)) else {
-        return;
-    };
-    if st.culling.drawn.as_ref() != Some(path) {
-        st.culling.drawn = Some(path.clone());
-        st.culling.drawn_owed = true;
-    }
+    st.culling.drawn = st.current.and_then(|i| st.path_at(i)).cloned();
 }
 
-/// The frame Cull last drew, written as the last file if it is owed:
-/// from the timer that keeps the panel's choices (so a run of arrow
-/// keys writes once a tick at most, and the frame it rests on is in the
-/// file a second after at most), at the loop's exit, and after the loop
+/// The frame chosen, written as the last file if it is owed: from the
+/// timer that keeps the panel's choices (so a run of arrow keys writes
+/// once a tick at most, and the frame it rests on is in the file a
+/// second after at most), at the loop's exit, and after the loop
 /// returns (a lost device's way out, which may skip the exit's hook):
 /// the owe is spent by the first, so the file is written once. Only
 /// while it is still the open frame: one left since (another folder,
 /// Develop on another frame) is no longer what the user sees, and the
-/// owe goes; Cull drawing it again owes it again.
-pub(crate) fn keep_last_file(st: &mut State) {
-    if !std::mem::take(&mut st.culling.drawn_owed) {
+/// owe goes. And only where nothing the open note guards (`open_note`)
+/// is still to come for it: in Cull, from a sheet of tiles (the
+/// Library's grid, the lightbox's) at once, since Cull develops nothing
+/// and a sheet puts up no full picture, and in the loupe once it has
+/// drawn the frame since it was chosen. A frame chosen on a sheet in
+/// Cull is so written before its camera picture is fetched, which runs
+/// on threads that catch a panic. In Develop, the grid or not, a
+/// develop of the frame is running, and the last file waits for it to
+/// land (`remember_last_file`), noted as it does. Until then the owe
+/// waits.
+pub(crate) fn keep_last_file(st: &mut State, app: &App) {
+    let Some(owed) = st.culling.owed.clone() else {
+        return;
+    };
+    if st.current.and_then(|i| st.path_at(i)) != Some(&owed) {
+        st.culling.owed = None;
         return;
     }
-    let open = st.current.and_then(|i| st.path_at(i));
-    if open.is_none() || open != st.culling.drawn.as_ref() {
-        st.culling.drawn = None;
-        return;
-    }
-    // A run the command line owns writes no Cull frame (`Launch::owned`);
-    // Develop's own path keeps its narrower guard.
+    // A run the command line owns writes no frame chosen
+    // (`Launch::owned`); Develop's own path keeps its narrower guard.
     if leaves_settings_alone(st) || st.launch.owned {
+        st.culling.owed = None;
         return;
     }
-    // Gone since it was drawn (moved, deleted): the file keeps the
+    let settled = st.culling.cull.is_some()
+        && (app.get_grid_open() || st.culling.drawn.as_ref() == Some(&owed));
+    if !settled {
+        return;
+    }
+    st.culling.owed = None;
+    // Gone since it was chosen (moved, deleted): the file keeps the
     // last it had, and a launch falls back from a file gone.
-    let Some(path) = st
-        .culling
-        .drawn
-        .as_ref()
-        .and_then(|p| std::fs::canonicalize(p).ok())
-    else {
+    let Ok(path) = std::fs::canonicalize(&owed) else {
         return;
     };
     let path = path.to_string_lossy().into_owned();

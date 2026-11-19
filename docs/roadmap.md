@@ -39,9 +39,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] A NaN, an infinity, or a negative channel renders black on the
       GPU and in color on the CPU, and on lavapipe the black reaches
       the pixels beside it
-- [ ] A frame chosen in the Library grid or on the lightbox's sheet
-      is not remembered for the next run: only a frame Cull's loupe
-      drew or a develop landed is
 - [ ] The capture sharpen's early stop sits on a knife edge: the
       device and the CPU can stop a 32x32 block an iteration apart,
       and the block moves by up to 3% (§668). A margin past an

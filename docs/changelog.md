@@ -32,6 +32,8 @@ design note behind it.
   with Try again to bring them back, and greycard no longer quits
   (discussion 168,
   [§712](https://github.com/jessolmstead/greycard/blob/master/docs/notes/712-a-learned-denoiser-that-loses-the-card-rests-there.md)).
+- A frame chosen in Cull's grid or on the lightbox's sheet is where the
+  next run starts, as one the loupe showed already was.
 - The filmstrip's and the panels' edge arrows hold still while a crop
   handle is dragged past them, no longer flashing from side to side.
 - An XMP beside a raw larger than 64 MB is passed over on open and by

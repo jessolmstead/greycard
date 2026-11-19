@@ -900,7 +900,7 @@ impl State {
                 lightbox_fetch: None,
                 compare_tiles: Rc::new(VecModel::default()),
                 drawn: None,
-                drawn_owed: false,
+                owed: None,
             },
             views: owners::Views {
                 companions: HashMap::new(),

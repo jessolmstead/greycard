@@ -251,7 +251,7 @@ fn a_frame_stepped_to_in_cull_is_kept_for_the_next_run_once_it_settles() {
     // A frame drawn and the window closed before the next tick: the
     // close keeps it (`keep_last_file`, from the loop's exit).
     kept.step(2);
-    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut(), &kept.app);
     assert_eq!(kept.last_file(), kept.canonical(2), "kept at the close");
 }
 
@@ -275,7 +275,7 @@ fn a_capture_or_batch_run_in_cull_keeps_no_last_file() {
         kept.step(1 + i);
         set(&mut kept.state.borrow_mut(), true);
         kept.tick();
-        crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+        crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut(), &kept.app);
         assert_eq!(kept.last_file(), "planted", "run {i}");
         set(&mut kept.state.borrow_mut(), false);
     }
@@ -333,7 +333,7 @@ fn a_stand_in_drawn_in_develop_keeps_no_last_file_until_its_develop_lands() {
         cull_frame(&mut st, &kept.app, &kept.state);
     }
     kept.tick();
-    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut(), &kept.app);
     assert_eq!(kept.last_file(), "planted", "not before the develop");
     kept.land();
     assert_eq!(kept.last_file(), kept.canonical(2), "as the develop lands");
@@ -414,7 +414,7 @@ fn a_frame_left_for_another_folder_before_the_tick_is_not_written() {
     kept.app.set_grid_open(true);
     crate::panel::browser::open_loaded(&kept.state, &kept.app, &kept.worker, files, held, true, 0);
     kept.tick();
-    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut(), &kept.app);
     assert_eq!(kept.last_file(), "planted", "the old folder's frame");
 }
 
@@ -464,7 +464,7 @@ fn a_run_the_command_line_owns_keeps_no_cull_frame() {
     kept.state.borrow_mut().launch.owned = true;
     kept.step_bare(1);
     kept.tick();
-    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut(), &kept.app);
     assert_eq!(kept.last_file(), "planted");
     crate::panel::startup::remember_last_file(&mut kept.state.borrow_mut());
     assert_eq!(kept.last_file(), kept.canonical(1), "Develop's as it was");
@@ -484,12 +484,12 @@ fn the_loops_exit_keeps_cull_s_frame_once() {
     crate::panel::startup::exiting();
     assert_eq!(kept.last_file(), kept.canonical(2), "at the exit");
     kept.plant("planted");
-    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut(), &kept.app);
     assert_eq!(kept.last_file(), "planted", "once");
     // The hook never ran (a panic on a lost device): the write
     // after the loop keeps it.
     kept.step_bare(3);
-    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut(), &kept.app);
     assert_eq!(kept.last_file(), kept.canonical(3), "after the loop");
 }
 
@@ -512,6 +512,270 @@ fn the_lightbox_loupe_over_cull_keeps_its_frame() {
     kept.tick();
     let open = kept.state.borrow().current.unwrap();
     assert_eq!(kept.last_file(), kept.canonical(open));
+}
+
+impl Kept {
+    /// The sheet of tiles (the Library's grid, the lightbox's) laid out
+    /// over the window, as it reports the rows it shows.
+    fn sheet(&self) {
+        self.app.invoke_grid_range(0.0, 773.0, 8, 0.0);
+        crate::testing::settle(&self.app);
+    }
+
+    /// A click on the sheet's cell for `row`, found by the cells' id.
+    fn click_cell(&self, row: usize) {
+        use i_slint_backend_testing::ElementHandle;
+        slint::platform::update_timers_and_animations();
+        let cell = ElementHandle::find_by_element_id(&self.app, "GridSheet::ct")
+            .nth(row)
+            .expect("the cell on the sheet");
+        let (at, size) = (cell.absolute_position(), cell.size());
+        click(&self.app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(self.state.borrow().current, Some(row), "the cell's frame");
+    }
+
+    /// The session ended as the loop's exit ends it (`at_exit`).
+    fn end(&self) {
+        crate::panel::startup::at_exit(&self.app, &self.state, &self.choices);
+        crate::panel::startup::exiting();
+    }
+
+    /// The frame the next run starts on: the last file the settings
+    /// keep, still a file, its folder listed and matched to it as the
+    /// launch does; none when there is none to restore.
+    fn next_run(&self) -> Option<String> {
+        let last = crate::panel::startup::last_file(&crate::settings::Settings::load())?;
+        let files = crate::files::list_files(last.parent().unwrap(), false).unwrap();
+        start_on(files, Some(last))
+    }
+}
+
+/// The frame a launch over `files` starts on, `last` the file it
+/// restores: the list read and landed, the frame left for the
+/// rendering setup to open, canonical.
+fn start_on(files: Vec<PathBuf>, last: Option<PathBuf>) -> Option<String> {
+    let app = window(files.len());
+    let (state, worker) = state_for(&app, Vec::new());
+    crate::roots::open_listing(
+        &state,
+        &app,
+        &worker,
+        crate::roots::Listing::Files(files),
+        crate::roots::Select::Last(last),
+    );
+    crate::roots::land_sent(&state, &app, &worker);
+    let st = state.borrow();
+    let path = st.path_of(st.launch.select_at_start?);
+    Some(
+        std::fs::canonicalize(path)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
+/// A frame chosen in the Library's grid, by a click or the arrows, over
+/// Cull or over Develop, is where the next run starts: kept at the tick
+/// after it rests, never per key, and at the close. With a set chosen,
+/// the frame kept is the current one, as the loupe shows it.
+#[test]
+fn a_frame_chosen_in_the_library_grid_is_where_the_next_run_starts() {
+    let kept = Kept::bare("last-file-grid", 4);
+    kept.plant("planted");
+    press(&kept.app, "g");
+    assert!(kept.app.get_grid_open() && !kept.app.get_lightbox());
+    kept.sheet();
+    kept.click_cell(2);
+    assert_eq!(kept.last_file(), "planted", "not at the click");
+    kept.tick();
+    assert_eq!(kept.last_file(), kept.canonical(2), "the click's");
+    // The arrows: no write per key, the frame they rest on at the close.
+    kept.plant("planted");
+    press(&kept.app, Key::RightArrow);
+    press(&kept.app, Key::LeftArrow);
+    press(&kept.app, Key::LeftArrow);
+    assert_eq!(kept.state.borrow().current, Some(1));
+    assert_eq!(kept.last_file(), "planted", "not per key");
+    // Another frame added to the set: the current one stays the one.
+    kept.app.invoke_frame_clicked(3, true, false);
+    assert_eq!(kept.state.borrow().views.picked, [1, 3]);
+    kept.end();
+    assert_eq!(kept.last_file(), kept.canonical(1), "the current frame");
+    assert_eq!(kept.next_run(), Some(kept.canonical(1)));
+}
+
+/// The grid over Develop: a click sends the frame's develop, and the
+/// last file waits for it to land, as the Loupe's does; then it is the
+/// next run's.
+#[test]
+fn a_frame_chosen_on_the_grid_over_develop_is_kept_as_its_develop_lands() {
+    let kept = Kept::bare("last-file-grid-develop", 4);
+    kept.plant("planted");
+    to_develop(&mut kept.state.borrow_mut(), &kept.app, &kept.worker);
+    kept.app.set_grid_open(true);
+    kept.sheet();
+    kept.click_cell(3);
+    kept.tick();
+    crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut(), &kept.app);
+    assert_eq!(kept.last_file(), "planted", "not before its develop");
+    kept.land();
+    assert_eq!(kept.last_file(), kept.canonical(3), "as its develop lands");
+    assert_eq!(kept.next_run(), Some(kept.canonical(3)));
+}
+
+/// A frame chosen on the grid over Develop whose develop kills the
+/// process is never kept: every launch after restores the frame before
+/// it, not the one that died.
+#[test]
+fn a_frame_dying_in_its_develop_under_the_grid_is_not_restored() {
+    let kept = Kept::bare("last-file-grid-dies", 4);
+    press(&kept.app, "g");
+    kept.sheet();
+    kept.click_cell(1);
+    kept.tick();
+    assert_eq!(kept.last_file(), kept.canonical(1));
+    to_develop(&mut kept.state.borrow_mut(), &kept.app, &kept.worker);
+    kept.app.set_grid_open(true);
+    kept.sheet();
+    kept.click_cell(2);
+    kept.tick();
+    // The process dies in frame 2's develop: no landing, no exit.
+    for launch in 0..3 {
+        assert_eq!(
+            kept.next_run(),
+            Some(kept.canonical(1)),
+            "launch {launch}: the frame before"
+        );
+    }
+}
+
+/// A launch whose list lands under the grid in Develop sends the
+/// restored frame's develop: its open note stays on until that develop
+/// is drawn, so a death in it is the note's, and the launch after does
+/// not open the frame again. In Cull, which develops nothing, the grid
+/// takes the note off at once, as before.
+#[test]
+fn a_restored_frame_developing_under_the_grid_keeps_its_open_note() {
+    let kept = Kept::bare("open-note-grid", 4);
+    let files = kept.files.clone();
+    let restored = files[2].clone();
+    let held = |files: &[PathBuf]| -> Vec<crate::rows::Held> {
+        files
+            .iter()
+            .map(|f| crate::rows::from_disk(f, None, Default::default()))
+            .collect()
+    };
+    let launch = |notes: &std::path::Path, cull: bool| {
+        let skip = crate::open_note::start_in(notes, Some(&restored));
+        let app = window(4);
+        let (state, worker) = state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.current = None;
+            st.launch.setup_ran = true;
+            st.launch.not_reopened = skip.clone();
+            if cull {
+                st.current = Some(0);
+                enter_cull(&mut st, &app, 0);
+            }
+        }
+        app.set_grid_open(true);
+        crate::panel::browser::open_loaded(
+            &state,
+            &app,
+            &worker,
+            files.clone(),
+            held(&files),
+            true,
+            2,
+        );
+        let current = state.borrow().current;
+        let noted = notes.join("opening").exists();
+        // The death, or the end.
+        crate::open_note::forget();
+        (skip, current, noted)
+    };
+    let develop = kept.dir.join("notes-develop");
+    let (skip, current, noted) = launch(&develop, false);
+    assert_eq!(
+        (skip, current, noted),
+        (None, Some(2), true),
+        "dies with its note"
+    );
+    let (skip, current, _) = launch(&develop, false);
+    assert!(skip.is_some(), "the next launch skips it");
+    assert_eq!(current, None, "not opened");
+    let cull = kept.dir.join("notes-cull");
+    let (_, current, noted) = launch(&cull, true);
+    assert_eq!(
+        (current, noted),
+        (Some(2), false),
+        "Cull's grid: off at once"
+    );
+}
+
+/// A loupe's draw settles only the choice it was drawn for: Cull drew
+/// a frame, Develop moved elsewhere and came back to it, and C before
+/// its develop lands writes nothing until the loupe draws it again.
+#[test]
+fn an_old_draw_does_not_settle_a_frame_chosen_again() {
+    let kept = Kept::bare("last-file-old-draw", 4);
+    kept.step_bare(1);
+    kept.tick();
+    assert_eq!(kept.last_file(), kept.canonical(1));
+    to_develop(&mut kept.state.borrow_mut(), &kept.app, &kept.worker);
+    kept.app.invoke_select(2);
+    kept.land();
+    assert_eq!(kept.last_file(), kept.canonical(2), "Develop's");
+    kept.app.invoke_select(1);
+    assert_eq!(kept.state.borrow().current, Some(1));
+    to_cull(&mut kept.state.borrow_mut(), &kept.app, &kept.worker);
+    kept.tick();
+    assert_eq!(kept.last_file(), kept.canonical(2), "not on the old draw");
+    crate::panel::startup::loupe_drew(&mut kept.state.borrow_mut());
+    kept.tick();
+    assert_eq!(kept.last_file(), kept.canonical(1), "drawn again");
+}
+
+/// A frame chosen on the lightbox's sheet, by a click or the arrows,
+/// is where the next run starts.
+#[test]
+fn a_frame_chosen_on_the_lightbox_s_sheet_is_where_the_next_run_starts() {
+    let kept = Kept::bare("last-file-sheet", 4);
+    kept.plant("planted");
+    press(&kept.app, "l");
+    assert!(kept.app.get_lightbox() && kept.app.get_grid_open());
+    kept.sheet();
+    kept.click_cell(3);
+    kept.tick();
+    assert_eq!(kept.last_file(), kept.canonical(3), "the click's");
+    kept.plant("planted");
+    press(&kept.app, Key::LeftArrow);
+    assert_eq!(kept.state.borrow().current, Some(2));
+    kept.end();
+    assert_eq!(kept.last_file(), kept.canonical(2), "the arrow's");
+    assert_eq!(kept.next_run(), Some(kept.canonical(2)));
+}
+
+/// A frame kept and deleted since: the next run has no frame to
+/// restore, and its folder, opened, starts on the first frame.
+#[test]
+fn a_frame_kept_and_gone_since_falls_back_at_the_next_run() {
+    let kept = Kept::bare("last-file-gone", 4);
+    press(&kept.app, "g");
+    kept.sheet();
+    kept.click_cell(3);
+    kept.end();
+    let last = kept.last_file();
+    assert_eq!(last, kept.canonical(3));
+    std::fs::remove_file(&kept.files[3]).unwrap();
+    assert_eq!(kept.next_run(), None, "nothing to restore");
+    let left = kept.files[..3].to_vec();
+    assert_eq!(
+        start_on(left, Some(PathBuf::from(last))),
+        Some(kept.canonical(0)),
+        "the folder's first frame"
+    );
 }
 
 /// A frame's local preview and its file land in either order, on

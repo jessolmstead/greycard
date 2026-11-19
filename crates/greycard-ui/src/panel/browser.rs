@@ -2173,8 +2173,16 @@ pub(crate) fn open_loaded(
         started.elapsed().as_secs_f64() * 1e3
     );
     // The Library's grid or lightbox shows thumbnails, never a frame's
-    // full picture: nothing the open note guards goes up for it.
-    if app.get_grid_open() {
+    // full picture: nothing the open note guards goes up for it, unless
+    // the frame opens in Develop, whose develop runs under the grid all
+    // the same; that develop's picture, drawn, takes the note off.
+    let developing = {
+        let st = state.borrow();
+        st.culling.cull.is_none()
+            && st.launch.cull_at_start.is_none()
+            && (row.is_some() || deferred)
+    };
+    if app.get_grid_open() && !developing {
         crate::open_note::shown();
     }
     if let Some(row) = row {
@@ -2408,6 +2416,9 @@ pub(crate) fn current_moved(st: &mut State) {
         crate::open_note::moved_to(file);
     }
     st.culling.tags.opened(file.as_deref());
+    // The frame for the next run to come back to, however it was
+    // chosen.
+    crate::panel::startup::chosen(st, file.clone());
     // A zoom noted from a stand-in is for the frame it stood in for
     // (`viewport::frame_on_show`).
     st.develop.stood_view = None;
@@ -3045,10 +3056,10 @@ fn follow_paths(st: &mut State, was: &Path, to: &Path) {
                 // By path, and never by cell: a path the list no longer
                 // holds is not the current frame's, so `keep_last_file`
                 // lets the owe go, and a moved or deleted one fails to
-                // resolve and is skipped; the next draw owes the frame
+                // resolve and is skipped; the next choice owes the frame
                 // then open.
                 drawn: _,
-                drawn_owed: _,
+                owed: _,
             },
         views:
             Views {

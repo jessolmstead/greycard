@@ -21,10 +21,15 @@
 //! frame whose develop lands as the file open after another (as
 //! `last_file` changes to it). A develop of the same frame again (a
 //! slider) writes nothing. `last_file` changes without a note in one
-//! place: a frame Cull's loupe has drawn (`startup::keep_last_file`),
-//! written only once its camera picture is up and drawn, so what the
-//! note guards is past for it; a launch that restores it notes it as
-//! any restored file. A lock beside the note is held for the session, so a
+//! place: a frame chosen in Cull (`startup::keep_last_file`), which
+//! develops nothing, written once Cull's loupe has drawn its camera
+//! picture, or at once from a sheet of tiles, which puts up none (its
+//! camera picture fetched after, on threads that catch a panic), so
+//! what the note guards is past for it or never comes; a launch that
+//! restores it notes it as any restored file. A launch whose list lands
+//! under the grid takes its note off at once only when no develop of
+//! the restored frame is sent; in Develop that develop's picture,
+//! drawn, takes it off. A lock beside the note is held for the session, so a
 //! second greycard beside a live one finds the note live, and neither
 //! honors it nor writes one. A note for another file than the one to
 //! be restored is let go; a launch that restores none (a file named on
@@ -766,8 +771,9 @@ pub(crate) mod tests {
     /// its picture going up on the next frame (`land_pending` ->
     /// `picture_up`) marks it up, and the develop view's draw
     /// (`drawn`, which the window calls after handing its texture to
-    /// Slint) takes the note off. And in the Library: the list opening
-    /// in the grid takes the restored frame's note off at once. Skipped
+    /// Slint) takes the note off. And in the Library over Cull: the
+    /// list opening in the grid takes the restored frame's note off at
+    /// once; over Develop it stays for that frame's develop. Skipped
     /// without a GPU for the picture to go up on.
     #[test]
     fn a_launch_in_develop_or_the_library_leaves_no_note_once_settled() {
@@ -784,24 +790,37 @@ pub(crate) mod tests {
                 .collect()
         };
 
-        // The Library: the restored frame noted at the start, the list
-        // opening in the grid takes it off.
-        let app = window(2);
-        let (state, worker) = state_for(&app, files.clone());
-        assert_eq!(start_in(&config, Some(&frame)), None);
-        assert_eq!(noted(&config), Some(frame.clone()));
-        app.set_grid_open(true);
-        crate::panel::browser::open_loaded(
-            &state,
-            &app,
-            &worker,
-            files.clone(),
-            held(&files),
-            true,
-            0,
-        );
-        assert_eq!(noted(&config), None, "the Library shows no full picture");
-        forget();
+        // The Library: the restored frame noted at the start. Over
+        // Cull, which develops nothing, the list opening in the grid
+        // takes it off; over Develop the frame's develop runs under the
+        // grid, and its note stays on until that picture is drawn.
+        for cull in [true, false] {
+            let app = window(2);
+            let (state, worker) = state_for(&app, files.clone());
+            if cull {
+                let mut st = state.borrow_mut();
+                st.current = Some(1);
+                crate::panel::cull::enter_cull(&mut st, &app, 1);
+            }
+            assert_eq!(start_in(&config, Some(&frame)), None);
+            assert_eq!(noted(&config), Some(frame.clone()));
+            app.set_grid_open(true);
+            crate::panel::browser::open_loaded(
+                &state,
+                &app,
+                &worker,
+                files.clone(),
+                held(&files),
+                true,
+                0,
+            );
+            if cull {
+                assert_eq!(noted(&config), None, "the Library shows no full picture");
+            } else {
+                assert_eq!(noted(&config), Some(frame.clone()), "its develop runs");
+            }
+            forget();
+        }
 
         // Develop.
         let Some((device, queue)) = greycard_viewport::testing::device("the open note in Develop")
