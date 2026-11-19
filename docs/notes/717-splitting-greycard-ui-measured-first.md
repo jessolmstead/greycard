@@ -78,7 +78,7 @@ Each step is one squashed commit by one agent, and each starts from master with 
 - No test module holds a `tr!`, so the translations do not move.
 - 58,960 lines; `panel/cull.rs` comes out at 3,371.
 
-**2. The windowless leaves into the library target.** grid (684 code / 788 test lines), strip (206/180), and focus_points (165/64) move from `main.rs`'s module list to `lib.rs`. The binary names them through its `pub(crate) use greycard_ui::{…}`, so every `crate::grid::X` compiles untouched. focus_points' `tell` and `HEAD_READS`, now `#[cfg(test)]` and called by culling's tests, become unconditional and `#[doc(hidden)]`, as archive's test hooks are; otherwise the binary's tests lose them. Log targets keep their text, since both targets are the crate `greycard_ui`.
+**2. The windowless leaves into the library target.** grid (684 code / 788 test lines), strip (206/180), and focus_points (165/64) move from `main.rs`'s module list to `lib.rs`. The binary names them through its `pub(crate) use greycard_ui::{…}`, so every `crate::grid::X` compiles untouched. focus_points' `tell`, now `#[cfg(test)]` and called by culling's tests, becomes unconditional and `#[doc(hidden)]`; otherwise the binary's tests lose it. `HEAD_READS` stays `#[cfg(test)]`, since only the module's own tests read it. Log targets keep their text, since both targets are the crate `greycard_ui`.
 
 **3. Five modules, one seam each.**
 - **cull** (1,199/1,518): `lightbox::fetch` moves into it beside the `Want`, `Source`, and `Loaded` it takes. `versions::Key` is named as the engine's `version_key::Key`, which it is. `DEVELOPS`, `threads_gone`, `asked`, and `pushed` become unconditional.

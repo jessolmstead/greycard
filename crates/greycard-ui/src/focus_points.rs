@@ -45,13 +45,13 @@ const HELD: usize = 1 << 16;
 const READERS: usize = 4;
 
 /// Sets what a read off the window's thread wakes: once, at start.
-pub(crate) fn set_wake(wake: impl Fn() + Send + Sync + 'static) {
+pub fn set_wake(wake: impl Fn() + Send + Sync + 'static) {
     let _ = WAKE.set(Box::new(wake));
 }
 
 /// The point of the file at `path` when it is known, read or told,
 /// with nothing read or looked at: for the window's thread.
-pub(crate) fn known(path: &Path) -> Option<Point> {
+pub fn known(path: &Path) -> Option<Point> {
     POINTS
         .lock()
         .expect("focus points")
@@ -61,7 +61,7 @@ pub(crate) fn known(path: &Path) -> Option<Point> {
 
 /// Whether reading the file at `path` could find a point: a raw of a
 /// maker read, nothing known of it yet.
-pub(crate) fn wanted(path: &Path) -> bool {
+pub fn wanted(path: &Path) -> bool {
     greycard_core::decode::may_have_focus_point(path) && known(path).is_none()
 }
 
@@ -74,9 +74,11 @@ fn keep(path: &Path, stamp: Stamp, point: Point) {
     points.insert(path.to_path_buf(), (stamp, point));
 }
 
-/// Keeps `point` as the word on the file at `path`, as it is now.
-#[cfg(test)]
-pub(crate) fn tell(path: &Path, point: Point) {
+/// Keeps `point` as the word on the file at `path`, as it is now. For
+/// the tests; built whatever the build, since the binary's tests use
+/// it and they build this library without cfg(test).
+#[doc(hidden)]
+pub fn tell(path: &Path, point: Point) {
     keep(path, stamp_of(path), point);
 }
 
@@ -128,7 +130,9 @@ pub(crate) fn read(path: &Path) -> (Point, bool) {
 
 /// [`read`] on the decode thread after its picture went out: the
 /// window is woken when the read found something new.
-pub(crate) fn read_and_wake(path: &Path) {
+// Its links name this module's private items, for a reader here.
+#[allow(rustdoc::private_intra_doc_links)]
+pub fn read_and_wake(path: &Path) {
     if read(path).1
         && let Some(wake) = WAKE.get()
     {
@@ -140,7 +144,9 @@ pub(crate) fn read_and_wake(path: &Path) {
 /// path at a time: a second ask for a path being read waits on the
 /// first. True when a read is on its way, false when [`READERS`] are
 /// busy and none was started.
-pub(crate) fn read_then(path: PathBuf) -> bool {
+// Its links name this module's private items, for a reader here.
+#[allow(rustdoc::private_intra_doc_links)]
+pub fn read_then(path: PathBuf) -> bool {
     {
         let mut reading = READING.lock().expect("focus reads");
         if reading.contains(&path) {
@@ -181,7 +187,7 @@ mod tests {
     /// that holds no point, are asked once and kept as none.
     #[test]
     fn a_point_is_kept_by_the_file_as_it_was() {
-        let dir = crate::testing::scratch_dir("focus-points");
+        let dir = greycard_engine::testing::scratch_dir("focus-points");
         let raw = dir.join("IMG_0001.CR3");
         let seed = include_bytes!("../../../fuzz/corpus/focus_point/seed-cr3-two-in-focus");
         std::fs::write(&raw, seed).unwrap();
@@ -202,7 +208,7 @@ mod tests {
         assert_eq!(known(&missing), Some(None));
         // Another test may read at once; at least these three did.
         assert!(reads() - before >= 3);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// One thread a path, and no more than [`READERS`] at once.

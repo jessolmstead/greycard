@@ -11,7 +11,9 @@ pub mod display;
 pub mod edit_in;
 pub mod files;
 pub mod filter;
+pub mod focus_points;
 pub mod gpu_marker;
+pub mod grid;
 pub mod i18n;
 pub mod import;
 pub mod instance;
@@ -21,6 +23,7 @@ pub mod outline;
 pub mod rejects;
 pub mod scrolling;
 pub mod selection;
+pub mod strip;
 pub mod tags;
 pub mod wheel;
 pub mod zoom;
@@ -28,6 +31,10 @@ pub mod zoom;
 // The export's names and a preset laid at the start, in the engine's
 // crate, which a run with no window shares; named here as they were.
 pub use greycard_engine::{export_name, naming, preset_fit};
+
+// The worker's thumbnail width, which the grid and the strip size
+// from, at the path they name it by in the binary.
+use greycard_engine::worker;
 
 // The marker for a shown table's strings, at the path its callers use.
 pub use i18n::marked;

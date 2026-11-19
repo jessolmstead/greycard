@@ -104,6 +104,8 @@ impl Layout {
     }
 
     /// How many cells.
+    // Public for the binary; nobody asks whether a strip is empty.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.lefts.len()
     }

@@ -27,10 +27,8 @@ mod edited;
 mod entry;
 mod export_queue;
 mod finder;
-mod focus_points;
 mod gpu_errors;
 mod gpu_lost;
-mod grid;
 mod headless;
 mod keys;
 mod library;
@@ -52,7 +50,6 @@ mod settings;
 mod shared;
 mod sort;
 mod stacks;
-mod strip;
 mod sync;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -68,8 +65,8 @@ mod window_fit;
 // binary; named here as they were when they were the binary's own.
 pub(crate) use greycard_ui::{
     archive, carried, collections, delete, display, edit_in, export_name, files, filter,
-    gpu_marker, i18n, import, instance, log, naming, outline, preset_fit, rejects, scrolling,
-    selection, tags, wheel, zoom,
+    focus_points, gpu_marker, grid, i18n, import, instance, log, naming, outline, preset_fit,
+    rejects, scrolling, selection, strip, tags, wheel, zoom,
 };
 
 // The window's words: `crate::tr!` here as in the library, and the
