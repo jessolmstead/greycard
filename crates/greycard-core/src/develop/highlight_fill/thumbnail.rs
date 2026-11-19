@@ -5,7 +5,7 @@
 
 use rayon::prelude::*;
 
-use super::half::PixelCodes;
+use super::half::{PixelCodes, PixelSource, Plain};
 
 /// A thumbnail, `height` × `width` × 5, channels last: log2 of each
 /// channel's mean (negatives and non-finite values as 0, floor 2⁻¹²),
@@ -29,6 +29,12 @@ pub fn thumbnail(
     codes: &impl PixelCodes,
     long: usize,
 ) -> Thumbnail {
+    thumbnail_of(&Plain::new(x, width, height), codes, long)
+}
+
+/// [`thumbnail`] of any source.
+pub fn thumbnail_of(x: &impl PixelSource, codes: &impl PixelCodes, long: usize) -> Thumbnail {
+    let (width, height) = x.size();
     let f = width.max(height).div_ceil(long).max(1);
     let (tw, th) = (width.div_ceil(f), height.div_ceil(f));
     let mut data = vec![0.0f32; tw * th * 5];
@@ -44,9 +50,8 @@ pub fn thumbnail(
                     let n = (ys.len() * xs.len()) as f64;
                     for y in ys {
                         for px in xs.clone() {
-                            let p = 3 * (y * width + px);
-                            for (c, a) in acc.iter_mut().enumerate() {
-                                let v = x[p + c];
+                            let rgb = x.rgb(px, y);
+                            for (a, v) in acc.iter_mut().zip(rgb) {
                                 *a += if v.is_finite() {
                                     (v as f64).max(0.0)
                                 } else {

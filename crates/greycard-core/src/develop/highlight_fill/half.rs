@@ -6,6 +6,50 @@ use rayon::prelude::*;
 use super::oklab;
 use crate::develop::clipcodes::ClipCodes;
 
+/// The fill's input picture, pixel by pixel: linear Rec.2020 over the
+/// ceiling and headroom (SPEC.md "Inputs"). A plain slice ([`Plain`]),
+/// or a camera picture read through the matrix as it is read
+/// ([`Through`](super::camera::Through)), so the fill of a 100 MP frame
+/// needs no second full-size picture. The analysis and the thumbnail
+/// read each pixel by this alone, so two sources that give a pixel the
+/// same bits give the same fill to the bit.
+pub trait PixelSource: Sync {
+    /// The picture: (width, height).
+    fn size(&self) -> (usize, usize);
+
+    /// Pixel (`x`, `y`)'s three channels.
+    fn rgb(&self, x: usize, y: usize) -> [f32; 3];
+}
+
+/// A picture held as it is read: RGB interleaved, row-major.
+#[derive(Debug, Clone, Copy)]
+pub struct Plain<'a> {
+    x: &'a [f32],
+    width: usize,
+    height: usize,
+}
+
+impl<'a> Plain<'a> {
+    /// # Panics
+    /// If `x` is not `width · height · 3` long.
+    pub fn new(x: &'a [f32], width: usize, height: usize) -> Self {
+        assert_eq!(x.len(), width * height * 3, "x is RGB interleaved");
+        Self { x, width, height }
+    }
+}
+
+impl PixelSource for Plain<'_> {
+    fn size(&self) -> (usize, usize) {
+        (self.width, self.height)
+    }
+
+    #[inline]
+    fn rgb(&self, x: usize, y: usize) -> [f32; 3] {
+        let p = 3 * (y * self.width + x);
+        [self.x[p], self.x[p + 1], self.x[p + 2]]
+    }
+}
+
 /// The clip code of each pixel of the fill's input: the count of colors
 /// clipped in its CFA cell, 0 to 3, bit 7 (untrusted) ignored by the
 /// fill.
@@ -128,6 +172,18 @@ pub fn half_cell(
     cx: usize,
     cy: usize,
 ) -> ([f32; 3], u8, u8, u8) {
+    half_cell_of(&Plain::new(x, width, height), codes, cx, cy)
+}
+
+/// [`half_cell`] of any source.
+#[inline]
+pub fn half_cell_of(
+    x: &impl PixelSource,
+    codes: &impl PixelCodes,
+    cx: usize,
+    cy: usize,
+) -> ([f32; 3], u8, u8, u8) {
+    let (width, height) = x.size();
     let xs = [2 * cx, (2 * cx + 1).min(width - 1)];
     let ys = [2 * cy, (2 * cy + 1).min(height - 1)];
     let mut sum = [0.0f32; 3];
@@ -141,9 +197,9 @@ pub fn half_cell(
     .into_iter()
     .enumerate()
     {
-        let p = 3 * (py * width + px);
+        let rgb = x.rgb(px, py);
         for c in 0..3 {
-            let v = finite(x[p + c]);
+            let v = finite(rgb[c]);
             sum[c] = if n == 0 { v } else { sum[c] + v };
         }
         let k = codes.code(px, py) & 0x7F;
@@ -193,6 +249,15 @@ pub fn planes(
     height: usize,
     codes: &impl PixelCodes,
 ) -> (Vec<Cell>, Vec<[f32; 2]>, Vec<f32>) {
+    planes_of(&Plain::new(x, width, height), codes)
+}
+
+/// [`planes`] of any source.
+pub fn planes_of(
+    x: &impl PixelSource,
+    codes: &impl PixelCodes,
+) -> (Vec<Cell>, Vec<[f32; 2]>, Vec<f32>) {
+    let (width, height) = x.size();
     let (wh, hh) = half_size(width, height);
     let mut cells = vec![Cell::default(); wh * hh];
     let mut abh = vec![[0.0f32; 2]; wh * hh];
@@ -207,7 +272,7 @@ pub fn planes(
         .enumerate()
         .for_each(|(cy, ((cells, abh), yh))| {
             for cx in 0..wh {
-                let (xh, any, core, kh) = half_cell(x, width, height, codes, cx, cy);
+                let (xh, any, core, kh) = half_cell_of(x, codes, cx, cy);
                 cells[cx] = Cell::new(any, core, kh);
                 (abh[cx], yh[cx]) = unit_ab(xh);
             }

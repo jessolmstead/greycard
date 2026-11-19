@@ -3082,7 +3082,7 @@ pub(crate) mod tests {
     /// reads `light(x, y, c)` times the range from `black` to `white`
     /// over the black, clipped at [`TOP`] as an ADC clips; the
     /// saturation level, when asked for, where the decoder puts it.
-    fn lit_frame(
+    pub(crate) fn lit_frame(
         w: usize,
         h: usize,
         black: f32,
@@ -3114,7 +3114,8 @@ pub(crate) mod tests {
 
     /// The levels each case is tried at: Canon's ISO 100, its ISO 125
     /// and up at the low black, and at the black of high ISO.
-    const CANON_LEVELS: [(f32, f32); 3] = [(512.0, 14008.0), (512.0, 14888.0), (2048.0, 14888.0)];
+    pub(crate) const CANON_LEVELS: [(f32, f32); 3] =
+        [(512.0, 14008.0), (512.0, 14888.0), (2048.0, 14888.0)];
 
     #[test]
     fn the_headroom_is_the_saturation_over_the_white_from_the_black() {
@@ -3173,7 +3174,7 @@ pub(crate) mod tests {
 
     /// A ramp through the white and the saturation, with each channel
     /// clipping at its own light: what a blown sky's edge reads.
-    fn ramp_light(w: usize) -> impl Fn(usize, usize, usize) -> f32 {
+    pub(crate) fn ramp_light(w: usize) -> impl Fn(usize, usize, usize) -> f32 {
         move |x, y, c| {
             // Under the white on the left, past the top on the right,
             // a little texture so nothing is flat.

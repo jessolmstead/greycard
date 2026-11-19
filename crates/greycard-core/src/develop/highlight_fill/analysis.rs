@@ -3,7 +3,7 @@
 //! reads beside the network's outputs.
 
 use super::constants::*;
-use super::half::{self, Cell, PixelCodes};
+use super::half::{self, Cell, PixelCodes, PixelSource, Plain};
 use super::harmonic::{self, Harmonic};
 use super::net::{FEATURES, frame_where, grid_point};
 use super::regions::{self, Labels};
@@ -173,6 +173,16 @@ pub fn analyze(
     analyze_traced(x, width, height, codes, clips, harmonic_bright).0
 }
 
+/// [`analyze`] of any source.
+pub fn analyze_of(
+    x: &impl PixelSource,
+    codes: &impl PixelCodes,
+    clips: [f32; 3],
+    harmonic_bright: f32,
+) -> Analysis {
+    analyze_traced_of(x, codes, clips, harmonic_bright).0
+}
+
 /// [`analyze`], with the planes it drops: each cell's ring owner as a
 /// row (0 off every ring), and yh.
 pub(crate) fn analyze_traced(
@@ -183,9 +193,18 @@ pub(crate) fn analyze_traced(
     clips: [f32; 3],
     harmonic_bright: f32,
 ) -> (Analysis, Vec<u32>, Vec<f32>) {
-    assert_eq!(x.len(), width * height * 3, "x is RGB interleaved");
+    analyze_traced_of(&Plain::new(x, width, height), codes, clips, harmonic_bright)
+}
+
+fn analyze_traced_of(
+    x: &impl PixelSource,
+    codes: &impl PixelCodes,
+    clips: [f32; 3],
+    harmonic_bright: f32,
+) -> (Analysis, Vec<u32>, Vec<f32>) {
+    let (width, height) = x.size();
     let (wh, hh) = half::half_size(width, height);
-    let (cells, abh, yh) = half::planes(x, width, height, codes);
+    let (cells, abh, yh) = half::planes_of(x, codes);
     let fa: Vec<bool> = cells.iter().map(|c| c.fa()).collect();
     let labels = regions::labels(&fa, wh, hh);
     let (d0, dc0) = rayon::join(

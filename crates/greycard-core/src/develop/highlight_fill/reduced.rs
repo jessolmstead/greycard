@@ -5,6 +5,20 @@
 
 use rayon::prelude::*;
 
+/// The look scale f of a reduced picture: the full frame's long edge
+/// over the picture's, unrounded, from the two sizes in pixels. One
+/// function, so the engine's stage and the tests take the same f.
+/// A binned develop's picture drops the ragged edge, so an odd frame's
+/// f is a little over the bin (4001 over 2000 at bin 2).
+///
+/// # Panics
+/// If the picture is empty.
+pub fn look_scale(full: (usize, usize), reduced: (usize, usize)) -> f64 {
+    let small = reduced.0.max(reduced.1);
+    assert!(small > 0, "a reduced picture of some size");
+    full.0.max(full.1) as f64 / small as f64
+}
+
 /// `down(x, n)`: `x` (`width` × `height`, RGB interleaved) with the
 /// ragged edge dropped (the first ⌊H/n⌋·n rows and ⌊W/n⌋·n columns
 /// kept), each n×n block's mean in f32: its pixels summed in raster

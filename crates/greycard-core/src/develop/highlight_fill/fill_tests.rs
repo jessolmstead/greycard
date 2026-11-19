@@ -16,7 +16,7 @@ use super::tests::{DEPTH_REL, HARM_BRIGHT, close, close_rel, exact, peak_rss_mb,
 use super::{down, down_codes, fill, fill_fields, oklab, region_outputs};
 
 /// hl-1's look (`oracle.py`'s constants block).
-const LOOK: FillLook = FillLook {
+pub(super) const LOOK: FillLook = FillLook {
     core_whiten: 0.5,
     core_boost: 1.4,
     harmonic_bright: 0.25,

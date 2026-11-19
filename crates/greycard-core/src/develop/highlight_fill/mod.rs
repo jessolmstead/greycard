@@ -5,11 +5,15 @@
 //!
 //! [`fill_fields`] runs the whole fill on a picture up to its two
 //! half-size fields, which [`Fields::apply`] applies to it or to
-//! another picture of its size; [`fill`] does both.
+//! another picture of its size; [`fill`] does both. [`camera_fields`]
+//! and [`CameraFill::apply`] run it on the develop's camera picture,
+//! before the DNG warp, reading the input through the matrix
+//! ([`camera`]).
 
 pub mod analysis;
 pub mod apply;
 pub mod blur;
+pub mod camera;
 pub mod constants;
 pub mod half;
 pub mod harmonic;
@@ -21,10 +25,11 @@ pub mod synthesis;
 pub mod thumbnail;
 
 pub use apply::Fields;
+pub use camera::{BinnedCodes, Camera, CameraFill, Changes, FrameCodes, Through, camera_fields};
 pub use constants::*;
-pub use reduced::{down, down_codes};
+pub use reduced::{down, down_codes, look_scale};
 
-use half::PixelCodes;
+use half::{PixelCodes, PixelSource, Plain};
 use net::{FillLook, FillWeights, RegionRow};
 
 /// The fill's fields for `x` (`width` × `height`, RGB interleaved,
@@ -53,7 +58,31 @@ pub fn fill_fields(
     look: &FillLook,
     f: f64,
 ) -> Option<Fields> {
-    assert_eq!(x.len(), width * height * 3, "x is RGB interleaved");
+    fill_fields_of(
+        &Plain::new(x, width, height),
+        codes,
+        clips,
+        weights,
+        look,
+        f,
+    )
+}
+
+/// [`fill_fields`] of any source: the same fields from any two sources
+/// that give each pixel the same bits.
+///
+/// # Panics
+/// If the codes are not the source's size, or `f` is not a positive
+/// number.
+pub fn fill_fields_of(
+    x: &impl PixelSource,
+    codes: &impl PixelCodes,
+    clips: [f32; 3],
+    weights: &FillWeights,
+    look: &FillLook,
+    f: f64,
+) -> Option<Fields> {
+    let (width, height) = x.size();
     assert_eq!(
         codes.size(),
         (width, height),
@@ -63,25 +92,36 @@ pub fn fill_fields(
     if width == 0 || height == 0 {
         return None;
     }
-    let a = analysis::analyze(x, width, height, codes, clips, look.harmonic_bright as f32);
-    let outputs = region_outputs(&a, x, codes, weights)?;
+    let a = analysis::analyze_of(x, codes, clips, look.harmonic_bright as f32);
+    let outputs = region_outputs_of(&a, x, codes, weights)?;
     Some(synthesis::fields(&a, &outputs, look_scaled))
 }
 
-/// The network's outputs a row of the analysis's region table (SPEC
-/// stages 7 to 9): the input's thumbnail, the encoder, and the MLP at
-/// each row's point, the outside row's zeroed. None when the table is
-/// empty.
+/// [`region_outputs_of`] of a slice, for the tests.
+#[cfg(test)]
 pub(crate) fn region_outputs(
     a: &analysis::Analysis,
     x: &[f32],
     codes: &impl PixelCodes,
     weights: &FillWeights,
 ) -> Option<Vec<[f32; net::OUTPUTS]>> {
+    region_outputs_of(a, &Plain::new(x, a.width, a.height), codes, weights)
+}
+
+/// The network's outputs a row of the analysis's region table (SPEC
+/// stages 7 to 9): the input's thumbnail, the encoder, and the MLP at
+/// each row's point, the outside row's zeroed. None when the table is
+/// empty.
+fn region_outputs_of(
+    a: &analysis::Analysis,
+    x: &impl PixelSource,
+    codes: &impl PixelCodes,
+    weights: &FillWeights,
+) -> Option<Vec<[f32; net::OUTPUTS]>> {
     if a.regions.is_empty() {
         return None;
     }
-    let t = thumbnail::thumbnail(x, a.width, a.height, codes, THUMB_LONG);
+    let t = thumbnail::thumbnail_of(x, codes, THUMB_LONG);
     let map = weights.encode(&t.data, t.height, t.width);
     let rows: Vec<RegionRow> = a
         .regions
