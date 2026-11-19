@@ -75,6 +75,7 @@ GROUPS = {
     'lamp_f3': FULL_KEYS,
     'depth_tie_f3': LABELS + FIELDS + HARM,
     'nonfinite': ('regions',) + FIELDS,
+    'tiny': LABELS + FIELDS + HARM,
 }
 INTS = ('regions', 'ring', 'ids', 'inv', 'ring_owner', 'harm_known')
 

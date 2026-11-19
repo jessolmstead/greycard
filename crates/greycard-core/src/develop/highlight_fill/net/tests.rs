@@ -146,12 +146,13 @@ fn thumbnail(x: &[f32], codes: &[u8], h: usize, w: usize) -> (Vec<f32>, usize, u
     (out, th, tw)
 }
 
-/// SPEC stage 9's centroids: per row (ids ascending), the f32 raster
-/// sums of (x + 0.5) / Wh and (y + 0.5) / Hh over the region's cells,
-/// over max(count, 1). The outside row has no inside cells: (0, 0).
+/// SPEC stage 9's centroids: per row (ids ascending), the f64 raster
+/// sums of the f32 (x + 0.5) / Wh and (y + 0.5) / Hh over the region's
+/// cells, over max(count, 1), rounded to f32 once. The outside row has
+/// no inside cells: (0, 0).
 fn centroids(regions: &[i32], hh: usize, wh: usize, ids: &[i32]) -> Vec<[f32; 2]> {
-    let mut sum = vec![[0.0f32; 2]; ids.len()];
-    let mut count = vec![0.0f32; ids.len()];
+    let mut sum = vec![[0.0f64; 2]; ids.len()];
+    let mut count = vec![0u64; ids.len()];
     for y in 0..hh {
         for x in 0..wh {
             let id = regions[y * wh + x];
@@ -159,14 +160,17 @@ fn centroids(regions: &[i32], hh: usize, wh: usize, ids: &[i32]) -> Vec<[f32; 2]
                 continue;
             }
             let row = ids.binary_search(&id).unwrap();
-            sum[row][0] += (x as f32 + 0.5) / wh as f32;
-            sum[row][1] += (y as f32 + 0.5) / hh as f32;
-            count[row] += 1.0;
+            sum[row][0] += f64::from((x as f32 + 0.5) / wh as f32);
+            sum[row][1] += f64::from((y as f32 + 0.5) / hh as f32);
+            count[row] += 1;
         }
     }
     sum.iter()
         .zip(&count)
-        .map(|(s, c)| [s[0] / c.max(1.0), s[1] / c.max(1.0)])
+        .map(|(s, &c)| {
+            let c = c.max(1) as f64;
+            [(s[0] / c) as f32, (s[1] / c) as f32]
+        })
         .collect()
 }
 
@@ -282,7 +286,7 @@ fn mlp_matches_every_scene() {
         assert!(e <= TOL_OUTPUTS, "{scene}: outputs {e}");
         checked += 1;
     }
-    assert_eq!(checked, 14);
+    assert_eq!(checked, 15);
 }
 
 /// The encoder and the sampling on every scene whose regions the
@@ -333,7 +337,7 @@ fn context_matches_every_scene_with_regions() {
         assert!(e <= TOL_CTX, "{scene}: ctx {e}");
         checked += 1;
     }
-    assert_eq!(checked, 13);
+    assert_eq!(checked, 14);
 }
 
 #[test]

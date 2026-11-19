@@ -230,8 +230,20 @@ def nonfinite():
     return dict(x=x, codes=c, clips=CLIPS, about="hl-1's guard: NaN and infinite pixels pass through untouched")
 
 
+def tiny():
+    """hl-1's small-frame rule (not the trial's, whose pool raises): 7x6 px,
+    a 4x3 half grid with no 4x4 block, so the harmonic is 0 everywhere;
+    a clipped spot on a bright surround."""
+    w, h = 7, 6
+    xx, yy = grid(w, h)
+    r = np.hypot(xx - 3.5, yy - 3.0)
+    t = surround(w, h, 0.3, 0.6) + (3.0 * np.exp(-(r / 2.2) ** 2))[..., None] * np.array([1.0, 0.8, 0.5])
+    x, c = make(t)
+    return dict(x=x, codes=c, clips=CLIPS, about="hl-1's small-frame rule: under 8 px a side the harmonic is 0")
+
+
 # hl-1's departures from the trial: scenes the trial's code cannot match.
-DEPARTURE = dict(nonfinite=nonfinite)
+DEPARTURE = dict(nonfinite=nonfinite, tiny=tiny)
 # Reduced develops: (name, source scene, box-downsampling factor, look
 # scale f). depth_tie_f2_5 stands for a frame 2.5x its input's long edge:
 # a non-integer f, so sigma 2.4 and the tie (4.8, 19.2).

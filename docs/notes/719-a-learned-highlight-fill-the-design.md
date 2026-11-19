@@ -251,6 +251,10 @@ places:
   about a million);
 - a clipped pixel that no field reaches stays as it was, to the bit;
 - a reduced develop builds its thumbnail from its own reduced input.
+- each region's counts are integers and its sums are f64, rounded
+  once. The trial's f32 sums drift from about 20,000 cells and are
+  0.02 stop out at a 4 M-cell region, a 16 MP blown sky; at 25 M cells
+  the region's center, where the context is read, is wrong.
 
 **The fixtures** are small scenes of a few hundred pixels:
 - a disk lamp with a colored band;
@@ -340,7 +344,12 @@ unmeasured.**
 In total: about 0.5–1 s at 24 MP, 1–1.5 s at 45 MP, and 2–4 s at
 100 MP. Region analysis dominates; the network never does.
 
-**Memory:** about 150–250 MB transient at 100 MP, on the CPU.
+**Measured in Rust, the region analysis alone:** 0.5 s on one thread
+at 24 MP and 0.14 s on all; 2.0 s and 0.5 s at 100 MP. The network
+adds 0.05 s on four threads.
+
+**Memory:** the analysis peaks about 660 MB over the input at 100 MP,
+and keeps about 430 MB for the synthesis.
 
 **Card:** none. The fill never touches the GPU, so the denoiser's card
 policy (`greycard-engine/src/ai.rs:1687`, `:2050`; §712) is not

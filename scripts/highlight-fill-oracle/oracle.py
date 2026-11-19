@@ -26,8 +26,10 @@ SPEC.md): `apply` fills a pixel only where its luminance Y(x) is finite
 and above 1e-6 and its gain or offset is nonzero, and leaves every other
 pixel bit for bit as x; `fill` reads non-finite channels as 0 for the
 analysis (the half-size picture and the thumbnail), so a NaN or an
-infinity cannot spread; and at f > 1 the thumbnail is the reduced
-input's own. Elsewhere the oracle is the trial's to the bit.
+infinity cannot spread; at f > 1 the thumbnail is the reduced input's
+own; per-region sums are float64 with integer counts; the labels run to
+convergence; and under 8 px a side the harmonic is 0. Elsewhere the
+oracle is the trial's to the bit.
 
 Arrays are numpy (H, W, 3) float32 for pictures and (H, W) uint8 for the
 codes (low 7 bits the count of colors clipped in the pixel's CFA cell, 0
@@ -173,21 +175,24 @@ def load(state_dict):
 
 # ---- hl_struct helpers ----
 
-def labels(mask, max_iter=20000):
+def labels(mask):
     """Connected components of mask (B, 1, H, W float): ids from 1, 0
     outside, by propagating the largest index (8-connected max pool,
     restricted to the mask) until nothing changes. A region's id is its
-    largest flat index (row-major) plus one."""
+    largest flat index (row-major) plus one. hl-1 runs to convergence
+    (the trial stopped at 20000 iterations)."""
     B, _, H, W = mask.shape
     # Doubles: a float's integers run out at 16 M pixels.
     mask = mask.double()
     idx = torch.arange(1, H * W + 1, device=mask.device, dtype=torch.float64).view(1, 1, H, W).expand(B, 1, H, W)
     lab = idx * mask
-    for i in range(max_iter):
+    i = 0
+    while True:
         new = F.max_pool2d(lab, 3, stride=1, padding=1) * mask
         if i % 16 == 15 and torch.equal(new, lab):
             break
         lab = new
+        i += 1
     return lab.float() if H * W < (1 << 24) else lab
 
 
@@ -203,6 +208,11 @@ def grow(lab, inside, steps):
 def harmonic(ab, fixed, iters=300, rec=None):
     """ab (B, 2, H, W) continued into the pixels where fixed is 0 by
     Jacobi iterations at a quarter of the resolution."""
+    if min(ab.shape[2:]) < 4:
+        # hl-1: under 8 px on a side the quarter grid is empty (the pool
+        # would raise), and the continuation is 0, as when nothing is
+        # known.
+        return torch.zeros_like(ab)
     q = F.avg_pool2d(ab * fixed, 4)
     fq = F.avg_pool2d(fixed, 4)
     known = fq > 0.25
@@ -314,10 +324,14 @@ def numbers(model, lab, xh, any_share, core_share, kh, clips, thumb, where, f=1.
         rinv = torch.searchsorted(ids, rv.contiguous()).clamp(max=n - 1)
         rinv = torch.where(rv > 0, rinv, torch.zeros_like(rinv))
 
+        # hl-1's departure from the trial (SPEC.md): every per-region sum
+        # is float64 and every count an integer, the mean rounded to
+        # float32 once. The trial's float32 index_add_ drifted on regions
+        # of a few million cells and its counts stopped at 2^24.
         def per(v, sel, idx):
-            s = torch.zeros(n, device=dev).index_add_(0, idx, v * sel)
-            c = torch.zeros(n, device=dev).index_add_(0, idx, sel)
-            return s / c.clamp_min(1), c
+            s = torch.zeros(n, dtype=torch.float64, device=dev).index_add_(0, idx, (v * sel).double())
+            c = torch.zeros(n, dtype=torch.int64, device=dev).index_add_(0, idx, sel.long())
+            return (s / c.clamp_min(1)).float(), c
         inside = (regions[b, 0].reshape(-1) > 0).float()
         kr = kh[b, 0].reshape(-1)
         lyb = ly[b, 0].reshape(-1)
@@ -328,19 +342,22 @@ def numbers(model, lab, xh, any_share, core_share, kh, clips, thumb, where, f=1.
         b2 = inside * (kr == 2).float()
         bandm = band[b, 0].reshape(-1) * inside
         corem = fc[b, 0].reshape(-1) * inside
-        area = torch.zeros(n, device=dev).index_add_(0, inv, inside)
+        area = torch.zeros(n, dtype=torch.int64, device=dev).index_add_(0, inv, inside.long()).float()
         depth0 = torch.zeros(n, device=dev).index_reduce_(0, inv, d0[b, 0].reshape(-1) * inside, 'amax')
         ybr, cbr = per(lyb, bright, rinv)
         yb1, cb1 = per(lyb, b1, inv)
         yb2, cb2 = per(lyb, b2, inv)
         _, ccore = per(lyb, corem, inv)
-        tot = (cbr + cb1 + cb2 + ccore).clamp_min(1)
+        # The counts' total as an integer, then every count as float32.
+        tot = (cbr + cb1 + cb2 + ccore).clamp_min(1).float()
+        cbr, cb1, cb2, ccore = cbr.float(), cb1.float(), cb2.float(), ccore.float()
         top = torch.where(cb2 > 0, yb2, torch.where(cb1 > 0, yb1, ybr))
         rise = torch.where((cbr > 0) & (cb1 + cb2 > 0), top - ybr, torch.zeros_like(top))
         ar, _ = per(ab[0], bright, rinv)
         br, _ = per(ab[1], bright, rinv)
         an, _ = per(ab[0], bandm, inv)
         bn, cbn = per(ab[1], bandm, inv)
+        cbn = cbn.float()
         thin_n, _ = per((dcore[b, 0].reshape(-1) <= THIN * S).float(), corem, inv)
         fa_, fd_ = area, depth0
         feat = torch.stack([

@@ -11,8 +11,11 @@ cell, and "px" means full-size pixels of the input.
 
 ## Where hl-1 differs from the trial
 
-hl-1 is the trial's fill plus three guards and one definition for reduced
-develops. These are the only places the oracle differs from the trial.
+hl-1 is the trial's fill plus three guards, one definition for reduced
+develops, and three definitions where the trial's code was only
+approximately what it meant (per-region sums, the labels' iteration
+limit, and frames under 8 px). These are the only places the oracle
+differs from the trial.
 
 - **`apply`, luminance:** a pixel is filled only where 1e-6 < Y(x) < +inf.
   Every other pixel stays x, bit for bit. Y(x) is the same `x · LUMA` the
@@ -40,16 +43,35 @@ develops. These are the only places the oracle differs from the trial.
   - We keep the reduced input's thumbnail. A reduced develop in the
     editor has only its binned base, so this is the thumbnail it can
     build. It is part of hl-1's definition.
+- **Per-region sums (stage 9):** counts are integers, and every
+  per-region sum (the means of ly and ab, the centroid, the thin share)
+  accumulates in f64 and is rounded to f32 once, after the division.
+  - The trial summed in f32 (`index_add_`). Its error grows with the
+    region: on a region of constant ly = log2(0.9), the mean is off by
+    more than the features' 2e-5 from about 20 000 cells (80 k px), by
+    9e-4 at 1 M cells, 1.8e-3 at 4 M, and 1.6e-2 at 25 M. In review a
+    4 M-cell region's mean ly read 0.924 for a true 0.900.
+  - Its counts stopped at 2²⁴ = 16 777 216, so a region of 25 M cells
+    (a blown sky on a 100 MP frame) read a short area and every mean
+    over it was off by half; its centroid landed at (0.758, 0.765).
+- **Labels (stage 3)** run until nothing changes. The trial stopped at
+  20000 iterations, which a region more than about 20000 cells across
+  would reach.
+- **Frames under 8 px on a side (stage 6):** the quarter grid is empty,
+  and the harmonic is 0 everywhere, the "nothing known" result. The
+  trial's pool raised.
 
 On the fixtures, the guards change only five pixels of the `mixed` scene.
 Four are its negative-luminance pixels, where the trial gives about
 (1.1e6, −4.8e5, −2.4e5) and hl-1 gives x. The fifth is its lone clipped
 pixel, where the trial moves x by about 1e-6.
 
-Every other stage and pixel of every scene matches the trial at 0. That
-holds with both the random checkpoint and r6e-s1, at f = 1, 2.5, and 3
-(`compare_trial.py`, run with the trial's thumbnail convention). The
-`nonfinite` scene has no trial counterpart.
+Every stage up to the features matches the trial at 0. The f64 sums move
+the features by at most 3.5e-6 (sky), the outputs by 6.3e-7, gain_h by
+6.0e-7, dab_h by 2.8e-8, and the final picture by 3.6e-6, with the
+random checkpoint at f = 1, 2.5, and 3 (`compare_trial.py`, run with the
+trial's thumbnail convention). The `nonfinite` and `tiny` scenes have no
+trial counterpart.
 
 ## Inputs
 
@@ -155,6 +177,8 @@ float32.
   The summation order is numpy's, so expect ±1 ulp.
 - any_share = mean(k > 0) and core_share = mean(k == 3), both exact
   quarters. kh = max(k) over the block.
+  - kh is only ever compared with 0, 1, and 2, so a port may cap it at
+    3. Codes with low bits above 3 are not produced by the app.
 - In `numbers`: fa = any_share > 0.5, fc = (core_share > 0.5) · fa, and
   band = fa · (1 − fc).
 
@@ -178,9 +202,10 @@ float32.
 - Each fa cell starts with id = row-major flat index + 1, on the padded
   half grid.
 - Repeat: new = 3×3 max (padding −inf) × fa, until unchanged. The check
-  runs every 16 iterations, up to 20000.
-- So regions are **8-connected**, and a region's id is its largest flat
-  index + 1.
+  runs every 16 iterations, with no limit (hl-1).
+- So regions are the converged **8-connected** components, and a
+  region's id is its largest flat index + 1. Any O(N) method giving that
+  partition and those ids is the same (core uses union-find).
 - The port keeps ids as integers (u32). The oracle propagates in f64 and
   returns f32 below 2²⁴ half-size cells, where f32 holds every integer
   exactly. At or above 2²⁴ cells (a frame of about 67 MP or more) it
@@ -209,7 +234,12 @@ float32.
 
 ### 6. Harmonic (`harmonic`)
 
+- Under 8 px on a side (Hh or Wh under 4) the quarter grid is empty and
+  harm is 0 everywhere (hl-1; the `tiny` scene).
 - fixed = (1 − fa) · (yh > 0.25): raw yh, not exp2(ly).
+  - With correctly rounded log2 and exp2, and with torch's and numpy's,
+    the two readings agree on every f32 within 2²⁰ ulp of 0.25, so the
+    choice moves no cell there; it is kept as written.
 - q = avgpool4(abh · fixed) and fq = avgpool4(fixed).
   - Kernel 4, stride 4, floor: the last Hh % 4 rows and Wh % 4 columns
     are dropped.
@@ -251,8 +281,13 @@ float32.
   outside, when any cell is outside.
 - inv maps each cell to its row. For ring cells, the ring id's row is
   found by searchsorted; non-ring cells map to row 0 and are masked.
-- mean(v, sel) = Σ(v · sel) / max(Σ sel, 1). Sums are f32 in raster
+- mean(v, sel) = f32(Σ(v · sel) / max(Σ sel, 1)), the sum in f64 over
+  the f32 values and the count an integer, rounded to f32 once (hl-1).
+  The order of an f64 sum no longer matters at f32; core sums in raster
   order.
+- Counts (area, cbr, cb1, cb2, ccore, and cbn) are integers. Each enters
+  a feature as f32(count); tot is summed as an integer, then read as
+  f32.
 - Masks:
   - inside: the region's cells;
   - bright = ring · (kh == 0) · (exp2(ly) > 0.25);
@@ -275,8 +310,8 @@ float32.
   - 10·ar, 10·br, 10·an, 10·bn, 10·√(an² + bn²), and 10·√(ar² + br²);
   - thin, then clip_r, clip_g, and clip_b.
 - **Context:**
-  - The centroid is cx = mean over inside of (x + 0.5) / Wh, and
-    likewise cy.
+  - The centroid is cx = mean over inside of (x + 0.5) / Wh (that f32
+    value, summed in f64 as every mean), and likewise cy.
   - where = [box_x / fw, box_y / fh, 2·Wh / fw, 2·Hh / fh]. This uses the
     padded size.
   - g = (where₀ + where₂ · cx) · 2 − 1, and likewise for y.
@@ -385,11 +420,15 @@ taken over all scenes with both checkpoints (`compare_trial.py`).
 - **2e-5:** feats, cmap, and ctx. Measured up to 7e-6.
 - **outputs and params:** 5e-6 with the random weights and 5e-5 with
   r6e-s1. Measured 1.1e-6 and 1.5e-5.
-- **1e-4 abs:** dd, dc, depth, and cdepth (values reach 512). Measured up
-  to 3e-5.
+- **1e-6 relative to max(|v|, 1):** dd, dc, depth, and cdepth (values
+  reach 512). Measured up to 3e-5 abs on the fixtures, and 1.5e-4 abs at
+  values near 469 (3.2e-7 relative) on a 2400×1600 case in review.
 - **1e-5:** gain_h. Measured 2.6e-6.
 - **Final picture: 2e-5 abs.** Measured 7.7e-6, on values up to about 4.
-- **The thumbnail:** 1 ulp. Its f64 sums reproduce exactly.
+- **The thumbnail:** 2 ulp. Its f64 sums reproduce exactly, but numpy's
+  float32 log2 is up to 2 ulp from the correctly rounded one (log2 of
+  0.92012054 is −0.12010523; numpy 2.5 gives −0.120105214), and a
+  platform libm may add one more.
 - **Threshold flips.** yh > 0.25, exp2(ly) > 0.25, fq > 0.25, Y(x) > 1e-6,
   and a field's exact zero can flip on a 1-ulp difference. None of the
   fixtures sits within an ulp of one of them.
@@ -413,6 +452,7 @@ taken over all scenes with both checkpoints (`compare_trial.py`).
   - Odd padding: edge_cut and depth_tie_f3.
   - The harmonic's quarter grid dropping rows or columns: edge_cut,
     lamp_f3, and depth_tie_f3.
+  - An empty quarter grid (under 8 px a side), harm 0: tiny (hl-1).
 - **Features:**
   - top from two-color cells: lamp, line, sky, and others.
   - top from one-color cells: edge_cut, depth_tie, and mixed.
@@ -438,7 +478,9 @@ taken over all scenes with both checkpoints (`compare_trial.py`).
   - Bit 7 ignored: xtrans.
   - Headroom: headroom.
 - **Not covered:**
-  - the labels' 20000-iteration limit;
+  - regions large enough for the f64 sums to differ from f32 ones by
+    more than the tolerances (core tests a 3000 × 2000-cell region of its
+    own);
   - L or L2 at 4096;
   - r1 or r11 at ±20;
   - H or H2 in tanh's saturation;
@@ -503,5 +545,7 @@ Each of these is the trial's, and hl-1 keeps it.
 9. **Look scale at f = 3 gives σ_g = 2.0 exactly**, which skips the wide
    branch. The result is the same.
 10. **The ab clamp is at half size only.** The full-size apply has none.
-11. **Per-region sums are order-sensitive.** They are f32 `index_add_`;
-    sum in raster order.
+
+The trial's f32 per-region sums, its labels' iteration limit, and its
+pool's refusal of frames under 8 px are not kept; see "Where hl-1 differs
+from the trial".

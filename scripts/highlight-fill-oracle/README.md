@@ -5,7 +5,7 @@ e_tied's look), cut from the highlight-learn trial with its numerics
 unchanged. It is the reference the Rust port is tested against, and it
 writes the fixtures under `crates/greycard-core/tests/fixtures/highlight_fill/`.
 `SPEC.md` is what the port works from: every stage's arithmetic, the
-tolerances, the coverage, and hl-1's one departure from the trial.
+tolerances, the coverage, and where hl-1 departs from the trial.
 
 - `oracle.py`: the fill. `fill(model, x, codes, clips)` runs the whole
   frame; `box`, `frame`, and `thumb` give the trial's crop instead; `f`
