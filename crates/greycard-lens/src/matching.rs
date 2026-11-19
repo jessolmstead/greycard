@@ -94,9 +94,24 @@ pub fn score(file: &[String], db: &[String]) -> Option<f32> {
     Some(common as f32 / union as f32)
 }
 
+#[cfg(feature = "testing")]
+thread_local! {
+    static CAMERA_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread has looked a body up with
+/// [`Database::camera`], a walk of every camera: for a test that a
+/// caller does it once, not once a row.
+#[cfg(feature = "testing")]
+pub fn camera_lookups() -> usize {
+    CAMERA_LOOKUPS.with(std::cell::Cell::get)
+}
+
 impl Database {
     /// The camera a file's make and model name, if one does.
     pub fn camera(&self, make: &str, model: &str) -> Option<&Camera> {
+        #[cfg(feature = "testing")]
+        CAMERA_LOOKUPS.with(|n| n.set(n.get() + 1));
         let file = without_maker(tokens(model), make);
         let mut best: Option<(f32, &Camera)> = None;
         for c in &self.cameras {

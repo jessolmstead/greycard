@@ -122,6 +122,7 @@ pub(super) fn lens_report(db: Option<&greycard_lens::Database>, input: &Input) -
                 lens: p.name().to_string(),
                 camera: p.camera.is_some(),
                 smaller_sensor: p.measured_on_smaller_sensor(),
+                carries: crate::lens::Carries::of_profile(&p, shot),
             }
         }
         None => match named {

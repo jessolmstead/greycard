@@ -24,3 +24,8 @@ dirs.workspace = true
 [dev-dependencies]
 # The scratch folder's removal the tests share.
 greycard-core = { path = "../greycard-core", features = ["testing"] }
+
+[features]
+# The count of body lookups, for a test that a caller looks its body
+# up once. Turned on by greycard-engine's dev-dependency only.
+testing = []

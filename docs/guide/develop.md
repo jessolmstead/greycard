@@ -566,6 +566,10 @@ These are all on by default when a profile is found:
   has the last word. It is live on a JPEG, a TIFF, or a linear DNG.
 - **Vignetting** brightens the darkened corners.
 
+A switch is greyed when the profile has no data of its kind, as many
+database entries have no vignetting. Its setting is kept for a lens
+that has it.
+
 ### By hand
 
 - **Manual** corrects distortion on top of the profile.

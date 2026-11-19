@@ -61,6 +61,8 @@ greycard-render = { path = "../greycard-render", features = ["testing"] }
 greycard-library = { path = "../greycard-library", features = ["fixtures"] }
 # The off-card record's seam: no test reads the user's store.
 greycard-ai = { path = "../greycard-ai", features = ["testing"] }
+# The count of body lookups: the picker's rows look the body up once.
+greycard-lens = { path = "../greycard-lens", features = ["testing"] }
 
 [features]
 # The test helpers and the test hooks the window's tests share with

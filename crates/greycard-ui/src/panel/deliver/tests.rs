@@ -2026,6 +2026,7 @@ fn opened_raw(generation: u64, model: &str, width: usize, as_shot: (f64, f64)) -
             lens: format!("{model} lens"),
             camera: true,
             smaller_sensor: false,
+            carries: greycard_engine::lens::Carries::ALL,
         },
         lens_options: Vec::new(),
         kind: SourceKind::Raw,

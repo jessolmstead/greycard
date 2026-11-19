@@ -26,7 +26,68 @@ pub struct LensOption {
     /// lens on an adapter: its label names its mounts, and the picker
     /// lists it only when words typed match it.
     pub off_mount: bool,
+    /// Which corrections its profile has for the frame.
+    pub carries: Carries,
 }
+
+/// Which of the three corrections a profile has something to apply
+/// of for the frame: the switches of those it has not stand down, the
+/// edit's own setting kept for a lens that has them. A kind with data
+/// at any setting is extended from its nearest calibration, so it is
+/// had at every focal length and aperture unless what it comes to
+/// there moves and shades nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Carries {
+    pub distortion: bool,
+    pub chromatic_aberration: bool,
+    pub vignetting: bool,
+}
+
+impl Carries {
+    /// All three: what a switch shows when nothing says otherwise.
+    pub const ALL: Self = Self {
+        distortion: true,
+        chromatic_aberration: true,
+        vignetting: true,
+    };
+
+    /// None of the three.
+    pub const NONE: Self = Self {
+        distortion: false,
+        chromatic_aberration: false,
+        vignetting: false,
+    };
+
+    /// What a profile's correction, every part of it asked for, has
+    /// that the develop applies: a part that does nothing (all-zero
+    /// distortion or vignetting, an aberration of exactly one) is
+    /// dropped there, and counts as none here.
+    pub fn of(c: &LensCorrection) -> Self {
+        Self {
+            distortion: c.distortion.as_ref().is_some_and(|d| !d.is_identity()),
+            chromatic_aberration: c
+                .chromatic_aberration
+                .as_ref()
+                .is_some_and(|a| !a.is_identity()),
+            vignetting: c.vignetting.as_ref().is_some_and(|v| !v.is_identity()),
+        }
+    }
+
+    /// What a lens of the database's has for a frame shot at `shot`.
+    pub(crate) fn of_profile(p: &greycard_lens::Profile, shot: &Shot) -> Self {
+        let (w, h) = ANY_SIZE;
+        Self::of(&p.correction(w, h, shot, greycard_lens::Wanted::ALL))
+    }
+
+    /// What a profile has, from its correction; nothing when there is
+    /// no correction to be had.
+    fn of_any(c: Option<LensCorrection>) -> Self {
+        c.map_or(Self::NONE, |c| Self::of(&c))
+    }
+}
+
+/// The size a correction is asked at when only what it has matters.
+const ANY_SIZE: (usize, usize) = (3, 2);
 
 /// The profile's correction for a picture `width` by `height` of the
 /// frame, standing at `orientation` from the sensor, for the lens
@@ -79,8 +140,8 @@ pub fn left_out_in(
         LensChoice::FromFile => return None,
         LensChoice::Database(name) | LensChoice::Lcp(name) => name,
     };
-    let none =
-        profile_correction_in((3, 2), Orientation::Normal, identity, lens, db, profiles).is_none();
+    let none = profile_correction_in(ANY_SIZE, Orientation::Normal, identity, lens, db, profiles)
+        .is_none();
     (lens.wants_profile() && none)
         .then(|| format!("the lens {name}: no profile for it here; written without one"))
 }
@@ -139,11 +200,21 @@ pub fn options(db: Option<&Database>, identity: Identity) -> Vec<LensOption> {
 /// them all. An Adobe profile is filed as `Makers::of_profile` says.
 pub fn options_in(
     db: Option<&Database>,
-    (make, model, _, raw): Identity,
+    (make, model, shot, raw): Identity,
     profiles: Option<&Path>,
 ) -> Vec<LensOption> {
     let makers = Makers::of(db);
     let body = db.and_then(|db| db.camera(make, model).map(|c| (db, c)));
+    // A lens of the database's, as a pick by name finds it for the
+    // body: the same entry, so the same corrections.
+    let carries = |lens: &greycard_lens::Lens| {
+        let p = greycard_lens::Profile {
+            lens,
+            camera: body.map(|(_, c)| c),
+            from_body: false,
+        };
+        Carries::of_profile(&p, shot)
+    };
     let mut out: Vec<LensOption> = body
         .map(|(db, c)| db.lenses_for(c))
         .unwrap_or_default()
@@ -153,6 +224,7 @@ pub fn options_in(
             label: l.name().to_string(),
             maker: makers.spelled(&l.maker),
             off_mount: false,
+            carries: carries(l),
         })
         .collect();
     // The lenses on other mounts, for one on an adapter: labeled with
@@ -167,12 +239,15 @@ pub fn options_in(
                 label: format!("{} ({})", l.name(), l.mounts.join(", ")),
                 maker: makers.spelled(&l.maker),
                 off_mount: true,
+                carries: carries(l),
             }),
     );
     // A profile made on another body is read at this body's sensor
     // size, which only the database knows: without it, only this
     // body's own are offered.
     let sized = body.is_some();
+    // The body's sensor size, looked up once for every profile's row.
+    let body_crop = body.map(|(_, c)| c.crop_factor);
     let made_here = |l: &lcp::Listed| lcp::load(&l.path).is_some_and(|p| p.made_on(make, model));
     let rank = |l: &lcp::Listed| (l.raw != raw, !made_here(l));
     let mut adobe: Vec<lcp::Listed> = Vec::new();
@@ -190,11 +265,36 @@ pub fn options_in(
     adobe.sort_by_key(|l| l.lens.to_lowercase());
     out.extend(adobe.into_iter().map(|l| LensOption {
         maker: makers.of_profile(&l),
+        carries: lcp_carries(&l, body_crop, (make, model, shot)),
         choice: LensChoice::Lcp(l.file),
         label: l.lens,
         off_mount: false,
     }));
     out
+}
+
+/// What an Adobe profile's row has for the frame: its correction at
+/// the body's sensor size `body_crop`, as a pick of it develops, or
+/// at its own for one made on this body the database does not know.
+/// The body is the caller's, looked up once for every row.
+fn lcp_carries(
+    l: &lcp::Listed,
+    body_crop: Option<f32>,
+    (make, model, shot): (&str, &str, &Shot),
+) -> Carries {
+    let Some(p) = lcp::load(&l.path) else {
+        return Carries::of_any(None);
+    };
+    let crop = body_crop.or_else(|| p.made_on(make, model).then_some(p.crop_factor));
+    Carries::of_any(crop.map(|crop| {
+        p.correction(
+            ANY_SIZE.0,
+            ANY_SIZE.1,
+            crop,
+            shot,
+            greycard_lens::Wanted::ALL,
+        )
+    }))
 }
 
 /// The database's lens makers by first word, each the shortest
@@ -319,12 +419,19 @@ mod tests {
             .replace("RAW", if raw { "True" } else { "False" })
     }
 
+    /// What the test lenses and profiles carry, but for one that says.
+    const DISTORTION_ONLY: Carries = Carries {
+        distortion: true,
+        chromatic_aberration: false,
+        vignetting: false,
+    };
+
     /// A lens of `maker` on `mount`, for a database in a test.
     fn db_lens(maker: &str, model: &str, mount: &str) -> String {
         format!(
             "<lens><maker>{maker}</maker><model>{model}</model><mount>{mount}</mount>\
              <cropfactor>1</cropfactor><calibration>\
-             <distortion model=\"poly3\" focal=\"50\" k1=\"0\"/>\
+             <distortion model=\"poly3\" focal=\"50\" k1=\"0.01\"/>\
              </calibration></lens>"
         )
     }
@@ -420,12 +527,14 @@ mod tests {
                     label: "Sony FE 50mm F1.8".into(),
                     maker: "Sony".into(),
                     off_mount: false,
+                    carries: DISTORTION_ONLY,
                 },
                 LensOption {
                     choice: LensChoice::Database(name.into()),
                     label: format!("{name} (Canon EF, Nikon F AF)"),
                     maker: "Sigma".into(),
                     off_mount: true,
+                    carries: DISTORTION_ONLY,
                 },
             ]
         );
@@ -465,6 +574,7 @@ mod tests {
                 label: "Hand 35mm".into(),
                 maker: "Hand".into(),
                 off_mount: false,
+                carries: DISTORTION_ONLY,
             }]
         );
         // A rendered picture takes the one made on JPEGs, once the
@@ -541,6 +651,163 @@ mod tests {
             ..Default::default()
         };
         assert!(left_out_in(other, &b, None, Some(&dir)).is_some());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// An Adobe profile of the lens `name`, made on a Nikon Z 50, with
+    /// `inner` in its one entry's model at 24mm f/4.
+    fn adobe(name: &str, inner: &str) -> String {
+        format!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:stCamera="http://ns.adobe.com/photoshop/1.0/camera-profile"
+   xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/">
+  <rdf:Description rdf:about="">
+   <photoshop:CameraProfiles><rdf:Seq>
+    <rdf:li><rdf:Description stCamera:LensPrettyName="{name}"
+      stCamera:Make="Nikon Corporation" stCamera:Model="Nikon Z 50"
+      stCamera:CameraRawProfile="True" stCamera:SensorFormatFactor="1.5"
+      stCamera:FocalLength="24" stCamera:ApertureValue="4" stCamera:FocusDistance="10">
+     <stCamera:PerspectiveModel><rdf:Description stCamera:FocalLengthX="1">{inner}</rdf:Description></stCamera:PerspectiveModel>
+    </rdf:Description></rdf:li>
+   </rdf:Seq></photoshop:CameraProfiles>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"#
+        )
+    }
+
+    /// An Adobe profile's vignetting model of `params`.
+    fn adobe_vignette(params: &str) -> String {
+        format!(
+            r#"<stCamera:VignetteModel><rdf:Description stCamera:FocalLengthX="1" {params}/></stCamera:VignetteModel>"#
+        )
+    }
+
+    /// What each row's profile has that the develop applies, by row:
+    /// a lens of the database's with distortion and TCA and no
+    /// vignetting has those two (the Nikkor Z DX 16-50mm's case), one
+    /// with all three has all three, one without TCA has the other two,
+    /// and one whose data is all zero or one moves nothing and has
+    /// nothing; an Adobe profile with vignetting alone has that alone,
+    /// and one with distortion and an all-zero vignetting has the
+    /// distortion alone. A frame that names no focal length is read at
+    /// the middle of the lens's range, where a distortion running from
+    /// barrel to pincushion comes to nothing. The body is looked up
+    /// once for every row.
+    #[test]
+    fn each_row_says_which_corrections_its_profile_has() {
+        let dir = crate::testing::scratch_dir("lens-carries");
+        let distortion = r#"<stCamera:RadialDistortParam1>-0.1</stCamera:RadialDistortParam1>"#;
+        std::fs::write(
+            dir.join("vignette.lcp"),
+            adobe(
+                "Adobe vignetting only",
+                &adobe_vignette(r#"stCamera:VignetteModelParam1="-0.8""#),
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("zeros.lcp"),
+            adobe(
+                "Adobe vignetting zeros",
+                &format!(
+                    "{distortion}{}",
+                    adobe_vignette(
+                        r#"stCamera:VignetteModelParam1="0" stCamera:VignetteModelParam2="0" stCamera:VignetteModelParam3="0""#
+                    )
+                ),
+            ),
+        )
+        .unwrap();
+        let lens = |model: &str, calibration: &str| {
+            format!(
+                r#"<lens><maker>Nikon</maker><model>{model}</model><mount>Nikon Z</mount>
+                <cropfactor>1.5</cropfactor><calibration>{calibration}</calibration></lens>"#
+            )
+        };
+        let distortion_tca = r#"<distortion model="poly3" focal="16" k1="-0.02"/>
+            <distortion model="poly3" focal="50" k1="0.01"/>
+            <tca model="poly3" focal="16" vr="1.0002" vb="0.9998"/>"#;
+        let vignetting = r#"<vignetting model="pa" focal="18" aperture="3.5" distance="10" k1="-0.5" k2="0.1" k3="0"/>"#;
+        let mut db = Database::default();
+        db.read_xml(&format!(
+            r#"<lensdatabase version="2"><camera><maker>Nikon Corporation</maker>
+            <model>Nikon Z 50</model><mount>Nikon Z</mount>
+            <cropfactor>1.5</cropfactor></camera>{}{}{}{}{}</lensdatabase>"#,
+            lens("Nikkor Z DX 16-50mm f/3.5-6.3 VR", distortion_tca),
+            lens(
+                "Nikkor Z DX 18-140mm f/3.5-6.3 VR",
+                &format!("{distortion_tca}{vignetting}")
+            ),
+            lens(
+                "Nikkor Z DX 50-250mm f/4.5-6.3 VR",
+                &format!(r#"<distortion model="poly3" focal="50" k1="0.01"/>{vignetting}"#)
+            ),
+            lens(
+                "Nikkor Z 50mm f/1.8 S",
+                r#"<distortion model="poly3" focal="50" k1="0"/>
+                <tca model="linear" focal="50" kr="1" kb="1"/>
+                <vignetting model="pa" focal="50" aperture="1.8" distance="10" k1="0" k2="0" k3="0"/>"#
+            ),
+            lens(
+                "Nikkor Z 24-120mm f/4 S",
+                &format!(
+                    r#"<distortion model="poly3" focal="18" k1="-0.02"/>
+                    <distortion model="poly3" focal="140" k1="0.02"/>
+                    <tca model="poly3" focal="18" vr="1.0004" vb="0.9996"/>{vignetting}"#
+                )
+            ),
+        ))
+        .unwrap();
+        let rows = |shot: &Shot| {
+            let before = greycard_lens::matching::camera_lookups();
+            let options = options_in(
+                Some(&db),
+                ("Nikon Corporation", "Nikon Z 50", shot, true),
+                Some(&dir),
+            );
+            assert_eq!(
+                greycard_lens::matching::camera_lookups() - before,
+                1,
+                "the body looked up once, not once a row"
+            );
+            options
+                .into_iter()
+                .map(|o| (o.label, o.carries))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let has = |distortion, chromatic_aberration, vignetting| Carries {
+            distortion,
+            chromatic_aberration,
+            vignetting,
+        };
+        let expected = |middle: Carries| {
+            [
+                ("Nikkor Z DX 16-50mm f/3.5-6.3 VR", has(true, true, false)),
+                ("Nikkor Z DX 18-140mm f/3.5-6.3 VR", Carries::ALL),
+                ("Nikkor Z DX 50-250mm f/4.5-6.3 VR", has(true, false, true)),
+                ("Nikkor Z 50mm f/1.8 S", Carries::NONE),
+                ("Nikkor Z 24-120mm f/4 S", middle),
+                ("Adobe vignetting only", has(false, false, true)),
+                ("Adobe vignetting zeros", DISTORTION_ONLY),
+            ]
+            .into_iter()
+            .map(|(l, c)| (l.to_string(), c))
+            .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let at_24 = Shot {
+            focal_length: Some(24.0),
+            f_number: Some(5.6),
+            ..Default::default()
+        };
+        assert_eq!(rows(&at_24), expected(Carries::ALL));
+        assert_eq!(
+            rows(&Shot::default()),
+            expected(has(false, true, true)),
+            "no focal length: the middle of the range"
+        );
+        assert_eq!(Carries::of_any(None), Carries::NONE);
         crate::testing::remove_dir_retry(&dir);
     }
 }

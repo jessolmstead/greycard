@@ -891,14 +891,31 @@ fn show_lens_as(
     let label = show_lens_rows(options, chosen, app);
     app.set_lens_choice(chosen.key().into());
     app.set_lens_database(!matches!(report, LensReport::NoDatabase));
+    // What the profile has, for the switches; all three where there is
+    // no profile, whose switches stand down on that alone.
+    let carries = if chosen.is_from_file() {
+        match report {
+            LensReport::Found { carries, .. } => Some(*carries),
+            _ => None,
+        }
+    } else {
+        options
+            .iter()
+            .find(|o| o.choice == *chosen)
+            .map(|o| o.carries)
+    };
+    let has = carries.unwrap_or(greycard_engine::lens::Carries::ALL);
+    app.set_lens_has_distortion(has.distortion);
+    app.set_lens_has_ca(has.chromatic_aberration);
+    app.set_lens_has_vignetting(has.vignetting);
+    app.set_lens_available(carries.is_some());
     if !chosen.is_from_file() {
-        app.set_lens_available(options.iter().any(|o| o.choice == *chosen));
         app.set_lens_profile(label.into());
         return;
     }
-    app.set_lens_available(matches!(report, LensReport::Found { .. }));
     app.set_lens_profile(
         match report {
+            LensReport::Unread => String::new(),
             LensReport::NoDatabase => tr!("no lens profiles on this machine"),
             LensReport::NoLensName => tr!("the file names no lens"),
             LensReport::Unknown(name) => tr!("no profile for {name}", name = name),
@@ -906,11 +923,13 @@ fn show_lens_as(
                 lens,
                 camera: true,
                 smaller_sensor: false,
+                ..
             } => lens.clone(),
             LensReport::Found {
                 lens,
                 camera: true,
                 smaller_sensor: true,
+                ..
             } => tr!("{lens} (measured on a smaller sensor)", lens = lens),
             LensReport::Found {
                 lens,

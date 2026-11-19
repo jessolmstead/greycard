@@ -2572,6 +2572,13 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     crate::panel::merge::left(app);
     // A look previewed from the list was the last frame's.
     crate::panel::look_preview::end(st, app);
+    // So are the lens and its rows: none until this frame's open says,
+    // and none for a frame that does not develop, so the switches
+    // never show another frame's profile.
+    if st.key_of(i) != st.develop.lens_frame {
+        st.develop.lens = crate::worker::LensReport::Unread;
+        st.develop.lens_options.clear();
+    }
     let offline = !crate::rows::is_loaded(st, i);
     // The session's first open, whichever way it goes, is the one
     // the command line's mask, patch and zoom are for. A first file

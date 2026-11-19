@@ -797,6 +797,7 @@ fn a_picture_opens_with_its_lens_shown_and_its_corrections_off() {
                 lens: lens.into(),
                 camera: true,
                 smaller_sensor: false,
+                carries: greycard_engine::lens::Carries::ALL,
             },
             lens_options: Vec::new(),
             kind: crate::worker::SourceKind::Picture {
@@ -845,18 +846,21 @@ fn the_lens_picker_lists_the_options_and_keeps_the_choice() {
             label: "Canon RF 50mm F1.8 STM".into(),
             maker: "Canon".into(),
             off_mount: false,
+            carries: greycard_engine::lens::Carries::ALL,
         },
         LensOption {
             choice: LensChoice::Lcp("hand.lcp".into()),
             label: "Hand 35mm".into(),
             maker: "Hand".into(),
             off_mount: false,
+            carries: greycard_engine::lens::Carries::ALL,
         },
     ];
     let found = LensReport::Found {
         lens: "Canon RF 50mm F1.8 STM".into(),
         camera: true,
         smaller_sensor: false,
+        carries: greycard_engine::lens::Carries::ALL,
     };
     let strings = |m: ModelRc<slint::SharedString>| -> Vec<String> {
         m.iter().map(|s| s.to_string()).collect()
@@ -887,6 +891,122 @@ fn the_lens_picker_lists_the_options_and_keeps_the_choice() {
     assert!(!app.get_lens_available());
 }
 
+/// The LENS switches stand down, by their element ids, for what the
+/// profile picked has no data of: the file's lens with distortion and
+/// TCA and no vignetting, then a lens with all three, an Adobe profile
+/// without vignetting, a lens without TCA, an Adobe profile with
+/// vignetting alone, then no profile at all. The edit's
+/// setting is kept through each, and is the edit's again on a lens
+/// that has it.
+#[test]
+fn a_lens_switch_stands_down_for_what_the_profile_has_not() {
+    use greycard_edit::LensChoice;
+    use greycard_engine::lens::{Carries, LensOption};
+    use i_slint_backend_testing::ElementHandle;
+    let app = crate::testing::window(1);
+    app.set_lens_enabled(true);
+    app.set_lens_profile_on(true);
+    app.set_lens_distortion(true);
+    app.set_lens_ca(true);
+    app.set_lens_vignetting(true);
+    let no_vignetting = Carries {
+        vignetting: false,
+        ..Carries::ALL
+    };
+    let options = vec![
+        LensOption {
+            choice: LensChoice::Database("Nikkor Z DX 18-140mm f/3.5-6.3 VR".into()),
+            label: "Nikkor Z DX 18-140mm f/3.5-6.3 VR".into(),
+            maker: "Nikon".into(),
+            off_mount: false,
+            carries: Carries::ALL,
+        },
+        LensOption {
+            choice: LensChoice::Lcp("hand.lcp".into()),
+            label: "Hand 35mm".into(),
+            maker: "Hand".into(),
+            off_mount: false,
+            carries: no_vignetting,
+        },
+        LensOption {
+            choice: LensChoice::Database("Nikkor Z DX 50-250mm f/4.5-6.3 VR".into()),
+            label: "Nikkor Z DX 50-250mm f/4.5-6.3 VR".into(),
+            maker: "Nikon".into(),
+            off_mount: false,
+            carries: Carries {
+                chromatic_aberration: false,
+                ..Carries::ALL
+            },
+        },
+        LensOption {
+            choice: LensChoice::Lcp("shade.lcp".into()),
+            label: "Shade 24mm".into(),
+            maker: "Shade".into(),
+            off_mount: false,
+            carries: Carries {
+                vignetting: true,
+                ..Carries::NONE
+            },
+        },
+    ];
+    let found = LensReport::Found {
+        lens: "Nikkor Z DX 16-50mm f/3.5-6.3 VR".into(),
+        camera: true,
+        smaller_sensor: false,
+        carries: no_vignetting,
+    };
+    let enabled = |id: &str| {
+        let id = format!("LensSection::{id}");
+        crate::testing::by_id(&app, &id);
+        ElementHandle::find_by_element_id(&app, &id)
+            .next()
+            .and_then(|e| e.accessible_enabled())
+            .unwrap_or_else(|| panic!("{id} says nothing of taking a hand"))
+    };
+    let switches = || {
+        [
+            enabled("distortion-switch"),
+            enabled("ca-switch"),
+            enabled("vignetting-switch"),
+        ]
+    };
+    let kept = |app: &App| {
+        let edit = read_edit(app, &greycard_edit::Edit::default(), None);
+        assert!(app.get_lens_distortion() && app.get_lens_ca() && app.get_lens_vignetting());
+        assert!(edit.lens.distortion && edit.lens.chromatic_aberration && edit.lens.vignetting);
+    };
+
+    show_lens(&found, &options, &LensChoice::FromFile, &app);
+    assert_eq!(switches(), [true, true, false]);
+    kept(&app);
+
+    show_lens(&found, &options, &options[0].choice, &app);
+    assert_eq!(switches(), [true, true, true]);
+    kept(&app);
+
+    show_lens(&found, &options, &options[1].choice, &app);
+    assert_eq!(switches(), [true, true, false]);
+    kept(&app);
+
+    show_lens(&found, &options, &options[2].choice, &app);
+    assert_eq!(switches(), [true, false, true]);
+    kept(&app);
+
+    show_lens(&found, &options, &options[3].choice, &app);
+    assert_eq!(switches(), [false, false, true]);
+    kept(&app);
+
+    // No profile: all three stand down on that, as before.
+    show_lens(
+        &LensReport::NoLensName,
+        &options,
+        &LensChoice::FromFile,
+        &app,
+    );
+    assert_eq!(switches(), [false, false, false]);
+    kept(&app);
+}
+
 /// A picker's options: three makers' lenses and a profile.
 fn maker_options() -> Vec<greycard_engine::lens::LensOption> {
     use greycard_edit::LensChoice;
@@ -896,6 +1016,7 @@ fn maker_options() -> Vec<greycard_engine::lens::LensOption> {
         label: label.into(),
         maker: maker.into(),
         off_mount: false,
+        carries: greycard_engine::lens::Carries::ALL,
     };
     let db = |name: &str| LensChoice::Database(name.into());
     vec![
@@ -1029,9 +1150,58 @@ fn the_lens_rows_narrow_by_maker_and_words_and_keep_the_choice() {
         label: "Laowa 15mm f/2 Zero-D".into(),
         maker: "Venus".into(),
         off_mount: false,
+        carries: greycard_engine::lens::Carries::ALL,
     }];
     let venus = lens_rows(&laowa, &from, None, "venus 15mm");
     assert_eq!(labels(&venus), [FROM_THE_FILE, "Laowa 15mm f/2 Zero-D"]);
+}
+
+/// Another frame picked: the last frame's lens and rows are dropped at
+/// the pick, so until its open says, the three switches stand down and
+/// show no other frame's profile; its open brings its own.
+#[test]
+fn another_frame_picked_shows_no_lens_until_its_open_says() {
+    let app = crate::testing::window(2);
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+    let opened = |app: &App| {
+        let generation = state.borrow().develop.generation;
+        crate::panel::deliver::deliver(
+            app,
+            crate::worker::Outcome::Opened {
+                generation,
+                as_shot: (6504.0, 0.0),
+                frame: None,
+                profile: None,
+                lens: LensReport::Found {
+                    lens: "Nikkor Z DX 18-140mm f/3.5-6.3 VR".into(),
+                    camera: true,
+                    smaller_sensor: false,
+                    carries: greycard_engine::lens::Carries::ALL,
+                },
+                lens_options: Vec::new(),
+                kind: crate::worker::SourceKind::Raw,
+                shot: Default::default(),
+                taken: None,
+                blend: None,
+            },
+        );
+    };
+    app.invoke_select(0);
+    opened(&app);
+    app.set_lens_profile_on(true);
+    assert!(app.get_lens_available());
+
+    app.invoke_select(1);
+    assert_eq!(state.borrow().develop.lens, LensReport::Unread);
+    assert!(state.borrow().develop.lens_options.is_empty());
+    assert!(
+        !app.get_lens_available(),
+        "no switch shows the last frame's"
+    );
+    assert_eq!(app.get_lens_profile(), "");
+
+    opened(&app);
+    assert!(app.get_lens_available());
 }
 
 /// An open with no develop to follow it (an offline frame, or one
@@ -1197,24 +1367,28 @@ fn a_lens_off_the_mount_is_listed_when_words_find_it() {
             label: "Sony FE 35mm F1.8".into(),
             maker: "Sony".into(),
             off_mount: false,
+            carries: greycard_engine::lens::Carries::ALL,
         },
         LensOption {
             choice: LensChoice::Database(name.into()),
             label: label.clone(),
             maker: "Sigma".into(),
             off_mount: true,
+            carries: greycard_engine::lens::Carries::ALL,
         },
         LensOption {
             choice: LensChoice::Database("Minolta AF 50mm F1.7".into()),
             label: "Minolta AF 50mm F1.7 (Sony Alpha)".into(),
             maker: "Minolta".into(),
             off_mount: true,
+            carries: greycard_engine::lens::Carries::ALL,
         },
         LensOption {
             choice: LensChoice::Lcp("hand.lcp".into()),
             label: "Hand 35mm".into(),
             maker: "Hand".into(),
             off_mount: false,
+            carries: greycard_engine::lens::Carries::ALL,
         },
     ];
     state.borrow_mut().develop.lens_options = options.clone();

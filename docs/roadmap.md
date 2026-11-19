@@ -18,10 +18,6 @@ the reasoning lives in `docs/notes.md`.
       stalls while it runs. The models on the CPU, or smaller tiles,
       on such a chip; waits on the reporter's tile test and a policy
       (issue 181)
-- [ ] Vignetting stands on for a lens whose database entry has no
-      vignetting data (the Nikkor Z DX 16-50mm f/3.5-6.3 VR), and does
-      nothing; the switch should show there is nothing to apply
-      (issue 182)
 - [ ] A save rereads the XMP it is about to rewrite whole, with no
       bound (`xmp::stage_dated`); every other read stops at 64 MB
       (§705). Bounding it makes the save of a larger one fail

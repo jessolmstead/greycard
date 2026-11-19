@@ -356,18 +356,23 @@ impl WhiteBase {
 /// What the lens database made of a file.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LensReport {
+    /// Nothing read yet: the panel's for a frame picked whose open has
+    /// not said, or one that does not develop. Never sent.
+    Unread,
     /// No database on this machine.
     NoDatabase,
     /// The file names no lens.
     NoLensName,
     /// The lens is not in the database.
     Unknown(String),
-    /// The lens found, whether the body was, and whether the profile
-    /// was measured on a smaller sensor than the body's.
+    /// The lens found, whether the body was, whether the profile was
+    /// measured on a smaller sensor than the body's, and which
+    /// corrections it has for the frame.
     Found {
         lens: String,
         camera: bool,
         smaller_sensor: bool,
+        carries: crate::lens::Carries,
     },
 }
 

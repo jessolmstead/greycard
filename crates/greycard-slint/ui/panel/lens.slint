@@ -27,6 +27,10 @@ export component LensSection inherits Section {
     in-out property <bool> lens-ca;
     in property <bool> lens-ca-measured;
     in-out property <bool> lens-vignetting;
+    // Which corrections the profile has for the frame.
+    in property <bool> lens-has-distortion: true;
+    in property <bool> lens-has-ca: true;
+    in property <bool> lens-has-vignetting: true;
     in-out property <float> lens-manual;
     in-out property <float> lens-ca-red;
     in-out property <float> lens-ca-blue;
@@ -118,21 +122,24 @@ export component LensSection inherits Section {
         checked <=> root.lens-profile-on;
         toggled => { root.develop-changed(); }
     }
-    Toggle {
+    // A correction the profile has no data for, or data that moves and
+    // shades nothing, has nothing to apply: its switch stands down and
+    // keeps its setting for a profile that has it.
+    distortion-switch := Toggle {
         label: @tr("Distortion");
-        enabled: root.lens-available && root.lens-profile-on;
+        enabled: root.lens-available && root.lens-profile-on && root.lens-has-distortion;
         checked <=> root.lens-distortion;
         toggled => { root.develop-changed(); }
     }
-    Toggle {
+    ca-switch := Toggle {
         label: @tr("Chromatic aberration");
-        enabled: root.lens-available && root.lens-profile-on && !root.lens-ca-measured;
+        enabled: root.lens-available && root.lens-profile-on && root.lens-has-ca && !root.lens-ca-measured;
         checked <=> root.lens-ca;
         toggled => { root.develop-changed(); }
     }
-    Toggle {
+    vignetting-switch := Toggle {
         label: @tr("Vignetting");
-        enabled: root.lens-available && root.lens-profile-on;
+        enabled: root.lens-available && root.lens-profile-on && root.lens-has-vignetting;
         checked <=> root.lens-vignetting;
         toggled => { root.develop-changed(); }
     }

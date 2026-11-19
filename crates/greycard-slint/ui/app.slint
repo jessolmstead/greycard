@@ -2131,6 +2131,11 @@ export component App inherits Window {
     // profile's stands down: the switch has nothing to do.
     in property <bool> lens-ca-measured: false;
     in-out property <bool> lens-vignetting: true;
+    // Which corrections the profile picked has for the frame: a switch
+    // with nothing to apply stands down, its setting kept.
+    in property <bool> lens-has-distortion: true;
+    in property <bool> lens-has-ca: true;
+    in property <bool> lens-has-vignetting: true;
     in-out property <float> lens-manual: 0;
     in-out property <float> lens-ca-red: 0;
     in-out property <float> lens-ca-blue: 0;
@@ -4887,6 +4892,9 @@ export component App inherits Window {
                                     lens-ca <=> root.lens-ca;
                                     lens-ca-measured: root.lens-ca-measured;
                                     lens-vignetting <=> root.lens-vignetting;
+                                    lens-has-distortion: root.lens-has-distortion;
+                                    lens-has-ca: root.lens-has-ca;
+                                    lens-has-vignetting: root.lens-has-vignetting;
                                     lens-manual <=> root.lens-manual;
                                     lens-ca-red <=> root.lens-ca-red;
                                     lens-ca-blue <=> root.lens-ca-blue;
