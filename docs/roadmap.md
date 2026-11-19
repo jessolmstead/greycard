@@ -1265,7 +1265,16 @@ clears or a tester asks for it.
       picture, a fill model trained to paint it, pairs made by
       clipping well-exposed raws; the object remover failed at this
       because it is trained to remove. Judged by eye, blind, not by
-      error against the truth; an option like the generative remove
+      error against the truth; an option like the generative remove.
+      After the learned fill ships, and beside it, for clipped regions
+      with real structure (clouds, fabric, faces); needing a GPU is
+      accepted. A 16 GB card can fine-tune an existing fill model in
+      about a day a run, or train a mid-sized feed-forward one from
+      scratch on crops in several; a pretrained base's license and
+      data want vetting, as the remove's did. First trial: a
+      feed-forward fine-tune in a log-encoded space on the regions the
+      learned fill marks large and textured, judged blind against it;
+      the result cached so the view and the export agree
 - [ ] Highlight fills judged blind by eye beside the benchmark's
       error: no fill can match what the sensor never recorded, and
       the smoothness bar may reject fills that look right
