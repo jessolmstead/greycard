@@ -125,6 +125,7 @@ pub(crate) fn window(count: usize) -> App {
     // for its bundled catalogs on its own.
     slint::select_bundled_translation("").expect("the window's catalogs are bundled");
     crate::panel::prefs::show_languages(&app, "");
+    crate::panel::startup::show_unopened(&app);
     let thumbs: Vec<Thumb> = (0..count)
         .map(|i| Thumb {
             name: format!("f{i:02}.CR3").into(),

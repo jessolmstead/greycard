@@ -1199,8 +1199,9 @@ export component App inherits Window {
     changed guide-mode => { if (root.guide-mode != "") { root.crop-draw-armed = false; } }
     // Local adjustments: the list (Global first), which one the panel
     // edits (0 is global), that one's own controls, and the kind of
-    // shape being drawn in the viewport, if any.
-    in-out property <[string]> adjustment-names: ["Global"];
+    // shape being drawn in the viewport, if any. The list's words are
+    // Rust's, from the start (`startup::show_unopened`).
+    in-out property <[string]> adjustment-names;
     in-out property <int> target: 0;
     // Which tab the panel shows: Develop, Crop, Masks or Retouch.
     in-out property <string> panel-tab: "Develop";
@@ -2112,8 +2113,9 @@ export component App inherits Window {
     in property <bool> lens-database: false;
     // The lens picker: "From the file" first, then the database's
     // lenses for the body and the Adobe profiles; the edit's choice
-    // as its key, and its row.
-    in property <[string]> lens-choice-labels: ["From the file"];
+    // as its key, and its row. The labels are Rust's, from the start
+    // (`startup::show_unopened`).
+    in property <[string]> lens-choice-labels;
     in property <[string]> lens-choice-keys: [""];
     in-out property <string> lens-choice: "";
     in-out property <int> lens-choice-index: 0;

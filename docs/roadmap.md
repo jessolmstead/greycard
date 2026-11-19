@@ -74,9 +74,6 @@ the reasoning lives in `docs/notes.md`.
       (the sharpen guide's among them, §643) while its denoiser or
       removal asks for room; on a short card the release could drop
       them too, at the cost of the window's next develop (§646)
-- [ ] Two window defaults nothing marks for translation, "Global"
-      and "From the file" in `app.slint`, which Rust overwrites
-      later (§651): mark them or drop the defaults
 - [ ] A mask's Shadows and Highlights summed with the picture's are
       not held to the slider's limit (Midtones' sum is, §644): a mask
       at +2 over a picture at +2 can fold the tones

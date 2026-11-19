@@ -382,6 +382,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The language, now that a component exists and before the window
     // shows.
     crate::panel::prefs::start_language(&app, &remembered.language);
+    show_unopened(&app);
     // A size asked for on the command line, for a capture, in place of
     // the layout's preferred one; the screen's fit still applies.
     if let Some((w, h)) = cli.window {
@@ -2685,6 +2686,15 @@ pub(crate) fn keep_choices(app: &App, state: &Rc<Shared>, choices: &Choices) -> 
     timer
 }
 
+/// The words the panel shows before any frame is open, in the window's
+/// language: the adjustments' list with Global alone, and the lens
+/// picker with its first row. The window holds none of its own, so
+/// nothing shows English under another language.
+pub(crate) fn show_unopened(app: &App) {
+    crate::panel::edit::show_names(&Edit::default(), app);
+    crate::panel::assets::show_lens_rows(&[], &greycard_edit::LensChoice::FromFile, app);
+}
+
 /// What the last run painted over the picture, the clipping warnings
 /// and focus peaking; `clipping` (the command line's) turns both
 /// warnings on whatever it left.
@@ -3450,5 +3460,30 @@ mod tests {
         // Gone: the last folder.
         assert_eq!(open(&text(&dir.join("gone")), true), (in_last, None));
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The window holds no words of its own for the adjustments' list
+    /// or the lens picker; the start puts them there, through `tr!`,
+    /// before any frame is open.
+    #[test]
+    fn the_start_shows_the_lists_words_before_a_frame_is_open() {
+        use super::show_unopened;
+        use crate::App;
+        use slint::{Model, ModelRc};
+        crate::testing::backend();
+        let app = App::new().expect("the window builds");
+        let words = |m: ModelRc<slint::SharedString>| -> Vec<String> {
+            m.iter().map(|s| s.to_string()).collect()
+        };
+        assert!(words(app.get_adjustment_names()).is_empty());
+        assert!(words(app.get_lens_choice_labels()).is_empty());
+        show_unopened(&app);
+        assert_eq!(words(app.get_adjustment_names()), ["Global"]);
+        assert_eq!(
+            words(app.get_lens_choice_labels()),
+            [crate::panel::assets::FROM_THE_FILE]
+        );
+        assert_eq!(words(app.get_lens_choice_keys()), [""]);
+        assert_eq!(app.get_lens_choice_index(), 0);
     }
 }
