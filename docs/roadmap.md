@@ -12,6 +12,16 @@ the reasoning lives in `docs/notes.md`.
       view, so what it finds depends on the window's height. One failed
       on CI alone at the 0.12.0 cut; the rest want an audit, and ids
       (2026-11-17)
+- [ ] A small integrated GPU is given every learned model at full
+      size, because the machine's memory is counted as the card's
+      (§431): on a Ryzen 5700U a denoise takes 64 s and the desktop
+      stalls while it runs. The models on the CPU, or smaller tiles,
+      on such a chip; waits on the reporter's tile test and a policy
+      (issue 181)
+- [ ] Vignetting stands on for a lens whose database entry has no
+      vignetting data (the Nikkor Z DX 16-50mm f/3.5-6.3 VR), and does
+      nothing; the switch should show there is nothing to apply
+      (issue 182)
 - [ ] The XMP beside a raw is read whole, with no bound, by the
       open's adoption (`xmp::adopt_own`) and the index's pass; the
       take's own read stops at 64 MB (§705)
@@ -1630,6 +1640,7 @@ release when the wait clears.
       next line
 - [ ] The makers' embedded lens corrections, exact where a file carries
       them. Waits on rawler surfacing them (and the Panasonic lens name)
+      (discussion 187)
 - [ ] lensfun calibrates the Sigma 50mm f/1.4 DG HSM Art with a
       distortion k1 of exactly zero (made on a Canon 6D), so it gets no
       distortion correction where Adobe's profile straightens it; measure
