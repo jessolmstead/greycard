@@ -36,6 +36,8 @@ export component CollectionSheet inherits Rectangle {
         // As the root sheet's: Escape is taken on the card, since the
         // field has the focus and a key goes up from it.
         FocusScope {
+            // No stop of its own: Tab goes round the card's controls.
+            focus-on-tab-navigation: false;
             key-pressed(e) => {
                 if (e.text == Key.Escape) {
                     root.open = false;

@@ -7,20 +7,23 @@
 // the list scrolls.
 
 import { Theme } from "../theme.slint";
-import { PanelButton, Segmented, ScrollPane } from "../controls.slint";
+import { PanelButton, Segmented, ScrollPane, ButtonKeys } from "../controls.slint";
 import { CarryRow } from "../structs.slint";
 
 // A check: off, on, or "some" for a heading with some of its parts
 // on. It takes the keys as the other controls do: Tab to it, Space
 // to turn it over, a ring while it has the focus. Return goes up to
-// the sheet, whose default button it is.
-component Check inherits Rectangle {
+// the sheet, whose default button it is. The match sheet's groups have
+// one each, with no label.
+export component Check inherits Rectangle {
     in property <string> label;
     in property <string> a11y;
     in property <int> state;
     in property <bool> heading;
+    in property <bool> enabled: true;
     callback toggled();
 
+    accessible-enabled: root.enabled;
     accessible-role: checkbox;
     accessible-checkable: true;
     // A heading partly on reads as checked, and says it is partly.
@@ -28,16 +31,31 @@ component Check inherits Rectangle {
     // Spoken by a screen reader: a box with some of its parts checked
     accessible-description: root.state == 1 ? @tr("partly checked") : "";
     accessible-label: root.a11y;
-    accessible-action-default => { root.toggled(); }
+    accessible-action-default => {
+        if (root.enabled) { root.toggled(); }
+    }
 
+    // The focus ring goes around the box, as round a primary button: a
+    // box on is filled with the ring's own blue, which a ring on its
+    // edge would vanish into. Clear of the list's left edge, which
+    // would clip it.
+    if fs.has-focus: Rectangle {
+        x: box.x - 3px;
+        y: box.y - 3px;
+        width: box.width + 6px;
+        height: box.height + 6px;
+        border-radius: Theme.radius-sm + 3px;
+        border-width: 2px;
+        border-color: Theme.focus-ring;
+    }
     box := Rectangle {
-        x: 0;
+        x: 3px;
         y: (root.height - self.height) / 2;
         width: 14px;
         height: 14px;
         border-radius: Theme.radius-sm;
-        border-width: fs.has-focus ? 2px : root.state == 0 ? 1px : 0;
-        border-color: fs.has-focus || ta.has-hover ? Theme.focus-ring : Theme.border-strong;
+        border-width: root.state == 0 ? 1px : 0;
+        border-color: ta.has-hover ? Theme.focus-ring : Theme.border-strong;
         background: root.state == 0 ? Theme.base : Theme.accent;
         // The tick, drawn: a short stroke down and a long one up.
         if root.state == 2: Path {
@@ -64,8 +82,8 @@ component Check inherits Rectangle {
         }
     }
     Text {
-        x: box.width + Theme.space-2;
-        width: root.width - self.x;
+        x: box.x + box.width + Theme.space-2;
+        width: max(0px, root.width - self.x);
         height: root.height;
         text: root.label;
         font-size: root.heading ? Theme.font-sm : Theme.font-xs;
@@ -75,15 +93,22 @@ component Check inherits Rectangle {
         overflow: elide;
     }
     fs := FocusScope {
+        enabled: root.enabled;
         key-pressed(e) => {
             if (e.text == " ") {
-                root.toggled();
+                // Turned off with the keys still here (a fit started):
+                // taken, and nothing turned.
+                if (root.enabled) { root.toggled(); }
                 return accept;
             }
-            return reject;
+            // Any other key goes on as a button's does: up to the
+            // sheet's card where it has one (Escape, Enter), to the
+            // window's keys where it has none (the match sheet).
+            return ButtonKeys.pass(e) ? accept : reject;
         }
     }
     ta := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: MouseCursor.pointer;
         clicked => {
             fs.focus();
@@ -115,12 +140,12 @@ export component CarryList inherits VerticalLayout {
             text: @tr("Check all");
             clicked => { root.all(true); }
         }
-        PanelButton {
+        uncheck-all := PanelButton {
             text: @tr("Uncheck all");
             clicked => { root.all(false); }
         }
     }
-    ScrollPane {
+    pane := ScrollPane {
         height: min(root.lines * root.pitch, max(root.max-list-height, 4 * root.pitch));
         content-height: grid.height;
         content-width: self.visible-width;
@@ -139,7 +164,7 @@ export component CarryList inherits VerticalLayout {
                     : row.kind == 1 ? grid.part-w - Theme.space-1
                     : grid.col-w - root.indent;
                 height: root.pitch;
-                if row.kind != 2: Check {
+                if row.kind != 2: check := Check {
                     width: parent.width;
                     height: parent.height;
                     label: row.label;
@@ -148,9 +173,12 @@ export component CarryList inherits VerticalLayout {
                     heading: row.kind == 0;
                     toggled => { root.toggled(i); }
                 }
-                if row.kind == 2: Segmented {
+                if row.kind == 2: join := Segmented {
+                    // In line with the boxes, which sit in from the
+                    // row's edge to keep their ring.
+                    x: 3px;
                     y: 1px;
-                    width: parent.width;
+                    width: parent.width - 3px;
                     height: parent.height - 2px;
                     options: ["Replace masks", "Add to masks"];
                     // Sync sheet: how the masks go across

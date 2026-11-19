@@ -2324,25 +2324,121 @@ export component Segmented inherits Rectangle {
     in property <bool> rounded: true;
     in property <bool> bordered: true;
     in property <bool> padded: true;
+    /// Whether Tab stops on it: one stop for the row, as a radio
+    /// group's, where Left and Right move the choice at once. A click
+    /// never gives it the keys, so the window's arrows stay the
+    /// window's after one.
+    in property <bool> tab-stop: true;
+    /// The row's name to a screen reader, as the words beside it say
+    /// it; empty for a row with none.
+    in property <string> name;
     callback selected(string);
+    /// Whether it has the keys.
+    out property <bool> focused: root.keys-here;
     height: Theme.control-height;
     border-radius: root.rounded ? Theme.radius-md : 0px;
     background: Theme.base;
-    border-width: root.bordered ? 1px : 0px;
-    border-color: Theme.border;
+    // With the keys and no option of its own to ring (`at` below), the
+    // ring goes round the row.
+    border-width: root.keys-here && root.at < 0 ? 2px : root.bordered ? 1px : 0px;
+    border-color: root.keys-here && root.at < 0 ? Theme.focus-ring : Theme.border;
     opacity: root.enabled ? 1 : 0.45;
+    // The current option's place among the first eight, -1 for none:
+    // Slint has no loop to look with, and no row has more than five.
+    // An option not found (none current, or one past the eighth)
+    // leaves the arrows nothing to do and rings no option.
+    pure function is-at(k: int) -> bool {
+        return k < root.options.length && root.options[k] == root.current;
+    }
+    property <int> at: root.current == "" ? -1
+        : root.is-at(0) ? 0
+        : root.is-at(1) ? 1
+        : root.is-at(2) ? 2
+        : root.is-at(3) ? 3
+        : root.is-at(4) ? 4
+        : root.is-at(5) ? 5
+        : root.is-at(6) ? 6
+        : root.is-at(7) ? 7 : -1;
+    // What a screen reader says the row is at: the current option's
+    // words.
+    property <string> spoken: root.at < 0 ? ""
+        : root.at < root.labels.length ? root.labels[root.at] : root.current;
+    pure function usable(i: int) -> bool {
+        return i >= 0 && i < root.options.length && root.why-not[i] == "";
+    }
+    // The next option that can be chosen from `from` by `by`, or
+    // `from` at the row's end.
+    pure function next(from: int, by: int) -> int {
+        if (root.usable(from + by)) { return from + by; }
+        if (root.usable(from + 2 * by)) { return from + 2 * by; }
+        if (root.usable(from + 3 * by)) { return from + 3 * by; }
+        if (root.usable(from + 4 * by)) { return from + 4 * by; }
+        if (root.usable(from + 5 * by)) { return from + 5 * by; }
+        if (root.usable(from + 6 * by)) { return from + 6 * by; }
+        if (root.usable(from + 7 * by)) { return from + 7 * by; }
+        return from;
+    }
+    function pick(i: int) {
+        let option = root.options[i];
+        Typing.close-all();
+        if (root.picks) { root.current = option; }
+        root.selected(option);
+    }
+    // Whether its scope has the keys.
+    property <bool> keys-here: false;
+    // Under the options, whose clicks are their own: an option's
+    // TipArea takes the press, so a click never reaches this scope
+    // and never gives it the keys (`focus-on-click` aside). Only a
+    // stop of the walk has one: the panel's rows take no keys at all.
+    if root.tab-stop: fs := FocusScope {
+        enabled: root.enabled;
+        focus-on-click: false;
+        changed has-focus => { root.keys-here = self.has-focus; }
+        // To a screen reader, a radio group named by its row, at its
+        // current option.
+        accessible-role: radio-group;
+        accessible-label: root.name;
+        accessible-value: root.spoken;
+        key-pressed(e) => {
+            let plain = !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta && !e.modifiers.shift;
+            if (plain && (e.text == Key.LeftArrow || e.text == Key.RightArrow)) {
+                // Turned off with the keys still here (a run started),
+                // or no option known to move from: taken, and nothing
+                // moved.
+                if (root.enabled && root.at >= 0) {
+                    let to = root.next(root.at, e.text == Key.RightArrow ? 1 : -1);
+                    if (to != root.at) { root.pick(to); }
+                }
+                return accept;
+            }
+            return ButtonKeys.pass(e) ? accept : reject;
+        }
+    }
     HorizontalLayout {
         padding: root.padded ? 3px : 0px;
         spacing: 2px;
-        for option[i] in root.options: Rectangle {
+        for option[i] in root.options: seg := Rectangle {
             property <bool> on: option == root.current;
             property <bool> usable: root.why-not[i] == "";
             border-radius: root.rounded ? Theme.radius-sm : 0px;
             background: on ? Theme.raised : (t.has-hover && root.enabled && usable ? Theme.hover : transparent);
             animate background { duration: Theme.quick; }
+            // The keys' ring, on the option they move from.
+            border-width: root.keys-here && i == root.at ? 2px : 0;
+            border-color: Theme.focus-ring;
+            // Each option a radio button, named by its words.
+            accessible-role: radio-button;
+            accessible-label: label.text;
+            accessible-checkable: true;
+            accessible-checked: on;
+            accessible-action-default => {
+                if (root.enabled && usable) { root.pick(i); }
+            }
             min-width: root.equal-width ? 0px : label.preferred-width + 2 * root.label-margin;
             preferred-width: root.equal-width ? 0px : label.preferred-width + 2 * root.label-margin;
             label := Text {
+                // Said once, by its radio button.
+                accessible-role: none;
                 text: i < root.labels.length ? root.labels[i] : option;
                 color: !usable ? Theme.text-muted : on ? Theme.text : Theme.text-secondary;
                 font-size: Theme.font-xs;

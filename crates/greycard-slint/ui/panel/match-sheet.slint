@@ -7,6 +7,7 @@ import { Theme } from "../theme.slint";
 import { PanelButton, Segmented, Toggle, ScrollPane } from "../controls.slint";
 import { MatchGroup } from "../structs.slint";
 import { LoadingCard } from "loading.slint";
+import { Check } from "carry-list.slint";
 
 export component MatchSheet inherits Rectangle {
     /// "Library" or "This folder".
@@ -94,7 +95,7 @@ export component MatchSheet inherits Rectangle {
                 color: Theme.text-secondary;
                 wrap: word-wrap;
             }
-            Segmented {
+            scope := Segmented {
                 options: root.match-scopes;
                 current <=> root.match-scope;
                 enabled: !root.match-running;
@@ -136,39 +137,19 @@ export component MatchSheet inherits Rectangle {
                         for group[i] in root.match-groups: HorizontalLayout {
                             spacing: Theme.space-2;
                             // The box: a group's own, checked at first.
+                            // The carry list's check, so Tab stops on it
+                            // and Space turns it over.
                             Rectangle {
-                                width: 16px;
-                                box := Rectangle {
-                                    y: 1px;
-                                    width: 16px;
-                                    height: 16px;
-                                    border-radius: Theme.radius-sm;
-                                    border-width: 1px;
-                                    border-color: box-ta.has-hover ? Theme.focus-ring : Theme.border-strong;
-                                    background: group.checked ? Theme.accent : Theme.base;
-                                    // The tick, drawn: a short stroke down and a long one up.
-                                    if group.checked: Path {
-                                        x: 0;
-                                        y: 0;
-                                        width: 14px;
-                                        height: 14px;
-                                        viewbox-width: 14;
-                                        viewbox-height: 14;
-                                        commands: "M 3 7.5 L 6 10.5 L 11 3.5";
-                                        stroke: Theme.on-accent;
-                                        stroke-width: 2px;
-                                        stroke-line-cap: round;
-                                        stroke-line-join: round;
-                                    }
-                                    accessible-role: checkbox;
-                                    accessible-checkable: true;
-                                    accessible-checked: group.checked;
-                                    accessible-label: @tr("Fit {}", group.name);
-                                    box-ta := TouchArea {
-                                        enabled: !root.match-running;
-                                        mouse-cursor: MouseCursor.pointer;
-                                        clicked => { root.match-group-toggled(i); }
-                                    }
+                                width: 20px;
+                                group-check := Check {
+                                    x: 0;
+                                    y: 0;
+                                    width: 20px;
+                                    height: 18px;
+                                    a11y: @tr("Fit {}", group.name);
+                                    state: group.checked ? 2 : 0;
+                                    enabled: !root.match-running;
+                                    toggled => { root.match-group-toggled(i); }
                                 }
                             }
                             Text {

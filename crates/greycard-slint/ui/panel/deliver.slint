@@ -213,6 +213,8 @@ export component ExportSheet inherits Rectangle {
         // its own Enter; only a dialog, which took the focus anyway,
         // hands it back here.
         keys := FocusScope {
+            // No stop of its own: Tab goes round the card's controls.
+            focus-on-tab-navigation: false;
             init => { self.focus(); }
             key-pressed(e) => {
                 // The open question first: the name row's Cancel, the
@@ -333,8 +335,8 @@ export component ExportSheet inherits Rectangle {
                         spacing: Theme.space-2;
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Format"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["JPEG", "PNG", "TIFF 16-bit", "WebP"]; labels: ["JPEG", "PNG", @tr("TIFF 16-bit"), "WebP"]; current <=> root.export-format; }
+                            format-words := Text { accessible-role: none; text: @tr("Format"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { name: format-words.text; options: ["JPEG", "PNG", "TIFF 16-bit", "WebP"]; labels: ["JPEG", "PNG", @tr("TIFF 16-bit"), "WebP"]; current <=> root.export-format; }
                         }
                         EditSlider {
                             label: @tr("Quality");
@@ -351,9 +353,9 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Long edge"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            long-edge-words := Text { accessible-role: none; text: @tr("Long edge"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             // Export size: the full size, with the pixel counts beside it
-                            Segmented { options: ["Full", "4096", "2048", "1024", "Custom"]; labels: [@tr("Full"), "4096", "2048", "1024", @tr("Custom")]; current <=> root.export-size; }
+                            Segmented { name: long-edge-words.text; options: ["Full", "4096", "2048", "1024", "Custom"]; labels: [@tr("Full"), "4096", "2048", "1024", @tr("Custom")]; current <=> root.export-size; }
                         }
                         if root.export-size == "Custom": HorizontalLayout {
                             spacing: Theme.space-2;
@@ -381,15 +383,15 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Sharpen"); width: 68px; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                            sharpen-words := Text { accessible-role: none; text: @tr("Sharpen"); width: 68px; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
                             // Export sharpen: the four levels
-                            Segmented { options: ["Off", "Low", "Standard", "High"]; labels: [@tr("Off"), @tr("Low"), @tr("Standard"), @tr("High")]; current <=> root.export-sharpen; }
+                            Segmented { name: sharpen-words.text; options: ["Off", "Low", "Standard", "High"]; labels: [@tr("Off"), @tr("Low"), @tr("Standard"), @tr("High")]; current <=> root.export-sharpen; }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
                             // Export sheet: the color profile row
-                            Text { text: @tr("Color"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; current <=> root.export-space; }
+                            color-words := Text { accessible-role: none; text: @tr("Color"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { name: color-words.text; options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; current <=> root.export-space; }
                         }
                         Toggle {
                             label: @tr("Embed profile");
@@ -397,9 +399,9 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Metadata"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            metadata-words := Text { accessible-role: none; text: @tr("Metadata"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             // Export metadata: all, all but greycard's edit record, or none
-                            Segmented { options: ["All", "No edit", "None"]; labels: [@tr("metadata" => "All"), @tr("No edit"), @tr("metadata" => "None")]; current <=> root.export-metadata; }
+                            Segmented { name: metadata-words.text; options: ["All", "No edit", "None"]; labels: [@tr("metadata" => "All"), @tr("No edit"), @tr("metadata" => "None")]; current <=> root.export-metadata; }
                         }
                         // Typed, every export goes into it beside each frame
                         // with no chooser; left empty, the chooser asks.
@@ -444,14 +446,14 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("If it exists"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["Increment", "Overwrite", "Skip"]; labels: [@tr("Increment"), @tr("Overwrite"), @tr("Skip")]; current <=> root.export-on-exists; }
+                            if-it-exists-words := Text { accessible-role: none; text: @tr("If it exists"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { name: if-it-exists-words.text; options: ["Increment", "Overwrite", "Skip"]; labels: [@tr("Increment"), @tr("Overwrite"), @tr("Skip")]; current <=> root.export-on-exists; }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Watermark"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            watermark-words := Text { accessible-role: none; text: @tr("Watermark"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             // Export watermark: off, a text, or a PNG
-                            Segmented { options: ["Off", "Text", "Image"]; labels: [@tr("Off"), @tr("Text"), @tr("Image")]; current <=> root.export-mark; }
+                            Segmented { name: watermark-words.text; options: ["Off", "Text", "Image"]; labels: [@tr("Off"), @tr("Text"), @tr("Image")]; current <=> root.export-mark; }
                         }
                         if root.export-mark == "Text": HorizontalLayout {
                             spacing: Theme.space-2;

@@ -4078,6 +4078,8 @@ export component App inherits Window {
                         wrap: word-wrap;
                     }
                     if !root.frozen: Segmented {
+                        // The panel's Tab is the window's: no stop here.
+                        tab-stop: false;
                         width: 40px;
                         options: ["Cull"];
                         // The Loupe's mode button at the top of the develop panel
@@ -4101,6 +4103,8 @@ export component App inherits Window {
                         }
                     }
                     if !root.frozen: Segmented {
+                        // The panel's Tab is the window's: no stop here.
+                        tab-stop: false;
                         options: ["Develop", "Crop", "Masks", "Retouch"];
                         // The Loupe's mode buttons at the top of the develop panel
                         labels: [@tr("Develop"), @tr("Crop"), @tr("Masks"), @tr("Retouch")];

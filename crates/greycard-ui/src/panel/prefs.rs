@@ -1928,9 +1928,17 @@ mod tests {
     fn row_shows(app: &App, id: &str) -> String {
         use i_slint_backend_testing::ElementHandle;
         crate::testing::count_labeled(app, id);
-        ElementHandle::find_by_element_id(app, &format!("SettingsSheet::{id}"))
+        let row = ElementHandle::find_by_element_id(app, &format!("SettingsSheet::{id}"))
             .next()
-            .unwrap_or_else(|| panic!("{id} on the sheet"))
+            .unwrap_or_else(|| panic!("{id} on the sheet"));
+        let (at, size) = (row.absolute_position(), row.size());
+        // The row's radio group, which says its current option.
+        ElementHandle::find_by_element_id(app, "Segmented::fs")
+            .find(|g| {
+                let p = g.absolute_position();
+                p.x >= at.x && p.x < at.x + size.width && p.y >= at.y && p.y < at.y + size.height
+            })
+            .unwrap_or_else(|| panic!("{id}'s radio group"))
             .accessible_value()
             .unwrap_or_default()
             .to_string()

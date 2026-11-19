@@ -530,8 +530,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Theme"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                theme-words := Text { accessible-role: none; text: @tr("Theme"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
+                                    name: theme-words.text;
                                     options: ["Charcoal", "Grey", "Light"];
                                     labels: [@tr("Charcoal"), @tr("Grey"), @tr("theme" => "Light")];
                                     current <=> root.theme;
@@ -540,8 +541,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Scroll bars"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                scroll-bars-words := Text { accessible-role: none; text: @tr("Scroll bars"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
+                                    name: scroll-bars-words.text;
                                     options: ["Fade", "Stay"];
                                     // Scroll bars: fade when idle, or stay
                                     labels: [@tr("Fade"), @tr("Stay")];
@@ -551,8 +553,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Scroll bar size"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                scroll-bar-size-words := Text { accessible-role: none; text: @tr("Scroll bar size"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
+                                    name: scroll-bar-size-words.text;
                                     options: ["Thin", "Medium", "Wide"];
                                     // Scroll bar size
                                     labels: [@tr("Thin"), @tr("Medium"), @tr("Wide")];
@@ -613,8 +616,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Start in"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                start-in-words := Text { accessible-role: none; text: @tr("Start in"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
+                                    name: start-in-words.text;
                                     options: ["Last folder", "Chosen folder"];
                                     labels: [@tr("Last folder"), @tr("Chosen folder")];
                                     current: root.start-choice;
@@ -668,8 +672,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Edits go"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                edits-go-words := Text { accessible-role: none; text: @tr("Edits go"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
+                                    name: edits-go-words.text;
                                     options: ["Beside the raw", "Hidden folder"];
                                     labels: [@tr("Beside the raw"), @tr("Hidden folder")];
                                     current <=> root.sidecar-placement;
@@ -861,13 +866,12 @@ export component SettingsSheet inherits Rectangle {
                             spacing: Theme.space-3;
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Canvas"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                canvas-words := Text { accessible-role: none; text: @tr("Canvas"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 canvas-row := Segmented {
+                                    name: canvas-words.text;
                                     options: root.canvas-names;
                                     current: root.canvas-names[root.canvas-choice];
                                     picks: false;
-                                    accessible-role: list;
-                                    accessible-value: self.current;
                                     selected(c) => {
                                         root.canvas-choice = c == root.canvas-names[4] ? 4
                                             : c == root.canvas-names[3] ? 3
@@ -881,16 +885,12 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 // Editing: the monitor profile row
-                                Text { text: @tr("Monitor"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                monitor-words := Text { accessible-role: none; text: @tr("Monitor"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 monitor-row := Segmented {
+                                    name: monitor-words.text;
                                     options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
                                     labels: [@tr("System"), "sRGB", "Adobe RGB", "Display P3", @tr("File")];
                                     current <=> root.display-profile;
-                                    accessible-role: list;
-                                    // Spoken as the label shown.
-                                    accessible-value: self.current == "System" ? @tr("System")
-                                        : self.current == "File" ? @tr("File")
-                                        : self.current;
                                     selected(p) => { root.display-changed(); }
                                 }
                             }
@@ -921,15 +921,12 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 // Editing: the soft proof row
-                                Text { text: @tr("Soft proof"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                soft-proof-words := Text { accessible-role: none; text: @tr("Soft proof"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 proof-row := Segmented {
+                                    name: soft-proof-words.text;
                                     options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
                                     labels: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", @tr("File")];
                                     current <=> root.proof-profile;
-                                    accessible-role: list;
-                                    // Spoken as the label shown.
-                                    accessible-value: self.current == "File" ? @tr("File")
-                                        : self.current;
                                     selected(p) => { root.proof-changed(); }
                                 }
                             }
@@ -955,11 +952,6 @@ export component SettingsSheet inherits Rectangle {
                                     options: ["Perceptual", "Relative"];
                                     labels: [@tr("Perceptual"), @tr("Relative")];
                                     current <=> root.proof-intent;
-                                    accessible-role: list;
-                                    // Spoken as the label shown.
-                                    accessible-value: self.current == "Perceptual" ? @tr("Perceptual")
-                                        : self.current == "Relative" ? @tr("Relative")
-                                        : self.current;
                                     selected(i) => { root.proof-changed(); }
                                 }
                             }
@@ -977,8 +969,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Aspect"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                aspect-words := Text { accessible-role: none; text: @tr("Aspect"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
+                                    name: aspect-words.text;
                                     options: ["Original", "Last used", "Free"];
                                     // Editing: the aspect a new crop opens at
                                     labels: [@tr("aspect" => "Original"), @tr("Last used"), @tr("Free")];
@@ -1005,20 +998,15 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Fill"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                fill-words := Text { accessible-role: none; text: @tr("Fill"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 fill-row := Segmented {
+                                    name: fill-words.text;
                                     options: ["Patch", "Fast", "Best"];
                                     labels: [@tr("Patch"), @tr("Fast"), @tr("Best")];
                                     tips: [@tr("From the picture around it, at once"), @tr("The remove in four steps: quicker, rougher on large areas"), @tr("The remove in full")];
                                     why-not: root.fill-why-not;
                                     current <=> root.fill-choice;
                                     picks: false;
-                                    accessible-role: list;
-                                    // Spoken as the label shown.
-                                    accessible-value: self.current == "Patch" ? @tr("Patch")
-                                        : self.current == "Fast" ? @tr("Fast")
-                                        : self.current == "Best" ? @tr("Best")
-                                        : self.current;
                                     selected(c) => { root.fill-chosen(c); }
                                 }
                             }
@@ -1060,25 +1048,21 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Format"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                format-words := Text { accessible-role: none; text: @tr("Format"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 format-row := Segmented {
+                                    name: format-words.text;
                                     options: ["JPEG", "PNG", "TIFF 16-bit", "WebP"];
                                     labels: ["JPEG", "PNG", @tr("TIFF 16-bit"), "WebP"];
                                     current <=> root.export-format;
-                                    accessible-role: list;
-                                    // Spoken as the label shown.
-                                    accessible-value: self.current == "TIFF 16-bit" ? @tr("TIFF 16-bit")
-                                        : self.current;
                                 }
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Color"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                color-words := Text { accessible-role: none; text: @tr("Color"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 space-row := Segmented {
+                                    name: color-words.text;
                                     options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"];
                                     current <=> root.export-space;
-                                    accessible-role: list;
-                                    accessible-value: self.current;
                                 }
                             }
                             HorizontalLayout {

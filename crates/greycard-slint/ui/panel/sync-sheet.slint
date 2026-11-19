@@ -17,21 +17,21 @@ component ShiftChoice inherits HorizontalLayout {
     callback changed();
     spacing: Theme.space-2;
     Text {
+        // Said by the choice, which it names.
+        accessible-role: none;
         text: root.label;
         font-size: Theme.font-sm;
         color: root.enabled ? Theme.text : Theme.text-muted;
         vertical-alignment: center;
     }
-    Segmented {
+    choice := Segmented {
+        name: root.label;
         width: 112px;
         options: ["Set", "Shift"];
         // Sync sheet: set every frame to this value, or shift each by it
         labels: [@tr("Set"), @tr("Shift")];
         current: root.shift ? "Shift" : "Set";
         enabled: root.enabled;
-        accessible-role: list;
-        accessible-label: @tr("{} set or shift", root.label);
-        accessible-value: root.shift ? @tr("Shift") : @tr("Set");
         selected(o) => {
             root.shift = o == "Shift";
             root.changed();
@@ -161,7 +161,7 @@ export component SyncSheet inherits Rectangle {
                 Rectangle { height: Theme.space-2; }
                 HorizontalLayout {
                     spacing: Theme.space-2;
-                    PanelButton {
+                    cancel := PanelButton {
                         text: @tr("Cancel");
                         clicked => { root.sync-open = false; }
                     }

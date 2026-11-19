@@ -423,6 +423,8 @@ export component BlackWhiteSection inherits Section {
     // turns the section on rather than
     // needing the switch thrown first.
     Segmented {
+        // The panel's Tab is the window's: no stop here.
+        tab-stop: false;
         options: ["None", "Red", "Orange", "Yellow", "Green", "Blue"];
         // Black & white: the color filters, None for no filter
         labels: [@tr("None"), @tr("Red"), @tr("Orange"), @tr("Yellow"), @tr("Green"), @tr("Blue")];

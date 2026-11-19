@@ -4319,8 +4319,9 @@ mod tests {
         app.invoke_paste_asked();
         assert!(app.get_sync_open());
         let before = row_states(&app);
-        // Paste to Check all, Uncheck all, the checks, then Cancel.
-        for _ in 0..2 + checks + 1 {
+        // Paste to Check all, Uncheck all, the checks and the masks'
+        // choice (every row a stop), then Cancel.
+        for _ in 0..2 + app.get_sync_rows().row_count() + 1 {
             press(&app, Key::Tab);
         }
         press(&app, Key::Return);

@@ -30,6 +30,8 @@ export component OverwriteSheet inherits Rectangle {
         // The sheet takes the keys while it is up (§234): Escape is its
         // no, Enter its default, which is Keep both.
         FocusScope {
+            // No stop of its own: Tab goes round the card's controls.
+            focus-on-tab-navigation: false;
             init => { self.focus(); }
             key-pressed(e) => {
                 if (e.text == Key.Escape) {

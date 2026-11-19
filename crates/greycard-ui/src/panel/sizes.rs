@@ -1386,6 +1386,10 @@ mod tests {
         settle(&app);
         settle(&app);
         assert_eq!(label_text(&app, "Quality").size().width, LEAST - GAP);
-        assert_eq!(label_text(&app, "Format").size().width, LEAST);
+        // The row's words, which its choice says to a screen reader.
+        let format = ElementHandle::find_by_element_id(&app, "ExportSheet::format-words")
+            .next()
+            .expect("the Format label");
+        assert_eq!(format.size().width, LEAST);
     }
 }

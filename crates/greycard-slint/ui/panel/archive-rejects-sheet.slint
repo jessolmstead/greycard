@@ -42,6 +42,8 @@ export component ArchiveRejectsSheet inherits Rectangle {
         // Escape is its no, Enter the move and never a delete; every
         // other key stops here, Tab with them.
         keys := FocusScope {
+            // No stop of its own: Tab goes round the card's controls.
+            focus-on-tab-navigation: false;
             init => { self.focus(); }
             key-pressed(e) => {
                 if (e.text == Key.Escape) {

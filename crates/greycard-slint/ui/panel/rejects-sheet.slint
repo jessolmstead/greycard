@@ -22,6 +22,8 @@ export component RejectsSheet inherits Rectangle {
         drop-shadow-color: #00000099;
         TouchArea { }
         keys := FocusScope {
+            // No stop of its own: Tab goes round the card's controls.
+            focus-on-tab-navigation: false;
             init => { self.focus(); }
             key-pressed(e) => {
                 if (e.text == Key.Escape) {

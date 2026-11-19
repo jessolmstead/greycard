@@ -730,6 +730,8 @@ export component AdjustmentsSection inherits Section {
                                 horizontal-stretch: 1;
                             }
                             Segmented {
+                                // The panel's Tab is the window's: no stop here.
+                                tab-stop: false;
                                 options: ["5", "11", "21", "41"];
                                 current: root.range-sample;
                                 picks: false;
@@ -856,6 +858,8 @@ export component AdjustmentsSection inherits Section {
                     changed(v) => { }
                 }
                 Segmented {
+                    // The panel's Tab is the window's: no stop here.
+                    tab-stop: false;
                     options: ["Add", "Subtract", "Erase"];
                     // Brush: what a stroke does
                     labels: [@tr("Add"), @tr("Subtract"), @tr("Erase")];
@@ -889,6 +893,8 @@ export component AdjustmentsSection inherits Section {
                     // a second one is not shown to ask a question a
                     // first shape has no answer to.
                     if root.component-names.length > 0: Segmented {
+                        // The panel's Tab is the window's: no stop here.
+                        tab-stop: false;
                         accessible-role: button;
                         // Spoken by a screen reader: the shape mode button
                         accessible-label: @tr("Next shape mode");

@@ -463,6 +463,9 @@ const _MARK_PARTS: [&str; 42] = [
 ];
 
 #[cfg(test)]
+mod walk;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use greycard_edit::preset::Part;

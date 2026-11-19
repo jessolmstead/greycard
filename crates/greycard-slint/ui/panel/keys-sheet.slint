@@ -29,6 +29,8 @@ export component KeysSheet inherits Rectangle {
         // The field has the focus and a key goes up from it: Escape is
         // taken here, on the card.
         FocusScope {
+            // No stop of its own: Tab goes round the card's controls.
+            focus-on-tab-navigation: false;
             key-pressed(e) => {
                 if (e.text == Key.Escape) {
                     root.open = false;

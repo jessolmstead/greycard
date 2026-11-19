@@ -32,6 +32,8 @@ export component RootSheet inherits Rectangle {
         // reaches the window's keys: Escape is taken here, on the card,
         // so a click beside it still reaches the scrim.
         FocusScope {
+            // No stop of its own: Tab goes round the card's controls.
+            focus-on-tab-navigation: false;
             key-pressed(e) => {
                 if (e.text == Key.Escape) {
                     root.open = false;

@@ -141,6 +141,8 @@ export component LightSection inherits Section {
         }
         // Named so the tests find it.
         display-curve-choice := Segmented {
+            // The panel's Tab is the window's: no stop here.
+            tab-stop: false;
             options: ["Per channel", "AgX"];
             labels: [@tr("Per channel"), "AgX"];
             enabled: !root.display-curve-inert;
@@ -205,6 +207,8 @@ export component NoiseSection inherits Section {
     if !root.again: VerticalLayout {
         padding-bottom: Theme.space-1;
         Segmented {
+            // The panel's Tab is the window's: no stop here.
+            tab-stop: false;
             options: root.learned-unavailable == "" ? root.denoise-tiers
                 : root.denoise-learned == "off" ? ["off"] : ["off", root.denoise-learned];
             // The tiers' names are the values; only the "off" this side
@@ -258,6 +262,8 @@ export component NoiseSection inherits Section {
     if root.again: VerticalLayout {
         spacing: 4px;
         Segmented {
+            // The panel's Tab is the window's: no stop here.
+            tab-stop: false;
             options: root.denoise-tiers;
             enabled: root.unavailable == "" && !root.merging;
             current <=> root.again-tier;
@@ -631,6 +637,8 @@ export component GrainSection inherits Section {
     }
     Rectangle { height: Theme.space-1; }
     Segmented {
+        // The panel's Tab is the window's: no stop here.
+        tab-stop: false;
         options: ["Cubic", "Tabular"];
         // Grain: the two kinds of grain
         labels: [@tr("Cubic"), @tr("Tabular")];
@@ -656,6 +664,8 @@ export component DemosaicSection inherits Section {
     hint: root.raw-input ? root.menu-hint : @tr("raw only");
     collapsed <=> root.collapsed-demosaic;
     if root.raw-input: Segmented {
+        // The panel's Tab is the window's: no stop here.
+        tab-stop: false;
         options: root.demosaics;
         enabled: root.menu-hint == "";
         current <=> root.demosaic;

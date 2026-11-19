@@ -287,6 +287,8 @@ export component PanelHead inherits VerticalLayout {
         HorizontalLayout {
             spacing: Theme.space-1;
             Segmented {
+                // The panel's Tab is the window's: no stop here.
+                tab-stop: false;
                 horizontal-stretch: 1;
                 options: root.scopes;
                 rounded: false;

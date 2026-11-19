@@ -23,6 +23,8 @@ export component ProofSection inherits Section {
     switched => { root.proof-changed(); }
     body-spacing: Theme.space-1;
     Segmented {
+        // The panel's Tab is the window's: no stop here.
+        tab-stop: false;
         options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
         labels: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", @tr("File")];
         current <=> root.proof-profile;
@@ -44,6 +46,8 @@ export component ProofSection inherits Section {
         }
     }
     Segmented {
+        // The panel's Tab is the window's: no stop here.
+        tab-stop: false;
         options: ["Perceptual", "Relative"];
         labels: [@tr("Perceptual"), @tr("Relative")];
         current <=> root.proof-intent;
@@ -75,12 +79,16 @@ export component MonitorSection inherits Section {
     collapsed <=> root.collapsed-monitor;
     body-spacing: Theme.space-1;
     Segmented {
+        // The panel's Tab is the window's: no stop here.
+        tab-stop: false;
         options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
         labels: [@tr("System"), "sRGB", "Adobe RGB", "Display P3", @tr("File")];
         current <=> root.display-profile;
         selected(p) => { root.display-changed(); }
     }
     if root.display-profile == "System" && root.monitors.length > 1: Segmented {
+        // The panel's Tab is the window's: no stop here.
+        tab-stop: false;
         options: root.monitors;
         current <=> root.display-monitor;
         selected(m) => { root.display-changed(); }

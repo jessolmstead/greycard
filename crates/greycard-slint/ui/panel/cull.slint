@@ -171,6 +171,8 @@ export component CullSection inherits Section {
         spacing: Theme.space-2;
         Text { text: @tr("Compare"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Segmented {
+            // The panel's Tab is the window's: no stop here.
+            tab-stop: false;
             // Three is shown only while Compare versions has put the
             // view at three; it is never offered otherwise.
             options: root.compare-text == "3" ? ["1", "2", "3", "4"] : ["1", "2", "4"];

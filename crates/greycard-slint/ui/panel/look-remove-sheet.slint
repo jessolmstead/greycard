@@ -36,6 +36,8 @@ export component LookRemoveSheet inherits Rectangle {
         // no, Enter its default, which is the trash and never the
         // permanent delete. Nothing else is anybody's until it goes.
         keys := FocusScope {
+            // No stop of its own: Tab goes round the card's controls.
+            focus-on-tab-navigation: false;
             init => { self.focus(); }
             key-pressed(e) => {
                 if (e.text == Key.Escape) {
