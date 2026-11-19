@@ -218,7 +218,7 @@ the reasoning lives in `docs/notes.md`.
 steps aside on a card it cannot run on.
 
 - [ ] An edit from a newer version opens in an older one
-- [ ] The editor's crate broken up, its first steps
+- [ ] The editor's crate broken up, its first steps (§717)
 - [ ] The window's tests find a control by its id
 - [ ] A failed save tells the user
 
