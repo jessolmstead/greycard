@@ -729,3 +729,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§715. Slint 1.19, and both forks gone](notes/715-slint-1-19-and-both-forks-gone.md) (2026-11-18)
 - [§716. Light between Canon's white and its clip](notes/716-light-between-canons-white-and-its-clip.md) (2026-11-18)
 - [§717. Splitting greycard-ui, measured first](notes/717-splitting-greycard-ui-measured-first.md) (2026-11-18)
+- [§718. A linear gradient eases out of both ends](notes/718-a-linear-gradient-eases-out-of-both-ends.md) (2026-11-18)

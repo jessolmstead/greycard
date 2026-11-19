@@ -15,6 +15,10 @@ design note behind it.
 
 ### Develop
 
+- A linear gradient eases out of both ends, so its boundary no longer
+  shows as a line on a smooth sky; existing ones render slightly softer
+  (issue 182,
+  [§718](https://github.com/jessolmstead/greycard/blob/master/docs/notes/718-a-linear-gradient-eases-out-of-both-ends.md)).
 - Canon R6 II and R5 II raws keep the light between Canon's white level
   and the sensor's clip, up to 0.17 stops more highlight
   ([§716](https://github.com/jessolmstead/greycard/blob/master/docs/notes/716-light-between-canons-white-and-its-clip.md)).

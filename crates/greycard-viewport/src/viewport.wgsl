@@ -1022,7 +1022,7 @@ fn shape_at(sh: Shape, uv: vec2<f32>, sample: vec3<f32>) -> f32 {
         let d = sh.a.zw - sh.a.xy;
         let len2 = dot(d, d);
         if (len2 >= 1e-12) {
-            s = 1.0 - clamp(dot(uv - sh.a.xy, d) / len2, 0.0, 1.0);
+            s = 1.0 - step_up(0.0, 1.0, dot(uv - sh.a.xy, d) / len2);
         }
     } else if (sh.kind == 2u) {
         s = raster_at(sh.wide, sh.layer, sh.b.yz, uv.x, uv.y / sh.b.x);

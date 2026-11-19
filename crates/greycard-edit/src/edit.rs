@@ -397,6 +397,15 @@ impl Edit {
                 .any(|a| a.look.light.tone.midtones != 0.0)
     }
 
+    /// Whether some mask holds a linear gradient, whose ramp
+    /// [`crate::key::LINEAR_RAMP`] versions.
+    pub fn has_linear_gradient(&self) -> bool {
+        self.adjustments
+            .iter()
+            .flat_map(|a| &a.mask.components)
+            .any(|c| matches!(c.shape, crate::mask::Shape::Linear { .. }))
+    }
+
     /// Whether the range masks read a picture of their own, the one
     /// from before the Detail section: some mask has a Luminance or
     /// Color shape and the section does something. Switched off or on,

@@ -156,7 +156,8 @@ pub fn on_angle_step(anchor: (f32, f32), p: (f32, f32)) -> (f32, f32) {
 pub enum Shape {
     /// One on the `from` side of the line through `from` at right
     /// angles to `from`-`to`, nothing beyond the like line through
-    /// `to`, straight between.
+    /// `to`, Hermite's step between: half at the middle line, flat at
+    /// both ends.
     Linear { from: Pos, to: Pos },
     /// One inside an ellipse turned by `angle` degrees, fading over
     /// the outer `feather` (0 to 1) of its radii to nothing at the
@@ -1131,7 +1132,10 @@ impl Shape {
                     return 0.0;
                 }
                 let d = ((u - from[0]) * dx + (v - from[1]) * dy) / len2;
-                1.0 - d.clamp(0.0, 1.0)
+                // Eased as the radial's feather is: a straight ramp's
+                // kink where it meets the flat shows as a Mach band, a
+                // dark line along the 0% end when the look brightens.
+                1.0 - smoothstep(0.0, 1.0, d)
             }
             Shape::Radial {
                 center,
@@ -1630,6 +1634,9 @@ mod tests {
         assert_eq!(g.at(0.0, 0.1), 1.0);
         assert_eq!(g.at(0.2, 0.9), 1.0);
         assert!((g.at(0.4, 0.5) - 0.5).abs() < 1e-6);
+        // Eased: past three quarters at a quarter of the way.
+        assert!((g.at(0.3, 0.5) - 0.84375).abs() < 1e-6);
+        assert!((g.at(0.5, 0.5) - 0.15625).abs() < 1e-6);
         assert_eq!(g.at(0.6, 0.5), 0.0);
         assert_eq!(g.at(0.9, 0.5), 0.0);
         // Along the line's own direction only: sideways changes nothing.
@@ -1643,6 +1650,46 @@ mod tests {
             .at(0.1, 0.1),
             0.0
         );
+    }
+
+    /// Issue 182: a straight ramp's slope jumps from nothing to its
+    /// whole where it meets the flat, and the eye draws a line there
+    /// (a dark one at the 0% end when the look brightens). The eased
+    /// ramp leaves both ends flat, falls the whole way without a rise,
+    /// and is half at the middle.
+    #[test]
+    fn a_linear_gradient_eases_out_of_both_ends() {
+        let g = Shape::Linear {
+            from: [0.1, 0.5],
+            to: [0.9, 0.5],
+        };
+        let along = |t: f32| g.at(0.1 + 0.8 * t, 0.5);
+        assert_eq!(along(0.0), 1.0);
+        assert_eq!(along(1.0), 0.0);
+        assert!((along(0.5) - 0.5).abs() < 1e-6);
+        let mut last = along(-0.01);
+        for i in 0..=1000 {
+            let w = along(i as f32 / 1000.0 - 0.005);
+            assert!(w <= last, "rises at step {i}: {last} then {w}");
+            last = w;
+        }
+        // The slope in units of the whole ramp: the straight ramp's is
+        // one right up to each end (a half across the kink, which
+        // this central difference reads), the eased one's is nothing
+        // there.
+        let slope = |t: f32| {
+            let h = 1e-3;
+            (along(t - h) - along(t + h)) / (2.0 * h)
+        };
+        for end in [0.0, 1.0] {
+            assert!(slope(end) < 0.01, "the slope at {end} is {}", slope(end));
+            // Just inside, it is still a small fraction of the
+            // straight ramp's.
+            let inside = if end == 0.0 { 0.01 } else { 0.99 };
+            assert!(slope(inside) < 0.07, "{}", slope(inside));
+        }
+        // Steepest at the middle, half again the straight ramp's.
+        assert!((slope(0.5) - 1.5).abs() < 1e-2, "{}", slope(0.5));
     }
 
     #[test]

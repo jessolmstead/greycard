@@ -1087,6 +1087,30 @@ fn a_brushs_cut_is_the_cpus() {
     }
 }
 
+/// The shader's linear gradient eases out of both ends as `Shape::at`
+/// does (issue 182), across the frame, down it, and at a slant: a
+/// straight ramp is ten levels and more out of the eased one over
+/// most of its length.
+#[test]
+fn a_linear_gradients_ease_is_the_cpus() {
+    let image = field();
+    let locals: Vec<Local> = [
+        ([0.1, 0.0], [0.9, 0.0]),
+        ([0.0, 0.6], [0.0, 0.05]),
+        ([0.2, 0.1], [0.7, 0.5]),
+    ]
+    .into_iter()
+    .map(|(from, to)| local_of(vec![(Shape::Linear { from, to }, Mode::Add)]))
+    .collect();
+    let Some((device, queue)) = device("the linear gradient's GPU check") else {
+        return;
+    };
+    let (worst, mean) = gpu_against_cpu(&device, &queue, &image, &locals, 0.0, true);
+    eprintln!("linear gradients, GPU against CPU: max {worst:.4}, mean {mean:.5}");
+    assert!(worst <= 1.5 / 255.0, "max {worst}");
+    assert!(mean <= 0.5 / 255.0, "mean {mean}");
+}
+
 /// A switched-off adjustment's mask can still be shown, and its
 /// range shapes read the picture for it even when no switched-on
 /// one does: not an empty sample, which painted a window from 0

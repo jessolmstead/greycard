@@ -84,6 +84,13 @@ pub const MIDTONES_SHAPE: &str = "midtones-1";
 /// past the pictures trial builds kept under 1 and 2.
 pub const WHITES_SHAPE: &str = "whites-3";
 
+/// The linear gradient's ramp, by version: taken into the key of an
+/// edit with a linear gradient in some mask
+/// ([`Edit::has_linear_gradient`]), so the pictures kept of such an
+/// edit are made again when it changes, and those of every other edit
+/// are kept. 1: Hermite's step, issue 182, 2026-11-18.
+pub const LINEAR_RAMP: &str = "linear-ramp-1";
+
 /// An aspect over no crop, by version: taken into the key of an edit
 /// whose aspect frames the picture with no crop stored
 /// ([`crate::geometry::Geometry::frames_by_aspect`]), so the pictures
@@ -272,6 +279,11 @@ impl Edit {
             hasher.update(&(WHITES_SHAPE.len() as u64).to_le_bytes());
             hasher.update(WHITES_SHAPE.as_bytes());
         }
+        if self.has_linear_gradient() {
+            hasher.update(b"linear ramp\0");
+            hasher.update(&(LINEAR_RAMP.len() as u64).to_le_bytes());
+            hasher.update(LINEAR_RAMP.as_bytes());
+        }
         if self.geometry.frames_by_aspect() {
             hasher.update(b"aspect frame\0");
             hasher.update(&(ASPECT_FRAME.len() as u64).to_le_bytes());
@@ -407,6 +419,43 @@ mod tests {
         assert!(edit.sets_whites_down(), "a mask's whites");
         edit.adjustments.clear();
         assert_eq!(key(&edit, None), up);
+    }
+
+    /// The linear ramp is in the key of an edit with a linear gradient
+    /// in some mask, and of no other: a radial alone keeps the key it
+    /// had, so the pictures kept of it stay.
+    #[test]
+    fn the_linear_ramp_is_keyed_only_where_a_mask_holds_a_linear_gradient() {
+        use crate::mask::{Component, Shape};
+        let kept = |edit: &Edit| key(edit, None) == key_before_the_aspect_frame(edit);
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        assert!(!edit.has_linear_gradient());
+        let mut a = crate::Adjustment::default();
+        a.look.light.exposure = 1.0;
+        a.mask.components.push(Component {
+            shape: Shape::Radial {
+                center: [0.5, 0.5],
+                radius: [0.2, 0.2],
+                angle: 0.0,
+                feather: 0.5,
+            },
+            ..Default::default()
+        });
+        edit.adjustments.push(a);
+        assert!(!edit.has_linear_gradient());
+        assert!(kept(&edit), "a radial alone");
+        edit.adjustments[0].mask.components.push(Component {
+            shape: Shape::Linear {
+                from: [0.0, 0.0],
+                to: [0.3, 0.2],
+            },
+            ..Default::default()
+        });
+        assert!(edit.has_linear_gradient());
+        assert!(!kept(&edit), "a linear gradient carries the ramp");
+        edit.adjustments[0].mask.components.remove(0);
+        assert!(!kept(&edit), "a linear gradient alone");
     }
 
     /// The key as it was made before [`ASPECT_FRAME`], for an edit with
