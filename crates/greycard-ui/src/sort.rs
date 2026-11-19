@@ -24,23 +24,78 @@
 //! hand order, which a choice of order lays aside without rewriting.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use greycard_library::{Order, SortBy};
 use serde::{Deserialize, Serialize};
 
 use crate::marked;
-use crate::roots::View;
+
+/// What the browser lists.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum View {
+    /// A folder, or files the desktop asked to open.
+    #[default]
+    Folder,
+    /// Every file under the roots, or under one of them.
+    Roots(Option<PathBuf>),
+    /// One folder under a root, from the index as a view of the root
+    /// is: the frames directly in it, or with `deep` those in the
+    /// folders under it too. Still that root's view, narrowed: its
+    /// row stays lit.
+    Branch {
+        root: PathBuf,
+        folder: PathBuf,
+        deep: bool,
+    },
+    /// A collection, by its id: its pictures from the index, each
+    /// once, in the collection's own order, or in the order chosen for
+    /// it (`sort`).
+    Collection { id: String },
+    /// The export queue: every frame of every entry, each under its
+    /// destination's heading, in the queue's order. A frame queued
+    /// twice is listed twice: each is an export.
+    Queue,
+}
+
+impl View {
+    /// The list comes from the index's rows, not from a folder's
+    /// listing on disk.
+    pub fn lists_rows(&self) -> bool {
+        !matches!(self, View::Folder)
+    }
+
+    /// What the index is asked to list: the files under each of these
+    /// folders, or with the flag, those directly in the one folder.
+    pub fn listed(&self, all: &[PathBuf]) -> (Vec<PathBuf>, bool) {
+        match self {
+            View::Folder => (Vec::new(), false),
+            View::Roots(None) => (all.to_vec(), false),
+            View::Roots(Some(r)) => (vec![r.clone()], false),
+            View::Branch { folder, deep, .. } => (vec![folder.clone()], !deep),
+            View::Collection { .. } | View::Queue => (Vec::new(), false),
+        }
+    }
+
+    /// The collection this view shows, by its id.
+    pub fn collection(&self) -> Option<&str> {
+        match self {
+            View::Collection { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+}
 
 /// A view's order: a collection's own, by hand, or an order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Choice {
+pub enum Choice {
     Hand,
     By(Order),
 }
 
 impl Choice {
     /// The order, none for a collection's own.
-    pub(crate) fn order(self) -> Option<Order> {
+    pub fn order(self) -> Option<Order> {
         match self {
             Choice::Hand => None,
             Choice::By(o) => Some(o),
@@ -65,7 +120,7 @@ impl Choice {
 
 /// Which views share a choice.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Slot {
+pub enum Slot {
     /// One folder: from the disk, or one of a root's tree alone.
     Folder,
     /// Several folders: every root, one root, a folder with those
@@ -78,7 +133,7 @@ pub(crate) enum Slot {
 }
 
 impl Slot {
-    pub(crate) fn of(view: &View) -> Slot {
+    pub fn of(view: &View) -> Slot {
         match view {
             View::Folder | View::Branch { deep: false, .. } => Slot::Folder,
             View::Roots(_) | View::Branch { deep: true, .. } => Slot::Roots,
@@ -88,7 +143,7 @@ impl Slot {
     }
 
     /// What the view is in until another is chosen.
-    pub(crate) fn default_choice(&self) -> Choice {
+    pub fn default_choice(&self) -> Choice {
         match self {
             Slot::Folder => Choice::By(Order::NAME),
             Slot::Roots => Choice::By(Order::TAKEN),
@@ -127,7 +182,7 @@ impl Kept {
     /// The view's choice: the one kept, else its default. A collection's
     /// hand order is a collection's alone: kept for another view, it is
     /// that view's default.
-    pub(crate) fn choice(&self, view: &View) -> Choice {
+    pub fn choice(&self, view: &View) -> Choice {
         let slot = Slot::of(view);
         let kept = self.kept(&slot).and_then(|k| Choice::from_key(k));
         match (kept, &slot) {
@@ -137,7 +192,7 @@ impl Kept {
     }
 
     /// Keep `choice` for the view.
-    pub(crate) fn set(&mut self, view: &View, choice: Choice) {
+    pub fn set(&mut self, view: &View, choice: Choice) {
         let key = choice.key();
         match Slot::of(view) {
             Slot::Folder => self.folder = Some(key),
@@ -152,8 +207,10 @@ impl Kept {
 
     /// Every view of several folders by name: for a test whose frames
     /// are told apart by their place in a list it built in that order.
-    #[cfg(test)]
-    pub(crate) fn by_name() -> Kept {
+    /// Built whatever the build: the binary's tests use it, and they
+    /// build this library without cfg(test).
+    #[doc(hidden)]
+    pub fn by_name() -> Kept {
         Kept {
             roots: Some(Order::NAME.key()),
             ..Kept::default()
@@ -161,14 +218,14 @@ impl Kept {
     }
 
     /// A collection deleted: its choice goes with it.
-    pub(crate) fn forget(&mut self, id: &str) {
+    pub fn forget(&mut self, id: &str) {
         self.collections.remove(id);
     }
 }
 
 /// The Sort menu's entries, in order: "Hand order" first in a
 /// collection's, then each order. What the menu's index means.
-pub(crate) fn entries(view: &View) -> Vec<Option<SortBy>> {
+pub fn entries(view: &View) -> Vec<Option<SortBy>> {
     // The queue's order is the order it runs in, and nothing else.
     if Slot::of(view) == Slot::Queue {
         return vec![None];
@@ -180,7 +237,7 @@ pub(crate) fn entries(view: &View) -> Vec<Option<SortBy>> {
 }
 
 /// The words on the Sort button.
-pub(crate) fn button_words(choice: Choice) -> String {
+pub fn button_words(choice: Choice) -> String {
     match choice {
         Choice::Hand => marked::tr!("Hand order").to_string(),
         Choice::By(o) => o.by.words().to_string(),
@@ -188,7 +245,7 @@ pub(crate) fn button_words(choice: Choice) -> String {
 }
 
 /// The words for each way up of an order: the oldest first, A to Z.
-pub(crate) fn way_words(by: SortBy) -> [&'static str; 2] {
+pub fn way_words(by: SortBy) -> [&'static str; 2] {
     match by {
         SortBy::Taken | SortBy::Edited => {
             // Sort menu: the two ways up for capture time and date edited
@@ -234,7 +291,7 @@ const _BY_WORDS: [&str; 5] = [
 /// order keeps the way up it had, so a pick of the same order again
 /// changes nothing; "Hand order" lays the order aside. Focus comes in
 /// the sharpest first, which is what it is picked for.
-pub(crate) fn picked(view: &View, now: Choice, entry: usize) -> Option<Choice> {
+pub fn picked(view: &View, now: Choice, entry: usize) -> Option<Choice> {
     let by = *entries(view).get(entry)?;
     let was = now.order();
     Some(match by {
@@ -247,7 +304,7 @@ pub(crate) fn picked(view: &View, now: Choice, entry: usize) -> Option<Choice> {
 }
 
 /// The choice with its way up set; a collection's hand order has none.
-pub(crate) fn turned(now: Choice, descending: bool) -> Choice {
+pub fn turned(now: Choice, descending: bool) -> Choice {
     match now {
         Choice::Hand => Choice::Hand,
         Choice::By(o) => Choice::By(Order::new(o.by, descending)),
@@ -324,38 +381,6 @@ mod tests {
         assert_eq!(back, kept);
         kept.forget("c1");
         assert_eq!(kept.choice(&collection("c1")), Choice::Hand);
-    }
-
-    #[test]
-    fn a_settings_file_from_before_the_sort_reads_as_every_default() {
-        // A file as 0.7.0 wrote it: the filter kept, no sort.
-        let old = r#"{"filter": {"stars": 3, "text": "iso>=400"}, "jpegs_apart": true}"#;
-        let settings: crate::settings::Settings = serde_json::from_str(old).unwrap();
-        assert_eq!(settings.sort, Kept::default());
-        assert_eq!(settings.filter.stars, 3);
-        assert_eq!(
-            settings.sort.choice(&View::Roots(None)),
-            Choice::By(Order::TAKEN)
-        );
-        // A later build's order, and a hand order kept for a view that
-        // has none: each view's default, the file's words kept.
-        let later: Kept =
-            serde_json::from_str(r#"{"folder": "size-desc", "roots": "hand"}"#).unwrap();
-        assert_eq!(later.choice(&View::Folder), Choice::By(Order::NAME));
-        assert_eq!(later.choice(&View::Roots(None)), Choice::By(Order::TAKEN));
-        assert_eq!(later.folder.as_deref(), Some("size-desc"));
-        // And the whole settings file round trips with one.
-        let mut settings = crate::settings::Settings::default();
-        settings
-            .sort
-            .set(&View::Folder, Choice::By(Order::new(SortBy::Edited, false)));
-        let text = serde_json::to_string(&settings).unwrap();
-        let back: crate::settings::Settings = serde_json::from_str(&text).unwrap();
-        assert_eq!(back.sort, settings.sort);
-        assert_eq!(
-            back.sort.choice(&View::Folder),
-            Choice::By(Order::new(SortBy::Edited, false))
-        );
     }
 
     #[test]

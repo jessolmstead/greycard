@@ -231,6 +231,9 @@ pub(crate) fn state_with(
     worker: Rc<Worker>,
 ) -> Rc<Shared> {
     let state = Rc::new(Shared::new(State::empty(files, app)));
+    // What culling asks of its decode threads, kept for the tests to
+    // read; a shipping build keeps none of it.
+    state.borrow().culling.prefetch.record();
     app.set_patch_handles(ModelRc::from(state.borrow().develop.patch_handles.clone()));
     install_callbacks(app, state.clone(), worker);
     state

@@ -10,6 +10,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
@@ -22,16 +23,20 @@ use crate::tr;
 pub use crate::zoom::tile_rects;
 #[cfg(test)]
 pub(crate) use greycard_engine::camera::FILE_READS;
-pub(crate) use greycard_engine::camera::{camera_picture, turn_rgb8, turned_size};
+pub use greycard_engine::camera::camera_picture;
+pub(crate) use greycard_engine::camera::{turn_rgb8, turned_size};
 // The rejects' move, in the library beside the archive's.
 pub use crate::rejects::{
     Moved, Orphans, REJECTS, above_rejects, move_back, move_rejects_as, rejects_dir,
 };
 
+pub mod lightbox;
+
 /// [`move_rejects_as`] as the shoot's own folder has it, for the tests:
 /// an orphaned sidecar written over, and the camera's JPEG beside a raw
-/// going with it.
-#[cfg(test)]
+/// going with it. Built whatever the build: the binary's tests use it,
+/// and they build this library without cfg(test).
+#[doc(hidden)]
 pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Moved> {
     move_rejects_as(files, rejected, Orphans::WriteOver, false)
 }
@@ -438,21 +443,21 @@ pub fn chosen_first(chosen: usize, shown: &[usize]) -> Vec<usize> {
 pub enum Loaded {
     Ok {
         file: usize,
-        frame: crate::versions::Key,
+        frame: crate::version_key::Key,
         /// The long edge it was asked at, zero for the JPEG's own.
         size: u32,
         preview: Arc<Preview>,
     },
     Failed {
         file: usize,
-        frame: crate::versions::Key,
+        frame: crate::version_key::Key,
         size: u32,
         message: String,
     },
     /// A local preview asked for is not kept.
     NoPreview {
         file: usize,
-        frame: crate::versions::Key,
+        frame: crate::version_key::Key,
     },
 }
 
@@ -489,6 +494,8 @@ pub struct Want {
     /// this want ([`developed_picture`]): the culling loupe's and the
     /// lightbox's. The develop view's stand-in is not: the develop it
     /// stands in for is on its way.
+    // Its link names this module's private items, for a reader here.
+    #[allow(rustdoc::private_intra_doc_links)]
     pub develop: bool,
     /// The camera's picture whole, never cut to the camera's frame: the
     /// frame's edit stores a crop of its own, made on the whole sensor,
@@ -537,8 +544,8 @@ impl Want {
     }
 
     /// The frame the picture is of: the file and its version.
-    pub fn frame(&self) -> crate::versions::Key {
-        crate::versions::Key {
+    pub fn frame(&self) -> crate::version_key::Key {
+        crate::version_key::Key {
             path: self.path.clone(),
             version: self.version.clone(),
             name: None,
@@ -649,11 +656,12 @@ type Deliver = Arc<dyn Fn(Loaded) + Send + Sync>;
 pub struct Prefetcher {
     queue: Arc<(Mutex<Queue>, Condvar)>,
     previews: Previewed,
+    /// Whether a test armed the two below ([`Prefetcher::record`]):
+    /// never in a shipping build, which keeps nothing of either.
+    recording: AtomicBool,
     /// The last list wanted, for the tests to read what was asked.
-    #[cfg(test)]
     asked: Mutex<Vec<Want>>,
     /// Every decode put at the front, for the tests.
-    #[cfg(test)]
     pushed: Mutex<Vec<Want>>,
 }
 
@@ -681,9 +689,8 @@ impl Prefetcher {
         Self {
             queue,
             previews,
-            #[cfg(test)]
+            recording: AtomicBool::new(false),
             asked: Mutex::new(Vec::new()),
-            #[cfg(test)]
             pushed: Mutex::new(Vec::new()),
         }
     }
@@ -696,20 +703,39 @@ impl Prefetcher {
         move || queue.upgrade().is_none()
     }
 
-    /// The last list wanted.
-    #[cfg(test)]
-    pub(crate) fn asked(&self) -> Vec<Want> {
+    /// Keeps what is asked of this prefetcher from now on, for
+    /// [`Prefetcher::asked`] and [`Prefetcher::pushed`]. For the tests;
+    /// built whatever the build, since the binary's tests use it and
+    /// they build this library without cfg(test). Nothing arms it
+    /// outside a test, so a culling session keeps nothing.
+    #[doc(hidden)]
+    pub fn record(&self) {
+        self.recording.store(true, Ordering::Relaxed);
+    }
+
+    /// The last list wanted since [`Prefetcher::record`], which a test
+    /// must have called: one that did not is told so, rather than
+    /// reading an empty list.
+    #[doc(hidden)]
+    pub fn asked(&self) -> Vec<Want> {
+        assert!(self.recording(), "Prefetcher::record was not called");
         self.asked.lock().expect("cull asked").clone()
     }
 
-    /// Every decode put at the front so far.
-    #[cfg(test)]
-    pub(crate) fn pushed(&self) -> Vec<Want> {
+    /// Every decode put at the front since [`Prefetcher::record`], as
+    /// [`Prefetcher::asked`] has it.
+    #[doc(hidden)]
+    pub fn pushed(&self) -> Vec<Want> {
+        assert!(self.recording(), "Prefetcher::record was not called");
         self.pushed.lock().expect("cull pushed").clone()
     }
 
+    fn recording(&self) -> bool {
+        self.recording.load(Ordering::Relaxed)
+    }
+
     /// The local previews to read and to make: the worker's.
-    pub(crate) fn set_previews(&self, previews: Arc<crate::previews::Previews>) {
+    pub fn set_previews(&self, previews: Arc<crate::previews::Previews>) {
         *self.previews.lock().expect("cull previews") = Some(previews);
     }
 
@@ -718,8 +744,7 @@ impl Prefetcher {
     /// before and is not here is forgotten; one a thread is already
     /// on is not started again, and arrives as it was going to.
     pub fn want(&self, list: Vec<Want>) {
-        #[cfg(test)]
-        {
+        if self.recording() {
             *self.asked.lock().expect("cull asked") = list.clone();
         }
         let (lock, cv) = &*self.queue;
@@ -734,8 +759,9 @@ impl Prefetcher {
     /// One decode before everything else wanted: a full-size copy of
     /// a frame just taken to 1:1.
     pub fn push_front(&self, want: Want) {
-        #[cfg(test)]
-        self.pushed.lock().expect("cull pushed").push(want.clone());
+        if self.recording() {
+            self.pushed.lock().expect("cull pushed").push(want.clone());
+        }
         let (lock, cv) = &*self.queue;
         let mut q = lock.lock().expect("cull queue");
         if q.in_flight.iter().any(|f| want.covered_by(f)) {
@@ -855,13 +881,13 @@ fn keeps_as_preview(companion: bool, path: &Path) -> bool {
 /// the file's. A picture decoded from the file for the loupe makes the
 /// frame's local preview when it is owed one, on another thread, so
 /// this one goes on to the next decode at once.
-pub(crate) fn fetch(
+pub fn fetch(
     want: &Want,
     previews: Option<&Arc<crate::previews::Previews>>,
     deliver: &dyn Fn(Loaded),
 ) {
     if want.lightbox {
-        return crate::lightbox::fetch(want, previews, deliver);
+        return lightbox::fetch(want, previews, deliver);
     }
     let edited = previews.and_then(|p| p.edited()).filter(|_| !want.camera);
     if let Source::Preview { hash, stamp } = &want.from {
@@ -1052,11 +1078,12 @@ fn developed_picture(
     // previews' pool does not make the same develop beside this one.
     let owed = previews.and_then(|p| Some((p.clone(), p.take(path)?)));
     let started = Instant::now();
-    #[cfg(test)]
-    DEVELOPS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push(path.to_path_buf());
+    if RECORDING_DEVELOPS.load(Ordering::Relaxed) {
+        DEVELOPS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(path.to_path_buf());
+    }
     let (width, height, rgb) =
         crate::worker::thumbnail(path, crate::previews::SIZE).inspect_err(|_| {
             tracing::debug!("preview {}: {why:#}; no develop either", path.display());
@@ -1090,9 +1117,34 @@ fn developed_picture(
 
 /// The raws developed for want of a camera picture, for the tests that
 /// say a kept local preview is read instead: by path, since the tests
-/// run beside each other.
-#[cfg(test)]
-pub(crate) static DEVELOPS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+/// run beside each other. Kept only once a test has armed it
+/// ([`record_develops`]), so a shipping build keeps nothing.
+static DEVELOPS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// Whether a test armed [`DEVELOPS`].
+static RECORDING_DEVELOPS: AtomicBool = AtomicBool::new(false);
+
+/// Keeps the raws developed for want of a camera picture from now on,
+/// for [`developed`]. For the tests; built whatever the build, since
+/// the binary's tests use it and they build this library without
+/// cfg(test). Nothing arms it outside a test.
+// Its links name this module's private items, for a reader here.
+#[allow(rustdoc::private_intra_doc_links)]
+#[doc(hidden)]
+pub fn record_develops() {
+    RECORDING_DEVELOPS.store(true, Ordering::Relaxed);
+}
+
+/// The raws developed since [`record_develops`], which a test must have
+/// called: one that did not is told so, rather than reading none.
+#[doc(hidden)]
+pub fn developed() -> Vec<PathBuf> {
+    assert!(
+        RECORDING_DEVELOPS.load(Ordering::Relaxed),
+        "cull::record_develops was not called"
+    );
+    DEVELOPS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
 
 /// [`decode_keeping`] for a raw with the camera's JPEG beside it, and
 /// whether the picture is the JPEG's: the JPEG, the camera's finished

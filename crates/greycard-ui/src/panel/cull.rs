@@ -23,6 +23,10 @@ use crate::render::{self, View};
 use crate::worker::Worker;
 use crate::{App, CompareTile, FilterChip, STATE, Shared, State, cull, filter, placeholder};
 
+// The status line's words for a picture and its zoom, in the library
+// beside the placeholder's line that says them too.
+pub(crate) use crate::placeholder::{picture_words, zoom_words};
+
 /// The panel's tab while culling, which the tab bar does not list:
 /// the develop sections go away by their own condition and the
 /// CULLING section takes their place.
@@ -2409,33 +2413,6 @@ pub(crate) fn plate_words(named: &Named) -> String {
     }
 }
 
-/// The picture shown, in the status line's words: the camera's JPEG
-/// (inside the raw or beside it), a small one, or the local preview
-/// kept in the cache.
-pub(crate) fn picture_words((w, h): (u32, u32), small: bool, from: cull::Origin) -> String {
-    if from == cull::Origin::Edit {
-        tr!("the edit, {w} \u{d7} {h}", w = w, h = h)
-    } else if from == cull::Origin::Local {
-        tr!("the local preview, {w} \u{d7} {h}", w = w, h = h)
-    } else if from == cull::Origin::Companion && small {
-        tr!(
-            "a small camera JPEG beside the raw, {w} \u{d7} {h}",
-            w = w,
-            h = h
-        )
-    } else if from == cull::Origin::Companion {
-        tr!(
-            "the camera's JPEG beside the raw, {w} \u{d7} {h}",
-            w = w,
-            h = h
-        )
-    } else if small {
-        tr!("a small camera preview, {w} \u{d7} {h}", w = w, h = h)
-    } else {
-        tr!("the camera JPEG, {w} \u{d7} {h}", w = w, h = h)
-    }
-}
-
 /// The culling loupe's status line: what mode the viewport is in,
 /// what is shown of the frame and at what, and what a small preview
 /// is.
@@ -2487,23 +2464,6 @@ pub(crate) fn cull_status(
             what = what,
             at = at
         ),
-    }
-}
-
-/// At what a camera's picture is shown, in the status line: fitted,
-/// or the zoom, and while the copy on screen is the view-size one
-/// (`own` false), that it is until the full one decodes.
-pub(crate) fn zoom_words(zoom: f32, own: bool) -> String {
-    if zoom <= 0.0 {
-        // Culling status: the zoom when the picture is fitted to the window
-        tr!("fitted")
-    } else if own {
-        format!("{}%", (zoom * 100.0).round() as i32)
-    } else {
-        tr!(
-            "{percent}%, screen-size copy until the full one decodes",
-            percent = (zoom * 100.0).round() as i32
-        )
     }
 }
 

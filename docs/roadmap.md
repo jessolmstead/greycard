@@ -218,7 +218,6 @@ the reasoning lives in `docs/notes.md`.
 steps aside on a card it cannot run on.
 
 - [ ] An edit from a newer version opens in an older one
-- [ ] The editor's crate broken up, step 3 (§717; steps 1 and 2 are in)
 - [ ] The window's tests find a control by its id
 - [ ] A failed save tells the user
 

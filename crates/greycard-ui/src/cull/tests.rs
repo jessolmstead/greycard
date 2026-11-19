@@ -7,7 +7,7 @@ use crate::zoom::tile_grid;
 /// one known to be framed is left to the pool.
 #[test]
 fn a_companion_is_kept_as_the_preview_by_what_is_known() {
-    let dir = crate::testing::scratch_dir("companion-kept");
+    let dir = greycard_engine::testing::scratch_dir("companion-kept");
     let raw = dir.join("P0000001.ORF");
     std::fs::write(
         &raw,
@@ -28,7 +28,7 @@ fn a_companion_is_kept_as_the_preview_by_what_is_known() {
     );
     assert!(!keeps_as_preview(true, &raw));
     assert!(keeps_as_preview(false, &raw));
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// The camera's picture of a frame the camera framed at 3:2 comes to
@@ -398,7 +398,7 @@ fn the_local_preview_reads_no_file_and_a_decode_makes_one() {
     std::fs::remove_file(&file).unwrap();
     let got = run(&local);
     assert!(matches!(&got[..], [Loaded::Ok { preview, .. }] if preview.local));
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 #[test]
@@ -464,7 +464,7 @@ fn a_reject_takes_its_sidecar_under_the_folder_along() {
             .join("A.CR3.gcd")
             .exists()
     );
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A raw of the name there already keeps the frame whole where it
@@ -473,7 +473,7 @@ fn a_reject_takes_its_sidecar_under_the_folder_along() {
 #[test]
 fn the_rejects_move_with_their_sidecars_and_nothing_is_deleted() {
     let dir = std::env::temp_dir().join(format!("greycard-rejects-{}", std::process::id()));
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let names = ["A.CR3", "B.CR3", "C.CR3", "D.CR3"];
     let files: Vec<PathBuf> = names.iter().map(|n| dir.join(n)).collect();
@@ -562,13 +562,13 @@ fn the_rejects_move_with_their_sidecars_and_nothing_is_deleted() {
     );
     // Nothing rejected: nothing done, no folder made.
     let empty = std::env::temp_dir().join(format!("greycard-rejects-none-{}", std::process::id()));
-    crate::testing::remove_dir_retry(&empty);
+    greycard_render::testing::remove_dir_retry(&empty);
     std::fs::create_dir_all(&empty).unwrap();
     let none = move_rejects(&[empty.join("E.CR3")], &[]).unwrap();
     assert_eq!(none, Moved::default());
     assert!(!rejects_dir(&empty).exists());
-    crate::testing::remove_dir_retry(&dir);
-    crate::testing::remove_dir_retry(&empty);
+    greycard_render::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&empty);
 }
 
 /// A list from more than one folder, as the library's all-roots
@@ -597,7 +597,7 @@ fn rejects_from_two_shoots_go_to_their_own_folders() {
     assert!(rejects_dir(&two).join("C.CR3").exists());
     assert!(!rejects_dir(&one).join("C.CR3").exists());
     assert!(files[0].exists());
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A shoot whose rejects folder cannot be made keeps its rejects,
@@ -634,7 +634,7 @@ fn a_shoot_that_cannot_take_a_rejects_folder_keeps_its_own_and_none_nest() {
     std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o755)).unwrap();
     if writable {
         // Run as root, which writes anyway.
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
         return;
     }
     assert_eq!(moved.files, vec![0]);
@@ -649,7 +649,7 @@ fn a_shoot_that_cannot_take_a_rejects_folder_keeps_its_own_and_none_nest() {
         "{:?}",
         moved.skipped
     );
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A shoot with a rejects folder in it, for Move back: the shoot,
@@ -704,7 +704,7 @@ fn move_back_takes_a_frame_home_with_its_sidecar_and_xmps() {
     // Nothing made under the hidden folder for a sidecar that was
     // beside.
     assert!(!dir.join(greycard_edit::SIDECAR_FOLDER).exists());
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A sidecar under the rejects folder's hidden folder goes under
@@ -721,7 +721,7 @@ fn move_back_keeps_a_sidecar_under_the_hidden_folder() {
     assert!(dir.join(hidden).join("A.CR3.gcd").exists());
     assert!(!dir.join("A.CR3.gcd").exists());
     assert!(!rejects.join(hidden).join("A.CR3.gcd").exists());
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A raw of the name in the folder above, or an XMP of one of the
@@ -755,7 +755,7 @@ fn move_back_leaves_a_frame_whose_name_is_taken_whole() {
     assert!(rejects.join("B.xmp").exists());
     assert_eq!(std::fs::read(dir.join("A.CR3")).unwrap(), b"other");
     assert_eq!(std::fs::read(dir.join("B.xmp")).unwrap(), b"the jpeg's");
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A sidecar in the folder above under the frame's name with no
@@ -780,7 +780,7 @@ fn move_back_writes_the_frames_sidecar_over_its_own_orphan() {
         .expect("the frame's own sidecar");
     assert_eq!(now.meta.flag, greycard_edit::meta::Flag::Reject);
     assert_ne!(std::fs::read(hidden.join("A.CR3.gcd")).unwrap(), b"older");
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A frame not in a rejects folder stays where it is, said; the
@@ -801,7 +801,7 @@ fn move_back_leaves_a_frame_not_in_a_rejects_folder() {
     assert!(dir.join("B.CR3").exists() && !b.exists());
     // Nothing went up a folder from the shoot itself.
     assert!(!dir.parent().unwrap().join("A.CR3").exists());
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// An orphan under the other placement than the frame's own
@@ -856,7 +856,7 @@ fn an_orphan_under_the_other_placement_goes_or_keeps_the_frame_whole() {
         std::fs::read(rejects.join(hidden).join("B.CR3.gcd")).unwrap(),
         b"older"
     );
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// The `.gcd` and the long XMP name carry the raw's whole name, so
@@ -875,7 +875,7 @@ fn a_jpeg_of_the_stem_owns_no_gcd() {
     let moved = move_back(std::slice::from_ref(&a), &[0], false);
     assert_eq!(moved.files, vec![0], "{:?}", moved.skipped);
     assert_ne!(std::fs::read(hidden.join("A.CR3.gcd")).unwrap(), b"older");
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// Move rejects with the camera's JPEG of a frame's stem in the
@@ -923,7 +923,7 @@ fn a_jpegs_short_xmp_in_the_rejects_folder_keeps_the_frame_whole() {
     assert_eq!(std::fs::read(rejects.join("B.xmp")).unwrap(), b"the jpeg's");
     assert!(c.exists() && dir.join("C.xmp").exists() && !rejects.join("C.xmp").exists());
     assert!(rejects.join("D.CR3").exists() && rejects.join("D.CR3.xmp").exists());
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A raw and the camera's JPEG of one shot, each with its `.gcd`,
@@ -967,7 +967,7 @@ fn a_raw_and_its_jpeg_move_with_their_short_xmp_together() {
         assert_eq!(back.files.len(), 2, "{:?}", back.skipped);
         assert_eq!(names(&dir), trio, "back, in the order {order:?}");
         assert!(names(&rejects).is_empty());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     // Only the raw: the XMP stays with the JPEG.
@@ -991,7 +991,7 @@ fn a_raw_and_its_jpeg_move_with_their_short_xmp_together() {
     let back = move_back(&[rejects.join("A.CR3")], &[0], false);
     assert_eq!(back.files, vec![0], "{:?}", back.skipped);
     assert_eq!(names(&dir), trio);
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A High Res Shot's merge (`.ORF`) and its single frame (`.ORI`),
@@ -1045,7 +1045,7 @@ fn an_orf_and_its_ori_move_out_and_back_with_their_xmps() {
     assert_eq!(out.files, vec![0], "{:?}", out.skipped);
     assert_eq!(names(&rejects), all);
     assert!(names(&dir).is_empty());
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 
     // The ORF out alone, and back.
     let (dir, rejects, pair) = set_up("orf-back");
@@ -1057,7 +1057,7 @@ fn an_orf_and_its_ori_move_out_and_back_with_their_xmps() {
     assert_eq!(back.files, vec![0], "{:?}", back.skipped);
     assert_eq!(names(&dir), all);
     assert!(names(&rejects).is_empty());
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// The ORI rated while its ORF is away writes only its own
@@ -1107,7 +1107,7 @@ fn an_ori_rated_alone_never_takes_the_orfs_xmp() {
     );
     let ori = std::fs::read_to_string(dir.join("P.ORI.xmp")).unwrap();
     assert_eq!(greycard_edit_io::xmp::read(&ori).unwrap().meta.rating, 5);
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 
     // The ORI out first and rated there; the ORF after it.
     let (dir, rejects, pair) = set_up("ori-rated-out");
@@ -1121,7 +1121,7 @@ fn an_ori_rated_alone_never_takes_the_orfs_xmp() {
         std::fs::read(rejects.join("P.xmp")).unwrap(),
         ours(1).as_bytes()
     );
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 
     // A P.xmp beside the ORI from elsewhere: refused, both whole.
     let (dir, rejects, pair) = set_up("ori-foreign");
@@ -1139,7 +1139,7 @@ fn an_ori_rated_alone_never_takes_the_orfs_xmp() {
         std::fs::read(rejects.join("P.xmp")).unwrap(),
         ours(1).as_bytes()
     );
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// The camera's JPEG beside a raw is the raw's: Move rejects takes
@@ -1199,14 +1199,14 @@ fn a_raw_takes_its_companion_out_and_back() {
     assert!(alone.companions.is_empty());
     assert_eq!(names(&rejects), ["A.CR3", "A.CR3.gcd"]);
     assert_eq!(names(&dir), ["A.JPG", "A.xmp"]);
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A want with the camera's JPEG beside the raw decodes that file,
 /// whole, and says so: the loupe's line names it.
 #[test]
 fn a_want_with_a_companion_decodes_the_jpeg_beside_the_raw() {
-    let dir = crate::testing::scratch_dir("cull-companion");
+    let dir = greycard_engine::testing::scratch_dir("cull-companion");
     let raw = dir.join("A.CR3");
     std::fs::write(&raw, b"no preview in here").unwrap();
     let jpeg = dir.join("A.JPG");
@@ -1228,17 +1228,17 @@ fn a_want_with_a_companion_decodes_the_jpeg_beside_the_raw() {
     assert_eq!(preview.origin(), Origin::Companion);
     assert_eq!(preview.source, (60, 40));
     assert_eq!(
-        crate::panel::cull::picture_words((60, 40), preview.small(), preview.origin()),
+        crate::placeholder::picture_words((60, 40), preview.small(), preview.origin()),
         "a small camera JPEG beside the raw, 60 \u{d7} 40"
     );
     assert_eq!(
-        crate::panel::cull::picture_words((6000, 4000), false, Origin::Companion),
+        crate::placeholder::picture_words((6000, 4000), false, Origin::Companion),
         "the camera's JPEG beside the raw, 6000 \u{d7} 4000"
     );
     // Without it the raw's own preview is asked for, and there is none.
     let got = run(&Want::for_loupe(0, raw.clone(), 0));
     assert!(matches!(&got[..], [Loaded::Failed { .. }]));
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A raw with no camera picture in it is developed quickly for the
@@ -1249,9 +1249,10 @@ fn a_want_with_a_companion_decodes_the_jpeg_beside_the_raw() {
 /// not decode still fails.
 #[test]
 fn a_raw_with_no_camera_picture_is_developed_for_the_loupe_and_the_lightbox() {
-    let dir = crate::testing::scratch_dir("cull-developed");
+    record_develops();
+    let dir = greycard_engine::testing::scratch_dir("cull-developed");
     let raw = dir.join("frame.dng");
-    crate::testing::linear_dng(&raw, 96, 64, "Greycard", "Test Body");
+    greycard_engine::testing::linear_dng(&raw, 96, 64, "Greycard", "Test Body");
     assert!(
         matches!(greycard_core::decode::preview_path(&raw), Ok(None)),
         "no camera picture in it"
@@ -1294,7 +1295,7 @@ fn a_raw_with_no_camera_picture_is_developed_for_the_loupe_and_the_lightbox() {
     assert_eq!(preview.origin(), Origin::Local);
     assert!(!preview.small() && preview.own_size());
     assert_eq!(
-        crate::panel::cull::picture_words(preview.source, preview.small(), preview.origin()),
+        crate::placeholder::picture_words(preview.source, preview.small(), preview.origin()),
         "the local preview, 96 \u{d7} 64"
     );
     // Its local preview, kept from the develop off the thread.
@@ -1306,14 +1307,7 @@ fn a_raw_with_no_camera_picture_is_developed_for_the_loupe_and_the_lightbox() {
 
     // The loupe's: the local preview kept, which is that develop,
     // read rather than developed again.
-    let developed = || {
-        DEVELOPS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .filter(|p| **p == raw)
-            .count()
-    };
+    let developed = || developed().iter().filter(|p| **p == raw).count();
     assert_eq!(developed(), 1, "the lightbox's develop");
     let got = run(&Want::for_loupe(0, raw.clone(), 1000));
     let [Loaded::Ok { preview, .. }] = &got[..] else {
@@ -1328,14 +1322,15 @@ fn a_raw_with_no_camera_picture_is_developed_for_the_loupe_and_the_lightbox() {
     std::fs::write(&broken, b"no raw in here").unwrap();
     let got = run(&Want::for_loupe(1, broken, 1000));
     assert!(matches!(&got[..], [Loaded::Failed { .. }]));
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A picture file that will not read is broken, not a raw without a
 /// camera picture: the loupe says it failed and develops nothing.
 #[test]
 fn a_broken_picture_is_not_developed() {
-    let dir = crate::testing::scratch_dir("cull-broken-picture");
+    record_develops();
+    let dir = greycard_engine::testing::scratch_dir("cull-broken-picture");
     for name in ["broken.jpg", "broken.tif"] {
         let path = dir.join(name);
         std::fs::write(&path, b"no picture in here").unwrap();
@@ -1347,15 +1342,9 @@ fn a_broken_picture_is_not_developed() {
             matches!(&got.into_inner()[..], [Loaded::Failed { .. }]),
             "{name}"
         );
-        assert!(
-            !DEVELOPS
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .contains(&path),
-            "{name} developed"
-        );
+        assert!(!developed().contains(&path), "{name} developed");
     }
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A raw and the camera's JPEG beside it, loaded for a lightbox
@@ -1366,7 +1355,7 @@ fn a_broken_picture_is_not_developed() {
 /// catches.
 #[test]
 fn a_pair_in_the_lightbox_maps_no_raw() {
-    let dir = crate::testing::scratch_dir("cull-pair-unmapped");
+    let dir = greycard_engine::testing::scratch_dir("cull-pair-unmapped");
     let raw = dir.join("A.dng");
     greycard_library::fixture::write_mosaic_dng(&raw, "RGGB");
     let jpeg = dir.join("A.JPG");
@@ -1385,7 +1374,7 @@ fn a_pair_in_the_lightbox_maps_no_raw() {
         "the JPEG, the raw having no preview"
     );
     assert_eq!(greycard_core::decode::maps_under(&dir), 0, "raws mapped");
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// The JPEG beside a raw is shown only when it is no smaller than
@@ -1394,7 +1383,7 @@ fn a_pair_in_the_lightbox_maps_no_raw() {
 /// picture is itself, and it says its size as a raw does.
 #[test]
 fn a_companion_smaller_than_the_raws_preview_or_unreadable_gives_way() {
-    let dir = crate::testing::scratch_dir("cull-companion-size");
+    let dir = greycard_engine::testing::scratch_dir("cull-companion-size");
     let raw = dir.join("A.png");
     image::RgbImage::from_pixel(600, 400, image::Rgb([10, 20, 30]))
         .save(&raw)
@@ -1432,7 +1421,7 @@ fn a_companion_smaller_than_the_raws_preview_or_unreadable_gives_way() {
     bytes.extend_from_slice(&[0, 0, 0xFF, 0xFF]);
     std::fs::write(&padded, &bytes).unwrap();
     assert_eq!(shown(&padded), (true, (600, 400)));
-    crate::testing::remove_dir_retry(&dir);
+    greycard_render::testing::remove_dir_retry(&dir);
 }
 
 /// A worker and a culling prefetcher dropped take their threads with
@@ -1448,7 +1437,7 @@ fn a_dropped_worker_and_prefetcher_leave_no_threads() {
     let worker = crate::worker::Worker::new(|_| {});
     worker.send(crate::worker::Job::Thumbnail {
         index: 0,
-        frame: crate::versions::Key::file("/nonexistent/greycard-threads-exit.CR3"),
+        frame: crate::version_key::Key::file("/nonexistent/greycard-threads-exit.CR3"),
     });
     let prefetcher = Prefetcher::new(|_| {});
     let worker_queue = worker.queue_held();

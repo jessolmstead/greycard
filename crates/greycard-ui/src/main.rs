@@ -22,10 +22,8 @@ mod carry;
 mod cells;
 mod chooser;
 mod clipboard;
-mod cull;
 mod edited;
 mod entry;
-mod export_queue;
 mod finder;
 mod gpu_errors;
 mod gpu_lost;
@@ -39,7 +37,6 @@ mod open_note;
 mod owners;
 mod panel;
 mod panes;
-mod placeholder;
 mod preparing;
 mod report;
 mod roots;
@@ -48,7 +45,6 @@ mod runners;
 mod scope;
 mod settings;
 mod shared;
-mod sort;
 mod stacks;
 mod sync;
 #[cfg(test)]
@@ -64,9 +60,9 @@ mod window_fit;
 // The modules with no window in them, in the library beside this
 // binary; named here as they were when they were the binary's own.
 pub(crate) use greycard_ui::{
-    archive, carried, collections, delete, display, edit_in, export_name, files, filter,
-    focus_points, gpu_marker, grid, i18n, import, instance, log, naming, outline, preset_fit,
-    rejects, scrolling, selection, strip, tags, wheel, zoom,
+    archive, carried, collections, cull, delete, display, edit_in, export_name, export_queue,
+    files, filter, focus_points, gpu_marker, grid, i18n, import, instance, log, naming, outline,
+    placeholder, preset_fit, scrolling, selection, sort, strip, tags, wheel, zoom,
 };
 
 // The window's words: `crate::tr!` here as in the library, and the

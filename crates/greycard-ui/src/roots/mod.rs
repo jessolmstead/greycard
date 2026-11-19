@@ -96,60 +96,9 @@ pub(crate) use self::{
 use crate::worker::Worker;
 use crate::{App, RootChip, Shared, chooser, tr};
 
-/// What the browser lists.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) enum View {
-    /// A folder, or files the desktop asked to open.
-    #[default]
-    Folder,
-    /// Every file under the roots, or under one of them.
-    Roots(Option<PathBuf>),
-    /// One folder under a root, from the index as a view of the root
-    /// is: the frames directly in it, or with `deep` those in the
-    /// folders under it too. Still that root's view, narrowed: its
-    /// row stays lit.
-    Branch {
-        root: PathBuf,
-        folder: PathBuf,
-        deep: bool,
-    },
-    /// A collection, by its id: its pictures from the index, each
-    /// once, in the collection's own order, or in the order chosen for
-    /// it (`sort`).
-    Collection { id: String },
-    /// The export queue: every frame of every entry, each under its
-    /// destination's heading, in the queue's order. A frame queued
-    /// twice is listed twice: each is an export.
-    Queue,
-}
-
-impl View {
-    /// The list comes from the index's rows, not from a folder's
-    /// listing on disk.
-    pub(crate) fn lists_rows(&self) -> bool {
-        !matches!(self, View::Folder)
-    }
-
-    /// What the index is asked to list: the files under each of these
-    /// folders, or with the flag, those directly in the one folder.
-    fn listed(&self, all: &[PathBuf]) -> (Vec<PathBuf>, bool) {
-        match self {
-            View::Folder => (Vec::new(), false),
-            View::Roots(None) => (all.to_vec(), false),
-            View::Roots(Some(r)) => (vec![r.clone()], false),
-            View::Branch { folder, deep, .. } => (vec![folder.clone()], !deep),
-            View::Collection { .. } | View::Queue => (Vec::new(), false),
-        }
-    }
-
-    /// The collection this view shows, by its id.
-    pub(crate) fn collection(&self) -> Option<&str> {
-        match self {
-            View::Collection { id, .. } => Some(id),
-            _ => None,
-        }
-    }
-}
+// What the browser lists, in the library beside the order each view
+// is sorted in.
+pub(crate) use crate::sort::View;
 
 /// The index's rows for a view, in `order`: under each of `under`, or
 /// with `only`, directly in the one folder.

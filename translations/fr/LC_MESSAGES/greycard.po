@@ -3222,11 +3222,11 @@ msgstr ""
 msgid "the file chooser failed: {e}"
 msgstr "échec du sélecteur de fichiers : {e}"
 
-#: crates/greycard-ui/src/cull.rs:631
+#: crates/greycard-ui/src/cull.rs:638
 msgid "its root is offline, and no local preview of it is kept"
 msgstr "son dossier racine est hors ligne et aucun aperçu local n'est conservé"
 
-#: crates/greycard-ui/src/cull.rs:799
+#: crates/greycard-ui/src/cull.rs:825
 msgid "the decode panicked"
 msgstr "le décodage a provoqué une erreur fatale"
 
@@ -5220,7 +5220,7 @@ msgid "With the camera's JPEG, {}"
 msgstr "Avec le JPEG de l'appareil, {}"
 
 #: crates/greycard-ui/src/panel/browser.rs:879
-#: crates/greycard-ui/src/panel/cull.rs:436
+#: crates/greycard-ui/src/panel/cull.rs:440
 #: crates/greycard-ui/src/panel/deliver.rs:1562
 #: crates/greycard-ui/src/panel/deliver.rs:1596
 #: crates/greycard-ui/src/panel/edit.rs:590
@@ -5621,78 +5621,44 @@ msgstr ""
 msgid "the guide needs two different lines"
 msgstr "le guide nécessite deux lignes différentes"
 
-#: crates/greycard-ui/src/panel/cull.rs:2192
+#: crates/greycard-ui/src/panel/cull.rs:2196
 msgid "{said}; {status}"
 msgstr "{said} ; {status}"
 
-#: crates/greycard-ui/src/panel/cull.rs:2407
+#: crates/greycard-ui/src/panel/cull.rs:2411
 msgid "{version}, {what}"
 msgstr "{version}, {what}"
 
-#: crates/greycard-ui/src/panel/cull.rs:2417
-msgid "the edit, {w} × {h}"
-msgstr "les modifications, {w} × {h}"
-
-#: crates/greycard-ui/src/panel/cull.rs:2419
-msgid "the local preview, {w} × {h}"
-msgstr "l'aperçu local, {w} × {h}"
-
-#: crates/greycard-ui/src/panel/cull.rs:2422
-msgid "a small camera JPEG beside the raw, {w} × {h}"
-msgstr "un petit JPEG de l'appareil à côté du RAW, {w} × {h}"
-
-#: crates/greycard-ui/src/panel/cull.rs:2428
-msgid "the camera's JPEG beside the raw, {w} × {h}"
-msgstr "le JPEG de l'appareil à côté du RAW, {w} × {h}"
-
-#: crates/greycard-ui/src/panel/cull.rs:2433
-msgid "a small camera preview, {w} × {h}"
-msgstr "un petit aperçu de l'appareil, {w} × {h}"
-
-#: crates/greycard-ui/src/panel/cull.rs:2435
-msgid "the camera JPEG, {w} × {h}"
-msgstr "le JPEG de l'appareil, {w} × {h}"
-
-#: crates/greycard-ui/src/panel/cull.rs:2450
+#: crates/greycard-ui/src/panel/cull.rs:2427
 msgid "culling, {n} up"
 msgstr "tri, {n} photos affichées"
 
-#: crates/greycard-ui/src/panel/cull.rs:2452
+#: crates/greycard-ui/src/panel/cull.rs:2429
 msgid "culling"
 msgstr "tri"
 
-#: crates/greycard-ui/src/panel/cull.rs:2457
+#: crates/greycard-ui/src/panel/cull.rs:2434
 msgid "{mode}: nothing to show; {why}"
 msgstr "{mode} : rien à afficher ; {why}"
 
-#: crates/greycard-ui/src/panel/cull.rs:2463
+#: crates/greycard-ui/src/panel/cull.rs:2440
 msgid "{mode}: no camera preview ({why}); Enter develops"
 msgstr "{mode} : aucun aperçu de l'appareil ({why}) ; Entrée pour développer"
 
-#: crates/greycard-ui/src/panel/cull.rs:2469
-#: crates/greycard-ui/src/panel/cull.rs:2472
+#: crates/greycard-ui/src/panel/cull.rs:2446
+#: crates/greycard-ui/src/panel/cull.rs:2449
 msgid "{mode}: decoding the camera JPEG..."
 msgstr "{mode} : décodage du JPEG de l'appareil..."
 
-#: crates/greycard-ui/src/panel/cull.rs:2478
+#: crates/greycard-ui/src/panel/cull.rs:2455
 msgid "{mode}: {what}, {at}; Enter develops; {note}"
 msgstr "{mode} : {what}, {at} ; Entrée pour développer ; {note}"
 
-#: crates/greycard-ui/src/panel/cull.rs:2485
+#: crates/greycard-ui/src/panel/cull.rs:2462
 msgid "{mode}: {what}, {at}; Enter develops"
 msgstr "{mode} : {what}, {at} ; Entrée pour développer"
 
-#. Culling status: the zoom when the picture is fitted to the window
-#: crates/greycard-ui/src/panel/cull.rs:2499
-msgid "fitted"
-msgstr "ajusté"
-
-#: crates/greycard-ui/src/panel/cull.rs:2504
-msgid "{percent}%, screen-size copy until the full one decodes"
-msgstr ""
-"{percent} %, copie à la taille de l'écran en attendant le décodage complet"
-
-#: crates/greycard-ui/src/panel/cull.rs:2600
+#: crates/greycard-ui/src/panel/cull.rs:2560
 msgid "a rejects folder in each of the {n} folder they are in"
 msgid_plural "a rejects folder in each of the {n} folders they are in"
 msgstr[0] ""
@@ -5700,20 +5666,20 @@ msgstr[0] ""
 msgstr[1] ""
 "un dossier de photos rejetées dans chacun des {n} dossiers concernés"
 
-#: crates/greycard-ui/src/panel/cull.rs:2627
-#: crates/greycard-ui/src/panel/cull.rs:2654
-#: crates/greycard-ui/src/panel/cull.rs:2854
+#: crates/greycard-ui/src/panel/cull.rs:2587
+#: crates/greycard-ui/src/panel/cull.rs:2614
+#: crates/greycard-ui/src/panel/cull.rs:2814
 #: crates/greycard-ui/src/panel/delete.rs:207
 #: crates/greycard-ui/src/panel/delete.rs:565
 #: crates/greycard-ui/src/panel/versions.rs:620
 msgid "a delete is still under way"
 msgstr "une suppression est toujours en cours"
 
-#: crates/greycard-ui/src/panel/cull.rs:2632
+#: crates/greycard-ui/src/panel/cull.rs:2592
 msgid "no frames are flagged reject"
 msgstr "aucune photo marquée comme rejetée"
 
-#: crates/greycard-ui/src/panel/cull.rs:2640
+#: crates/greycard-ui/src/panel/cull.rs:2600
 msgid "{n} frame flagged reject, with its sidecar, will be moved to {folder}."
 msgid_plural ""
 "{n} frames flagged reject, with their sidecars, will be moved to {folder}."
@@ -5724,23 +5690,23 @@ msgstr[1] ""
 "{n} photos marquées comme rejetées, avec leurs fichiers annexes, seront "
 "déplacées vers {folder}."
 
-#: crates/greycard-ui/src/panel/cull.rs:2676
+#: crates/greycard-ui/src/panel/cull.rs:2636
 msgid "the rejects could not be moved: {why}"
 msgstr "impossible de déplacer les photos rejetées : {why}"
 
-#: crates/greycard-ui/src/panel/cull.rs:2691
+#: crates/greycard-ui/src/panel/cull.rs:2651
 msgid "moved {n} frame{companions} and {sidecars} to {folder}"
 msgid_plural "moved {n} frames{companions} and {sidecars} to {folder}"
 msgstr[0] "{n} photo{companions} et {sidecars} déplacés vers {folder}"
 msgstr[1] "{n} photos{companions} et {sidecars} déplacés vers {folder}"
 
-#: crates/greycard-ui/src/panel/cull.rs:2756
+#: crates/greycard-ui/src/panel/cull.rs:2716
 msgid "; {n} left where it was ({why})"
 msgid_plural "; {n} left where they were ({why}; the log has each)"
 msgstr[0] "; {n} laissée à sa place ({why})"
 msgstr[1] "; {n} laissées à leur place ({why} ; détails dans le journal)"
 
-#: crates/greycard-ui/src/panel/cull.rs:2774
+#: crates/greycard-ui/src/panel/cull.rs:2734
 msgid "; {n} camera JPEG stayed behind its raw ({name}: {why})"
 msgid_plural "; {n} camera JPEGs stayed behind their raws ({name}: {why})"
 msgstr[0] ""
@@ -5748,36 +5714,36 @@ msgstr[0] ""
 msgstr[1] ""
 "; {n} JPEG de l'appareil sont restés derrière leurs RAW ({name} : {why})"
 
-#: crates/greycard-ui/src/panel/cull.rs:2840
+#: crates/greycard-ui/src/panel/cull.rs:2800
 msgid "their folders"
 msgstr "leurs dossiers"
 
-#: crates/greycard-ui/src/panel/cull.rs:2859
+#: crates/greycard-ui/src/panel/cull.rs:2819
 msgid "no frame chosen is in a rejects folder"
 msgstr "aucune photo sélectionnée dans un dossier de photos rejetées"
 
-#: crates/greycard-ui/src/panel/cull.rs:2870
+#: crates/greycard-ui/src/panel/cull.rs:2830
 msgid "nothing moved back"
 msgstr "aucune photo renvoyée"
 
-#: crates/greycard-ui/src/panel/cull.rs:2872
+#: crates/greycard-ui/src/panel/cull.rs:2832
 msgid "moved {n} frame{companions} and {sidecars} back to {folder}"
 msgid_plural "moved {n} frames{companions} and {sidecars} back to {folder}"
 msgstr[0] "{n} photo{companions} et {sidecars} renvoyés vers {folder}"
 msgstr[1] "{n} photos{companions} et {sidecars} renvoyés vers {folder}"
 
-#: crates/greycard-ui/src/panel/cull.rs:2882
+#: crates/greycard-ui/src/panel/cull.rs:2842
 msgid "the folder above each of the {n} rejects folder"
 msgid_plural "the folder above each of the {n} rejects folders"
 msgstr[0] "le dossier parent de chacun des {n} dossiers de photos rejetées"
 msgstr[1] "le dossier parent de chacun des {n} dossiers de photos rejetées"
 
-#: crates/greycard-ui/src/panel/cull.rs:3222
+#: crates/greycard-ui/src/panel/cull.rs:3182
 msgid "filter: {why}"
 msgstr "filtre : {why}"
 
-#: crates/greycard-ui/src/panel/cull.rs:3260
-#: crates/greycard-ui/src/panel/cull.rs:3298
+#: crates/greycard-ui/src/panel/cull.rs:3220
+#: crates/greycard-ui/src/panel/cull.rs:3258
 msgid "nothing to cull: open a folder"
 msgstr "aucune photo à trier : ouvrez un dossier"
 
@@ -7558,10 +7524,6 @@ msgstr ""
 "Nécessite {need} Gio de mémoire vidéo, {have} disponibles. Utilisez "
 "« Correctif »."
 
-#: crates/greycard-ui/src/panel/sort.rs:24 crates/greycard-ui/src/sort.rs:185
-msgid "Hand order"
-msgstr "Ordre manuel"
-
 #: crates/greycard-ui/src/panel/sort.rs:52
 msgid "Sort: {}, {way}"
 msgstr "Tri : {}, {way}"
@@ -8259,6 +8221,40 @@ msgstr ""
 msgid "{word}: {what}, {at}; developing..."
 msgstr "{word} : {what}, {at} ; développement..."
 
+#: crates/greycard-ui/src/placeholder.rs:196
+msgid "the edit, {w} × {h}"
+msgstr "les modifications, {w} × {h}"
+
+#: crates/greycard-ui/src/placeholder.rs:198
+msgid "the local preview, {w} × {h}"
+msgstr "l'aperçu local, {w} × {h}"
+
+#: crates/greycard-ui/src/placeholder.rs:201
+msgid "a small camera JPEG beside the raw, {w} × {h}"
+msgstr "un petit JPEG de l'appareil à côté du RAW, {w} × {h}"
+
+#: crates/greycard-ui/src/placeholder.rs:207
+msgid "the camera's JPEG beside the raw, {w} × {h}"
+msgstr "le JPEG de l'appareil à côté du RAW, {w} × {h}"
+
+#: crates/greycard-ui/src/placeholder.rs:212
+msgid "a small camera preview, {w} × {h}"
+msgstr "un petit aperçu de l'appareil, {w} × {h}"
+
+#: crates/greycard-ui/src/placeholder.rs:214
+msgid "the camera JPEG, {w} × {h}"
+msgstr "le JPEG de l'appareil, {w} × {h}"
+
+#. Culling status: the zoom when the picture is fitted to the window
+#: crates/greycard-ui/src/placeholder.rs:224
+msgid "fitted"
+msgstr "ajusté"
+
+#: crates/greycard-ui/src/placeholder.rs:229
+msgid "{percent}%, screen-size copy until the full one decodes"
+msgstr ""
+"{percent} %, copie à la taille de l'écran en attendant le décodage complet"
+
 #: crates/greycard-ui/src/rejects.rs:85
 msgid "it is in a rejects folder already"
 msgstr "elle se trouve déjà dans un dossier de photos rejetées"
@@ -8284,7 +8280,7 @@ msgstr "{} se trouve déjà dans {}"
 msgid "{owner} there answers to {} too"
 msgstr "{owner} y répond aussi au nom de {}"
 
-#: crates/greycard-ui/src/report.rs:344
+#: crates/greycard-ui/src/report.rs:321
 msgid ""
 "the form is open in the browser, and the log's folder: drag greycard-ui.log "
 "into the form"
@@ -8292,11 +8288,11 @@ msgstr ""
 "le formulaire et le dossier du journal sont ouverts dans le navigateur : "
 "glissez greycard-ui.log dans le formulaire"
 
-#: crates/greycard-ui/src/report.rs:347
+#: crates/greycard-ui/src/report.rs:324
 msgid "the form is open in the browser; there is no log to attach"
 msgstr "le formulaire est ouvert dans le navigateur ; aucun journal à joindre"
 
-#: crates/greycard-ui/src/report.rs:363
+#: crates/greycard-ui/src/report.rs:340
 msgid "no browser would open: the form is at {}/issues/new"
 msgstr "aucun navigateur ouvert : le formulaire se trouve sur {}/issues/new"
 
@@ -8344,15 +8340,15 @@ msgstr "aucune photo dans {}"
 msgid "{}: not a folder"
 msgstr "{} : ce n'est pas un dossier"
 
-#: crates/greycard-ui/src/roots/mod.rs:763
+#: crates/greycard-ui/src/roots/mod.rs:712
 msgid "choosing a folder to add to the library..."
 msgstr "choix d'un dossier à ajouter à la bibliothèque..."
 
-#: crates/greycard-ui/src/roots/mod.rs:764
+#: crates/greycard-ui/src/roots/mod.rs:713
 msgid "Add a folder to the library"
 msgstr "Ajouter un dossier à la bibliothèque"
 
-#: crates/greycard-ui/src/roots/mod.rs:778
+#: crates/greycard-ui/src/roots/mod.rs:727
 msgid "nothing added"
 msgstr "aucun dossier ajouté"
 
@@ -8777,87 +8773,91 @@ msgstr ""
 "fichier annexe de {} introuvable, alors que la bibliothèque conserve ses "
 "modifications, une exportation ou une version ; rien ne sera écrit par-dessus"
 
+#: crates/greycard-ui/src/sort.rs:242
+msgid "Hand order"
+msgstr "Ordre manuel"
+
 #. Sort menu: the two ways up for capture time and date edited
-#: crates/greycard-ui/src/sort.rs:195
+#: crates/greycard-ui/src/sort.rs:252
 msgid "Newest first"
 msgstr "Plus récents d'abord"
 
 #. Sort menu: the two ways up for capture time and date edited
-#: crates/greycard-ui/src/sort.rs:195
+#: crates/greycard-ui/src/sort.rs:252
 msgid "Oldest first"
 msgstr "Plus anciens d'abord"
 
 #. Sort menu: the two ways up for the name
-#: crates/greycard-ui/src/sort.rs:198
+#: crates/greycard-ui/src/sort.rs:255
 msgid "A to Z"
 msgstr "De A à Z"
 
 #. Sort menu: the two ways up for the name
-#: crates/greycard-ui/src/sort.rs:198
+#: crates/greycard-ui/src/sort.rs:255
 msgid "Z to A"
 msgstr "De Z à A"
 
 #. Sort menu: the two ways up for rating and focus
-#: crates/greycard-ui/src/sort.rs:201
+#: crates/greycard-ui/src/sort.rs:258
 msgid "Highest first"
 msgstr "Plus élevés d'abord"
 
 #. Sort menu: the two ways up for rating and focus
-#: crates/greycard-ui/src/sort.rs:201
+#: crates/greycard-ui/src/sort.rs:258
 msgid "Lowest first"
 msgstr "Plus faibles d'abord"
 
 #. The sort in the grid header's 'by {}', lower case
-#: crates/greycard-ui/src/sort.rs:210
+#: crates/greycard-ui/src/sort.rs:267
 msgid "hand order"
 msgstr "ordre manuel"
 
-#: crates/greycard-ui/src/sort.rs:211
+#: crates/greycard-ui/src/sort.rs:268
 msgid "capture time"
 msgstr "heure de prise de vue"
 
-#: crates/greycard-ui/src/sort.rs:212
+#: crates/greycard-ui/src/sort.rs:269
 msgid "name"
 msgstr "nom"
 
-#: crates/greycard-ui/src/sort.rs:213
+#: crates/greycard-ui/src/sort.rs:270
 msgid "rating"
 msgstr "note"
 
-#: crates/greycard-ui/src/sort.rs:214
+#: crates/greycard-ui/src/sort.rs:271
 msgid "date edited"
 msgstr "date de modification"
 
-#: crates/greycard-ui/src/sort.rs:215
+#: crates/greycard-ui/src/sort.rs:272
 msgid "focus"
 msgstr "netteté"
 
-#: crates/greycard-ui/src/sort.rs:216
+#: crates/greycard-ui/src/sort.rs:273
 msgid "oldest first"
 msgstr "plus anciens d'abord"
 
-#: crates/greycard-ui/src/sort.rs:217
+#: crates/greycard-ui/src/sort.rs:274
 msgid "newest first"
 msgstr "plus récents d'abord"
 
-#: crates/greycard-ui/src/sort.rs:218
+#: crates/greycard-ui/src/sort.rs:275
 msgid "lowest first"
 msgstr "plus faibles d'abord"
 
-#: crates/greycard-ui/src/sort.rs:219
+#: crates/greycard-ui/src/sort.rs:276
 msgid "highest first"
 msgstr "plus élevés d'abord"
 
 #. Sort menu: what the frames are sorted by
-#: crates/greycard-ui/src/sort.rs:226
+#: crates/greycard-ui/src/sort.rs:283
 msgid "Capture time"
 msgstr "Heure de prise de vue"
 
-#: crates/greycard-ui/src/sort.rs:229
+#: crates/greycard-ui/src/sort.rs:286
 msgid "Date edited"
 msgstr "Date de modification"
 
-#: crates/greycard-ui/src/sort.rs:230
+#: crates/greycard-ui/src/sort.rs:287
 msgid "Focus"
 msgstr "Netteté"
 

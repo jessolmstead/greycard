@@ -9,13 +9,19 @@
 //! Nothing is sent from here: the browser shows the form, and the
 //! tester reads it, adds to it and submits it or does not.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 
 use anyhow::{Context, Result};
 use slint::ComponentHandle;
 
 use crate::{App, Shared, gpu, log, tr};
+
+// A path of ours as shown, the home folder short, in the library
+// beside the files, where the export queue's lines take it too.
+#[cfg(test)]
+use crate::files::abbreviate;
+pub(crate) use crate::files::path_shown;
 
 /// The fields of the form this fills, by id, in the form's order.
 pub struct Report {
@@ -82,35 +88,6 @@ pub fn log_note(log: &str) -> String {
          Drag greycard-ui.log here. If greycard closed on its own before this, \
          greycard-ui-1.log is that run: drag it too."
     )
-}
-
-/// `path` with the first of `prefixes` it lies under swapped for that
-/// prefix's name: `%LOCALAPPDATA%` or `~`, so what goes into a public
-/// form does not carry the account's name.
-fn abbreviate(path: &Path, prefixes: &[(Option<PathBuf>, &str)]) -> String {
-    for (prefix, name) in prefixes {
-        if let Some(rest) = prefix.as_ref().and_then(|p| path.strip_prefix(p).ok()) {
-            return format!("{name}{}{}", std::path::MAIN_SEPARATOR, rest.display());
-        }
-    }
-    path.display().to_string()
-}
-
-/// A path of ours as the form and the Settings sheet show it, the
-/// home folder short, so neither carries the account's name.
-pub(crate) fn path_shown(path: &Path) -> String {
-    if cfg!(windows) {
-        abbreviate(
-            path,
-            &[
-                (dirs::data_local_dir(), "%LOCALAPPDATA%"),
-                (dirs::config_dir(), "%APPDATA%"),
-                (dirs::home_dir(), "%USERPROFILE%"),
-            ],
-        )
-    } else {
-        abbreviate(path, &[(dirs::home_dir(), "~")])
-    }
 }
 
 /// The adapter as the log's start and the form both say it.

@@ -11,7 +11,7 @@
 //! Everything that decides something is here and pure, so it can be
 //! tested without a window; the panel's modules hold the glue.
 
-use crate::tr;
+use crate::{cull, tr};
 
 /// How many frames either side of the selection keep their camera
 /// picture in the develop view. Nothing is decoded ahead here — the
@@ -178,14 +178,58 @@ pub fn status(
     local: crate::cull::Origin,
     at: (f32, bool),
 ) -> String {
-    let what = crate::panel::cull::picture_words(size, small, local);
-    let at = crate::panel::cull::zoom_words(at.0, at.1);
+    let what = picture_words(size, small, local);
+    let at = zoom_words(at.0, at.1);
     tr!(
         "{word}: {what}, {at}; developing...",
         word = word(),
         what = what,
         at = at
     )
+}
+
+/// The picture shown, in the status line's words: the camera's JPEG
+/// (inside the raw or beside it), a small one, or the local preview
+/// kept in the cache.
+pub fn picture_words((w, h): (u32, u32), small: bool, from: cull::Origin) -> String {
+    if from == cull::Origin::Edit {
+        tr!("the edit, {w} \u{d7} {h}", w = w, h = h)
+    } else if from == cull::Origin::Local {
+        tr!("the local preview, {w} \u{d7} {h}", w = w, h = h)
+    } else if from == cull::Origin::Companion && small {
+        tr!(
+            "a small camera JPEG beside the raw, {w} \u{d7} {h}",
+            w = w,
+            h = h
+        )
+    } else if from == cull::Origin::Companion {
+        tr!(
+            "the camera's JPEG beside the raw, {w} \u{d7} {h}",
+            w = w,
+            h = h
+        )
+    } else if small {
+        tr!("a small camera preview, {w} \u{d7} {h}", w = w, h = h)
+    } else {
+        tr!("the camera JPEG, {w} \u{d7} {h}", w = w, h = h)
+    }
+}
+
+/// At what a camera's picture is shown, in the status line: fitted,
+/// or the zoom, and while the copy on screen is the view-size one
+/// (`own` false), that it is until the full one decodes.
+pub fn zoom_words(zoom: f32, own: bool) -> String {
+    if zoom <= 0.0 {
+        // Culling status: the zoom when the picture is fitted to the window
+        tr!("fitted")
+    } else if own {
+        format!("{}%", (zoom * 100.0).round() as i32)
+    } else {
+        tr!(
+            "{percent}%, screen-size copy until the full one decodes",
+            percent = (zoom * 100.0).round() as i32
+        )
+    }
 }
 
 /// The rows whose camera picture is kept about `row` of `count`.

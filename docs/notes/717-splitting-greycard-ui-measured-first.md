@@ -80,14 +80,14 @@ Each step is one squashed commit by one agent, and each starts from master with 
 
 **2. The windowless leaves into the library target.** grid (684 code / 788 test lines), strip (206/180), and focus_points (165/64) move from `main.rs`'s module list to `lib.rs`. The binary names them through its `pub(crate) use greycard_ui::{…}`, so every `crate::grid::X` compiles untouched. focus_points' `tell`, now `#[cfg(test)]` and called by culling's tests, becomes unconditional and `#[doc(hidden)]`; otherwise the binary's tests lose it. `HEAD_READS` stays `#[cfg(test)]`, since only the module's own tests read it. Log targets keep their text, since both targets are the crate `greycard_ui`.
 
-**3. Five modules, one seam each.**
-- **cull** (1,199/1,518): `lightbox::fetch` moves into it beside the `Want`, `Source`, and `Loaded` it takes. `versions::Key` is named as the engine's `version_key::Key`, which it is. `DEVELOPS`, `threads_gone`, `asked`, and `pushed` become unconditional.
+**3. Four modules, one seam each.**
+- **cull** (1,199/1,518): `lightbox::fetch` moves beside the `Want`, `Source`, and `Loaded` it takes, into a child module `cull::lightbox` since cull has a `fetch` of its own, with the `pick`, `Pick`, and `kept_order` it needs. `versions::Key` is named as the engine's `version_key::Key`, which it is. `move_rejects` becomes unconditional. `asked`, `pushed`, and the develops list become unconditional but record only once a test arms them (`Prefetcher::record`, `cull::record_develops`), so a shipping build keeps nothing and pays one atomic load; a reader panics unarmed. `threads_gone` stays `#[cfg(test)]`, read only by cull's own tests.
 - **placeholder** (253/159): `panel::cull::{picture_words, zoom_words}` move into it, and `panel::cull` re-exports them.
 - **sort** (249/157): `roots::View` moves into it, and `roots` re-exports it. `Kept::by_name` becomes unconditional.
 - **export_queue** (241/107): `report::{path_shown, abbreviate}` move into `files.rs`.
-- **web** (90/48): `adapter::scrub` and its flag move with it.
+- **web** stays in the binary: `adapter::scrub` also calls `window_fit::scale::scrub`, which has a flag of its own that the window's scale code sets, so the seam is two functions and two flags, not one.
 
-That is 2,032 lines of code and 1,989 of tests. The moved functions keep their names and bodies; their old homes re-export them.
+The moved functions keep their names and bodies; their old homes re-export them. One sort test that reads `settings::Settings` moved to settings' tests.
 
 ## Left out
 

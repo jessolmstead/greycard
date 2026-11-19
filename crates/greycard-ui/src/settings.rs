@@ -1994,4 +1994,38 @@ mod tests {
     fn the_gamut_warning_is_off_by_default() {
         assert!(!Settings::default().gamut_warning);
     }
+
+    #[test]
+    fn a_settings_file_from_before_the_sort_reads_as_every_default() {
+        use crate::sort::{Choice, Kept, View};
+        use greycard_library::{Order, SortBy};
+        // A file as 0.7.0 wrote it: the filter kept, no sort.
+        let old = r#"{"filter": {"stars": 3, "text": "iso>=400"}, "jpegs_apart": true}"#;
+        let settings: crate::settings::Settings = serde_json::from_str(old).unwrap();
+        assert_eq!(settings.sort, Kept::default());
+        assert_eq!(settings.filter.stars, 3);
+        assert_eq!(
+            settings.sort.choice(&View::Roots(None)),
+            Choice::By(Order::TAKEN)
+        );
+        // A later build's order, and a hand order kept for a view that
+        // has none: each view's default, the file's words kept.
+        let later: Kept =
+            serde_json::from_str(r#"{"folder": "size-desc", "roots": "hand"}"#).unwrap();
+        assert_eq!(later.choice(&View::Folder), Choice::By(Order::NAME));
+        assert_eq!(later.choice(&View::Roots(None)), Choice::By(Order::TAKEN));
+        assert_eq!(later.folder.as_deref(), Some("size-desc"));
+        // And the whole settings file round trips with one.
+        let mut settings = crate::settings::Settings::default();
+        settings
+            .sort
+            .set(&View::Folder, Choice::By(Order::new(SortBy::Edited, false)));
+        let text = serde_json::to_string(&settings).unwrap();
+        let back: crate::settings::Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.sort, settings.sort);
+        assert_eq!(
+            back.sort.choice(&View::Folder),
+            Choice::By(Order::new(SortBy::Edited, false))
+        );
+    }
 }

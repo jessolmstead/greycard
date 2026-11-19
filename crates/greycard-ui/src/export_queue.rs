@@ -219,7 +219,7 @@ pub fn name(entry: &Entry) -> String {
 /// `~`, or the subfolder it goes into beside each file.
 pub fn place_shown(entry: &Entry) -> String {
     match (&entry.folder, entry.sheet.subfolder().ok().flatten()) {
-        (Some(folder), _) => crate::report::path_shown(folder),
+        (Some(folder), _) => crate::files::path_shown(folder),
         (None, Some(sub)) => sub.display().to_string(),
         (None, None) => String::new(),
     }
@@ -245,7 +245,7 @@ mod tests {
 
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("greycard-xq-{tag}-{}", std::process::id()));
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
         dir
     }
 
@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(count_line(&q[1..]), "1 set, 1 frame queued");
         save(&file, &[]);
         assert!(!file.exists());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod tests {
             "{ not json"
         );
         assert!(dir.join("export-queue.json.unread.2").exists());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// An entry's edit is read through the edit's migration: an older
@@ -343,6 +343,6 @@ mod tests {
         assert!(load(&file).is_empty());
         assert!(!file.exists());
         assert!(dir.join("export-queue.json.unread").exists());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 }
