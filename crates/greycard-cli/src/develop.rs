@@ -1,7 +1,7 @@
 //! `greycard develop`: a RAW, or a picture, developed to a linear DNG,
 //! a linear Rec.2020 TIFF or an sRGB preview.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use greycard_core::decode::RawlerDecoder;
@@ -500,6 +500,24 @@ fn denoiser_for(name: &str) -> Result<(PathBuf, Option<&'static greycard_ai::Mod
     Ok((store.path(model, &model.files[0]), Some(model)))
 }
 
+/// The learned denoiser for `--ai-denoise`: a tier from `store` (which
+/// a tier always has), or a file named by path. Either is refused on a
+/// card the off-card record in `store` says lost the learned denoiser
+/// (§712); a path with no store has no record to read.
+fn load_learned(
+    (path, model): (&Path, Option<&'static greycard_ai::Model>),
+    store: Option<&greycard_ai::Store>,
+    providers: &[greycard_ai::Provider],
+) -> Result<greycard_ai::Denoiser> {
+    match (model, store) {
+        (Some(model), Some(store)) => greycard_ai::Denoiser::from_store(store, model, providers),
+        (Some(model), None) => Err(greycard_ai::runtime::Error::Missing(model.name)),
+        // A model file named by hand rests as every tier does.
+        (None, store) => greycard_ai::Denoiser::from_path(store, path, providers),
+    }
+    .with_context(|| format!("loading {}", path.display()))
+}
+
 /// The engine's develop with the learned denoiser in place of the
 /// demosaic and the profiled denoise.
 fn develop_learned(
@@ -523,21 +541,15 @@ fn develop_learned(
     // answer for it is read from and written to the record
     // (`runtime::Remembered`); a bare path (an arbitrary model file
     // named on the command line) has no store entry to key that on.
-    let mut denoiser = match *model {
-        Some(model) => {
-            let store = greycard_ai::Store::user().context("finding the model store")?;
-            // In a test, the off-card check is a test's: no user's
-            // store, ONNX Runtime, or adapter asked for it.
-            #[cfg(test)]
-            greycard_ai::runtime::off_card_for_tests();
-            greycard_ai::Denoiser::from_store(&store, model, &providers)
-        }
-        // A model file named by hand is not gated by the off-card
-        // record: it names no registered tier, and a developer asking
-        // for that file on this card means it.
-        None => greycard_ai::Denoiser::load(path, &providers),
-    }
-    .with_context(|| format!("loading {}", path.display()))?;
+    // In a test, the off-card check is a test's: no user's store, ONNX
+    // Runtime, or adapter asked for it.
+    #[cfg(test)]
+    greycard_ai::runtime::off_card_for_tests();
+    let store = match model {
+        Some(_) => Some(greycard_ai::Store::user().context("finding the model store")?),
+        None => greycard_ai::Store::user().ok(),
+    };
+    let mut denoiser = load_learned((path, *model), store.as_ref(), &providers)?;
     tracing::info!(
         "learned denoiser {} on {} ({:.1} s to load)",
         denoiser.version(),
@@ -2031,5 +2043,54 @@ mod tests {
         assert_eq!(path, file);
         assert!(model.is_none());
         std::fs::remove_file(&file).unwrap();
+    }
+
+    /// `--ai-denoise <path>` is refused on a card the record says lost
+    /// the learned denoiser, with the same error as a tier; with nothing
+    /// on record, neither is refused (each fails at its own load here:
+    /// the store holds no files, and the path names none).
+    #[test]
+    fn a_model_named_by_path_is_refused_as_a_tier_is_on_a_lost_card() {
+        use greycard_ai::{DENOISE_FAST, runtime};
+        runtime::off_card_for_tests();
+        let (adapter, build) = ("Test GPU|Vulkan|1.2.3", "b");
+        runtime::set_test_here(Some((adapter, build)));
+        let root = std::env::temp_dir().join(format!(
+            "greycard-cli-off-card-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        greycard_core::testing::remove_dir_retry(&root);
+        let store = greycard_ai::Store::at(&root);
+        let file = root.join("named.onnx");
+        let providers = [greycard_ai::Provider::Cpu];
+        let off_card = |e: &anyhow::Error| {
+            e.chain().any(|c| {
+                matches!(
+                    c.downcast_ref::<runtime::Error>(),
+                    Some(runtime::Error::OffCard)
+                )
+            })
+        };
+        let tier = || load_learned((&file, Some(&DENOISE_FAST)), Some(&store), &providers);
+        let path = || load_learned((&file, None), Some(&store), &providers);
+        let (t, p) = (tier().err().unwrap(), path().err().unwrap());
+        assert!(!off_card(&t), "nothing on record: {t:#}");
+        assert!(!off_card(&p), "nothing on record: {p:#}");
+        // A tier on record for this card, as a loss writes it.
+        runtime::Held::new().put_off(&[runtime::OnCard::new(
+            &root,
+            DENOISE_FAST.id,
+            DENOISE_FAST.files[0].sha256,
+            adapter,
+            build,
+        )]);
+        let (t, p) = (tier().err().unwrap(), path().err().unwrap());
+        assert!(off_card(&t), "{t:#}");
+        assert!(off_card(&p), "{p:#}");
+        assert_eq!(format!("{t:#}"), format!("{p:#}"), "the same error");
+        runtime::forget_off_card(&root, &[]);
+        runtime::set_test_here(None);
+        greycard_core::testing::remove_dir_retry(&root);
     }
 }

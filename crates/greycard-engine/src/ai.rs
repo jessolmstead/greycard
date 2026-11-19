@@ -88,6 +88,20 @@ pub fn learned_off_card() -> bool {
     greycard_ai::runtime::denoisers_off_card()
 }
 
+/// [`learned_off_card`] as this process knows it now, the record never
+/// read for it (`greycard_ai::runtime::denoisers_off_card_known`): for
+/// the window's thread, where the first read would load ONNX Runtime
+/// and ask the adapter. The worker reads the record before its first
+/// develop, and the window asks again after each.
+pub fn learned_off_card_known() -> bool {
+    off_card_seam();
+    #[cfg(any(test, feature = "testing"))]
+    if let Some(off) = TEST_OFF_CARD.with(|t| t.get()) {
+        return off;
+    }
+    greycard_ai::runtime::denoisers_off_card_known()
+}
+
 #[cfg(any(test, feature = "testing"))]
 thread_local! {
     static TEST_OFF_CARD: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };

@@ -465,7 +465,9 @@ pub(crate) fn show_learned_unavailable(st: &State, app: &App) {
     let xtrans = st.develop.frame.as_ref().is_some_and(
         |(f, _)| matches!(&f.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans()),
     );
-    let off_card = crate::ai::learned_off_card();
+    // As known now: the first read of the record loads ONNX Runtime,
+    // which is the worker's to do, not this thread's.
+    let off_card = crate::ai::learned_off_card_known();
     app.set_learned_unavailable(learned_unavailable(xtrans, off_card).into());
     app.set_learned_retry(retry_offered(xtrans, off_card));
 }
@@ -2795,6 +2797,56 @@ mod tests {
         show_learned_unavailable(&state.borrow(), &app);
         assert_eq!(app.get_learned_unavailable(), "");
         crate::ai::set_test_off_card(None);
+    }
+
+    /// The hint asks only what the process knows: a record that holds a
+    /// denoiser, not yet read, is not read on the window's thread, which
+    /// would load ONNX Runtime and name the adapter there.
+    #[test]
+    fn the_hint_never_reads_the_record_on_the_windows_thread() {
+        use crate::testing::{folder, state_for, window};
+        let app = window(1);
+        let (state, _worker) = state_for(&app, folder(1));
+        let root = std::env::temp_dir().join(format!(
+            "greycard-hint-no-read-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        crate::testing::remove_dir_retry(&root);
+        let (here, build) = ("Test GPU|Vulkan|1.2.3", "b");
+        // A tier on record for this card, written as a loss writes it,
+        // through a held run of a model that is not one (so the
+        // process's flag, which other tests read, stays as it is), then
+        // named a tier in the file.
+        greycard_ai::runtime::Held::new().put_off(&[greycard_ai::runtime::OnCard::new(
+            &root,
+            "hint-no-read",
+            "h",
+            here,
+            build,
+        )]);
+        let path = greycard_ai::runtime::off_card_path(&root);
+        let record = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(
+            &path,
+            record.replace("hint-no-read", greycard_ai::DENOISE_FAST.id),
+        )
+        .unwrap();
+        greycard_ai::runtime::set_test_here(Some((here, build)));
+        greycard_ai::runtime::set_test_store(Some(&root));
+        greycard_ai::runtime::read_store_again_for_tests();
+        crate::ai::set_test_off_card(None);
+        app.set_raw_input(true);
+        let before = greycard_ai::runtime::here_asked_on_this_thread();
+        show_learned_unavailable(&state.borrow(), &app);
+        assert_eq!(
+            greycard_ai::runtime::here_asked_on_this_thread(),
+            before,
+            "the window's thread asked for the card"
+        );
+        greycard_ai::runtime::set_test_store(None);
+        greycard_ai::runtime::set_test_here(None);
+        crate::testing::remove_dir_retry(&root);
     }
 
     /// Try again sits beside the hint, only where the card is why; a

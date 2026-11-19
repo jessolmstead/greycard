@@ -154,6 +154,8 @@ pub fn off_card_is_for_tests() -> bool {
 /// or the adapter cannot be named. In a test process ([`TESTS`]), what
 /// the test set on its thread, and with nothing set, none.
 fn here(providers: &[Provider]) -> Option<(String, String)> {
+    #[cfg(any(test, feature = "testing"))]
+    HERE_ASKED.with(|n| n.set(n.get() + 1));
     if tests() {
         return test_here();
     }
@@ -176,6 +178,24 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static TEST_STORE: std::cell::RefCell<Option<PathBuf>> =
         const { std::cell::RefCell::new(None) };
+    /// How many times [`here`] was asked on this thread: in a binary,
+    /// each ask loads ONNX Runtime and names the adapter.
+    static HERE_ASKED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread asked for the card this launch runs on,
+/// which in a binary loads ONNX Runtime and names the adapter: for a
+/// test that a thread, the window's, never does.
+#[cfg(any(test, feature = "testing"))]
+pub fn here_asked_on_this_thread() -> u64 {
+    HERE_ASKED.with(|n| n.get())
+}
+
+/// The store is read again at the next ask of [`denoisers_off_card`],
+/// as at a process's start: for a test of the first read.
+#[cfg(any(test, feature = "testing"))]
+pub fn read_store_again_for_tests() {
+    *STORE_READ.lock().unwrap_or_else(|e| e.into_inner()) = false;
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -451,6 +471,16 @@ pub fn denoisers_off_card() -> bool {
                 .map(|s| s.root().to_path_buf())
         }
     });
+    DENOISERS_OFF.load(Ordering::SeqCst)
+}
+
+/// [`DENOISERS_OFF`] as it stands, the store never read for it: for the
+/// window's thread, which must not load ONNX Runtime or ask the adapter
+/// (the first read of a record that holds a denoiser does both). The
+/// worker reads the record before its first develop and the models
+/// probe reads it on its own thread; the window shows the answer again
+/// after each.
+pub fn denoisers_off_card_known() -> bool {
     DENOISERS_OFF.load(Ordering::SeqCst)
 }
 
@@ -925,6 +955,32 @@ mod tests {
         // Read once: taken off by hand, the flag stands till Try again.
         std::fs::remove_file(off_card_path(&root)).unwrap();
         assert!(denoisers_off_card());
+        let_denoisers_back_on();
+        set_test_store(None);
+        set_test_here(None);
+        greycard_core::testing::remove_dir_retry(&root);
+    }
+
+    /// The flag as known reads no store and asks for no card, which in a
+    /// binary loads ONNX Runtime: the window's thread asks it so. The
+    /// first ask of the flag itself asks for the card, once.
+    #[test]
+    fn the_flag_as_known_asks_for_no_card() {
+        let _flag = flag_lock();
+        let root = root("known");
+        let_denoisers_back_on();
+        *STORE_READ.lock().unwrap() = false;
+        write_off(&root, &[on(&root, DENOISE_FAST.id, ADAPTER, BUILD).entry]);
+        set_test_here(Some((ADAPTER, BUILD)));
+        set_test_store(Some(&root));
+        let before = here_asked_on_this_thread();
+        assert!(!denoisers_off_card_known(), "not read yet");
+        assert_eq!(here_asked_on_this_thread(), before);
+        assert!(!*STORE_READ.lock().unwrap(), "the store is not read");
+        assert!(denoisers_off_card());
+        assert_eq!(here_asked_on_this_thread(), before + 1);
+        assert!(denoisers_off_card_known(), "known once read");
+        assert_eq!(here_asked_on_this_thread(), before + 1);
         let_denoisers_back_on();
         set_test_store(None);
         set_test_here(None);

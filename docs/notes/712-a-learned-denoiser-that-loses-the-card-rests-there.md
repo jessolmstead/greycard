@@ -77,10 +77,10 @@ record that will not parse says so (the next write drops its entries).
 - Two windows writing the record at once: the last rename wins and may drop
   the other's entry; a lost entry is written again at the next loss, so no
   lock.
-- The CLI's `--denoiser <path>` names a file, not a tier, and is not gated.
-- The first read of the record holds its lock while it loads ONNX Runtime
-  and names the adapter, on whichever thread asks first (the UI's, maybe),
-  and only when the record holds a denoiser.
+- The CLI's `--ai-denoise <path>` names a file, not a tier, and rests as
+  the tiers do; a loss under it is still not written to the record.
+- The first read of the record loads ONNX Runtime and names the adapter,
+  so the window's hint only reads the flag the worker's read has set.
 - The cause is unproven between the watchdog and memory: both give the same
   adapter-wide loss (paging is what makes a dispatch slow enough for TDR).
   The 384 estimate was measured on one large card under Vulkan; the tester's

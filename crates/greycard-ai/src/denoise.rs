@@ -221,6 +221,21 @@ fn core_ml_plan(
     (None, own.to_string())
 }
 
+/// The off-card gate every learned denoiser's load passes: refused
+/// ([`Error::OffCard`]), and said in the log with the record's path,
+/// where `off` finds a denoiser on the record under `store_root` for
+/// this card. `name` is the tier's, or the file's for one named by path.
+fn refuse_off_card(store_root: &Path, name: &str, off: impl FnOnce(&Path) -> bool) -> Result<()> {
+    if off(store_root) {
+        log::info!(
+            "{name}: a learned denoiser is on record as off this card; not loaded ({})",
+            runtime::off_card_path(store_root).display()
+        );
+        return Err(Error::OffCard);
+    }
+    Ok(())
+}
+
 impl Denoiser {
     /// Load the model at `path` on the first provider that runs it,
     /// its [`Denoiser::tiling`] chosen for that provider
@@ -229,6 +244,21 @@ impl Denoiser {
     /// [`Denoiser::from_store`] for that.
     pub fn load(path: &Path, providers: &[Provider]) -> Result<Self> {
         Self::load_inner(path, None, providers, None, Tiling::default()).map(Self::choose)
+    }
+
+    /// [`Denoiser::load`] for a model file the user named by path (the
+    /// CLI's `--ai-denoise <path>`), refused as a tier is
+    /// ([`Error::OffCard`]) while any learned denoiser is on the
+    /// off-card record in `store` for the card this launch runs on: a
+    /// card that lost under one is not trusted with another, and a file
+    /// named by hand is one more. No store, no record to read.
+    pub fn from_path(store: Option<&Store>, path: &Path, providers: &[Provider]) -> Result<Self> {
+        if let Some(store) = store {
+            refuse_off_card(store.root(), &path.display().to_string(), |root| {
+                runtime::denoisers_off_here(root, providers)
+            })?;
+        }
+        Self::load(path, providers)
     }
 
     /// [`Denoiser::load`] for runs at `tiling`, as given: nothing is
@@ -315,14 +345,7 @@ impl Denoiser {
         providers: &[Provider],
         off: impl FnOnce(&Path) -> bool,
     ) -> Result<Self> {
-        if off(store.root()) {
-            log::info!(
-                "{}: a learned denoiser is on record as off this card; not loaded ({})",
-                model.name,
-                runtime::off_card_path(store.root()).display()
-            );
-            return Err(Error::OffCard);
-        }
+        refuse_off_card(store.root(), model.name, off)?;
         if !store.have(model) {
             return Err(Error::Missing(model.name));
         }
@@ -653,6 +676,37 @@ mod tests {
             runtime::forget_off_card(&root, &[]);
             greycard_core::testing::remove_dir_retry(&root);
         }
+        runtime::set_test_here(None);
+    }
+
+    /// A model file named by path is refused as a tier is while any
+    /// tier is on the record for this card; with nothing there, or no
+    /// store, the load goes on (to its own error here: no such file).
+    #[test]
+    fn a_model_named_by_path_is_refused_while_a_tier_is_off_the_card() {
+        use crate::registry::DENOISE_FAST;
+        let _flag = runtime::flag_lock();
+        runtime::set_test_here(Some(("Test GPU|Vulkan|1.2.3", "b")));
+        let root =
+            std::env::temp_dir().join(format!("greycard-denoise-off-path-{}", std::process::id()));
+        greycard_core::testing::remove_dir_retry(&root);
+        let store = Store::at(&root);
+        let file = root.join("not-there.onnx");
+        let load = |store| Denoiser::from_path(store, &file, &[Provider::Cpu]);
+        let not_refused = |r: Result<Denoiser>| r.is_err_and(|e| !matches!(e, Error::OffCard));
+        assert!(not_refused(load(Some(&store))), "nothing on record");
+        runtime::Held::new().put_off(&[runtime::OnCard::new(
+            &root,
+            DENOISE_FAST.id,
+            DENOISE_FAST.files[0].sha256,
+            "Test GPU|Vulkan|1.2.3",
+            "b",
+        )]);
+        assert!(matches!(load(Some(&store)), Err(Error::OffCard)));
+        assert!(not_refused(load(None)), "no store, no record");
+        runtime::forget_off_card(&root, &[]);
+        assert!(not_refused(load(Some(&store))), "after Try again");
+        greycard_core::testing::remove_dir_retry(&root);
         runtime::set_test_here(None);
     }
 

@@ -51,12 +51,15 @@ mod record;
 #[cfg(test)]
 pub(crate) use on_card::flag_lock;
 pub use on_card::{
-    HELD, Held, OnCard, denoisers_off_card, denoisers_off_here, forget_off_card,
-    let_denoisers_back_on, off_card_path, on_card_now, put_off_card, read_denoisers_off_card,
-    runs_held, set_build_label,
+    HELD, Held, OnCard, denoisers_off_card, denoisers_off_card_known, denoisers_off_here,
+    forget_off_card, let_denoisers_back_on, off_card_path, on_card_now, put_off_card,
+    read_denoisers_off_card, runs_held, set_build_label,
 };
 #[cfg(any(test, feature = "testing"))]
-pub use on_card::{off_card_for_tests, off_card_is_for_tests, set_test_here, set_test_store};
+pub use on_card::{
+    here_asked_on_this_thread, off_card_for_tests, off_card_is_for_tests,
+    read_store_again_for_tests, set_test_here, set_test_store,
+};
 
 pub use dylib::{FETCH_RUNTIME, LIBRARY, SHIPS, Unavailable};
 
