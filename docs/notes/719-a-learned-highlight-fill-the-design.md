@@ -240,6 +240,17 @@ torch's to 1e-6.
 cut down. Synthetic fixtures are made from it and committed beside it.
 No raw and no trained weight is a test input.
 
+**The oracle is in** `scripts/highlight-fill-oracle/`, with the stage
+spec the port works from (`SPEC.md`) and its fixtures under
+`crates/greycard-core/tests/fixtures/highlight_fill/`. It matches the
+trial at zero on every stage, and departs from it in three stated
+places:
+- a pixel is filled only where its luminance is above 1e-6 and finite
+  (the trial sent a clipped pixel of zero or negative luminance to
+  about a million);
+- a clipped pixel that no field reaches stays as it was, to the bit;
+- a reduced develop builds its thumbnail from its own reduced input.
+
 **The fixtures** are small scenes of a few hundred pixels:
 - a disk lamp with a colored band;
 - a thin specular line;

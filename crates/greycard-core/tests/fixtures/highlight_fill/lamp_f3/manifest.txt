@@ -1,0 +1,58 @@
+x f32 26 32 3
+codes u8 26 32
+clips f32 3
+box i32 2
+frame i32 2
+f f32 1
+out_clipped f32 258 3
+ids i32 2
+feats f32 2 20
+ctx f32 2 32
+outputs f32 2 12
+params f32 2 12
+depth f32 2
+cdepth f32 2
+xh f32 13 16 3
+any_share f32 13 16
+core_share f32 13 16
+kh f32 13 16
+thumb f32 26 32 5
+where f32 4
+fa f32 13 16
+fc f32 13 16
+abh f32 2 13 16
+yh f32 13 16
+ly f32 13 16
+harm_fixed f32 13 16
+harm_known i32 3 4
+harm_val f32 2 3 4
+harm_start f32 2 3 4
+harm_eighth f32 2 3 4
+cmap f32 32 7 8
+inv i32 13 16
+ring_owner i32 13 16
+centroid f32 2 2
+grid f32 2 2
+off f32 13 16
+dd f32 13 16
+s f32 13 16
+mix f32 13 16
+mixg f32 13 16
+gain_band f32 13 16
+dc f32 13 16
+s2 f32 13 16
+tie f32 13 16
+core_dab f32 2 13 16
+band_dab f32 2 13 16
+dab_mixed f32 2 13 16
+keep f32 13 16
+gain_up f32 26 32
+dab_up f32 2 26 32
+regions i32 13 16
+ring i32 13 16
+d0 f32 13 16
+dcore f32 13 16
+dc0 f32 13 16
+gain_h f32 13 16
+dab_h f32 2 13 16
+harm f32 2 13 16

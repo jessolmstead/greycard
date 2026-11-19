@@ -1,0 +1,19 @@
+x f32 32 96 3
+codes u8 32 96
+clips f32 3
+box i32 2
+frame i32 2
+f f32 1
+out_clipped f32 3072 3
+ids i32 1
+feats f32 1 20
+ctx f32 1 32
+outputs f32 1 12
+params f32 1 12
+depth f32 1
+cdepth f32 1
+d0 f32 16 48
+dc0 f32 16 48
+gain_h f32 16 48
+dab_h f32 2 16 48
+harm f32 2 16 48

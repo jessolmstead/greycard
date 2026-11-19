@@ -1,0 +1,7 @@
+x f32 48 96 3
+codes u8 48 96
+clips f32 3
+box i32 2
+frame i32 2
+f f32 1
+out_clipped f32 0 3

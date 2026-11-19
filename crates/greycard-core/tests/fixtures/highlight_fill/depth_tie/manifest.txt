@@ -1,0 +1,14 @@
+x f32 88 136 3
+codes u8 88 136
+clips f32 3
+box i32 2
+frame i32 2
+f f32 1
+out_clipped f32 10132 3
+ids i32 4
+feats f32 4 20
+ctx f32 4 32
+outputs f32 4 12
+params f32 4 12
+depth f32 4
+cdepth f32 4

@@ -5,3 +5,7 @@ scripts/*.sh text eol=lf
 about.toml text eol=lf
 packaging/notices/* text eol=lf
 crates/greycard-slint/ui/icons/LICENSE text eol=lf
+# The learned highlight fill's fixtures: raw arrays never touched, and the
+# manifests the tests read the same bytes on every platform.
+crates/greycard-core/tests/fixtures/highlight_fill/**/*.bin binary
+crates/greycard-core/tests/fixtures/highlight_fill/**/*.txt text eol=lf

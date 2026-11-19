@@ -1,0 +1,16 @@
+# name	size	look scale	bytes	what it exercises
+lamp	96x80	f=1	188977	a warm disk lamp, band of one and two colors, negative specks
+line	96x64	f=1	117370	a thin specular line
+diagonal	96x64	f=1	125058	diagonal touch at half size; two rings meeting
+edge_cut	99x73	f=1	223656	cut by the frame edge, core about 60 px deep, odd size
+sky	128x80	f=1	250542	a broad gradient sky, bright and dark foreground
+all_clipped	96x32	f=1	98921	all clipped; distances at the cap
+no_clip	96x48	f=1	60027	nothing clipped; the fill returns x
+depth_tie	136x88	f=1	278657	cores below, at, and inside the depth tie
+xtrans	96x72	f=1	118268	3x3-cell codes, untrusted bits
+mixed	96x64	f=1	136170	core without band on dark, band without core, half-core blocks, a one-cell region, sub-floor luminance
+headroom	96x80	f=1	25660	the lamp with headroom 1.123 (x and codes derived from the lamp): clips below 1
+lamp_f3	32x26	f=3	83775	lamp box-downsampled 3x, its codes pooled; run look-scaled at f = 3
+depth_tie_f3	45x29	f=3	46811	depth_tie box-downsampled 3x, its codes pooled; run look-scaled at f = 3
+depth_tie_f2_5	68x44	f=2.5	85805	depth_tie box-downsampled 2x, its codes pooled; run look-scaled at f = 2.5 (as a reduced input of a frame 2.5x its long edge)
+nonfinite	32x26	f=1	18146	hl-1's guard: NaN and infinite pixels pass through untouched

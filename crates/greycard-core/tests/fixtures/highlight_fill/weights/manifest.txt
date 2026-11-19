@@ -1,0 +1,16 @@
+ctx.net.0.weight f32 16 5 3 3
+ctx.net.0.bias f32 16
+ctx.net.2.weight f32 32 16 3 3
+ctx.net.2.bias f32 32
+ctx.net.4.weight f32 32 32 3 3
+ctx.net.4.bias f32 32
+ctx.net.6.weight f32 32 32 3 3
+ctx.net.6.bias f32 32
+ctx.net.8.weight f32 32 32 3 3
+ctx.net.8.bias f32 32
+mlp.0.weight f32 128 52
+mlp.0.bias f32 128
+mlp.2.weight f32 128 128
+mlp.2.bias f32 128
+mlp.4.weight f32 12 128
+mlp.4.bias f32 12
