@@ -1648,6 +1648,43 @@ mod tests {
         Purpose::Export(Box::default())
     }
 
+    /// The edit's crate names the highlight fill's versions this build
+    /// has without seeing greycard-ai, whose versions they are: held
+    /// equal, in order.
+    #[test]
+    fn the_edit_names_the_highlight_fills_this_build_has() {
+        let names: Vec<&str> = greycard_ai::highlight::VERSIONS
+            .iter()
+            .map(|v| v.name)
+            .collect();
+        assert_eq!(names, greycard_edit::key::HIGHLIGHT_FILLS);
+        for name in names {
+            assert!(greycard_ai::highlight::version(name).is_some());
+        }
+    }
+
+    /// No stage reads the highlight fill yet: on, off, or a version
+    /// this build lacks, every list is the one it was.
+    #[test]
+    fn the_highlight_fill_moves_no_list_yet() {
+        for purpose in [
+            Purpose::Viewport,
+            export(),
+            Purpose::Reduced,
+            Purpose::ModelsSee,
+            Purpose::Prefetch,
+        ] {
+            let off = stages(&Edit::default(), &purpose, &raw(0), None);
+            for name in ["hl-1", "hl-9"] {
+                let edit = Edit {
+                    highlight_fill: Some(name.into()),
+                    ..Edit::default()
+                };
+                assert_eq!(stages(&edit, &purpose, &raw(0), None), off, "{name}");
+            }
+        }
+    }
+
     /// The sharpen's guide is tapped just before the local contrast,
     /// where Texture, Clarity, or Structure runs and a sharpen
     /// follows; an edit with all three at zero has the list it had.

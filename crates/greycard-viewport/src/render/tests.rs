@@ -5368,6 +5368,8 @@ fn case_fields(case: &Case, seen: &mut Moved) {
         grain,
         // The develop's, before the finish.
         demosaic: _,
+        // The develop's, before the finish.
+        highlight_fill: _,
         camera,
         adjustments,
         // The develop's, before the finish.

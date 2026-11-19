@@ -9,8 +9,8 @@ use std::time::SystemTime;
 
 use greycard_edit::camera::ProfileChoice;
 use greycard_edit::key::{
-    ASPECT_FRAME, DEVELOP_RECIPE, LANDSCAPE_PIPELINE, LINEAR_RAMP, MIDTONES_SHAPE, PART_PIPELINE,
-    PERSON_EDGE, Read, SHARPEN_GUIDE, SKY_PIPELINE, WHITES_SHAPE,
+    ASPECT_FRAME, DEVELOP_RECIPE, HIGHLIGHT_FILL, LANDSCAPE_PIPELINE, LINEAR_RAMP, MIDTONES_SHAPE,
+    PART_PIPELINE, PERSON_EDGE, Read, SHARPEN_GUIDE, SKY_PIPELINE, WHITES_SHAPE,
 };
 use greycard_edit::look::LutChoice;
 use greycard_edit::{Edit, LensChoice};
@@ -111,8 +111,8 @@ fn contents(path: &Path) -> Option<[u8; 32]> {
 /// guide ([`SHARPEN_GUIDE`]), the Midtones bell's shape
 /// ([`MIDTONES_SHAPE`]), the whites' shape ([`WHITES_SHAPE`]), the
 /// linear gradient's ramp ([`LINEAR_RAMP`]), an aspect's framing with
-/// no crop stored
-/// ([`ASPECT_FRAME`]), the saturation table's version
+/// no crop stored ([`ASPECT_FRAME`]), the highlight fill's
+/// implementation ([`HIGHLIGHT_FILL`]), the saturation table's version
 /// ([`greycard_core::decode::HEADROOM`]), the lens database's name as the caller gives
 /// it, and the look and profile directories as they stand (each file's
 /// name, length and modification time; not their contents, which only
@@ -170,7 +170,7 @@ pub fn keys_made_under_in(
     format!(
         "recipe {DEVELOP_RECIPE}; masks {SKY_PIPELINE} {LANDSCAPE_PIPELINE} {PART_PIPELINE} \
          {PERSON_EDGE}; {SHARPEN_GUIDE}; {MIDTONES_SHAPE}; {WHITES_SHAPE}; {LINEAR_RAMP}; \
-         {ASPECT_FRAME}; {}; \
+         {ASPECT_FRAME}; {HIGHLIGHT_FILL}; {}; \
          lenses {lenses:?}; files {}",
         greycard_core::decode::HEADROOM,
         &files.to_hex()[..16]
@@ -282,6 +282,7 @@ mod tests {
             WHITES_SHAPE,
             LINEAR_RAMP,
             ASPECT_FRAME,
+            HIGHLIGHT_FILL,
             greycard_core::decode::HEADROOM,
         ] {
             assert!(first.contains(&format!("; {part};")), "{part}: {first}");

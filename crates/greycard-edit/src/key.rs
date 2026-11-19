@@ -99,6 +99,22 @@ pub const LINEAR_RAMP: &str = "linear-ramp-1";
 /// before the pictures were the whole frame, 2026-11-13.
 pub const ASPECT_FRAME: &str = "aspect-frame-1";
 
+/// The learned highlight fill, by its implementation's version: taken
+/// into the key of an edit whose fill names a version this build has
+/// ([`Edit::highlight_fill`]), so the pictures kept of such an edit are
+/// made again when the op changes under one name, and those of every
+/// other edit are kept. The version's name is in the edit's own JSON
+/// already; this is the code that runs it. An edit naming a version
+/// this build lacks develops without the fill and does not take it, so
+/// a newer build that has that version keys it apart from the picture
+/// kept here. 1: the first, 2026-11-19.
+pub const HIGHLIGHT_FILL: &str = "highlight-fill-1";
+
+/// The highlight fill's versions this build has, by the names an edit
+/// writes: `greycard_ai::highlight::VERSIONS`' names, which this crate
+/// cannot see; the engine's tests hold the two equal.
+pub const HIGHLIGHT_FILLS: &[&str] = &["hl-1"];
+
 /// The learned masks' stages, by version: raise one when its raster
 /// comes to be another from the same shape. greycard-ui's mask cache
 /// keys its rasters by these, and the develop key of an edit with such
@@ -289,6 +305,11 @@ impl Edit {
             hasher.update(&(ASPECT_FRAME.len() as u64).to_le_bytes());
             hasher.update(ASPECT_FRAME.as_bytes());
         }
+        if self.highlight_fill().is_some() {
+            hasher.update(b"highlight fill\0");
+            hasher.update(&(HIGHLIGHT_FILL.len() as u64).to_le_bytes());
+            hasher.update(HIGHLIGHT_FILL.as_bytes());
+        }
         for Read { name, contents } in read {
             hasher.update(&(name.len() as u64).to_le_bytes());
             hasher.update(name.as_bytes());
@@ -456,6 +477,40 @@ mod tests {
         assert!(!kept(&edit), "a linear gradient carries the ramp");
         edit.adjustments[0].mask.components.remove(0);
         assert!(!kept(&edit), "a linear gradient alone");
+    }
+
+    /// The highlight fill off keeps every key as it was; a version this
+    /// build has is another picture and carries [`HIGHLIGHT_FILL`]; a
+    /// version it lacks develops without the fill but is in the edit's
+    /// JSON, so its key is its own, made without the tag.
+    #[test]
+    fn the_highlight_fill_is_keyed_only_where_this_build_has_its_version() {
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        assert_eq!(edit.highlight_fill, None);
+        let off = key(&edit, None);
+        assert_eq!(off, key_before_the_aspect_frame(&edit), "off, as before");
+        edit.highlight_fill = Some("hl-1".into());
+        assert_eq!(edit.highlight_fill(), Some("hl-1"));
+        let on = key(&edit, None);
+        assert_ne!(on, off);
+        assert_ne!(
+            on,
+            key_before_the_aspect_frame(&edit),
+            "hl-1 carries the fill's version"
+        );
+        edit.highlight_fill = Some("hl-9".into());
+        assert_eq!(edit.highlight_fill(), None, "a version this build lacks");
+        let unknown = key(&edit, None);
+        assert_ne!(unknown, off, "the name is in the edit's JSON");
+        assert_ne!(unknown, on);
+        assert_eq!(
+            unknown,
+            key_before_the_aspect_frame(&edit),
+            "and the fill's version is not"
+        );
+        edit.highlight_fill = None;
+        assert_eq!(key(&edit, None), off, "and off again");
     }
 
     /// The key as it was made before [`ASPECT_FRAME`], for an edit with

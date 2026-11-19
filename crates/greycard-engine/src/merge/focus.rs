@@ -336,11 +336,13 @@ pub fn stack(files: &[PathBuf], options: &Options, progress: &dyn Progress) -> R
 }
 
 /// The edit a stack's file starts with: the reference frame's, less
-/// the learned denoiser, which a file with no mosaic cannot run. Its
-/// exposure stays: a stack is at the reference's.
+/// the learned denoiser and the highlight fill, which a file with no
+/// mosaic cannot run. Its exposure stays: a stack is at the
+/// reference's.
 pub fn edit_for_stack(reference: &Edit) -> Edit {
     let mut edit = reference.clone();
     edit.noise.learned = greycard_edit::Learned::Off;
+    edit.highlight_fill = None;
     edit
 }
 
@@ -349,6 +351,18 @@ mod tests {
     use super::*;
     use greycard_core::merge::Noise;
     use greycard_core::merge::testing::{mosaic, write_dng as write_raw};
+
+    /// A stack's file starts without the highlight fill, as without
+    /// the learned denoiser, and at the reference's exposure.
+    #[test]
+    fn a_stack_starts_without_the_highlight_fill() {
+        let mut reference = Edit::default();
+        reference.light.exposure = 0.5;
+        reference.highlight_fill = Some("hl-1".into());
+        let edit = edit_for_stack(&reference);
+        assert_eq!(edit.highlight_fill, None);
+        assert_eq!(edit.light.exposure, 0.5);
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir =

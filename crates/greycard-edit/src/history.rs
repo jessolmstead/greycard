@@ -1097,6 +1097,20 @@ mod tests {
         assert_eq!(describe(&base, &base, &[]), "No change");
     }
 
+    /// A step that moves the highlight fill alone has no words of its
+    /// own yet: it reads as no change. Nothing sets it alone today.
+    #[test]
+    fn the_highlight_fill_alone_reads_as_no_change() {
+        let base = Edit::default();
+        let mut on = base.clone();
+        on.highlight_fill = Some("hl-1".into());
+        assert_eq!(describe(&base, &on, &[]), "No change");
+        assert_eq!(describe(&on, &base, &[]), "No change");
+        let mut both = on.clone();
+        both.light.exposure = 0.5;
+        assert_eq!(describe(&base, &both, &[]), "Exposure +0.50");
+    }
+
     #[test]
     fn midtones_is_named_with_its_value_like_its_neighbors() {
         let base = Edit::default();

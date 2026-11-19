@@ -108,6 +108,61 @@ use greycard_edit::{Learned, Sidecar, preset};
 use slint::Model;
 use slint::platform::{Key, WindowEvent};
 
+/// No section carries the highlight fill: a sync of every section the
+/// sheet ticks and a paste of every section leave each frame's own, on
+/// or off, while the rest of the look lands. Pinned so that giving it
+/// a carry is a choice made here.
+#[test]
+fn neither_a_sync_nor_a_paste_carries_the_highlight_fill() {
+    let with = |ev: f32, fill: Option<&str>| {
+        let mut e = Edit::default();
+        e.light.exposure = ev;
+        e.highlight_fill = fill.map(str::to_string);
+        e
+    };
+    let app = window(3);
+    let (state, worker) = state_for(&app, folder(3));
+    {
+        let mut st = state.borrow_mut();
+        st.sidecars[0].record(with(1.25, Some("hl-1")));
+        st.sidecars[2].record(with(0.0, Some("hl-9")));
+    }
+    app.invoke_select(0);
+    state.borrow_mut().views.picked = vec![0, 1, 2];
+    app.invoke_sync_open_asked();
+    app.invoke_sync_applied();
+    {
+        let st = state.borrow();
+        assert_eq!(st.sidecars[0].current, with(1.25, Some("hl-1")));
+        assert_eq!(st.sidecars[1].current.light.exposure, 1.25);
+        assert_eq!(st.sidecars[1].current.highlight_fill, None);
+        assert_eq!(st.sidecars[2].current.light.exposure, 1.25);
+        assert_eq!(
+            st.sidecars[2].current.highlight_fill.as_deref(),
+            Some("hl-9")
+        );
+    }
+
+    let mut st = state.borrow_mut();
+    st.sidecars[1].record(with(-0.5, None));
+    copy_settings_of(&mut st, &app, 0);
+    paste_onto(
+        &mut st,
+        &app,
+        &worker,
+        &[1, 2],
+        &Choice::whole(Section::ALL),
+        &[],
+        |_, _| None,
+    );
+    assert_eq!(st.line(1).unwrap().current.light.exposure, 1.25);
+    assert_eq!(st.line(1).unwrap().current.highlight_fill, None);
+    assert_eq!(
+        st.line(2).unwrap().current.highlight_fill.as_deref(),
+        Some("hl-9")
+    );
+}
+
 /// The sheet's headings as its rows read: each section's title
 /// and how its checks stand, 0 off, 1 some, 2 on.
 fn headings(app: &App) -> Vec<(String, i32)> {

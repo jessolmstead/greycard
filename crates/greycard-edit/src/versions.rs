@@ -278,6 +278,38 @@ mod tests {
         Sidecar::from_json(&s.to_json()).unwrap()
     }
 
+    /// The highlight fill rides with the whole edit wherever one is
+    /// kept: a step of the history and its undo and redo, a snapshot,
+    /// a version made from the frame, and the sidecar's file, a name
+    /// this build lacks included.
+    #[test]
+    fn the_highlight_fill_goes_wherever_a_whole_edit_goes() {
+        let filled = |name: &str| {
+            let mut e = exposed(0.5);
+            e.highlight_fill = Some(name.into());
+            e
+        };
+        let mut s = Sidecar::default();
+        s.record(exposed(0.5));
+        assert!(s.record(filled("hl-1")), "the fill alone is a step");
+        s.take_snapshot("Filled", 1_700_000_000);
+        s.record(filled("hl-9"));
+        assert!(s.undo());
+        assert_eq!(s.line.current, filled("hl-1"));
+        assert!(s.undo());
+        assert_eq!(s.line.current.highlight_fill, None);
+        assert!(s.redo() && s.redo());
+        assert_eq!(s.line.current, filled("hl-9"));
+        assert!(s.restore_snapshot(0));
+        assert_eq!(s.line.current, filled("hl-1"));
+        let id = s.new_version(None, None).unwrap();
+        assert_eq!(s.version(&id).unwrap().line.current, filled("hl-1"));
+        let read = reread(&s);
+        assert_eq!(read.line, s.line);
+        assert_eq!(read.versions, s.versions);
+        assert_eq!(read.line.snapshots[0].edit, filled("hl-1"));
+    }
+
     #[test]
     fn a_new_version_copies_the_sources_current_edit_and_nothing_else() {
         let mut s = developed();

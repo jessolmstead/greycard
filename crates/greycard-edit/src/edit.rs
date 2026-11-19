@@ -75,6 +75,14 @@ pub struct Edit {
     /// The grain over the frame as shown.
     pub grain: grain::Grain,
     pub demosaic: Demosaic,
+    /// The learned highlight fill, by the name of the version the edit
+    /// was made with (`"hl-1"`); absent, off. A name and not an enum,
+    /// so a sidecar naming a version this build lacks still reads,
+    /// develops without the fill ([`Edit::highlight_fill`]), and is
+    /// written back as it was. Left out of a sidecar when off, so every
+    /// sidecar and develop key written before it is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight_fill: Option<String>,
     /// The camera profile the sensor's color is taken through: the
     /// file's own calibrations, or a DCP from the profile directory.
     pub camera: Camera,
@@ -484,6 +492,7 @@ impl Default for Edit {
             grain: grain::Grain::default(),
             adjustments: Vec::new(),
             demosaic: Demosaic::default(),
+            highlight_fill: None,
             camera: Camera::default(),
             retouch: retouch::Retouch::default(),
         }
@@ -491,6 +500,18 @@ impl Default for Edit {
 }
 
 impl Edit {
+    /// The highlight fill's version this edit asks for, when this
+    /// build has it ([`crate::key::HIGHLIGHT_FILLS`]); `None` when the
+    /// fill is off or names a version this build lacks, which develops
+    /// as off.
+    pub fn highlight_fill(&self) -> Option<&'static str> {
+        let name = self.highlight_fill.as_deref()?;
+        crate::key::HIGHLIGHT_FILLS
+            .iter()
+            .copied()
+            .find(|&v| v == name)
+    }
+
     /// The engine's settings for this edit, with the camera profile it
     /// names read through `loader`. Exposure and the tone curve are not
     /// the engine's; see [`Light`].
@@ -647,6 +668,49 @@ mod tests {
     use crate::{Learned, Tone};
     use greycard_core::color::WhitePoint;
     use greycard_core::develop::dehaze::DehazeOptions;
+
+    /// The highlight fill came in with no new version: off, it is not
+    /// written, so an edit serializes as it did before it, byte for
+    /// byte; on, it is written and read back; a version this build
+    /// lacks reads, develops as off, and is written back as it was,
+    /// through the sidecar too.
+    #[test]
+    fn the_highlight_fill_is_written_only_when_on_and_kept_when_unknown() {
+        let old = r#"{"version": 9, "light": {"exposure": 0.5}, "demosaic": "rcd-vng4"}"#;
+        let e = Edit::from_json(old).unwrap();
+        assert_eq!(e.highlight_fill, None);
+        assert_eq!(e.highlight_fill(), None);
+        let json = e.to_json();
+        assert!(!json.contains("highlight_fill"), "{json}");
+        let mut set = e.clone();
+        set.highlight_fill = Some("hl-1".into());
+        let mut bare: serde_json::Value = serde_json::from_str(&set.to_json()).unwrap();
+        assert_eq!(bare["highlight_fill"], "hl-1");
+        bare.as_object_mut().unwrap().remove("highlight_fill");
+        assert_eq!(
+            bare,
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            "the field is all it adds"
+        );
+        assert_eq!(Edit::from_json(&set.to_json()).unwrap(), set);
+        assert_eq!(set.highlight_fill(), Some("hl-1"));
+
+        let newer = r#"{"version": 9, "highlight_fill": "hl-9"}"#;
+        let e = Edit::from_json(newer).unwrap();
+        assert_eq!(e.highlight_fill.as_deref(), Some("hl-9"));
+        assert_eq!(e.highlight_fill(), None, "develops as off");
+        assert_eq!(Edit::from_json(&e.to_json()).unwrap(), e);
+
+        let mut sidecar = crate::Sidecar::default();
+        sidecar.record(e);
+        let read = crate::Sidecar::from_json(&sidecar.to_json()).unwrap();
+        assert_eq!(read.current.highlight_fill.as_deref(), Some("hl-9"));
+        assert!(
+            !crate::Sidecar::default()
+                .to_json()
+                .contains("highlight_fill")
+        );
+    }
 
     fn masked(detail: Detail) -> Edit {
         let mut edit = Edit::default();

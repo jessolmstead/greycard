@@ -3578,6 +3578,7 @@ fn same_base(a: &Edit, b: &Edit) -> bool {
     a.white_balance == b.white_balance
         && a.noise == b.noise
         && a.demosaic == b.demosaic
+        && a.highlight_fill == b.highlight_fill
         && a.camera == b.camera
         && a.lens == b.lens
 }

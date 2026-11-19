@@ -138,14 +138,17 @@ fn strip_verbatim(p: &Path) -> std::path::PathBuf {
 }
 
 /// `edit` with only what the base made at `size` reads of it: the
-/// white balance, the camera profile, the demosaic, the noise, and the
-/// lens; and for the reduced develop the geometry, which picks its bin,
-/// and the Detail section, which its models' picture is run through.
+/// white balance, the camera profile, the demosaic, the highlight fill
+/// (which comes before the masks' tap; off, it writes nothing, so no
+/// print moves), the noise, and the lens; and for the reduced develop
+/// the geometry, which picks its bin, and the Detail section, which
+/// its models' picture is run through.
 pub fn base_edit(edit: &Edit, size: Size) -> Edit {
     let mut base = Edit {
         white_balance: edit.white_balance.clone(),
         camera: edit.camera.clone(),
         demosaic: edit.demosaic,
+        highlight_fill: edit.highlight_fill.clone(),
         noise: edit.noise.clone(),
         lens: edit.lens.clone(),
         ..Edit::default()
@@ -231,6 +234,7 @@ mod tests {
         edit.grain.amount = 0.2;
         edit.output_sharpen.amount = 0.5;
         edit.color.saturation = 15.0;
+        edit.highlight_fill = Some("hl-1".into());
         let mut a = greycard_edit::Adjustment::default();
         a.mask.components.push(greycard_edit::mask::Component {
             shape: greycard_edit::mask::Shape::Sky { picks: Vec::new() },
@@ -433,6 +437,10 @@ mod tests {
             moved("defringe", &|e| e.lens.defringe = false),
             moved("denoise", &|e| e.noise.strength += 0.1),
             moved("demosaic", &|e| e.demosaic = greycard_edit::Demosaic::Vng4),
+            moved("highlight fill off", &|e| e.highlight_fill = None),
+            moved("another highlight fill", &|e| {
+                e.highlight_fill = Some("hl-9".into())
+            }),
         ];
         for (what, moved) in base {
             assert!(moved, "{what} moves the print");
@@ -468,6 +476,25 @@ mod tests {
         let mut flat = edit.clone();
         flat.detail.clarity = 0.0;
         assert_ne!(reduced(&flat), reduced(&edit), "the models see Detail");
+        let mut unfilled = edit.clone();
+        unfilled.highlight_fill = None;
+        assert_ne!(
+            reduced(&unfilled),
+            reduced(&edit),
+            "the models see the fill"
+        );
+        // Off, the field writes nothing into the base's edit, whose
+        // develop key is then the one it was before the field
+        // (greycard-edit's key tests): no print made before it moves.
+        for size in [Size::Full, Size::Reduced] {
+            let base = base_edit(&unfilled, size);
+            assert_eq!(base.highlight_fill, None);
+            assert!(!base.to_json().contains("highlight_fill"));
+            assert_eq!(
+                base_edit(&edit, size).highlight_fill.as_deref(),
+                Some("hl-1")
+            );
+        }
 
         let dir = crate::testing::scratch_dir("mask-base-file");
         let (a, b) = (dir.join("a.dng"), dir.join("b.dng"));

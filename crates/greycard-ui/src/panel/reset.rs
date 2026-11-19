@@ -289,6 +289,49 @@ mod tests {
         assert_eq!(state.borrow().sidecars[1], Sidecar::default());
     }
 
+    /// The highlight fill has no section: the panel's read keeps it, a
+    /// save records it, every header reset leaves it, and Reset to
+    /// Original takes it off with the rest. A step that moves it alone
+    /// reads "No change" in the history, as it has no words yet.
+    #[test]
+    fn the_highlight_fill_stays_through_the_panel_and_goes_with_reset_to_original() {
+        let mut filled = exposed(0.7);
+        filled.highlight_fill = Some("hl-1".into());
+        let app = window(2);
+        let (state, _worker) = state_for(&app, folder(2));
+        state.borrow_mut().sidecars[0].record(filled.clone());
+        app.invoke_select(0);
+        {
+            let st = state.borrow();
+            assert_eq!(read_edit(&app, &st.develop.edit, st.develop.target), filled);
+        }
+        app.set_exposure(0.2);
+        save(&app, &state);
+        let now = state.borrow().sidecars[0].current.clone();
+        assert_eq!(now.light.exposure, 0.2);
+        assert_eq!(now.highlight_fill.as_deref(), Some("hl-1"));
+        for name in crate::panel::section_reset::SECTIONS {
+            let mut e = now.clone();
+            crate::panel::section_reset::reset_section(&mut e, &Edit::default(), None, name);
+            assert_eq!(e.highlight_fill.as_deref(), Some("hl-1"), "{name}");
+        }
+
+        app.invoke_history_reset();
+        assert_eq!(state.borrow().sidecars[0].current, Edit::default());
+
+        let only = Edit {
+            highlight_fill: Some("hl-1".into()),
+            ..Edit::default()
+        };
+        state.borrow_mut().sidecars[1].record(only);
+        app.invoke_select(1);
+        assert!(
+            app.get_history_resettable(),
+            "the fill alone is not the Original"
+        );
+        assert_eq!(history_rows(&app)[0], "No change");
+    }
+
     #[test]
     fn the_menu_resets_the_edited_of_a_selection_and_leaves_the_one_at_original() {
         let dir = std::env::temp_dir().join(format!("greycard-reset-{}", std::process::id()));

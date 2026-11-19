@@ -221,7 +221,8 @@ pub fn reference_of(count: usize, asked: Option<usize>) -> Result<usize> {
 
 /// The edit a panorama's file starts with: the reference frame's, less
 /// what the merge did or what was of one frame's geometry. Less the
-/// exposure and the learned denoiser, as a bracket's; less the lens
+/// exposure, the learned denoiser, and the highlight fill, as a
+/// bracket's; less the lens
 /// section, which the merge ran (its profile, a distortion or an
 /// aberration set by hand); less the crop, the turn, the retouch, and
 /// the masks, which were placed on the reference frame and mean

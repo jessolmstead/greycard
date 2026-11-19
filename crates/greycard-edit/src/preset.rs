@@ -1596,6 +1596,55 @@ mod tests {
     use super::*;
     use crate::{Learned, WhiteBalance};
 
+    /// The highlight fill is no section's, so no preset, copy sheet,
+    /// paste, or sync carries it: every section and every part chosen,
+    /// it stays behind, and the picture laid on keeps its own, on or
+    /// off. Pinned so that giving it a carry is a choice made here.
+    #[test]
+    fn the_highlight_fill_goes_with_no_section_or_part() {
+        let mut from = Edit::default();
+        from.light.exposure = 0.5;
+        from.highlight_fill = Some("hl-1".into());
+        from.adjustments.push(crate::Adjustment {
+            id: 1,
+            ..Default::default()
+        });
+        let all = Choice {
+            sections: Section::ALL.to_vec(),
+            parts: Part::ALL.to_vec(),
+            masks: None,
+            masks_land: Masks::Replace,
+        };
+        let presets = [
+            Preset::from_edit("All", &from, Section::ALL),
+            Preset::from_choice("All", &from, &all),
+            Preset::between_frames(&from, &all),
+            Preset::between_frames(&from, &Choice::whole(&[Section::Demosaic])),
+            Preset::of_mask(&from, 1),
+        ];
+        for p in &presets {
+            assert_eq!(p.edit.highlight_fill, None, "{:?}", p.sections);
+            assert!(!p.to_json().contains("highlight_fill"));
+            let off = p.applied(&Edit::default());
+            assert_eq!(off.highlight_fill, None, "{:?}", p.sections);
+            let kept = Edit {
+                highlight_fill: Some("hl-9".into()),
+                ..Edit::default()
+            };
+            assert_eq!(
+                p.applied(&kept).highlight_fill.as_deref(),
+                Some("hl-9"),
+                "{:?}",
+                p.sections
+            );
+        }
+        for s in Section::ALL {
+            let mut onto = from.clone();
+            onto.highlight_fill = None;
+            assert!(s.same(&from, &onto), "{s:?} does not read the fill");
+        }
+    }
+
     /// A DCP named with the tone curve's switch on, laid where the
     /// profile has no curve (stripped of it, or not in the directory):
     /// the switch is dropped, so the frame's edit, its develop key, and

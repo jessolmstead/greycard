@@ -398,12 +398,13 @@ pub fn reference_of(files: &[PathBuf], asked: Option<usize>) -> Result<usize> {
 /// The edit a merge's file starts with: the reference frame's, less
 /// its exposure (the file opens at the reference's already, and a
 /// reference pulled down to save its highlights would pull the
-/// merge's headroom down with it) and less the learned denoiser, which
-/// a file with no mosaic cannot run.
+/// merge's headroom down with it) and less the learned denoiser and
+/// the highlight fill, which a file with no mosaic cannot run.
 pub fn edit_for_merge(reference: &Edit) -> Edit {
     let mut edit = reference.clone();
     edit.light.exposure = 0.0;
     edit.noise.learned = greycard_edit::Learned::Off;
+    edit.highlight_fill = None;
     edit
 }
 
@@ -1674,6 +1675,20 @@ mod tests {
 
     const W: usize = 256;
     const H: usize = 160;
+
+    /// A merge's file starts with the reference's edit less what a file
+    /// with no mosaic cannot run: the learned denoiser and the
+    /// highlight fill; the rest of the look stays.
+    #[test]
+    fn a_merge_starts_without_the_highlight_fill() {
+        let mut reference = Edit::default();
+        reference.color.saturation = 10.0;
+        reference.highlight_fill = Some("hl-1".into());
+        let edit = edit_for_merge(&reference);
+        assert_eq!(edit.highlight_fill, None);
+        assert_eq!(edit.color.saturation, 10.0);
+        assert_eq!(pano::edit_for_pano(&reference).highlight_fill, None);
+    }
 
     /// A bracket of three made-up frames in a scratch folder: the true
     /// exposures x0.25, x1, x4 of the scene (a ramp from -12 stops to
