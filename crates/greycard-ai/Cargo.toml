@@ -81,14 +81,16 @@ pollster = { workspace = true, optional = true }
 [target.'cfg(any(windows, target_os = "linux", target_os = "android"))'.dependencies]
 ash = { version = "0.38", default-features = false, features = ["std"], optional = true }
 
-# `runtime::leave`'s `_exit`, `ram`'s `sysconf`, and `runtime::trim_heap`'s
+# `runtime::end`'s `_exit`, `ram`'s `sysconf`, and `runtime::trim_heap`'s
 # `malloc_trim`. Already in the tree.
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
-# `ram`'s `GlobalMemoryStatusEx`. Already in the tree.
+# `ram`'s `GlobalMemoryStatusEx`, and `runtime::end`'s `fflush` and
+# `TerminateProcess`. Already in the tree.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_System_SystemInformation"] }
+libc.workspace = true
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [dev-dependencies]
 # The scratch folder's removal the tests share.

@@ -13,6 +13,9 @@ design note behind it.
   [§712](https://github.com/jessolmstead/greycard/blob/master/docs/notes/712-a-learned-denoiser-that-loses-the-card-rests-there.md)).
 - A camera picture smaller than its raw, as in our merged panoramas,
   no longer stands in small while the frame develops.
+- On Windows, greycard no longer crashes a moment after its window
+  closes once an AI model has run (discussion 168,
+  [§714](https://github.com/jessolmstead/greycard/blob/master/docs/notes/714-windows-ends-without-teardown-once-a-model-is-loaded.md)).
 - On Windows, a graphics backend that keeps failing at start is given
   up after three starts in a row, and the other is tried
   ([§713](https://github.com/jessolmstead/greycard/blob/master/docs/notes/713-the-gpu-marker-gives-up-and-is-written-whole.md)).

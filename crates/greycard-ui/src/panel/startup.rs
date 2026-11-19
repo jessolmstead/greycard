@@ -81,24 +81,24 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // `--match-compare` measures the camera match and writes a report;
     // no window, no device.
     if let Some(out) = cli.match_compare.as_deref() {
-        return crate::runners::match_compare(&cli, out);
+        return ended(crate::runners::match_compare(&cli, out));
     }
     // `--measure-baseline` likewise: the default develop against the
     // camera's JPEG, per body.
     if let Some(out) = cli.measure_baseline.as_deref() {
-        return crate::runners::measure_baseline(&cli, out);
+        return ended(crate::runners::measure_baseline(&cli, out));
     }
     // `--fit-lightroom` likewise: the mapper fitted to the blocks the
     // measurement kept.
     if !cli.fit_lightroom.is_empty() {
-        return crate::runners::fit_lightroom(&cli, &cli.fit_lightroom);
+        return ended(crate::runners::fit_lightroom(&cli, &cli.fit_lightroom));
     }
     // `--measure-lightroom` likewise: a catalog against its exports.
     if let Some(catalog) = cli.measure_lightroom.as_deref() {
         if cli.crops {
-            return crate::runners::measure_crop(&cli, catalog);
+            return ended(crate::runners::measure_crop(&cli, catalog));
         }
-        return crate::runners::measure_lightroom(&cli, catalog);
+        return ended(crate::runners::measure_lightroom(&cli, catalog));
     }
     // `--import` with no sheet asked for is a run with no window.
     let import_sheet = matches!(
@@ -1963,9 +1963,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // inside the GPU driver, waiting on a fence in `Device::poll`.
     // Returning from here runs the C library's exit handlers, which
     // tear NVIDIA's driver down under it, and the process dies with
-    // SIGSEGV on the worker's thread. So it ends by `_exit` instead,
-    // which runs none of them: the kernel ends every thread where it
-    // is. What this quit saves is written above (the import's file
+    // SIGSEGV on the worker's thread. So it ends by `_exit` instead
+    // (`TerminateProcess` on Windows, `headless::leave`), which runs
+    // none of them: the kernel ends every thread where it is. What
+    // this quit saves is written above (the import's file
     // in hand, the index closed, the settings, the open frame's
     // sidecar), each by a write that has returned. The archive writes
     // are made or noted: a followed frame's write to its copy that
@@ -1978,8 +1979,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // that has ended by now, the usual case, leaves the process to end
     // as it always has, unless a model was opened: then ONNX Runtime's
     // own exit handler would tear Dawn's Vulkan instance down after
-    // the driver, the crash `greycard_ai::runtime::leave` is about, and
-    // the quit ends by `_exit` too.
+    // the driver (on Windows its TLS callback at process detach, Dawn,
+    // D3D12 and the shader compiler with it), the crash
+    // `greycard_ai::runtime::leave` is about, and the quit ends by
+    // `_exit` too.
     if !worker.finished() || greycard_ai::runtime::loaded() {
         if let Err(e) = &ran {
             eprintln!("Error: {e:?}");
@@ -1988,7 +1991,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         if let Some(index) = index {
             fold_library_log(&index, LOG_FOLD_WAIT);
         }
-        return crate::headless::leave(u8::from(failed));
+        crate::headless::leave(u8::from(failed));
     }
     ran?;
     Ok(if failed {
@@ -2099,14 +2102,25 @@ pub(crate) fn bins_read(
     ));
 }
 
-/// The quit's saves, the window's index reader closed: the open
-/// frame's edit as left; a frame followed onto its archive copy, its
-/// own root away, has no file here for that save, so its write goes
-/// now, waited for at most `wait` and noted waiting in the index if it
-/// has not ended; and every other frame's archive write that never
-/// went out, this save's among them, is noted waiting for the next
-/// window, since no job sent now would land.
-/// What the followed frames' writes came to, for a test.
+/// A run with no window that develops frames (the measurements), ended
+/// as the export ends (`headless::leave`) when a develop opened a
+/// model; returned as it would be otherwise. Each says its error as
+/// `main` returning it would, and every one succeeds with 0.
+fn ended(run: Result<std::process::ExitCode>) -> Result<std::process::ExitCode> {
+    if !greycard_ai::runtime::loaded() {
+        return run;
+    }
+    let code = match run {
+        Ok(code) if code == std::process::ExitCode::SUCCESS => 0,
+        Ok(_) => 1,
+        Err(e) => {
+            eprintln!("Error: {e:?}");
+            1
+        }
+    };
+    crate::headless::leave(code)
+}
+
 /// How long a quit that ends by `_exit` waits for the library's last
 /// other connection to close, so that its own close folds the log in.
 const LOG_FOLD_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -2157,6 +2171,15 @@ fn fold_library_log(index: &Path, within: std::time::Duration) {
     }
 }
 
+/// The quit's saves, the window's index reader closed: the open
+/// frame's edit as left; a frame followed onto its archive copy, its
+/// own root away, has no file here for that save, so its write goes
+/// now, waited for at most `wait` and noted waiting in the index if it
+/// has not ended; and every other frame's archive write that never
+/// went out, this save's among them, is noted waiting for the next
+/// window, since no job sent now would land.
+///
+/// What the followed frames' writes came to, for a test.
 pub(crate) fn save_at_quit(
     st: &mut State,
     edit: greycard_edit::Edit,

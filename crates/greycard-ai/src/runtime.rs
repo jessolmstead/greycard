@@ -1031,29 +1031,73 @@ pub fn loaded() -> bool {
 /// written. `ort` 2.0.0-rc.13 offers no way to release the environment
 /// earlier (it is a private static, and a release of our own through
 /// the C API would be released again by that handler), so the handler
-/// is not run: `_exit` ends the process at once, the kernel takes back
-/// the driver's state, and no exit handler or destructor runs on this
-/// thread or another. Stdout, stderr and the C library's streams are
-/// flushed first. A caller has every file it wrote closed by then.
+/// is not run ([`end`]). A caller has every file it wrote closed by
+/// then.
 ///
-/// On Windows the process returns as it otherwise would; Dawn runs on
-/// D3D12 there and the crash has not been seen.
+/// Windows crashed the same way: an access violation in the GPU's
+/// Vulkan driver and in the shader compiler's DLL about a second after
+/// the editor's window closed. There `ort` releases the environment
+/// from a TLS callback at process detach, which `ExitProcess` runs on
+/// the exiting thread after every DLL's own detach, tearing down Dawn,
+/// D3D12 and the shader compiler under a wgpu instance that is never
+/// dropped and the window's Vulkan device, and perhaps under a worker
+/// thread the exit has already killed mid-call.
 pub fn leave(code: u8) -> std::process::ExitCode {
-    use std::io::Write;
     if loaded() {
-        let _ = std::io::stdout().flush();
-        let _ = std::io::stderr().flush();
-        #[cfg(unix)]
-        // SAFETY: `fflush(NULL)` flushes every C stdio stream, so a C or
-        // C++ library's buffered output is not lost with the exit
-        // handlers that would have flushed it; `_exit` then ends the
-        // process at once and returns nothing to undo.
-        unsafe {
-            libc::fflush(std::ptr::null_mut());
-            libc::_exit(i32::from(code))
-        }
+        end(code)
     }
     std::process::ExitCode::from(code)
+}
+
+/// End the process with `code` now, no exit handler, destructor, DLL
+/// detach or TLS callback run, on this thread or another: what
+/// [`leave`] does once ONNX Runtime is loaded, and the window's quit
+/// with a worker still in the driver. Stdout, stderr and the C
+/// library's streams are flushed first.
+///
+/// By `_exit` on unix; by `TerminateProcess` on Windows, where the C
+/// library's `_exit` still goes through `ExitProcess`, and with it the
+/// DLL detach and TLS callbacks this skips. Every handle the
+/// process holds is closed by the kernel on either, and what was
+/// written through one is the file's.
+pub fn end(code: u8) -> ! {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    #[cfg(unix)]
+    // SAFETY: `fflush(NULL)` flushes every C stdio stream, so a C or
+    // C++ library's buffered output is not lost with the exit handlers
+    // that would have flushed it; `_exit` then ends the process at once
+    // and returns nothing to undo.
+    unsafe {
+        libc::fflush(std::ptr::null_mut());
+        libc::_exit(i32::from(code))
+    }
+    #[cfg(windows)]
+    {
+        // SAFETY: `fflush(NULL)` flushes every stream of the C runtime
+        // we link, as on unix. `GetCurrentProcess` is a pseudo-handle
+        // that needs no closing, and `TerminateProcess` on it ends every
+        // thread where it is and runs no code of the process's: no
+        // atexit, no DLL detach, no TLS callback.
+        let ended = unsafe {
+            libc::fflush(std::ptr::null_mut());
+            windows_sys::Win32::System::Threading::TerminateProcess(
+                windows_sys::Win32::System::Threading::GetCurrentProcess(),
+                u32::from(code),
+            )
+        };
+        // Termination is under way and this thread goes with it; it
+        // waits rather than running on. A refusal, which the current
+        // process's own handle does not get, exits as a return would.
+        if ended != 0 {
+            loop {
+                std::thread::park();
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    std::process::exit(i32::from(code));
 }
 
 /// For a test that needs ONNX Runtime and finds `why` it cannot have

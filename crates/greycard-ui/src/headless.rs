@@ -74,14 +74,19 @@ fn lent(cpu_ops: bool) -> greycard_engine::headless::Lent {
 
 /// End the process with `code`, the run's work all done and said.
 ///
-/// On unix by `_exit`, which skips the C library's exit handlers and
-/// the static destructors behind them. Two callers, for two reasons.
+/// By `greycard_ai::runtime::end`: `_exit` on unix, `TerminateProcess`
+/// on Windows, which skip the C library's exit handlers and the static
+/// destructors behind them, and on Windows every DLL's detach and the
+/// TLS callbacks too. Three callers, for two reasons.
 ///
 /// The headless export, always. A run whose edit asked for a learned
 /// mask, a fill or the learned denoiser has loaded ONNX Runtime's
 /// WebGPU provider, Dawn, and Dawn's Vulkan instance is torn down by a
 /// static destructor that died in libvulkan on the way out: SIGSEGV,
-/// exit 139, after the file was written. A batch caller reads the exit
+/// exit 139, after the file was written; on Windows `ort` tears it
+/// down from a TLS callback at process detach, and the GPU's driver
+/// and the shader compiler's DLL faulted there after the window
+/// closed (`greycard_ai::runtime::leave`). A batch caller reads the exit
 /// code, and must not read a written file as a crash. Nothing is lost
 /// there: the set is done, the worker asked to stop (and joined, unless
 /// it outlasts the wait), every file written is closed.
@@ -93,28 +98,15 @@ fn lent(cpu_ops: bool) -> greycard_engine::headless::Lent {
 /// lost, as a quit always lost it.
 ///
 /// For both, the log's file and stderr are written unbuffered, and
-/// stdout and the C library's streams are flushed first. On other
-/// systems the process returns as it otherwise would; neither crash
-/// has been seen there, and that is unchecked.
-pub(crate) fn leave(code: u8) -> Result<std::process::ExitCode> {
-    use std::io::Write;
+/// stdout and the C library's streams are flushed first.
+///
+/// And a measurement with no window (`--match-compare` and the rest)
+/// whose develops opened a model (`startup::ended`), for the export's
+/// reason.
+pub(crate) fn leave(code: u8) -> ! {
     // The same exit, and the same reason, `greycard_ai::runtime::leave`
     // gives the command line once a model has been opened.
-    let _ = std::io::stdout().flush();
-    let _ = std::io::stderr().flush();
-    #[cfg(unix)]
-    // SAFETY: `fflush(NULL)` flushes every C stdio stream, so a C or
-    // C++ library's buffered output is not lost with the exit
-    // handlers that would have flushed it; `_exit` then ends the
-    // process at once and returns nothing to undo. No exit handler or
-    // destructor runs, on this thread or another, so none can run into
-    // a thread still at work: the kernel ends every thread where it is.
-    unsafe {
-        libc::fflush(std::ptr::null_mut());
-        libc::_exit(i32::from(code))
-    }
-    #[cfg(not(unix))]
-    Ok(std::process::ExitCode::from(code))
+    greycard_ai::runtime::end(code)
 }
 
 /// The flags that ask the window for something an export run has no
