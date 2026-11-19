@@ -103,7 +103,7 @@ winresource.workspace = true
 # A headless backend so the window's key handling can be tested; its
 # software renderer draws the window for a capture of a state only a
 # test can set (`testing::drawing_backend`).
-i-slint-backend-testing = { version = "1.18", features = ["renderer-software"] }
+i-slint-backend-testing = { version = "1.19", features = ["renderer-software"] }
 # The render crate's test helpers, which these tests share (a camera
 # profile, a scratch folder's removal, a watermark picture).
 greycard-render = { path = "../greycard-render", features = ["testing"] }

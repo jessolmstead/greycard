@@ -4,7 +4,7 @@
 //! (Windows' TDR after about two seconds, amdgpu's ring timeout after
 //! ten), and wgpu then reports the device lost. The window's device is
 //! Slint's: its renderer made every buffer and pipeline the window
-//! draws with on it, and Slint 1.18 can neither hand a window a new
+//! draws with on it, and Slint 1.19 can neither hand a window a new
 //! device nor make the window again on one, its wgpu setup running
 //! once a process. Every frame after the loss fails, and femtovg panics
 //! at the first buffer it maps. So we start again: on the loss the

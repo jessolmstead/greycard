@@ -87,7 +87,7 @@ winresource = "0.1"
 # One Slint for greycard-slint and greycard-ui: the editor's whole
 # feature list, so the two crates name the same Slint. Build
 # greycard-slint through greycard-ui (see its manifest).
-slint = { version = "1.18", features = ["unstable-wgpu-30", "unstable-winit-030", "renderer-femtovg-wgpu"] }
+slint = { version = "1.19", features = ["unstable-wgpu-30", "unstable-winit-030", "renderer-femtovg-wgpu"] }
 
 # The pinned branch, float-deflate-pin, is upstream main at 01f3f092
 # (which has dnglab/dnglab#840, the EOS R6 Mark II's white level, and
@@ -107,41 +107,6 @@ slint = { version = "1.18", features = ["unstable-wgpu-30", "unstable-winit-030"
 # copy of this line, its workspace being its own; change both.
 [patch.crates-io]
 rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "eb997fb7a99b09c0eaab8e378574d8f11a7d58c3" }
-# femtovg 0.27.0 plus one change: a render pipeline is kept through
-# flushes that do not bind it, where 0.27.0 drops it at every flush and
-# compiles it again next frame (§208; femtovg/femtovg#371). Upstream
-# merged its own form of the fix on 2026-10-10 (femtovg/femtovg#366),
-# past API changes Slint 1.18 does not build against, so this pin stays
-# until Slint takes a femtovg release that carries it.
-femtovg = { git = "https://github.com/jessolmstead/femtovg", rev = "befdd4dc512d05673db87e70a1586fa4f45acc36" }
-# Slint 1.18.1 plus one change: once the window exists, the winit
-# backend converts a logical size or position at the window's own
-# scale factor, where 1.18.1 hands it to winit as logical and winit
-# converts it at the system's. With SLINT_SCALE_FACTOR set, which the
-# interface scale setting sets, the window collapsed by the percentage
-# whenever Slint re-applied its size (1760x1018 to 880x527 at 200 % on
-# X11, as the layout's least grew). Every Slint crate comes from the
-# fork at the same commit: a git crate takes its path dependencies from
-# its own checkout, which beside the crates.io copies would be two
-# i-slint-core. Pinned until a Slint release carries the fix, sent
-# upstream as slint-ui/slint#14324.
-slint = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-slint-build = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-slint-macros = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-backend-android-activity = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-backend-linuxkms = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-backend-selector = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-backend-testing = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-backend-winit = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-common = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-compiler = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-core = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-core-macros = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-renderer-femtovg = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-renderer-skia = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-i-slint-renderer-software = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-vtable = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
-vtable-macro = { git = "https://github.com/jessolmstead/slint", rev = "d8686b7ad4a74c59199b272981e1c50e4af9e98d" }
 
 # The symbol tables go: nothing in a package reads them. There is no
 # crash reporter and no symbolication step, and a panic's message and

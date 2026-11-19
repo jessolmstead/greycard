@@ -726,3 +726,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§712. A learned denoiser that loses the card rests there](notes/712-a-learned-denoiser-that-loses-the-card-rests-there.md) (2026-11-17)
 - [§713. The GPU marker gives up, and is written whole](notes/713-the-gpu-marker-gives-up-and-is-written-whole.md) (2026-11-18)
 - [§714. Windows ends without teardown once a model is loaded](notes/714-windows-ends-without-teardown-once-a-model-is-loaded.md) (2026-11-18)
+- [§715. Slint 1.19, and both forks gone](notes/715-slint-1-19-and-both-forks-gone.md) (2026-11-18)

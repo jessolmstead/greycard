@@ -2,7 +2,7 @@
 //!
 //! wgpu sends an error raised outside every error scope to the
 //! device's uncaptured handler, and the one it has by default panics.
-//! The window's device is Slint's, and Slint 1.18 sets no handler of
+//! The window's device is Slint's, and Slint 1.19 sets no handler of
 //! its own, so we set this one. The engine's ops share the device from
 //! the worker thread and catch their own errors in scopes, which are a
 //! thread's own (greycard-gpu's `scoped`); what reaches the handler is

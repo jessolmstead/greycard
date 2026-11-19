@@ -17,7 +17,7 @@ slint.workspace = true
 
 [dev-dependencies]
 # A backend that opens no window, for the test's component.
-i-slint-backend-testing = "1.18"
+i-slint-backend-testing = "1.19"
 
 [build-dependencies]
-slint-build = "1.18"
+slint-build = "1.19"

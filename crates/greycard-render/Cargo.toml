@@ -27,8 +27,9 @@ tracing.workspace = true
 half = { workspace = true, features = ["bytemuck"] }
 lcms2.workspace = true
 # The watermark's text: the system's sans-serif found the way Slint
-# finds its own, and rasterized. Both already in the tree.
-fontique = "0.11"
+# finds its own, and rasterized. Both already in the tree; fontique at
+# the version Slint's parley takes, so there is one, and one font scan.
+fontique = "0.12"
 ab_glyph = "0.2"
 # A character's script, for the font fallback. Already in the tree.
 unicode-script = "0.5"

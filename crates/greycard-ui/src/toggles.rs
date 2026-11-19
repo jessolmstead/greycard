@@ -10,35 +10,41 @@ use slint::{LogicalPosition, LogicalSize};
 
 use crate::testing::{Bounds, ToggleParts, click, press};
 
-slint::slint! {
-    import { Toggle } from "../../greycard-slint/ui/controls.slint";
-    export component Bench inherits Window {
-        width: 400px;
-        height: 60px;
-        in property <string> label;
-        in property <length> row-width: 300px;
-        in property <bool> at-end;
-        in-out property <bool> on;
-        out property <length> label-x: t.label-x;
-        out property <length> label-width: t.label-width;
-        out property <length> switch-x: t.switch-x;
-        out property <length> target-x: t.target-x;
-        out property <length> target-width: t.target-width;
-        // What holds the keys behind the row, as the window's own scope
-        // does: focused at the start, and whether it still is.
-        out property <bool> behind-focused: behind.has-focus;
-        forward-focus: behind;
-        behind := FocusScope { }
-        t := Toggle {
-            x: 20px;
-            y: 10px;
-            width: root.row-width;
-            label: root.label;
-            switch-at-end: root.at-end;
-            checked <=> root.on;
+// No edition, as the editor's own build sets none: the bench compiles
+// `controls.slint` under the same language behavior as the editor.
+#[allow(deprecated)]
+mod bench_ui {
+    slint::slint! {
+        import { Toggle } from "../../greycard-slint/ui/controls.slint";
+        export component Bench inherits Window {
+            width: 400px;
+            height: 60px;
+            in property <string> label;
+            in property <length> row-width: 300px;
+            in property <bool> at-end;
+            in-out property <bool> on;
+            out property <length> label-x: t.label-x;
+            out property <length> label-width: t.label-width;
+            out property <length> switch-x: t.switch-x;
+            out property <length> target-x: t.target-x;
+            out property <length> target-width: t.target-width;
+            // What holds the keys behind the row, as the window's own scope
+            // does: focused at the start, and whether it still is.
+            out property <bool> behind-focused: behind.has-focus;
+            forward-focus: behind;
+            behind := FocusScope { }
+            t := Toggle {
+                x: 20px;
+                y: 10px;
+                width: root.row-width;
+                label: root.label;
+                switch-at-end: root.at-end;
+                checked <=> root.on;
+            }
         }
     }
 }
+use bench_ui::Bench;
 
 /// The switch's width, the gap after a label (`Theme.space-2`), and
 /// the row's place and height on the bench.

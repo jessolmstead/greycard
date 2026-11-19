@@ -52,6 +52,14 @@ mod tests {
     const W: f32 = 1500.0;
     const H: f32 = 900.0;
 
+    /// Long enough for Slint's animated scroll to an item that took
+    /// the focus to end.
+    fn rest(app: &App) {
+        for _ in 0..10 {
+            settle(app);
+        }
+    }
+
     fn sized(app: &App, w: f32, h: f32) {
         app.window().set_size(slint::LogicalSize::new(w, h));
         settle(app);
@@ -1085,8 +1093,10 @@ mod tests {
             .expect("the panel's view");
         // The keys in the filter's words, then the panel scrolled until
         // the focal range's top half is above the view.
+        // Slint scrolls an item that takes the focus into view, and
+        // since 1.19 animates the scroll: it is let finish first.
         app.set_filter_focus(true);
-        settle(&app);
+        rest(&app);
         let focal = sliders()[1];
         let scrolled = app.get_panel_scroll() - (focal.0.y + focal.1.height / 2.0 - view.y);
         app.set_panel_scroll(scrolled);
@@ -1094,15 +1104,15 @@ mod tests {
         let focal = *sliders().last().expect("the focal range, cut");
         assert!(focal.0.y < view.y, "cut by the edge first: {focal:?}");
         crate::testing::press(&app, slint::platform::Key::Backtab);
-        settle(&app);
-        settle(&app);
+        rest(&app);
         assert!(app.get_panel_scroll() > scrolled, "the panel scrolled back");
         // The handles, on the track's middle line, in view; the row's
-        // edges around them may stay cut.
+        // edges around them may stay cut. Slint brings the focused
+        // handle to the view's very edge, to a float's rounding.
         let (at, s) = *sliders().last().expect("the focal range");
         let middle = at.y + s.height / 2.0;
         assert!(
-            middle - 7.0 >= view.y && middle + 7.0 <= 520.0,
+            middle - 7.0 >= view.y - 0.01 && middle + 7.0 <= 520.0 + 0.01,
             "the focal range's handles in view: {at:?} under {}",
             view.y
         );

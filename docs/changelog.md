@@ -5,6 +5,12 @@ design note behind it.
 
 ## 0.13.0
 
+### The window
+
+- Panels scroll smoothly with the wheel and to a focused control, on
+  Slint 1.19, no longer a fork
+  ([§715](https://github.com/jessolmstead/greycard/blob/master/docs/notes/715-slint-1-19-and-both-forks-gone.md)).
+
 ### Fixes
 
 - A graphics card that the learned denoiser crashes rests its tiers,

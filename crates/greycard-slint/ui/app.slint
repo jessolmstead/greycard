@@ -2965,7 +2965,7 @@ export component App inherits Window {
     /// parent, which lets that one go by; for the frame menu, a
     /// zero-sized corner, it reaches nothing. Its release goes to
     /// whatever is under the pointer, which ignores a release it had no
-    /// press for. Slint 1.18 does not say whether a ContextMenuArea's
+    /// press for. Slint 1.19 does not say whether a ContextMenuArea's
     /// menu is open, so it is read two ways. Off the keys: Slint's own
     /// menu takes the focus from them while it is up and gives it back
     /// when it closes, however it closes. And from Slint's own list of
@@ -4162,11 +4162,20 @@ export component App inherits Window {
                     }
                     // A slider reached by a key, scrolled into view,
                     // and kept there as the layout moves it. Moved by
-                    // the wheel, it is not chased: out of view, it
-                    // lets go of the keys, which Slint would drop at
-                    // the next event and give to nobody.
+                    // the user's scroll, it is not chased: out of view,
+                    // it lets go of the keys, which Slint would drop at
+                    // the next event and give to nobody. The user's
+                    // scroll is told by its input (`user-scrolls`), not
+                    // by the view moving: Slint moves it too, animating
+                    // its reveal of an item that took the focus. A
+                    // wheel's move is animated as well, so the scroll
+                    // stays the user's over the frames it moves in,
+                    // until a key reaches a slider or the slider moves
+                    // with the view still.
                     property <int> reveal: SliderKeys.reveal;
                     property <length> held-scroll;
+                    property <int> held-user-scrolls;
+                    property <bool> user-scrolling;
                     changed reveal => {
                         // A sheet's own sliders are not the panel's.
                         if (root.sheet-open()) { return; }
@@ -4174,8 +4183,13 @@ export component App inherits Window {
                         if (SliderKeys.reveal-x < left || SliderKeys.reveal-x > left + self.width) { return; }
                         let top = SliderKeys.reveal-y - self.absolute-position.y;
                         let bottom = top + SliderKeys.reveal-height;
-                        let wheeled = !SliderKeys.by-key
-                            && self.in-reach(root.panel-scroll) != self.in-reach(self.held-scroll);
+                        let moved = self.in-reach(root.panel-scroll) != self.in-reach(self.held-scroll);
+                        if (self.user-scrolls != self.held-user-scrolls) {
+                            self.held-user-scrolls = self.user-scrolls;
+                            self.user-scrolling = true;
+                        }
+                        if (SliderKeys.by-key || !moved) { self.user-scrolling = false; }
+                        let wheeled = self.user-scrolling;
                         self.held-scroll = root.panel-scroll;
                         if (wheeled) {
                             if (bottom <= 0 || top >= self.visible-height) { Typing.close-all(); }
@@ -4192,15 +4206,19 @@ export component App inherits Window {
                     // A section opened by its header under One section
                     // open at a time: the whole of it in view if it
                     // fits, else its header at the top.
-                    // Moved since the last reveal, by the wheel: the
-                    // section is let go of rather than fought for.
+                    // Moved since the last reveal by the user's scroll
+                    // (its input, as above): the section is let go of
+                    // rather than fought for.
                     property <int> fold-reveal: Folds.reveal;
                     property <length> revealed-scroll;
+                    property <int> revealed-user-scrolls;
                     changed fold-reveal => {
                         if (root.sheet-open()) { return; }
+                        let scrolled = self.user-scrolls != self.revealed-user-scrolls;
+                        self.revealed-user-scrolls = self.user-scrolls;
                         if (Folds.reveal-first) {
                             Folds.reveal-first = false;
-                        } else if (self.in-reach(root.panel-scroll) != self.in-reach(self.revealed-scroll)) {
+                        } else if (scrolled && self.in-reach(root.panel-scroll) != self.in-reach(self.revealed-scroll)) {
                             Folds.let-go += 1;
                             return;
                         }

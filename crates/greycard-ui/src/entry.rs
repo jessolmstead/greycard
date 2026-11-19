@@ -885,13 +885,141 @@ mod tests {
         assert_eq!(label, "Exposure");
         assert!(y0 >= top && y1 <= bottom, "{y0}..{y1} in {top}..{bottom}");
         // The wheel takes the panel to its foot, from under it.
-        let sections =
-            i_slint_backend_testing::ElementHandle::find_by_element_id(&app, "App::panel-sections")
+        wheel_to_foot(&app);
+        press(&app, Key::RightArrow);
+        assert_eq!(state.borrow().current, Some(1), "the window's arrow");
+        assert_eq!(app.get_exposure(), 0.0);
+    }
+
+    /// The wheel over the panel, near its foot and away from the
+    /// focused slider, notch by notch until the panel rests at its
+    /// foot: the user's own scroll, as the window gets it.
+    fn wheel_to_foot(app: &App) {
+        use slint::platform::WindowEvent;
+        let view =
+            i_slint_backend_testing::ElementHandle::find_by_element_id(app, "App::panel-view")
                 .next()
                 .unwrap();
-        app.set_panel_scroll(-(sections.size().height - (bottom - top)));
-        settle();
-        press(&app, Key::RightArrow);
+        let (at, size) = (view.absolute_position(), view.size());
+        let position = slint::LogicalPosition::new(at.x + 40.0, at.y + size.height - 40.0);
+        let mut last = f32::NAN;
+        for _ in 0..200 {
+            app.window().dispatch_event(WindowEvent::PointerScrolled {
+                position,
+                delta_x: 0.0,
+                delta_y: -120.0,
+            });
+            for _ in 0..30 {
+                i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+                slint::platform::update_timers_and_animations();
+            }
+            let now = app.get_panel_scroll();
+            if now == last {
+                return;
+            }
+            last = now;
+        }
+        panic!("the wheel never reached the panel's foot");
+    }
+
+    /// Period from the exposure through every Develop slider, every
+    /// section open, in a window short enough that the panel scrolls
+    /// many times: each step keeps the keys on a slider, a new one,
+    /// and the walk passes the vignette's Amount. Slint animates its
+    /// own scroll to a slider that took the focus, and that scroll is
+    /// not the user's, so it never lets the slider go.
+    #[test]
+    fn period_keeps_the_keys_down_to_the_vignettes_amount() {
+        use crate::testing::{click, press};
+        use i_slint_backend_testing::ElementHandle;
+        let frames = |n: usize| {
+            for _ in 0..n {
+                i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+                slint::platform::update_timers_and_animations();
+            }
+        };
+        // The panel builds the sections in its view: the exposure is
+        // found and focused in a tall window, which then gets short.
+        let app = crate::testing::window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(0);
+        frames(60);
+        // A control a property has just brought in is built on the
+        // next event: a pointer move at the corner, where nothing is.
+        let find = |id: &str| {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(0.0, 0.0),
+                });
+            ElementHandle::find_by_element_id(&app, id).next()
+        };
+        // The light section brought to the view's top, its body built.
+        app.set_collapsed_light(false);
+        let light = ElementHandle::find_by_element_type_name(&app, "LightSection")
+            .next()
+            .expect("the light section");
+        let (top, _) = panel_view(&app);
+        app.set_panel_scroll(app.get_panel_scroll() - (light.absolute_position().y - top));
+        frames(60);
+        let exposure = find("LightSection::exposure").expect("the exposure's slider");
+        let (at, size) = (exposure.absolute_position(), exposure.size());
+        click(&app, at.x + 8.0, at.y + size.height / 2.0);
+        frames(60);
+        for (_, _, set) in crate::panel::edit::FOLDS {
+            set(&app, false);
+        }
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 500.0));
+        frames(60);
+        let keys = app.global::<crate::SliderKeys>();
+        let mut holder = keys.get_holder();
+        assert_ne!(holder, 0, "the exposure took the keys");
+        // The vignette's Amount, if built, and whether the arrow moves
+        // it: put back at once.
+        let at_amount = || {
+            let amount = find("VignetteSection::amount")?;
+            let before = amount.accessible_value();
+            press(&app, slint::platform::Key::UpArrow);
+            let after = amount.accessible_value();
+            press(&app, slint::platform::Key::DownArrow);
+            Some(before != after)
+        };
+        let (mut scrolls, mut last_scroll, mut reached) = (0, app.get_panel_scroll(), false);
+        for step in 1..=200 {
+            press(&app, ".");
+            // As a user presses: a few frames apart, the animated
+            // scroll caught partway.
+            frames(6);
+            let now = keys.get_holder();
+            assert_ne!(now, 0, "step {step}: the keys let go");
+            if app.get_panel_scroll() != last_scroll {
+                scrolls += 1;
+                last_scroll = app.get_panel_scroll();
+            }
+            if at_amount() == Some(true) {
+                reached = true;
+                break;
+            }
+            assert_ne!(now, holder, "step {step}: Period moved nothing");
+            holder = now;
+        }
+        assert!(reached, "the walk never reached the vignette's Amount");
+        assert!(scrolls >= 3, "the panel scrolled only {scrolls} times");
+    }
+
+    /// The other way: the user's wheel over the panel, a slider
+    /// focused, takes it out of view, and the slider lets go of the
+    /// keys, so the next arrow is the window's.
+    #[test]
+    fn the_wheel_taking_a_focused_slider_out_of_view_lets_it_go() {
+        use slint::platform::Key;
+        let (app, state, _worker) = exposure_focused();
+        assert_ne!(app.global::<crate::SliderKeys>().get_holder(), 0);
+        wheel_to_foot(&app);
+        assert_eq!(app.global::<crate::SliderKeys>().get_holder(), 0, "let go");
+        crate::testing::press(&app, Key::RightArrow);
         assert_eq!(state.borrow().current, Some(1), "the window's arrow");
         assert_eq!(app.get_exposure(), 0.0);
     }

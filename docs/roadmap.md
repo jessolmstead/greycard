@@ -152,12 +152,11 @@ the reasoning lives in `docs/notes.md`.
       monitor profile is the lead
 - [ ] "Finding people" ran forever and the masks broke after, on
       Windows (issue 44): waits on the reporter's log
-- [ ] The Slint and femtovg pins dropped: Slint 1.19.0 carries
-      slint-ui/slint#14324 and takes femtovg 0.28, which carries
-      femtovg/femtovg#366 (§377). Then the muda context menu's
-      positions on Windows, which may carry the same mistake and were
-      not in the patch; on a Mac at a Scale of 150% the menus opened
-      at the pointer (2026-10-31)
+- [ ] The native context menu on Windows opens away from the pointer
+      at an interface scale other than 100%: muda places it by the
+      system's scale, not ours, in Slint 1.19 as before (§715, issue
+      179); on a Mac at a Scale of 150% the menus opened at the
+      pointer (2026-10-31)
 - [ ] A fill on a denoised frame still gets a little more grain than
       its surround (1.2x at two blocks on an overcast sky after §574,
       where the window's bins mix sea and rock with the sky): the
@@ -220,7 +219,6 @@ steps aside on a card it cannot run on.
 
 - [ ] Canon raws keep the headroom over their declared white level
 - [ ] An edit from a newer version opens in an older one
-- [ ] Slint 1.19, with the Slint and femtovg pins dropped
 - [ ] The editor's crate broken up, its first steps
 - [ ] The window's tests find a control by its id
 - [ ] A failed save tells the user

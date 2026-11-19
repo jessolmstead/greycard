@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 greycard-core = { path = "../greycard-core" }
-# The major Slint 1.18 pins (notes §91): the editor hands this crate
+# The major Slint 1.19 pins (notes §91): the editor hands this crate
 # its own device, so the two must be one wgpu.
 wgpu.workspace = true
 bytemuck.workspace = true

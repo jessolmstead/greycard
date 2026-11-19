@@ -40,7 +40,8 @@ export component LightSection inherits Section {
     switchable: true;
     on <=> root.light-enabled;
     switched => { root.view-changed(); }
-    EditSlider {
+    // Named so the tests find it.
+    exposure := EditSlider {
         label: @tr("Exposure");
         minimum: -5;
         maximum: 5;
@@ -541,7 +542,8 @@ export component VignetteSection inherits Section {
     switchable: true;
     on <=> root.vignette-enabled;
     switched => { root.view-changed(); }
-    EditSlider {
+    // Named so the tests find it.
+    amount := EditSlider {
         label: @tr("Amount");
         minimum: -5;
         maximum: 5;

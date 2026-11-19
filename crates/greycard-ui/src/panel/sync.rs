@@ -4456,6 +4456,12 @@ mod tests {
         for _ in 0..3 + at {
             press(&app, Key::Tab);
         }
+        // Slint scrolls the check that took the focus into view, and
+        // since 1.19 animates the scroll: let it end.
+        for _ in 0..60 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+            slint::platform::update_timers_and_animations();
+        }
         let b = bottom(&low).expect("the check in view");
         assert!(b <= cancel, "{b} > {cancel}");
         press(&app, Key::Escape);

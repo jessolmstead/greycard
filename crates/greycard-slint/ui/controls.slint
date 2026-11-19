@@ -3254,6 +3254,11 @@ export component ScrollPane {
     in property <length> bar-track-inset: 2px;
     in property <length> bar-thumb-inset: 4px;
     in property <length> bar-most: 1000px;
+    // Counted up at each scroll the user makes: the wheel or a flick
+    // on the view, a press or a drag on a bar. A move of the view with
+    // no such input (Slint revealing an item that took the focus, an
+    // owner's own scroll, the content changing height) leaves it.
+    out property <int> user-scrolls: 0;
     property <bool> past-y: flick.content-y < -root.max-y || flick.content-y > 0px;
     property <bool> past-x: flick.content-x < -root.max-x || flick.content-x > 0px;
     changed past-y => {
@@ -3291,6 +3296,8 @@ export component ScrollPane {
         mouse-drag-pan-enabled: false;
         width: parent.width;
         height: parent.height;
+        // At the input event itself, before an animated wheel moves it.
+        flicked => { root.user-scrolls += 1; }
         @children
     }
     ScrollBand {
@@ -3305,9 +3312,15 @@ export component ScrollPane {
         label: @tr("Scroll");
         scroll: -flick.content-y;
         max: root.max-y;
-        scroll-to(to) => { flick.content-y = -clamp(to, 0px, root.max-y); }
+        scroll-to(to) => {
+            root.user-scrolls += 1;
+            flick.content-y = -clamp(to, 0px, root.max-y);
+        }
         wheel(dx, dy, ctrl) => {
-            if (dy != 0px) { flick.content-y = clamp(flick.content-y + dy, -root.max-y, 0px); }
+            if (dy != 0px) {
+                root.user-scrolls += 1;
+                flick.content-y = clamp(flick.content-y + dy, -root.max-y, 0px);
+            }
         }
         bar-length(span, far) => { return root.thumb-length(span, far); }
         bar-offset(span, far, at) => {
@@ -3330,10 +3343,16 @@ export component ScrollPane {
         label: @tr("Scroll");
         scroll: -flick.content-x;
         max: root.max-x;
-        scroll-to(to) => { flick.content-x = -clamp(to, 0px, root.max-x); }
+        scroll-to(to) => {
+            root.user-scrolls += 1;
+            flick.content-x = -clamp(to, 0px, root.max-x);
+        }
         wheel(dx, dy, ctrl) => {
             let by = dx != 0px ? dx : dy;
-            if (by != 0px) { flick.content-x = clamp(flick.content-x + by, -root.max-x, 0px); }
+            if (by != 0px) {
+                root.user-scrolls += 1;
+                flick.content-x = clamp(flick.content-x + by, -root.max-x, 0px);
+            }
         }
         bar-length(span, far) => { return root.thumb-length(span, far); }
         bar-offset(span, far, at) => {

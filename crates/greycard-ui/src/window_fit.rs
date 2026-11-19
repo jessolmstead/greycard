@@ -728,10 +728,10 @@ pub(crate) fn opening(
             });
             // On Wayland the window opens at 1 times the setting
             // (`scale::decide`), and the size goes in at that factor as
-            // pixels: Slint 1.18 sends a logical one on to winit as
-            // logical once the window exists, and winit makes pixels of
-            // it at its own scale, 1 until the compositor's comes,
-            // which leaves the window the percentage too small.
+            // pixels. Slint converts a logical size at
+            // `SLINT_SCALE_FACTOR` as it was at the start, which is this
+            // factor only until the compositor's scale corrects it; the
+            // pixels say the same whenever that correction lands.
             let set = if *plan == Plan::Wayland && matches!(scale, Scale::Times(_)) {
                 let factor = scale.on(1.0) as f32;
                 slint::PhysicalSize::new(
