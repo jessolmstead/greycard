@@ -223,6 +223,44 @@ Reading the engine for step 6 changed four things above:
 The masks see the filled base, so the mask cache's print takes the
 field.
 
+## 1b. The engine stage as built (2026-11-19)
+
+`Stage::HighlightFill` sits after the demosaic, the bin, and the
+denoise, and before the Warp; `engine::highlight_fill::run` drops the
+mosaic's samples, fills the plain picture, and applies the same fields
+to the network's half of a pair. Off, the list, the keys, and the bits
+are what they were. A frame the fill does not take (X-Trans, linear,
+monochrome, merged, a rendered picture) or a version the build lacks
+makes the off list with a skip, logged, and the edit keeps its field.
+
+At 24 MP through the engine the stage is 0.4 s on all threads and 2.0
+to 2.5 s on one, and adds 5 to 6 MB to the peak: the samples it lets
+go cover the analysis.
+
+**The range shift drifts under what comes after.** It is measured in
+the stage, before the lens correction, the Warp, and the profile's
+map, and added at the guide's tap, after them. On minus off, in stops,
+on a 640x426 frame, by how far the fill moves the range's top:
+
+| Between the fill and the tap | top moved 0.005 | 1 stop | 2 stops |
+|---|---|---|---|
+| nothing, crop, angle, turn, denoise, the pair, a reduced develop | 0 | 0 | 0 |
+| a DNG warp | 0.0005 | 0.034 | 0.007 |
+| a profile map and look table | 0.003 | 0.021 | 0.013 |
+| lens vignetting -0.4 | 0.002 | 0.024 | 0.076 |
+| lens distortion -0.08 with vignetting -0.6 | 0.005 | 0.187 | 0.133 |
+
+Without the shift the range would be off by the whole move. We accept
+the drift for now, and tests pin these figures. The exact form carries
+the fill's change through each geometric stage to the tap.
+
+Two more things wait:
+- `same_base` is false between on and off on a frame the fill does not
+  take, since the skip is in the list: one develop of the same bits
+  when the switch is turned there. Step 8 decides with the switch.
+- The stage cannot give way inside the fill, and its fields are
+  dropped after the apply; step 7 needs both changed.
+
 ## 2. Everything in Rust
 
 The procedural part and the network's forward pass are both plain

@@ -26,6 +26,7 @@ pub mod export_name;
 pub mod finish;
 pub mod fit_lightroom;
 pub mod headless;
+pub mod highlight_fill;
 pub mod lens;
 pub mod made;
 pub mod mask_base;

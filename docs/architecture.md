@@ -136,6 +136,7 @@ must give, and the list is made from its `Facts`.
 | `Bin` | In place of the demosaic, for the reduced develop | core, `develop/reduced.rs` | none |
 | `Learned` | In place of the demosaic: the learned denoiser's network and a plain demosaic beside it | ai, through the walk's `Models` (`worker/base.rs`) | ONNX Runtime's own providers |
 | `Denoise` | The profiled denoise on camera RGB | core, `develop/denoise.rs` | none |
+| `HighlightFill` | The learned highlight fill, where the edit names a version this build has, on a Bayer raw of the camera's own: fields made from the plain picture through the matrix, applied to it and a learned pair's other half, in the mosaic's frame; at a bin, look-scaled. The frame's range is carried to `Tap::Guide` as a shift from before the fill | core, `develop/highlight_fill/camera.rs`; weights from ai's `highlight`; the stage in the engine's `highlight_fill.rs` | none |
 | `Warp` | A DNG's own lens warps, on the camera's geometry | core, `develop/warp.rs` | none |
 | `IntoWorking` | The matrix into linear Rec.2020, the camera profile's map, the orientation | core, `develop::finish` | none |
 | `Blend` | The learned pair blended by strength | engine, `walk::blend` | none |

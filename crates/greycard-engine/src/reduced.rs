@@ -15,7 +15,10 @@
 //! the 2048 picture is never brought up from fewer pixels. An X-Trans
 //! mosaic is binned 3x3 to a third, under the same rule at three times
 //! 2048. Then the
-//! pipeline as it is on that picture: the lens, the defringe, the retouch, the local
+//! pipeline as it is on that picture: the learned highlight fill where
+//! the edit names one, look-scaled to the bin and on the full mosaic's
+//! cells, each binned pixel one Bayer cell (notes §719 §3), and not a
+//! skip, so such a picture stands for the edit's; the lens, the defringe, the retouch, the local
 //! contrast, the dehaze, the guide plane; then the finish exactly as the
 //! open frame's pictures are finished (`edited_pictures::make`: the geometry, a
 //! resize to 2048, `export::render_framed` with no output sharpening,
@@ -344,6 +347,7 @@ fn walk_reduced(
                     | Stage::Bin(_)
                     | Stage::Demosaic(..)
                     | Stage::Denoise(_)
+                    | Stage::HighlightFill(_)
                     | Stage::Warp(_)
                     | Stage::IntoWorking { .. }
                     | Stage::White { .. }

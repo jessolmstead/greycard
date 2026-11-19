@@ -36,6 +36,7 @@ use greycard_gpu::wgpu;
 use greycard_render::detail::DetailPlanes;
 use greycard_render::finish::{Guide, Source, guide_plane};
 
+use crate::highlight_fill::Filled;
 use crate::stages::{Delta, Facts, Fills, Keep, Masks, Purpose, Stage, Step, Steps, Tap, quarters};
 
 /// The open file: a raw to develop, or a picture already in the
@@ -174,6 +175,11 @@ pub struct Meta {
     pub picture: Option<(TempTint, TempTint)>,
     /// A monochrome sensor's raw: no white moves it, a mask's neither.
     pub monochrome: bool,
+    /// What the guide's tap adds to the frame's range, in its stops:
+    /// the range before the learned highlight fill less the range
+    /// after it, so Highlights and Whites read the frame as it was
+    /// (notes §719 §1a). None where no fill changed what it reads.
+    pub range_shift: Option<[f32; 2]>,
 }
 
 impl Meta {
@@ -191,6 +197,7 @@ impl Meta {
             stood_in: None,
             picture: None,
             monochrome: false,
+            range_shift: None,
         }
     }
 
@@ -549,6 +556,7 @@ struct Applied {
 #[derive(Clone, Default)]
 struct Ran {
     ca: Option<CaStats>,
+    filled: Option<Filled>,
     detail: Option<LocalContrastStats>,
     dehaze: Option<DehazeStats>,
     sources: Vec<Patch>,
@@ -558,6 +566,7 @@ impl Ran {
     fn of(walked: &Walked) -> Self {
         Self {
             ca: walked.ca,
+            filled: walked.filled.clone(),
             detail: walked.detail,
             dehaze: walked.dehaze,
             sources: walked.sources.clone(),
@@ -1236,6 +1245,8 @@ pub struct Walked {
     pub ca: Option<CaStats>,
     /// The CA's fit, when the list asked for it to be handed back.
     pub ca_fit: Option<Arc<CaFit>>,
+    /// What the learned highlight fill did, where it changed anything.
+    pub filled: Option<Filled>,
     pub detail: Option<LocalContrastStats>,
     pub dehaze: Option<DehazeStats>,
     pub sharpen: Option<SharpenStats>,
@@ -1506,6 +1517,7 @@ fn start(
                 stood_in: None,
                 picture: None,
                 monochrome: frame.layout == SensorLayout::Monochrome,
+                range_shift: None,
             },
         ),
         Input::Picture { image, meta } => (
@@ -1522,6 +1534,7 @@ fn start(
                 stood_in: None,
                 picture: Some((meta.own_white(), meta.own_white())),
                 monochrome: false,
+                range_shift: None,
             },
         ),
     };
@@ -1566,6 +1579,7 @@ fn attempt(
         sharpen_mask: None,
         ca: ran.ca,
         ca_fit: None,
+        filled: ran.filled,
         detail: ran.detail,
         dehaze: ran.dehaze,
         sharpen: None,
@@ -1619,7 +1633,12 @@ fn attempt(
                 match tap {
                     Tap::Guide => {
                         let started = Instant::now();
-                        st.taps.guide = Some(Arc::new(guide_plane(image)));
+                        let mut guide = guide_plane(image);
+                        // The range from before the highlight fill.
+                        if let Some(d) = st.meta.range_shift {
+                            guide.range = [guide.range[0] + d[0], guide.range[1] + d[1]];
+                        }
+                        st.taps.guide = Some(Arc::new(guide));
                         walked
                             .seconds
                             .push(("guide", started.elapsed().as_secs_f64()));
@@ -1997,6 +2016,30 @@ fn cpu_op(
                 )
                 .map_err(failed)?;
             }
+        }
+        Stage::HighlightFill(name) => {
+            let filled = match &mut st.buf {
+                Buf::Camera { prepared, rgb } => {
+                    crate::highlight_fill::run(name, prepared, rgb, None, st.meta.bin)
+                }
+                Buf::CameraPair {
+                    prepared,
+                    network,
+                    plain,
+                } => crate::highlight_fill::run(name, prepared, plain, Some(network), st.meta.bin),
+                _ => unreachable!("the highlight fill is camera RGB's"),
+            };
+            if let Some(f) = &filled {
+                log::debug!(
+                    "the highlight fill {}: {} pixels at a look scale of {}, the range moved {:?}",
+                    f.version,
+                    f.changed,
+                    f.look_scale,
+                    f.range_shift
+                );
+            }
+            st.meta.range_shift = filled.as_ref().and_then(|f| f.range_shift);
+            walked.filled = filled;
         }
         Stage::Warp(options) => {
             let at = WarpPlacement::binned(options.area, st.meta.bin);
@@ -2833,6 +2876,8 @@ mod tests {
 
     use super::*;
     use crate::stages::{self, Purpose};
+
+    mod fill_tests;
 
     /// A small Bayer raw with edges and texture for every stage to
     /// bite on: a ramp, a bright disk, and a fine checker.

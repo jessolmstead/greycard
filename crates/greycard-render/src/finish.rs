@@ -654,25 +654,12 @@ impl Guide {
 /// share of the cell and not by its height.
 pub fn guide_plane(image: &WorkingImage) -> Guide {
     let (w, h) = (image.width, image.height);
-    let scale = w.max(h).div_ceil(GUIDE_EDGE).max(1);
-    let (gw, gh) = (w.div_ceil(scale), h.div_ceil(scale));
-    let mut small = vec![0.0f32; gw * gh];
-    small.par_chunks_mut(gw).enumerate().for_each(|(gy, out)| {
-        let (y0, y1) = (gy * scale, ((gy + 1) * scale).min(h));
-        for (gx, o) in out.iter_mut().enumerate() {
-            let (x0, x1) = (gx * scale, ((gx + 1) * scale).min(w));
-            let mut acc = 0.0f32;
-            for y in y0..y1 {
-                let row = &image.data[y * w * 3..(y + 1) * w * 3];
-                for px in row.as_chunks::<3>().0[x0..x1].iter() {
-                    let y = LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2];
-                    acc += (y.max(1e-6) / MID_GREY).log2().max(GUIDE_FLOOR);
-                }
-            }
-            *o = acc / ((x1 - x0) * (y1 - y0)) as f32;
-        }
+    let cells = GuideCells::of(w, h, &|x, y| {
+        let p = 3 * (y * w + x);
+        [image.data[p], image.data[p + 1], image.data[p + 2]]
     });
-    let data = greycard_core::guided::filter(&small, None, gw, gh, GUIDE_RADIUS, GUIDE_EPS);
+    let (scale, gw, gh) = (cells.scale, cells.width, cells.height);
+    let data = cells.filtered();
     let range = plane_range(&data);
     Guide {
         width: gw,
@@ -681,6 +668,116 @@ pub fn guide_plane(image: &WorkingImage) -> Guide {
         data,
         range,
         picture: None,
+    }
+}
+
+/// The guide plane's reduced grid before its filter: each cell's mean
+/// log luminance ([`guide_plane`]'s first half), for a picture read
+/// pixel by pixel. What a stage before the guide's tap measures the
+/// frame's range on, before and after it changes some pixels, so it
+/// can hand the tap the difference ([`GuideCells::redo`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuideCells {
+    /// The picture's size.
+    pub picture: (usize, usize),
+    /// Source pixels to a cell each way.
+    pub scale: usize,
+    /// Cells across and down.
+    pub width: usize,
+    pub height: usize,
+    /// Each cell's mean, row by row.
+    pub data: Vec<f32>,
+}
+
+impl GuideCells {
+    /// The cells of a `w` by `h` picture whose pixel (x, y) is
+    /// `pixel(x, y)`, in the working space: the grid [`guide_plane`]
+    /// lays on a picture of that size, each cell's mean to the bit
+    /// [`guide_plane`]'s for the same pixels.
+    pub fn of(w: usize, h: usize, pixel: &(impl Fn(usize, usize) -> [f32; 3] + Sync)) -> Self {
+        let scale = w.max(h).div_ceil(GUIDE_EDGE).max(1);
+        let (gw, gh) = (w.div_ceil(scale), h.div_ceil(scale));
+        let mut data = vec![0.0f32; gw * gh];
+        let cells = Self {
+            picture: (w, h),
+            scale,
+            width: gw,
+            height: gh,
+            data: Vec::new(),
+        };
+        if gw > 0 {
+            data.par_chunks_mut(gw).enumerate().for_each(|(gy, out)| {
+                for (gx, o) in out.iter_mut().enumerate() {
+                    *o = cells.mean(gx, gy, pixel);
+                }
+            });
+        }
+        Self { data, ..cells }
+    }
+
+    /// The pixels of cell (`gx`, `gy`): columns, then rows.
+    pub fn span(&self, gx: usize, gy: usize) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+        let (w, h) = self.picture;
+        let s = self.scale;
+        (gx * s..((gx + 1) * s).min(w), gy * s..((gy + 1) * s).min(h))
+    }
+
+    /// Cell (`gx`, `gy`)'s mean log luminance over mid grey: a row at a
+    /// time, left to right, as [`guide_plane`] always summed it.
+    fn mean(&self, gx: usize, gy: usize, pixel: &impl Fn(usize, usize) -> [f32; 3]) -> f32 {
+        let (xs, ys) = self.span(gx, gy);
+        let n = (xs.len() * ys.len()) as f32;
+        let mut acc = 0.0f32;
+        for y in ys {
+            for x in xs.clone() {
+                let px = pixel(x, y);
+                let y = LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2];
+                acc += (y.max(1e-6) / MID_GREY).log2().max(GUIDE_FLOOR);
+            }
+        }
+        acc / n
+    }
+
+    /// The cells again where `changed` says a cell's pixels changed,
+    /// read through `pixel`; every other cell keeps its bits.
+    pub fn redo(
+        &mut self,
+        pixel: &(impl Fn(usize, usize) -> [f32; 3] + Sync),
+        changed: &(impl Fn(std::ops::Range<usize>, std::ops::Range<usize>) -> bool + Sync),
+    ) {
+        let gw = self.width;
+        if gw == 0 {
+            return;
+        }
+        let mut data = std::mem::take(&mut self.data);
+        data.par_chunks_mut(gw).enumerate().for_each(|(gy, out)| {
+            for (gx, o) in out.iter_mut().enumerate() {
+                let (xs, ys) = self.span(gx, gy);
+                if changed(xs, ys) {
+                    *o = self.mean(gx, gy, pixel);
+                }
+            }
+        });
+        self.data = data;
+    }
+
+    /// The plane: the guided filter over the cells, as [`guide_plane`]
+    /// makes it.
+    pub fn filtered(&self) -> Vec<f32> {
+        greycard_core::guided::filter(
+            &self.data,
+            None,
+            self.width,
+            self.height,
+            GUIDE_RADIUS,
+            GUIDE_EPS,
+        )
+    }
+
+    /// The frame's range as the plane made of these cells reads it
+    /// ([`Guide::range`]).
+    pub fn range(&self) -> [f32; 2] {
+        plane_range(&self.filtered())
     }
 }
 
@@ -4220,6 +4317,65 @@ mod tests {
                 assert!((g.at(x, y) - stops).abs() < 1e-4);
             }
         }
+    }
+
+    /// The guide's cells read a pixel at a time are the plane's, to the
+    /// bit, and made again where some pixels changed they are the
+    /// cells of the changed picture, every other cell kept.
+    #[test]
+    fn the_guide_cells_are_the_planes_and_redo_only_what_changed() {
+        let (w, h) = (2100, 900);
+        let mut image = WorkingImage::new(w, h);
+        for (i, px) in image.pixels_mut().enumerate() {
+            let (x, y) = ((i % w) as f32, (i / w) as f32);
+            *px = [
+                0.02 + x / 2000.0,
+                0.05 + y / 1500.0,
+                0.1 + (x * y) % 7.0 / 50.0,
+            ];
+        }
+        let read = |image: &WorkingImage| {
+            let data = image.data.clone();
+            move |x: usize, y: usize| {
+                let p = 3 * (y * w + x);
+                [data[p], data[p + 1], data[p + 2]]
+            }
+        };
+        let plane = guide_plane(&image);
+        let mut cells = GuideCells::of(w, h, &read(&image));
+        assert_eq!(cells.scale, plane.scale);
+        assert!(cells.filtered() == plane.data);
+        assert_eq!(cells.range(), plane.range);
+
+        // A bright block, as a fill would leave.
+        let changed = |x: usize, y: usize| (1500..1700).contains(&x) && (100..160).contains(&y);
+        for (i, px) in image.pixels_mut().enumerate() {
+            if changed(i % w, i / w) {
+                *px = [4.0, 4.0, 4.0];
+            }
+        }
+        let before = cells.clone();
+        cells.redo(
+            &read(&image),
+            &|xs: std::ops::Range<usize>, ys: std::ops::Range<usize>| {
+                xs.clone().any(|x| ys.clone().any(|y| changed(x, y)))
+            },
+        );
+        let fresh = GuideCells::of(w, h, &read(&image));
+        assert!(cells.data == fresh.data);
+        assert_eq!(cells.range(), guide_plane(&image).range);
+        let kept = (0..cells.height)
+            .flat_map(|gy| (0..cells.width).map(move |gx| (gx, gy)))
+            .filter(|&(gx, gy)| {
+                let (xs, ys) = cells.span(gx, gy);
+                !xs.clone().any(|x| ys.clone().any(|y| changed(x, y)))
+            })
+            .all(|(gx, gy)| {
+                let i = gy * cells.width + gx;
+                cells.data[i].to_bits() == before.data[i].to_bits()
+            });
+        assert!(kept);
+        assert!(cells.data != before.data);
     }
 
     #[test]

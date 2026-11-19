@@ -1242,10 +1242,16 @@ clears or a tester asks for it.
       (§677), 0.063 there against opposed's 0.093 with no channel
       left, and preferred by eye in the blind rounds. Ported in steps: a Python
       oracle with synthetic fixtures, the clip codes, the region
-      analysis, the network, and the synthesis in core, then the
-      engine and the edit, then the UI, which waits on its words. It
+      analysis, the network, and the synthesis in core, and the
+      engine's stage and the edit's field; left are the fields kept
+      for a stand-in and a stage that gives way, then the UI. It
       invents, so it is an option, off by default; the classical fill
       stays the default
+- [ ] The learned fill's range shift drifts under a lens correction:
+      Highlights and Whites read the range up to 0.19 stops off on a
+      heavily clipped frame with strong distortion and vignetting,
+      0.03 under a DNG warp. Exact: the fill's change carried through
+      the geometric stages to the guide's tap (§719)
 - [ ] A generative fill trained for clipped highlights: the frame
       darkened two stops so the clip is a flat patch in an ordinary
       picture, a fill model trained to paint it, pairs made by

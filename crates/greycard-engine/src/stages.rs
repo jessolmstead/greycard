@@ -277,6 +277,34 @@ impl Facts {
             && !self.file_corrects().chromatic_aberration
     }
 
+    /// Why the frame takes no learned highlight fill (notes §719 §7),
+    /// for the log; none when it takes it: a 2x2 Bayer mosaic of the
+    /// camera's own. A rendered picture, a raw with no mosaic (a linear
+    /// DNG, sRAW, a demosaiced DNG, a monochrome sensor's), X-Trans,
+    /// which waits on a score of its own, any other pattern, and a merge
+    /// of ours, whose frames keep their own path, do not.
+    pub fn highlight_fill_skip(&self) -> Option<&'static str> {
+        let InputKind::Raw {
+            pattern,
+            merged,
+            monochrome,
+            ..
+        } = &self.input
+        else {
+            return Some("the highlight fill is a raw's, and this is a rendered picture");
+        };
+        match pattern {
+            _ if *merged => Some("the highlight fill does not run on a merge"),
+            None if *monochrome => Some("the highlight fill has no monochrome version"),
+            None => Some("the highlight fill needs a mosaic, and this file has none"),
+            Some(p) if p.is_xtrans() => Some("the highlight fill has no X-Trans version yet"),
+            Some(p) if !greycard_core::develop::rcd::is_bayer(p) => {
+                Some("the highlight fill needs a 2x2 Bayer mosaic")
+            }
+            Some(_) => None,
+        }
+    }
+
     /// Whether the input is a monochrome sensor's raw.
     pub fn is_monochrome(&self) -> bool {
         matches!(
@@ -506,6 +534,12 @@ pub enum Stage {
     Learned(&'static greycard_ai::Model),
     /// The profiled denoise, on camera RGB.
     Denoise(DenoiseOptions),
+    /// The learned highlight fill (notes §719 §1a), on camera RGB before
+    /// the file's warp, by the name of the version this build has
+    /// (`greycard_ai::highlight::version`): fields made once from the
+    /// plain picture, applied to it and to a learned pair's network
+    /// half. At a bin, look-scaled.
+    HighlightFill(&'static str),
     /// A DNG's own lens correction, on camera RGB: a resample, the
     /// camera's geometry before any turn, crop, or lens profile.
     Warp(Box<WarpOptions>),
@@ -645,6 +679,8 @@ impl Stage {
             | Stage::Bin(_)
             | Stage::Learned(_)
             | Stage::Denoise(_)
+            // Before the turn, in the mosaic's own frame.
+            | Stage::HighlightFill(_)
             | Stage::Warp(_)
             | Stage::IntoWorking { .. }
             | Stage::Blend { .. }
@@ -667,6 +703,7 @@ impl Stage {
             Stage::Bin(_) => "bin",
             Stage::Learned(_) => "learned denoiser",
             Stage::Denoise(_) => "denoise",
+            Stage::HighlightFill(_) => "highlight fill",
             Stage::Warp(_) => "the file's warp",
             Stage::IntoWorking { .. } => "move into the working space",
             Stage::Blend { .. } => "blend",
@@ -797,6 +834,13 @@ pub const OFF_CARD: &str = "the learned denoiser is not on this graphics card";
 
 /// Why the learned denoiser is skipped on an X-Trans mosaic.
 pub const NO_XTRANS: &str = "the learned denoiser has no X-Trans version yet";
+
+/// The name a list's skips give the learned highlight fill.
+pub const HIGHLIGHT_FILL: &str = "the highlight fill";
+
+/// Why the highlight fill is skipped for an edit naming a version this
+/// build does not have, a newer build's; the edit keeps the name.
+pub const NO_SUCH_FILL: &str = "this build has no such version of the highlight fill";
 
 /// Why a stage the edit asks for is not in a list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1024,6 +1068,7 @@ pub fn stages(
         1
     };
     let mut s = Steps::default();
+    let fill = highlight_fill(edit, facts, &mut s);
     let mut settings = edit.settings(&stores());
     // Only where a look table may go on, so the list of an edit with
     // none (and its base, which keeps no baseline then) is as it was.
@@ -1090,6 +1135,9 @@ pub fn stages(
                     chromatic_aberration: None,
                     denoise,
                     orientation: None,
+                    // The fill's cells, read beside opposed; only for
+                    // the fill, so a list without it prepares as it did.
+                    clip_codes: fill.is_some(),
                     ..settings.clone()
                 },
                 measure_noise: learned.is_some(),
@@ -1114,6 +1162,10 @@ pub fn stages(
                     .filter(|_| bin == 1 || pattern.is_none())
                     .map(Stage::Denoise),
             );
+            // In the frame the cells were read in: the mosaic's, before
+            // the file's warp moves it and the turn turns it. After the
+            // denoise, which reads the demosaic's noise as measured.
+            s.op_if(fill.map(Stage::HighlightFill));
             // The file's own correction of its lens, on the camera's
             // geometry: after the denoise, which reads the demosaic's
             // noise as measured, and before the turn.
@@ -1276,6 +1328,23 @@ pub fn stages(
         },
     }));
     s
+}
+
+/// The version of the learned highlight fill `edit` names, when this
+/// build has it and the frame `facts` describes takes it; why not in
+/// `s`'s skips otherwise, for the log. The edit keeps its field either
+/// way, and a list without the fill is the list of an edit without it.
+fn highlight_fill(edit: &Edit, facts: &Facts, s: &mut Steps) -> Option<&'static str> {
+    let name = edit.highlight_fill.as_deref()?;
+    let Some(version) = greycard_ai::highlight::version(name) else {
+        s.skip(HIGHLIGHT_FILL, Skip::Unavailable(NO_SUCH_FILL));
+        return None;
+    };
+    if let Some(why) = facts.highlight_fill_skip() {
+        s.skip(HIGHLIGHT_FILL, Skip::Unavailable(why));
+        return None;
+    }
+    Some(version.name)
 }
 
 /// A merge's frame: the prepare with nothing clipped after the gains,
@@ -1663,26 +1732,215 @@ mod tests {
         }
     }
 
-    /// No stage reads the highlight fill yet: on, off, or a version
-    /// this build lacks, every list is the one it was.
-    #[test]
-    fn the_highlight_fill_moves_no_list_yet() {
-        for purpose in [
+    fn purposes() -> [Purpose; 5] {
+        [
             Purpose::Viewport,
             export(),
             Purpose::Reduced,
             Purpose::ModelsSee,
             Purpose::Prefetch,
-        ] {
-            let off = stages(&Edit::default(), &purpose, &raw(0), None);
-            for name in ["hl-1", "hl-9"] {
-                let edit = Edit {
-                    highlight_fill: Some(name.into()),
-                    ..Edit::default()
-                };
-                assert_eq!(stages(&edit, &purpose, &raw(0), None), off, "{name}");
+        ]
+    }
+
+    fn filled(mut edit: Edit, name: &str) -> Edit {
+        edit.highlight_fill = Some(name.into());
+        edit
+    }
+
+    /// `off`'s list with the fill in it, as the list of an edit with
+    /// the fill on is to be: the prepare reads the cells, and the fill
+    /// runs just before the file's warp or, with none, the move into
+    /// the working space. Nothing else moves.
+    fn with_the_fill(off: &Steps) -> Steps {
+        let mut on = off.clone();
+        let at = on
+            .steps
+            .iter()
+            .position(|s| matches!(s, Step::Op(Stage::Warp(_) | Stage::IntoWorking { .. })))
+            .expect("a raw's list goes into the working space");
+        on.steps.insert(at, Step::Op(Stage::HighlightFill("hl-1")));
+        let Some(Step::Op(Stage::Prepare(p))) = on.steps.first_mut() else {
+            panic!("a raw's list starts at its prepare");
+        };
+        assert!(!p.settings.clip_codes, "off reads no cells");
+        p.settings.clip_codes = true;
+        on
+    }
+
+    /// The fill off makes the list it made before the fill: no stage,
+    /// and a prepare that reads no cells, for every purpose and input.
+    #[test]
+    fn the_highlight_fill_off_is_nothing() {
+        for purpose in purposes() {
+            for facts in [raw(0), raw(1), phone(), xtrans(), picture(0)] {
+                for edit in [Edit::default(), everything()] {
+                    let s = stages(&edit, &purpose, &facts, None);
+                    assert!(!s.ops().any(|o| matches!(o, Stage::HighlightFill(_))));
+                    assert!(
+                        !s.ops()
+                            .any(|o| matches!(o, Stage::Prepare(p) if p.settings.clip_codes))
+                    );
+                    assert!(!s.skipped.iter().any(|(n, _)| *n == HIGHLIGHT_FILL));
+                }
             }
         }
+    }
+
+    /// On, on a Bayer raw: the prepare reads the cells and the fill runs
+    /// after the demosaic, the bin, the denoise, or the learned
+    /// denoiser, before the file's warp; every other step as it was.
+    /// The reduced develop's is no skip.
+    #[test]
+    fn the_highlight_fill_runs_before_the_warp_in_camera_space() {
+        let mut learned = everything();
+        learned.noise.learned = greycard_edit::Learned::Fast;
+        for purpose in purposes() {
+            for facts in [raw(0), raw(3), phone()] {
+                for edit in [Edit::default(), everything(), learned.clone()] {
+                    let off = stages(&edit, &purpose, &facts, None);
+                    let on = stages(&filled(edit, "hl-1"), &purpose, &facts, None);
+                    assert_eq!(on, with_the_fill(&off), "{purpose:?}");
+                    assert!(!on.reduced_recipe() || off.reduced_recipe());
+                    let ops: Vec<&Stage> = on.ops().collect();
+                    let i = ops
+                        .iter()
+                        .position(|o| matches!(o, Stage::HighlightFill(_)))
+                        .unwrap();
+                    assert!(matches!(
+                        ops[i - 1],
+                        Stage::Demosaic(..) | Stage::Bin(_) | Stage::Denoise(_) | Stage::Learned(_)
+                    ));
+                    assert!(matches!(
+                        ops[i + 1],
+                        Stage::Warp(_) | Stage::IntoWorking { .. }
+                    ));
+                }
+            }
+        }
+        let s = stages(
+            &filled(everything(), "hl-1"),
+            &Purpose::Reduced,
+            &raw(0),
+            None,
+        );
+        assert!(
+            s.ops().any(|o| matches!(o, Stage::Bin(2))),
+            "a 24 MP frame bins"
+        );
+        let fill = Stage::HighlightFill("hl-1");
+        assert!(fill.commutes_with_turn());
+        assert!(!fill.device() && !fill.in_memory_on_device());
+        assert_eq!(fill.name(), "highlight fill");
+    }
+
+    /// A frame that cannot take the fill, or an edit naming a version
+    /// this build lacks, makes the list of the fill off, step for step,
+    /// and says why for the log; never under the reduced recipe.
+    #[test]
+    fn a_frame_that_takes_no_fill_walks_as_with_it_off() {
+        let monochrome = || {
+            let mut f = raw(0);
+            if let InputKind::Raw {
+                pattern,
+                monochrome,
+                ..
+            } = &mut f.input
+            {
+                *pattern = None;
+                *monochrome = true;
+            }
+            f
+        };
+        let linear = || {
+            let mut f = raw(0);
+            if let InputKind::Raw { pattern, .. } = &mut f.input {
+                *pattern = None;
+            }
+            f
+        };
+        let merged = || {
+            let mut f = raw(0);
+            if let InputKind::Raw { merged, .. } = &mut f.input {
+                *merged = true;
+            }
+            f
+        };
+        let quad = || {
+            let mut f = raw(0);
+            if let InputKind::Raw { pattern, .. } = &mut f.input {
+                // A quad Bayer: each color in 2x2 blocks.
+                use greycard_core::raw::CfaColor::{Blue as B, Green as G, Red as R};
+                let colors = vec![R, R, G, G, R, R, G, G, G, G, B, B, G, G, B, B];
+                *pattern = Some(CfaPattern::new(4, 4, colors).unwrap());
+            }
+            f
+        };
+        let cases: [(&str, Facts, &str); 6] = [
+            (
+                "X-Trans",
+                xtrans(),
+                "the highlight fill has no X-Trans version yet",
+            ),
+            (
+                "linear",
+                linear(),
+                "the highlight fill needs a mosaic, and this file has none",
+            ),
+            (
+                "monochrome",
+                monochrome(),
+                "the highlight fill has no monochrome version",
+            ),
+            (
+                "merged",
+                merged(),
+                "the highlight fill does not run on a merge",
+            ),
+            (
+                "quad",
+                quad(),
+                "the highlight fill needs a 2x2 Bayer mosaic",
+            ),
+            (
+                "picture",
+                picture(0),
+                "the highlight fill is a raw's, and this is a rendered picture",
+            ),
+        ];
+        for (what, facts, why) in cases {
+            assert_eq!(facts.highlight_fill_skip(), Some(why), "{what}");
+            for purpose in purposes() {
+                let off = stages(&everything(), &purpose, &facts, None);
+                let on = stages(&filled(everything(), "hl-1"), &purpose, &facts, None);
+                assert_eq!(on.steps, off.steps, "{what} {purpose:?}");
+                assert_eq!(on.skipped[0], (HIGHLIGHT_FILL, Skip::Unavailable(why)));
+                assert_eq!(on.skipped[1..], off.skipped[..], "{what}");
+                assert_eq!(on.reduced_recipe(), off.reduced_recipe());
+            }
+        }
+        assert_eq!(raw(0).highlight_fill_skip(), None);
+        for purpose in purposes() {
+            let off = stages(&everything(), &purpose, &raw(0), None);
+            let on = stages(&filled(everything(), "hl-9"), &purpose, &raw(0), None);
+            assert_eq!(on.steps, off.steps);
+            assert_eq!(
+                on.skipped[0],
+                (HIGHLIGHT_FILL, Skip::Unavailable(NO_SUCH_FILL))
+            );
+            assert_eq!(on.skipped[1..], off.skipped[..]);
+        }
+        // A merge's frames keep their own path: no fill, no cells.
+        let merge = Purpose::MergeInput(MergeInput {
+            white: None,
+            reconstruct: true,
+            denoiser: None,
+            ca: MergeCa::Own,
+            lens: Vec::new(),
+        });
+        assert_eq!(
+            stages(&filled(everything(), "hl-1"), &merge, &raw(0), None),
+            stages(&everything(), &merge, &raw(0), None)
+        );
     }
 
     /// The sharpen's guide is tapped just before the local contrast,
