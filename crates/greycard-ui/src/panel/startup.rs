@@ -9,6 +9,7 @@ use greycard_edit::{Demosaic, Edit, Learned, meta, preset};
 use slint::wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
+use crate::capture::{schedule_snapshot, write_screenshot};
 use crate::filter::SavedBar;
 use crate::panel::assets::show_presets;
 use crate::panel::browser::{
@@ -22,9 +23,9 @@ use crate::panel::edit::{read_edit, read_folds, save_edit, show_folds, time_move
 use crate::panel::mask::{ask_for, bake_locals, chosen_shape, show_shape};
 use crate::panel::retouch::{patch_handles, pending_outlines, shown_outlines};
 use crate::panel::viewport::{
-    display_key, drawn_kind, effective_zoom, picture_up, proof_settings, schedule_snapshot,
-    settle_source_size, show_crop_on_view, show_hover, show_source_shape, source_known,
-    source_to_view, sync_display, write_screenshot, zoom_label,
+    display_key, drawn_kind, effective_zoom, picture_up, proof_settings, settle_source_size,
+    show_crop_on_view, show_hover, show_source_shape, source_known, source_to_view, sync_display,
+    zoom_label,
 };
 use crate::render::{Renderer, View};
 use crate::worker::{Job, WhiteBase, Worker};
@@ -104,9 +105,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     let import_sheet = matches!(
         cli.sheet,
         Some(
-            crate::panel::viewport::Shown::Import
-                | crate::panel::viewport::Shown::Imported
-                | crate::panel::viewport::Shown::ImportInPlace
+            crate::capture::Shown::Import
+                | crate::capture::Shown::Imported
+                | crate::capture::Shown::ImportInPlace
         )
     );
     if let Some(source) = cli.import.as_deref().filter(|_| !import_sheet) {
@@ -645,7 +646,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     });
 
     if let Some(keys) = cli.keys.clone() {
-        let _ = crate::panel::viewport::SNAPSHOT_KEYS.set(keys);
+        let _ = crate::capture::SNAPSHOT_KEYS.set(keys);
     }
     let state = Rc::new(Shared::new({
         let write_sidecars = !cli.no_sidecars;
@@ -668,8 +669,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             .sheet
             .or(cli.tool)
             .or(cli.part)
-            .or(cli.menu.map(crate::panel::viewport::Shown::Menu))
-            .or(cli.press.map(crate::panel::viewport::Shown::Key));
+            .or(cli.menu.map(crate::capture::Shown::Menu))
+            .or(cli.press.map(crate::capture::Shown::Key));
         let export_presets = remembered.shared.export_presets.clone();
         let export_last_folder = remembered_folder(&remembered);
         let settings_file = if cli.snapshot.is_some() || cli.screenshot.is_some() {

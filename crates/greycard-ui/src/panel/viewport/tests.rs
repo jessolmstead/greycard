@@ -5,6 +5,7 @@ use std::sync::Arc;
 use greycard_core::raw::{Orientation, RawFrame};
 use greycard_edit::{Edit, WhiteBalance};
 
+use crate::capture::{LightroomStep, RawTherapeeStep, Shown};
 use crate::testing::{click, window};
 
 /// A point of the camera's picture standing in, under random turns,

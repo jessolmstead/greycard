@@ -18,6 +18,7 @@
 #![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
 mod adapter;
+mod capture;
 mod carry;
 mod cells;
 mod chooser;
@@ -418,8 +419,8 @@ struct Cli {
     /// opens it), help (the Help menu, open), zoom (the Fit
     /// button's menu of zooms, open), or wb-presets (the white
     /// balance's presets, open off Auto)
-    #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
-    sheet: Option<panel::viewport::Shown>,
+    #[arg(long, value_name = "NAME", value_parser = capture::Shown::sheet, conflicts_with = "tool")]
+    sheet: Option<capture::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
     /// the grid with --grid, once the picture is up, for a snapshot
     #[arg(long, value_name = "ROW", conflicts_with_all = ["sheet", "tool"])]
@@ -437,15 +438,15 @@ struct Cli {
     keys: Option<String>,
     /// Put this Crop-tab tool in hand once the picture is up, for a
     /// snapshot: crop, level or guide
-    #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::tool)]
-    tool: Option<panel::viewport::Shown>,
+    #[arg(long, value_name = "NAME", value_parser = capture::Shown::tool)]
+    tool: Option<capture::Shown>,
     /// Choose this part from the masks panel's People menu (its label,
     /// as Iris or Top) once the picture is up, into the mask
     /// --show-mask chooses on the Masks tab, for a snapshot of what
     /// follows it: the part made, or the people to pick among
-    #[arg(long, value_name = "LABEL", value_parser = panel::viewport::Shown::part,
+    #[arg(long, value_name = "LABEL", value_parser = capture::Shown::part,
         conflicts_with_all = ["sheet", "tool", "menu"])]
-    part: Option<panel::viewport::Shown>,
+    part: Option<capture::Shown>,
     /// Paint the capture sharpening's mask over the picture, for a
     /// screenshot
     #[arg(long)]

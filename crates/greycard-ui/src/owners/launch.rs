@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use greycard_edit::Edit;
 
-use crate::{Tweak, filter, panel};
+use crate::{Tweak, capture, filter, panel};
 
 /// What the command line asked of this run, and what the run has done
 /// of it: the captures and their waits, the timing runs, and the actions
@@ -119,7 +119,7 @@ pub(crate) struct Launch {
     /// logical pixels.
     pub(crate) panel_scroll: Option<f32>,
     /// A sheet or a tool put on screen before the snapshot.
-    pub(crate) snapshot_shown: Option<panel::viewport::Shown>,
+    pub(crate) snapshot_shown: Option<capture::Shown>,
     /// Something a batch run asked for did not happen: the exit code
     /// says so.
     pub(crate) failed: bool,

@@ -9,6 +9,7 @@ use greycard_edit::{Edit, Sidecar, meta};
 use slint::wgpu_30::wgpu as gpu;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
+use crate::capture::{schedule_snapshot, write_screenshot};
 use crate::panel::browser::{
     file_name, filter_frames, grid_filled_rows, migrate_frame, rebuild_browser, reject_count,
     row_of, show_frame_tags,
@@ -18,7 +19,7 @@ use crate::panel::curve::draw_curve;
 use crate::panel::edit::{read_edit, save_edit, schedule_save, show_edit};
 use crate::panel::history::show_history;
 use crate::panel::startup::sync_rows;
-use crate::panel::viewport::{schedule_snapshot, sync_display, write_screenshot, zoom_label};
+use crate::panel::viewport::{sync_display, zoom_label};
 use crate::render::{self, View};
 use crate::worker::Worker;
 use crate::{App, CompareTile, FilterChip, STATE, Shared, State, cull, filter, placeholder};
