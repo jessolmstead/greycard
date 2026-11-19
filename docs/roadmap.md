@@ -1606,8 +1606,13 @@ release when the wait clears.
       size that overflows the offset; report upstream as its follow-up
 - [ ] ort rc.13 ignores every `ep::WebGPU` option (the key prefix is
       applied twice); greycard sets them through a config entry
-      instead (§159). Fixed on ort's main in pykeio/ort@bc23566;
-      drop the workaround when a release carries it
+      instead (§159). Fixed in ort rc.14; rc.15 builds and passes
+      on our ONNX Runtime 1.28 with `api-27` kept (trial on the
+      branch `worktree-agent-af1fe58eca13b72c8`, 2026-11-18), needs
+      one unsafe call to keep mapped weights off the heap, and has
+      no exit hook, though §714's ending stays; move when we want
+      the options or ONNX Runtime 1.31, alone, after a close after a
+      denoise on Windows
 - [ ] The GPU Subject model on Windows adapters: its remaining
       Splits need nine storage buffers; an adapter allowing fewer
       falls back to the CPU. Runs on WebGPU on an M5 Mac
