@@ -1189,6 +1189,9 @@ export component ValueField inherits Rectangle {
         overflow: elide;
     }
     if root.editing: TextInput {
+        // The field itself is the text input a screen reader meets;
+        // this would say the same text again.
+        accessible-role: none;
         x: Theme.space-1;
         width: parent.width - 2 * Theme.space-1;
         height: 100%;
