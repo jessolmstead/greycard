@@ -1063,6 +1063,82 @@ fn a_lens_switch_stands_down_for_what_the_profile_has_not() {
     kept(&app);
 }
 
+/// A screen reader's press on a LENS correction's switch is a click:
+/// it flips the switch, asks for a develop as a click does, and the
+/// switch says on or off as it comes to. A greyed one, with its tip
+/// or without, flips nothing and asks nothing.
+#[test]
+fn a_screen_reader_presses_a_lens_switch_as_a_click_does() {
+    use greycard_edit::LensChoice;
+    use greycard_engine::lens::Carries;
+    use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let app = crate::testing::window(1);
+    app.set_lens_enabled(true);
+    app.set_lens_profile_on(true);
+    app.set_lens_distortion(true);
+    app.set_lens_ca(true);
+    app.set_lens_vignetting(true);
+    let asked = Rc::new(Cell::new(0));
+    app.on_develop_changed({
+        let asked = asked.clone();
+        move || asked.set(asked.get() + 1)
+    });
+    // The file's lens: distortion and TCA, no vignetting.
+    let found = LensReport::Found {
+        lens: "Nikkor Z DX 16-50mm f/3.5-6.3 VR".into(),
+        camera: true,
+        smaller_sensor: false,
+        carries: Carries {
+            vignetting: false,
+            ..Carries::ALL
+        },
+    };
+    show_lens(&found, &[], &LensChoice::FromFile, &app);
+    let switch = |id: &str| {
+        let id = format!("LensSection::{id}");
+        crate::testing::by_id(&app, &id);
+        let e = ElementHandle::find_by_element_id(&app, &id)
+            .next()
+            .unwrap_or_else(|| panic!("no {id}"));
+        assert_eq!(e.accessible_role(), Some(AccessibleRole::Switch), "{id}");
+        assert_eq!(e.accessible_checkable(), Some(true), "{id}");
+        e
+    };
+
+    let distortion = switch("distortion-switch");
+    assert_eq!(distortion.accessible_enabled(), Some(true));
+    assert_eq!(distortion.accessible_checked(), Some(true));
+    let before = asked.get();
+    distortion.invoke_accessible_default_action();
+    assert!(!app.get_lens_distortion(), "the press flips it");
+    assert_eq!(asked.get(), before + 1, "and asks for a develop");
+    assert_eq!(distortion.accessible_checked(), Some(false), "and says so");
+    // The press took the keys, as a click does: Space flips it back.
+    crate::testing::press(&app, " ");
+    assert!(app.get_lens_distortion(), "Space after the press");
+    assert_eq!(asked.get(), before + 2);
+    assert_eq!(distortion.accessible_checked(), Some(true));
+
+    // Greyed with its tip: the profile has no vignetting.
+    let vignetting = switch("vignetting-switch");
+    assert_eq!(vignetting.accessible_enabled(), Some(false));
+    assert_ne!(vignetting.accessible_description().as_deref(), Some(""));
+    vignetting.invoke_accessible_default_action();
+    assert!(app.get_lens_vignetting(), "greyed with a tip: no flip");
+    assert_eq!(asked.get(), before + 2, "greyed with a tip: no ask");
+
+    // Greyed with none: the aberration measured from the picture.
+    app.set_lens_ca_measured(true);
+    let ca = switch("ca-switch");
+    assert_eq!(ca.accessible_enabled(), Some(false));
+    assert_eq!(ca.accessible_description().as_deref(), Some(""));
+    ca.invoke_accessible_default_action();
+    assert!(app.get_lens_ca(), "greyed: no flip");
+    assert_eq!(asked.get(), before + 2, "greyed: no ask");
+}
+
 /// A picker's options: three makers' lenses and a profile.
 fn maker_options() -> Vec<greycard_engine::lens::LensOption> {
     use greycard_edit::LensChoice;

@@ -152,9 +152,10 @@ export component AdjustmentsList inherits Section {
                 width: list.visible-width;
                 padding: 1px;
                 spacing: 2px;
-                for name[i] in root.adjustment-names: Rectangle {
+                for name[i] in root.adjustment-names: mask-item := Rectangle {
                     accessible-role: button;
                     accessible-label: name;
+                    accessible-action-default => { root.target-changed(i); }
                     property <bool> on: i == root.target;
                     property <bool> lit: i == 0 || root.adjustment-on[i - 1];
                     // The pointer is on the row's switch: the row's
@@ -532,6 +533,12 @@ export component AdjustmentsSection inherits Section {
                                 border-color: Theme.focus-ring;
                                 accessible-role: button;
                                 accessible-label: @tr("Invert this shape");
+                                accessible-checkable: true;
+                                accessible-checked: inverted;
+                                accessible-action-default => {
+                                    invert-focus.focus();
+                                    root.invert-shape-toggled(i);
+                                }
                                 Image {
                                     source: @image-url("../icons/contrast.svg");
                                     colorize: inverted ? Theme.accent-text : (invert-hit.has-hover || invert-focus.has-focus ? Theme.text : Theme.text-secondary);

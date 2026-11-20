@@ -64,7 +64,8 @@ export component CameraSection inherits Section {
                         accessible-role: button;
                         accessible-label: !row.heading ? row.label
                             : row.folded ? @tr("Unfold {}", row.label) : @tr("Fold {}", row.label);
-                        clicked => {
+                        accessible-action-default => { self.choose(); }
+                        function choose() {
                             if (row.heading) {
                                 root.camera-profile-group-toggled(row.name);
                             } else {
@@ -72,6 +73,7 @@ export component CameraSection inherits Section {
                                 root.camera-profile-picked();
                             }
                         }
+                        clicked => { self.choose(); }
                     }
                     // A heading: the fold's triangle, the camera, a mark
                     // for the open frame's own, and the count.
@@ -236,7 +238,8 @@ export component LookSection inherits Section {
                         ? (row.folded ? @tr("Unfold {}", row.label) : @tr("Fold {}", row.label))
                         // Spoken by a screen reader: a look's row; {} is its name
                         : @tr("Look {}", row.label);
-                    clicked => {
+                    accessible-action-default => { self.choose(); }
+                    function choose() {
                         if (row.heading) {
                             root.look-group-toggled(row.name);
                         } else {
@@ -244,6 +247,7 @@ export component LookSection inherits Section {
                             root.look-picked();
                         }
                     }
+                    clicked => { self.choose(); }
                     changed has-hover => {
                         if (!row.heading) {
                             root.look-hovered(row.name, self.has-hover);
@@ -269,6 +273,8 @@ export component LookSection inherits Section {
                         }
                     }
                     Text {
+                        // Said by the row's fold, which it names.
+                        accessible-role: none;
                         text: row.label;
                         color: look-row.has-hover ? Theme.text : Theme.text-secondary;
                         font-size: Theme.font-xs;

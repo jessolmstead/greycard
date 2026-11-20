@@ -198,6 +198,14 @@ export component Switch inherits Rectangle {
     accessible-checkable: true;
     accessible-checked: root.shown;
     accessible-enabled: root.enabled;
+    // A screen reader's press is a click.
+    accessible-action-default => {
+        if (root.enabled) {
+            fs.focus();
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
     property <bool> active: enabled && (ta.has-hover || ta.pressed || fs.has-focus);
     background: !root.enabled ? Theme.border
         : root.shown ? (root.active ? Theme.accent-hover : Theme.accent)
@@ -2083,6 +2091,16 @@ export component Toggle inherits Rectangle {
     accessible-checkable: true;
     accessible-checked: root.checked;
     accessible-enabled: root.enabled;
+    // A screen reader's press is a click: a greyed switch, tip or
+    // not, flips nothing.
+    accessible-action-default => {
+        if (!root.enabled) { return; }
+        fs.focus();
+        if (!root.follows) {
+            root.checked = !root.checked;
+        }
+        root.toggled();
+    }
     /// Why the switch stands down, when that wants saying: at the
     /// pointer after a rest, greyed or not, and to a screen reader.
     in property <string> tip;

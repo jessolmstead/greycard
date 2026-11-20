@@ -9,6 +9,8 @@ design note behind it.
 
 - A screen reader can open a frame from the grid or the strip, hears a
   held-out filter chip as excluded, and hears each label once.
+- A screen reader can press a switch, a section's switch, a mask's row
+  and its shapes' invert, a folder's fold, and a profile or look row.
 - A screen reader now hears a name for every choice row, field, list
   row, swatch, and section header in the panels and sheets.
 - The alignment grid also shows while the Vertical and Horizontal

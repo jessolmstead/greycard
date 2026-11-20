@@ -120,6 +120,10 @@ export component FoldersSection inherits Section {
                                 mouse-cursor: row.children ? MouseCursor.pointer : MouseCursor.default;
                                 accessible-role: button;
                                 accessible-label: row.expanded ? @tr("Fold {}", row.name) : @tr("Unfold {}", row.name);
+                                accessible-enabled: row.children;
+                                accessible-action-default => {
+                                    if (row.children) { root.folded(i); root.focus-keys(); }
+                                }
                                 clicked => { root.folded(i); root.focus-keys(); }
                             }
                         }

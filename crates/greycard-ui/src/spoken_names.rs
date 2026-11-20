@@ -606,6 +606,63 @@ fn a_screen_reader_presses_a_frame_in_the_strip_and_the_grid() {
     press("GridSheet", 2);
 }
 
+/// A mask's row, a shape's invert, and the soft proof's badge are
+/// buttons a screen reader presses, each as a click does: the row
+/// chooses its mask, the invert flips its shape, the badge ends the
+/// proof.
+#[test]
+fn a_screen_reader_presses_a_mask_an_invert_and_the_proof_badge() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let app = window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1600.0, 2000.0));
+    fill_the_lists(&app);
+    app.set_panel_tab("Masks".into());
+    app.set_collapsed_adjustments(false);
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    app.on_target_changed({
+        let heard = heard.clone();
+        move |i| heard.borrow_mut().push(("target", i))
+    });
+    app.on_invert_shape_toggled({
+        let heard = heard.clone();
+        move |i| heard.borrow_mut().push(("invert", i))
+    });
+    let button = |id: &str, nth: usize| {
+        settle(&app);
+        let e = ElementHandle::find_by_element_id(&app, id)
+            .nth(nth)
+            .unwrap_or_else(|| panic!("no {id} {nth}"));
+        assert_eq!(e.accessible_role(), Some(AccessibleRole::Button), "{id}");
+        e
+    };
+
+    // Global's row is the first; Mask 2's the third.
+    button("AdjustmentsList::mask-item", 2).invoke_accessible_default_action();
+    // The second shape is inverted, the first not; each invert says so.
+    let inverts = || -> Vec<Option<bool>> {
+        settle(&app);
+        ElementHandle::find_by_element_id(&app, "AdjustmentsSection::invert-button")
+            .map(|e| e.accessible_checked())
+            .collect()
+    };
+    assert_eq!(inverts(), [Some(false), Some(true)]);
+    button("AdjustmentsSection::invert-button", 1).invoke_accessible_default_action();
+    // The press took the keys, as a click does: Space asks again.
+    crate::testing::press(&app, " ");
+    assert_eq!(
+        *heard.borrow(),
+        [("target", 2), ("invert", 1), ("invert", 1)]
+    );
+    app.set_shape_invert(flags(&[true, false]));
+    assert_eq!(inverts(), [Some(true), Some(false)], "and follows it");
+
+    app.set_proofing(true);
+    button("Viewport::proof-pill", 0).invoke_accessible_default_action();
+    assert!(!app.get_proofing(), "the badge's press ends the proof");
+}
+
 /// The words of every item of the menu up now, and how many items have
 /// none: Slint draws a menu's items itself, each its words in a text.
 fn menu_items(app: &App) -> (Vec<String>, usize) {

@@ -832,7 +832,7 @@ export component Viewport inherits Rectangle {
     // The soft proof, named, in the top left corner: a stray S looks
     // like a broken render without it. The pill is the only part of
     // it that takes the pointer, and a click on it is the way out.
-    if root.proof-badge != "": Rectangle {
+    if root.proof-badge != "": proof-pill := Rectangle {
         x: Theme.space-3;
         y: Theme.space-3;
         width: proof-word.preferred-width + 2 * Theme.space-2;
@@ -841,7 +841,10 @@ export component Viewport inherits Rectangle {
         background: root.plate-ground;
         accessible-role: button;
         accessible-label: root.proof-badge;
+        accessible-action-default => { root.proof-off(); }
         proof-word := Text {
+            // Said by the badge, which it names.
+            accessible-role: none;
             text: root.proof-badge;
             color: Theme.over-text;
             font-size: Theme.font-xs;

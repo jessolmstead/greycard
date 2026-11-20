@@ -316,3 +316,53 @@ fn a_greyed_switch_says_its_tip_and_still_flips_nothing() {
     click_at(&b, left(p.switch) + 4.0);
     assert!(b.get_on());
 }
+
+/// A screen reader's press on a section's header switch is a click:
+/// LENS's flips and asks for a develop, and says on or off as it
+/// comes to; the picture's COLOR MIXER, taken over by a black and
+/// white, is greyed and flips nothing and asks nothing.
+#[test]
+fn a_screen_reader_presses_a_section_switch_as_a_click_does() {
+    use i_slint_backend_testing::AccessibleRole;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let app = crate::testing::window(1);
+    app.set_panel_tab("Develop".into());
+    let asked = Rc::new(Cell::new(0));
+    app.on_develop_changed({
+        let asked = asked.clone();
+        move || asked.set(asked.get() + 1)
+    });
+    app.on_view_changed({
+        let asked = asked.clone();
+        move || asked.set(asked.get() + 1)
+    });
+    let switch = |section: &str| {
+        crate::testing::section_bounds(&app, section, "Section::header-switch");
+        let e = crate::testing::section_part(&app, section, "Section::header-switch")
+            .unwrap_or_else(|| panic!("no switch in {section}"));
+        assert_eq!(e.accessible_role(), Some(AccessibleRole::Switch));
+        assert_eq!(e.accessible_checkable(), Some(true));
+        e
+    };
+
+    app.set_lens_enabled(true);
+    let lens = switch("LensSection");
+    assert_eq!(lens.accessible_checked(), Some(true));
+    lens.invoke_accessible_default_action();
+    assert!(!app.get_lens_enabled(), "the press flips it");
+    assert_eq!(asked.get(), 1, "and asks for a develop");
+    assert_eq!(lens.accessible_checked(), Some(false), "and says so");
+    // The press took the keys, as a click does: Space flips it back.
+    press(&app, " ");
+    assert!(app.get_lens_enabled(), "Space after the press");
+    assert_eq!(asked.get(), 2);
+
+    app.set_mixer_enabled(true);
+    app.set_bw_enabled(true);
+    let mixer = switch("MixerSection");
+    assert_eq!(mixer.accessible_enabled(), Some(false));
+    mixer.invoke_accessible_default_action();
+    assert!(app.get_mixer_enabled(), "greyed: no flip");
+    assert_eq!(asked.get(), 2, "greyed: no ask");
+}

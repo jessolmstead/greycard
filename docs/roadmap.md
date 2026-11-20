@@ -1586,9 +1586,6 @@ clears or a tester asks for it.
 - [ ] A clearer name for the Lens section's From the file, which
       reads as the raw's own corrections (issue 189). The owner's
       wording
-- [ ] A switch has no action for a screen reader to press: `Toggle`
-      lacks the `accessible-action-default` the other controls have
-      (review, 2026-11-20)
 - [ ] The lens match (§723), what is left: a lens name with no line
       word on a body of another line; Sigma's and Tamron's own line
       words; the database's 36 bare-number names
