@@ -940,11 +940,35 @@ pub fn reduced_frame(
     // the short side; the nearest a pixel either way on each that
     // lands on it, the floor itself first.
     let near = |n: usize| [n, n.saturating_sub(1), n + 1];
+    let fits = |(w, h): (usize, usize)| {
+        w.min(h) >= 1
+            && w.max(h) > edge
+            && w * h <= limit
+            && fit_size(w, h, long_edge) == Some(fitted)
+    };
     near(w)
         .into_iter()
         .flat_map(|w| near(h).map(|h| (w, h)))
-        .filter(|&(w, h)| w.max(h) > edge && w * h <= limit)
-        .find(|&(w, h)| fit_size(w, h, long_edge) == Some(fitted))
+        .find(|&c| fits(c))
+        .or_else(|| {
+            // None of those: where the limit is tight and the short
+            // side narrow, the one short side that rounds to the fit's
+            // at a long side may not be held with it. So each long side
+            // down from there to just past the export's, the largest
+            // short side held with it, among the few that round to the
+            // fit's: at most `edge` long sides, four short ones each.
+            let (long, short) = (tw.max(th), tw.min(th));
+            let wide = size.0 >= size.1;
+            let top = (long as f64 * room).floor() as usize + 1;
+            (edge + 1..=top).rev().find_map(|l| {
+                let most = (limit / l)
+                    .min((l as f64 * (short as f64 + 0.5) / edge as f64).ceil() as usize);
+                (most.saturating_sub(3)..=most)
+                    .rev()
+                    .map(|s| if wide { (l, s) } else { (s, l) })
+                    .find(|&c| fits(c))
+            })
+        })
 }
 
 /// The size [`fit`] takes a picture of this size to, or none when it
@@ -1201,6 +1225,30 @@ mod tests {
         assert_eq!(reduced_frame(frame, None, limit), None);
         assert_eq!(reduced_frame(frame, Some(22_917), limit), None);
         assert_eq!(reduced_frame(frame, Some(20_000), limit), None);
+    }
+
+    /// Where the limit is tight and the short side narrow, the one
+    /// short side that rounds to the fit's beside the long side a
+    /// pixel either way of the room the limit leaves is not held with
+    /// it; a long side further down still finds a cut, the one of
+    /// the longest long side, held and fitting to the whole frame's
+    /// size.
+    #[test]
+    fn a_frame_too_large_is_cut_further_down_where_it_must_be() {
+        for (frame, edge, limit, want) in [
+            ((4388, 417), 2968, 884_014, (3048, 290)),
+            ((164, 4013), 137, 1412, (8, 176)),
+            ((3746, 267), 1414, 277_652, (1969, 141)),
+            ((214_077, 12_961), 53_419, 200_000_000, (57_474, 3479)),
+        ] {
+            let at = reduced_frame(frame, Some(edge), limit);
+            assert_eq!(at, Some(want), "{frame:?} at {edge}");
+            assert!(want.0 * want.1 <= limit && want.0.max(want.1) > edge as usize);
+            assert_eq!(
+                fit_size(want.0, want.1, Some(edge)),
+                fit_size(frame.0, frame.1, Some(edge))
+            );
+        }
     }
 
     /// A synthetic camera profile with a tone curve, a look table fitted
