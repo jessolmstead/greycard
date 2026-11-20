@@ -57,19 +57,69 @@ fn sample_cubic_of<const N: usize>(
     out
 }
 
+/// The most pixels a frame may have past its source's own: 200 MP,
+/// 2.4 GB of three f32 channels before the finish copies it. Twice a
+/// panorama's canvas cap and above any still camera's single frame
+/// (150 MP the largest), so only a crop dragged far out to a
+/// keystone's bounds, which may reach 64 times the source, meets it.
+/// The finish frames the masks' detail bands at the same size beside
+/// the picture, so the peak is several times one frame. A frame no
+/// larger than its source is never refused: the source is already
+/// held at that size.
+pub const MAX_FRAME_PIXELS: usize = 200_000_000;
+
+/// A frame refused as too large to hold: its size and the most pixels
+/// it may have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TooLarge {
+    pub size: (usize, usize),
+    pub limit: usize,
+}
+
+impl std::fmt::Display for TooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (w, h) = self.size;
+        write!(
+            f,
+            "a frame of {w} by {h} pixels is more than the {} megapixels one may hold",
+            self.limit / 1_000_000
+        )
+    }
+}
+
+impl std::error::Error for TooLarge {}
+
+/// Whether a frame of `size` can be held within `limit` pixels.
+pub fn holdable(size: (usize, usize), limit: usize) -> Result<(), TooLarge> {
+    match size.0.checked_mul(size.1) {
+        Some(pixels) if pixels <= limit => Ok(()),
+        _ => Err(TooLarge { size, limit }),
+    }
+}
+
+/// The most pixels a frame cut from a `width` by `height` source may
+/// have: [`MAX_FRAME_PIXELS`], or the source's own when more.
+pub fn limit_for(width: usize, height: usize) -> usize {
+    MAX_FRAME_PIXELS.max(width.saturating_mul(height))
+}
+
 /// The frame of `geometry` cut from `image`. A frame the camera framed
 /// comes here with its frame resolved
 /// (`Geometry::with_camera_frame`), as every renderer here takes it.
-pub fn apply(image: &WorkingImage, geometry: &Geometry) -> WorkingImage {
+/// A frame past [`limit_for`] the image is refused before any of it is
+/// allocated.
+pub fn apply(image: &WorkingImage, geometry: &Geometry) -> Result<WorkingImage, TooLarge> {
     if geometry.is_identity_on(image.width as f32, image.height as f32, None) {
-        return image.clone();
+        return Ok(image.clone());
     }
-    let (data, width, height) = frame_of::<3>(&image.data, image.width, image.height, geometry);
-    WorkingImage {
+    let limit = limit_for(image.width, image.height);
+    let (data, width, height) =
+        frame_of::<3>(&image.data, image.width, image.height, geometry, limit)?;
+    Ok(WorkingImage {
         width,
         height,
         data,
-    }
+    })
 }
 
 /// [`apply`] on a plane of one channel, `width` by `height`: its data,
@@ -79,23 +129,26 @@ pub fn apply_plane(
     width: usize,
     height: usize,
     geometry: &Geometry,
-) -> (Vec<f32>, usize, usize) {
+) -> Result<(Vec<f32>, usize, usize), TooLarge> {
     if geometry.is_identity_on(width as f32, height as f32, None) {
-        return (data.to_vec(), width, height);
+        return Ok((data.to_vec(), width, height));
     }
-    frame_of::<1>(data, width, height, geometry)
+    frame_of::<1>(data, width, height, geometry, limit_for(width, height))
 }
 
-/// The frame of `geometry` cut from `N` interleaved channels.
+/// The frame of `geometry` cut from `N` interleaved channels, refused
+/// past `limit` pixels before it is allocated.
 fn frame_of<const N: usize>(
     data: &[f32],
     width: usize,
     height: usize,
     geometry: &Geometry,
-) -> (Vec<f32>, usize, usize) {
+    limit: usize,
+) -> Result<(Vec<f32>, usize, usize), TooLarge> {
     let (w, h) = (width as f32, height as f32);
     let frame = geometry.frame(w, h, None);
     let (ow, oh) = (frame.size.0 as usize, frame.size.1 as usize);
+    holdable((ow, oh), limit)?;
     let mut out = vec![0.0f32; ow * oh * N];
     let turned = geometry.resamples();
     out.par_chunks_mut((ow * N).max(1))
@@ -121,7 +174,7 @@ fn frame_of<const N: usize>(
                 }
             }
         });
-    (out, ow, oh)
+    Ok((out, ow, oh))
 }
 
 #[cfg(test)]
@@ -154,7 +207,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let out = apply(&image, &g);
+        let out = apply(&image, &g).unwrap();
         assert_eq!((out.width, out.height), (32, 24));
         assert_eq!(out.data[0..3], [16.0, 12.0, 1.0]);
         assert_eq!(
@@ -174,7 +227,7 @@ mod tests {
             aspect: Aspect::Original,
             ..Default::default()
         };
-        let out = apply(&image, &turned);
+        let out = apply(&image, &turned).unwrap();
         assert!(out.width < 64 && out.height < 48);
         let f = turned.frame(64.0, 48.0, None);
         // Away from the frame's corners, which the fit puts on the
@@ -219,7 +272,7 @@ mod keystone {
             horizontal: -6.0,
             ..Default::default()
         };
-        let out = apply(&image, &g);
+        let out = apply(&image, &g).unwrap();
         let f = g.frame(w as f32, h as f32, None);
         assert!(out.width < w || out.height < h);
         for (oy, ox) in [
@@ -251,6 +304,123 @@ mod keystone {
             span(out.height - 3)
         );
     }
+
+    /// A frame is held up to its limit and refused one pixel past it,
+    /// with its size and the limit; one whose pixels overflow is too.
+    #[test]
+    fn a_frame_is_held_up_to_its_limit() {
+        assert_eq!(holdable((100, 100), 10_000), Ok(()));
+        assert_eq!(holdable((10_000, 1), 10_000), Ok(()));
+        assert_eq!(holdable((0, 7), 0), Ok(()));
+        assert_eq!(
+            holdable((101, 100), 10_000),
+            Err(TooLarge {
+                size: (101, 100),
+                limit: 10_000
+            })
+        );
+        assert!(holdable((usize::MAX, 2), usize::MAX).is_err());
+        assert_eq!(limit_for(10, 10), MAX_FRAME_PIXELS);
+        assert_eq!(limit_for(20_000, 20_000), 400_000_000);
+        assert_eq!(
+            TooLarge {
+                size: (40_000, 30_000),
+                limit: MAX_FRAME_PIXELS
+            }
+            .to_string(),
+            "a frame of 40000 by 30000 pixels is more than the 200 megapixels one may hold"
+        );
+    }
+
+    /// A crop dragged out to an extreme keystone's bounds asks for many
+    /// times its source's pixels: past the limit it is refused with its
+    /// size, before any of it is allocated, and within it it is cut.
+    #[test]
+    fn a_frame_past_the_limit_is_refused() {
+        let (w, h) = (48usize, 32usize);
+        let image = WorkingImage::new(w, h);
+        let mut g = Geometry {
+            vertical: 40.0,
+            ..Default::default()
+        };
+        let (fw, fh) = (w as f32, h as f32);
+        let (pw, ph) = g.plane_size(fw, fh);
+        let b = g.bounds(fw, fh);
+        // The largest crop that fits, of a coarse search over the
+        // bounds: a band across them, centered, from one depth to
+        // another.
+        let steps = (1..=20).map(|i| i as f32 / 20.0);
+        let crop = steps
+            .clone()
+            .flat_map(|s| steps.clone().map(move |t| (s, t)))
+            .flat_map(|(s, t)| (0..20).map(move |u| (s, t, u as f32 / 20.0)))
+            .filter(|&(_, t, u)| u < t)
+            .map(|(s, t, u)| greycard_edit::geometry::Crop {
+                x: (pw / 2.0 - s * b.size.0 / 2.0) / pw,
+                y: (b.origin.1 + u * b.size.1) / ph,
+                w: s * b.size.0 / pw,
+                h: (t - u) * b.size.1 / ph,
+            })
+            .filter(|c| g.fits(c, fw, fh))
+            .max_by(|a, b| (a.w * a.h).total_cmp(&(b.w * b.h)))
+            .unwrap();
+        g.crop = Some(crop);
+        let f = g.frame(fw, fh, None);
+        let size = (f.size.0 as usize, f.size.1 as usize);
+        assert!(size.0 * size.1 > 4 * w * h, "{size:?}");
+        let limit = size.0 * size.1 - 1;
+        assert_eq!(
+            frame_of::<3>(&image.data, w, h, &g, limit),
+            Err(TooLarge { size, limit })
+        );
+        let held = frame_of::<3>(&image.data, w, h, &g, limit + 1).unwrap();
+        assert_eq!((held.1, held.2), size);
+        assert_eq!(apply(&image, &g).map(|i| (i.width, i.height)), Ok(size));
+    }
+
+    /// The source and the geometry of [`over_the_limit`]: 12.4 MP, as
+    /// small a source as reaches [`MAX_FRAME_PIXELS`]. A search of
+    /// every tilt and angle at a 32nd of the bounds found no crop that
+    /// fits past about 17 times its source, so a smaller one cannot.
+    const OVER: (usize, usize) = (4320, 2880);
+
+    /// Both tilts far over, a turn, and the crop dragged out to the
+    /// reach of the bounds on one side, a little inside it.
+    fn over_the_limit() -> Geometry {
+        Geometry {
+            vertical: -40.0,
+            horizontal: -40.0,
+            angle: -30.0,
+            crop: Some(greycard_edit::geometry::Crop {
+                x: -3.49,
+                y: 0.26,
+                w: 3.98,
+                h: 4.22,
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// The real limit refuses a crop dragged out on a 12 MP source,
+    /// before any of its frame is allocated, which held would be
+    /// 2.5 GB.
+    #[test]
+    fn the_limit_refuses_a_crop_dragged_out_on_a_real_source() {
+        let (w, h) = OVER;
+        let g = over_the_limit();
+        assert!(g.fits(&g.crop.unwrap(), w as f32, h as f32));
+        let f = g.frame(w as f32, h as f32, None);
+        let size = (f.size.0 as usize, f.size.1 as usize);
+        assert!(size.0 * size.1 > MAX_FRAME_PIXELS, "{size:?}");
+        let image = WorkingImage::new(w, h);
+        assert_eq!(
+            apply(&image, &g).map(|_| ()),
+            Err(TooLarge {
+                size,
+                limit: MAX_FRAME_PIXELS
+            })
+        );
+    }
 }
 
 #[cfg(test)]
@@ -268,7 +438,7 @@ mod orientation {
                 flip,
                 ..Default::default()
             };
-            let out = apply(&image, &g);
+            let out = apply(&image, &g).unwrap();
             let (pw, ph) = g.plane_size(40.0, 30.0);
             assert_eq!((out.width, out.height), (pw as usize, ph as usize));
             for (ox, oy) in [(0usize, 0usize), (7, 3), (out.width - 1, out.height - 1)] {
@@ -316,7 +486,7 @@ mod direction {
             angle: 10.0,
             ..Default::default()
         };
-        let out = apply(&image, &g);
+        let out = apply(&image, &g).unwrap();
         let brightest_row = |x: usize| {
             (0..out.height)
                 .max_by(|&a, &b| {

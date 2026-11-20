@@ -1074,12 +1074,13 @@ impl FrameDevelop {
 
     /// The developed picture finished under `edit` (whose develop is
     /// the one this was made under) and `settings`, as an export
-    /// finishes it.
+    /// finishes it, or refused as an export refuses a frame too large
+    /// to hold.
     pub fn finish(
         &mut self,
         edit: &Edit,
         settings: &greycard_render::export::Settings,
-    ) -> greycard_render::export::Rendered {
+    ) -> Result<greycard_render::export::Rendered, greycard_render::geometry::TooLarge> {
         for item in &self.left_out {
             tracing::warn!("{item}");
         }
@@ -1087,27 +1088,28 @@ impl FrameDevelop {
     }
 
     /// What the finish would be handed for `edit` and `settings`,
-    /// before any pixel goes through it ([`greycard_render::export::Scene`]).
+    /// before any pixel goes through it ([`greycard_render::export::Scene`]),
+    /// or refused for a frame too large to hold.
     pub fn scene(
         &self,
         edit: &Edit,
         settings: &greycard_render::export::Settings,
-    ) -> greycard_render::export::Scene {
+    ) -> Result<greycard_render::export::Scene, greycard_render::geometry::TooLarge> {
         let framed;
         let (w, h) = (self.image.width as f32, self.image.height as f32);
         let image: &WorkingImage = if edit.geometry.is_identity_on(w, h, self.input.camera) {
             &self.image
         } else {
-            framed = greycard_render::geometry::apply(&self.image, &edit.geometry);
+            framed = greycard_render::geometry::apply(&self.image, &edit.geometry)?;
             &framed
         };
-        greycard_render::export::scene_framed(
+        Ok(greycard_render::export::scene_framed(
             image,
             edit,
             self.input.source,
             settings,
             self.input.guide.as_deref(),
-        )
+        ))
     }
 }
 

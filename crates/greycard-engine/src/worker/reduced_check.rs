@@ -400,7 +400,7 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                 detail: developed.detail.clone(),
                 camera: developed.camera,
             };
-            let made = crate::edited_pictures::make(&developed.image, &finish);
+            let made = crate::edited_pictures::make(&developed.image, &finish).unwrap();
             let reduced_ms = started.elapsed().as_secs_f64() * 1e3;
             let describe = format!(
                 "{:.2},{:.2},{:.2},{:.2},{:.1},{},{},{:.2},{},{:.2}",
@@ -550,7 +550,7 @@ fn the_reduced_develop_of_the_samples_timed() {
                 camera: developed.camera,
             };
             let before_finish = started.elapsed().as_secs_f64();
-            let made = crate::edited_pictures::make(&developed.image, &finish);
+            let made = crate::edited_pictures::make(&developed.image, &finish).unwrap();
             let finished = started.elapsed().as_secs_f64();
             let cache: ThumbCache = Arc::new(Mutex::new(Some(
                 Thumbs::at(
@@ -668,8 +668,8 @@ fn a_masks_detail_measured() {
             greycard_render::export::Pixels::Eight(p) => p,
             greycard_render::export::Pixels::Sixteen(_) => unreachable!(),
         };
-        let a = eight(g.finish(&global, &settings));
-        let b = eight(m.finish(&masked, &settings));
+        let a = eight(g.finish(&global, &settings).unwrap());
+        let b = eight(m.finish(&masked, &settings).unwrap());
         let (mean, p99) = delta_e(&a, &b);
         eprintln!(
             "{name} {}x{} ({:.1} MP): develop {t_plain:.2} s plain, {t_global:.2} s global \
@@ -861,8 +861,8 @@ fn a_masks_sharpen_measured() {
         let mut g = FrameDevelop::develop(path, &global, None).expect("developed");
         let mut m = FrameDevelop::develop(path, &masked, None).expect("developed");
         let (mean, p99) = delta_e(
-            &eight(g.finish(&global, &settings)),
-            &eight(m.finish(&masked, &settings)),
+            &eight(g.finish(&global, &settings).unwrap()),
+            &eight(m.finish(&masked, &settings).unwrap()),
         );
         // And the mask's Sharpen alone at +1 over the unsharpened frame
         // against the global sharpen: the same delta, put on at the
@@ -875,8 +875,8 @@ fn a_masks_sharpen_measured() {
         let mut s = FrameDevelop::develop(path, &plain, None).expect("developed");
         let mut a = FrameDevelop::develop(path, &alone, None).expect("developed");
         let (alone_mean, alone_p99) = delta_e(
-            &eight(s.finish(&plain, &settings)),
-            &eight(a.finish(&alone, &settings)),
+            &eight(s.finish(&plain, &settings).unwrap()),
+            &eight(a.finish(&alone, &settings).unwrap()),
         );
         eprintln!(
             "{name} {w}x{h} ({:.1} MP): -1 over the sharpen, luminance off the unsharpened by \

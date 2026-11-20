@@ -58,13 +58,14 @@ impl Walked {
 /// crate's finish, with the masks' bands taken through the same
 /// geometry when they are the picture's size. No border and no mark.
 /// An edit with no crop on a frame the camera framed is cut to the
-/// camera's frame (`input.camera`).
+/// camera's frame (`input.camera`). A frame too large to hold is
+/// refused before it is cut.
 pub fn render(
     image: &WorkingImage,
     edit: &Edit,
     input: &FinishInput,
     settings: &export::Settings,
-) -> export::Rendered {
+) -> Result<export::Rendered, greycard_render::geometry::TooLarge> {
     let (w, h) = (image.width as f32, image.height as f32);
     let edit = &Edit {
         geometry: edit.geometry.with_camera_frame(w, h, input.camera),
@@ -75,22 +76,24 @@ pub fn render(
     let picture: &WorkingImage = if whole {
         image
     } else {
-        framed = greycard_render::geometry::apply(image, &edit.geometry);
+        framed = greycard_render::geometry::apply(image, &edit.geometry)?;
         &framed
     };
     let planes = input
         .planes
         .as_ref()
         .filter(|p| (p.width as u32, p.height as u32) == input.source);
-    let detail = planes.map(|p| {
-        let bands = p.to_image();
-        if whole {
-            bands
-        } else {
-            bands.framed(&edit.geometry)
-        }
-    });
-    export::render(
+    let detail = planes
+        .map(|p| {
+            let bands = p.to_image();
+            if whole {
+                Ok(bands)
+            } else {
+                bands.framed(&edit.geometry)
+            }
+        })
+        .transpose()?;
+    Ok(export::render(
         picture,
         edit,
         &greycard_edit_io::Stores::user(),
@@ -102,7 +105,7 @@ pub fn render(
         input.kind,
         input.white.as_ref(),
         detail.as_ref().zip(planes.map(|p| &p.meta)),
-    )
+    ))
 }
 
 /// [`render`], then the border and the mark: the file's pixels. A mark
@@ -114,7 +117,7 @@ pub fn finish_file(
     input: &FinishInput,
     settings: &export::Settings,
 ) -> anyhow::Result<export::Rendered> {
-    let mut rendered = render(image, edit, input, settings);
+    let mut rendered = render(image, edit, input, settings)?;
     export::border(&mut rendered, settings);
     export::mark(&mut rendered, settings)?;
     Ok(rendered)
@@ -209,8 +212,8 @@ mod tests {
         let uncropped = placed();
         let mut by_crop = uncropped.clone();
         by_crop.geometry.crop = Some(band);
-        let a = render(&image, &uncropped, &framed, &settings);
-        let b = render(&image, &by_crop, &input(w, h), &settings);
+        let a = render(&image, &uncropped, &framed, &settings).unwrap();
+        let b = render(&image, &by_crop, &input(w, h), &settings).unwrap();
         assert_eq!((a.width, a.height), (120, 80), "3:2, not the whole 4:3");
         assert!(pixels(&a) == pixels(&b), "placed alike");
         let mut whole = uncropped.clone();
@@ -220,9 +223,9 @@ mod tests {
             w: 1.0,
             h: 1.0,
         });
-        let c = render(&image, &whole, &framed, &settings);
+        let c = render(&image, &whole, &framed, &settings).unwrap();
         assert_eq!((c.width, c.height), (120, 90), "the whole sensor");
-        let d = render(&image, &uncropped, &input(w, h), &settings);
+        let d = render(&image, &uncropped, &input(w, h), &settings).unwrap();
         assert_eq!((d.width, d.height), (120, 90), "no camera frame");
     }
 
@@ -242,8 +245,8 @@ mod tests {
         };
         let mut by_crop = by_aspect.clone();
         by_crop.geometry.crop = Some(by_aspect.geometry.effective_crop(w as f32, h as f32, None));
-        let a = render(&image, &by_aspect, &input(w, h), &settings);
-        let b = render(&image, &by_crop, &input(w, h), &settings);
+        let a = render(&image, &by_aspect, &input(w, h), &settings).unwrap();
+        let b = render(&image, &by_crop, &input(w, h), &settings).unwrap();
         assert_eq!((a.width, a.height), (120, 80), "3:2, not the whole 4:3");
         assert_eq!((a.width, a.height), (b.width, b.height));
         assert!(pixels(&a) == pixels(&b), "placed alike");
@@ -259,9 +262,46 @@ mod tests {
         let plain = placed();
         let mut own = plain.clone();
         own.geometry.aspect = Aspect::Ratio { w: 3.0, h: 2.0 };
-        let a = render(&image, &plain, &input(w, h), &settings);
-        let b = render(&image, &own, &input(w, h), &settings);
+        let a = render(&image, &plain, &input(w, h), &settings).unwrap();
+        let b = render(&image, &own, &input(w, h), &settings).unwrap();
         assert_eq!((a.width, a.height), (b.width, b.height));
         assert!(pixels(&a) == pixels(&b));
+    }
+
+    /// A crop dragged out to an extreme keystone's bounds on a 12 MP
+    /// picture fails the finish, and the file with it, with the frame's
+    /// size and the limit, before any of the frame is allocated.
+    #[test]
+    fn a_frame_too_large_to_hold_fails_the_finish() {
+        let (w, h) = (4320, 2880);
+        let edit = Edit {
+            geometry: Geometry {
+                vertical: -40.0,
+                horizontal: -40.0,
+                angle: -30.0,
+                crop: Some(greycard_edit::geometry::Crop {
+                    x: -3.49,
+                    y: 0.26,
+                    w: 3.98,
+                    h: 4.22,
+                }),
+                ..Default::default()
+            },
+            ..Edit::default()
+        };
+        let image = WorkingImage::new(w, h);
+        let settings = export::Settings::default();
+        let err = render(&image, &edit, &input(w, h), &settings)
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(err.limit, greycard_render::geometry::MAX_FRAME_PIXELS);
+        assert!(err.size.0 * err.size.1 > err.limit, "{err}");
+        let err = finish_file(&image, &edit, &input(w, h), &settings)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("megapixels one may hold"),
+            "{err:#}"
+        );
     }
 }

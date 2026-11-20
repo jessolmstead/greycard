@@ -306,7 +306,13 @@ fn frame(pair: &lx::Pair, shot: &lx::Shot, lenses: Option<&greycard_lens::Databa
         ..cm::settings()
     };
     let render = match crate::worker::FrameDevelop::develop(raw, &edit, lenses) {
-        Ok(mut d) => cm::picture_of(&d.finish(&edit, &settings)),
+        Ok(mut d) => match d.finish(&edit, &settings) {
+            Ok(r) => cm::picture_of(&r),
+            Err(e) => {
+                line.failed = Some(format!("the finish: {e}"));
+                return line;
+            }
+        },
         Err(e) => {
             line.failed = Some(format!("the develop: {e}"));
             return line;

@@ -466,14 +466,17 @@ pub struct BandImages {
 impl Plane {
     /// The frame of `geometry` cut from it, as from a channel of the
     /// picture.
-    fn framed(&self, geometry: &greycard_edit::geometry::Geometry) -> Self {
+    fn framed(
+        &self,
+        geometry: &greycard_edit::geometry::Geometry,
+    ) -> Result<Self, crate::geometry::TooLarge> {
         let (data, width, height) =
-            crate::geometry::apply_plane(&self.data, self.width, self.height, geometry);
-        Plane {
+            crate::geometry::apply_plane(&self.data, self.width, self.height, geometry)?;
+        Ok(Plane {
             width,
             height,
             data,
-        }
+        })
     }
 
     /// Resampled to `w` by `h` as a channel of the picture is.
@@ -505,18 +508,32 @@ impl BandImages {
         [t, c, h, one(&self.structure), one(&self.sharpen)]
     }
 
-    /// The frame of `geometry` cut from each, as from the picture.
-    pub fn framed(&self, geometry: &greycard_edit::geometry::Geometry) -> Self {
+    /// The frame of `geometry` cut from each, as from the picture, or
+    /// none of it when the frame is too large to hold.
+    pub fn framed(
+        &self,
+        geometry: &greycard_edit::geometry::Geometry,
+    ) -> Result<Self, crate::geometry::TooLarge> {
         let lanes = self
             .lanes
             .as_ref()
-            .map(|l| crate::geometry::apply(l, geometry));
-        let structure = self.structure.as_ref().map(|s| s.framed(geometry));
-        let sharpen = self.sharpen.as_ref().map(|s| s.framed(geometry));
+            .map(|l| crate::geometry::apply(l, geometry))
+            .transpose()?;
+        let structure = self
+            .structure
+            .as_ref()
+            .map(|s| s.framed(geometry))
+            .transpose()?;
+        let sharpen = self
+            .sharpen
+            .as_ref()
+            .map(|s| s.framed(geometry))
+            .transpose()?;
         let sample = self
             .sample
             .as_ref()
-            .map(|s| Arc::new(crate::geometry::apply(s, geometry)));
+            .map(|s| crate::geometry::apply(s, geometry).map(Arc::new))
+            .transpose()?;
         let size = lanes
             .as_ref()
             .map(|l| (l.width, l.height))
@@ -524,13 +541,13 @@ impl BandImages {
             .or_else(|| sharpen.as_ref().map(|s| (s.width, s.height)))
             .or_else(|| sample.as_ref().map(|s| (s.width, s.height)))
             .unwrap_or(self.size);
-        Self {
+        Ok(Self {
             size,
             lanes,
             structure,
             sharpen,
             sample,
-        }
+        })
     }
 
     /// Each resampled to `w` by `h` as the picture is, or none when
@@ -1188,7 +1205,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let framed = bands.framed(&turned);
+        let framed = bands.framed(&turned).unwrap();
         let s = framed.structure.as_ref().unwrap();
         assert_eq!((s.width, s.height), (framed.width(), framed.height()));
         assert_eq!(s.data, first(&framed));
@@ -1249,8 +1266,8 @@ mod tests {
                 }),
                 ..Default::default()
             };
-            let framed = bands.framed(&turned);
-            let channel = crate::geometry::apply(&as_channel, &turned);
+            let framed = bands.framed(&turned).unwrap();
+            let channel = crate::geometry::apply(&as_channel, &turned).unwrap();
             let s = framed.sharpen.as_ref().unwrap();
             assert_eq!((s.width, s.height), (framed.width(), framed.height()));
             assert_eq!((channel.width, channel.height), framed.size);

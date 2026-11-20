@@ -639,7 +639,10 @@ pub(crate) fn measure_frame_with(
         ..cm::settings()
     };
     let mut developed = crate::worker::FrameDevelop::develop(raw, edit, lenses)?;
-    let render = cm::picture_of(&developed.finish(edit, &settings));
+    let render = developed
+        .finish(edit, &settings)
+        .map_err(|e| e.to_string())?;
+    let render = cm::picture_of(&render);
     // The registration is of the picture's structure, which the
     // tone curve bends a little differently at every brightness: a
     // render a stop from the export can miss the correlation on a frame
@@ -654,7 +657,10 @@ pub(crate) fn measure_frame_with(
             let shift = median_shift(&mapped, export);
             let mut moved = edit.clone();
             moved.light.exposure += shift;
-            let shifted = cm::picture_of(&developed.finish(&moved, &settings));
+            let shifted = developed
+                .finish(&moved, &settings)
+                .map_err(|e| e.to_string())?;
+            let shifted = cm::picture_of(&shifted);
             match lay(&cut(&shifted, own, crop, size), own, export) {
                 Ok(l) => (l, Some(shift)),
                 Err(_) => return Err(why),
@@ -662,8 +668,11 @@ pub(crate) fn measure_frame_with(
         }
     };
     let first = pairs_of(&render, own, crop, size, &laid);
-    let kept = keep.then(|| {
-        let scene = developed.scene(edit, &settings);
+    let scene = keep
+        .then(|| developed.scene(edit, &settings))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let kept = scene.map(|scene| {
         let n = scene.image.width * scene.image.height;
         let scene_picture = to_picture(scene.image);
         // The guide and the vignette's stops as a picture of their own,
@@ -712,14 +721,22 @@ pub(crate) fn measure_frame_with(
     let at = |developed: &mut crate::worker::FrameDevelop, o: f32| {
         let mut moved = edit.clone();
         moved.light.exposure += o;
-        let render = cm::picture_of(&developed.finish(&moved, &settings));
-        pairs_of(&render, own, crop, size, &laid)
+        let render = developed.finish(&moved, &settings)?;
+        Ok::<_, greycard_render::geometry::TooLarge>(pairs_of(
+            &cm::picture_of(&render),
+            own,
+            crop,
+            size,
+            &laid,
+        ))
     };
-    let once = at(&mut developed, offset);
+    let once = at(&mut developed, offset).map_err(|e| e.to_string())?;
     let residual =
         greycard_match::exposure::offset_stops(&once).ok_or("no flat, unclipped blocks")?;
     let (ended, matched) = cm::iterate(offset, residual, once, &mut |o| {
-        let p = at(&mut developed, o);
+        let p = at(&mut developed, o)
+            .inspect_err(|e| tracing::warn!("the match's finish at {o:+.2} stops: {e}"))
+            .ok()?;
         greycard_match::exposure::offset_stops(&p).map(|r| (r, p))
     });
     let s = summary_of(&first);
@@ -1861,13 +1878,17 @@ mod tests {
         assert!((edit.light.exposure - 0.3).abs() < 1e-6);
         let crop = Crop::of(&lx::words(settings));
         let mut developed = crate::worker::FrameDevelop::develop(&raw, &edit, None).unwrap();
-        let render = cm::picture_of(&developed.finish(
-            &edit,
-            &export::Settings {
-                long_edge: Some(long_edge_for(crop.as_ref(), None)),
-                ..cm::settings()
-            },
-        ));
+        let render = cm::picture_of(
+            &developed
+                .finish(
+                    &edit,
+                    &export::Settings {
+                        long_edge: Some(long_edge_for(crop.as_ref(), None)),
+                        ..cm::settings()
+                    },
+                )
+                .unwrap(),
+        );
         let export = cut(&render, Orientation::Normal, crop.as_ref(), None);
         assert_eq!(
             (export.width, export.height),

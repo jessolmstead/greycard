@@ -5433,7 +5433,9 @@ fn the_edits_pictures_are_refined() {
         };
         (
             developed.guide.picture.is_some(),
-            crate::edited_pictures::make(&developed.image, &finish).big,
+            crate::edited_pictures::make(&developed.image, &finish)
+                .unwrap()
+                .big,
         )
     };
     let (with, refined) = picture(&edit);

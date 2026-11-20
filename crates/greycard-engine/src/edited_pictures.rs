@@ -1163,8 +1163,15 @@ pub fn read_back_reduced(
 /// before its geometry): the geometry, a resize to [`BIG`] on the long
 /// edge, the finish as an export at that size is finished (with no
 /// output sharpening), the frame's own turns taken back out, and the
-/// made sizes shrunk from that.
-pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
+/// made sizes shrunk from that. The picture cut here is the reduced
+/// one, under 4096 on its long edge, whose limit is at least
+/// [`greycard_render::geometry::MAX_FRAME_PIXELS`], so in practice
+/// nothing is refused: a frame the export refuses still gets its
+/// pictures. The error is passed on all the same.
+pub fn make(
+    reduced: &WorkingImage,
+    finish: &Finish,
+) -> Result<Made, greycard_render::geometry::TooLarge> {
     // The camera's frame resolved into the geometry at the full
     // develop's size, as the export resolves it, for the renderers that
     // take a whole geometry.
@@ -1183,7 +1190,7 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
     let image = if whole {
         reduced
     } else {
-        framed = greycard_render::geometry::apply(reduced, &edit.geometry);
+        framed = greycard_render::geometry::apply(reduced, &edit.geometry)?;
         &framed
     };
     // At the size an export at BIG of the full develop has, to the
@@ -1206,10 +1213,11 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
             bands.fit_exact(rw, rh).unwrap_or(bands)
         };
         if !whole {
-            bands = bands.framed(&edit.geometry);
+            bands = bands.framed(&edit.geometry)?;
         }
-        bands.fit_exact(w, h).unwrap_or(bands)
+        Ok(bands.fit_exact(w, h).unwrap_or(bands))
     });
+    let detail = detail.transpose()?;
     let (sw, sh) = (finish.source.0 as f32, finish.source.1 as f32);
     let frame_width = edit.geometry.frame(sw, sh, None).size.0;
     let full_width = edit.geometry.frame(fw, fh, None).size.0;
@@ -1251,7 +1259,7 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
         .iter()
         .map(|&size| (size, shrunk(&big, size)))
         .collect();
-    Made { big, thumbs }
+    Ok(Made { big, thumbs })
 }
 
 /// The size an export at [`BIG`] of a full develop of `full` under
@@ -1357,14 +1365,22 @@ pub fn keep(edited: &Edited, job: Keeping, done: impl FnOnce(Key)) {
     };
     let (rw, rh) = (image.width, image.height);
     let reducing = started.elapsed().as_secs_f64();
-    let made = make(image, &job.finish);
+    let name = job.frame.said();
+    // A frame refused makes nothing, and the pictures kept before it
+    // stay as they were.
+    let made = match make(image, &job.finish) {
+        Ok(made) => made,
+        Err(e) => {
+            tracing::warn!("the edit's pictures of {name}: not made: {e}");
+            return;
+        }
+    };
     let making = started.elapsed().as_secs_f64() - reducing;
     let stored = edited.store(&job.frame, &job.hash, job.key, job.iso, &made);
     // Kept, or not: a save of the same picture from now on looks for it
     // in the cache rather than waiting on this one.
     drop(job.marked);
     let total = started.elapsed().as_secs_f64();
-    let name = job.frame.said();
     match stored {
         Ok(bytes) => {
             tracing::info!(
@@ -1621,7 +1637,7 @@ pub mod tests {
                 detail: None,
                 camera: None,
             };
-            let big = make(&reduced, &finish).big;
+            let big = make(&reduced, &finish).unwrap().big;
             assert_eq!((big.width, big.height), (w as u32, h as u32));
             let i = ((h / 2) * w + 1001) * 3;
             big.rgb[i..i + 3].iter().map(|v| u32::from(*v)).sum::<u32>()

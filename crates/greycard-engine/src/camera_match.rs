@@ -1099,7 +1099,10 @@ pub(crate) fn lay(
     jpeg: &Picture,
     curve: DisplayCurve,
 ) -> Result<Laid, String> {
-    let render = picture_of(&developed.finish(&fit_edit(curve), &settings()));
+    let render = developed
+        .finish(&fit_edit(curve), &settings())
+        .map_err(|e| e.to_string())?;
+    let render = picture_of(&render);
     let reg = register(&render, jpeg);
     if reg.ncc < NCC_MIN {
         return Err(format!(
@@ -1136,14 +1139,27 @@ pub(crate) fn pairs_at(
 /// The block pairs of `developed` finished under `edit` against the
 /// JPEG `laid` holds: [`pairs_at`] for an edit other than the fit's,
 /// such as one carrying a look. The registration holds for any edit
-/// that moves no pixel.
+/// that moves no pixel. A finish refused leaves no block, as a step
+/// that leaves none does.
 pub(crate) fn pairs_under(
     developed: &mut crate::worker::FrameDevelop,
     laid: &Laid,
     edit: &Edit,
 ) -> Pairs {
-    let render = picture_of(&developed.finish(edit, &settings()));
-    greycard_match::pairs::pairs(&render, &laid.laid, &laid.coverage)
+    match developed.finish(edit, &settings()) {
+        Ok(render) => {
+            greycard_match::pairs::pairs(&picture_of(&render), &laid.laid, &laid.coverage)
+        }
+        Err(e) => {
+            tracing::warn!("the camera match's finish: {e}");
+            Pairs {
+                pairs: Vec::new(),
+                rows: 0,
+                cols: 0,
+                total: 0,
+            }
+        }
+    }
 }
 
 /// A frame's exposure matched to the camera's: the first pass, and
@@ -3341,8 +3357,8 @@ mod tests {
                 .sum::<f32>()
                 / p.data.len() as f32
         };
-        let at = mean(&picture_of(&developed.finish(&edit, &settings())));
-        let above = mean(&picture_of(&developed.finish(&up, &settings())));
+        let at = mean(&picture_of(&developed.finish(&edit, &settings()).unwrap()));
+        let above = mean(&picture_of(&developed.finish(&up, &settings()).unwrap()));
         let ratio = above / at;
         eprintln!("mid grey {at:.4}, a stop up {above:.4}, ratio {ratio:.3}");
         assert!(
@@ -3373,7 +3389,7 @@ mod tests {
             let edit = fit_edit(curve);
             assert_eq!(edit.display_curve, curve);
             assert!(edit.look_lut.is_off(), "the fit develops with no look");
-            pictures.push(picture_of(&developed.finish(&edit, &settings())));
+            pictures.push(picture_of(&developed.finish(&edit, &settings()).unwrap()));
         }
         let moved = pictures[0]
             .data
@@ -3422,7 +3438,7 @@ mod tests {
     ) -> Picture {
         let mut at = fit_edit(curve);
         at.light.exposure += stops;
-        picture_of(&developed.finish(&at, &settings()))
+        picture_of(&developed.finish(&at, &settings()).unwrap())
     }
 
     /// The match's exposure match on a real finish. One pass reads the

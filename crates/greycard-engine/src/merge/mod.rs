@@ -2972,7 +2972,9 @@ mod tests {
     fn exported(file: &Path, edit: &Edit) -> Vec<f32> {
         let mut developed =
             crate::worker::FrameDevelop::develop(file, edit, None).expect("it develops");
-        let rendered = developed.finish(edit, &greycard_render::export::Settings::default());
+        let rendered = developed
+            .finish(edit, &greycard_render::export::Settings::default())
+            .unwrap();
         assert_eq!((rendered.width, rendered.height), (W as u32, H as u32));
         match rendered.pixels {
             greycard_render::export::Pixels::Eight(p) => {

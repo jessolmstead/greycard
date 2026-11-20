@@ -888,7 +888,8 @@ impl Reducer {
         };
         let made = self
             .pool()
-            .install(|| crate::edited_pictures::make(&developed.image, &finish));
+            .install(|| crate::edited_pictures::make(&developed.image, &finish))
+            .map_err(|e| Why::Failed(e.to_string()))?;
         let making =
             started.elapsed().as_secs_f64() - developed.decode - developed.develop - developed.rest;
         let kept = edited

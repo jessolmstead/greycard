@@ -391,7 +391,7 @@ fn a_free_crops_blocks_are_the_exports_pixels() {
                     h: (ph * 0.55) / ph,
                 });
                 let frame = g.frame(sw, sh, None);
-                let export = greycard_render::geometry::apply(&image, &g);
+                let export = greycard_render::geometry::apply(&image, &g).unwrap();
                 let (fw, fh) = (export.width, export.height);
                 assert_eq!((fw as f32, fh as f32), frame.size);
                 renderer.upload(&Halves::from_image(&export, None));
