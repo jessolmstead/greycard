@@ -48,6 +48,8 @@ design note behind it.
 
 ### Fixes
 
+- A folder of raws moved by hand carries its sidecars faster: the old
+  folder is listed once, not once a frame.
 - A lens the database lacks no longer takes the profile of another
   line's lens of its name, a Summilux-TL's for a Summilux-M
   ([§723](https://github.com/jessolmstead/greycard/blob/master/docs/notes/723-a-lens-match-that-knows-its-line.md)).
