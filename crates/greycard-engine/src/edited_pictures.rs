@@ -359,8 +359,10 @@ impl Drop for Marked {
 /// The lens database a develop reads now, named by the directory it is
 /// found in (the first of `greycard_lens::Store::candidates` with any
 /// XML in it, which is the one `Store::load` reads) and the fetch's
-/// `timestamp.txt` there: a fetch or an update moves it. `None` with
-/// none. A listing or two and one small read, never the database.
+/// `timestamp.txt` there: a fetch or an update moves it. With the
+/// matching's version, [`greycard_lens::MATCHING`]: the same database
+/// matched another way gives a file another profile. `None` with none.
+/// A listing or two and one small read, never the database.
 pub fn lens_database() -> Option<String> {
     let store = greycard_lens::Store::user().ok()?;
     let dir = store.candidates().into_iter().find(|dir| {
@@ -368,8 +370,18 @@ pub fn lens_database() -> Option<String> {
             entries.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x == "xml")))
         })
     })?;
+    Some(lens_database_named(&dir))
+}
+
+/// [`lens_database`] for the database in `dir`.
+fn lens_database_named(dir: &std::path::Path) -> String {
     let made = std::fs::read_to_string(dir.join("timestamp.txt")).unwrap_or_default();
-    Some(format!("{} {}", dir.display(), made.trim()))
+    format!(
+        "{} {} matching {}",
+        dir.display(),
+        made.trim(),
+        greycard_lens::MATCHING
+    )
 }
 
 impl Edited {
@@ -2194,6 +2206,18 @@ pub mod tests {
         edited.settle_key(&a, &ha, 7, None);
         assert!(edited.settle_key(&a, &ha, 8, None));
         assert!(!has(&ha, 7), "the version found its own key: 7 is nobody's");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The database's name for the keys carries the matching's version,
+    /// so a frame whose profile the matching changed is made again.
+    #[test]
+    fn the_lens_databases_name_carries_the_matching() {
+        let dir = crate::testing::scratch_dir("lens-database-name");
+        std::fs::write(dir.join("timestamp.txt"), "1700000000\n").unwrap();
+        let name = lens_database_named(&dir);
+        assert!(name.starts_with(&format!("{} 1700000000 ", dir.display())));
+        assert!(name.ends_with(&format!("matching {}", greycard_lens::MATCHING)));
         crate::testing::remove_dir_retry(&dir);
     }
 }

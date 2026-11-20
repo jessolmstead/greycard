@@ -1577,9 +1577,9 @@ clears or a tester asks for it.
       and its strip would do; upstream, rawler's `preview_image`
       takes the first preview listed, and a public
       `apply_linearization` would spare consumers the table
-- [ ] The lens lookup's fallback that ignores the mount takes an
-      APS-C lens for a full-frame body (a Summilux-TL for an M's
-      Summilux-M): refuse a lens calibrated for a much smaller sensor
+- [ ] The lens match (§723), what is left: a lens name with no line
+      word on a body of another line; Sigma's and Tamron's own line
+      words; the database's 36 bare-number names
 
 ## Blocked
 

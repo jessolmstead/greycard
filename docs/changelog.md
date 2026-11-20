@@ -43,6 +43,11 @@ design note behind it.
 
 ### Fixes
 
+- A lens the database lacks no longer takes the profile of another
+  line's lens of its name, a Summilux-TL's for a Summilux-M
+  ([§723](https://github.com/jessolmstead/greycard/blob/master/docs/notes/723-a-lens-match-that-knows-its-line.md)).
+- A Sigma or Tamron lens is told from its later version by its model
+  code, where a 24-70 DG DN took the Mark II's profile.
 - Both perspective sliders near their ends no longer make a frame
   millions of pixels wide, in the crop view or from a stored crop.
 - Turn left and Turn right keep the point you are zoomed in on, where

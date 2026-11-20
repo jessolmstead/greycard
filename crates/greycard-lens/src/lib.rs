@@ -26,6 +26,17 @@ pub use db::{Camera, Database, Lens};
 pub use lcp::Lcp;
 pub use store::{Progress, Store};
 
+/// How [`Database::lens`] matches, for the keys of pictures kept from
+/// an edit corrected by the file's profile: raise it when the same
+/// database comes to give a file another lens or none, and those
+/// pictures are made again.
+///
+/// 2: a name of another line of its maker's, or another maker's lens
+/// for a first-party line, is not taken; codes are no focal lengths,
+/// and a match leaving one out needs most of the name; calibrations of
+/// one name tie to the one covering the body, 2026-11-19.
+pub const MATCHING: u32 = 2;
+
 use db::{DistortionModel, Lens as DbLens};
 use greycard_core::develop::lens::{
     ChromaticAberration, Distortion, LensCorrection, Scale, Vignetting,

@@ -734,3 +734,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§720. The panels stay one crate](notes/720-the-panels-stay-one-crate.md) (2026-11-19)
 - [§721. A vignette on the picture as shown](notes/721-a-vignette-on-the-picture-as-shown.md) (2026-11-19)
 - [§722. A save that looks before it writes](notes/722-a-save-that-looks-before-it-writes.md) (2026-11-20)
+- [§723. A lens match that knows its line](notes/723-a-lens-match-that-knows-its-line.md) (2026-11-20)
