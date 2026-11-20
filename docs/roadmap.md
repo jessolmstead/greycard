@@ -1527,8 +1527,21 @@ clears or a tester asks for it.
       2026-11-18)
 - [ ] A relative sync: the change, not the value, applied across the
       selected frames (issue 106)
-- [ ] Leica in camera match: the film style read from an M's DNG,
-      fitted against its JPEG; waits on sample pairs (2026-11-18)
+- [ ] Leica in camera match: the film style read from an M's DNG
+      (`Maker::Leica`; the maker note's tags are unnamed until frames
+      in each style say which is which), fitted against its JPEG or
+      the full-size preview the DNG carries. Six M11 frames in one
+      style laid 0.4 to 0.5 stops under our default, the color
+      already close. Waits on 20 or more frames a style (2026-11-19)
+- [ ] A DNG's LinearizationTable is not applied: a linear DNG that
+      carries one (PureRAW's at 60 MP, and likely older Leica M
+      files) renders six stops dark and magenta
+- [ ] A camera's DNG gives its 160x120 thumbnail as the preview, the
+      first preview SubIFD, where a full-size one follows: the
+      culling loupe and the camera match get a thumbnail
+- [ ] The lens lookup's fallback that ignores the mount takes an
+      APS-C lens for a full-frame body (a Summilux-TL for an M's
+      Summilux-M): refuse a lens calibrated for a much smaller sensor
 
 ## Blocked
 
