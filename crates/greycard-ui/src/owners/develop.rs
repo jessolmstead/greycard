@@ -526,14 +526,17 @@ pub(crate) struct StoodView {
 
 /// The frame on show as the render laid it out: the frame (the file
 /// and the version) whose develop was drawn, none for no develop, the
-/// geometry it was drawn under, the size of the source drawn, and the
-/// frame on the leveled plane, so a point of the frame can be taken to
-/// the source and onto the next frame laid out of the same picture.
+/// geometry it was drawn under, the size of the source drawn and the
+/// frame's own quarter turns clockwise it stands at (`Sidecar::turn`),
+/// and the frame on the leveled plane, so a point of the frame can be
+/// taken to the source and onto the next frame laid out of the same
+/// picture.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Laid {
     pub(crate) of: Option<(PathBuf, Option<Arc<str>>)>,
     pub(crate) geometry: greycard_edit::geometry::Geometry,
     pub(crate) source: (f32, f32),
+    pub(crate) turn: u8,
     pub(crate) frame: greycard_edit::geometry::Frame,
 }
 

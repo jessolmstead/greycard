@@ -235,10 +235,14 @@ pub(crate) fn frame_on_show(
         let cell = st.cells.get(c)?;
         Some((st.files.get(cell.file)?.clone(), cell.version.clone()))
     });
+    // The develop drawn stands at the turn it was made at, and the
+    // lag turns it on to the open frame's.
+    let turn = st.develop.shown_turn.map_or(0, |(_, t)| (t + lag) % 4);
     let laid = owners::Laid {
         of,
         geometry: edit.geometry.clone(),
         source: (sw, sh),
+        turn,
         frame,
     };
     let before = st.develop.laid.replace(laid.clone());
@@ -273,29 +277,39 @@ pub(crate) fn frame_on_show(
 /// plane to the source under the geometry it was drawn under, and back
 /// under the one in force, so a turn, a keystone, a mirror, or a crop
 /// refitted about it leaves the same place of the picture in the
-/// middle. A point the new frame leaves out is held at its edge. None
-/// for another frame's develop, or none drawn (a stand-in), another
-/// size of source, or a point that does not come back finite (past a
-/// keystone's horizon), which is laid out as a new frame is; the center
-/// as it was where nothing changed, so a frame drawn again does not
-/// drift.
+/// middle. The frame's own turn between the two turns the source
+/// under them ([`turned_point`]), so the picture turns about the
+/// view's center. A point the new frame leaves out is held at its
+/// edge. None for another frame's develop, or none drawn (a stand-in),
+/// another size of source, or a point that does not come back finite
+/// (past a keystone's horizon), which is laid out as a new frame is;
+/// the center as it was where nothing changed, so a frame drawn again
+/// does not drift.
 fn carried_center(
     before: &owners::Laid,
     now: &owners::Laid,
     center: (f32, f32),
 ) -> Option<(f32, f32)> {
-    if before.of.is_none() || before.of != now.of || before.source != now.source {
+    let quarters = (now.turn + 4 - before.turn % 4) % 4;
+    let turned = if quarters % 2 == 1 {
+        (before.source.1, before.source.0)
+    } else {
+        before.source
+    };
+    if before.of.is_none() || before.of != now.of || turned != now.source {
         return None;
     }
     if before == now {
         return Some(center);
     }
-    let (sw, sh) = now.source;
     let plane = (
         before.frame.origin.0 + center.0,
         before.frame.origin.1 + center.1,
     );
-    let source = before.geometry.to_source(plane, sw, sh);
+    let (bw, bh) = before.source;
+    let source = before.geometry.to_source(plane, bw, bh);
+    let source = turned_point(source, before.source, quarters);
+    let (sw, sh) = now.source;
     let (px, py) = now.geometry.to_plane(source, sw, sh);
     let (x, y) = (px - now.frame.origin.0, py - now.frame.origin.1);
     (x.is_finite() && y.is_finite()).then(|| {
@@ -304,6 +318,18 @@ fn carried_center(
             y.clamp(0.0, now.frame.size.1),
         )
     })
+}
+
+/// A point of a source `w` by `h` on the same source turned `quarters`
+/// quarter turns clockwise: the continuous form of the shader's
+/// `texel_at` (`render::texel_of`), read the other way.
+fn turned_point((x, y): (f32, f32), (w, h): (f32, f32), quarters: u8) -> (f32, f32) {
+    match quarters % 4 {
+        1 => (h - y, x),
+        2 => (w - x, h - y),
+        3 => (y, w - x),
+        _ => (x, y),
+    }
 }
 
 /// A view on a picture standing in, as the zoom and center of the

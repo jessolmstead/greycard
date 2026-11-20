@@ -94,12 +94,14 @@ the reasoning lives in `docs/notes.md`.
       machines; the Lightroom import reads the label too, and history
       rows stay English in a translated window. A step's kind as a
       field instead (review, 2026-11-11)
-- [ ] The frame's own Turn left and right, zoomed in, throws the view
-      to the frame's middle: carry the point as a geometry change
-      does, with the turn in what was laid out (review, 2026-11-19)
-- [ ] Both perspective sliders past about 30 degrees send a corner
-      across the horizon and the frame's bounds to tens of millions
-      of pixels: bound the frame there (review, 2026-11-19)
+- [ ] The culling loupe and the compare view, zoomed in, still throw
+      the view to the middle at the frame's own Turn: they draw through
+      another path than the develop view's carry (review, 2026-11-20)
+- [ ] An export refuses a frame too large to hold, with its reason:
+      a crop is now held within 64 times the source's pixels, which is
+      finite but can still be tens of gigabytes; `frame_of` and
+      `apply` return plain buffers, so it is seven call sites (review,
+      2026-11-20)
 - [ ] `greycard.exe` beside the editor on Windows: double-clicked,
       or run from Win+R, the command line is a console that opens and
       closes. A name or a place that keeps it out of the way (§684)

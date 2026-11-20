@@ -41,6 +41,8 @@ design note behind it.
 
 ### Fixes
 
+- Turn left and Turn right keep the point you are zoomed in on, where
+  the view jumped to the frame's middle.
 - A save no longer writes over another window's or machine's edit:
   the other copy is kept beside the frame
   ([§722](https://github.com/jessolmstead/greycard/blob/master/docs/notes/722-a-save-that-looks-before-it-writes.md)).

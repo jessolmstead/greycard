@@ -28,12 +28,18 @@ fn developed() -> (App, Rc<crate::Shared>, Rc<crate::worker::Worker>) {
 
 /// The open frame's develop of `size` landing.
 fn land(app: &App, state: &Rc<crate::Shared>, size: (u32, u32)) {
+    land_at(app, state, size, 0);
+}
+
+/// The open frame's develop of `size` landing, made at the frame's
+/// own `turn`.
+fn land_at(app: &App, state: &Rc<crate::Shared>, size: (u32, u32), turn: u8) {
     let generation = state.borrow().develop.generation;
     crate::panel::deliver::deliver(
         app,
         crate::worker::Outcome::Developed {
             generation,
-            turn: 0,
+            turn,
             kind: crate::finish::Source::SCENE,
             image: crate::worker::Developed::Halves(std::sync::Arc::new(crate::worker::Halves {
                 width: size.0,
@@ -469,4 +475,195 @@ fn another_frame_is_never_carried_through_the_last_ones_geometry() {
         state.borrow().develop.center,
         shown.frame.size
     );
+}
+
+/// `p`, a point of the develop at no turn of its own, on the develop
+/// turned `quarters` quarter turns clockwise, as the frame's own Turn
+/// right turns it.
+fn turned_at((x, y): (f32, f32), quarters: i32) -> (f32, f32) {
+    let (w, h) = (SIZE.0 as f32, SIZE.1 as f32);
+    match quarters.rem_euclid(4) {
+        1 => (h - y, x),
+        2 => (w - x, h - y),
+        3 => (y, w - x),
+        _ => (x, y),
+    }
+}
+
+/// What the frame carries before it is zoomed into and turned.
+#[derive(Clone, Copy, Debug)]
+enum Under {
+    Nothing,
+    /// A crop about the point, small enough that a turn the wrong way
+    /// round would leave the point out of it.
+    Crop,
+    Angle,
+    /// Mirrored, with a keystone: an odd turn of the frame takes the
+    /// mirrored edit a half turn more (`under_turned_source`).
+    MirrorKeystone,
+    /// The edit's own quarter turn under the frame's.
+    EditTurn,
+}
+
+const UNDER: [Under; 5] = [
+    Under::Nothing,
+    Under::Crop,
+    Under::Angle,
+    Under::MirrorKeystone,
+    Under::EditTurn,
+];
+
+fn put_under(app: &App, state: &Rc<crate::Shared>, under: Under) {
+    match under {
+        Under::Nothing => {}
+        Under::Crop => {
+            crate::panel::crop::set_crop(
+                app,
+                Some(crate::Crop {
+                    x: 0.55,
+                    y: 0.25,
+                    w: 0.2,
+                    h: 0.25,
+                }),
+            );
+            app.invoke_view_changed();
+        }
+        Under::Angle => {
+            app.set_geo_angle(10.0);
+            app.invoke_geometry_changed();
+        }
+        Under::MirrorKeystone => {
+            app.invoke_geometry_flipped(false);
+            app.set_geo_vertical(20.0);
+            app.invoke_geometry_changed();
+            assert!(app.get_geo_flip(), "mirrored");
+        }
+        Under::EditTurn => {
+            app.invoke_geometry_turned(1);
+            assert_eq!(app.get_geo_turns(), 1, "the edit turned");
+        }
+    }
+    lay_out(app, state);
+}
+
+/// The frame's own Turn left and Turn right (`Sidecar::turn`, not the
+/// edit's), zoomed in: the picture turns about the view's center, so
+/// the same picture point stays there at the same zoom, while the
+/// develop at the old turn is drawn turned and once the develop at the
+/// new one lands; and so across two turns, over a crop and an angle.
+/// It went back to the middle of the frame.
+#[test]
+fn the_frames_own_turn_while_zoomed_keeps_the_point_in_the_middle() {
+    // Each case: the turns pressed, and whether the develop lands
+    // after each or only after the last.
+    let cases: [(&[i32], bool); 5] = [
+        (&[1], false),
+        (&[-1], false),
+        (&[1, 1], false),
+        (&[1, 1], true),
+        (&[-1, 1, 1], false),
+    ];
+    for under in UNDER {
+        for (turns, each) in cases {
+            let (app, state, _worker) = developed();
+            put_under(&app, &state, under);
+            zoom_to(&app, &state, 2.0, AT);
+            assert!(close(view(&app, &state).1, AT), "{under:?}: zoomed");
+            let mut total = 0;
+            for (i, &q) in turns.iter().enumerate() {
+                app.invoke_frame_turned(q);
+                total += q;
+                let turn = total.rem_euclid(4) as u8;
+                assert_eq!(state.borrow().sidecars[0].turn, turn, "turned");
+                let want = turned_at(AT, total);
+                let what = format!("{under:?}, {turns:?} to {i}");
+                let drawn = view(&app, &state);
+                assert_eq!(drawn.0, 2.0, "{what}: the zoom");
+                assert!(
+                    close(drawn.1, want),
+                    "{what}: {:?} under the middle, not {want:?}",
+                    drawn.1
+                );
+                if each || i + 1 == turns.len() {
+                    let size = if turn % 2 == 1 {
+                        (SIZE.1, SIZE.0)
+                    } else {
+                        SIZE
+                    };
+                    land_at(&app, &state, size, turn);
+                    let landed = view(&app, &state);
+                    assert_eq!(landed.0, 2.0, "{what}, landed: the zoom");
+                    assert!(
+                        close(landed.1, want),
+                        "{what}, landed: {:?} under the middle, not {want:?}",
+                        landed.1
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A point near the frame's edge, turned: held where it is as usual,
+/// not thrown to the middle.
+#[test]
+fn the_frames_own_turn_near_an_edge_keeps_the_point() {
+    let (app, state, _worker) = developed();
+    let near_edge = (5990.0, 2000.0);
+    zoom_to(&app, &state, 2.0, near_edge);
+    app.invoke_frame_turned(1);
+    let want = turned_at(near_edge, 1);
+    let shown = lay_out(&app, &state);
+    let st = state.borrow();
+    assert_eq!(st.develop.zoom, 2.0);
+    let (cx, cy) = st.develop.center;
+    // The right edge turned clockwise is the bottom.
+    assert!(
+        (cx - want.0).abs() < 1.0 && (cy - want.1).abs() < 1.0,
+        "({cx}, {cy}), not {want:?}, in {:?}",
+        shown.frame.size
+    );
+}
+
+/// An angle undone after the frame's own turn, zoomed in, keeps the
+/// point too: the history's states turned with the frame.
+#[test]
+fn undo_after_the_frames_own_turn_keeps_the_point() {
+    let (app, state, _worker) = developed();
+    app.set_panel_tab("Crop".into());
+    past_the_save();
+    app.set_geo_angle(10.0);
+    app.invoke_geometry_changed();
+    past_the_save();
+    lay_out(&app, &state);
+    zoom_to(&app, &state, 2.0, AT);
+    app.invoke_frame_turned(1);
+    let want = turned_at(AT, 1);
+    assert!(close(view(&app, &state).1, want), "turned");
+    app.invoke_undo();
+    assert_eq!(app.get_geo_angle(), 0.0, "undone");
+    let after = view(&app, &state);
+    assert_eq!(after.0, 2.0);
+    assert!(close(after.1, want), "undo: {after:?}, not {want:?}");
+}
+
+/// At fit, the frame's own turn leaves the frame fitted and in the
+/// middle.
+#[test]
+fn the_frames_own_turn_at_fit_stays_fitted_in_the_middle() {
+    for under in UNDER {
+        for q in [1, -1] {
+            let (app, state, _worker) = developed();
+            put_under(&app, &state, under);
+            app.invoke_frame_turned(q);
+            let shown = lay_out(&app, &state);
+            assert_eq!(state.borrow().develop.zoom, 0.0, "{under:?} {q}");
+            assert!(
+                in_the_middle(&state, &shown),
+                "{under:?} {q}: {:?} in {:?}",
+                state.borrow().develop.center,
+                shown.frame.size
+            );
+        }
+    }
 }

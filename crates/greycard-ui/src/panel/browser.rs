@@ -869,8 +869,11 @@ pub(crate) fn turn_frames(
     // The picture stands on end now, so whatever was fitted is
     // fitted afresh; the culling loupe reads the turn out of the
     // same matrix on its next frame, which is a redraw and not a
-    // decode.
-    st.develop.image_size = (0, 0);
+    // decode. A develop zoomed into keeps the picture point in the
+    // middle, turned about it (`viewport::frame_on_show`).
+    if st.develop.zoom == 0.0 || crate::panel::cull::loupe_draws(st) {
+        st.develop.image_size = (0, 0);
+    }
     // Whatever the panel was holding was recorded on the way in; the
     // turn itself added no state. A frame the worker was not sent (a
     // pick reading its sidecar) develops when its open goes out.

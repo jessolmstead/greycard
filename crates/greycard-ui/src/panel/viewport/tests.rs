@@ -4541,6 +4541,7 @@ fn a_carried_center_stays_over_the_same_source_pixel() {
             of: of.clone(),
             geometry,
             source: (sw, sh),
+            turn: 0,
             frame,
         }
     };
@@ -4577,4 +4578,26 @@ fn a_carried_center_stays_over_the_same_source_pixel() {
     }
     assert!(checked > 50, "only {checked} cases the new frame holds");
     assert!(worst < 0.05, "{worst} px off the source pixel");
+}
+
+/// A point turned with the frame's own turn lands where the shader
+/// reads the texture of the develop that turn lags behind: the middle
+/// of each texel is the middle of the pixel drawn from it.
+#[test]
+fn a_turned_point_is_the_shaders_turn() {
+    let size = (6u32, 4u32);
+    for lag in 0..4u8 {
+        let turned = crate::placeholder::turned_size(size, lag);
+        for y in 0..i64::from(turned.1) {
+            for x in 0..i64::from(turned.0) {
+                let (tx, ty) = crate::placeholder::texel_of((x, y), turned, lag);
+                let at = turned_point(
+                    (tx as f32 + 0.5, ty as f32 + 0.5),
+                    (size.0 as f32, size.1 as f32),
+                    lag,
+                );
+                assert_eq!(at, (x as f32 + 0.5, y as f32 + 0.5), "lag {lag}");
+            }
+        }
+    }
 }
