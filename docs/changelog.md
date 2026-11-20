@@ -36,6 +36,8 @@ design note behind it.
 
 ### Fixes
 
+- On a short window the Masks tab's list gives up rows sooner, so a
+  mask's sliders keep at least 214 px of room (issue 157).
 - A graphics card that the learned denoiser crashes rests its tiers,
   with Try again to bring them back, and greycard no longer quits
   (discussion 168,

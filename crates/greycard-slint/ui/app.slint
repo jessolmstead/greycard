@@ -4134,7 +4134,7 @@ export component App inherits Window {
                 // another mask is one click away. The sections scroll
                 // under it, and the scroll counts from its foot, so
                 // the list's own height never moves what they show.
-                if root.shown-tab == "Masks": VerticalLayout {
+                if root.shown-tab == "Masks": list-block := VerticalLayout {
                     padding-left: Theme.space-1;
                     padding-right: Theme.space-1;
                     padding-top: Theme.space-2;
@@ -4178,7 +4178,7 @@ export component App inherits Window {
                 }
                 // The list's foot, so a section scrolled up under it
                 // reads as going under and not as round New mask.
-                if root.shown-tab == "Masks": Rectangle { height: 1px; background: Theme.border; }
+                if root.shown-tab == "Masks": list-foot := Rectangle { height: 1px; background: Theme.border; }
                 // Named so the tests find the view's own edges.
                 panel-view := ScrollPane {
                     content-y <=> root.panel-scroll;

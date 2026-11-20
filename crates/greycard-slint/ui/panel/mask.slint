@@ -9,8 +9,9 @@ import { Tips, TipArea, Section, EditSlider, Steps, Toggle, PanelButton, Segment
 
 // The list: Global, then each mask with its switch, the chosen one
 // with its bin; then New mask. It never scrolls with the sections
-// under it, and holds at most six rows before it scrolls inside
-// itself, so a long list leaves the sections their room. Folded, its
+// under it, and holds at most six rows, and fewer in a short window,
+// before it scrolls inside itself, so a long list or a short window
+// leaves the sections their room. Folded, its
 // header names the chosen row. A right-click on a mask offers a copy
 // of it below, or the mask clipboard; on any row, once the clipboard
 // holds a mask, its paste.
@@ -53,11 +54,11 @@ export component AdjustmentsList inherits Section {
 
     // The height between the panel's tab bar and its footer. How many
     // rows show before the list scrolls follows it: as many as leave
-    // the sections a view of at least 150 px, from one to six, so the
-    // list gives up rows before the sections' view and the footer are
-    // squeezed. Set by handlers, not bound: the window's height itself
-    // answers to what is laid out in it, this list among it, and a
-    // binding would be a loop.
+    // the sections a view of at least 214 px, about six sliders, from
+    // one to six. On a window 800 px high that is one row, a view of
+    // 214 px where three rows left 154 (issue 157); from 1000 px up,
+    // six. The list gives up rows before the sections' view and the
+    // footer are squeezed.
     in property <length> room: 1000px;
     property <int> max-rows: 6;
     // What the list takes besides its rows: its block's padding (8 +
@@ -66,7 +67,10 @@ export component AdjustmentsList inherits Section {
     // border (2), and New mask (28), right under it: 95 px.
     property <length> chrome: Theme.space-2 * 2 + 1px + Theme.space-2 + Theme.icon + Theme.space-2 + Theme.space-2 * 2 + 2px + Theme.control-height;
     // The least view of the sections a row is given up for.
-    property <length> sections-view: 150px;
+    property <length> sections-view: 214px;
+    // Set when the room changes, not bound: the window's height itself
+    // answers to what is laid out in it, this list among it, and a
+    // binding would be a loop.
     function fit-rows() {
         root.max-rows = clamp(floor((root.room - root.chrome - root.sections-view) / root.pitch), 1, 6);
     }
@@ -396,19 +400,19 @@ export component AdjustmentsSection inherits Section {
                 }
                 HorizontalLayout {
                     spacing: Theme.space-2;
-                    Toggle {
+                    show-mask-toggle := Toggle {
                         label: @tr("Show mask");
                         checked <=> root.show-mask;
                         toggled => { root.show-mask-toggled(); root.view-changed(); }
                     }
-                    Toggle {
+                    invert-toggle := Toggle {
                         label: @tr("Invert");
                         checked <=> root.mask-invert;
                         toggled => { root.view-changed(); }
                     }
                 }
                 // The whole mask's edge drawn onto the picture's.
-                EditSlider {
+                refine-slider := EditSlider {
                     label: @tr("Refine edge");
                     label-width: max(84px, LabelColumn.width);
                     minimum: 0;
@@ -423,7 +427,7 @@ export component AdjustmentsSection inherits Section {
                 }
                 // How much of the mask's look goes on, the overlay
                 // as it is.
-                EditSlider {
+                opacity-slider := EditSlider {
                     // Mask: the strength of its whole look
                     label: @tr("Opacity");
                     label-width: max(84px, LabelColumn.width);

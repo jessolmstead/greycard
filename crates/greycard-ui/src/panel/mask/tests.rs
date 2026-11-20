@@ -2545,6 +2545,9 @@ fn placed(app: &App, label: &str) -> Vec<(slint::LogicalPosition, slint::Logical
 fn the_adjustments_list_stays_in_reach_from_far_down_the_tab() {
     use crate::testing::buttons;
     let app = window(1);
+    // Tall enough for all three rows in sight.
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 900.0));
     let (state, _worker) = crate::testing::state_for(&app, Vec::new());
     app.set_panel_tab("Masks".into());
     app.invoke_new_mask();
@@ -2715,7 +2718,7 @@ fn a_short_panel_keeps_its_footer_with_a_long_list() {
             }
             assert!(rows >= 1, "{scope} at {height}: a row in sight");
             // A row is given up before the sections' view goes
-            // under 150 px (`chrome` in mask.slint).
+            // under 214 px (`sections-view` in mask.slint).
             let view =
                 i_slint_backend_testing::ElementHandle::find_by_element_id(&app, "App::panel-view")
                     .next()
@@ -2723,7 +2726,7 @@ fn a_short_panel_keeps_its_footer_with_a_long_list() {
                     .size()
                     .height;
             assert!(
-                rows == 1 || view >= 149.5,
+                rows == 1 || view >= 213.5,
                 "{scope} at {height}: {rows} rows over a view of {view}"
             );
             assert!(
@@ -2740,6 +2743,130 @@ fn a_short_panel_keeps_its_footer_with_a_long_list() {
     assert_eq!(shown(&app), 6, "six rows in a tall window");
 }
 
+/// The pinned list leaves the sections their room in a short window
+/// (issue 157): with one, four, or twelve masks, at 720 to 1000 px
+/// high, the sections' view keeps at least 214 px unless the list is
+/// down to one row; the first section's controls
+/// are wholly under the list's foot at the top, and again as Tab
+/// reaches each of them; and the sections scroll down to their foot
+/// and no further.
+#[test]
+fn the_masks_sections_keep_their_room_under_the_list() {
+    use crate::testing::{assert_panel_in_range, panel_to_end, press};
+    use i_slint_backend_testing::ElementHandle;
+    use slint::platform::Key;
+    for masks in [1usize, 4, 12] {
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        for _ in 0..masks {
+            app.invoke_new_mask();
+        }
+        app.invoke_target_changed(1);
+        for height in [720.0, 768.0, 800.0, 900.0, 1000.0] {
+            let what = format!("{masks} masks at {height} px");
+            app.window()
+                .set_size(slint::LogicalSize::new(1500.0, height));
+            app.set_panel_scroll(0.0);
+            settle_layout(&app);
+            let one = |id: &str| {
+                ElementHandle::find_by_element_id(&app, id)
+                    .next()
+                    .unwrap_or_else(|| panic!("{what}: no {id}"))
+            };
+            let edges = |id: &str| {
+                let e = one(id);
+                let top = e.absolute_position().y;
+                (top, top + e.size().height)
+            };
+            let (_, list_foot) = edges("App::list-foot");
+            let (view_top, view_bottom) = edges("App::panel-view");
+            assert!(
+                view_top >= list_foot - 0.5,
+                "{what}: the view starts under the list"
+            );
+            let pitch = 30.0;
+            let rows = ((one("AdjustmentsList::frame").size().height - 2.0) / pitch).round();
+            assert!(rows >= 1.0, "{what}: a row in sight");
+            // The floor (`sections-view` in mask.slint): rows go
+            // before the view goes under 214 px, down to one; and
+            // where one row leaves 214 px, the view has them.
+            let view = view_bottom - view_top;
+            let one_row_view = view + (rows - 1.0) * pitch;
+            assert!(
+                rows <= 1.0 || view >= 213.5,
+                "{what}: {rows} rows over a view of {view}"
+            );
+            assert!(
+                one_row_view < 213.5 || view >= 213.5,
+                "{what}: a view of {view} where one row would leave {one_row_view}"
+            );
+            let in_view = |id: &str| {
+                let (top, bottom) = edges(id);
+                assert!(
+                    top >= list_foot && top >= view_top && bottom <= view_bottom + 0.5,
+                    "{what}: {id} at {top}..{bottom}, the list's foot at {list_foot}, \
+                     the view {view_top}..{view_bottom}"
+                );
+                (top, bottom)
+            };
+
+            // At the top, and through the section by Tab from its name.
+            let (top, bottom) = in_view("AdjustmentsSection::name-field");
+            let name = one("AdjustmentsSection::name-field");
+            let x = name.absolute_position().x + name.size().width / 2.0;
+            click(&app, x, (top + bottom) / 2.0);
+            settle_layout(&app);
+            assert!(
+                app.global::<crate::Typing>().get_boxes() > 0,
+                "{what}: the name took the keys"
+            );
+            let keys = app.global::<crate::SliderKeys>();
+            for (id, slider) in [
+                ("AdjustmentsSection::show-mask-toggle", false),
+                ("AdjustmentsSection::invert-toggle", false),
+                ("AdjustmentsSection::refine-slider", true),
+                ("AdjustmentsSection::opacity-slider", true),
+            ] {
+                press(&app, Key::Tab);
+                settle_layout(&app);
+                let (top, _) = in_view(id);
+                // The control Tab reached: a slider says where the
+                // keys are, a switch flips at a space (and back).
+                if slider {
+                    assert_ne!(keys.get_holder(), 0, "{what}: {id} has the keys");
+                    assert!(
+                        (keys.get_reveal_y() - top).abs() < 0.5,
+                        "{what}: {id} has the keys"
+                    );
+                } else {
+                    let checked = || one(id).accessible_checked();
+                    let before = checked();
+                    press(&app, " ");
+                    assert_ne!(checked(), before, "{what}: {id} has the keys");
+                    press(&app, " ");
+                    assert_eq!(checked(), before);
+                }
+            }
+            press(&app, Key::Escape);
+
+            // The sections' foot, the last control on it, in view; and
+            // no further (§693).
+            panel_to_end(&app);
+            settle_layout(&app);
+            let (_, sections_foot) = edges("App::panel-sections");
+            let (_, view_bottom) = edges("App::panel-view");
+            assert!(
+                (sections_foot - view_bottom).abs() < 0.5,
+                "{what}: the sections end at {sections_foot}, the view at {view_bottom}"
+            );
+            app.set_panel_scroll(app.get_panel_scroll() - 500.0);
+            settle_layout(&app);
+            assert_panel_in_range(&app, &what);
+        }
+    }
+}
+
 /// The chosen row is in sight when the list is built again: on
 /// coming back to the Masks tab, and when the rows change under a
 /// target that does not.
@@ -2747,6 +2874,9 @@ fn a_short_panel_keeps_its_footer_with_a_long_list() {
 fn the_chosen_row_is_in_sight_when_the_list_comes_back() {
     use crate::testing::buttons;
     let app = window(1);
+    // Tall enough for rows to scroll under the wheel.
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 900.0));
     let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
     app.set_panel_tab("Masks".into());
     for _ in 0..10 {
@@ -3195,6 +3325,9 @@ fn a_hovered_masks_row_lights_its_mask() {
     use crate::render::{Renderer, View};
     use slint::platform::WindowEvent;
     let app = window(1);
+    // Tall enough for all three rows in sight.
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 900.0));
     let (state, _worker) = crate::testing::state_for(&app, Vec::new());
     {
         let mut st = state.borrow_mut();
