@@ -334,6 +334,8 @@ export component AdjustmentsSection inherits Section {
     in-out property <[string]> landscape-offers;
     in-out property <[string]> landscape-kinds;
     in-out property <bool> landscape-menu-shown;
+    // Whether the menu raised is still the chosen mask's to open.
+    pure callback landscape-menu-wanted() -> bool;
     // The People or Landscape menu about to open: the window's keys
     // take the focus first, as Fit's menu does, so the click that
     // closes it is no click, and a pick leaves the keys with them, not
@@ -992,12 +994,21 @@ export component AdjustmentsSection inherits Section {
                         // buildings, and its sky: only what the model
                         // found, the largest first.
                         landscape-button := PanelButton {
-                            property <bool> want: root.landscape-menu-shown;
-                            changed want => {
-                                if (self.want) {
+                            // Raised from Rust when the answer is in, and
+                            // opened a turn later from a timer, not from a
+                            // change handler: those run mid-update, even
+                            // inside a frame's draw, and a native menu
+                            // (macOS) runs its own loop while it is up.
+                            // Opened only if Rust still wants it then.
+                            Timer {
+                                interval: 1ms;
+                                running: root.landscape-menu-shown;
+                                triggered => {
                                     root.landscape-menu-shown = false;
-                                    root.menu-opening();
-                                    landscape-menu.show({ x: 0, y: self.height });
+                                    if (root.landscape-menu-wanted()) {
+                                        root.menu-opening();
+                                        landscape-menu.show({ x: 0, y: landscape-button.height });
+                                    }
                                 }
                             }
                             text: @tr("Landscape");

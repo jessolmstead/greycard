@@ -243,6 +243,15 @@ pub(crate) fn chosen(st: &mut State, app: &App, kind: &str) -> bool {
     true
 }
 
+/// Whether the menu `found` raised still opens, asked a turn later as
+/// it is about to: its offer not gone (`stopped`) and its mask still
+/// there.
+pub(crate) fn menu_wanted(st: &State) -> bool {
+    st.develop
+        .landscape_offer
+        .is_some_and(|p| st.develop.edit.adjustments.iter().any(|a| a.id == p.id))
+}
+
 /// Escape, another mask, another tab or another picture: the press
 /// waiting and the menu's offer go.
 pub(crate) fn stopped(st: &mut State) {
@@ -271,6 +280,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
                 app.invoke_view_changed();
             }
         });
+    }
+    {
+        let state = state.clone();
+        app.on_landscape_menu_wanted(move || menu_wanted(&state.borrow()));
     }
 }
 
@@ -482,6 +495,89 @@ mod tests {
         );
         assert_eq!(app.get_landscape_offers().row_count(), 3);
         assert!(state.borrow().develop.landscape_offer.is_some());
+    }
+
+    /// The window's open popups.
+    fn popups(app: &App) -> usize {
+        slint::private_unstable_api::re_exports::WindowInner::from_pub(app.window())
+            .active_popups()
+            .len()
+    }
+
+    /// Turns of the event loop: the one that starts the menu's timer
+    /// (the raise's change is seen) and the one it is due on.
+    fn a_turn() {
+        for _ in 0..2 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+            slint::platform::update_timers_and_animations();
+        }
+    }
+
+    /// The masks window with the mask's buttons shown and a press
+    /// waiting, the answer delivered as the worker delivers it.
+    fn answered() -> (App, Rc<Shared>, Rc<Worker>) {
+        let (app, state, worker) = masks();
+        app.set_target(1);
+        a_turn();
+        state.borrow_mut().develop.landscape_pending = Some(Pending {
+            id: 1,
+            mode: Mode::Add,
+        });
+        crate::panel::deliver::deliver(
+            &app,
+            Outcome::Landscape {
+                file: None,
+                offers: Ok((coast(), "CPU", 0.2)),
+            },
+        );
+        (app, state, worker)
+    }
+
+    /// The menu opens from a timer a turn after the answer, not from
+    /// the change it raised, and is over the button then.
+    #[test]
+    fn the_menu_opens_a_turn_after_the_answer() {
+        let (app, _state, _worker) = answered();
+        assert_eq!(popups(&app), 0, "none yet");
+        // The turn whose change handlers see the raise: still none.
+        slint::platform::update_timers_and_animations();
+        assert_eq!(popups(&app), 0, "not from the change");
+        a_turn();
+        assert_eq!(popups(&app), 1, "the menu is up");
+        assert!(app.get_menu_up(), "the menu took the keys' focus");
+        assert!(!app.get_landscape_menu_shown(), "the raise is spent");
+    }
+
+    /// The mask deleted between the answer and the turn: no menu opens
+    /// for it, nor over the next mask chosen, the raise spent there.
+    #[test]
+    fn no_menu_opens_for_a_mask_deleted_in_between() {
+        let (app, state, _worker) = answered();
+        app.invoke_delete_adjustment();
+        assert!(state.borrow().develop.edit.adjustments.is_empty());
+        a_turn();
+        assert_eq!(popups(&app), 0);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.edit.adjustments.push(greycard_edit::Adjustment {
+                id: 2,
+                name: "Mask 2".into(),
+                ..Default::default()
+            });
+            st.develop.target = Some(0);
+        }
+        app.set_target(1);
+        a_turn();
+        assert_eq!(popups(&app), 0);
+        assert!(!app.get_landscape_menu_shown());
+        // Put down with Escape in between, the mask and its button
+        // still there: the same.
+        let (app, state, _worker) = answered();
+        app.invoke_stop_placing();
+        assert!(state.borrow().develop.landscape_offer.is_none());
+        a_turn();
+        assert_eq!(popups(&app), 0);
+        assert!(!app.get_landscape_menu_shown());
     }
 
     /// The button sits beside Sky and its menu is what was found, each

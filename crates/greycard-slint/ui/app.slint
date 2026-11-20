@@ -1766,6 +1766,7 @@ export component App inherits Window {
     in-out property <[string]> landscape-offers;
     in-out property <[string]> landscape-kinds;
     in-out property <bool> landscape-menu-shown: false;
+    pure callback landscape-menu-wanted() -> bool;
     // "Use this person on all N pictures" after a person picked, or "".
     in-out property <string> people-offer;
     in-out property <int> people-offer-mask;
@@ -4488,6 +4489,7 @@ export component App inherits Window {
                                     landscape-offers <=> root.landscape-offers;
                                     landscape-kinds <=> root.landscape-kinds;
                                     landscape-menu-shown <=> root.landscape-menu-shown;
+                                    landscape-menu-wanted => { return root.landscape-menu-wanted(); }
                                     people-offer: root.people-offer;
                                     people-offer-mask: root.people-offer-mask;
                                     people-offer-used => { root.people-offer-used(); }
