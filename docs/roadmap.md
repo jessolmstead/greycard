@@ -784,6 +784,11 @@ clears or a tester asks for it.
 
 #### Editor
 
+- [ ] A screen reader's press while a menu is up: the mask row
+      ignores it, as a click only closes the menu; the preset,
+      collection, strip, and grid rows have the same guard on a click
+      and are unchecked for a press; the press does not close the
+      menu (Linux only, where the menu is drawn in the window)
 - [ ] Window tests find their controls by element id: 181 lookups
       by translated words are left in 32 files (the guard,
       `testing/by_label.rs`, lets a file's count only fall), many of

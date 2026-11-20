@@ -155,7 +155,12 @@ export component AdjustmentsList inherits Section {
                 for name[i] in root.adjustment-names: mask-item := Rectangle {
                     accessible-role: button;
                     accessible-label: name;
-                    accessible-action-default => { root.target-changed(i); }
+                    // A press while a menu is up is nothing, as a
+                    // click then only closes it: Slint's menu leaves
+                    // the window's other controls in reach.
+                    accessible-action-default => {
+                        if (!root.menu-shown()) { root.target-changed(i); }
+                    }
                     property <bool> on: i == root.target;
                     property <bool> lit: i == 0 || root.adjustment-on[i - 1];
                     // The pointer is on the row's switch: the row's

@@ -2299,3 +2299,92 @@ fn a_body_s_two_names_profiles_list_with_their_file_names() {
         ["Embedded", "Adobe Standard (850D)", "Adobe Standard (T8i)"]
     );
 }
+
+/// Row `a` of the rows `id` names, pressed by a screen reader, leaves
+/// `chosen` as a click on it does: `a` clicked, then `b`, then `a`
+/// pressed.
+fn pressed_as_clicked<T: PartialEq + std::fmt::Debug>(
+    app: &App,
+    id: &str,
+    (a, b): (usize, usize),
+    chosen: impl Fn() -> T,
+) {
+    use i_slint_backend_testing::ElementHandle;
+    let row = |i: usize| {
+        crate::testing::settle(app);
+        ElementHandle::find_by_element_id(app, id)
+            .nth(i)
+            .unwrap_or_else(|| panic!("no {id} {i}"))
+    };
+    let click = |i: usize| {
+        let (at, size) = crate::testing::bounds_of(&row(i));
+        crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    };
+    click(a);
+    let clicked = chosen();
+    click(b);
+    assert_ne!(chosen(), clicked, "the click on {b} chose another");
+    row(a).invoke_accessible_default_action();
+    assert_eq!(chosen(), clicked, "the press on {a} chose as the click");
+}
+
+/// A screen reader's press on a CAMERA PROFILE row chooses its
+/// profile, as a click does.
+#[test]
+fn a_screen_reader_presses_a_profile_row_as_a_click_does() {
+    let (app, state, _worker) = profile_window();
+    let profiles: Vec<usize> = app
+        .get_camera_profile_rows()
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| !r.heading)
+        .map(|(i, _)| i)
+        .collect();
+    pressed_as_clicked(
+        &app,
+        "CameraSection::profile-row",
+        (profiles[0], profiles[1]),
+        || {
+            (
+                app.get_camera_profile().to_string(),
+                state.borrow().develop.edit.camera.clone(),
+            )
+        },
+    );
+}
+
+/// A screen reader's press on a LOOK row chooses its look, as a
+/// click does.
+#[test]
+fn a_screen_reader_presses_a_look_row_as_a_click_does() {
+    use greycard_edit::look::{Entry, LookLut};
+    let (app, state, _worker) = profile_window();
+    app.set_collapsed_camera(true);
+    app.set_collapsed_look(false);
+    let entry = |name: &str| Entry {
+        name: name.into(),
+        variant: None,
+        path: std::path::PathBuf::from(format!("/nowhere/{name}.cube")),
+        title: None,
+        size: 33,
+        kind: greycard_core::lut::Kind::Cube3d,
+        encoding: Default::default(),
+        primaries: Default::default(),
+        comments: Vec::new(),
+    };
+    state.borrow_mut().develop.looks = vec![entry("Print"), entry("Slide")];
+    show_looks(&state.borrow(), &LookLut::default(), &app);
+    let looks: Vec<usize> = app
+        .get_look_rows()
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| !r.heading && !r.name.is_empty())
+        .map(|(i, _)| i)
+        .collect();
+    pressed_as_clicked(&app, "LookSection::look-row", (looks[0], looks[1]), || {
+        (
+            app.get_look_name().to_string(),
+            state.borrow().develop.edit.look_lut.clone(),
+        )
+    });
+}
