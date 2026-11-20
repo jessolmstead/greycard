@@ -1550,6 +1550,13 @@ clears or a tester asks for it.
       100 holds 0.45 stops and waits on a bracket to show that band
       linear; any other CR3 body needs a frame blown in every channel
       a shutter and ISO
+- [ ] Light above the declared white on other makers, small and
+      unproven (survey, 2026-11-20): Sony A7R V 0.10 stops at ISO 640,
+      Nikon Z6III 0.05 (lossy HE frames only), OM-5 0.04; each waits
+      on a bracket. The GFX 100S II's green and blue clip 0.002 to
+      0.011 stops under its white (the format's maximum, rawler has no
+      entry): the clip flag still catches them, by 0.27% at the
+      closest; a measured white upstream would make the margin honest
 - [ ] Leica in camera match: the film style read from an M's DNG
       (`Maker::Leica`; the maker note's tags are unnamed until frames
       in each style say which is which), fitted against its JPEG or
