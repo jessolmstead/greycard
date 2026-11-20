@@ -749,6 +749,7 @@ export component AdjustmentsSection inherits Section {
                                 clicked => { root.pick-started("Range"); }
                             }
                             sample-words := Text {
+                                accessible-role: none;
                                 // Color range: the button that reads a color off the picture
                                 text: @tr("Sample");
                                 color: Theme.text-secondary;

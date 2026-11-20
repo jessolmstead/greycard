@@ -7,6 +7,8 @@ design note behind it.
 
 ### The window
 
+- A screen reader can open a frame from the grid or the strip, hears a
+  held-out filter chip as excluded, and hears each label once.
 - A screen reader now hears a name for every choice row, field, list
   row, swatch, and section header in the panels and sheets.
 - The alignment grid also shows while the Vertical and Horizontal

@@ -242,13 +242,20 @@ fn find_text(app: &App, label: &str) -> Option<ElementHandle> {
     app.window().dispatch_event(WindowEvent::PointerMoved {
         position: LogicalPosition::new(0.0, 0.0),
     });
-    // A section with an owner (a mask's name) titles itself "·  MASK".
-    let after_owner = format!("\u{00b7}  {label}");
-    ElementHandle::find_by_element_type_name(app, "Text").find(|e| {
-        e.size().height > 0.0
-            && e.accessible_label()
-                .is_some_and(|l| l == label || l == after_owner.as_str())
-    })
+    // A section's title is said by its header's fold, not by its words:
+    // the words inside the fold named `label`.
+    let fold = ElementHandle::find_by_element_id(app, "Section::row")
+        .find(|e| e.size().height > 0.0 && e.accessible_label().is_some_and(|l| l == label));
+    if let Some(fold) = fold {
+        let (at, size) = (fold.absolute_position(), fold.size());
+        return ElementHandle::find_by_element_id(app, "Section::title-words").find(|t| {
+            let (p, s) = (t.absolute_position(), t.size());
+            let (x, y) = (p.x + s.width / 2.0, p.y + s.height / 2.0);
+            x >= at.x && x <= at.x + size.width && y >= at.y && y <= at.y + size.height
+        });
+    }
+    ElementHandle::find_by_element_type_name(app, "Text")
+        .find(|e| e.size().height > 0.0 && e.accessible_label().is_some_and(|l| l == label))
 }
 
 /// A header's middle, in the window.

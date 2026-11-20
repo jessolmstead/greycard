@@ -5225,13 +5225,11 @@ fn the_loupe_comes_back_from_library_in_the_mode_it_was_left_in() {
                 // The cell's name (the test window's names, not the
                 // files'), as wide as the grid's cell: not the
                 // header's word for the frame, nor the strip's.
-                crate::testing::count_labeled(&app, "f02.CR3");
-                let (at, size) = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
-                    &app, "f02.CR3",
-                )
-                .map(|e| (e.absolute_position(), e.size()))
-                .find(|(_, size)| size.width == app.get_grid_cell())
-                .expect("the grid's cell");
+                let (at, size) = crate::testing::cell_names(&app, "f02.CR3")
+                    .iter()
+                    .map(|e| (e.absolute_position(), e.size()))
+                    .find(|(_, size)| size.width == app.get_grid_cell())
+                    .expect("the grid's cell");
                 let (x, y) = (at.x + size.width / 2.0, at.y - 40.0);
                 let position = slint::LogicalPosition::new(x, y);
                 let button = slint::platform::PointerEventButton::Left;

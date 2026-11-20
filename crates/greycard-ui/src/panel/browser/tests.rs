@@ -1155,7 +1155,8 @@ fn a_portraits_cell_shows_its_name_whole_and_a_landscapes_is_its_picture() {
     // which these names fit in the theme's face (see `strip::FLOOR`):
     // no longer cut to the picture's width, and under the ring.
     for (name, left, width) in [(names[0], p_left, p_width), (names[1], l_left, l_width)] {
-        let text = ElementHandle::find_by_accessible_label(&app, name)
+        let text = crate::testing::cell_names(&app, name)
+            .into_iter()
             .find(|e| e.absolute_position().x == left)
             .unwrap_or_else(|| panic!("{name} under its cell"));
         assert_eq!(text.size().width, width);

@@ -148,6 +148,17 @@ export component Filmstrip inherits Rectangle {
                 property <bool> on: i == root.selected;
                 property <bool> in-set: on || t.chosen;
                 property <length> ring: root.strip-ring;
+                // To a screen reader an item of the strip named by its
+                // file, chosen or not, whose press picks it as a click
+                // does.
+                accessible-role: list-item;
+                accessible-label: t.name;
+                accessible-item-selectable: true;
+                accessible-item-selected: in-set;
+                accessible-action-default => {
+                    root.focus-keys();
+                    root.frame-clicked(i, false, false);
+                }
                 property <length> photo-h: root.strip-photo;
                 property <length> photo-w: self.p.photo;
                 // The ring and the hover's ground hug the picture and
@@ -249,6 +260,8 @@ export component Filmstrip inherits Rectangle {
                     }
                 }
                 name-text := Text {
+                    // Said by the cell, which it names.
+                    accessible-role: none;
                     x: 0;
                     y: frame.height + 2px;
                     width: parent.width;

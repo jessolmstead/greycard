@@ -92,6 +92,8 @@ export component CameraSection inherits Section {
                             }
                         }
                         Text {
+                            // Said by the row's fold, which it names.
+                            accessible-role: none;
                             text: row.label;
                             color: profile-row.has-hover ? Theme.text : Theme.text-secondary;
                             font-size: Theme.font-xs;
@@ -120,6 +122,8 @@ export component CameraSection inherits Section {
                         padding-left: row.indented ? 2px + 14px + Theme.space-1 : Theme.space-2;
                         padding-right: Theme.space-2 + (profile-box.long ? Theme.scrollbar-band : 0);
                         Text {
+                            // Said by the row, which it names.
+                            accessible-role: none;
                             text: row.label;
                             color: on ? Theme.text : (profile-row.has-hover ? Theme.text : Theme.text-secondary);
                             font-size: Theme.font-xs;

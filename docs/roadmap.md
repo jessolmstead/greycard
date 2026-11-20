@@ -577,10 +577,12 @@ comes across with its ratings and collections.
       and Page Down with a handle focused change the frame; both
       handles say one label to a screen reader; `mm<=35` typed is a
       word, not a term
-- [ ] Left for a screen reader: grid and strip cells cannot be
-      pressed; the curve editor, crop handles, and pane edges have no
-      role; popup menus are unwalked; a filter chip held out says
-      "not checked" and is to say "excluded"; the panel's rows say their label twice
+- [ ] Left for a screen reader: menu items have names but no role
+      (Slint has no menu-item role: upstream); pane edges as sliders
+      need a name each ("Left panel width", and so on, the owner's
+      words) and their size as a value; crop handles and the curve
+      need focus, arrow keys, and a value read out; a chip cannot be
+      held out by a screen reader's press
 - [ ] Several values of one number field in the filter text,
       `focal:35,85` or `iso:400,800,1600`, for the picks a range
       cannot make (two primes, full stops only); how a range shows

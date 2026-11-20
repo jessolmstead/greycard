@@ -771,10 +771,12 @@ mod tests {
                 crate::testing::count_labeled(app, "3 stars, pick, yellow"),
                 crate::testing::count_labeled(app, "Edited"),
                 crate::testing::count_labeled(app, "Exported"),
-                // Named on the sheet: any element of the name that is not
-                // the tile's own, read to a screen reader.
-                crate::testing::count_labeled(app, "f03.CR3")
-                    - with_role(app, "f03.CR3", AccessibleRole::Image),
+                // Named on the sheet: the words under a cell, or any
+                // element of the name that is not a cell's own, read to
+                // a screen reader.
+                crate::testing::cell_names(app, "f03.CR3").len()
+                    + crate::testing::count_labeled(app, "f03.CR3")
+                    - with_role(app, "f03.CR3", AccessibleRole::ListItem),
                 crate::testing::count_labeled(app, "Lightbox"),
             )
         };
@@ -787,7 +789,7 @@ mod tests {
         assert_eq!(button, 1, "the header offers the lightbox");
         press(&app, "l");
         assert_eq!(counts(&app), (0, 0, 0, 0, 0));
-        assert_eq!(with_role(&app, "f03.CR3", AccessibleRole::Image), 1);
+        assert_eq!(with_role(&app, "f03.CR3", AccessibleRole::ListItem), 1);
         // The rating key still rates, and still draws nothing.
         press(&app, "4");
         assert_eq!(model.row_data(0).unwrap().rating, 4);

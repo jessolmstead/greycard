@@ -564,7 +564,9 @@ export component Section inherits VerticalLayout {
                         vertical-alignment: center;
                         overflow: elide;
                     }
-                    Text {
+                    title-words := Text {
+                        // Said by the fold, which it names.
+                        accessible-role: none;
                         text: (root.owner == "" ? "" : "\u{00b7}  ") + root.title;
                         color: Theme.text;
                         font-size: Theme.font-xs;
@@ -607,6 +609,8 @@ export component Section inherits VerticalLayout {
                 accessible-label: root.action;
                 accessible-action-default => { root.action-clicked(); }
                 action-text := Text {
+                    // Said by its button, which it names.
+                    accessible-role: none;
                     text: root.action;
                     color: action-area.has-hover ? Theme.text : Theme.text-secondary;
                     font-size: Theme.font-xs;
@@ -1566,7 +1570,9 @@ export component EditSlider inherits Rectangle {
         }
     }
 
-    Text {
+    label-words := Text {
+        // Said by the slider, which it names.
+        accessible-role: none;
         x: 0;
         width: label-width - Theme.space-2;
         text: root.label;

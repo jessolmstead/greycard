@@ -482,6 +482,26 @@ pub(crate) fn bounds_of(element: &i_slint_backend_testing::ElementHandle) -> Bou
     (element.absolute_position(), element.size())
 }
 
+/// The name drawn under each frame's cell named `name`, in the strip
+/// and on the grid: the cell says it to a screen reader, its words
+/// do not, so they are found inside the cell.
+pub(crate) fn cell_names(app: &App, name: &str) -> Vec<i_slint_backend_testing::ElementHandle> {
+    use i_slint_backend_testing::ElementHandle;
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(0.0, 0.0),
+    });
+    ElementHandle::find_by_accessible_label(app, name)
+        .filter_map(|cell| {
+            let words = match cell.id()?.as_str() {
+                "Filmstrip::cell" => "Filmstrip::name-text",
+                "GridSheet::cell" => "GridSheet::cell-name",
+                _ => return None,
+            };
+            cell.query_descendants().match_id(words).find_first()
+        })
+        .collect()
+}
+
 /// A `Toggle`'s parts: the whole row, its label, its switch, and the
 /// target a click flips it in.
 #[derive(Debug, Clone, Copy)]

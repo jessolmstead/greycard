@@ -24,8 +24,10 @@ fn texts(app: &App, words: &str) -> Vec<(f32, f32)> {
     app.window().dispatch_event(WindowEvent::PointerMoved {
         position: slint::LogicalPosition::new(0.0, 0.0),
     });
+    // A frame's name is said by its cell, a folder's by its words.
     let mut found: Vec<_> = ElementHandle::find_by_element_type_name(app, "Text")
         .filter(|e| e.accessible_label().is_some_and(|l| l == words))
+        .chain(crate::testing::cell_names(app, words))
         .filter(|e| e.size().width > 0.0)
         .map(|e| {
             let (at, size) = (e.absolute_position(), e.size());

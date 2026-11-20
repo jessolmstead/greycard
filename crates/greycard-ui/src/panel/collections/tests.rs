@@ -287,12 +287,12 @@ fn a_drag_in_the_grid_reorders_the_collection() {
     app.invoke_select(1);
     // A cell, by its name under the picture: a point on its picture.
     let at = |name: &str| {
-        use i_slint_backend_testing::ElementHandle;
         app.window()
             .dispatch_event(slint::platform::WindowEvent::PointerMoved {
                 position: slint::LogicalPosition::new(0.0, 0.0),
             });
-        let e = ElementHandle::find_by_accessible_label(app, name)
+        let e = crate::testing::cell_names(app, name)
+            .into_iter()
             .min_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y))
             .unwrap_or_else(|| panic!("no cell {name}"));
         let (p, size) = (e.absolute_position(), e.size());
@@ -356,7 +356,7 @@ fn a_drag_in_the_grid_reorders_the_collection() {
 /// collection's own order, not the frames' time or name.
 #[test]
 fn the_lightbox_over_a_collection_is_in_its_hand_order() {
-    use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+    use i_slint_backend_testing::ElementHandle;
     let s = setup("lightbox");
     let (app, state, worker) = (&s.app, &s.state, &s.worker);
     let id = {
@@ -387,7 +387,7 @@ fn the_lightbox_over_a_collection_is_in_its_hand_order() {
         .into_iter()
         .map(|name| {
             let e = ElementHandle::find_by_accessible_label(app, name)
-                .find(|e| e.accessible_role() == Some(AccessibleRole::Image))
+                .find(|e| e.id().is_some_and(|i| i == "GridSheet::cell"))
                 .unwrap_or_else(|| panic!("no tile {name}"));
             let p = e.absolute_position();
             (p.y, p.x, name)

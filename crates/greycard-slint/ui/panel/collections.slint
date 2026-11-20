@@ -223,6 +223,8 @@ export component CollectionsSection inherits Section {
                 padding-right: Theme.space-2;
                 Text {
                     text: @tr("+ New collection...");
+                    // Said by the link, which it names.
+                    accessible-role: none;
                     color: new-ta.has-hover ? Theme.text : Theme.text-secondary;
                     font-size: Theme.font-xs;
                     vertical-alignment: center;

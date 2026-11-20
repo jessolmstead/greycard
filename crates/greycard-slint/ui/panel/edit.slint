@@ -157,6 +157,7 @@ export component LightSection inherits Section {
     if root.show-display-curve: VerticalLayout {
         spacing: 4px;
         display-curve-words := Text {
+            accessible-role: none;
             text: @tr("Display curve");
             color: root.display-curve-inert ? Theme.text-muted : Theme.text;
             font-size: Theme.font-sm;
@@ -628,6 +629,7 @@ export component VignetteSection inherits Section {
         spacing: 4px;
         padding-top: Theme.space-1;
         vignette-place-words := Text {
+            accessible-role: none;
             // Vignette: where it acts, the scene or the picture
             text: @tr("Style");
             color: Theme.text;

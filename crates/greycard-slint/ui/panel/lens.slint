@@ -62,7 +62,7 @@ export component LensSection inherits Section {
     // width of its own.
     HorizontalLayout {
         spacing: Theme.space-2;
-        maker-words := Text { text: @tr("Maker"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        maker-words := Text { accessible-role: none; text: @tr("Maker"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         ComboBox {
             accessible-label: maker-words.text;
             min-width: 64px;
@@ -89,7 +89,7 @@ export component LensSection inherits Section {
     Rectangle { height: Theme.space-1; }
     HorizontalLayout {
         spacing: Theme.space-2;
-        lens-words := Text { text: @tr("Lens"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        lens-words := Text { accessible-role: none; text: @tr("Lens"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         ComboBox {
             accessible-label: lens-words.text;
             model: root.lens-choice-labels;

@@ -126,7 +126,7 @@ export component MonitorSection inherits Section {
         spacing: Theme.space-2;
         padding-top: Theme.space-2;
         // Monitor section: the canvas shade row
-        canvas-words := Text { text: @tr("Canvas"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        canvas-words := Text { accessible-role: none; text: @tr("Canvas"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Swatches {
             name: canvas-words.text;
             names: root.canvas-names;

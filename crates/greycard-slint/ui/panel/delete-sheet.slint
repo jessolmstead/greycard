@@ -38,6 +38,8 @@ export component DangerButton inherits Rectangle {
             y: (parent.height - self.height) / 2;
         }
         Text {
+            // Said by the button, which it names.
+            accessible-role: none;
             text: root.text;
             color: Theme.warn-red;
             font-size: Theme.font-sm;

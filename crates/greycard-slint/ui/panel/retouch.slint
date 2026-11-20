@@ -183,6 +183,8 @@ export component RetouchSection inherits Section {
                         padding-right: Theme.space-1;
                         spacing: Theme.space-2;
                         Text {
+                            // Said by the row, which it names.
+                            accessible-role: none;
                             text: name;
                             color: on ? Theme.text : Theme.text-secondary;
                             font-size: Theme.font-xs;

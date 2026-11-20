@@ -636,9 +636,20 @@ mod tests {
             settle(&app);
             assert_eq!(picked.get(), 2, "the last folder {dy} px down its {size:?}");
         }
-        let e = ElementHandle::find_by_element_type_name(&app, "Text")
+        // Its title's words, inside the fold that says them.
+        let fold = ElementHandle::find_by_element_id(&app, "Section::row")
             .find(|e| e.accessible_label().as_deref() == Some("SNAPSHOTS"))
             .expect("SNAPSHOTS in the left pane");
+        let (top, foot) = (
+            fold.absolute_position().y,
+            fold.absolute_position().y + fold.size().height,
+        );
+        let e = ElementHandle::find_by_element_id(&app, "Section::title-words")
+            .find(|t| {
+                let y = t.absolute_position().y + t.size().height / 2.0;
+                y >= top && y <= foot
+            })
+            .expect("SNAPSHOTS's words");
         let (at, size) = (e.absolute_position(), e.size());
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         settle(&app);

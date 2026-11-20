@@ -1518,7 +1518,7 @@ fn a_monochrome_frames_mask_white_balance_rests() {
     crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     crate::testing::press(app, "w");
     let folded = app.get_collapsed_wb();
-    m.click_header_switch("\u{b7}  WHITE BALANCE");
+    m.click_header_switch("WHITE BALANCE");
     assert_eq!(
         app.get_collapsed_wb(),
         folded,
@@ -1730,7 +1730,7 @@ fn a_focused_mask_switch_takes_no_key_on_a_monochrome_frame() {
         "mono-focus-switch",
         true,
         Route::Decode,
-        |m| m.click_header_switch("\u{b7}  WHITE BALANCE"),
+        |m| m.click_header_switch("WHITE BALANCE"),
         &button_keys(),
     );
 }

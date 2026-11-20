@@ -1209,10 +1209,33 @@ const REST: f32 = LEAST + RIGHT - FROM;
 const GAP: f32 = 8.0;
 const VALUE: f32 = 60.0;
 
-/// The Text a row's label is drawn in.
+/// The Text a row's label is drawn in. A slider says its label and a
+/// box says the words beside it, so the words are found by the
+/// control named `label`: inside a slider, left of a box on its line.
 fn label_text(app: &App, label: &str) -> ElementHandle {
+    use i_slint_backend_testing::AccessibleRole::{Combobox, Slider};
+    let control = ElementHandle::find_by_accessible_label(app, label)
+        .find(|e| matches!(e.accessible_role(), Some(Slider | Combobox)))
+        .unwrap_or_else(|| panic!("the control {label:?}"));
+    let (at, size) = (control.absolute_position(), control.size());
+    // A slider's words are its `label-words`, drawn from the label it
+    // is named by; their text is not readable here (a Text's `text` is
+    // not testable), so the slider's name stands for it.
+    if control.accessible_role() == Some(Slider) {
+        return control
+            .query_descendants()
+            .match_id("EditSlider::label-words")
+            .find_first()
+            .unwrap_or_else(|| panic!("the {label:?} label"));
+    }
+    // A box's words: the nearest Text left of it on its line.
     ElementHandle::find_by_element_type_name(app, "Text")
-        .find(|e| e.accessible_label().is_some_and(|l| l == label))
+        .filter(|t| {
+            let (p, s) = (t.absolute_position(), t.size());
+            let y = p.y + s.height / 2.0;
+            p.x + s.width <= at.x + 0.5 && y >= at.y && y <= at.y + size.height && s.width > 0.0
+        })
+        .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
         .unwrap_or_else(|| panic!("the {label:?} label"))
 }
 

@@ -276,6 +276,8 @@ export component QueueHeader inherits Rectangle {
         }
         title := Text {
             text: @tr("Export queue").to-uppercase();
+            // Said by the header, which it names.
+            accessible-role: none;
             color: Theme.text;
             font-size: Theme.font-xs;
             font-weight: Theme.weight-semibold;
@@ -323,6 +325,8 @@ component AddLink inherits Rectangle {
         padding-left: 0;
         padding-right: Theme.space-2;
         Text {
+            // Said by the link, which it names.
+            accessible-role: none;
             text: root.text;
             color: ta.has-hover ? Theme.text : Theme.text-secondary;
             font-size: Theme.font-xs;

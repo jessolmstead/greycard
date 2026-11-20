@@ -833,6 +833,17 @@ export component GridSheet inherits Rectangle {
                     // selection's ground, the current frame ringed.
                     property <bool> on: i == root.selected;
                     property <bool> in-set: on || t.chosen;
+                    // To a screen reader an item of the sheet named as
+                    // its tile is, chosen or not, whose press picks it
+                    // as a click does.
+                    accessible-role: list-item;
+                    accessible-label: t.version != "" ? t.version : t.name;
+                    accessible-item-selectable: true;
+                    accessible-item-selected: in-set;
+                    accessible-action-default => {
+                        root.focus-keys();
+                        root.frame-clicked(i, false, false);
+                    }
                     x: root.grid-left + self.p.col * root.grid-pitch;
                     y: root.grid-pad + root.grid-top + self.p.y;
                     width: root.grid-cell;
@@ -924,14 +935,11 @@ export component GridSheet inherits Rectangle {
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
-                    // Named for a screen reader, not on the sheet.
-                    if root.lightbox: Rectangle {
-                        accessible-role: image;
-                        accessible-label: t.name;
-                    }
                     // A version is named by its own name, the file's
                     // own by the file's.
                     if !root.lightbox: cell-name := Text {
+                        // Said by the cell, which it names.
+                        accessible-role: none;
                         y: parent.p.pic;
                         width: 100%;
                         height: root.grid-label;

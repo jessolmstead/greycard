@@ -18,7 +18,7 @@ use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementRoot};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::testing::{folder, settle, state_for, window};
-use crate::{App, HistoryRow, PresetRow};
+use crate::{App, FilterChip, HistoryRow, PresetRow};
 
 /// The roles a hand works: what a screen reader offers to press, turn,
 /// move, or type into.
@@ -168,6 +168,8 @@ fn survey(app: &App) -> Survey {
     let mut groups = Vec::new();
     let mut buttons = Vec::new();
     let mut options = Vec::new();
+    let mut texts = Vec::new();
+    let mut labeled = Vec::new();
     app.root_element().visit_descendants(|e| {
         let Some(role) = e.accessible_role() else {
             return ControlFlow::<()>::Continue(());
@@ -175,8 +177,21 @@ fn survey(app: &App) -> Survey {
         if let Some(k) = COUNTED.iter().position(|r| *r == role) {
             counts[k] += 1;
         }
+        if role == AccessibleRole::Text
+            && let Some(words) = e.accessible_label().filter(|w| !w.trim().is_empty())
+        {
+            texts.push((words.to_lowercase(), box_of(&e)));
+        }
         if !INTERACTIVE.contains(&role) {
             return ControlFlow::Continue(());
+        }
+        if let Some(words) = e.accessible_label().filter(|w| !w.trim().is_empty()) {
+            let who = format!(
+                "{role:?} {} ({})",
+                e.id().unwrap_or_default(),
+                e.type_name().unwrap_or_default()
+            );
+            labeled.push((words.to_lowercase(), box_of(&e), who));
         }
         match role {
             AccessibleRole::RadioGroup => groups.push(box_of(&e)),
@@ -212,6 +227,23 @@ fn survey(app: &App) -> Survey {
             let key = format!("no group: {what}");
             let at = format!(" at {:.0},{:.0}", option.0, option.1);
             gaps.push((key.clone(), key + &at));
+        }
+    }
+    // A label a screen reader reaches as words of its own, inside the
+    // control it names or beside it on its line, is said twice: once
+    // as the control's name and once as the text.
+    const BESIDE: f32 = 24.0;
+    for (words, text) in &texts {
+        let cy = text.1 + text.3 / 2.0;
+        for (name, control, who) in &labeled {
+            let on_line = cy >= control.1 && cy <= control.1 + control.3;
+            let near =
+                text.0 <= control.0 + control.2 + BESIDE && text.0 + text.2 >= control.0 - BESIDE;
+            if name == words && on_line && near {
+                let key = format!("said twice: {words:?}, the name of {who}");
+                let at = format!(" at {:.0},{:.0}", text.0, text.1);
+                gaps.push((key.clone(), key + &at));
+            }
         }
     }
     gaps.sort();
@@ -276,7 +308,8 @@ fn flags(on: &[bool]) -> ModelRc<bool> {
 
 /// The lists' rows a frame brings: two masks, the first chosen with two
 /// shapes, a snapshot, history steps, a group of presets, and a
-/// retouch patch, so their rows are walked too.
+/// retouch patch, so their rows are walked too; and an edit, so
+/// History's reset is.
 fn fill_the_lists(app: &App) {
     app.set_adjustment_names(strings(&["Global", "Mask 1", "Mask 2"]));
     app.set_adjustment_on(flags(&[true, false]));
@@ -313,6 +346,8 @@ fn fill_the_lists(app: &App) {
     ])));
     app.set_patch_names(strings(&["Patch 1"]));
     app.set_patch(0);
+    // An edited frame: History offers its Reset to Original.
+    app.set_history_resettable(true);
 }
 
 /// The fixture's rows, by id, with how many each tab must draw: a list
@@ -479,5 +514,232 @@ fn every_control_a_screen_reader_reaches_has_a_name() {
         LEAST.len(),
         places.len(),
         "a pin for every place: {counted:?}"
+    );
+}
+
+/// The elements a screen reader knows as `label` in the role `role`.
+fn found(app: &App, role: AccessibleRole, label: &str) -> Vec<ElementHandle> {
+    settle(app);
+    ElementHandle::find_by_accessible_label(app, label)
+        .filter(|e| e.accessible_role() == Some(role))
+        .collect()
+}
+
+/// A filter chip held out (Ctrl+click) hides its matches: it says
+/// "excluded", not the "not checked" of a chip merely off, and one on
+/// or off still says which.
+#[test]
+fn a_chip_held_out_says_excluded() {
+    let app = window(3);
+    app.window()
+        .set_size(slint::LogicalSize::new(1600.0, 2000.0));
+    let (_state, _worker) = state_for(&app, folder(3));
+    app.invoke_select(0);
+    app.set_grid_open(true);
+    settle(&app);
+    // A chip held out and one ticked, as a Ctrl+click and a click leave
+    // them.
+    let chip = |text: &str, on: bool, out: bool| FilterChip {
+        text: text.into(),
+        count: 1,
+        on,
+        out,
+        code: 0,
+    };
+    let (out, on) = ("Picked", "Rejected");
+    app.set_filter_flags(ModelRc::new(VecModel::from(vec![
+        chip(out, false, true),
+        chip(on, true, false),
+    ])));
+    let held = found(&app, AccessibleRole::Button, out);
+    assert!(!held.is_empty(), "the held-out chip {out:?}");
+    for chip in held {
+        assert_eq!(chip.accessible_description().as_deref(), Some("excluded"));
+        assert_eq!(chip.accessible_checkable(), Some(false), "{out:?}");
+    }
+    let ticked = found(&app, AccessibleRole::Button, on);
+    assert!(!ticked.is_empty(), "the chip {on:?}");
+    for chip in ticked {
+        assert_eq!(chip.accessible_description().as_deref(), Some(""));
+        assert_eq!(chip.accessible_checkable(), Some(true));
+        assert_eq!(chip.accessible_checked(), Some(true));
+    }
+}
+
+/// A frame's cell in the strip and on the grid is an item a screen
+/// reader names by its file, says chosen or not, and presses: the
+/// press picks the frame as a click does.
+#[test]
+fn a_screen_reader_presses_a_frame_in_the_strip_and_the_grid() {
+    let app = window(3);
+    app.window()
+        .set_size(slint::LogicalSize::new(1600.0, 1000.0));
+    let (_state, _worker) = state_for(&app, folder(3));
+    app.invoke_select(0);
+    settle(&app);
+    // The thumbs' names, as `window` gives them.
+    let names = ["f00.CR3", "f01.CR3", "f02.CR3"];
+    // The cells of `place` (the strip stays under the grid) named `name`.
+    let cells = |place: &str, name: &str| -> Vec<ElementHandle> {
+        found(&app, AccessibleRole::ListItem, name)
+            .into_iter()
+            .filter(|e| e.id().is_some_and(|i| i == format!("{place}::cell")))
+            .collect()
+    };
+    let press = |place: &str, i: usize| {
+        let name = names[i];
+        let before = cells(place, name);
+        assert_eq!(before.len(), 1, "{place}: one cell {name:?}");
+        assert_eq!(before[0].accessible_item_selected(), Some(false), "{place}");
+        before[0].invoke_accessible_default_action();
+        settle(&app);
+        assert_eq!(
+            app.get_selected(),
+            i as i32,
+            "{place}: the press picks {name:?}"
+        );
+        let after = cells(place, name);
+        assert_eq!(after[0].accessible_item_selected(), Some(true), "{place}");
+    };
+    press("Filmstrip", 1);
+    app.set_grid_open(true);
+    press("GridSheet", 2);
+}
+
+/// The words of every item of the menu up now, and how many items have
+/// none: Slint draws a menu's items itself, each its words in a text.
+fn menu_items(app: &App) -> (Vec<String>, usize) {
+    settle(app);
+    let mut words = Vec::new();
+    let mut unnamed = 0;
+    for item in ElementHandle::find_by_element_type_name(app, "MenuItemBase") {
+        // A separator draws no press area and says nothing, rightly.
+        let pressable = item
+            .query_descendants()
+            .match_id("MenuItemBase::touch-area")
+            .find_first()
+            .is_some();
+        if !pressable {
+            continue;
+        }
+        let label = item
+            .query_descendants()
+            .match_id("MenuItemBase::label")
+            .find_first()
+            .and_then(|t| t.accessible_label())
+            .filter(|l| !l.trim().is_empty());
+        match label {
+            Some(l) => words.push(l.to_string()),
+            None => unnamed += 1,
+        }
+    }
+    (words, unnamed)
+}
+
+fn center(e: &ElementHandle) -> (f32, f32) {
+    let (x, y, w, h) = box_of(e);
+    (x + w / 2.0, y + h / 2.0)
+}
+
+/// The window's menus, each opened as a hand opens it: every item has
+/// words to say, and whatever else the open menu brings with a role
+/// has its name, as the walk asks of the window.
+///
+/// Slint 1.19 gives a menu's items no role of their own (its
+/// `MenuItemBase` sets none, and `AccessibleRole` has no menu item),
+/// so a screen reader reads them as text; we cannot give them one
+/// from here.
+#[test]
+fn every_menu_item_has_a_name() {
+    use slint::platform::{Key, PointerEventButton};
+    let app = window(3);
+    app.window()
+        .set_size(slint::LogicalSize::new(1600.0, 2000.0));
+    let (_state, _worker) = state_for(&app, folder(3));
+    app.invoke_select(0);
+    fill_the_lists(&app);
+    settle(&app);
+    let right_click = |app: &App, at: (f32, f32)| {
+        crate::testing::click_with(app, PointerEventButton::Right, at.0, at.1);
+    };
+    let by_id = |app: &App, id: &str, nth: usize| {
+        settle(app);
+        let e = ElementHandle::find_by_element_id(app, id)
+            .nth(nth)
+            .unwrap_or_else(|| panic!("no {id}"));
+        center(&e)
+    };
+    type Open = Box<dyn Fn(&App)>;
+    let menus: Vec<(&str, usize, Open)> = vec![
+        (
+            "the zoom menu",
+            8,
+            Box::new(|app: &App| app.set_zoom_menu_shown(true)),
+        ),
+        (
+            "a frame's menu in the strip",
+            4,
+            Box::new(move |app: &App| right_click(app, crate::testing::strip_cell(app, 0))),
+        ),
+        (
+            "a preset's menu",
+            2,
+            Box::new(move |app: &App| {
+                app.set_panel_tab("Develop".into());
+                app.set_collapsed_presets(false);
+                // The group's heading is the first; a preset's own is
+                // the second.
+                right_click(app, by_id(app, "PresetsSection::preset-row", 1));
+            }),
+        ),
+        (
+            "a mask's menu",
+            2,
+            Box::new(move |app: &App| {
+                app.set_panel_tab("Masks".into());
+                app.set_collapsed_adjustments(false);
+                // Global has no menu; a mask's is the second row's.
+                right_click(app, by_id(app, "AdjustmentsList::row", 1));
+            }),
+        ),
+        (
+            "the help menu",
+            2,
+            Box::new(|app: &App| {
+                settle(app);
+                let help = ElementHandle::find_by_accessible_label(app, "Help menu")
+                    .next()
+                    .expect("the Help button");
+                let (x, y) = center(&help);
+                crate::testing::click(app, x, y);
+            }),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, least, open) in menus {
+        open(&app);
+        let (words, unnamed) = menu_items(&app);
+        if words.len() + unnamed < least {
+            failures.push(format!(
+                "{name}: {} items, at least {least}",
+                words.len() + unnamed
+            ));
+        }
+        if unnamed > 0 {
+            failures.push(format!(
+                "{name}: {unnamed} items say nothing, beside {words:?}"
+            ));
+        }
+        for (_, line) in survey(&app).gaps {
+            failures.push(format!("{name}: {line}"));
+        }
+        crate::testing::press(&app, Key::Escape);
+        settle(&app);
+        assert!(menu_items(&app).0.is_empty(), "{name} put away");
+    }
+    assert!(
+        failures.is_empty(),
+        "menus a screen reader would miss in:\n{}",
+        failures.join("\n")
     );
 }

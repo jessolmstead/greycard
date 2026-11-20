@@ -214,6 +214,8 @@ export component PresetsSection inherits Section {
                             transform-rotation: row.folded ? -90deg : 0deg;
                         }
                         Text {
+                            // Said by the row, which it names.
+                            accessible-role: none;
                             text: row.group == "" ? PresetWords.favorites : row.text;
                             color: preset-row.has-hover ? Theme.text : Theme.text-secondary;
                             font-size: Theme.font-xs;
@@ -231,6 +233,8 @@ export component PresetsSection inherits Section {
                         padding-right: Theme.space-1 + Theme.scrollbar-band;
                         spacing: Theme.space-1;
                         Text {
+                            // Said by the row, which it names.
+                            accessible-role: none;
                             text: row.text;
                             color: preset-row.has-hover ? Theme.text : Theme.text-secondary;
                             font-size: Theme.font-xs;

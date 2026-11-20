@@ -624,6 +624,8 @@ export component ExportSheet inherits Rectangle {
                                 }
                             }
                             Text {
+                                // Said by the swatch chosen, which it names.
+                                accessible-role: none;
                                 text: root.export-border && root.export-border-color != "Match" ? root.border-words(root.export-border-color) : "";
                                 color: Theme.text-secondary;
                                 font-size: Theme.font-xs;

@@ -82,11 +82,15 @@ component Chip inherits Rectangle {
     /// (a color label's) what its color is called.
     in property <string> name: root.text;
     // To a screen reader a button, on or off, with the frames it would
-    // leave as its value; its press ticks it as a plain click does.
+    // leave as its value; its press ticks it as a plain click does. One
+    // held out is neither: it says so instead of "not checked".
     accessible-role: button;
     accessible-label: root.name;
-    accessible-checkable: true;
+    accessible-checkable: !root.out;
     accessible-checked: root.on;
+    accessible-description: root.out
+        // Spoken: a filter chip that hides its matches
+        ? @tr("excluded") : "";
     accessible-value: root.shows-count ? root.count : "";
     accessible-action-default => { root.clicked(false); }
 }

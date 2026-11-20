@@ -887,10 +887,9 @@ fn the_editing_rows_are_the_panels_own_choices() {
     assert_eq!(kept().proof_profile, "Rec.2020");
     click_panel(&app, "Perceptual");
     assert_eq!(kept().proof_intent, "Perceptual");
-    // The canvas's first swatch, right of its word.
+    // The canvas's first swatch, at the left of its row of swatches.
     let (at, size) = crate::testing::labeled(&app, "Canvas");
-    let column = app.global::<crate::LabelColumn>().get_width();
-    crate::testing::click(&app, at.x + column + 8.0 + 4.0, at.y + size.height / 2.0);
+    crate::testing::click(&app, at.x + 4.0, at.y + size.height / 2.0);
     assert_eq!(kept().canvas_color, crate::render::CANVAS_NAMES[0]);
     open_editing(&app);
     assert_eq!(

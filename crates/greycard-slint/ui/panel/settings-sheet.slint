@@ -56,6 +56,8 @@ component BindChip inherits Rectangle {
     accessible-value: self.shown;
     accessible-action-default => { root.listen(); }
     Text {
+        // Said by the chip, as its value.
+        accessible-role: none;
         text: root.shown;
         font-size: Theme.font-sm;
         font-weight: Theme.weight-medium;
@@ -453,6 +455,8 @@ export component SettingsSheet inherits Rectangle {
                                         accessible-checked: self.on;
                                         accessible-action-default => { root.choose(name); }
                                         Text {
+                                            // Said by its tab, which it names.
+                                            accessible-role: none;
                                             x: Theme.space-3;
                                             width: parent.width - 2 * Theme.space-3;
                                             text: root.category-words[i];
@@ -1241,6 +1245,8 @@ export component SettingsSheet inherits Rectangle {
                                 if !row.heading: HorizontalLayout {
                                     spacing: Theme.space-2;
                                     Text {
+                                        // Said by its chips, which it names.
+                                        accessible-role: none;
                                         text: row.does;
                                         font-size: Theme.font-sm;
                                         color: Theme.text;
