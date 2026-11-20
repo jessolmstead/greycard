@@ -1532,7 +1532,8 @@ clears or a tester asks for it.
       in each style say which is which), fitted against its JPEG or
       the full-size preview the DNG carries. Six M11 frames in one
       style laid 0.4 to 0.5 stops under our default, the color
-      already close. Waits on 20 or more frames a style (2026-11-19)
+      already close. Waits on a frame or two in each style, to
+      name the tags (2026-11-19)
 - [ ] A DNG's LinearizationTable is not applied: a linear DNG that
       carries one (PureRAW's at 60 MP, and likely older Leica M
       files) renders six stops dark and magenta
