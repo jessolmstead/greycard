@@ -30,7 +30,16 @@ export component LightSection inherits Section {
     in property <bool> raw-input;
     /// The picture's light, not a mask's: Auto sets the former only.
     in property <bool> auto-shown;
+    // The learned highlight fill, the picture's alone: on or off, and
+    // whether the open frame takes it (a 2x2 Bayer raw of the camera's
+    // own); one that does not keeps the setting. Shown here, where the
+    // bright end is rescued, though it is the edit's Demosaic section's:
+    // Light's switch, reset, and copy leave it alone.
+    in-out property <bool> highlight-fill;
+    in property <bool> highlight-fill-takes: true;
+    in property <bool> show-highlight-fill;
     callback view-changed();
+    callback develop-changed();
     callback light-auto();
 
     title: @tr("LIGHT");
@@ -96,6 +105,19 @@ export component LightSection inherits Section {
         value <=> root.shadows;
         text: (root.shadows >= 0 ? "+" : "") + round(root.shadows * 100) / 100 + " EV";
         changed(v) => { root.view-changed(); }
+    }
+    if root.show-highlight-fill: highlight-fill-switch := Toggle {
+        // Light: the learned fill of clipped highlights
+        label: @tr("Highlight fill");
+        enabled: root.highlight-fill-takes;
+        checked <=> root.highlight-fill;
+        toggled => { root.develop-changed(); }
+    }
+    // The regional three above, the clipping pair below.
+    light-hairline := VerticalLayout {
+        padding-top: Theme.space-1;
+        padding-bottom: Theme.space-1;
+        Rectangle { height: 1px; background: Theme.border; }
     }
     EditSlider {
         label: @tr("Whites");

@@ -121,7 +121,10 @@ pub(crate) fn reset_section(
         "output-sharpen" => edit.output_sharpen = original.output_sharpen,
         "vignette" => edit.vignette = original.vignette,
         "grain" => edit.grain = original.grain,
-        "demosaic" => edit.demosaic = original.demosaic,
+        "demosaic" => {
+            edit.demosaic = original.demosaic;
+            edit.highlight_fill = original.highlight_fill.clone();
+        }
         "crop" => {
             g.crop = o.crop;
             g.aspect = o.aspect;
@@ -196,7 +199,9 @@ pub(crate) fn section_at_reset(
         "output-sharpen" => edit.output_sharpen == original.output_sharpen,
         "vignette" => edit.vignette == original.vignette,
         "grain" => edit.grain == original.grain,
-        "demosaic" => edit.demosaic == original.demosaic,
+        "demosaic" => {
+            edit.demosaic == original.demosaic && edit.highlight_fill == original.highlight_fill
+        }
         "crop" => g.crop == o.crop && g.aspect == o.aspect && g.portrait == o.portrait,
         "rotate" => g.turns == o.turns && g.flip == o.flip && g.angle == o.angle,
         "perspective" => g.vertical == o.vertical && g.horizontal == o.horizontal,

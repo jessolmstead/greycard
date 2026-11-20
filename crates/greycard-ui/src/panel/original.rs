@@ -149,6 +149,17 @@ pub(crate) fn under_geometry(mut original: Edit, edit: &Edit) -> Edit {
     original
 }
 
+/// Whether the edit's picture on screen is all of it: the latest
+/// develop, up, with no generative fill and no highlight fill still to
+/// come. Only then is it kept to put back after the Original; else
+/// the edit develops again, so a round given way to is made again.
+pub(crate) fn edit_picture_whole(st: &State) -> bool {
+    st.develop.pending.is_none()
+        && st.develop.drawn_generation == st.develop.generation
+        && st.develop.fills_pending.is_empty()
+        && !st.develop.highlight_pending
+}
+
 /// The key: the Original if the edit shows, the edit if the Original
 /// does. Only over the open frame's own develop, up and not culled.
 pub(crate) fn key(st: &mut State, app: &App, worker: &Worker) {
@@ -175,10 +186,11 @@ pub(crate) fn key(st: &mut State, app: &App, worker: &Worker) {
     let turn = current_turn(st);
     // The edit's picture is put back as it is only when it is the
     // latest develop of it, all made: else the edit develops again.
-    let fresh = st.develop.pending.is_none()
-        && st.develop.drawn_generation == st.develop.generation
-        && st.develop.fills_pending.is_empty();
-    let edited = if fresh { Shown::on_screen(st) } else { None };
+    let edited = if edit_picture_whole(st) {
+        Shown::on_screen(st)
+    } else {
+        None
+    };
     let o = &mut st.develop.original;
     // Kept of this frame at this turn, under this lens drawing.
     let of = Some((frame, turn % 4));

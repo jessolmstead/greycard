@@ -304,6 +304,8 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     st.culling.cull = Some(cull);
     set_loupe_cull(st, true);
     // No frame is being edited while culling.
+    // Nor does the highlight fill go on: its words go with the editor.
+    crate::panel::deliver::show_fill_pending(app, false);
     if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
         worker.set_open_frame(None);
         crate::panel::browser::previews_ahead(st, &worker);

@@ -2487,6 +2487,8 @@ fn follow_paths(st: &mut State, was: &Path, to: &Path) {
                 patch_shape: _,
                 lit_shape: _,
                 fills_pending: _,
+                highlight_pending: _,
+                fill_takes: _,
                 pending_shapes: _,
                 guiding: _,
                 guide_kept: _,
@@ -3588,7 +3590,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             crate::rows::ask_reframed(&mut st, &worker, first as usize, last as usize);
             worker.want_thumbnails(f, l);
             near_shown(&mut st, &worker, first as usize, last as usize);
-            crate::edited::note_editing(&mut st, &worker, false);
+            crate::edited::note_editing(&mut st, &app, &worker, false);
         });
     }
     // The grid's layout, asked of the pure arithmetic in `grid` so
@@ -3756,7 +3758,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             worker.want_thumbnails(st.views.shown[first], st.views.shown[last]);
             near_shown(&mut st, &worker, first, last);
             // In the grid, no frame is being edited.
-            crate::edited::note_editing(&mut st, &worker, true);
+            crate::edited::note_editing(&mut st, &app, &worker, true);
             // The lightbox's tiles follow the cells.
             if st.culling.lightbox.is_some() {
                 crate::lightbox::refresh(&mut st, &app);

@@ -516,6 +516,12 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         st.develop.lens = crate::worker::LensReport::Unread;
         st.develop.lens_options.clear();
     }
+    // Whether the frame takes the highlight fill is its open's to say:
+    // until then (and in culling, where nothing opens) the switch is
+    // free, never the last frame's, and the frame develops with the
+    // fill or without by its own kind.
+    st.develop.fill_takes = None;
+    app.set_highlight_fill_takes(true);
     let offline = !crate::rows::is_loaded(st, i);
     // The session's first open, whichever way it goes, is the one
     // the command line's mask, patch and zoom are for. A first file

@@ -536,6 +536,22 @@ pub(crate) fn read_demosaic(app: &App) -> Demosaic {
     Demosaic::from_name(app.get_demosaic_stored().as_str()).unwrap_or_default()
 }
 
+/// The highlight fill as the switch leaves it: off, none; on, the
+/// version `base` names when it names one (a version this build lacks
+/// among them, kept as it is), and otherwise this build's newest. The
+/// switch is read whether or not the frame takes the fill, so a frame
+/// that does not keeps what was laid on it.
+pub(crate) fn read_highlight_fill(app: &App, base: &Edit) -> Option<String> {
+    if !app.get_highlight_fill() {
+        return None;
+    }
+    base.highlight_fill.clone().or_else(|| {
+        greycard_edit::key::HIGHLIGHT_FILLS
+            .last()
+            .map(|v| v.to_string())
+    })
+}
+
 pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     let mut edit = base.clone();
     // A curve the panel holds in order that `base` has out of order,
@@ -666,6 +682,7 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     edit.sharpen.auto_threshold = app.get_sharpen_auto_threshold();
     edit.sharpen.threshold = app.get_sharpen_threshold();
     edit.demosaic = read_demosaic(app);
+    edit.highlight_fill = read_highlight_fill(app, base);
     // Global, as the black and white is: the curve under every look.
     edit.display_curve = greycard_edit::DisplayCurve::from_name(app.get_display_curve().as_str())
         .unwrap_or_default();
@@ -965,6 +982,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_sharpen_auto_threshold(edit.sharpen.auto_threshold);
     app.set_sharpen_threshold(edit.sharpen.threshold);
     show_demosaic(st.open_mosaic(), edit.demosaic, app);
+    app.set_highlight_fill(edit.highlight_fill.is_some());
     app.set_display_curve(edit.display_curve.name().into());
     // The list and its warning follow the choice, so an undo or a
     // preset that brings another camera's profile says so at once.
@@ -1268,3 +1286,6 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod fill_tests;

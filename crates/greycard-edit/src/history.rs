@@ -193,6 +193,11 @@ fn changes(b: &Edit, a: &Edit) -> Vec<String> {
     if b.demosaic != a.demosaic {
         out.push("Demosaic".to_string());
     }
+    if b.highlight_fill.is_some() != a.highlight_fill.is_some() {
+        out.push(switched("Highlight fill", a.highlight_fill.is_some()));
+    } else if b.highlight_fill != a.highlight_fill {
+        out.push("Highlight fill".to_string());
+    }
     if b.camera.profile == a.camera.profile && b.camera.tone_curve != a.camera.tone_curve {
         out.push(switched("Profile tone curve", a.camera.tone_curve));
     } else if b.camera != a.camera {
@@ -1103,18 +1108,18 @@ mod tests {
         assert_eq!(describe(&base, &base, &[]), "No change");
     }
 
-    /// A step that moves the highlight fill alone has no words of its
-    /// own yet: it reads as no change. Nothing sets it alone today.
+    /// The highlight fill's switch is named as the other switches are,
+    /// on or off; a step from one version to another by its name alone.
     #[test]
-    fn the_highlight_fill_alone_reads_as_no_change() {
+    fn the_highlight_fill_is_named_as_a_switch() {
         let base = Edit::default();
         let mut on = base.clone();
         on.highlight_fill = Some("hl-1".into());
-        assert_eq!(describe(&base, &on, &[]), "No change");
-        assert_eq!(describe(&on, &base, &[]), "No change");
-        let mut both = on.clone();
-        both.light.exposure = 0.5;
-        assert_eq!(describe(&base, &both, &[]), "Exposure +0.50");
+        assert_eq!(describe(&base, &on, &[]), "Highlight fill on");
+        assert_eq!(describe(&on, &base, &[]), "Highlight fill off");
+        let mut newer = on.clone();
+        newer.highlight_fill = Some("hl-9".into());
+        assert_eq!(describe(&on, &newer, &[]), "Highlight fill");
     }
 
     #[test]

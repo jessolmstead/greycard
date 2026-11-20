@@ -289,10 +289,10 @@ mod tests {
         assert_eq!(state.borrow().sidecars[1], Sidecar::default());
     }
 
-    /// The highlight fill has no section: the panel's read keeps it, a
-    /// save records it, every header reset leaves it, and Reset to
-    /// Original takes it off with the rest. A step that moves it alone
-    /// reads "No change" in the history, as it has no words yet.
+    /// The highlight fill is the Demosaic section's: the panel's read
+    /// keeps it, a save records it, every header reset but Demosaic's
+    /// leaves it, and Reset to Original takes it off with the rest. A
+    /// step that moves it alone is named as its switch.
     #[test]
     fn the_highlight_fill_stays_through_the_panel_and_goes_with_reset_to_original() {
         let mut filled = exposed(0.7);
@@ -313,7 +313,8 @@ mod tests {
         for name in crate::panel::section_reset::SECTIONS {
             let mut e = now.clone();
             crate::panel::section_reset::reset_section(&mut e, &Edit::default(), None, name);
-            assert_eq!(e.highlight_fill.as_deref(), Some("hl-1"), "{name}");
+            let kept = (*name != "demosaic").then_some("hl-1");
+            assert_eq!(e.highlight_fill.as_deref(), kept, "{name}");
         }
 
         app.invoke_history_reset();
@@ -329,7 +330,7 @@ mod tests {
             app.get_history_resettable(),
             "the fill alone is not the Original"
         );
-        assert_eq!(history_rows(&app)[0], "No change");
+        assert_eq!(history_rows(&app)[0], "Highlight fill on");
     }
 
     #[test]

@@ -2933,6 +2933,10 @@ fn auto_light_is_a_button_under_the_light_sliders() {
     use greycard_edit::auto::MIDDLE;
     use i_slint_backend_testing::ElementHandle;
     let app = window(1);
+    // Tall enough that Auto, under the Light section's last slider
+    // and its highlight fill's switch, is in the panel's view.
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
     let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
     app.invoke_select(0);
     let wait = || {

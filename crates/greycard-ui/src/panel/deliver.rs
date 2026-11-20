@@ -123,6 +123,45 @@ pub(crate) fn listed(names: &[String]) -> String {
     }
 }
 
+/// Whether the learned highlight fill runs on the frame opened, a raw's
+/// `frame` or a picture's none, as the engine's list has it
+/// (`Facts::highlight_fill_skip`); why not goes to the log.
+pub(crate) fn highlight_fill_takes(frame: Option<&greycard_core::raw::RawFrame>) -> bool {
+    let why = match frame {
+        Some(f) => greycard_engine::stages::Facts::raw(f, 0).highlight_fill_skip(),
+        None => Some("the highlight fill is a raw's, and this is a rendered picture"),
+    };
+    if let Some(why) = why {
+        tracing::debug!("{why}");
+    }
+    why.is_none()
+}
+
+/// The status line's words while the highlight fill is to come.
+pub(crate) fn fill_pending_words() -> String {
+    // Status line: the highlight fill's picture to come
+    tr!("developing... the highlight fill is at work")
+}
+
+/// The pending fill's words on the status line, last, while `shown`,
+/// and taken off it otherwise, the rest of the line as it was: the
+/// worker pauses the fill's round while the editor is left (Cull, the
+/// grid, the lightbox) and goes on when the frame is shown again.
+pub(crate) fn show_fill_pending(app: &App, shown: bool) {
+    let words = fill_pending_words();
+    let status = app.get_status().to_string();
+    let rest = status
+        .strip_suffix(words.as_str())
+        .map(|r| r.strip_suffix("; ").unwrap_or(r).to_string());
+    let line = match (shown, rest) {
+        (true, None) if status.is_empty() => words,
+        (true, None) => format!("{status}; {words}"),
+        (false, Some(rest)) => rest,
+        _ => return,
+    };
+    app.set_status(line.into());
+}
+
 /// The export sheet's choices as the panel holds them.
 pub(crate) fn read_sheet(app: &App) -> Sheet {
     Sheet {
@@ -514,6 +553,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let behind = generation != st.develop.generation;
             // The last file's fills to come are not this one's.
             st.develop.fills_pending.clear();
+            st.develop.highlight_pending = false;
             app.set_fill_fraction(-1.0);
             // A fresh raw's learned-denoiser blend from its ISO: into
             // the open cell's line (and that line alone: a version at
@@ -570,6 +610,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     .as_ref()
                     .is_some_and(|f| greycard_engine::stages::Facts::raw(f, 0).measures_ca()),
             );
+            // The highlight fill's switch stands down on a frame the
+            // fill does not take, its setting kept; why is the log's.
+            let takes = highlight_fill_takes(frame.as_deref());
+            st.develop.fill_takes = Some(takes);
+            app.set_highlight_fill_takes(takes);
             st.develop.frame = frame.zip(profile);
             crate::panel::color::learn_monochrome(&mut st, app);
             // The camera the file names, and what the profile
@@ -857,6 +902,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // while they wait, the bar ready for the first of them.
             st.develop.fills_pending = fills.pending.clone();
             app.set_fill_fraction(if fills.pending.is_empty() { -1.0 } else { 0.0 });
+            // The learned highlight fill to come, the picture without
+            // it until then: said on the status line (below), until a
+            // develop lands that waits on none.
+            st.develop.highlight_pending = fills.highlight_pending;
             // Which engine made each Fill, for its row's "Another".
             if crate::panel::retouch::took_engines(&mut st, &fills.engines) {
                 crate::panel::retouch::show_patches(&st, &st.develop.edit, app);
@@ -916,7 +965,16 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     st.develop.start_note.take()
                 };
                 let without = (!without.is_empty()).then(|| without.join(", "));
-                let status: Vec<String> = said.into_iter().chain(start).chain(without).collect();
+                // Not while the grid or the lightbox is up: the round
+                // waits for the editor, and the words come back with it.
+                let left = app.get_grid_open() || st.culling.lightbox.is_some();
+                let filling = (st.develop.highlight_pending && !left).then(fill_pending_words);
+                let status: Vec<String> = said
+                    .into_iter()
+                    .chain(start)
+                    .chain(without)
+                    .chain(filling)
+                    .collect();
                 let status = status.join("; ");
                 let status = match card_short {
                     Some(c) if status.is_empty() => c,
@@ -1055,7 +1113,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 app.set_busy(false);
                 // No fill of it is coming.
                 st.develop.fills_pending.clear();
+                st.develop.highlight_pending = false;
                 app.set_fill_fraction(-1.0);
+                // An open that failed before it said whether the frame
+                // takes the highlight fill leaves the switch free.
+                app.set_highlight_fill_takes(st.develop.fill_takes.unwrap_or(true));
                 // An open that failed before anything said what the raw
                 // is: the demosaic menu stops waiting.
                 crate::panel::browser::mosaic_unreadable(&mut st, app);

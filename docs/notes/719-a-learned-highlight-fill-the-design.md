@@ -322,6 +322,31 @@ What is not as §3 hoped:
 - The learned pair's memory was measured on the bare walk at 6 MP,
   the worker having no learned model in a test.
 
+## 1d. The switch, as built (2026-11-19)
+
+The switch, Highlight fill, is drawn in Light, under Shadows and above
+a hairline that parts the regional three from Whites and Blacks: a
+blown sky is looked for there, and nobody opens Demosaic. It carries
+with the Demosaic section all the same, a picture's own setting: Light
+rides presets by default, and a preset saved before the fill has no
+field for it, so carried with Light every look would switch fills
+off. Light's switch, its reset, its tick in the copy sheet, and a
+mask's Light leave it alone.
+
+- While a fill is to come the status line ends "the highlight fill is
+  at work", from `FillReport::highlight_pending`; the words go with
+  the filled picture, the switch off, another frame, a failure, and
+  while the editor is left for the grid, the lightbox, or Cull, where
+  the worker pauses the round.
+- On a frame `Facts::highlight_fill_skip` covers the switch is greyed
+  and the field kept, so a pasted "on" works on the next frame that
+  can use it; such a frame's `same_base` is as with the fill off.
+- The Original shown while a fill is pending no longer keeps the
+  unfilled picture to put back; the edit develops again.
+- On three 24 MP frames with blown skies and backlit leaves, off is
+  bit for bit the build before, every changed pixel lies within 64 px
+  of one above 97%, and the fill's stage takes 0.27 to 0.54 s.
+
 ## 2. Everything in Rust
 
 The procedural part and the network's forward pass are both plain

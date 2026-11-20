@@ -54,6 +54,7 @@ fn moved() -> Edit {
     e.vignette.place = greycard_edit::vignette::Place::Display;
     e.grain.amount = 0.3;
     e.demosaic = Demosaic::Rcd;
+    e.highlight_fill = Some("hl-1".into());
     e.geometry.crop = Some(Crop {
         x: 0.1,
         y: 0.1,

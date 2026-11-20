@@ -2172,6 +2172,10 @@ export component App inherits Window {
     in-out property <string> demosaic-stored: "amaze-vng4";
     // Why the menu rests while the open raw's mosaic is not known, or "".
     in property <string> demosaic-hint: "";
+    // The learned highlight fill's switch, and whether the open frame
+    // takes the fill: one that does not greys the switch.
+    in-out property <bool> highlight-fill: false;
+    in property <bool> highlight-fill-takes: true;
     callback demosaic-picked(string);
     demosaic-picked(v) => {
         root.demosaic-stored = v;
@@ -4633,6 +4637,10 @@ export component App inherits Window {
                                     auto-shown: root.target == 0;
                                     light-auto => { root.light-auto(); }
                                     view-changed => { root.view-changed(); }
+                                    highlight-fill <=> root.highlight-fill;
+                                    highlight-fill-takes: root.highlight-fill-takes;
+                                    show-highlight-fill: root.target == 0;
+                                    develop-changed => { root.develop-changed(); }
                                 }
                                 if section == "color" && (root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0)): ColorSection {
                                     reorderable: develop-stack.movable;

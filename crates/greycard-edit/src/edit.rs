@@ -1034,6 +1034,33 @@ mod tests {
         assert_eq!(overlay_changes(&before, &before, &frame).unwrap(), frame);
     }
 
+    /// The highlight fill's switch reached in culling goes over each
+    /// frame as the one change, a frame whose own fill is another
+    /// version or none alike; turned off, it comes off; untouched, each
+    /// frame keeps its own.
+    #[test]
+    fn the_highlight_fill_goes_over_a_frame_as_its_switch_alone() {
+        let before = Edit::default();
+        let mut on = before.clone();
+        on.highlight_fill = Some("hl-1".into());
+        let mut exposed = before.clone();
+        exposed.light.exposure = 0.4;
+        let mut older = before.clone();
+        older.highlight_fill = Some("hl-9".into());
+        for frame in [before.clone(), exposed.clone(), older.clone()] {
+            let merged = overlay_changes(&before, &on, &frame).unwrap();
+            assert_eq!(merged.highlight_fill.as_deref(), Some("hl-1"));
+            assert_eq!(merged.light, frame.light);
+            let off = overlay_changes(&on, &before, &merged).unwrap();
+            assert_eq!(off.highlight_fill, None);
+            assert_eq!(off.light, frame.light);
+            let mut moved = before.clone();
+            moved.light.exposure = 1.0;
+            let kept = overlay_changes(&before, &moved, &frame).unwrap();
+            assert_eq!(kept.highlight_fill, frame.highlight_fill);
+        }
+    }
+
     /// A field left out of the file at its default and set back to it
     /// in culling (a double-click, a step to zero) goes over the frame's
     /// own value, as any other change does; a field neither side

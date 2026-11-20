@@ -1046,6 +1046,8 @@ impl State {
                 patch_shape: None,
                 lit_shape: None,
                 fills_pending: Vec::new(),
+                highlight_pending: false,
+                fill_takes: None,
                 pending_shapes: HashMap::new(),
                 guiding: Guiding::default(),
                 guide_kept: Rc::new(VecModel::default()),

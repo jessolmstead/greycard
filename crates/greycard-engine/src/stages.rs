@@ -1530,14 +1530,21 @@ fn merge_input(edit: &Edit, merge: &MergeInput, facts: &Facts) -> Steps {
 }
 
 /// Whether `a` and `b` make the same base of the frame `facts`
-/// describes: the same steps to it, as a prefetch would take them.
+/// describes: the same steps to it, as a prefetch would take them. A
+/// highlight fill the frame does not take is the fill off here: its
+/// skip is the log's, and the list is the off list (notes §719 §1b).
 pub fn same_base(
     a: &Edit,
     b: &Edit,
     facts: &Facts,
     lenses: Option<&greycard_lens::Database>,
 ) -> bool {
-    stages(a, &Purpose::Prefetch, facts, lenses) == stages(b, &Purpose::Prefetch, facts, lenses)
+    let list = |e: &Edit| {
+        let mut s = stages(e, &Purpose::Prefetch, facts, lenses);
+        s.skipped.retain(|(name, _)| *name != HIGHLIGHT_FILL);
+        s
+    };
+    list(a) == list(b)
 }
 
 /// Whether `a` and `b` develop the same picture of the frame `facts`
@@ -2028,7 +2035,23 @@ mod tests {
                 assert_eq!(on.skipped[1..], off.skipped[..], "{what}");
                 assert_eq!(on.reduced_recipe(), off.reduced_recipe());
             }
+            // The same base as with the fill off: turning the switch
+            // there develops nothing again.
+            let on = filled(everything(), "hl-1");
+            assert!(same_base(&on, &everything(), &facts, None), "{what}");
         }
+        assert!(!same_base(
+            &filled(everything(), "hl-1"),
+            &everything(),
+            &raw(0),
+            None
+        ));
+        assert!(same_base(
+            &filled(everything(), "hl-9"),
+            &everything(),
+            &raw(0),
+            None
+        ));
         assert_eq!(raw(0).highlight_fill_skip(), None);
         for purpose in purposes() {
             let off = stages(&everything(), &purpose, &raw(0), None);

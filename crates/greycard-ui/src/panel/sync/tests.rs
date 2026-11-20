@@ -108,20 +108,23 @@ use greycard_edit::{Learned, Sidecar, preset};
 use slint::Model;
 use slint::platform::{Key, WindowEvent};
 
-/// No section carries the highlight fill: a sync of every section the
-/// sheet ticks and a paste of every section leave each frame's own, on
-/// or off, while the rest of the look lands. Pinned so that giving it
-/// a carry is a choice made here.
+/// The highlight fill goes with the Demosaic section: a sync of every
+/// section the sheet ticks lays it, on, over each frame, a JPEG that
+/// cannot use it among them, which keeps it; a paste without Demosaic
+/// leaves each frame's own, on or off, while the rest of the look
+/// lands; one with Demosaic lays the copy's, off as off.
 #[test]
-fn neither_a_sync_nor_a_paste_carries_the_highlight_fill() {
+fn a_sync_and_a_paste_carry_the_highlight_fill_with_the_demosaic() {
     let with = |ev: f32, fill: Option<&str>| {
         let mut e = Edit::default();
         e.light.exposure = ev;
         e.highlight_fill = fill.map(str::to_string);
         e
     };
+    let mut files = folder(3);
+    files[2] = PathBuf::from("/nowhere/IMG_0002.JPG");
     let app = window(3);
-    let (state, worker) = state_for(&app, folder(3));
+    let (state, worker) = state_for(&app, files);
     {
         let mut st = state.borrow_mut();
         st.sidecars[0].record(with(1.25, Some("hl-1")));
@@ -134,24 +137,28 @@ fn neither_a_sync_nor_a_paste_carries_the_highlight_fill() {
     {
         let st = state.borrow();
         assert_eq!(st.sidecars[0].current, with(1.25, Some("hl-1")));
-        assert_eq!(st.sidecars[1].current.light.exposure, 1.25);
-        assert_eq!(st.sidecars[1].current.highlight_fill, None);
-        assert_eq!(st.sidecars[2].current.light.exposure, 1.25);
-        assert_eq!(
-            st.sidecars[2].current.highlight_fill.as_deref(),
-            Some("hl-9")
-        );
+        for f in [1, 2] {
+            let current = &st.sidecars[f].current;
+            assert_eq!(current.light.exposure, 1.25, "{f}");
+            assert_eq!(current.highlight_fill.as_deref(), Some("hl-1"), "{f}");
+        }
     }
 
     let mut st = state.borrow_mut();
     st.sidecars[1].record(with(-0.5, None));
+    st.sidecars[2].record(with(0.0, Some("hl-9")));
     copy_settings_of(&mut st, &app, 0);
+    let others: Vec<Section> = Section::ALL
+        .iter()
+        .copied()
+        .filter(|s| *s != Section::Demosaic)
+        .collect();
     paste_onto(
         &mut st,
         &app,
         &worker,
         &[1, 2],
-        &Choice::whole(Section::ALL),
+        &Choice::whole(&others),
         &[],
         |_, _| None,
     );
@@ -161,6 +168,34 @@ fn neither_a_sync_nor_a_paste_carries_the_highlight_fill() {
         st.line(2).unwrap().current.highlight_fill.as_deref(),
         Some("hl-9")
     );
+    paste_onto(
+        &mut st,
+        &app,
+        &worker,
+        &[1, 2],
+        &Choice::whole(&[Section::Demosaic]),
+        &[],
+        |_, _| None,
+    );
+    for f in [1, 2] {
+        assert_eq!(
+            st.line(f).unwrap().current.highlight_fill.as_deref(),
+            Some("hl-1"),
+            "{f}"
+        );
+    }
+    st.sidecars[1].record(with(1.25, None));
+    copy_settings_of(&mut st, &app, 1);
+    paste_onto(
+        &mut st,
+        &app,
+        &worker,
+        &[2],
+        &Choice::whole(&[Section::Demosaic]),
+        &[],
+        |_, _| None,
+    );
+    assert_eq!(st.line(2).unwrap().current.highlight_fill, None, "off");
 }
 
 /// The sheet's headings as its rows read: each section's title

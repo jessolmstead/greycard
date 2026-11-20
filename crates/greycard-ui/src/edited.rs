@@ -76,12 +76,24 @@ pub(crate) fn looks_moved(st: &mut crate::State) {
 /// open in the editor, or none while culling, in the grid (`grid`), or
 /// with no frame. Said on every report of the strip's or the grid's
 /// range, and on the way into culling.
-pub(crate) fn note_editing(st: &mut crate::State, worker: &crate::worker::Worker, grid: bool) {
+pub(crate) fn note_editing(
+    st: &mut crate::State,
+    app: &crate::App,
+    worker: &crate::worker::Worker,
+    grid: bool,
+) {
     let open = st
         .current
         .filter(|_| st.culling.cull.is_none() && !grid)
         .and_then(|c| st.key_of(c));
     let back = open.is_some() && !worker.edited().any_open();
+    // The highlight fill's round waits while the editor is left: its
+    // words go with the editor, and come back with the frame.
+    if open.is_none() {
+        crate::panel::deliver::show_fill_pending(app, false);
+    } else if back && st.develop.highlight_pending {
+        crate::panel::deliver::show_fill_pending(app, true);
+    }
     worker.set_open_frame(open);
     // Back from culling or the grid on the frame still open: its
     // neighbors, let go on the way out, are sent again, in the order

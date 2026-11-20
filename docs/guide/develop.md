@@ -296,6 +296,31 @@ measured against that camera's JPEGs, so a frame opens about as
 bright as the camera's own picture of it. A frame edited before 0.8 keeps the brightness it had; **Reset**
 takes it to its body's.
 
+### Highlight fill
+
+The switch under **Shadows**, off by default. Where a highlight
+clipped, as in a blown lamp, a sun, a bright sky, or backlit leaves,
+**Highlight fill** paints it in with the light and color a small model
+learned from photographs, carried in from the clipped area's edge. It
+works on every clipped pixel, one channel clipped or all three, so a
+frame with much bright foliage changes in many small places; a frame
+with nothing clipped is left as it was. The model is built into
+greycard, so nothing downloads.
+
+The picture comes first without the fill, and the status line says
+**the highlight fill is at work** until the filled one replaces it,
+usually within a second or two. Exports and the edit's thumbnails wait
+for the fill.
+
+The switch is greyed on a frame the fill does not work on yet: a JPEG
+or TIFF, an X-Trans raw, a linear or monochrome DNG, and a merge. It
+keeps its setting there, so a sync or paste that turns it on takes
+effect on the frames that can use it.
+
+It is shown in **Light** but travels with **Demosaic**: Light's
+switch, its reset, and ticking **Light** in a copy or a preset leave
+it alone; tick **Demosaic** to carry it.
+
 ### Display curve
 
 At the foot of **LIGHT**, on a raw, the **Display curve** switch
@@ -695,6 +720,9 @@ another only if you see a problem in fine detail:
 
 When a learned denoiser is on, it does the demosaic itself and this
 choice has no effect.
+
+The **Highlight fill** switch in **Light** travels with this section:
+tick **Demosaic** in a preset, a paste, or a sync to carry it.
 
 ### Fujifilm X-Trans
 

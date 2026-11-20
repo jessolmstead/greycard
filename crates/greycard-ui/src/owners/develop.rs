@@ -285,6 +285,14 @@ pub(crate) struct Develop {
     /// after it, by id, until a develop lands with none: their outlines
     /// are drawn, dimmed, while they wait; and their rings, by id.
     pub(crate) fills_pending: Vec<u64>,
+    /// The last develop of the open frame came without the learned
+    /// highlight fill, which its next round brings
+    /// (`FillReport::highlight_pending`): the status line says so until
+    /// a develop lands without it, fails, or another frame opens.
+    pub(crate) highlight_pending: bool,
+    /// Whether the frame chosen takes the highlight fill, as its open
+    /// said; none until it says. The switch is free while none.
+    pub(crate) fill_takes: Option<bool>,
     pub(crate) pending_shapes: HashMap<u64, Option<PatchShape>>,
     /// The perspective guide's first stroke, while it waits for the
     /// second.

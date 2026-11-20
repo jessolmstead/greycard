@@ -43,6 +43,8 @@ pub enum Section {
     Lens,
     Vignette,
     Grain,
+    /// The demosaic and the learned highlight fill: the raw's own
+    /// reconstruction, both in camera space before the look.
     Demosaic,
     /// The camera profile the develop starts from.
     Camera,
@@ -190,7 +192,10 @@ impl Section {
             Section::Lens => onto.lens = from.lens.clone(),
             Section::Vignette => onto.vignette = from.vignette,
             Section::Grain => onto.grain = from.grain,
-            Section::Demosaic => onto.demosaic = from.demosaic,
+            Section::Demosaic => {
+                onto.demosaic = from.demosaic;
+                onto.highlight_fill = from.highlight_fill.clone();
+            }
             // A DCP lands with its look table (`Camera::take`).
             Section::Camera => onto.camera.take(&from.camera),
             Section::Adjustments => {
@@ -241,7 +246,7 @@ impl Section {
             Section::Lens => a.lens == b.lens,
             Section::Vignette => a.vignette == b.vignette,
             Section::Grain => a.grain == b.grain,
-            Section::Demosaic => a.demosaic == b.demosaic,
+            Section::Demosaic => a.demosaic == b.demosaic && a.highlight_fill == b.highlight_fill,
             // As `copy` would lay it (`Camera::take`).
             Section::Camera => b.camera.has(&a.camera),
             Section::Adjustments => a.adjustments == b.adjustments,
@@ -1603,12 +1608,13 @@ mod tests {
     use super::*;
     use crate::{Learned, WhiteBalance};
 
-    /// The highlight fill is no section's, so no preset, copy sheet,
-    /// paste, or sync carries it: every section and every part chosen,
-    /// it stays behind, and the picture laid on keeps its own, on or
-    /// off. Pinned so that giving it a carry is a choice made here.
+    /// The highlight fill goes with the Demosaic section and with no
+    /// other section or part: a preset, a copy sheet, a paste, or a
+    /// sync carries it only where Demosaic is chosen, and then on or
+    /// off, a version this build lacks as it is. A preset saved without
+    /// a say leaves Demosaic, and so the fill, behind.
     #[test]
-    fn the_highlight_fill_goes_with_no_section_or_part() {
+    fn the_highlight_fill_goes_with_the_demosaic_alone() {
         let mut from = Edit::default();
         from.light.exposure = 0.5;
         from.highlight_fill = Some("hl-1".into());
@@ -1616,39 +1622,76 @@ mod tests {
             id: 1,
             ..Default::default()
         });
-        let all = Choice {
-            sections: Section::ALL.to_vec(),
+        let others: Vec<Section> = Section::ALL
+            .iter()
+            .copied()
+            .filter(|s| *s != Section::Demosaic)
+            .collect();
+        let without = Choice {
+            sections: others.clone(),
             parts: Part::ALL.to_vec(),
             masks: None,
             masks_land: Masks::Replace,
         };
-        let presets = [
+        let kept = Edit {
+            highlight_fill: Some("hl-9".into()),
+            ..Edit::default()
+        };
+        let defaults: Vec<Section> = Section::ALL
+            .iter()
+            .copied()
+            .filter(|s| s.by_default())
+            .collect();
+        let behind = [
+            Preset::from_edit("Default", &from, &defaults),
+            Preset::from_choice("Others", &from, &without),
+            Preset::between_frames(&from, &without),
+            Preset::of_mask(&from, 1),
+        ];
+        for p in &behind {
+            assert_eq!(p.edit.highlight_fill, None, "{:?}", p.sections);
+            assert!(!p.to_json().contains("highlight_fill"));
+            assert_eq!(p.applied(&Edit::default()).highlight_fill, None);
+            assert_eq!(p.applied(&kept).highlight_fill.as_deref(), Some("hl-9"));
+        }
+        let all = Choice {
+            sections: Section::ALL.to_vec(),
+            ..without.clone()
+        };
+        let carried = [
             Preset::from_edit("All", &from, Section::ALL),
             Preset::from_choice("All", &from, &all),
             Preset::between_frames(&from, &all),
             Preset::between_frames(&from, &Choice::whole(&[Section::Demosaic])),
-            Preset::of_mask(&from, 1),
         ];
-        for p in &presets {
-            assert_eq!(p.edit.highlight_fill, None, "{:?}", p.sections);
-            assert!(!p.to_json().contains("highlight_fill"));
-            let off = p.applied(&Edit::default());
-            assert_eq!(off.highlight_fill, None, "{:?}", p.sections);
-            let kept = Edit {
-                highlight_fill: Some("hl-9".into()),
-                ..Edit::default()
-            };
+        for p in &carried {
+            assert_eq!(p.edit.highlight_fill.as_deref(), Some("hl-1"));
+            let read = Preset::from_json(&p.to_json()).unwrap();
+            assert_eq!(read.edit.highlight_fill.as_deref(), Some("hl-1"));
             assert_eq!(
-                p.applied(&kept).highlight_fill.as_deref(),
-                Some("hl-9"),
-                "{:?}",
-                p.sections
+                p.applied(&Edit::default()).highlight_fill.as_deref(),
+                Some("hl-1")
             );
+            assert_eq!(p.applied(&kept).highlight_fill.as_deref(), Some("hl-1"));
+            assert!(p.is_applied(&p.applied(&kept)));
+            assert!(!p.is_applied(&kept));
         }
+        // Off is carried as off: it turns the fill off where it lands.
+        let off = Preset::between_frames(&Edit::default(), &Choice::whole(&[Section::Demosaic]));
+        assert_eq!(off.applied(&kept).highlight_fill, None);
         for s in Section::ALL {
             let mut onto = from.clone();
             onto.highlight_fill = None;
-            assert!(s.same(&from, &onto), "{s:?} does not read the fill");
+            assert_eq!(
+                s.same(&from, &onto),
+                *s != Section::Demosaic,
+                "{s:?} reads the fill"
+            );
+        }
+        for p in Part::ALL {
+            let mut onto = Edit::default();
+            p.copy(&from, &mut onto);
+            assert_eq!(onto.highlight_fill, None, "{p:?}");
         }
     }
 

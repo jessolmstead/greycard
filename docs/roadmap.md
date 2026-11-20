@@ -1240,7 +1240,11 @@ clears or a tester asks for it.
       oracle with synthetic fixtures, the clip codes, the region
       analysis, the network, and the synthesis in core, and the
       engine's stage, the edit's field, and the rounds that deliver
-      it; left is the UI. It
+      it, and its switch in Light. Left: the timing pass on real
+      frames at 24, 45, and 100 MP, an X-Trans score, words for an
+      edit naming a version the build lacks (and exit 2 from the
+      CLI), no "at work" on a frame with nothing clipped, and the
+      switch drawn dimmed while Light is off. It
       invents, so it is an option, off by default; the classical fill
       stays the default
 - [ ] The learned fill's range shift drifts under a lens correction:
