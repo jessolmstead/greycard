@@ -22,6 +22,9 @@ use greycard_render::finish::{Local, MAX_LOCALS, RasterRef, Source};
 mod draw;
 mod inputs;
 mod locals;
+#[cfg(test)]
+mod magnified_tests;
+pub mod magnify;
 pub(crate) mod minify;
 mod osharp;
 mod peaking;
@@ -97,7 +100,14 @@ impl Warn {
 /// What one frame of the viewport shows of the edit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct View {
+    /// Target pixels, which are physical pixels, a frame pixel.
     pub zoom: f32,
+    /// A picture pixel's side in frame pixels: 1 where the view is
+    /// in the picture's own pixels, less for a copy smaller than the
+    /// picture it stands for (the loupe's `tile_view`). Past 1:1 of
+    /// these the view draws each as a block (`magnify`); 0 for a draw
+    /// that reads between pixels at any zoom (the scopes' analysis).
+    pub pixel: f32,
     pub center: (f32, f32),
     pub light: Light,
     pub mixer: Mixer,
@@ -204,6 +214,7 @@ impl View {
     pub fn blank() -> Self {
         View {
             zoom: 1.0,
+            pixel: 1.0,
             center: (0.0, 0.0),
             light: Light::default(),
             mixer: Mixer::default(),

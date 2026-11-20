@@ -4423,3 +4423,50 @@ fn the_navigator_grows_no_taller_at_a_wide_pane() {
         "one height for both"
     );
 }
+
+/// 100% is one picture pixel a physical pixel at any UI scale: at a
+/// scale of 1.5 the view is 1.5 physical pixels a logical one, the
+/// zoom the viewport draws at 100% is 1, and that is not past 1:1,
+/// so the picture is read as it always was; at 200% it is past, and
+/// each picture pixel is a block (`magnify`).
+///
+/// What it pins is the window's half: the size the renderer draws at
+/// (`view-width`, which the render hands `Renderer::render`) is the
+/// view's physical pixels, not its logical ones, and the zoom the menu
+/// names goes to the renderer as it is, not times the scale. Were
+/// either logical, 100% at 1.5 would draw at 1.5 target pixels a
+/// picture pixel and come out blocks. The renderer's half, strictly
+/// past one target pixel a picture pixel, is `magnify`'s and the
+/// viewport crate's tests'.
+#[test]
+fn a_one_and_a_half_ui_scale_at_100_is_not_past_1_to_1() {
+    use greycard_viewport::render::magnify::magnified;
+    let (app, state, _worker) = hover_frame(1.5);
+    assert_eq!(app.window().scale_factor(), 1.5);
+    let view = i_slint_backend_testing::ElementHandle::find_by_element_id(&app, "App::view")
+        .next()
+        .expect("the viewport is on screen")
+        .size();
+    let (vw, vh) = (
+        app.get_view_width().max(1) as u32,
+        app.get_view_height().max(1) as u32,
+    );
+    assert!(
+        (vw as f32 - view.width * 1.5).abs() <= 1.0,
+        "the view is {vw} physical pixels for {} logical",
+        view.width
+    );
+    let (mx, my) = view_middle(&app);
+    let drawn_at = |level: f32| {
+        app.invoke_zoom_to(level, mx, my);
+        let st = state.borrow();
+        assert_eq!(st.develop.zoom, level);
+        effective_zoom(&st, vw, vh)
+    };
+    let at_100 = drawn_at(1.0);
+    assert_eq!(at_100, 1.0);
+    assert!(!magnified(at_100, 1.0), "100% at a scale of 1.5");
+    let at_200 = drawn_at(2.0);
+    assert_eq!(at_200, 2.0);
+    assert!(magnified(at_200, 1.0), "200% at a scale of 1.5");
+}

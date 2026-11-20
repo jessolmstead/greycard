@@ -419,11 +419,11 @@ fn canvas_out() -> vec4<f32> {
 fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // Frame pixel under this target pixel, then the source pixel under
     // that through the turn, as `to_source` in the edit crate.
-    let q = frame_at(pos.xy);
+    var q = frame_at(pos.xy);
     if (q.x < 0.0 || q.y < 0.0 || q.x >= p.frame_size.x || q.y >= p.frame_size.y) {
         return canvas_out();
     }
-    let at = source_of(q);
+    var at = source_of(q);
     // Below 1:1 the pixel covers a square of source pixels, and the
     // picture and the planes are its mean (`footprint_mean`); the
     // masks are read once, at its center, as the export reads them
@@ -435,6 +435,38 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         // the canvas, as outside the frame (the turned source's
         // corners, which crop mode shows).
         return canvas_out();
+    }
+    // Past 1:1 every target pixel of a picture pixel reads at that
+    // picture pixel's center, so the whole of what follows, the masks,
+    // the grain and the output sharpen among it, is one color a
+    // picture pixel: a block (`magnify`). Whether a target pixel is
+    // picture or canvas was settled above, at its own center, so the
+    // picture's edges stay where they were. `here` is the center of
+    // the target pixel holding that center, one of the block's own,
+    // for the output sharpen to read its blur at: a pixel's center,
+    // so its taps never lean past the picture's edge onto the mark of
+    // the canvas beside it.
+    //
+    // A block straddling a turned or perspective source's edge is
+    // part canvas, where its pixels' own centers are past the edge,
+    // and part the edge's color, read clamped at the block's center.
+    //
+    // Where nothing resamples, the frame's pixels are the source's
+    // whole pixels, the frame's origin wherever the crop put it: the
+    // export takes the source pixel its position falls in, the floor
+    // (`frame_of` in the render crate's `geometry.rs`), and so does
+    // the block, at that pixel's center. Quarter turns and mirrors
+    // take a whole pixel to a whole pixel, so the floor is the same
+    // pixel either side of them.
+    var here = pos.xy;
+    let side = p.minify.z;
+    if (side > 0.0) {
+        q = (floor(q / side) + 0.5) * side;
+        at = source_of(q);
+        if (p.cubic.x < 0.5) {
+            at = (floor(at / side) + 0.5) * side;
+        }
+        here = floor((q - p.center) * p.zoom + p.view * 0.5 + p.tile.xy) + 0.5;
     }
     // The picture, and in its alpha the sharpen's blend mask. The
     // texture is read where it holds this source position; everything
@@ -736,7 +768,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         if (p.osharp.w < 1.5) {
             return vec4<f32>(l, l, l, 1.0);
         }
-        let blurred = osharp_down(pos.xy);
+        let blurred = osharp_down(here);
         if (!osharp_past(blurred)) {
             c = osharp_apply(c, l, blurred);
         }

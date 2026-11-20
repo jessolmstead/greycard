@@ -1955,6 +1955,7 @@ fn views_as_drawn_before(
             };
             Some(View {
                 zoom: zoom / scale,
+                pixel: scale,
                 center: (center.0 * scale, center.1 * scale),
                 matrix: geometry.matrix(),
                 plane: geometry.plane_size(tw, th),
@@ -6401,4 +6402,35 @@ fn an_unreject_that_will_not_save_is_noted() {
     assert_eq!(back.meta.flag, meta::Flag::None);
     drop(st);
     crate::testing::remove_scratch(state, &dir);
+}
+
+/// The loupe's blocks past 1:1 are the drawn picture's pixels, not
+/// the copy's: a copy half the picture's size at 100% is drawn
+/// magnified on the GPU but is not past 1:1, and at 200% it is, its
+/// blocks half a copy pixel a side; a full-size copy likewise.
+#[test]
+fn the_loupes_1_to_1_is_the_pictures_whatever_copy_stands() {
+    use greycard_viewport::render::magnify::magnified;
+    let drawn = (6000u32, 4000u32);
+    for copy in [(3000u32, 2000u32), (1620, 1080), drawn] {
+        let scale = copy.0 as f32 / drawn.0 as f32;
+        for (zoom, past) in [(0.5f32, false), (1.0, false), (2.0, true), (4.0, true)] {
+            let (view, _) = tile_view(
+                copy,
+                drawn,
+                &Geometry::default(),
+                (1500, 1000),
+                zoom,
+                (3000.0, 2000.0),
+                [0.0; 3],
+            );
+            assert_eq!(view.pixel, scale, "{copy:?}");
+            assert_eq!(
+                magnified(view.zoom, view.pixel),
+                past,
+                "{copy:?} at {zoom}: drawn at {} a copy pixel",
+                view.zoom
+            );
+        }
+    }
 }

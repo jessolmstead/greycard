@@ -762,6 +762,10 @@ fn whole_frame(v: &View, weigh_by: Option<usize>, most: u32) -> View {
     let (width, _) = analysis_size(v.frame_size, most);
     View {
         zoom: width as f32 / iw.floor(),
+        // A frame narrower than the analysis is read as it always
+        // was, between its pixels: the blocks past 1:1 are for the
+        // eye, and the scopes count colors.
+        pixel: 0.0,
         center: (iw.floor() / 2.0, ih.floor() / 2.0),
         show_mask: None,
         show_sharpen: false,

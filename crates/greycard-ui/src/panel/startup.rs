@@ -1576,6 +1576,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     } = View::with_look(&edit);
                     let view = View {
                         zoom,
+                        // The view is in the develop's own pixels.
+                        pixel: 1.0,
                         center: st.develop.center,
                         light,
                         mixer,

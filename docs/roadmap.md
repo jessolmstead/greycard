@@ -1520,8 +1520,9 @@ clears or a tester asks for it.
 - [ ] Straight strokes for the repair brushes, and a click then a
       Shift+click joined by a line; Shift on a drag pans today, so
       the two share the key (issue 177)
-- [ ] Nearest neighbor past 1:1, so single pixels show as blocks
-      (issue 180)
+- [ ] Past 1:1 a block straddling a turned or perspective source's
+      edge shows part canvas and part the clamped edge color, where
+      the export has nothing (found reviewing issue 180)
 - [ ] A look named by its file, not the .cube's TITLE, and the looks
       folder read with its subfolders, shown as a tree (pixls,
       2026-11-18)

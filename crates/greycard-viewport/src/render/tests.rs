@@ -385,6 +385,7 @@ fn the_weighted_scopes_are_the_cpus() {
     let ah = (aw * h as u32 / w as u32).max(1);
     let whole = |weigh_by: Option<usize>, show: Option<usize>| View {
         zoom: aw as f32 / w as f32,
+        pixel: 0.0,
         center: (w as f32 / 2.0, h as f32 / 2.0),
         weigh_by,
         show_mask: show,
@@ -555,6 +556,7 @@ fn the_color_under_the_pointer_is_in_the_scopes_bins() {
     let ah = (aw * h as u32 / w as u32).max(1);
     let whole = View {
         zoom: aw as f32 / w as f32,
+        pixel: 0.0,
         center: (w as f32 / 2.0, h as f32 / 2.0),
         ..view.clone()
     };
@@ -816,6 +818,7 @@ fn the_scopes_read_the_export_not_the_monitors_table() {
         );
         let shown = View {
             zoom: ANALYSIS_WIDTH as f32 / w as f32,
+            pixel: 0.0,
             ..view.clone()
         };
         let t = renderer.render(nw as u32, nh as u32, &shown).0;
@@ -1908,11 +1911,35 @@ fn osharp_view_on_the_cpu(
             (a[k] * (1.0 - fx) + b[k] * fx) * (1.0 - fy) + (c[k] * (1.0 - fx) + d[k] * fx) * fy
         })
     };
+    // Past 1:1 a pixel reads at the center of the picture pixel under
+    // it, and the sharpen's blur at the center of the margined pixel
+    // that center is in (`magnify`); a pixel's own, at and below.
+    let past = magnify::magnified(z, 1.0);
+    let read_at = |at: (f32, f32)| if past { magnify::snap(at, 1.0) } else { at };
+    let blur_at = |x: usize, y: usize| {
+        if !past {
+            return (x, y);
+        }
+        let s = magnify::snap(q(x, y), 1.0);
+        (
+            ((s.0 - center.0) * z + vw as f32 * 0.5 + m as f32).floor() as usize,
+            ((s.1 - center.1) * z + vh as f32 * 0.5 + m as f32).floor() as usize,
+        )
+    };
     let colors: Vec<Option<[f32; 3]>> = (0..lw * lh)
         .map(|i| {
             let at = q(i % lw, i / lw);
             inside(at).then(|| {
-                finish_pixel_display(bilinear(at), global, &[], 0.0, None, None, None, None)
+                finish_pixel_display(
+                    bilinear(read_at(at)),
+                    global,
+                    &[],
+                    0.0,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
             })
         })
         .collect();
@@ -1951,7 +1978,8 @@ fn osharp_view_on_the_cpu(
         .map(|i| {
             let (x, y) = (i % vw + m, i / vw + m);
             let c = colors[y * lw + x]?;
-            let b = blur_line(y0, y1, &|j| across[j * lw + x], y);
+            let (bx, by) = blur_at(x, y);
+            let b = blur_line(y0, y1, &|j| across[j * lw + bx], by);
             Some(finish_pixel_output(
                 apply(c, l[y * lw + x], b, &p),
                 global,
@@ -6322,6 +6350,10 @@ fn texture_map(
             (x - target.0 as f32 / 2.0) / v.zoom + v.center.0,
             (y - target.1 as f32 / 2.0) / v.zoom + v.center.1,
         );
+        // Past 1:1, the center of the picture pixel there, and with
+        // nothing resampled, of the source pixel that falls in.
+        let past = magnify::magnified(v.zoom, v.pixel);
+        let q = if past { magnify::snap(q, v.pixel) } else { q };
         let r0 = (
             v.frame_origin.0 + q.0 - v.plane.0 / 2.0,
             v.frame_origin.1 + q.1 - v.plane.1 / 2.0,
@@ -6333,6 +6365,11 @@ fn texture_map(
             image.0 / 2.0 + m0[0] * r.0 + m0[1] * r.1,
             image.1 / 2.0 + m1[0] * r.0 + m1[1] * r.1,
         );
+        let at = if past && !v.cubic {
+            magnify::whole(at, v.pixel)
+        } else {
+            at
+        };
         let tex = match v.source_turn % 4 {
             1 => (at.1, image.0 - at.0),
             2 => (image.0 - at.0, image.1 - at.1),
@@ -6435,7 +6472,8 @@ fn per_pixel_look() -> View {
 }
 
 /// At 1:1 and above the view is the single bilinear tap at the
-/// pixel's center, against the reference's one tap there: straight at
+/// pixel's center, past 1:1 the center of the picture pixel there
+/// (`magnify`), against the reference's one tap there: straight at
 /// 1:1, where the tap lands on a texel's center and the two are the
 /// same bytes, and at 1:1 and at 2 turned between pixels. Turned, a
 /// card's sampler weighs the tap with 8-bit sub-texel precision, so

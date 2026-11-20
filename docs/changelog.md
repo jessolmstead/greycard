@@ -12,6 +12,8 @@ design note behind it.
 - Panels scroll smoothly with the wheel and to a focused control, on
   Slint 1.19, no longer a fork
   ([§715](https://github.com/jessolmstead/greycard/blob/master/docs/notes/715-slint-1-19-and-both-forks-gone.md)).
+- Past 100% each picture pixel shows as a crisp block, the pixel an
+  export would write, no longer smoothed into its neighbors (issue 180).
 - Tab walks every check and choice in the sync, match, export, and
   settings sheets, with a visible ring, and the arrow keys change a
   choice.

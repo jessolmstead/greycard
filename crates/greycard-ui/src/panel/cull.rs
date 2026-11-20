@@ -1466,6 +1466,9 @@ fn tile_view(
     };
     let view = View {
         zoom: zoom / scale,
+        // A drawn pixel is `scale` of the copy's, so past 1:1 the
+        // blocks are the drawn picture's pixels whatever copy stands.
+        pixel: scale,
         center: (center.0 * scale, center.1 * scale),
         matrix: geometry.matrix(),
         plane: geometry.plane_size(tw, th),

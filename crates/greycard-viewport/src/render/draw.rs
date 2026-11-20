@@ -128,7 +128,9 @@ struct Params {
     /// from before the Detail section, rather than the source.
     range_sample: [f32; 4],
     /// In x the taps a side the shader averages over a pixel
-    /// (`minify::taps`).
+    /// (`minify::taps`), in y the factor the texture is reduced by,
+    /// in z past 1:1 a picture pixel's side in frame pixels, the
+    /// grid the shader snaps to, and 0 at 1:1 and below (`magnify`).
     minify: [f32; 4],
     /// In x the midtones (`Tone::midtones`): stops of shift by the
     /// guide plane's region, as the highlights and shadows are.
@@ -468,7 +470,11 @@ impl Renderer {
             minify: [
                 minify::taps_at_most(v.zoom, self.most_taps) as f32,
                 k as f32,
-                0.0,
+                if magnify::magnified(v.zoom, v.pixel) {
+                    v.pixel
+                } else {
+                    0.0
+                },
                 0.0,
             ],
             tone: [v.light.tone.midtones, 0.0, 0.0, 0.0],
@@ -982,6 +988,7 @@ impl Renderer {
                     macro_rules! diff { ($($n:ident),*) => { $( if d.$n != v.$n { f.push(stringify!($n)); } )* } }
                     diff!(
                         zoom,
+                        pixel,
                         center,
                         light,
                         mixer,
