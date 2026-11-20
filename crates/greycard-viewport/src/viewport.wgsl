@@ -225,6 +225,9 @@ struct Params {
     pro_out0: vec4<f32>,
     pro_out1: vec4<f32>,
     pro_out2: vec4<f32>,
+    // In x 1 where the vignette acts on the picture as shown, after
+    // the look table, rather than in the exposure (`vignette::Place`).
+    vignette_place: vec4<f32>,
 };
 
 // A local adjustment: its look's parameters as the global ones are
@@ -499,8 +502,14 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // in `finish.rs` does it.
     var look: Look;
     look.exposure = p.exposure;
+    // The vignette's stops here: in the exposure, or on the picture
+    // as shown after the look table (`vignette_shown`).
+    var vignette_stops = 0.0;
     if (p.vignette.x != 0.0) {
-        look.exposure = look.exposure + p.vignette.x * vignette_at(q / p.frame_size, p.frame_size.x / p.frame_size.y);
+        vignette_stops = p.vignette.x * vignette_at(q / p.frame_size, p.frame_size.x / p.frame_size.y);
+        if (p.vignette_place.x < 0.5) {
+            look.exposure = look.exposure + vignette_stops;
+        }
     }
     look.contrast = p.contrast;
     look.highlights = p.highlights;
@@ -760,6 +769,11 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (p.look.x > 0.0) {
         c = look_at(c);
     }
+    // The vignette on the picture as shown, as `finish_pixel_display`
+    // puts it on: after the look table, before the output sharpen.
+    if (p.vignette_place.x > 0.5 && vignette_stops != 0.0) {
+        c = vignette_shown(c, vignette_stops);
+    }
     // The output sharpen, here between the look table and the output
     // transform, as `finish_reaching` puts it: the first pass leaves
     // the luminance it reads, the last its blur down that.
@@ -946,6 +960,17 @@ fn grain_apply(noise: vec3<f32>, e: vec3<f32>) -> vec3<f32> {
     let bump = r * sqrt(r) * ((1.0 - luma) / 0.4);
     let w = 0.12 * 0.8 * (0.55 + 0.45 * bump);
     return clamp(e + noise * w, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// The vignette on a display-referred color, as `Vignette::shown` in
+// `vignette.rs`: toward black by its stops going down; going up, as
+// many stops in the shadows, rolled off toward white.
+fn vignette_shown(c: vec3<f32>, stops: f32) -> vec3<f32> {
+    let k = exp2(-abs(stops));
+    if (stops < 0.0) {
+        return c * k;
+    }
+    return select(c / k, c / (k + c * (1.0 - k)), c > vec3<f32>(0.0));
 }
 
 // How much of the vignette acts at a fraction of the frame, as

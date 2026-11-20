@@ -20,6 +20,10 @@ design note behind it.
 
 ### Develop
 
+- The Vignette has a Style: Overlay darkens the picture as shown, so a
+  bright corner darkens too; Exposure is the falloff as before
+  (discussion 170,
+  [§721](https://github.com/jessolmstead/greycard/blob/master/docs/notes/721-a-vignette-on-the-picture-as-shown.md)).
 - A linear gradient eases out of both ends, so its boundary no longer
   shows as a line on a smooth sky; existing ones render slightly softer
   (issue 182,

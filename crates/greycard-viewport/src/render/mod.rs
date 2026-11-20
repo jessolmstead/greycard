@@ -35,6 +35,8 @@ mod sample;
 mod scopes;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod vignette_tests;
 
 use self::locals::{Brushes, LocalsGpu, locals_gpu, range_reads};
 

@@ -830,7 +830,7 @@ fn every_panel_choice_is_off_the_walk_in_the_source() {
             panic!("a choice in {file}, on neither list: {body}");
         }
     }
-    assert_eq!(panel, 20, "the panel's choices");
+    assert_eq!(panel, 21, "the panel's choices");
     assert!(uses.len() > panel + 20, "{} choices in all", uses.len());
 }
 

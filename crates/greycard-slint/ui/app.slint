@@ -1829,6 +1829,7 @@ export component App inherits Window {
     in-out property <float> vignette-midpoint: 0.5;
     in-out property <float> vignette-feather: 0.5;
     in-out property <float> vignette-roundness: 0;
+    in-out property <string> vignette-place: "Scene";
     in-out property <float> geo-angle: 0;
     // The Angle slider being set, and the Vertical or the Horizontal
     // one; either lays the viewport's grid on.
@@ -4989,6 +4990,7 @@ export component App inherits Window {
                                     vignette-midpoint <=> root.vignette-midpoint;
                                     vignette-feather <=> root.vignette-feather;
                                     vignette-roundness <=> root.vignette-roundness;
+                                    vignette-place <=> root.vignette-place;
                                     view-changed => { root.view-changed(); }
                                 }
                                 if section == "grain" && root.shown-tab == "Develop": GrainSection {

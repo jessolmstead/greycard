@@ -51,6 +51,7 @@ fn moved() -> Edit {
     e.sharpen.enabled = !e.sharpen.enabled;
     e.output_sharpen.enabled = !e.output_sharpen.enabled;
     e.vignette.amount = -0.4;
+    e.vignette.place = greycard_edit::vignette::Place::Display;
     e.grain.amount = 0.3;
     e.demosaic = Demosaic::Rcd;
     e.geometry.crop = Some(Crop {

@@ -3614,6 +3614,13 @@ fn random_case(
         midpoint: rng.moved(0.0, 1.0),
         feather: rng.moved(0.0, 1.0),
         roundness: rng.moved(-1.0, 1.0),
+        // Where it acts by the edit's number, not a draw, so the edits
+        // drawn before the place came in are drawn as they were.
+        place: if k % 3 == 1 {
+            greycard_edit::vignette::Place::Display
+        } else {
+            greycard_edit::vignette::Place::Scene
+        },
     };
     if has("vignette") {
         edit.vignette = vignette;
@@ -4283,6 +4290,51 @@ fn a_masks_detail_on_both_sides() {
     let (off, off_gpu) = both_sides_with(&device, &queue, &image, &edit, Some(&planes));
     assert_eq!(off, bare);
     assert_eq!(off_gpu, bare_gpu);
+}
+
+/// The vignette on the picture as shown, on both sides: under both
+/// display curves and at amounts both ways, the shader the CPU's to
+/// two levels; on the display it is not the scene's, and at no amount
+/// the two are one, to the bit, on each side.
+#[test]
+fn the_vignette_on_the_display_on_both_sides() {
+    use greycard_edit::vignette::Place;
+    let Some((device, queue)) = device("the display vignette check") else {
+        return;
+    };
+    let image = parity_frame();
+    for curve in [
+        greycard_edit::DisplayCurve::Channels,
+        greycard_edit::DisplayCurve::Agx,
+    ] {
+        for amount in [-4.0f32, -1.0, 0.0, 1.5] {
+            let at = |place| {
+                let mut edit = greycard_edit::Edit {
+                    display_curve: curve,
+                    ..Default::default()
+                };
+                edit.vignette = Vignette {
+                    amount,
+                    midpoint: 0.2,
+                    feather: 0.6,
+                    roundness: 0.3,
+                    place,
+                    ..Vignette::default()
+                };
+                both_sides(&device, &queue, &image, &edit)
+            };
+            let (cpu, gpu) = at(Place::Display);
+            let worst = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+            assert!(worst <= Some(2), "{curve:?} at {amount}: {worst:?}");
+            let (scene_cpu, scene_gpu) = at(Place::Scene);
+            if amount == 0.0 {
+                assert_eq!(cpu, scene_cpu, "{curve:?}: none is none on the CPU");
+                assert_eq!(gpu, scene_gpu, "{curve:?}: none is none on the GPU");
+            } else {
+                assert_ne!(gpu, scene_gpu, "{curve:?} at {amount}");
+            }
+        }
+    }
 }
 
 /// A mask's Opacity on both sides: a look with every section moved,
@@ -5446,6 +5498,7 @@ fn case_fields(case: &Case, seen: &mut Moved) {
         midpoint,
         feather,
         roundness,
+        place,
     } = vignette;
     mark_off!(
         seen,
@@ -5457,6 +5510,9 @@ fn case_fields(case: &Case, seen: &mut Moved) {
         feather,
         roundness
     );
+    for p in greycard_edit::vignette::Place::ALL {
+        seen.mark(format!("vignette place {p:?}"), *place == p);
+    }
     let Grain {
         enabled,
         amount,

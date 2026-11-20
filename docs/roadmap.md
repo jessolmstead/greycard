@@ -941,12 +941,9 @@ clears or a tester asks for it.
       gaps turn out too rare (2026-11-08)
 - [ ] `sheet-open()` defined from `sheets-up`, one list in place of
       two; the every-sheet focus test made cheaper, 45 s today (§664)
-- [ ] A vignette that darkens what is on screen: a switch on the
-      Vignette to apply it after the display curve, as most editors
-      do, beside today's exposure falloff in the scene, under which a
-      bright edge stays bright; the tester's view is that a vignette
-      is for effect, not optics. Then tonal control (shadows only),
-      and a lift of the middle to go with it (discussion 170)
+- [ ] The Overlay vignette's tonal control (shadows only) and a lift
+      of the middle to go with it; its Style words and the lightening
+      math wait on a sign-off (§721, discussion 170)
 - [ ] A vignette's Amount is never reached in the frame at a high
       Feather: at Midpoint 0.5 and Feather 1.0 the corners get half
       of it and the edges' middles a tenth. Decide whether the corner

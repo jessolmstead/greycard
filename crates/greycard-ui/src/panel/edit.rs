@@ -634,6 +634,8 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
         midpoint: app.get_vignette_midpoint(),
         feather: app.get_vignette_feather(),
         roundness: app.get_vignette_roundness(),
+        place: greycard_edit::vignette::Place::from_name(app.get_vignette_place().as_str())
+            .unwrap_or_default(),
     };
     edit.grain = Grain {
         enabled: app.get_grain_enabled(),
@@ -909,6 +911,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_vignette_midpoint(edit.vignette.midpoint);
     app.set_vignette_feather(edit.vignette.feather);
     app.set_vignette_roundness(edit.vignette.roundness);
+    app.set_vignette_place(edit.vignette.place.name().into());
     app.set_grain_enabled(edit.grain.enabled);
     app.set_grain_amount(edit.grain.amount);
     app.set_grain_size(edit.grain.size);

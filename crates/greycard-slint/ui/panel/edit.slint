@@ -540,6 +540,7 @@ export component VignetteSection inherits Section {
     in-out property <float> vignette-midpoint;
     in-out property <float> vignette-feather;
     in-out property <float> vignette-roundness;
+    in-out property <string> vignette-place;
     callback view-changed();
 
     title: @tr("VIGNETTE");
@@ -595,6 +596,29 @@ export component VignetteSection inherits Section {
         scale: 100;
         text: (root.vignette-roundness >= 0 ? "+" : "") + round(root.vignette-roundness * 100);
         changed(v) => { root.view-changed(); }
+    }
+    // Where it acts: the scene's exposure, under which a bright edge
+    // stays bright, or the picture as shown, after the display curve.
+    VerticalLayout {
+        spacing: 4px;
+        padding-top: Theme.space-1;
+        Text {
+            // Vignette: where it acts, the scene or the picture
+            text: @tr("Style");
+            color: Theme.text;
+            font-size: Theme.font-sm;
+        }
+        // Named so the tests find it.
+        vignette-place-choice := Segmented {
+            // The panel's Tab is the window's: no stop here.
+            tab-stop: false;
+            options: ["Scene", "Display"];
+            // Vignette: a falloff in the scene; laid over the picture
+            labels: [@tr("Exposure"), @tr("Overlay")];
+            equal-width: true;
+            current <=> root.vignette-place;
+            selected(v) => { root.view-changed(); }
+        }
     }
 }
 

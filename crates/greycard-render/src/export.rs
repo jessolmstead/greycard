@@ -3116,3 +3116,6 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 }
+
+#[cfg(test)]
+mod vignette_tests;

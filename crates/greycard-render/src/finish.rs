@@ -63,6 +63,11 @@ pub struct Baked {
     /// finished picture ([`crate::output_sharpen`]), between the look
     /// table and the output transform. Off on every local's.
     pub output_sharpen: OutputSharpen,
+    /// Global only, as the output sharpen is: the vignette acts on the
+    /// picture as shown, after the look table, rather than in the
+    /// exposure (`greycard_edit::vignette::Place`). Its stops come in by
+    /// the pixel either way ([`finish_pixel_with`]).
+    pub vignette_shown: bool,
 }
 
 /// What the finish is handed. A raw's develop is a scene, which the
@@ -297,6 +302,7 @@ impl Baked {
                 [0.0; 5]
             },
             output_sharpen: OutputSharpen::default(),
+            vignette_shown: false,
         }
     }
 
@@ -312,6 +318,7 @@ impl Baked {
             source,
             display_curve: edit.display_curve,
             output_sharpen: edit.output_sharpen,
+            vignette_shown: edit.vignette.on_display(),
             ..Self::of(&edit.look())
         }
     }
@@ -835,10 +842,12 @@ pub fn finish_pixel_look(
 }
 
 /// `finish_pixel` with `stops` more exposure at this pixel, the
-/// vignette's, and `grain` laid on the encoded output, both places in
-/// the frame rather than a look; `reference`, the mean Oklab a
-/// and b of the source about this pixel (`local_ab`), which the
-/// mixer and the black and white read their hue and their confidence
+/// vignette's (or as many on the picture as shown, after the look
+/// table, where the global look says [`Baked::vignette_shown`]), and
+/// `grain` laid on the encoded output, both places in the frame
+/// rather than a look; `reference`, the mean Oklab a and b of the
+/// source about this pixel (`local_ab`), which the mixer and the
+/// black and white read their hue and their confidence
 /// from when it is given; and `guide`, the smoothed log luminance of
 /// the source there ([`Guide`]), which the three exposure shifts read
 /// their region from.
@@ -900,7 +909,9 @@ pub fn finish_pixel_display(
         Some(m) => rebalanced(px, reference, &m),
         None => (px, reference),
     };
-    let mut exposure = global.source.baseline(&global.light) + global.light.exposure + stops;
+    // The vignette in the exposure, or on the picture as shown below.
+    let scene_stops = if global.vignette_shown { 0.0 } else { stops };
+    let mut exposure = global.source.baseline(&global.light) + global.light.exposure + scene_stops;
     // The display white where the frame's baseline puts the clip, or
     // where the profile's curve reaches one when it renders.
     let profile = global.profile_curve();
@@ -1000,6 +1011,13 @@ pub fn finish_pixel_display(
     // strength — and the shader does the same arithmetic.
     if let Some(look) = look {
         c = look.at(c);
+    }
+    // The vignette on the picture as shown: after the display curve,
+    // every point and color curve and the look table, so a bright edge
+    // darkens with the rest, and before the output sharpen and the
+    // grain, which go over it as they go over the picture.
+    if global.vignette_shown && stops != 0.0 {
+        c = greycard_edit::Vignette::shown(c, stops);
     }
     c
 }
@@ -2806,6 +2824,7 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
+            vignette_shown: false,
         };
         finish_pixel(px, &global, &[], m)
     }
@@ -2831,6 +2850,7 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
+            vignette_shown: false,
         }
     }
 
@@ -3603,6 +3623,7 @@ mod tests {
                 white: None,
                 detail: [0.0; 5],
                 output_sharpen: OutputSharpen::default(),
+                vignette_shown: false,
             };
             let mut last = -1.0;
             for i in 0..=1400 {
@@ -4283,6 +4304,7 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
+            vignette_shown: false,
         };
         let g = guide.map(|g| (g.at(x as f32 + 0.5, y as f32 + 0.5), g.range));
         let px = image.pixel(x, y);
@@ -5382,6 +5404,7 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
+            vignette_shown: false,
         };
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let out = finish_pixel(px, &global, &[], &m);
@@ -5425,6 +5448,7 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
+            vignette_shown: false,
         };
         let bare = Baked {
             tint: idle,
@@ -5510,6 +5534,7 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
+            vignette_shown: false,
         };
         let local = Baked {
             tint,

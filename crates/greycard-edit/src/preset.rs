@@ -308,6 +308,7 @@ pub enum Part {
     DetailClarity,
     DetailStructure,
     DetailDehaze,
+    /// The amount, and where it acts, which gives the amount its look.
     VignetteAmount,
     VignetteMidpoint,
     VignetteFeather,
@@ -615,7 +616,13 @@ impl Part {
             DetailClarity => o.detail.clarity = f.detail.clarity,
             DetailStructure => o.detail.structure = f.detail.structure,
             DetailDehaze => o.detail.dehaze = f.detail.dehaze,
-            VignetteAmount => o.vignette.amount = f.vignette.amount,
+            // Where it acts goes with it, as the exposure's zero goes with
+            // the exposure: the same amount on the display and in the
+            // scene is not the same vignette.
+            VignetteAmount => {
+                o.vignette.amount = f.vignette.amount;
+                o.vignette.place = f.vignette.place;
+            }
             VignetteMidpoint => o.vignette.midpoint = f.vignette.midpoint,
             VignetteFeather => o.vignette.feather = f.vignette.feather,
             VignetteRoundness => o.vignette.roundness = f.vignette.roundness,
@@ -2075,6 +2082,7 @@ mod tests {
         let mut edit = Edit::default();
         edit.light.exposure = 1.5;
         edit.vignette.amount = -1.0;
+        edit.vignette.place = crate::vignette::Place::Display;
         edit.white_balance = WhiteBalance::Custom {
             temperature: 3200.0,
             tint: 0.0,
@@ -2109,6 +2117,7 @@ mod tests {
         let out = preset.applied(&other);
         assert_eq!(out.light.exposure, 1.5);
         assert_eq!(out.vignette.amount, -1.0);
+        assert_eq!(out.vignette.place, crate::vignette::Place::Display);
         assert_eq!(out.grain.amount, 0.3);
         assert!(
             matches!(out.white_balance, WhiteBalance::Custom { temperature, .. } if temperature == 6500.0)
@@ -2508,10 +2517,15 @@ mod tests {
         from.vignette.midpoint = 0.3;
         from.vignette.feather = 0.2;
         from.vignette.roundness = 0.6;
+        from.vignette.place = crate::vignette::Place::Display;
         from.grain.amount = 0.4;
         from.grain.size = 40.0;
         from.grain.kind = crate::grain::Kind::Tabular;
         let plain = Edit::default();
+        // The vignette's amount takes where it acts with it.
+        let mut laid = plain.clone();
+        Part::VignetteAmount.copy(&from, &mut laid);
+        assert_eq!(laid.vignette.place, crate::vignette::Place::Display);
         for &p in Part::ALL {
             assert!(!p.same(&from, &plain), "{p:?} moves nothing");
             assert_eq!(Part::from_name(p.name()), Some(p));

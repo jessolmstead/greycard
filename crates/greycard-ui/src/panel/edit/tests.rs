@@ -88,6 +88,61 @@ fn structure_has_one_name_and_its_sliders_carry_it() {
     assert_eq!(read.adjustments[0].look.detail.structure, -0.6);
 }
 
+/// The vignette's place is a choice under its sliders: a click on its
+/// second half puts the vignette on the picture as shown, in the edit
+/// the window reads, and a screen reader hears the option it is at;
+/// an edit with it set shows it, and one without shows the scene.
+#[test]
+fn the_vignette_place_choice_carries_the_field() {
+    use greycard_edit::vignette::Place;
+    use i_slint_backend_testing::ElementHandle;
+    let app = window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 2400.0));
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    app.invoke_select(0);
+    for (_, _, set) in FOLDS {
+        set(&app, true);
+    }
+    app.set_collapsed_vignette(false);
+    crate::testing::settle(&app);
+    assert_eq!(app.get_vignette_place(), "Scene");
+    let choice = || {
+        crate::testing::settle(&app);
+        ElementHandle::find_by_element_id(&app, "VignetteSection::vignette-place-choice")
+            .next()
+            .expect("the vignette's place is drawn")
+    };
+    let row = choice();
+    let (at, size) = (row.absolute_position(), row.size());
+    crate::testing::click(&app, at.x + size.width * 0.75, at.y + size.height / 2.0);
+    crate::testing::settle(&app);
+    assert_eq!(app.get_vignette_place(), "Display", "the click chose");
+    let read = read_edit(&app, &state.borrow().develop.edit, Some(0));
+    assert_eq!(read.vignette.place, Place::Display);
+    let checked: Vec<String> = choice()
+        .query_descendants()
+        .find_all()
+        .into_iter()
+        .filter(|e| e.accessible_checked() == Some(true))
+        .filter_map(|e| e.accessible_label().map(|l| l.to_string()))
+        .collect();
+    assert_eq!(checked, ["Overlay"]);
+
+    let mut edit = state.borrow().develop.edit.clone();
+    edit.vignette.place = Place::Scene;
+    show_edit(&state.borrow(), &edit, &app, Some(0));
+    assert_eq!(app.get_vignette_place(), "Scene");
+    assert_eq!(read_edit(&app, &edit, Some(0)).vignette.place, Place::Scene);
+    edit.vignette.place = Place::Display;
+    show_edit(&state.borrow(), &edit, &app, Some(0));
+    assert_eq!(app.get_vignette_place(), "Display");
+    assert_eq!(
+        read_edit(&app, &edit, Some(0)).vignette.place,
+        Place::Display
+    );
+}
+
 /// One section open at a time: off, sections open side by side;
 /// on, opening one, by its header or by the settings' restore,
 /// folds the others of the tab and leaves the panes' alone.

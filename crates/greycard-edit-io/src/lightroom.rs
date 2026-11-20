@@ -1265,6 +1265,14 @@ fn map(
             (num("PostCropVignetteFeather").unwrap_or(50.0) / 100.0).clamp(0.0, 1.0);
         edit.vignette.roundness =
             (num("PostCropVignetteRoundness").unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
+        // Its style: Highlight Priority (1) keeps a bright edge bright,
+        // as our scene falloff does; Color Priority (2) and Paint
+        // Overlay (3) darken the picture as shown. None said is the
+        // scene, as before the style was read.
+        edit.vignette.place = match num("PostCropVignetteStyle") {
+            Some(s) if s == 2.0 || s == 3.0 => greycard_edit::vignette::Place::Display,
+            _ => greycard_edit::vignette::Place::Scene,
+        };
     }
 
     // Grain: Lightroom's size 25 is about this engine's default cell.
@@ -1803,6 +1811,40 @@ mod tests {
         // Nesting past reason is refused rather than run the stack out.
         let deep = format!("s = {}{}", "{ ".repeat(100_000), "}".repeat(100_000));
         assert!(parse_table(&deep).unwrap_err().contains("nested"));
+    }
+
+    /// The post-crop vignette's style picks where it acts, in an XMP
+    /// and in a catalog's table alike: Highlight Priority the scene,
+    /// Color Priority and Paint Overlay the display, none said the
+    /// scene.
+    #[test]
+    fn the_vignette_style_picks_where_it_acts() {
+        use greycard_edit::vignette::Place;
+        for (style, place) in [
+            (None, Place::Scene),
+            (Some(1), Place::Scene),
+            (Some(2), Place::Display),
+            (Some(3), Place::Display),
+        ] {
+            let attr = style.map_or(String::new(), |s| {
+                format!("crs:PostCropVignetteStyle=\"{s}\"\n   ")
+            });
+            let xmp = SAMPLE.replace(
+                "crs:PostCropVignetteAmount=\"-30\"",
+                &format!("{attr}crs:PostCropVignetteAmount=\"-30\""),
+            );
+            assert_eq!(xmp.contains("PostCropVignetteStyle"), style.is_some());
+            let e = read(&xmp, "file").unwrap().preset.edit;
+            assert_eq!(e.vignette.place, place, "XMP, style {style:?}");
+            let entry = style.map_or(String::new(), |s| format!("PostCropVignetteStyle = {s},\n"));
+            let table = format!("s = {{ PostCropVignetteAmount = -30,\n{entry}}}\n");
+            let imported = read_table(&table, "x").unwrap();
+            assert_eq!(
+                imported.preset.edit.vignette.place, place,
+                "table, style {style:?}"
+            );
+            assert!(imported.unmapped.is_empty(), "{:?}", imported.unmapped);
+        }
     }
 
     #[test]

@@ -147,6 +147,10 @@ struct Params {
     profile: [f32; 4],
     pro_in: [[f32; 4]; 3],
     pro_out: [[f32; 4]; 3],
+    /// In x 1 where the vignette acts on the picture as shown, after
+    /// the look table, rather than in the exposure
+    /// (`vignette::Place`).
+    vignette_place: [f32; 4],
 }
 
 /// What of the picture and its overlays (the clipping paint, the
@@ -483,6 +487,12 @@ impl Renderer {
             profile: [profile.map_or(1.0, |p| p.gain()), 0.0, 0.0, 0.0],
             pro_in: pro_in.map(|r| [r[0], r[1], r[2], 0.0]),
             pro_out: pro_out.map(|r| [r[0], r[1], r[2], 0.0]),
+            vignette_place: [
+                if v.vignette.on_display() { 1.0 } else { 0.0 },
+                0.0,
+                0.0,
+                0.0,
+            ],
         };
         // The output sharpen on the developed picture drawn whole: not
         // on the camera's JPEG, nor a compare view's tile.

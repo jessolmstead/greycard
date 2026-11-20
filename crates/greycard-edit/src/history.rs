@@ -169,8 +169,10 @@ fn changes(b: &Edit, a: &Edit) -> Vec<String> {
     }
     if b.vignette != a.vignette {
         let (x, y) = (&b.vignette, &a.vignette);
-        let shape_same =
-            x.midpoint == y.midpoint && x.feather == y.feather && x.roundness == y.roundness;
+        let shape_same = x.midpoint == y.midpoint
+            && x.feather == y.feather
+            && x.roundness == y.roundness
+            && x.place == y.place;
         out.push(
             if x.enabled != y.enabled && x.amount == y.amount && shape_same {
                 switched("Vignette", y.enabled)
@@ -904,6 +906,10 @@ mod tests {
         let mut e = base.clone();
         e.vignette.amount = -1.0;
         assert_eq!(describe(&base, &e, &[]), "Vignette -1.00");
+        // Where it acts is named as its shape is: the section's name.
+        let mut e = base.clone();
+        e.vignette.place = crate::vignette::Place::Display;
+        assert_eq!(describe(&base, &e, &[]), "Vignette");
         let mut e = base.clone();
         e.grain.enabled = !e.grain.enabled;
         assert!(describe(&base, &e, &[]).starts_with("Grain o"));

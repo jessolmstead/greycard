@@ -656,6 +656,15 @@ Darkens or lightens the edges of the picture as cropped.
 | **Feather** | 0 to 100% | How soft the transition is. |
 | **Roundness** | −100 to +100 | 0 follows the frame's shape. Positive is rounder, toward a circle. Negative is squarer. |
 
+**Style** picks where the vignette acts. **Exposure**, the default,
+turns the light down at the edges before the display curve, as a lens
+does: a bright sky at the edge rolls through the curve and stays
+bright. **Overlay** darkens the finished picture, after the display
+curve and any look, as most editors' post-crop vignette does: the sky
+darkens with everything else, and colors keep their hue. Positive
+amounts under Overlay lighten the edges toward white, which softens
+their color.
+
 ## Grain
 
 Adds film grain. It follows the crop and looks the same at any export
