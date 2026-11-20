@@ -161,6 +161,36 @@ pub struct FillLook {
     /// reduced develop takes max(σ / f, 1) (SPEC constants,
     /// `MIX_SIGMA`).
     pub gain_sigma: f64,
+    /// Where the network's fields may reach, past what it was trained
+    /// on: None (hl-1) everywhere the synthesis makes them.
+    pub reach: Option<Reach>,
+}
+
+/// hl-2's two rules over hl-1's fields (notes §719 §7, the failures on
+/// large regions): the network trained on 384 px crops never saw a
+/// region deeper than about 192 px, nor learned the partly clipped band
+/// of one larger than that. Every length is in full-size px at f = 1;
+/// a reduced develop divides each by f, as the depth tie.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Reach {
+    /// The size gate: a region's contribution is whole up to depth
+    /// `gate[0]` (its `depth0`, the network's depth feature) and none
+    /// from `gate[1]`, a smoothstep between; a region at or past
+    /// `gate[1]` keeps the classical fill to the bit.
+    pub gate: [f64; 2],
+    /// Core only: the fields are zero off the fully clipped cells and
+    /// rise from zero at the core's edge, by smoothstep over this many
+    /// px of Euclidean distance into the core, or over the region's own
+    /// deepest core distance where that is less, so a small core keeps
+    /// its whole fill at its center. None: the gate alone, the fields
+    /// of a region under it hl-1's.
+    pub ramp: Option<f64>,
+    /// Neighbors share a gate: a region takes the smallest gate among
+    /// itself and every region with a cell within this many px of one
+    /// of its own (a square reach, chessboard), so the pieces of one
+    /// blown sky broken by branches are gated as the sky is. None: each
+    /// region its own gate.
+    pub near: Option<f64>,
 }
 
 /// The encoder's output: [`CONTEXT`] planes, channels first, at about a

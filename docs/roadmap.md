@@ -1262,10 +1262,11 @@ clears or a tester asks for it.
       invents, so it is an option, off by default; the classical fill
       stays the default
 - [ ] The learned highlight fill is hidden (`GREYCARD_HIGHLIGHT_FILL=1`
-      shows its switch): it hurts large blown areas, skies, suns, and
-      flat whites. hl-2, a size gate and core-only apply on the same
-      weights, then a blind round; a retrain at whole-frame scale on
-      real brackets if that is not enough (§719 1e)
+      shows its switch). hl-2 keeps hl-1 to regions the training
+      reached (§719 1f) and waits on a blind round by the owner. Left
+      for model work: a small sun disc, a sky through branches, and a
+      blotchy sky in far pieces; a retrain at whole-frame scale on
+      real brackets
 - [ ] The learned fill's range shift drifts under a lens correction:
       Highlights and Whites read the range up to 0.19 stops off on a
       heavily clipped frame with strong distortion and vignetting,

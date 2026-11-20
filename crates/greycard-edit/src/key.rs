@@ -113,7 +113,7 @@ pub const HIGHLIGHT_FILL: &str = "highlight-fill-1";
 /// The highlight fill's versions this build has, by the names an edit
 /// writes: `greycard_ai::highlight::VERSIONS`' names, which this crate
 /// cannot see; the engine's tests hold the two equal.
-pub const HIGHLIGHT_FILLS: &[&str] = &["hl-1"];
+pub const HIGHLIGHT_FILLS: &[&str] = &["hl-1", "hl-2"];
 
 /// The learned masks' stages, by version: raise one when its raster
 /// comes to be another from the same shape. greycard-ui's mask cache
@@ -525,6 +525,12 @@ mod tests {
             key_before_the_aspect_frame(&edit),
             "hl-1 carries the fill's version"
         );
+        edit.highlight_fill = Some("hl-2".into());
+        assert_eq!(edit.highlight_fill(), Some("hl-2"));
+        let second = key(&edit, None);
+        assert_ne!(second, on, "hl-2 is another picture than hl-1");
+        assert_ne!(second, off);
+        assert_ne!(second, key_before_the_aspect_frame(&edit));
         edit.highlight_fill = Some("hl-9".into());
         assert_eq!(edit.highlight_fill(), None, "a version this build lacks");
         let unknown = key(&edit, None);

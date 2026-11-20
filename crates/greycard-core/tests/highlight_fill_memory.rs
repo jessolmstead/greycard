@@ -84,6 +84,7 @@ const LOOK: FillLook = FillLook {
     harmonic_bright: 0.25,
     depth_tie: [12.0, 48.0],
     gain_sigma: 6.0,
+    reach: None,
 };
 
 /// The oracle fixtures' random-seeded checkpoint: the network's cost

@@ -444,36 +444,93 @@ fn the_fill_follows_the_devices_demosaic_in_every_plan() {
         return;
     };
     let input = Input::Raw(clipped_frame_of(160, 120));
-    let mut e = on(edit());
-    e.lens.defringe = false;
-    let go = |purpose: &Purpose, kept: &mut Kept, gpu: &mut Option<greycard_gpu::Context>| {
-        let steps = stages::stages(&e, purpose, &input.facts(0), None);
-        let plan = plan(&steps, purpose, gpu.is_some());
-        let walked = walk(&steps, &plan, &input, kept, &mut NoModels, gpu, &NoHold).unwrap();
-        let fill = steps
-            .steps
+    for version in greycard_edit::key::HIGHLIGHT_FILLS {
+        let mut e = on(edit());
+        e.highlight_fill = Some((*version).into());
+        e.lens.defringe = false;
+        let go = |purpose: &Purpose, kept: &mut Kept, gpu: &mut Option<greycard_gpu::Context>| {
+            let steps = stages::stages(&e, purpose, &input.facts(0), None);
+            let plan = plan(&steps, purpose, gpu.is_some());
+            let walked = walk(&steps, &plan, &input, kept, &mut NoModels, gpu, &NoHold).unwrap();
+            let fill = steps
+                .steps
+                .iter()
+                .position(|s| matches!(s, Step::Op(Stage::HighlightFill(_))))
+                .unwrap();
+            assert_eq!(walked.places[fill], Place::Cpu);
+            assert_eq!(walked.filled.as_ref().map(|f| f.version), Some(*version));
+            walked
+        };
+        let mut viewport = Kept::new();
+        let walked = go(&Purpose::Viewport, &mut viewport, &mut gpu);
+        assert!(
+            walked
+                .seconds
+                .iter()
+                .any(|(name, _)| *name == "demosaic on the GPU")
+        );
+        let mut prefetch = Kept::new();
+        go(&Purpose::Prefetch, &mut prefetch, &mut gpu);
+        let mut export = Kept::new();
+        go(&Purpose::Export(Box::default()), &mut export, &mut gpu);
+        let b = |k: &Kept| k.picture(Keep::Base).cloned().unwrap();
+        assert!(b(&viewport).data == b(&prefetch).data, "{version}");
+        assert!(b(&viewport).data == b(&export).data, "{version}");
+    }
+}
+
+/// hl-2 on a frame whose clipping is one region deeper than its gate's
+/// end develops as the fill off, to the bit, with no fields and no
+/// range shift, where hl-1 fills it; hl-2's list names its version, so
+/// nothing kept of one version serves the other.
+#[test]
+fn hl_2_leaves_a_region_past_its_gate_as_off() {
+    // White 500 on the scene's ramp: all but its left edge clips, one
+    // region far deeper than the gate's 224 px.
+    let input = Input::Raw(clipped_with(640, 600, 500.0));
+    let second = |mut e: Edit| {
+        e.highlight_fill = Some("hl-2".into());
+        e
+    };
+    let off = walk_cpu(&plain(), &Purpose::Viewport, &input, 0, &mut Kept::new());
+    let two = walk_cpu(
+        &second(plain()),
+        &Purpose::Viewport,
+        &input,
+        0,
+        &mut Kept::new(),
+    );
+    let one = walk_cpu(
+        &on(plain()),
+        &Purpose::Viewport,
+        &input,
+        0,
+        &mut Kept::new(),
+    );
+    assert!(two.filled.is_none(), "no fields past the gate");
+    assert!(two.meta.range_shift.is_none());
+    assert!(picture(&two).data == picture(&off).data);
+    assert_eq!(two.taps.guide, off.taps.guide);
+    assert!(
+        one.filled.is_some_and(|f| f.changed > 10_000),
+        "hl-1 fills it"
+    );
+    // Each list through its fill: the two differ at the fill alone, and
+    // one's fields never stand in for the other's.
+    let through = |e: &Edit| {
+        let mut steps = stages::stages(e, &Purpose::Viewport, &input.facts(0), None).steps;
+        let at = steps
             .iter()
             .position(|s| matches!(s, Step::Op(Stage::HighlightFill(_))))
             .unwrap();
-        assert_eq!(walked.places[fill], Place::Cpu);
-        assert!(walked.filled.is_some());
-        walked
+        steps.truncate(at + 1);
+        steps
     };
-    let mut viewport = Kept::new();
-    let walked = go(&Purpose::Viewport, &mut viewport, &mut gpu);
-    assert!(
-        walked
-            .seconds
-            .iter()
-            .any(|(name, _)| *name == "demosaic on the GPU")
-    );
-    let mut prefetch = Kept::new();
-    go(&Purpose::Prefetch, &mut prefetch, &mut gpu);
-    let mut export = Kept::new();
-    go(&Purpose::Export(Box::default()), &mut export, &mut gpu);
-    let b = |k: &Kept| k.picture(Keep::Base).cloned().unwrap();
-    assert!(b(&viewport).data == b(&prefetch).data);
-    assert!(b(&viewport).data == b(&export).data);
+    let (l1, l2) = (through(&on(plain())), through(&second(plain())));
+    assert_eq!(l2.last(), Some(&Step::Op(Stage::HighlightFill("hl-2"))));
+    assert_eq!(l1[..l1.len() - 1], l2[..l2.len() - 1]);
+    assert!(stages::stands_in_for(&l1, &l1));
+    assert!(!stages::stands_in_for(&l1, &l2));
 }
 
 /// The reduced develop and the models' picture fill their binned base
@@ -817,4 +874,86 @@ fn lens_drift(white: f32) {
             "white {white}, {what}: {d:?}"
         );
     }
+}
+
+/// hl-2 on a region on its gate's shoulder: the walk's base is core's
+/// hl-2 fill run by hand on the same picture, to the bit, the viewport,
+/// prefetch, and export bases agree to the bit, and the region takes a
+/// share of hl-1's fill, neither all nor none of it (its depth0 lies
+/// between the gate's ends, read off the fill's own input).
+#[test]
+fn hl_2_on_its_shoulder_agrees_with_core_and_across_purposes() {
+    use greycard_core::develop::highlight_fill::analysis;
+    use greycard_core::develop::highlight_fill::half::Plain;
+
+    // White 1640: the ramp clips from about 220 px short of the right
+    // edge, over the whole height, a region of depth0 about 196 (the
+    // frame's edges are no boundary), on hl-2's shoulder.
+    let raw = clipped_with(480, 160, 1640.0);
+    let input = Input::Raw(raw.clone());
+    let second = |mut e: Edit| {
+        e.highlight_fill = Some("hl-2".into());
+        e
+    };
+    let base_of = |e: &Edit, purpose: &Purpose| {
+        let mut kept = Kept::new();
+        walk_cpu(e, purpose, &input, 0, &mut kept);
+        base(&kept)
+    };
+    let two = base_of(&second(plain()), &Purpose::Viewport);
+    let one = base_of(&on(plain()), &Purpose::Viewport);
+    let off = base_of(&plain(), &Purpose::Viewport);
+    assert!(two.data == base_of(&second(plain()), &Purpose::Prefetch).data);
+    assert!(two.data == base_of(&second(plain()), &Purpose::Export(Box::default())).data);
+
+    // By hand: core's fill with hl-2's look on the walk's picture.
+    let steps = stages::stages(&second(plain()), &Purpose::Viewport, &input.facts(0), None);
+    let settings = by_hand_settings(&steps);
+    let prepared = prepare_with(&raw, &settings, false, None).unwrap();
+    let codes = prepared.clip_codes.clone().expect("the cells read");
+    let (w, h) = (prepared.width, prepared.height);
+    let (rgb, dual, denoised) = demosaic_prepared(&prepared, &settings).unwrap();
+    let version = greycard_ai::highlight::version("hl-2").unwrap();
+    let frame_codes = FrameCodes::new(&codes, 1).unwrap();
+    let camera = Camera::of(&prepared);
+    let reach = version.look.reach.expect("hl-2 has a gate");
+    let x: Vec<f32> = rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .flat_map(|&p| camera.working(p).map(|v| v / camera.scale()))
+        .collect();
+    let a = analysis::analyze_of(
+        &Plain::new(&x, w, h),
+        &frame_codes,
+        frame_codes.clips(),
+        version.look.harmonic_bright as f32,
+    );
+    let deepest = a.regions.iter().fold(0.0f32, |m, r| m.max(r.depth0));
+    eprintln!("the deepest region's depth0: {deepest} px");
+    assert!(
+        (deepest as f64) > reach.gate[0] && (deepest as f64) < reach.gate[1],
+        "on the shoulder: {deepest}"
+    );
+    let fill = camera_fields(
+        &rgb,
+        w,
+        h,
+        &camera,
+        Some(&frame_codes),
+        frame_codes.clips(),
+        version.weights(),
+        &version.look,
+        1.0,
+    )
+    .expect("fields");
+    let mut camera_rgb = rgb.clone();
+    fill.apply(&mut camera_rgb, &frame_codes);
+    let by_hand = core_develop::finish(prepared, camera_rgb, dual, denoised, &settings).unwrap();
+    assert!(by_hand.image.data == two.data, "the walk is core's hl-2");
+
+    // A share of hl-1's fill: some pixels hl-1 moves, hl-2 moves less.
+    let (moved_two, moved_one) = (moved(&off, &two), moved(&off, &one));
+    assert!(!moved_two.is_empty() && moved_two.len() <= moved_one.len());
+    assert!(two.data != one.data, "less than hl-1's whole fill");
 }

@@ -14,7 +14,7 @@
 
 use std::sync::OnceLock;
 
-use greycard_core::develop::highlight_fill::net::{FillLook, FillWeights};
+use greycard_core::develop::highlight_fill::net::{FillLook, FillWeights, Reach};
 
 use crate::registry::License;
 
@@ -54,17 +54,44 @@ impl Version {
     }
 }
 
+/// e_tied's look (`oracle.py`'s constants block).
+const HL_1_LOOK: FillLook = FillLook {
+    core_whiten: 0.5,
+    core_boost: 1.4,
+    harmonic_bright: 0.25,
+    depth_tie: [12.0, 48.0],
+    gain_sigma: 6.0,
+    reach: None,
+};
+
 /// hl-1: checkpoint r6e-s1 with e_tied's look (notes §719, "What
 /// ships"). Its blob is `scripts/highlight-fill-oracle/export_weights.py`
 /// run on that checkpoint; the look is `oracle.py`'s constants block.
 pub static HL_1: Version = Version {
     name: "hl-1",
+    look: HL_1_LOOK,
+    blob: include_bytes!("hl-1.bin"),
+    sha256: "4ed0d07ae594d0dd88f82cef5f87ca1a597303e86b0e8e1ac6abeca07f105091",
+    weights: OnceLock::new(),
+};
+
+/// hl-2: hl-1's weights and look with a size gate over its fields
+/// (notes §719 §7's failures on large regions), [`Reach`]: a region
+/// deeper than the training's 384 px crops reached is left to the
+/// classical fill, fading out from a depth of 168 px to none at 224;
+/// under the gate its fields are hl-1's. A region within 96 px of a
+/// gated one shares its gate, so the pieces of a sky broken by branches
+/// are gated as the sky is. No core-only ramp: measured, it cost the
+/// band's color on leaves, lamps, and bokeh.
+pub static HL_2: Version = Version {
+    name: "hl-2",
     look: FillLook {
-        core_whiten: 0.5,
-        core_boost: 1.4,
-        harmonic_bright: 0.25,
-        depth_tie: [12.0, 48.0],
-        gain_sigma: 6.0,
+        reach: Some(Reach {
+            gate: [168.0, 224.0],
+            ramp: None,
+            near: Some(96.0),
+        }),
+        ..HL_1_LOOK
     },
     blob: include_bytes!("hl-1.bin"),
     sha256: "4ed0d07ae594d0dd88f82cef5f87ca1a597303e86b0e8e1ac6abeca07f105091",
@@ -72,7 +99,7 @@ pub static HL_1: Version = Version {
 };
 
 /// Every version this build carries, oldest first.
-pub static VERSIONS: [&Version; 1] = [&HL_1];
+pub static VERSIONS: [&Version; 2] = [&HL_1, &HL_2];
 
 /// The version an edit names, if this build has it.
 pub fn version(name: &str) -> Option<&'static Version> {
@@ -81,3 +108,6 @@ pub fn version(name: &str) -> Option<&'static Version> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod hl2_tests;

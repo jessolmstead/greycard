@@ -180,7 +180,23 @@ pub fn analyze_of(
     clips: [f32; 3],
     harmonic_bright: f32,
 ) -> Analysis {
-    analyze_traced_of(x, codes, clips, harmonic_bright).0
+    analyze_traced_of(x, codes, clips, harmonic_bright, None)
+        .expect("no gate")
+        .0
+}
+
+/// [`analyze_of`], or None when no region is shallower than
+/// `gate_hi` px (its depth0, the network's depth feature): hl-2 gives
+/// every such region to the classical fill, so the rest of the analysis
+/// (the ring, the harmonic, the table) and the network are not run.
+pub fn analyze_gated_of(
+    x: &impl PixelSource,
+    codes: &impl PixelCodes,
+    clips: [f32; 3],
+    harmonic_bright: f32,
+    gate_hi: f32,
+) -> Option<Analysis> {
+    analyze_traced_of(x, codes, clips, harmonic_bright, Some(gate_hi)).map(|t| t.0)
 }
 
 /// [`analyze`], with the planes it drops: each cell's ring owner as a
@@ -193,7 +209,14 @@ pub(crate) fn analyze_traced(
     clips: [f32; 3],
     harmonic_bright: f32,
 ) -> (Analysis, Vec<u32>, Vec<f32>) {
-    analyze_traced_of(&Plain::new(x, width, height), codes, clips, harmonic_bright)
+    analyze_traced_of(
+        &Plain::new(x, width, height),
+        codes,
+        clips,
+        harmonic_bright,
+        None,
+    )
+    .expect("no gate")
 }
 
 fn analyze_traced_of(
@@ -201,7 +224,8 @@ fn analyze_traced_of(
     codes: &impl PixelCodes,
     clips: [f32; 3],
     harmonic_bright: f32,
-) -> (Analysis, Vec<u32>, Vec<f32>) {
+    gate_hi: Option<f32>,
+) -> Option<(Analysis, Vec<u32>, Vec<f32>)> {
     let (width, height) = x.size();
     let (wh, hh) = half::half_size(width, height);
     let (cells, abh, yh) = half::planes_of(x, codes);
@@ -214,6 +238,22 @@ fn analyze_traced_of(
             regions::distance(&fc, wh, hh, REACH_HALF)
         },
     );
+    if let Some(hi) = gate_hi {
+        // Each region's depth0 is its largest d0 (the table's), whole
+        // regions only: the outside row has no fa cell.
+        let mut depth0 = vec![0u16; labels.ids.len()];
+        for (i, _) in fa.iter().enumerate().filter(|(_, f)| **f) {
+            let r = labels.inv[i] as usize;
+            depth0[r] = depth0[r].max(d0[i]);
+        }
+        let shallow = fa
+            .iter()
+            .enumerate()
+            .any(|(i, &f)| f && (depth0[labels.inv[i] as usize] as f32) < hi);
+        if !shallow {
+            return None;
+        }
+    }
     let ring = regions::ring(&fa, &labels, wh, hh, RING);
     let fixed = harmonic::fixed(&cells, &yh, harmonic_bright);
     drop(fa);
@@ -243,7 +283,7 @@ fn analyze_traced_of(
         .iter()
         .map(|r| grid_point(a.extent, r.centroid))
         .collect();
-    (a, ring, yh)
+    Some((a, ring, yh))
 }
 
 #[derive(Default, Clone, Copy)]

@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use super::analysis::Analysis;
 use super::apply::{Fields, TILE};
 use super::blur::{blur, blur_normalized, sg};
-use super::net::{FillLook, OUTPUTS};
+use super::net::{FillLook, OUTPUTS, Reach};
 use super::{OFF, SIGMA_DEPTH, SIGMA_MIX};
 
 /// One region's parameters from its outputs r0 … r11 (SPEC stage 10).
@@ -113,6 +113,69 @@ pub(crate) struct Scaled {
     pub boost: f32,
     /// The whitening, rounded (0.5, exact).
     pub whiten: f32,
+    /// hl-2's rules at this scale; None for hl-1.
+    pub reach: Option<ScaledReach>,
+}
+
+/// A [`Reach`] at look scale f: each length over f in f64, rounded.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ScaledReach {
+    pub gate_lo: f32,
+    pub gate_hi: f32,
+    pub ramp: Option<f32>,
+    /// The neighbors' reach in half-size cells: round(near / f / 2).
+    pub near: Option<usize>,
+}
+
+impl ScaledReach {
+    pub(crate) fn new(r: &Reach, f: f64) -> Self {
+        assert!(
+            r.gate[0] < r.gate[1] && r.ramp.is_none_or(|v| v > 0.0),
+            "a gate's shoulder rises and a ramp has a length: {r:?}"
+        );
+        Self {
+            gate_lo: (r.gate[0] / f) as f32,
+            gate_hi: (r.gate[1] / f) as f32,
+            ramp: r.ramp.map(|v| (v / f) as f32),
+            near: r.near.map(|v| (v / f / 2.0).round() as usize),
+        }
+    }
+
+    /// A region's share of its fields by its depth0, px: 1 to
+    /// `gate_lo`, 0 from `gate_hi` (exactly), a smoothstep down between.
+    pub fn gate(&self, depth0: f32) -> f32 {
+        if depth0 >= self.gate_hi {
+            0.0
+        } else if depth0 <= self.gate_lo {
+            1.0
+        } else {
+            1.0 - smoothstep((depth0 - self.gate_lo) / (self.gate_hi - self.gate_lo))
+        }
+    }
+
+    /// A core cell's share by its core distance `e` (px past the
+    /// core's first two layers) in a region whose deepest is `e_max`:
+    /// smoothstep over min(ramp, e_max); 0 where that is 0. 1 without
+    /// a ramp.
+    pub fn ramp(&self, e: f32, e_max: f32) -> f32 {
+        let Some(ramp) = self.ramp else {
+            return 1.0;
+        };
+        let span = ramp.min(e_max);
+        if span > 0.0 {
+            smoothstep(e / span)
+        } else {
+            0.0
+        }
+    }
+}
+
+/// 3t² − 2t³ on t clamped to [0, 1]: 0 and 1 at the ends exactly, its
+/// slope 0 at both.
+#[inline]
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 impl Scaled {
@@ -129,6 +192,7 @@ impl Scaled {
             tie_den: (hi - lo) as f32,
             boost: (look.core_boost - 1.0) as f32,
             whiten: look.core_whiten as f32,
+            reach: look.reach.map(|r| ScaledReach::new(&r, f)),
         }
     }
 }
@@ -306,18 +370,23 @@ pub(crate) struct CellOut {
     /// d, the two colors mixed, before the whitening.
     pub dab_mixed: [f32; 2],
     pub keep: f32,
+    /// hl-2's share of the fields here, gate times ramp (1 for hl-1);
+    /// `gain` and `dab` are taken times it.
+    pub weight: f32,
     pub gain: f32,
     pub dab: [f32; 2],
 }
 
 /// One window's blurred planes: dd, dc, blur(fc, 2), and blur(fc, σ_g)
-/// when the wide branch runs.
+/// when the wide branch runs; and under hl-2's reach each cell's core
+/// distance ([`core_distance`]).
 struct Planes {
     w: Window,
     dd: Vec<f32>,
     dc: Vec<f32>,
     mix_blur: Vec<f32>,
     mixg_blur: Option<Vec<f32>>,
+    core: Option<Vec<f32>>,
 }
 
 impl Planes {
@@ -337,6 +406,10 @@ impl Planes {
         let dd = depth(&a.d0, &fa);
         drop(fa);
         let dc = depth(&a.dc0, &fc);
+        let core = look
+            .reach
+            .and_then(|r| r.ramp)
+            .map(|_| core_distance(&fc, w));
         let fcf: Vec<f32> = fc.iter().map(|&b| b as u32 as f32).collect();
         drop(fc);
         let mix_blur = blur(&fcf, ww, wh, SIGMA_MIX);
@@ -347,8 +420,208 @@ impl Planes {
             dc,
             mix_blur,
             mixg_blur,
+            core,
         }
     }
+}
+
+/// Each window cell's core distance for hl-2's ramp, px: on an fc cell
+/// 2·(√d² − √2)₊, d² the squared Euclidean distance in cells to the
+/// nearest cell of the window not fc ([`squared_distance`]); 0 off fc.
+/// So the core's first two layers, and every cell sharing a 2×2 block
+/// with a cell not fc, read 0, and no pixel whose four upsampling cells
+/// include one not fc sees a field. Exact on the whole grid: the
+/// window's border off the grid's edge is not fa ([`windows`]), and a
+/// cell beyond it is no nearer than the border's cell in its row or
+/// column; past the grid's edge there is nothing, so the frame's edge
+/// is no core edge. Infinite where the window has no cell not fc.
+fn core_distance(fc: &[bool], w: Window) -> Vec<f32> {
+    let not_fc: Vec<bool> = fc.iter().map(|&b| !b).collect();
+    let d2 = squared_distance(&not_fc, w.width, w.height);
+    fc.iter()
+        .zip(d2)
+        .map(|(&inside, d2)| {
+            if inside {
+                (2.0 * (d2.sqrt() - std::f64::consts::SQRT_2).max(0.0)) as f32
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+/// The exact squared Euclidean distance, in cells, from each cell of a
+/// `width` × `height` grid to the nearest cell where `source` holds
+/// (infinite where none does): a column pass, then the lower envelope
+/// of parabolas along each row (Felzenszwalb and Huttenlocher, 2012).
+/// Every value is an integer in f64 and every comparison is of exact
+/// sums, so the bits are the same on any machine and thread count.
+pub(crate) fn squared_distance(source: &[bool], width: usize, height: usize) -> Vec<f64> {
+    assert_eq!(source.len(), width * height);
+    let mut g: Vec<f64> = source
+        .iter()
+        .map(|&s| if s { 0.0 } else { f64::INFINITY })
+        .collect();
+    for y in 1..height {
+        let (above, row) = g.split_at_mut(y * width);
+        let above = &above[(y - 1) * width..];
+        for (v, &u) in row[..width].iter_mut().zip(above) {
+            *v = v.min(u + 1.0);
+        }
+    }
+    for y in (0..height.saturating_sub(1)).rev() {
+        let (row, below) = g.split_at_mut((y + 1) * width);
+        let row = &mut row[y * width..];
+        for (v, &u) in row.iter_mut().zip(&below[..width]) {
+            *v = v.min(u + 1.0);
+        }
+    }
+    let mut out = vec![0.0f64; width * height];
+    out.par_chunks_mut(width.max(1))
+        .zip(g.par_chunks(width.max(1)))
+        .for_each(|(out, g)| envelope(g, out));
+    out
+}
+
+/// One row's pass: out[x] = min over q of (x − q)² + g[q]²,
+/// infinite where every g is.
+fn envelope(g: &[f64], out: &mut [f64]) {
+    let n = g.len();
+    let f = |q: usize| g[q] * g[q];
+    let mut v: Vec<usize> = Vec::with_capacity(n);
+    let mut z: Vec<f64> = Vec::with_capacity(n);
+    for q in (0..n).filter(|&q| g[q].is_finite()) {
+        let fq = f(q) + (q * q) as f64;
+        loop {
+            let Some(&p) = v.last() else {
+                v.push(q);
+                z.push(f64::NEG_INFINITY);
+                break;
+            };
+            let s = (fq - (f(p) + (p * p) as f64)) / (2.0 * (q - p) as f64);
+            if s <= *z.last().unwrap_or(&f64::NEG_INFINITY) && v.len() > 1 {
+                v.pop();
+                z.pop();
+                continue;
+            }
+            v.push(q);
+            z.push(s);
+            break;
+        }
+    }
+    if v.is_empty() {
+        out.fill(f64::INFINITY);
+        return;
+    }
+    let mut k = 0;
+    for (x, o) in out.iter_mut().enumerate() {
+        while k + 1 < v.len() && z[k + 1] < x as f64 {
+            k += 1;
+        }
+        let d = x as f64 - v[k] as f64;
+        *o = d * d + f(v[k]);
+    }
+}
+
+/// Each row's gate shared with its neighbors (hl-2's [`Reach::near`]):
+/// the smallest gate of any region with an fa cell within `near` cells
+/// (chessboard) of one of the row's own, its own included. Read on the
+/// whole grid, so a neighbor in another window counts, and the windows
+/// and the whole grid give the same gates. Where every gate is 1 the
+/// gates are returned as they are.
+///
+/// [`Reach::near`]: super::net::Reach::near
+pub(crate) fn shared_gates(a: &Analysis, gate: &[f32], near: usize) -> Vec<f32> {
+    let (wh, hh) = (a.half_width, a.half_height);
+    if near == 0 || gate.iter().all(|&g| g >= 1.0) {
+        return gate.to_vec();
+    }
+    // Each fa cell's region's gate, 1 elsewhere (no gate is above 1, so
+    // 1 is the min filter's neutral), then the smallest within a square
+    // of radius `near`.
+    let field: Vec<f32> = (0..wh * hh)
+        .into_par_iter()
+        .map(|i| {
+            if a.cells[i].fa() {
+                gate[a.labels.inv[i] as usize]
+            } else {
+                1.0
+            }
+        })
+        .collect();
+    let spread = min_square(&field, wh, hh, near);
+    let mut shared = gate.to_vec();
+    for (i, &s) in spread.iter().enumerate() {
+        if a.cells[i].fa() {
+            let r = a.labels.inv[i] as usize;
+            shared[r] = shared[r].min(s);
+        }
+    }
+    shared
+}
+
+/// The smallest value within a (2r + 1)² square of each cell, cells
+/// past the grid's edge reading 1: van Herk and Gil-Werman along the
+/// rows, then the columns. Minimums are exact, so the same bits on any
+/// thread count.
+fn min_square(v: &[f32], width: usize, height: usize, r: usize) -> Vec<f32> {
+    let rows = min_lines(v, width, height, r);
+    let t = transpose(&rows, width, height);
+    transpose(&min_lines(&t, height, width, r), height, width)
+}
+
+fn transpose(v: &[f32], width: usize, height: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; width * height];
+    out.par_chunks_mut(height.max(1))
+        .enumerate()
+        .for_each(|(x, col)| {
+            for (y, o) in col.iter_mut().enumerate() {
+                *o = v[y * width + x];
+            }
+        });
+    out
+}
+
+/// Each line of `width` cells: the smallest within r of each cell.
+fn min_lines(v: &[f32], width: usize, height: usize, r: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; width * height];
+    let k = 2 * r + 1;
+    out.par_chunks_mut(width.max(1))
+        .zip(v.par_chunks(width.max(1)))
+        .for_each(|(out, line)| {
+            // The line padded with r ones each side, cut in blocks of k
+            // from its start: g the running minimum from each block's
+            // start, h from each block's end; the window of k starting
+            // at padded index i is min(h[i], g[i + 2r]).
+            let n = line.len() + 2 * r;
+            let at = |i: usize| {
+                if i < r || i >= r + line.len() {
+                    1.0
+                } else {
+                    line[i - r]
+                }
+            };
+            let mut g = vec![0.0f32; n];
+            let mut h = vec![0.0f32; n];
+            for i in 0..n {
+                g[i] = if i % k == 0 {
+                    at(i)
+                } else {
+                    g[i - 1].min(at(i))
+                };
+            }
+            for i in (0..n).rev() {
+                h[i] = if i % k == k - 1 || i == n - 1 {
+                    at(i)
+                } else {
+                    h[i + 1].min(at(i))
+                };
+            }
+            for (x, o) in out.iter_mut().enumerate() {
+                *o = h[x].min(g[x + 2 * r]);
+            }
+        });
+    out
 }
 
 /// Per row of the region table: off, the largest dd and dc so far, and
@@ -359,11 +632,23 @@ pub(crate) struct Tables {
     cdepth: Vec<f32>,
     pub params: Vec<Params>,
     pub tie: Vec<f32>,
+    /// Under hl-2's reach, each row's gate and its deepest core
+    /// distance, px (0 without a reach).
+    pub gate: Vec<f32>,
+    pub core_max: Vec<f32>,
 }
 
 impl Tables {
-    fn new(a: &Analysis) -> Self {
+    fn new(a: &Analysis, look: &Scaled) -> Self {
         let n = a.regions.len();
+        let mut gate: Vec<f32> = a
+            .regions
+            .iter()
+            .map(|r| look.reach.map_or(1.0, |reach| reach.gate(r.depth0)))
+            .collect();
+        if let Some(near) = look.reach.and_then(|r| r.near) {
+            gate = shared_gates(a, &gate, near);
+        }
         Self {
             // off = min(4, 0.5·depth0) per row.
             off: a.regions.iter().map(|r| OFF.min(0.5 * r.depth0)).collect(),
@@ -371,6 +656,8 @@ impl Tables {
             cdepth: vec![0.0; n],
             params: vec![Params::default(); n],
             tie: vec![0.0; n],
+            gate,
+            core_max: vec![0.0; n],
         }
     }
 
@@ -382,6 +669,16 @@ impl Tables {
         let (d, c) = (self.depth[r].max(1.0), self.cdepth[r].max(1.0));
         self.params[r] = Params::new(&outputs[r], d, c);
         self.tie[r] = ((c - look.tie_lo) / look.tie_den).clamp(0.0, 1.0);
+    }
+
+    /// Whether any region in window `w` is short of hl-2's gate's end.
+    fn any_open(&self, a: &Analysis, w: Window) -> bool {
+        (0..w.height).any(|y| {
+            (0..w.width).any(|x| {
+                let i = (w.y0 + y) * a.half_width + w.x0 + x;
+                a.cells[i].fa() && self.gate[a.labels.inv[i] as usize] > 0.0
+            })
+        })
     }
 
     /// Takes in a window's rows: each region lies whole in one window,
@@ -396,6 +693,9 @@ impl Tables {
                 let r = a.labels.inv[i] as usize;
                 self.depth[r] = self.depth[r].max(d);
                 self.cdepth[r] = self.cdepth[r].max(c);
+                if let Some(core) = &p.core {
+                    self.core_max[r] = self.core_max[r].max(core[j]);
+                }
                 rows.push(r);
             }
         }
@@ -429,14 +729,21 @@ fn cell(
     let (fb, fc) = (cell.fa() as u32 as f32, cell.fc());
     let r = a.labels.inv[i] as usize;
     let p = &t.params[r];
-    let (dd, dc, mix_blur, mixg_blur) = match at {
+    let (dd, dc, mix_blur, mixg_blur, core) = match at {
         Some((pl, j)) => (
             pl.dd[j],
             pl.dc[j],
             pl.mix_blur[j],
             pl.mixg_blur.as_ref().map(|b| b[j]),
+            pl.core.as_ref().map_or(0.0, |c| c[j]),
         ),
-        None => (0.0, 0.0, 0.0, look.gain_sigma.map(|_| 0.0)),
+        None => (0.0, 0.0, 0.0, look.gain_sigma.map(|_| 0.0), 0.0),
+    };
+    let weight = match look.reach {
+        None => 1.0,
+        Some(reach) if reach.ramp.is_none() => t.gate[r],
+        Some(reach) if fc => t.gate[r] * reach.ramp(core, t.core_max[r]),
+        Some(_) => 0.0,
     };
     let s = (1.0 - libm::expf(-dd / p.l)) * fb;
     let mix = hand_over(mix_blur, fb, fc);
@@ -467,7 +774,8 @@ fn cell(
         s2,
         tie,
         keep,
-        gain,
+        weight,
+        gain: gain * weight,
         ..CellOut::default()
     };
     for c in 0..2 {
@@ -479,7 +787,7 @@ fn cell(
         out.core_dab[c] = core;
         out.band_dab[c] = band;
         out.dab_mixed[c] = mixed;
-        out.dab[c] = ((big_a[c] + mixed) * keep - big_a[c]) * fb;
+        out.dab[c] = ((big_a[c] + mixed) * keep - big_a[c]) * fb * weight;
     }
     out
 }
@@ -510,6 +818,9 @@ fn write(a: &Analysis, look: &Scaled, t: &Tables, p: &Planes, fields: &mut Field
                         }
                         let j = (y - w.y0) * w.width + x - w.x0;
                         let c = cell(a, look, t, Some((p, j)), i);
+                        if c.weight == 0.0 {
+                            continue;
+                        }
                         let v = [c.gain, c.dab[0], c.dab[1]];
                         any |= v.iter().any(|&v| v != 0.0);
                         tile[(y - ty * TILE) * TILE + x - tx * TILE] = v;
@@ -541,9 +852,14 @@ fn write(a: &Analysis, look: &Scaled, t: &Tables, p: &Planes, fields: &mut Field
 /// [`FillWeights::region_outputs`]: super::net::FillWeights::region_outputs
 pub(crate) fn fields(a: &Analysis, outputs: &[[f32; OUTPUTS]], look: Scaled) -> Fields {
     assert_eq!(outputs.len(), a.regions.len(), "an output row a region");
-    let mut t = Tables::new(a);
+    let mut t = Tables::new(a, &look);
     let mut out = Fields::empty(a.width, a.height, a.half_width, a.half_height);
     for w in windows(a, reach(&look)) {
+        // A window of regions all past hl-2's gate writes nothing:
+        // its planes are not made.
+        if look.reach.is_some() && !t.any_open(a, w) {
+            continue;
+        }
         let p = Planes::new(a, &look, &t.off, w);
         t.absorb(a, &p, outputs, &look);
         write(a, &look, &t, &p, &mut out);
@@ -582,7 +898,7 @@ impl<'a> Synthesis<'a> {
     }
 
     fn on(a: &'a Analysis, outputs: &[[f32; OUTPUTS]], look: Scaled, ws: Vec<Window>) -> Self {
-        let mut tables = Tables::new(a);
+        let mut tables = Tables::new(a, &look);
         let planes: Vec<Planes> = ws
             .into_iter()
             .map(|w| {

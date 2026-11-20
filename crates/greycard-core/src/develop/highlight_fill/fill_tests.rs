@@ -10,7 +10,7 @@ use super::apply::{Fields, TILE, pixel};
 use super::fixtures::{Fixture, Inputs, random_weights};
 use super::half::{CodePlane, PixelCodes};
 use super::harmonic::source;
-use super::net::{FillLook, OUTPUTS};
+use super::net::{FillLook, OUTPUTS, Reach};
 use super::synthesis::{self, CellOut, Scaled, Synthesis};
 use super::tests::{DEPTH_REL, HARM_BRIGHT, close, close_rel, exact, peak_rss_mb, synthetic, ulps};
 use super::{down, down_codes, fill, fill_fields, oklab, region_outputs};
@@ -22,6 +22,20 @@ pub(super) const LOOK: FillLook = FillLook {
     harmonic_bright: 0.25,
     depth_tie: [12.0, 48.0],
     gain_sigma: 6.0,
+    reach: None,
+};
+
+/// hl-1's look with a reach small enough for these scenes to meet
+/// every part of it: regions under the gate, on its shoulder, and past
+/// it, cores both shorter and longer than the ramp, and neighbors
+/// sharing a gate.
+pub(super) const REACH_LOOK: FillLook = FillLook {
+    reach: Some(Reach {
+        gate: [16.0, 40.0],
+        ramp: Some(12.0),
+        near: Some(24.0),
+    }),
+    ..LOOK
 };
 
 /// SPEC.md's tolerances with the random weights.
@@ -364,8 +378,11 @@ fn the_windows_are_the_whole_grid_s() {
         let plane = CodePlane { codes, width: *w };
         let a = analyze(x, *w, *h, &plane, [1.0; 3], HARM_BRIGHT);
         let outputs = region_outputs(&a, x, &plane, &weights).unwrap();
-        for f in [1.0, 2.5, 3.0] {
-            let look = Scaled::new(&LOOK, f);
+        for (f, base) in [1.0, 2.5, 3.0]
+            .into_iter()
+            .flat_map(|f| [(f, &LOOK), (f, &REACH_LOOK)])
+        {
+            let look = Scaled::new(base, f);
             let part = Synthesis::new(&a, &outputs, look);
             let whole = Synthesis::whole(&a, &outputs, look);
             let ws = part.windows();
@@ -718,24 +735,26 @@ fn the_fill_is_the_same_on_any_thread_count() {
         codes: &codes,
         width: w,
     };
-    let on = |threads: usize, f: f64| {
+    let on = |threads: usize, f: f64, look: &FillLook| {
         rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
             .build()
             .unwrap()
             .install(|| {
                 let fields =
-                    fill_fields(&x, w, h, &plane, [1.0, 0.98, 0.95], &weights, &LOOK, f).unwrap();
+                    fill_fields(&x, w, h, &plane, [1.0, 0.98, 0.95], &weights, look, f).unwrap();
                 let mut out = x.clone();
                 fields.apply(&mut out, &plane);
                 (fields, out.iter().map(|v| v.to_bits()).collect::<Vec<_>>())
             })
     };
     for f in [1.0, 2.5] {
-        let one = on(1, f);
-        assert!(one.0.tiles() > 0);
-        assert_eq!(one, on(3, f));
-        assert_eq!(one, on(8, f));
+        for look in [&LOOK, &REACH_LOOK] {
+            let one = on(1, f, look);
+            assert!(one.0.tiles() > 0);
+            assert_eq!(one, on(3, f, look));
+            assert_eq!(one, on(8, f, look));
+        }
     }
 }
 

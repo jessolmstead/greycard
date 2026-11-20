@@ -367,6 +367,43 @@ Demosaic's reset takes it off. Next is hl-2 on the same weights: large
 regions left to the classical fill, and the learned fill applied to
 all-clipped cells only, ramped in from the core's edge.
 
+## 1f. hl-2: the same weights, kept to what they were trained on (2026-11-20)
+
+hl-2 is hl-1 with a reach (`Reach` on the look, `HL_2` in
+greycard-ai). A clipped region whose depth is 168 px or less gets
+hl-1's fill whole; from 224 px it gets none, and is the classical fill
+to the bit; between, a smoothstep. A region also takes the smallest
+gate among the regions within 96 px of it, so the pieces of one blown
+sky behind branches go together. hl-1 is unchanged, and an edit
+carrying either reads as on. The hidden switch writes hl-2.
+
+**Why depth, not area.** Depth is what the 384 px training crops
+bounded. It is a chessboard distance from the region's edge, so it
+depends on shape: a disk starts to fade at about 475 px across and is
+gated from about 634; a 400 px square reads 200 upright and 141
+turned 45 degrees; a long thin strip is never gated. The backlit
+leaves are one region of 248,000 half-size cells at depth 40, far past
+any training region's area, and they are a win an area gate would cut.
+
+**Tried and dropped: the core only.** Applying the fill to
+all-clipped cells alone, ramped in from the core's edge, removed the
+band's arc but cost the wins: the leaves lost their color, each bokeh
+disc gained a ring, the lamps lost their glow. The code stays
+(`Reach.ramp`) for a later version; hl-2 does not use it.
+
+**Measured** on the owner's four frames, the three T8i frames, and the
+survey's worst and best ten. Fixed: the sunset's arc, the white window
+frame (contour pairs 5,013 to 520), the grey core, the ring round the
+sun, and three more large skies, one of them only with the neighbor
+rule. Kept to the bit: leaves, lamps, bokeh, small lights, speculars.
+Lost: one frame's clouds (depth 292) and backlit hair (512), both
+large. Not fixed, and the same as hl-1: a small sun disc (depth 88), a
+sky through branches at depth 148, and a blotchy sky whose pieces lie
+more than 192 px apart. Lower gates cost the leaves and fix none of
+those: a size rule cannot tell that sky from bokeh. The reduced
+preview can gate a shoulder region up to 0.09 differently from full
+size, pinned under 0.15.
+
 ## 2. Everything in Rust
 
 The procedural part and the network's forward pass are both plain

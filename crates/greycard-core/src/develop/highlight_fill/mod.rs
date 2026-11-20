@@ -123,7 +123,16 @@ pub fn fill_fields_until(
     if width == 0 || height == 0 {
         return Ok(None);
     }
-    let a = analysis::analyze_of(x, codes, clips, look.harmonic_bright as f32);
+    let bright = look.harmonic_bright as f32;
+    let a = match look_scaled.reach {
+        None => analysis::analyze_of(x, codes, clips, bright),
+        // hl-2: every region gated out is the classical fill's, to the
+        // bit; the network is not asked.
+        Some(reach) => match analysis::analyze_gated_of(x, codes, clips, bright, reach.gate_hi) {
+            Some(a) => a,
+            None => return Ok(None),
+        },
+    };
     if give_way() {
         return Err(GaveWay);
     }
@@ -206,5 +215,7 @@ pub fn fill(
 mod fill_tests;
 #[cfg(test)]
 mod fixtures;
+#[cfg(test)]
+mod reach_tests;
 #[cfg(test)]
 mod tests;

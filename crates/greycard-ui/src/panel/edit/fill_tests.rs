@@ -145,7 +145,7 @@ fn the_switch_turns_the_fill_on_and_off_and_is_undone() {
         greycard_edit::key::HIGHLIGHT_FILLS.last().copied()
     );
     save(&app, &state);
-    assert_eq!(current(&state, 0).highlight_fill.as_deref(), Some("hl-1"));
+    assert_eq!(current(&state, 0).highlight_fill.as_deref(), Some("hl-2"));
     assert_eq!(history_rows(&app)[0], "Highlight fill on");
 
     flip(&app);
@@ -156,7 +156,7 @@ fn the_switch_turns_the_fill_on_and_off_and_is_undone() {
 
     app.invoke_undo();
     assert!(app.get_highlight_fill(), "undone: on again");
-    assert_eq!(current(&state, 0).highlight_fill.as_deref(), Some("hl-1"));
+    assert_eq!(current(&state, 0).highlight_fill.as_deref(), Some("hl-2"));
     app.invoke_undo();
     assert!(!app.get_highlight_fill());
     assert_eq!(current(&state, 0).highlight_fill, None);
@@ -185,8 +185,26 @@ fn a_version_this_build_lacks_is_kept_until_the_switch_is_turned() {
     flip(&app);
     assert_eq!(
         state.borrow().develop.edit.highlight_fill.as_deref(),
-        Some("hl-1")
+        Some("hl-2")
     );
+}
+
+/// An edit carrying either of this build's versions shows the switch
+/// on and keeps its version through the panel: hl-1 stays hl-1.
+#[test]
+fn either_version_reads_as_on_and_is_kept() {
+    for name in greycard_edit::key::HIGHLIGHT_FILLS {
+        let (app, state, _worker) = open(2);
+        let edit = Edit {
+            highlight_fill: Some((*name).into()),
+            ..Edit::default()
+        };
+        state.borrow_mut().sidecars[1].record(edit.clone());
+        app.invoke_select(1);
+        assert!(app.get_highlight_fill(), "{name}");
+        let st = state.borrow();
+        assert_eq!(read_edit(&app, &st.develop.edit, None), edit, "{name}");
+    }
 }
 
 /// The develop that comes without the fill says so on the status line,
@@ -305,7 +323,7 @@ fn the_switch_stands_down_on_a_frame_the_fill_does_not_take() {
     app.invoke_select(1);
     app.invoke_paste_asked();
     app.invoke_sync_applied();
-    assert_eq!(current(&state, 1).highlight_fill.as_deref(), Some("hl-1"));
+    assert_eq!(current(&state, 1).highlight_fill.as_deref(), Some("hl-2"));
     crate::panel::deliver::deliver(&app, opened(&state, xtrans()));
     assert!(!takes_a_hand(&app), "greyed on X-Trans");
     assert!(app.get_highlight_fill(), "and still on");
@@ -314,7 +332,7 @@ fn the_switch_stands_down_on_a_frame_the_fill_does_not_take() {
     save(&app, &state);
     let kept = current(&state, 1);
     assert_eq!(kept.light.exposure, 0.3);
-    assert_eq!(kept.highlight_fill.as_deref(), Some("hl-1"));
+    assert_eq!(kept.highlight_fill.as_deref(), Some("hl-2"));
 
     app.invoke_select(0);
     crate::panel::deliver::deliver(&app, opened(&state, bayer()));
@@ -356,7 +374,7 @@ fn the_switch_in_cull_lays_the_fill_over_the_frame_alone() {
     save_edit(&mut st, edit);
     let frame = &st.line(1).unwrap().current;
     assert_eq!(frame.light.exposure, 0.7);
-    assert_eq!(frame.highlight_fill.as_deref(), Some("hl-1"));
+    assert_eq!(frame.highlight_fill.as_deref(), Some("hl-2"));
     assert_eq!(st.line(0).unwrap().current.highlight_fill, None);
 }
 
@@ -378,7 +396,7 @@ fn a_virtual_copy_keeps_its_own_fill() {
     {
         let st = state.borrow();
         let line = &st.sidecars[0].version(&id).unwrap().line;
-        assert_eq!(line.current.highlight_fill.as_deref(), Some("hl-1"));
+        assert_eq!(line.current.highlight_fill.as_deref(), Some("hl-2"));
         assert_eq!(st.sidecars[0].current.highlight_fill, None);
     }
     app.invoke_select(0);
@@ -404,14 +422,14 @@ fn light_s_switch_reset_and_copy_leave_the_fill_alone() {
     save(&app, &state);
     let now = current(&state, 0);
     assert!(!now.light.enabled);
-    assert_eq!(now.highlight_fill.as_deref(), Some("hl-1"));
+    assert_eq!(now.highlight_fill.as_deref(), Some("hl-2"));
     assert_eq!(switch(&app).accessible_checked(), Some(true));
     // Light's reset, through its header and as the table has it.
     let (at, size) = crate::testing::header_reset(&app, "LightSection");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     let reset = current(&state, 0);
     assert_eq!(reset.light, Edit::default().light);
-    assert_eq!(reset.highlight_fill.as_deref(), Some("hl-1"));
+    assert_eq!(reset.highlight_fill.as_deref(), Some("hl-2"));
     assert!(app.get_highlight_fill());
     let original = Edit::default();
     assert!(section_at_reset(&reset, &original, None, "light"));
@@ -424,7 +442,7 @@ fn light_s_switch_reset_and_copy_leave_the_fill_alone() {
     let demosaic = Preset::between_frames(&reset, &Choice::whole(&[Section::Demosaic]));
     assert_eq!(
         demosaic.applied(&Edit::default()).highlight_fill.as_deref(),
-        Some("hl-1")
+        Some("hl-2")
     );
 }
 

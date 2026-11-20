@@ -33,11 +33,31 @@ fn hl_1_parses_to_every_tensor() {
 #[test]
 fn versions_by_name() {
     assert_eq!(version("hl-1").map(|v| v.name), Some("hl-1"));
-    assert!(version("hl-2").is_none());
+    assert_eq!(version("hl-2").map(|v| v.name), Some("hl-2"));
+    assert!(version("hl-3").is_none());
     assert!(version("").is_none());
     assert!(version("HL-1").is_none());
     let look = version("hl-1").unwrap().look;
     assert_eq!(look.depth_tie, [12.0, 48.0]);
+    assert!(look.reach.is_none());
+}
+
+/// hl-2 is hl-1's weights and look with the reach added: nothing else
+/// of hl-1's moves under it.
+#[test]
+fn hl_2_is_hl_1_with_its_reach() {
+    assert_eq!(HL_2.blob, HL_1.blob);
+    assert_eq!(HL_2.sha256, HL_1.sha256);
+    assert_eq!(HL_2.weights(), HL_1.weights());
+    let reach = HL_2.look.reach.expect("hl-2 has a reach");
+    assert_eq!(
+        FillLook {
+            reach: None,
+            ..HL_2.look
+        },
+        HL_1.look
+    );
+    assert!(reach.gate[0] < reach.gate[1] && reach.ramp.is_none() && reach.near == Some(96.0));
 }
 
 /// A rawio directory (SPEC.md, "Fixture format and layouts"): its f32
