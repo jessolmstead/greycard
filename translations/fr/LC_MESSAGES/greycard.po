@@ -1361,7 +1361,6 @@ msgstr "Zone de travail"
 msgid "LIGHT"
 msgstr "LUMIÈRE"
 
-#. Vignette: a falloff in the scene; laid over the picture
 #: crates/greycard-slint/ui/panel/edit.slint:54
 msgid "Exposure"
 msgstr "Exposition"
@@ -1505,6 +1504,11 @@ msgstr "Arrondi"
 #: crates/greycard-slint/ui/panel/edit.slint:632
 msgid "Style"
 msgstr "Style"
+
+#. Vignette: a falloff in the scene; laid over the picture
+#: crates/greycard-slint/ui/panel/edit.slint:643
+msgid "Natural"
+msgstr ""
 
 #. Vignette: a falloff in the scene; laid over the picture
 #: crates/greycard-slint/ui/panel/edit.slint:643

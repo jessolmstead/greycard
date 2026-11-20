@@ -575,7 +575,7 @@ comes across with its ratings and collections.
 - [ ] Left for a screen reader: grid and strip cells cannot be
       pressed; the curve editor, crop handles, and pane edges have no
       role; popup menus are unwalked; a filter chip held out says
-      "not checked"; the panel's rows say their label twice
+      "not checked" and is to say "excluded"; the panel's rows say their label twice
 - [ ] Several values of one number field in the filter text,
       `focal:35,85` or `iso:400,800,1600`, for the picks a range
       cannot make (two primes, full stops only); how a range shows
@@ -948,8 +948,7 @@ clears or a tester asks for it.
 - [ ] `sheet-open()` defined from `sheets-up`, one list in place of
       two; the every-sheet focus test made cheaper, 45 s today (§664)
 - [ ] The Overlay vignette's tonal control (shadows only) and a lift
-      of the middle to go with it; its Style words and the lightening
-      math wait on a sign-off (§721, discussion 170)
+      of the middle to go with it (§721, discussion 170)
 - [ ] A vignette's Amount is never reached in the frame at a high
       Feather: at Midpoint 0.5 and Feather 1.0 the corners get half
       of it and the edges' middles a tenth. Decide whether the corner

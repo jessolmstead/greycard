@@ -28,7 +28,7 @@ design note behind it.
 - Light's sliders sit in two groups, a hairline between Shadows and
   Whites.
 - The Vignette has a Style: Overlay darkens the picture as shown, so a
-  bright corner darkens too; Exposure is the falloff as before
+  bright corner darkens too; Natural is the falloff as before
   (discussion 170,
   [§721](https://github.com/jessolmstead/greycard/blob/master/docs/notes/721-a-vignette-on-the-picture-as-shown.md)).
 - A linear gradient eases out of both ends, so its boundary no longer

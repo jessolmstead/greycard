@@ -640,7 +640,7 @@ export component VignetteSection inherits Section {
             name: vignette-place-words.text;
             options: ["Scene", "Display"];
             // Vignette: a falloff in the scene; laid over the picture
-            labels: [@tr("Exposure"), @tr("Overlay")];
+            labels: [@tr("Natural"), @tr("Overlay")];
             equal-width: true;
             current <=> root.vignette-place;
             selected(v) => { root.view-changed(); }

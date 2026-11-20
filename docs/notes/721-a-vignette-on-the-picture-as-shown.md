@@ -8,7 +8,7 @@ post-crop vignettes do (discussion 170).
 
 **Decided.** The Vignette carries a place, `Vignette.place`: `Scene`,
 the default and the falloff as it was, or `Display`. The panel's row
-is Style, with Exposure and Overlay; those words are provisional.
+is Style, with Natural and Overlay.
 
 - **Where.** The display vignette acts in `finish_pixel_display`,
   after the display curve, the color curves, and the look table, and

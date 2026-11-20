@@ -1346,7 +1346,6 @@ msgstr ""
 msgid "LIGHT"
 msgstr ""
 
-#. Vignette: a falloff in the scene; laid over the picture
 #: crates/greycard-slint/ui/panel/edit.slint:54
 msgid "Exposure"
 msgstr ""
@@ -1488,6 +1487,11 @@ msgstr ""
 #. Vignette: where it acts, the scene or the picture
 #: crates/greycard-slint/ui/panel/edit.slint:632
 msgid "Style"
+msgstr ""
+
+#. Vignette: a falloff in the scene; laid over the picture
+#: crates/greycard-slint/ui/panel/edit.slint:643
+msgid "Natural"
 msgstr ""
 
 #. Vignette: a falloff in the scene; laid over the picture
