@@ -5166,14 +5166,17 @@ fn library_shows_the_grid_and_the_left_pane_and_the_loupe_one_picture() {
     let (app, state, _worker) = modes_window();
     assert_eq!(seen(&app, &state), Seen::Develop);
     assert_eq!(pressed(&app, "App::loupe-view-button"), Some(true));
-    assert_eq!(crate::testing::count_labeled(&app, "Lightbox"), 0);
+    assert_eq!(
+        crate::testing::count_id(&app, "GridSheet::lightbox-button"),
+        0
+    );
     click_on(&app, "App::library-view-button");
     assert_eq!(seen(&app, &state), Seen::Library);
     assert!(!app.get_left_hidden(), "the left pane is the library's");
     assert_eq!(pressed(&app, "App::library-view-button"), Some(true));
     assert_eq!(pressed(&app, "App::loupe-view-button"), Some(false));
     assert_eq!(
-        crate::testing::count_labeled(&app, "Lightbox"),
+        crate::testing::count_id(&app, "GridSheet::lightbox-button"),
         1,
         "the grid's header"
     );

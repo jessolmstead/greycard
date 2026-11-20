@@ -172,7 +172,7 @@ export component MatchSheet inherits Rectangle {
                     }
                 }
             }
-            Toggle {
+            replace-toggle := Toggle {
                 label: @tr("Replace existing looks");
                 checked <=> root.match-replace;
                 enabled: !root.match-running;

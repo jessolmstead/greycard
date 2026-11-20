@@ -711,7 +711,7 @@ fn pick(app: &App, name: &str) {
 
 /// The Portrait switch, clicked where it is drawn.
 fn click_portrait(app: &App) {
-    crate::testing::click_switch(app, "Portrait");
+    crate::testing::click_switch_by_id(app, "CropSection::portrait-toggle");
 }
 
 /// A frame shot on end, 4000 by 6000 as it is developed: a named
@@ -1668,7 +1668,7 @@ fn a_crops_edge_handles_are_not_under_the_edge_arrows() {
         assert_eq!(*pressed.borrow(), [id], "the side handle at {x}");
     }
     assert!(!app.get_right_hidden());
-    let (at, arrow) = crate::testing::labeled(&app, "Right panel");
+    let (at, arrow) = crate::testing::by_id(&app, "App::right-arrow");
     crate::testing::click(&app, at.x + arrow.width / 2.0, at.y + arrow.height / 2.0);
     assert!(app.get_right_hidden(), "the arrow, moved, still works");
     // A crop the view's whole height: its bottom handle is under
@@ -1682,7 +1682,7 @@ fn a_crops_edge_handles_are_not_under_the_edge_arrows() {
     crate::testing::click(&app, base.x + size.width / 2.0, base.y + size.height - 5.0);
     assert_eq!(*pressed.borrow(), [5], "the bottom handle");
     assert!(!app.get_strip_hidden());
-    let (at, arrow) = crate::testing::labeled(&app, "Filmstrip");
+    let (at, arrow) = crate::testing::by_id(&app, "App::strip-arrow");
     crate::testing::click(&app, at.x + arrow.width / 2.0, at.y + arrow.height / 2.0);
     assert!(
         app.get_strip_hidden(),

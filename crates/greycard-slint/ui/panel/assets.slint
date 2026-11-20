@@ -380,12 +380,12 @@ export component LookSection inherits Section {
     if root.look-removable || root.look-renamable: HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;
-        if root.look-renamable: PanelButton {
+        if root.look-renamable: rename-look-button := PanelButton {
             text: @tr("Rename...");
             icon: @image-url("../icons/pencil.svg");
             clicked => { root.look-rename-asked(); }
         }
-        if root.look-removable: PanelButton {
+        if root.look-removable: remove-look-button := PanelButton {
             text: @tr("Remove this look...");
             icon: @image-url("../icons/trash-2.svg");
             clicked => { root.look-remove-asked(); }

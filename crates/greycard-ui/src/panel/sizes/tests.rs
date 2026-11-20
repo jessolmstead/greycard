@@ -319,7 +319,7 @@ fn the_culling_picture_row_keeps_its_buttons_whole() {
     app.set_panel_tab("Cull".into());
     settle(&app);
     let rows = |app: &App| {
-        let button = ElementHandle::find_by_accessible_label(app, "Camera JPEG pictures")
+        let button = ElementHandle::find_by_element_id(app, "CullSection::camera-jpeg")
             .next()
             .expect("the Camera JPEG button");
         let label = ElementHandle::find_by_element_type_name(app, "Text")
@@ -1209,36 +1209,6 @@ const REST: f32 = LEAST + RIGHT - FROM;
 const GAP: f32 = 8.0;
 const VALUE: f32 = 60.0;
 
-/// The Text a row's label is drawn in. A slider says its label and a
-/// box says the words beside it, so the words are found by the
-/// control named `label`: inside a slider, left of a box on its line.
-fn label_text(app: &App, label: &str) -> ElementHandle {
-    use i_slint_backend_testing::AccessibleRole::{Combobox, Slider};
-    let control = ElementHandle::find_by_accessible_label(app, label)
-        .find(|e| matches!(e.accessible_role(), Some(Slider | Combobox)))
-        .unwrap_or_else(|| panic!("the control {label:?}"));
-    let (at, size) = (control.absolute_position(), control.size());
-    // A slider's words are its `label-words`, drawn from the label it
-    // is named by; their text is not readable here (a Text's `text` is
-    // not testable), so the slider's name stands for it.
-    if control.accessible_role() == Some(Slider) {
-        return control
-            .query_descendants()
-            .match_id("EditSlider::label-words")
-            .find_first()
-            .unwrap_or_else(|| panic!("the {label:?} label"));
-    }
-    // A box's words: the nearest Text left of it on its line.
-    ElementHandle::find_by_element_type_name(app, "Text")
-        .filter(|t| {
-            let (p, s) = (t.absolute_position(), t.size());
-            let y = p.y + s.height / 2.0;
-            p.x + s.width <= at.x + 0.5 && y >= at.y && y <= at.y + size.height && s.width > 0.0
-        })
-        .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
-        .unwrap_or_else(|| panic!("the {label:?} label"))
-}
-
 /// The part `part` (as `EditSlider::label-words`) of the slider `id`.
 fn slider_part(app: &App, id: &str, part: &str) -> ElementHandle {
     ElementHandle::find_by_element_id(app, id)
@@ -1316,12 +1286,17 @@ fn a_wider_panel_widens_the_labels_first() {
     // The Crop tab's rows with a control keep to the same column.
     app.set_panel_tab("Crop".into());
     settle(&app);
-    let _ = crate::testing::labeled(&app, "Aspect");
-    assert_eq!(label_text(&app, "Aspect").size().width, MOST);
+    let _ = crate::testing::by_id(&app, "CropSection::aspect-box");
+    let aspect_words = |app: &App| {
+        ElementHandle::find_by_element_id(app, "CropSection::aspect-words")
+            .next()
+            .expect("the Aspect label")
+    };
+    assert_eq!(aspect_words(&app).size().width, MOST);
     // Back to the default: as it was.
     right_at(&app, RIGHT);
     assert_eq!(column(&app), REST);
-    assert_eq!(label_text(&app, "Aspect").size().width, REST);
+    assert_eq!(aspect_words(&app).size().width, REST);
 }
 
 /// "Roundness", the longest English slider label that the least

@@ -2235,7 +2235,7 @@ fn a_check_tabbed_to_is_scrolled_into_view() {
         .unwrap();
     let low = low.a11y.to_string();
     // A button's words: its own label.
-    let cancel = ElementHandle::find_by_accessible_label(&app, "Cancel")
+    let cancel = ElementHandle::find_by_element_id(&app, "SyncSheet::cancel")
         .next()
         .unwrap()
         .absolute_position()
@@ -2292,7 +2292,7 @@ fn a_primary_buttons_ring_is_for_the_keys() {
     // Open with the keys on Paste: a ring.
     assert_eq!(rings(&app), 1);
     // A click on Uncheck all: the focus there, no ring anywhere.
-    let words = ElementHandle::find_by_accessible_label(&app, "Uncheck all")
+    let words = ElementHandle::find_by_element_id(&app, "CarryList::uncheck-all")
         .next()
         .unwrap();
     let (at, size) = (words.absolute_position(), words.size());
@@ -2592,10 +2592,40 @@ fn tick(app: &App, label: &str) {
     click(app, x, y);
 }
 
-/// A click on the words `label`: a button's, or a choice's.
-fn press_words(app: &App, label: &str) {
-    let (x, y) = spot(app, label, None);
-    click(app, x, y);
+/// A click at the middle of the sheet's control `id`, the one on
+/// screen, inside the window.
+fn press_id(app: &App, id: &str) {
+    use i_slint_backend_testing::ElementHandle;
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(0.0, 0.0),
+    });
+    let found: Vec<_> = ElementHandle::find_by_element_id(app, id).collect();
+    assert_eq!(found.len(), 1, "one {id} on screen");
+    let (at, size) = (found[0].absolute_position(), found[0].size());
+    assert_in_window(app, at, size, id);
+    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+}
+
+/// A click on the masks' row's Add to masks when `add`, its Replace
+/// masks when not.
+fn press_join(app: &App, add: bool) {
+    const JOIN: [&str; 2] = ["Replace masks", "Add to masks"];
+    let option = JOIN[usize::from(add)];
+    assert_eq!(crate::testing::count_id(app, "CarryList::join"), 1);
+    let (at, size) = crate::testing::segment(app, "CarryList::join", &JOIN, option);
+    assert_in_window(app, at, size, option);
+    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+}
+
+fn assert_in_window(app: &App, at: slint::LogicalPosition, size: slint::LogicalSize, what: &str) {
+    let window = app.window().size().to_logical(app.window().scale_factor());
+    assert!(
+        at.x >= 0.0
+            && at.y >= 0.0
+            && at.x + size.width <= window.width
+            && at.y + size.height <= window.height,
+        "{what:?} is off the window"
+    );
 }
 
 fn heading(app: &App, title: &str) -> i32 {
@@ -2664,15 +2694,15 @@ fn the_sheet_sends_one_part_and_one_mask_and_the_rest_stays() {
     // a sync's masks start.
     assert_eq!(heading(&app, "Masks"), 0);
     // Check all, then Uncheck all: every heading follows.
-    press_words(&app, "Check all");
+    press_id(&app, "CarryList::check-all");
     assert!(headings(&app).iter().all(|(_, on)| *on == 2));
-    press_words(&app, "Uncheck all");
+    press_id(&app, "CarryList::uncheck-all");
     assert!(headings(&app).iter().all(|(_, on)| *on == 0));
     // Light's Exposure, Detail's Dehaze and the one mask, joining.
     tick(&app, "Light: Exposure");
     tick(&app, "Detail: Dehaze");
     tick(&app, "Masks: Face 2");
-    press_words(&app, "Add to masks");
+    press_join(&app, true);
     assert_eq!(heading(&app, "Light"), 1);
     assert_eq!(heading(&app, "Detail"), 1);
     assert_eq!(heading(&app, "Masks"), 1);
@@ -2745,7 +2775,7 @@ fn a_mask_pasted_alone_replaces_the_frames_and_the_sheet_remembers() {
     app.invoke_select(2);
     app.invoke_paste_asked();
     assert!(app.get_sync_paste());
-    press_words(&app, "Uncheck all");
+    press_id(&app, "CarryList::uncheck-all");
     tick(&app, "Masks: Sky 1");
     app.invoke_sync_applied();
     assert_eq!(
@@ -2852,9 +2882,9 @@ fn copy_masks_keeps_the_join_and_leaves_the_sections_chosen() {
     app.invoke_copy_asked();
     app.invoke_select(2);
     app.invoke_paste_asked();
-    press_words(&app, "Uncheck all");
+    press_id(&app, "CarryList::uncheck-all");
     tick(&app, "Light: Exposure");
-    press_words(&app, "Add to masks");
+    press_join(&app, true);
     app.invoke_sync_applied();
     // Copy masks: every mask, joining as that paste had them.
     app.invoke_select(0);
@@ -2864,7 +2894,7 @@ fn copy_masks_keeps_the_join_and_leaves_the_sections_chosen() {
     assert_eq!(headings(&app), masks_alone());
     assert_eq!(joins(&app), 1);
     // Replacing, chosen here, is what the next paste opens with.
-    press_words(&app, "Replace masks");
+    press_join(&app, false);
     app.invoke_sync_applied();
     assert_eq!(
         mask_names(&state.borrow().sidecars[1].current),
@@ -3013,7 +3043,7 @@ fn the_preset_sheet_saves_a_single_part_and_a_single_mask() {
             "Detail: Dehaze"
         ]
     );
-    press_words(&app, "Uncheck all");
+    press_id(&app, "CarryList::uncheck-all");
     tick(&app, "Detail: Dehaze");
     tick(&app, "Masks: Face 2");
     app.set_preset_name("Haze".into());

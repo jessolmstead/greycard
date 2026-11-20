@@ -286,7 +286,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{click, count_labeled, labeled, settle, state_for, window};
+    use crate::testing::{by_id, click, count_id, settle, state_for, window};
 
     fn scratch(what: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -335,7 +335,7 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         // Nothing open: nothing named, and nothing to offer.
         assert_eq!(app.get_open_folder_name(), "");
-        assert_eq!(count_labeled(&app, "Recently opened"), 0);
+        assert_eq!(count_id(&app, "App::folder-name"), 0);
 
         open_folder(&state, &app, &worker, &a);
         open_folder(&state, &app, &worker, &b);
@@ -349,7 +349,7 @@ mod tests {
         );
         // Offered from the name, once under the button: the grid's
         // header is not on screen.
-        assert_eq!(count_labeled(&app, "Recently opened"), 1);
+        assert_eq!(count_id(&app, "App::folder-name"), 1);
 
         // Chosen from the list: open, and at the front again.
         chosen(&state, &app, &worker, a_s.as_ref());
@@ -376,7 +376,7 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         open_folder(&state, &app, &worker, &a);
         settle(&app);
-        let (at, size) = labeled(&app, "Recently opened");
+        let (at, size) = by_id(&app, "App::folder-name");
         let (x, y) = (at.x + 8.0, at.y + size.height / 2.0);
         assert!(!app.get_menu_up());
         click(&app, x, y);
@@ -385,7 +385,7 @@ mod tests {
         assert!(!app.get_menu_up(), "the press closed it and opened nothing");
         app.set_grid_open(true);
         settle(&app);
-        assert_eq!(count_labeled(&app, "Recently opened"), 1);
+        assert_eq!(count_id(&app, "App::folder-name"), 1);
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -408,8 +408,8 @@ mod tests {
         settle(&app);
         app.set_grid_open(true);
         settle(&app);
-        assert_eq!(count_labeled(&app, "Recently opened"), 1);
-        let (at, size) = ElementHandle::find_by_accessible_label(&app, "Recently opened")
+        assert_eq!(count_id(&app, "App::folder-name"), 1);
+        let (at, size) = ElementHandle::find_by_element_id(&app, "App::folder-name")
             .map(|e| (e.absolute_position(), e.size()))
             .next()
             .unwrap();

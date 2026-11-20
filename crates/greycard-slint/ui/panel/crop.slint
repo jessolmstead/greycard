@@ -120,7 +120,7 @@ export component CropSection inherits Section {
         // click flips the flag, and so what is shown, either way. Under
         // Free nothing reads the flag, so the switch is greyed and a
         // click is nothing.
-        Toggle {
+        portrait-toggle := Toggle {
             // Crop section: the toggle that stands the aspect upright
             label: @tr("Portrait");
             checked: root.portrait-shown;

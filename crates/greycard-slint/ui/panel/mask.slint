@@ -930,7 +930,7 @@ export component AdjustmentsSection inherits Section {
                     // always Add, so the row that picks among them for
                     // a second one is not shown to ask a question a
                     // first shape has no answer to.
-                    if root.component-names.length > 0: Segmented {
+                    if root.component-names.length > 0: shape-mode-row := Segmented {
                         // The panel's Tab is the window's: no stop here.
                         tab-stop: false;
                         // Spoken by a screen reader: the shape mode row

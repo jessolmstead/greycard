@@ -5275,7 +5275,7 @@ export component App inherits Window {
                         // A click fits; the chevron or a right-click
                         // offers the zooms, each about the view's
                         // center, as the keys' are.
-                        PanelButton {
+                        fit-button := PanelButton {
                             text: @tr("zoom" => "Fit");
                             icon: @image-url("icons/maximize.svg");
                             has-menu: true;
@@ -5434,7 +5434,7 @@ export component App inherits Window {
         if (root.arrow-clears(root.arrow-crop-top - 52px)) { return root.arrow-crop-top - 52px; }
         return rest;
     }
-    EdgeArrow {
+    right-arrow := EdgeArrow {
         x: root.width - root.right-w - self.width;
         y: root.arrow-top(self.x, root.left-w + root.arrow-crop-left + root.arrow-crop-width);
         width: 16px;
@@ -5801,7 +5801,7 @@ export component App inherits Window {
                         clicked => { keys.focus(); root.open-folder(); }
                     }
                     if root.open-folder-name != "" || root.open-folder-note != ""
-                        || root.recent-folders.length > 0: FolderName {
+                        || root.recent-folders.length > 0: folder-name := FolderName {
                         name: root.open-folder-name;
                         root-name: root.open-folder-root;
                         path: root.open-folder-path;
@@ -5851,7 +5851,7 @@ export component App inherits Window {
                     // of them. While a card import runs it is that
                     // import's Stop, and while a catalog writes its
                     // face says so and it waits.
-                    PanelButton {
+                    import-button := PanelButton {
                         text: root.import-running ? (root.import-stopping ? @tr("Stopping...") : @tr("Stop import"))
                             : root.lr-running ? @tr("Importing the catalog...") : @tr("Import...");
                         icon: @image-url("icons/camera.svg");
@@ -6039,7 +6039,7 @@ export component App inherits Window {
                         // first under the collections, rather than among the
                         // roots, since it is no folder; with nothing to fold,
                         // so folding one never hides the one way into its view.
-                        if section == "queue" && root.grid-open: QueueHeader {
+                        if section == "queue" && root.grid-open: queue-header := QueueHeader {
                             reorderable: left-stack.movable;
                             reorder-started => { left-stack.start(i); }
                             reorder-moved(x, y) => { left-stack.move(x, y); }
@@ -6259,7 +6259,7 @@ export component App inherits Window {
             // Help: the keys sheet, the guide in the browser, and the
             // report, which also has its own button below, where the
             // guide has always said it is.
-            PanelButton {
+            help-button := PanelButton {
                 text: @tr("Help");
                 icon: @image-url("icons/circle-help.svg");
                 accessible-role: button;

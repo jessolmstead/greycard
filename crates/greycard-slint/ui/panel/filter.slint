@@ -423,7 +423,7 @@ export component FilterBar inherits Rectangle {
             spacing: Theme.space-1;
             HorizontalLayout {
                 spacing: Theme.space-2;
-                Text {
+                stars-caption := Text {
                     // Filter bar: the rating row
                     text: @tr("Stars");
                     color: Theme.text-secondary;
@@ -699,7 +699,7 @@ export component FilterBar inherits Rectangle {
             }
             // The buttons keep their words: the chips before them give
             // way first, clipped at a narrow window.
-            if root.can-save: PanelButton {
+            if root.can-save: save-button := PanelButton {
                 // Filter bar: save the filter as a smart collection
                 text: @tr("Save...");
                 min-width: self.preferred-width;

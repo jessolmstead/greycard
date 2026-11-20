@@ -80,7 +80,7 @@ export component WhiteBalanceSection inherits Section {
         checked <=> root.as-shot;
         toggled => { root.as-shot-toggled(); }
     }
-    if root.local && !root.picture: Toggle {
+    if root.local && !root.picture: follow-global-toggle := Toggle {
         // White balance in a mask: take the picture's own
         label: @tr("Follow global");
         switch-at-end: true;
@@ -146,7 +146,7 @@ export component WhiteBalanceSection inherits Section {
         // section shows none as chosen. A picture has no camera white
         // for a preset's light to be read against, and a mask's white
         // is an offset: neither has the menu.
-        if !root.local: PanelButton {
+        if !root.local: auto-button := PanelButton {
             text: @tr("Auto");
             enabled: !root.monochrome;
             has-menu: !root.picture;
@@ -664,7 +664,7 @@ export component GradingSection inherits Section {
     // press in a wheel chooses it and puts its point at the
     // pointer; a click on its name chooses it and moves
     // nothing.
-    if root.grade-big >= 0 && root.grade-big < root.grade-images.length: GradeWheel {
+    if root.grade-big >= 0 && root.grade-big < root.grade-images.length: big-wheel := GradeWheel {
         picture: root.grade-images[root.grade-big];
         enabled: root.grading-enabled;
         chosen: root.grade-range == root.grade-big;

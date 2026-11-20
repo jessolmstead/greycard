@@ -777,7 +777,7 @@ mod tests {
                 crate::testing::cell_names(app, "f03.CR3").len()
                     + crate::testing::count_labeled(app, "f03.CR3")
                     - with_role(app, "f03.CR3", AccessibleRole::ListItem),
-                crate::testing::count_labeled(app, "Lightbox"),
+                crate::testing::count_id(app, "GridSheet::lightbox-button"),
             )
         };
         let (badges, edited, exported, name, button) = counts(&app);

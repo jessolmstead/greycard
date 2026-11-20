@@ -497,7 +497,7 @@ export component SettingsSheet inherits Rectangle {
                             padding-right: Theme.space-5 + Theme.scrollbar-band;
                             padding-bottom: Theme.space-2;
                             spacing: Theme.space-3;
-                            Text {
+                            interface-heading := Text {
                                 text: @tr("INTERFACE");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
@@ -536,7 +536,7 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 theme-words := Text { accessible-role: none; text: @tr("Theme"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                                Segmented {
+                                theme-row := Segmented {
                                     name: theme-words.text;
                                     options: ["Charcoal", "Grey", "Light"];
                                     labels: [@tr("Charcoal"), @tr("Grey"), @tr("theme" => "Light")];
@@ -547,7 +547,7 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 scroll-bars-words := Text { accessible-role: none; text: @tr("Scroll bars"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                                Segmented {
+                                scroll-bars-row := Segmented {
                                     name: scroll-bars-words.text;
                                     options: ["Fade", "Stay"];
                                     // Scroll bars: fade when idle, or stay
@@ -559,7 +559,7 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 scroll-bar-size-words := Text { accessible-role: none; text: @tr("Scroll bar size"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                                Segmented {
+                                scroll-bar-size-row := Segmented {
                                     name: scroll-bar-size-words.text;
                                     options: ["Thin", "Medium", "Wide"];
                                     // Scroll bar size
@@ -571,7 +571,7 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 language-words := Text { accessible-role: none; text: @tr("Language"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                                ComboBox {
+                                language-box := ComboBox {
                                     width: 160px;
                                     accessible-label: language-words.text;
                                     model: root.languages;
@@ -622,7 +622,7 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 start-in-words := Text { accessible-role: none; text: @tr("Start in"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                                Segmented {
+                                start-in-row := Segmented {
                                     name: start-in-words.text;
                                     options: ["Last folder", "Chosen folder"];
                                     labels: [@tr("Last folder"), @tr("Chosen folder")];
@@ -640,7 +640,7 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 Rectangle { width: 68px; }
-                                Segmented {
+                                start-view-row := Segmented {
                                     // Spoken by a screen reader: the row under Start in
                                     // that picks the view greycard opens in, Loupe or Library
                                     name: @tr("Start view");
@@ -673,7 +673,7 @@ export component SettingsSheet inherits Rectangle {
                                 toggled => { root.wheel-resizes-changed(); }
                             }
                             Rectangle { height: Theme.space-1; }
-                            Text {
+                            sidecars-heading := Text {
                                 text: @tr("SIDECARS");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
@@ -979,7 +979,7 @@ export component SettingsSheet inherits Rectangle {
                                 toggled => { root.lens-on-new-changed(); }
                             }
                             Rectangle { height: Theme.space-1; }
-                            Text {
+                            crop-heading := Text {
                                 text: @tr("CROP");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
@@ -1058,7 +1058,7 @@ export component SettingsSheet inherits Rectangle {
                                 wrap: word-wrap;
                             }
                             Rectangle { height: Theme.space-1; }
-                            Text {
+                            export-heading := Text {
                                 text: @tr("EXPORT");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
@@ -1154,7 +1154,7 @@ export component SettingsSheet inherits Rectangle {
                             padding-right: Theme.space-5 + Theme.scrollbar-band;
                             padding-bottom: Theme.space-2;
                             spacing: Theme.space-3;
-                            Text {
+                            models-heading := Text {
                                 text: @tr("MODELS");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
@@ -1228,7 +1228,7 @@ export component SettingsSheet inherits Rectangle {
                             padding-right: Theme.space-5 + Theme.scrollbar-band;
                             padding-bottom: Theme.space-2;
                             spacing: Theme.space-3;
-                            Text {
+                            keys-heading := Text {
                                 text: @tr("KEYS");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
@@ -1285,7 +1285,7 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 alignment: end;
-                                PanelButton {
+                                reset-keys-button := PanelButton {
                                     text: @tr("Reset to defaults");
                                     // The button's click takes the focus from a
                                     // row listening; the focus goes back to the
@@ -1341,7 +1341,7 @@ export component SettingsSheet inherits Rectangle {
                                     wrap: word-wrap;
                                     horizontal-stretch: 1;
                                 }
-                                PanelButton {
+                                check-now-button := PanelButton {
                                     text: @tr("Check now");
                                     width: 96px;
                                     enabled: !root.update-checking;

@@ -1310,7 +1310,7 @@ mod tests {
         s.app.set_grid_open(false);
         s.app.invoke_select(0);
         assert!(s.app.get_frozen());
-        assert_eq!(crate::testing::count_labeled(&s.app, "Cull mode"), 0);
+        assert_eq!(crate::testing::count_id(&s.app, "App::cull-mode-button"), 0);
         // Rating still works from the keys over the frozen frame.
         crate::testing::press(&s.app, "3");
         {
@@ -1328,7 +1328,7 @@ mod tests {
         s.app.set_grid_open(false);
         s.app.invoke_select(1);
         assert!(!s.app.get_frozen());
-        assert_eq!(crate::testing::count_labeled(&s.app, "Cull mode"), 1);
+        assert_eq!(crate::testing::count_id(&s.app, "App::cull-mode-button"), 1);
         teardown(s);
     }
 
@@ -1343,8 +1343,13 @@ mod tests {
     const WHY: &str = "Queued for export, shown as it will export. Edit it from its folder.";
 
     /// A click on the middle of the top's button named `label`.
-    fn press_button(s: &Setup, label: &str) {
-        let (at, size) = crate::testing::buttons(&s.app, label)[0];
+    fn press_button(s: &Setup, id: &str) {
+        use i_slint_backend_testing::ElementHandle;
+        crate::testing::count_id(&s.app, id);
+        let button = ElementHandle::find_by_element_id(&s.app, id)
+            .next()
+            .unwrap_or_else(|| panic!("no {id}"));
+        let (at, size) = (button.absolute_position(), button.size());
         crate::testing::click(&s.app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     }
 
@@ -1374,9 +1379,9 @@ mod tests {
         s.app.set_grid_open(false);
         s.app.invoke_select(0);
         assert!(s.app.get_frozen());
-        assert_eq!(crate::testing::count_labeled(&s.app, "Cull mode"), 0);
+        assert_eq!(crate::testing::count_id(&s.app, "App::cull-mode-button"), 0);
         assert_eq!(crate::testing::count_labeled(&s.app, WHY), 1);
-        press_button(&s, "Loupe view");
+        press_button(&s, "App::loupe-view-button");
         crate::roots::land_sent(&s.state, &s.app, &s.worker);
         assert_eq!(starts_on(&s), Some(s.files[1].clone()));
         s.app.invoke_select(1);
@@ -1392,7 +1397,7 @@ mod tests {
         assert!(!s.app.get_grid_open());
         assert!(!s.app.get_frozen());
         assert!(!s.app.get_queue_view_on());
-        assert_eq!(crate::testing::count_labeled(&s.app, "Cull mode"), 1);
+        assert_eq!(crate::testing::count_id(&s.app, "App::cull-mode-button"), 1);
         assert_eq!(crate::testing::count_labeled(&s.app, WHY), 0);
         teardown(s);
     }
@@ -1428,7 +1433,10 @@ mod tests {
             drop(st);
             assert!(!s.app.get_frozen());
         };
-        for (button, grid) in [("Loupe view", false), ("Library view", true)] {
+        for (button, grid) in [
+            ("App::loupe-view-button", false),
+            ("App::library-view-button", true),
+        ] {
             // The queue the first view, or after nothing.
             open(&s);
             s.app.set_grid_open(false);
@@ -1454,7 +1462,7 @@ mod tests {
         assert_eq!(s.state.borrow().views.view, View::Queue);
         let written = s.dir.join("IMG_0001-edited.jpg");
         std::fs::write(&written, b"").unwrap();
-        press_button(&s, "Library view");
+        press_button(&s, "App::library-view-button");
         crate::roots::land_sent(&s.state, &s.app, &s.worker);
         assert_eq!(starts_on(&s), Some(s.files[1].clone()));
         {
@@ -1478,7 +1486,7 @@ mod tests {
         queue(&s, vec![entry(&s, &[0], None, "JPEG")]);
         folder_on(&s, 1);
         open(&s);
-        press_button(&s, "Loupe view");
+        press_button(&s, "App::loupe-view-button");
         assert!(s.app.get_grid_open(), "no Loupe before the read lands");
         assert_eq!(s.state.borrow().views.view, View::Queue);
         crate::roots::land_sent(&s.state, &s.app, &s.worker);
@@ -1487,7 +1495,7 @@ mod tests {
         // Overtaken.
         s.app.set_grid_open(true);
         open(&s);
-        press_button(&s, "Loupe view");
+        press_button(&s, "App::loupe-view-button");
         crate::roots::open_listing(
             &s.state,
             &s.app,
@@ -1520,7 +1528,7 @@ mod tests {
             key
         };
         open(&s);
-        press_button(&s, "Library view");
+        press_button(&s, "App::library-view-button");
         crate::roots::land_sent(&s.state, &s.app, &s.worker);
         let st = s.state.borrow();
         assert_eq!(st.views.view, View::Folder);
@@ -1540,9 +1548,16 @@ mod tests {
         let s = setup("folded", 1);
         queue(&s, vec![entry(&s, &[0], None, "JPEG")]);
         s.app.set_collapsed_collections(true);
-        let rows = crate::testing::buttons(&s.app, "Export queue");
-        assert_eq!(rows.len(), 1, "the row, once");
-        let (at, size) = rows[0];
+        use i_slint_backend_testing::ElementHandle;
+        assert_eq!(
+            crate::testing::count_id(&s.app, "App::queue-header"),
+            1,
+            "the row, once"
+        );
+        let row = ElementHandle::find_by_element_id(&s.app, "App::queue-header")
+            .next()
+            .expect("the queue's row");
+        let (at, size) = (row.absolute_position(), row.size());
         crate::testing::click(&s.app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         crate::roots::land_sent(&s.state, &s.app, &s.worker);
         assert_eq!(s.state.borrow().views.view, View::Queue);
@@ -1558,7 +1573,7 @@ mod tests {
             .dispatch_event(slint::platform::WindowEvent::PointerMoved {
                 position: slint::LogicalPosition::new(0.0, 0.0),
             });
-        let e = ElementHandle::find_by_accessible_label(&s.app, "Export the queue").next()?;
+        let e = ElementHandle::find_by_element_id(&s.app, "GridSheet::queue-run-button").next()?;
         let (at, size) = (e.absolute_position(), e.size());
         Some((at.x + size.width / 2.0, at.y + size.height / 2.0))
     }

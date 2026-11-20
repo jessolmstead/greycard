@@ -1172,15 +1172,30 @@ fn the_settings_categories_step_by_the_keys() {
     let (app, _state, _worker) = develop_window();
     app.set_settings_category("Editing".into());
     app.invoke_settings_asked();
-    assert_eq!(crate::testing::count_labeled(&app, "CROP"), 1);
-    assert_eq!(crate::testing::count_labeled(&app, "SIDECARS"), 0);
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::crop-heading"),
+        1
+    );
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::sidecars-heading"),
+        0
+    );
     press(&app, Key::DownArrow);
     assert_eq!(app.get_settings_category(), "Models");
-    assert_eq!(crate::testing::count_labeled(&app, "CROP"), 0);
-    assert_eq!(crate::testing::count_labeled(&app, "MODELS"), 1);
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::crop-heading"),
+        0
+    );
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::models-heading"),
+        1
+    );
     press(&app, Key::DownArrow);
     assert_eq!(app.get_settings_category(), "Keys");
-    assert_eq!(crate::testing::count_labeled(&app, "KEYS"), 1);
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::keys-heading"),
+        1
+    );
     press(&app, Key::DownArrow);
     press(&app, Key::DownArrow);
     assert_eq!(app.get_settings_category(), "About", "held at the foot");
@@ -1197,14 +1212,20 @@ fn the_settings_categories_step_by_the_keys() {
     assert_eq!(app.get_settings_category(), "Interface", "round to the top");
     press(&app, Key::UpArrow);
     assert_eq!(app.get_settings_category(), "Interface", "held at the top");
-    assert_eq!(crate::testing::count_labeled(&app, "INTERFACE"), 1);
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::interface-heading"),
+        1
+    );
     // A click on a name shows its category.
     let tab = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Library")
         .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Tab))
         .expect("the Library tab");
     tab.invoke_accessible_default_action();
     assert_eq!(app.get_settings_category(), "Library");
-    assert_eq!(crate::testing::count_labeled(&app, "SIDECARS"), 1);
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::sidecars-heading"),
+        1
+    );
     press(&app, Key::Escape);
     assert!(!app.get_settings_open());
     slint::platform::update_timers_and_animations();
@@ -1214,7 +1235,10 @@ fn the_settings_categories_step_by_the_keys() {
     app.set_grid_open(false);
     app.invoke_settings_asked();
     assert_eq!(app.get_settings_category(), "Library");
-    assert_eq!(crate::testing::count_labeled(&app, "SIDECARS"), 1);
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::sidecars-heading"),
+        1
+    );
 }
 
 /// In the smallest window the fit allows, the sheet keeps Done in
@@ -1228,13 +1252,16 @@ fn the_keys_category_scrolls_in_a_small_window() {
     app.set_settings_category("Keys".into());
     app.invoke_settings_asked();
     // Every Done there is, the sheet's among them, in the window.
-    assert!(crate::testing::count_labeled(&app, "Done") > 0);
-    for done in ElementHandle::find_by_accessible_label(&app, "Done") {
+    assert!(crate::testing::count_id(&app, "SettingsSheet::done") > 0);
+    for done in ElementHandle::find_by_element_id(&app, "SettingsSheet::done") {
         let foot = done.absolute_position().y + done.size().height;
         assert!(foot <= 640.0, "Done at {foot}, past the window");
     }
     // The table runs past the view: its foot is scrolled out.
-    assert_eq!(crate::testing::count_labeled(&app, "Reset to defaults"), 0);
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::reset-keys-button"),
+        0
+    );
     assert!(crate::testing::count_labeled(&app, "Select every frame shown") > 0);
 }
 
@@ -1830,13 +1857,13 @@ fn a_clicked_button_keeps_its_own_keys_and_passes_the_rest() {
 /// Escape after a click on one of its buttons closes it.
 #[test]
 fn escape_after_a_click_on_the_import_sheet_closes_it() {
-    use crate::testing::{click, labeled, settle};
+    use crate::testing::{by_id, click, settle};
     // No state, so Choose asks the desktop for nothing.
     let app = window(3);
     app.set_import_open(true);
     settle(&app);
     assert!(!app.global::<crate::ButtonKeys>().get_sheet_up());
-    let (at, size) = labeled(&app, "Choose...");
+    let (at, size) = by_id(&app, "FolderRow::choose-button");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     press(&app, Key::Escape);
     assert_eq!(app.global::<crate::ButtonKeys>().get_passed(), 1);
@@ -1877,7 +1904,7 @@ fn the_export_keys_are_nobodys_under_the_match_sheet() {
     settle(&app);
     // On its label: a Toggle's name is the whole row's, whose
     // empty run past the label takes no click.
-    let (at, size) = crate::testing::toggle(&app, "Replace existing looks").label;
+    let (at, size) = crate::testing::toggle_by_id(&app, "MatchSheet::replace-toggle").label;
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     let passed = app.global::<crate::ButtonKeys>().get_passed();
     for shift in [true, false] {
@@ -1895,14 +1922,14 @@ fn the_export_keys_are_nobodys_under_the_match_sheet() {
 /// up to the sheet's, never to the window under it.
 #[test]
 fn a_button_on_a_sheet_keeps_the_keys_from_the_window() {
-    use crate::testing::{click, labeled, settle};
+    use crate::testing::{by_id, click, settle};
     // No state, so the check asks nothing of the network.
     let app = window(3);
     app.set_settings_category("About".into());
     app.set_settings_open(true);
     settle(&app);
     assert!(app.global::<crate::ButtonKeys>().get_sheet_up());
-    let (at, size) = labeled(&app, "Check now");
+    let (at, size) = by_id(&app, "SettingsSheet::check-now-button");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     press(&app, "g");
     assert!(!app.get_grid_open(), "not the window's G");

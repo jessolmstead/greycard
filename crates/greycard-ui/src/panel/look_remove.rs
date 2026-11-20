@@ -882,7 +882,7 @@ mod tests {
             slint::platform::update_timers_and_animations();
         }
         let remove = |app: &App| {
-            let (at, size) = crate::testing::labeled(app, "Remove this look...");
+            let (at, size) = crate::testing::by_id(app, "LookSection::remove-look-button");
             click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
             slint::platform::update_timers_and_animations();
             assert!(app.get_look_remove_open());

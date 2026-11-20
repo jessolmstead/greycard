@@ -1666,7 +1666,7 @@ fn tab_puts_the_panels_away_and_brings_them_back() {
     // while Tab has all three away, it stays away.
     crate::testing::press(&app, tab);
     let arrow_click = |app: &App| {
-        let (at, arrow) = crate::testing::labeled(app, "Filmstrip");
+        let (at, arrow) = crate::testing::by_id(app, "App::strip-arrow");
         crate::testing::click(app, at.x + arrow.width / 2.0, at.y + arrow.height / 2.0);
     };
     arrow_click(&app);
@@ -2590,17 +2590,12 @@ fn autos_menu_holds_the_presets_on_a_raw_alone() {
     assert_eq!(shown(&app), [0; 6], "the menu is away");
     assert_eq!(sliders(&app), (false, 7500.0, 0.003));
 
-    // A click on the chevron, just right of the section's Auto
-    // (the one on Neutral's row; the Light section has one too),
-    // opens it.
-    let (neutral, _) = crate::testing::by_id(&app, "WhiteBalanceSection::neutral-button");
-    let auto = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Auto")
-        .map(|e| (e.absolute_position(), e.size()))
-        .find(|(at, _)| (at.y - neutral.y).abs() < 4.0)
-        .expect("the section's Auto");
+    // A click on the chevron, at the right end of the section's
+    // Auto button (the Light section has an Auto too), opens it.
+    let auto = crate::testing::by_id(&app, "WhiteBalanceSection::auto-button");
     crate::testing::click(
         &app,
-        auto.0.x + auto.1.width + 12.0,
+        auto.0.x + auto.1.width - 12.0,
         auto.0.y + auto.1.height / 2.0,
     );
     assert_eq!(shown(&app), [1; 6], "the chevron opens it");
@@ -2640,14 +2635,10 @@ fn the_presets_menu_hands_the_keys_back() {
     let counted = picks.clone();
     app.on_pick_pressed(move |_, _| counted.set(counted.get() + 1));
     let chevron = || {
-        let (neutral, _) = crate::testing::by_id(&app, "WhiteBalanceSection::neutral-button");
-        let auto = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Auto")
-            .map(|e| (e.absolute_position(), e.size()))
-            .find(|(at, _)| (at.y - neutral.y).abs() < 4.0)
-            .expect("the section's Auto");
+        let auto = crate::testing::by_id(&app, "WhiteBalanceSection::auto-button");
         crate::testing::click(
             &app,
-            auto.0.x + auto.1.width + 12.0,
+            auto.0.x + auto.1.width - 12.0,
             auto.0.y + auto.1.height / 2.0,
         );
         // What every surface asks before taking a press: without
@@ -2726,12 +2717,12 @@ fn the_masks_menus_hand_the_keys_back() {
         slint::platform::update_timers_and_animations();
         assert!(!app.get_menu_up(), "the menu is away");
     };
-    let at = |label: &str| {
-        let (p, size) = crate::testing::labeled(&app, label);
+    let at = |id: &str| {
+        let (p, size) = crate::testing::by_id(&app, id);
         (p.x + size.width / 2.0, p.y + size.height / 2.0)
     };
-    let people = at("People");
-    let landscape = at("Landscape");
+    let people = at("AdjustmentsSection::parts-button");
+    let landscape = at("AdjustmentsSection::landscape-button");
     let people_up = || crate::testing::count_labeled(&app, "Whole person");
 
     // People, from a click on its button: Whole person picked from
@@ -2976,12 +2967,10 @@ fn auto_light_is_a_button_under_the_light_sliders() {
     let light = state.borrow().sidecars[0].current.light;
 
     // The white balance has an Auto of its own above: the Light
-    // section's is the first one under its last slider.
+    // section's is under its last slider.
     let (blacks, _) = crate::testing::by_id(&app, "LightSection::blacks-slider");
-    let (at, size) = ElementHandle::find_by_accessible_label(&app, "Auto")
-        .map(|e| (e.absolute_position(), e.size()))
-        .find(|(at, _)| at.y > blacks.y)
-        .expect("an Auto under the Blacks slider");
+    let (at, size) = crate::testing::by_id(&app, "LightSection::auto-button");
+    assert!(at.y > blacks.y, "the Auto under the Blacks slider");
     let grid: Vec<[f32; 3]> = (0..4000)
         .map(|i| {
             let stops = MIDDLE - 3.0 + 4.0 * (i as f32 + 0.5) / 4000.0;
@@ -3003,18 +2992,15 @@ fn auto_light_is_a_button_under_the_light_sliders() {
     app.invoke_new_mask();
     app.invoke_target_changed(1);
     assert_eq!(app.get_target(), 1);
-    // The history's row for the step is named Auto too: only the
-    // panel on the right is looked in.
     let (blacks, _) = crate::testing::by_id(&app, "LightSection::blacks-slider");
     let panel = ElementHandle::find_by_element_id(&app, "App::panel-view")
         .next()
         .expect("the panel's view")
         .absolute_position();
     assert!(blacks.x >= panel.x);
-    let in_panel = ElementHandle::find_by_accessible_label(&app, "Auto")
-        .filter(|e| e.absolute_position().x >= panel.x)
-        .count();
-    assert_eq!(in_panel, 0);
+    let autos = crate::testing::count_id(&app, "LightSection::auto-button")
+        + crate::testing::count_id(&app, "WhiteBalanceSection::auto-button");
+    assert_eq!(autos, 0);
 }
 
 /// A monochrome raw's masks' whites and the global slider's preview
@@ -3370,7 +3356,10 @@ fn a_masks_white_on_a_picture_adds_to_the_global() {
         (app.get_local_temperature(), app.get_local_tint()),
         (0.0, 0.0)
     );
-    assert_eq!(crate::testing::count_labeled(&app, "Follow global"), 0);
+    assert_eq!(
+        crate::testing::count_id(&app, "WhiteBalanceSection::follow-global-toggle"),
+        0
+    );
     // The mask's +20 is the picture's light moved by 50.
     app.set_local_temperature(20.0);
     let edit = read_edit(&app, &state.borrow().develop.edit, Some(0));
@@ -4113,7 +4102,7 @@ fn help_has_the_keys_and_the_guide_and_a_test_opens_no_browser() {
     app.window()
         .set_size(slint::LogicalSize::new(1500.0, 950.0));
     let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
-    assert_eq!(crate::testing::count_labeled(&app, "Help menu"), 1);
+    assert_eq!(crate::testing::count_id(&app, "App::help-button"), 1);
     app.invoke_guide_asked();
     assert_eq!(app.get_status(), "the guide is open in the browser");
     assert_eq!(Shown::sheet("keys"), Ok(Shown::Keys));
@@ -4126,7 +4115,7 @@ fn help_has_the_keys_and_the_guide_and_a_test_opens_no_browser() {
     // The menu asked for opens it, and the ask is spent.
     slint::platform::update_timers_and_animations();
     Shown::Help.open(&app);
-    crate::testing::count_labeled(&app, "Help menu");
+    crate::testing::count_id(&app, "App::help-button");
     slint::platform::update_timers_and_animations();
     assert!(!app.get_help_menu_shown());
 }
@@ -4164,11 +4153,11 @@ fn the_fit_buttons_menu_chooses_a_zoom_and_a_click_still_fits() {
             })
             .collect()
     };
-    // The footer's Fit is the lowest: the zoom's words say it too.
-    let button = found("Fit")
-        .into_iter()
-        .max_by(|a, b| a.1.total_cmp(&b.1))
-        .expect("the Fit button");
+    // The footer's Fit.
+    let button = {
+        let (at, size) = crate::testing::by_id(&app, "App::fit-button");
+        (at.x + size.width / 2.0, at.y + size.height / 2.0)
+    };
     // An entry of the open menu by its place, from the keys: the
     // menu is a popup of its own, with places of its own. Its
     // last entry's words are nowhere else.
@@ -4278,13 +4267,13 @@ fn the_edge_arrows_and_undo_say_their_words_after_a_rest() {
     away();
     // The press: the word, then the panel gone and the word with it,
     // and the arrow's next word is the way back.
-    let (x, y) = rest_on(&app, "Right panel");
+    let (x, y) = crate::testing::rest_on_id(&app, "App::right-arrow");
     assert_eq!(app.get_tip_text(), "Hide panel");
     click(&app, x, y);
     assert_eq!(app.get_tip_text(), "", "the press took the word down");
     assert!(app.get_right_hidden());
     away();
-    rest_on(&app, "Right panel");
+    crate::testing::rest_on_id(&app, "App::right-arrow");
     assert_eq!(app.get_tip_text(), "Show panel");
 }
 

@@ -372,7 +372,7 @@ export component Filmstrip inherits Rectangle {
     // strip's padding below the cells rather than the grid's wider
     // band, so its track never covers a frame's ring and a frame keeps
     // every pixel of its click. The thumb keeps its 4 px from the foot.
-    ScrollBand {
+    scroll-bar := ScrollBand {
         horizontal: true;
         y: parent.height - root.strip-foot;
         width: parent.width;

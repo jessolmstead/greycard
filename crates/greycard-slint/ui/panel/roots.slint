@@ -414,7 +414,7 @@ export component RootsSection inherits Section {
                 }
             }
         }
-        if root.roots.length > 0: RootRow {
+        if root.roots.length > 0: all-roots := RootRow {
             text: @tr("All roots");
             count: root.all-count;
             on: root.all-on;
@@ -447,12 +447,12 @@ export component RootsSection inherits Section {
         HorizontalLayout {
             spacing: Theme.space-1;
             alignment: start;
-            if root.can-add-open: AddLink {
+            if root.can-add-open: add-open-link := AddLink {
                 text: @tr("+ Add this folder");
                 menu-shown => { return root.menu-shown(); }
                 clicked => { root.focus-keys(); root.add-open(); }
             }
-            AddLink {
+            add-root-link := AddLink {
                 text: @tr("+ Add a root...");
                 menu-shown => { return root.menu-shown(); }
                 clicked => { root.focus-keys(); root.add(); }

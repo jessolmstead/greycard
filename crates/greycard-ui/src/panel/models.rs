@@ -847,7 +847,10 @@ mod tests {
             assert_eq!(l.license, m.license.name);
             assert!(!l.purpose.is_empty());
         }
-        assert_eq!(crate::testing::count_labeled(&app, "MODELS"), 1);
+        assert_eq!(
+            crate::testing::count_id(&app, "SettingsSheet::models-heading"),
+            1
+        );
         assert_eq!(line(&app, &SKY).status, "in the store");
         assert_eq!(line(&app, &SAM).status, "not downloaded");
         assert_eq!(

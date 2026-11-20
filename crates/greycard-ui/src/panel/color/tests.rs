@@ -138,7 +138,10 @@ fn the_sliders_follow_the_chosen_wheel(app: &App, state: &Rc<Shared>, prefix: &s
     assert_eq!(app.get_grade_big(), 1);
     assert_eq!(app.get_grade_range(), 1, "the marker follows the enlarging");
     assert_eq!(sliders(app), before[1]);
-    assert_eq!(crate::testing::count_labeled(app, "Enlarged wheel"), 1);
+    assert_eq!(
+        crate::testing::count_id(app, "GradingSection::big-wheel"),
+        1
+    );
     app.set_grade_saturation(0.9);
     app.invoke_grade_changed();
     let enlarged = wheels(app);
@@ -1511,7 +1514,7 @@ fn a_monochrome_frames_mask_white_balance_rests() {
     m.drag(TEMPERATURE);
     m.drag(TINT);
     m.double_click(TEMPERATURE);
-    crate::testing::click_switch(app, "Follow global");
+    crate::testing::click_switch_by_id(app, "WhiteBalanceSection::follow-global-toggle");
     m.settle();
     let (at, size) = crate::testing::by_id(app, "WhiteBalanceSection::neutral-button");
     crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
@@ -1706,7 +1709,7 @@ fn click_as_shot(m: &Mono) {
 }
 
 fn click_follow_global(m: &Mono) {
-    crate::testing::click_switch(&m.app, "Follow global");
+    crate::testing::click_switch_by_id(&m.app, "WhiteBalanceSection::follow-global-toggle");
     m.settle();
 }
 
