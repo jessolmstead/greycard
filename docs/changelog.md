@@ -22,9 +22,6 @@ design note behind it.
 
 ### Develop
 
-- Highlight fill, a switch in Light: a small learned model rebuilds
-  clipped highlights, a blown sky or backlit leaves, in a second or two
-  ([§719](https://github.com/jessolmstead/greycard/blob/master/docs/notes/719-a-learned-highlight-fill-the-design.md)).
 - Light's sliders sit in two groups, a hairline between Shadows and
   Whites.
 - The Vignette has a Style: Overlay darkens the picture as shown, so a

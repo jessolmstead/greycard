@@ -2176,6 +2176,10 @@ export component App inherits Window {
     // takes the fill: one that does not greys the switch.
     in-out property <bool> highlight-fill: false;
     in property <bool> highlight-fill-takes: true;
+    // Whether the switch is drawn at all: only with GREYCARD_HIGHLIGHT_FILL
+    // set to 1 at the start, while the model is not yet good enough to
+    // offer. An edit that carries the fill develops with it either way.
+    in property <bool> highlight-fill-shown: false;
     callback demosaic-picked(string);
     demosaic-picked(v) => {
         root.demosaic-stored = v;
@@ -4639,7 +4643,7 @@ export component App inherits Window {
                                     view-changed => { root.view-changed(); }
                                     highlight-fill <=> root.highlight-fill;
                                     highlight-fill-takes: root.highlight-fill-takes;
-                                    show-highlight-fill: root.target == 0;
+                                    show-highlight-fill: root.target == 0 && root.highlight-fill-shown;
                                     develop-changed => { root.develop-changed(); }
                                 }
                                 if section == "color" && (root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0)): ColorSection {

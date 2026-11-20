@@ -440,6 +440,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Ok(name) = std::env::var("GREYCARD_UI_CURVE_CHANNEL") {
         app.set_curve_channel(name.into());
     }
+    // The learned highlight fill's switch in Light, read once: drawn only
+    // with `GREYCARD_HIGHLIGHT_FILL=1` while the model is not yet good
+    // enough to offer. An edit carrying the fill develops with it either
+    // way; only the control is hidden.
+    let fill_shown = std::env::var("GREYCARD_HIGHLIGHT_FILL").is_ok_and(|v| v == "1");
+    app.set_highlight_fill_shown(fill_shown);
     if let Some(tab) = &cli.tab {
         app.set_panel_tab(tab.as_str().into());
     }

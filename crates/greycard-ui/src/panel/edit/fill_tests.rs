@@ -1,7 +1,10 @@
 //! The learned highlight fill's switch in LIGHT, by its element id:
 //! what it reads and writes, its history, the pending word and each way
 //! it goes, and the switch standing down on a frame the fill does not
-//! take, its setting kept.
+//! take, its setting kept. The switch is drawn only with
+//! `GREYCARD_HIGHLIGHT_FILL=1` at the start; these tests set the
+//! property it is read into, never the process's environment, which
+//! the tests share.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -19,9 +22,11 @@ const SWITCH: &str = "LightSection::highlight-fill-switch";
 /// The words the status line says while the fill is to come.
 const PENDING: &str = "developing... the highlight fill is at work";
 
-/// A window over `n` frames with frame 0 open and LIGHT unfolded.
+/// A window over `n` frames with frame 0 open, LIGHT unfolded, and the
+/// switch drawn.
 fn open(n: usize) -> (App, Rc<Shared>, Rc<Worker>) {
     let app = window(n);
+    app.set_highlight_fill_shown(true);
     app.window()
         .set_size(slint::LogicalSize::new(1500.0, 950.0));
     let (state, worker) = state_for(&app, folder(n));
@@ -439,6 +444,7 @@ fn a_mask_s_light_has_no_switch_and_its_reset_leaves_the_fill() {
     });
     edit.adjustments[0].look.light.exposure = 0.7;
     let app = window(1);
+    app.set_highlight_fill_shown(true);
     app.window()
         .set_size(slint::LogicalSize::new(1500.0, 950.0));
     let (state, _worker) = state_for(&app, folder(1));
@@ -549,4 +555,99 @@ fn the_pending_word_waits_with_the_editor() {
     app.invoke_cull_toggled();
     assert!(state.borrow().culling.cull.is_some());
     assert!(!app.get_status().contains(PENDING), "{}", app.get_status());
+}
+
+/// Without `GREYCARD_HIGHLIGHT_FILL=1` the switch is not drawn: no
+/// element by its id, nothing a screen reader reaches by its name. An
+/// edit that carries the fill all the same (a sidecar from a build that
+/// drew it, a paste, a sync) reads back on, saves on, and a paste of it
+/// carries it to another frame.
+#[test]
+fn hidden_the_switch_is_absent_and_a_carried_fill_stays_on() {
+    let app = window(2);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
+    assert!(!app.get_highlight_fill_shown(), "hidden by default");
+    let (state, _worker) = state_for(&app, folder(2));
+    let filled = Edit {
+        highlight_fill: Some("hl-1".into()),
+        ..Edit::default()
+    };
+    state.borrow_mut().sidecars[0].record(filled.clone());
+    app.invoke_select(0);
+    app.set_collapsed_light(false);
+    crate::testing::settle(&app);
+    by_id(&app, "LightSection::light-hairline");
+    assert!(
+        ElementHandle::find_by_element_id(&app, SWITCH)
+            .next()
+            .is_none(),
+        "no switch by its id"
+    );
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "Highlight fill")
+            .next()
+            .is_none(),
+        "nothing named for it"
+    );
+    assert!(app.get_highlight_fill(), "the edit's fill, shown on");
+    {
+        let st = state.borrow();
+        assert_eq!(read_edit(&app, &st.develop.edit, None), filled);
+    }
+    app.set_exposure(0.3);
+    save(&app, &state);
+    let kept = current(&state, 0);
+    assert_eq!(kept.light.exposure, 0.3);
+    assert_eq!(kept.highlight_fill.as_deref(), Some("hl-1"));
+    app.invoke_copy_asked();
+    app.invoke_select(1);
+    app.invoke_paste_asked();
+    app.invoke_sync_applied();
+    assert_eq!(current(&state, 1).highlight_fill.as_deref(), Some("hl-1"));
+}
+
+/// Hidden, the switch takes no room: the hairline sits under Shadows
+/// as close as the switch sits drawn, as tall as it is drawn, and Light
+/// is shorter by the switch's row and its spacing alone.
+#[test]
+fn hidden_the_switch_takes_no_room_in_light() {
+    let (app, _state, _worker) = open(1);
+    // Read without scrolling between, so each pair shares the panel's
+    // offset.
+    let bounds = |id: &str| {
+        crate::testing::bounds_of(
+            &ElementHandle::find_by_element_id(&app, id)
+                .next()
+                .unwrap_or_else(|| panic!("{id}")),
+        )
+    };
+    let exposure = "LightSection::exposure";
+    let hairline = "LightSection::light-hairline";
+    by_id(&app, hairline);
+    let (top_on, _) = bounds(exposure);
+    let (fill_at, _) = bounds(SWITCH);
+    let (line_on, line_size_on) = bounds(hairline);
+    let row = line_on.y - fill_at.y;
+    assert!(row > 0.0);
+    app.set_highlight_fill_shown(false);
+    crate::testing::settle(&app);
+    assert!(
+        ElementHandle::find_by_element_id(&app, SWITCH)
+            .next()
+            .is_none()
+    );
+    by_id(&app, hairline);
+    let (top_off, _) = bounds(exposure);
+    let (line_off, line_size_off) = bounds(hairline);
+    assert_eq!(line_size_off, line_size_on, "the hairline as it was");
+    let drop = (line_on.y - top_on.y) - (line_off.y - top_off.y);
+    assert!(
+        (drop - row).abs() < 0.5,
+        "shorter by the switch's row ({row}) alone, not {drop}"
+    );
+    assert!(
+        ((line_off.y - top_off.y) - (fill_at.y - top_on.y)).abs() < 0.5,
+        "the hairline where the switch was"
+    );
 }

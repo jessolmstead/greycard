@@ -347,6 +347,26 @@ mask's Light leave it alone.
   bit for bit the build before, every changed pixel lies within 64 px
   of one above 97%, and the fill's stage takes 0.27 to 0.54 s.
 
+## 1e. On real frames, and the switch hidden (2026-11-20)
+
+On the owner's frames hl-1 hurt more scenes than it helped: of the
+scenes it visibly changes across 104 runs, about ten were worse and
+seven better. The cause is the model, not the port or the Canon
+headroom: struct6 trained on 384 px crops, so no clipped region it saw
+was deeper than about 192 px, and the failing regions run 216 to 512.
+On those it builds a dome (the center raised, the edge left: a grey
+ring round a sun, bands on a flat white surface), tints the core from
+the rim, whitens a huge core to grey, and lifts the whole partly
+clipped band about 0.09 stops, ending in an arc where the last channel
+stops clipping. The wins are small sources: lamps, bokeh, backlit
+leaves, speculars.
+
+So the switch is drawn only with `GREYCARD_HIGHLIGHT_FILL=1` set at
+the start. An edit that carries the fill still develops with it, and
+Demosaic's reset takes it off. Next is hl-2 on the same weights: large
+regions left to the classical fill, and the learned fill applied to
+all-clipped cells only, ramped in from the core's edge.
+
 ## 2. Everything in Rust
 
 The procedural part and the network's forward pass are both plain
