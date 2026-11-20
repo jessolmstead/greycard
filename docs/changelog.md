@@ -61,7 +61,8 @@ design note behind it.
 - In the export queue's grid, a frame whose export failed no longer
   wears the exported mark while its set runs.
 - An export of a crop dragged far out on a steep keystone, past 200
-  megapixels, fails with its reason instead of running out of memory.
+  megapixels, fails with its reason instead of running out of memory;
+  at a smaller long edge it exports.
 - A DNG with a linearization table, such as some DxO PureRAW files,
   no longer develops six stops dark and magenta.
 - A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows

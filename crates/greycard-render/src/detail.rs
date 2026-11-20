@@ -466,12 +466,22 @@ pub struct BandImages {
 impl Plane {
     /// The frame of `geometry` cut from it, as from a channel of the
     /// picture.
+    /// At `at` when given, as [`crate::geometry::apply_plane_at`] cuts.
     fn framed(
         &self,
         geometry: &greycard_edit::geometry::Geometry,
+        at: Option<(usize, usize)>,
     ) -> Result<Self, crate::geometry::TooLarge> {
-        let (data, width, height) =
-            crate::geometry::apply_plane(&self.data, self.width, self.height, geometry)?;
+        let (data, width, height) = match at {
+            Some(size) => crate::geometry::apply_plane_at(
+                &self.data,
+                self.width,
+                self.height,
+                geometry,
+                size,
+            )?,
+            None => crate::geometry::apply_plane(&self.data, self.width, self.height, geometry)?,
+        };
         Ok(Plane {
             width,
             height,
@@ -514,25 +524,43 @@ impl BandImages {
         &self,
         geometry: &greycard_edit::geometry::Geometry,
     ) -> Result<Self, crate::geometry::TooLarge> {
-        let lanes = self
-            .lanes
-            .as_ref()
-            .map(|l| crate::geometry::apply(l, geometry))
-            .transpose()?;
+        self.framed_with(geometry, None)
+    }
+
+    /// [`Self::framed`] with the frame cut at `size`, as
+    /// [`crate::geometry::apply_at`] cuts the picture.
+    pub fn framed_at(
+        &self,
+        geometry: &greycard_edit::geometry::Geometry,
+        size: (usize, usize),
+    ) -> Result<Self, crate::geometry::TooLarge> {
+        self.framed_with(geometry, Some(size))
+    }
+
+    fn framed_with(
+        &self,
+        geometry: &greycard_edit::geometry::Geometry,
+        at: Option<(usize, usize)>,
+    ) -> Result<Self, crate::geometry::TooLarge> {
+        let cut = |i: &WorkingImage| match at {
+            Some(size) => crate::geometry::apply_at(i, geometry, size),
+            None => crate::geometry::apply(i, geometry),
+        };
+        let lanes = self.lanes.as_ref().map(cut).transpose()?;
         let structure = self
             .structure
             .as_ref()
-            .map(|s| s.framed(geometry))
+            .map(|s| s.framed(geometry, at))
             .transpose()?;
         let sharpen = self
             .sharpen
             .as_ref()
-            .map(|s| s.framed(geometry))
+            .map(|s| s.framed(geometry, at))
             .transpose()?;
         let sample = self
             .sample
             .as_ref()
-            .map(|s| crate::geometry::apply(s, geometry).map(Arc::new))
+            .map(|s| cut(s.as_ref()).map(Arc::new))
             .transpose()?;
         let size = lanes
             .as_ref()
@@ -1209,6 +1237,13 @@ mod tests {
         let s = framed.structure.as_ref().unwrap();
         assert_eq!((s.width, s.height), (framed.width(), framed.height()));
         assert_eq!(s.data, first(&framed));
+        // Cut smaller, as an export of a frame too large to hold cuts
+        // it, the plane still goes as the channel does.
+        let small = bands.framed_at(&turned, (21, 13)).unwrap();
+        let s = small.structure.as_ref().unwrap();
+        assert_eq!((s.width, s.height), (21, 13));
+        assert_eq!(small.size, (21, 13));
+        assert_eq!(s.data, first(&small));
         for (w, h) in [(30, 20), (90, 70)] {
             let fitted = framed.fit_exact(w, h).unwrap();
             assert_eq!(

@@ -916,6 +916,37 @@ pub(crate) fn fit(image: &WorkingImage, long_edge: Option<u32>) -> Option<Workin
     fit_exact(image, w, h)
 }
 
+/// The size a frame of `size`, too large to hold within `limit`
+/// pixels, is cut at instead for an export of `long_edge`: twice the
+/// size [`fit`] would take it to, or as near that as `limit` allows,
+/// and always larger than it, so the fit still takes it the rest of
+/// the way, sharpening after it as ever, to the same size it would
+/// have taken the whole frame to. None when the export asks for no
+/// smaller size or for one that cannot be held either.
+pub fn reduced_frame(
+    size: (usize, usize),
+    long_edge: Option<u32>,
+    limit: usize,
+) -> Option<(usize, usize)> {
+    let edge = long_edge? as usize;
+    let fitted = fit_size(size.0, size.1, long_edge)?;
+    let (tw, th) = (fitted.0 as usize, fitted.1 as usize);
+    let room = (limit as f64 / (tw as f64 * th as f64)).sqrt().min(2.0);
+    let (w, h) = (
+        (tw as f64 * room).floor() as usize,
+        (th as f64 * room).floor() as usize,
+    );
+    // The floor may land the fit a pixel off the whole frame's on
+    // the short side; the nearest a pixel either way on each that
+    // lands on it, the floor itself first.
+    let near = |n: usize| [n, n.saturating_sub(1), n + 1];
+    near(w)
+        .into_iter()
+        .flat_map(|w| near(h).map(|h| (w, h)))
+        .filter(|&(w, h)| w.max(h) > edge && w * h <= limit)
+        .find(|&(w, h)| fit_size(w, h, long_edge) == Some(fitted))
+}
+
 /// The size [`fit`] takes a picture of this size to, or none when it
 /// already fits.
 pub(crate) fn fit_size(width: usize, height: usize, long_edge: Option<u32>) -> Option<(u32, u32)> {
@@ -1139,6 +1170,38 @@ const SOFTWARE: &str = concat!("greycard ", env!("CARGO_PKG_VERSION"));
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// A frame too large to hold is cut at twice the export's size, or
+    /// as near it as the limit allows, always larger than the export
+    /// and fitting to the very size the whole frame would; never for an
+    /// export at full size, or one as large as the frame, or one that
+    /// cannot be held itself.
+    #[test]
+    fn a_frame_too_large_is_cut_near_the_size_asked() {
+        let limit = 200_000_000;
+        let frame = (22_917, 15_311);
+        let at = reduced_frame(frame, Some(2048), limit).unwrap();
+        let fitted = fit_size(frame.0, frame.1, Some(2048)).unwrap();
+        assert_eq!(at, (2 * fitted.0 as usize, 2 * fitted.1 as usize));
+        for (edge, frame) in [
+            (13_000, (22_917, 15_311)),
+            (15_000, (15_311, 22_917)),
+            (16_000, (24_001, 16_003)),
+            (9_999, (17_001, 12_997)),
+        ] {
+            let at = reduced_frame(frame, Some(edge), limit).unwrap();
+            assert!(at.0 * at.1 <= limit, "{at:?}");
+            assert!(at.0.max(at.1) > edge as usize, "{at:?}");
+            assert_eq!(
+                fit_size(at.0, at.1, Some(edge)),
+                fit_size(frame.0, frame.1, Some(edge)),
+                "{frame:?} at {edge}"
+            );
+        }
+        assert_eq!(reduced_frame(frame, None, limit), None);
+        assert_eq!(reduced_frame(frame, Some(22_917), limit), None);
+        assert_eq!(reduced_frame(frame, Some(20_000), limit), None);
+    }
 
     /// A synthetic camera profile with a tone curve, a look table fitted
     /// under per channel, and a general one, by name.

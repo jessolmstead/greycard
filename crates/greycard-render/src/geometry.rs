@@ -159,19 +159,131 @@ fn frame_of<const N: usize>(
                     frame.origin.0 + ox as f32 + 0.5,
                     frame.origin.1 + oy as f32 + 0.5,
                 );
-                let s = geometry.to_source(r, w, h);
-                *px = if turned {
-                    if s.0 < 0.0 || s.1 < 0.0 || s.0 >= w || s.1 >= h {
-                        [0.0; N]
-                    } else {
-                        sample_cubic_of::<N>(data, width, height, s.0, s.1)
+                *px = sample_of::<N>(data, width, height, turned, geometry.to_source(r, w, h));
+            }
+        });
+    Ok((out, ow, oh))
+}
+
+/// The source at a position `s` as the frame takes it: Catmull-Rom
+/// when `turned`, black off the source, and the pixel under it when
+/// not.
+#[inline]
+fn sample_of<const N: usize>(
+    data: &[f32],
+    width: usize,
+    height: usize,
+    turned: bool,
+    s: (f32, f32),
+) -> [f32; N] {
+    let (w, h) = (width as f32, height as f32);
+    if turned {
+        if s.0 < 0.0 || s.1 < 0.0 || s.0 >= w || s.1 >= h {
+            [0.0; N]
+        } else {
+            sample_cubic_of::<N>(data, width, height, s.0, s.1)
+        }
+    } else {
+        let sx = (s.0.floor() as i64).clamp(0, width as i64 - 1) as usize;
+        let sy = (s.1.floor() as i64).clamp(0, height as i64 - 1) as usize;
+        let k = (sy * width + sx) * N;
+        std::array::from_fn(|c| data[k + c])
+    }
+}
+
+/// [`apply`] with the frame cut at `size` rather than its own: for a
+/// frame too large to hold at its own size that an export asks for
+/// smaller, which the export's fit then takes the rest of the way.
+/// Refused past [`limit_for`] the image, as [`apply`] is.
+pub fn apply_at(
+    image: &WorkingImage,
+    geometry: &Geometry,
+    size: (usize, usize),
+) -> Result<WorkingImage, TooLarge> {
+    let limit = limit_for(image.width, image.height);
+    let (data, width, height) = frame_at_of::<3>(
+        &image.data,
+        image.width,
+        image.height,
+        geometry,
+        size,
+        limit,
+    )?;
+    Ok(WorkingImage {
+        width,
+        height,
+        data,
+    })
+}
+
+/// [`apply_at`] on a plane of one channel, as [`apply_plane`] is.
+pub fn apply_plane_at(
+    data: &[f32],
+    width: usize,
+    height: usize,
+    geometry: &Geometry,
+    size: (usize, usize),
+) -> Result<(Vec<f32>, usize, usize), TooLarge> {
+    frame_at_of::<1>(
+        data,
+        width,
+        height,
+        geometry,
+        size,
+        limit_for(width, height),
+    )
+}
+
+/// The frame of `geometry` cut at `size` from `N` interleaved
+/// channels: each pixel stands for a block of the frame's own pixels
+/// and is the mean of samples spread evenly over that block, as many
+/// along each side as the source pixels the side spans, from one (where
+/// the frame magnifies the source, a block is smooth and its center
+/// says enough) to the frame pixels the side stands for. So a frame cut
+/// many times smaller than its own size is a box filter of it, not an
+/// alias of the source, and the samples taken stay near the source's
+/// pixels rather than the frame's, which may be 64 times as many.
+fn frame_at_of<const N: usize>(
+    data: &[f32],
+    width: usize,
+    height: usize,
+    geometry: &Geometry,
+    size: (usize, usize),
+    limit: usize,
+) -> Result<(Vec<f32>, usize, usize), TooLarge> {
+    let (w, h) = (width as f32, height as f32);
+    let frame = geometry.frame(w, h, None);
+    let (ow, oh) = size;
+    holdable((ow, oh), limit)?;
+    let (bx, by) = (frame.size.0 / ow as f32, frame.size.1 / oh as f32);
+    let (most_x, most_y) = (bx.ceil().max(1.0), by.ceil().max(1.0));
+    let mut out = vec![0.0f32; ow * oh * N];
+    let turned = geometry.resamples();
+    let at = |x: f32, y: f32| geometry.to_source((frame.origin.0 + x, frame.origin.1 + y), w, h);
+    out.par_chunks_mut((ow * N).max(1))
+        .enumerate()
+        .for_each(|(oy, row)| {
+            for (ox, px) in row.as_chunks_mut::<N>().0.iter_mut().enumerate() {
+                let (x0, y0) = (ox as f32 * bx, oy as f32 * by);
+                let c = at(x0 + bx / 2.0, y0 + by / 2.0);
+                let span = |s: (f32, f32)| (s.0 - c.0).hypot(s.1 - c.1) * 2.0;
+                let along_x = span(at(x0 + bx, y0 + by / 2.0));
+                let along_y = span(at(x0 + bx / 2.0, y0 + by));
+                let count = |v: f32, most: f32| v.ceil().clamp(1.0, most) as usize;
+                let (kx, ky) = (count(along_x, most_x), count(along_y, most_y));
+                let mut sum = [0.0f32; N];
+                for j in 0..ky {
+                    let y = y0 + (j as f32 + 0.5) / ky as f32 * by;
+                    for i in 0..kx {
+                        let x = x0 + (i as f32 + 0.5) / kx as f32 * bx;
+                        let v = sample_of::<N>(data, width, height, turned, at(x, y));
+                        for (s, v) in sum.iter_mut().zip(v) {
+                            *s += v;
+                        }
                     }
-                } else {
-                    let sx = (s.0.floor() as i64).clamp(0, width as i64 - 1) as usize;
-                    let sy = (s.1.floor() as i64).clamp(0, height as i64 - 1) as usize;
-                    let k = (sy * width + sx) * N;
-                    std::array::from_fn(|c| data[k + c])
                 }
+                let n = (kx * ky) as f32;
+                *px = sum.map(|s| s / n);
             }
         });
     Ok((out, ow, oh))
@@ -399,6 +511,59 @@ mod keystone {
             }),
             ..Default::default()
         }
+    }
+
+    /// A frame past its limit cut at the size an export asks for it
+    /// smaller, then fitted, is the whole frame fitted to that size: of
+    /// [`over_the_limit`] on a tenth of [`OVER`], a ramp with a square
+    /// of a checker of single pixels on it, held whole here to read the
+    /// two against each other.
+    #[test]
+    fn a_frame_cut_smaller_is_the_whole_frame_fitted() {
+        use crate::export::{fit_exact, fit_size, reduced_frame};
+        let (w, h) = (OVER.0 / 10, OVER.1 / 10);
+        let mut image = WorkingImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let mark = (150..250).contains(&x) && (100..180).contains(&y);
+                let v = if mark {
+                    ((x + y) % 2) as f32
+                } else {
+                    0.1 + 0.3 * x as f32 / w as f32
+                };
+                let k = (y * w + x) * 3;
+                image.data[k..k + 3].copy_from_slice(&[v, 0.2, 0.3 * y as f32 / h as f32]);
+            }
+        }
+        let g = over_the_limit();
+        let (data, fw, fh) = frame_of::<3>(&image.data, w, h, &g, usize::MAX).unwrap();
+        let whole = WorkingImage {
+            width: fw,
+            height: fh,
+            data,
+        };
+        let limit = fw * fh / 4;
+        let edge = Some(240);
+        let target = fit_size(fw, fh, edge).unwrap();
+        let at = reduced_frame((fw, fh), edge, limit).unwrap();
+        assert!(at.0 * at.1 <= limit && at.0 > 240, "{at:?}");
+        let small = apply_at(&image, &g, at).unwrap();
+        assert_eq!((small.width, small.height), at);
+        let a = fit_exact(&whole, target.0, target.1).unwrap();
+        let b = fit_exact(&small, target.0, target.1).unwrap();
+        let diffs: Vec<f32> = a
+            .data
+            .iter()
+            .zip(&b.data)
+            .map(|(a, b)| (a - b).abs())
+            .collect();
+        let mean = diffs.iter().sum::<f32>() / diffs.len() as f32;
+        let most = diffs.iter().cloned().fold(0.0, f32::max);
+        // Measured 2.4e-5 and 0.22, the most on the checker, where the
+        // two filters part; a sample a pixel cut smaller, without the
+        // box, aliases it to 6.8e-5 and 0.36.
+        assert!(mean < 4e-5, "mean {mean}");
+        assert!(most < 0.3, "most {most}");
     }
 
     /// The real limit refuses a crop dragged out on a 12 MP source,

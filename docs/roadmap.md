@@ -94,10 +94,12 @@ the reasoning lives in `docs/notes.md`.
       machines; the Lightroom import reads the label too, and history
       rows stay English in a translated window. A step's kind as a
       field instead (review, 2026-11-11)
-- [ ] The frame's limit of 200 megapixels, what is left: a small
-      export of a frame past it is refused too, the cut being made at
-      full size before the export shrinks it; the detail bands frame
-      at the same size, so an export just under it peaks near 10 GB
+- [ ] The frame's limit of 200 megapixels, what is left: the detail
+      bands frame at the same size, so an export just under it peaks
+      near 10 GB; a long edge asked above about 50 megapixels of a
+      frame past the limit is sometimes still refused where a cut
+      exists (`reduced_frame` looks one pixel either way and no
+      lower); no test takes detail bands through the smaller cut
       (review, 2026-11-20)
 - [ ] A frame whose export failed leaves the queue (§213) with its
       reason only in the status line, when it is the one failure, and
