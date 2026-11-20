@@ -36,6 +36,8 @@ design note behind it.
 
 ### Fixes
 
+- Zoomed in, the view stays on the same spot while Angle, the level,
+  the perspective sliders, the aspect, a turn, or a flip changes.
 - On a short window the Masks tab's list gives up rows sooner, so a
   mask's sliders keep at least 214 px of room (issue 157).
 - A graphics card that the learned denoiser crashes rests its tiers,

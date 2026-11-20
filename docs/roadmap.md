@@ -91,6 +91,12 @@ the reasoning lives in `docs/notes.md`.
       machines; the Lightroom import reads the label too, and history
       rows stay English in a translated window. A step's kind as a
       field instead (review, 2026-11-11)
+- [ ] The frame's own Turn left and right, zoomed in, throws the view
+      to the frame's middle: carry the point as a geometry change
+      does, with the turn in what was laid out (review, 2026-11-19)
+- [ ] Both perspective sliders past about 30 degrees send a corner
+      across the horizon and the frame's bounds to tens of millions
+      of pixels: bound the frame there (review, 2026-11-19)
 - [ ] `greycard.exe` beside the editor on Windows: double-clicked,
       or run from Win+R, the command line is a console that opens and
       closes. A name or a place that keeps it out of the way (§684)

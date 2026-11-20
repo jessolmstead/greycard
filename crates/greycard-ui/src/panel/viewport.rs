@@ -189,9 +189,11 @@ pub(crate) struct OnShow {
 
 /// The frame on show under `edit` (the edit the view draws; `panel`
 /// the panel's), laid out: the picture's size as an export writes it
-/// goes to the sheet, a frame of a new size is centered, and a develop
-/// that replaces a picture standing in for it takes on the zoom chosen
-/// there (`cull::stood_view`) about the same place in the picture.
+/// goes to the sheet, a frame of a new size is centered unless a zoomed
+/// view carries its point across a change of geometry
+/// ([`carried_center`]), and a develop that replaces a picture standing
+/// in for it takes on the zoom chosen there (`cull::stood_view`) about
+/// the same place in the picture.
 ///
 /// The picture is this frame's develop once it has landed, and until
 /// then the one still on the GPU, which `edit` is the held one for. A
@@ -229,10 +231,31 @@ pub(crate) fn frame_on_show(
         .stood_view
         .take()
         .filter(|v| v.generation == st.develop.drawn_generation && own_develop(st).is_some());
+    let of = st.develop.shown_turn.and_then(|(c, _)| {
+        let cell = st.cells.get(c)?;
+        Some((st.files.get(cell.file)?.clone(), cell.version.clone()))
+    });
+    let laid = owners::Laid {
+        of,
+        geometry: edit.geometry.clone(),
+        source: (sw, sh),
+        frame,
+    };
+    let before = st.develop.laid.replace(laid.clone());
+    // A zoomed view of the picture laid out last, under another
+    // geometry or frame: the same point of the picture stays in the
+    // middle. A view asked to fit, or re-centered (a size of none),
+    // is centered below as it always was.
+    let carried = before
+        .filter(|_| st.develop.zoom > 0.0 && st.develop.image_size != (0, 0))
+        .and_then(|before| carried_center(&before, &laid, st.develop.center));
     if let Some(stood) = stood {
         let (zoom, center) = stood_onto(&stood, &edit.geometry, (sw, sh), &frame, camera);
         st.develop.image_size = size;
         st.develop.zoom = zoom;
+        st.develop.center = center;
+    } else if let Some(center) = carried {
+        st.develop.image_size = size;
         st.develop.center = center;
     } else if size != st.develop.image_size {
         st.develop.image_size = size;
@@ -243,6 +266,44 @@ pub(crate) fn frame_on_show(
         lag,
         frame,
     }
+}
+
+/// The view's `center`, a point of the frame `before` laid out, as a
+/// point of the frame `now` laid out of the same source: through the
+/// plane to the source under the geometry it was drawn under, and back
+/// under the one in force, so a turn, a keystone, a mirror, or a crop
+/// refitted about it leaves the same place of the picture in the
+/// middle. A point the new frame leaves out is held at its edge. None
+/// for another frame's develop, or none drawn (a stand-in), another
+/// size of source, or a point that does not come back finite (past a
+/// keystone's horizon), which is laid out as a new frame is; the center
+/// as it was where nothing changed, so a frame drawn again does not
+/// drift.
+fn carried_center(
+    before: &owners::Laid,
+    now: &owners::Laid,
+    center: (f32, f32),
+) -> Option<(f32, f32)> {
+    if before.of.is_none() || before.of != now.of || before.source != now.source {
+        return None;
+    }
+    if before == now {
+        return Some(center);
+    }
+    let (sw, sh) = now.source;
+    let plane = (
+        before.frame.origin.0 + center.0,
+        before.frame.origin.1 + center.1,
+    );
+    let source = before.geometry.to_source(plane, sw, sh);
+    let (px, py) = now.geometry.to_plane(source, sw, sh);
+    let (x, y) = (px - now.frame.origin.0, py - now.frame.origin.1);
+    (x.is_finite() && y.is_finite()).then(|| {
+        (
+            x.clamp(0.0, now.frame.size.0),
+            y.clamp(0.0, now.frame.size.1),
+        )
+    })
 }
 
 /// A view on a picture standing in, as the zoom and center of the

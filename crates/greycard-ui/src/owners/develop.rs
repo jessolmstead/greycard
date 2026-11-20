@@ -108,6 +108,10 @@ pub(crate) struct Develop {
     pub(crate) mat: bool,
     /// The image pixel at the view's center.
     pub(crate) center: (f32, f32),
+    /// The frame as the render last laid it out, which `center` is a
+    /// point of: a change of the geometry carries the center through
+    /// it (`viewport::frame_on_show`).
+    pub(crate) laid: Option<Laid>,
     /// Where a middle click's 200% came from, until any other change
     /// of the zoom.
     pub(crate) zoom_back: Option<ZoomBack>,
@@ -424,9 +428,10 @@ pub(crate) struct Develop {
     /// old picture.
     pub(crate) held: Option<Edit>,
     pub(crate) status_kept: Option<slint::SharedString>,
-    /// The view (the frame's size and the center) before a peek, put
-    /// back after it: a hover over a row is not to lose a zoomed place.
-    pub(crate) view_kept: Option<((u32, u32), (f32, f32))>,
+    /// The view (the frame's size, the center, and the frame laid out)
+    /// before a peek, put back after it: a hover over a row is not to
+    /// lose a zoomed place.
+    pub(crate) view_kept: Option<ViewKept>,
     /// The mask toggle as it was before a tool went in hand; the mask
     /// shows while a shape is placed, and the toggle comes back after,
     /// unless it was thrown meanwhile.
@@ -510,6 +515,23 @@ pub(crate) struct StoodView {
     /// What the picture standing in shows of the frame.
     pub(crate) shows: Stood,
 }
+
+/// The frame on show as the render laid it out: the frame (the file
+/// and the version) whose develop was drawn, none for no develop, the
+/// geometry it was drawn under, the size of the source drawn, and the
+/// frame on the leveled plane, so a point of the frame can be taken to
+/// the source and onto the next frame laid out of the same picture.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Laid {
+    pub(crate) of: Option<(PathBuf, Option<Arc<str>>)>,
+    pub(crate) geometry: greycard_edit::geometry::Geometry,
+    pub(crate) source: (f32, f32),
+    pub(crate) frame: greycard_edit::geometry::Frame,
+}
+
+/// A view kept across a peek: the frame's size, the center, and the
+/// frame laid out.
+pub(crate) type ViewKept = ((u32, u32), (f32, f32), Option<Laid>);
 
 /// What a picture standing in for a develop shows.
 #[derive(Clone, Copy, Debug, PartialEq)]

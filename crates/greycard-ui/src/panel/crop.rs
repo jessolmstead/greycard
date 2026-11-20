@@ -1021,3 +1021,5 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod view_tests;

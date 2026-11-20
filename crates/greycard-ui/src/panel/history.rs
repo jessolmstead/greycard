@@ -256,7 +256,11 @@ pub(crate) fn peek(st: &mut State, app: &App, edit: Option<Edit>, what: &str) {
                 st.develop.status_kept = Some(app.get_status());
             }
             if st.develop.view_kept.is_none() {
-                st.develop.view_kept = Some((st.develop.image_size, st.develop.center));
+                st.develop.view_kept = Some((
+                    st.develop.image_size,
+                    st.develop.center,
+                    st.develop.laid.clone(),
+                ));
             }
             app.set_status(format!("{what}{note}").into());
             st.develop.peek = Some(edit);
@@ -266,9 +270,10 @@ pub(crate) fn peek(st: &mut State, app: &App, edit: Option<Edit>, what: &str) {
                 if let Some(status) = st.develop.status_kept.take() {
                     app.set_status(status);
                 }
-                if let Some((size, center)) = st.develop.view_kept.take() {
+                if let Some((size, center, laid)) = st.develop.view_kept.take() {
                     st.develop.image_size = size;
                     st.develop.center = center;
+                    st.develop.laid = laid;
                 }
             }
         }

@@ -4470,3 +4470,107 @@ fn a_one_and_a_half_ui_scale_at_100_is_not_past_1_to_1() {
     assert_eq!(at_200, 2.0);
     assert!(magnified(at_200, 1.0), "200% at a scale of 1.5");
 }
+
+/// The source pixel under a point of the leveled plane, in f64 and
+/// written from the geometry's own description rather than its code:
+/// the keystone about the plane's center, then the fine turn, the
+/// quarter turns, and the mirror, about the source's center.
+fn plane_to_source(g: &Geometry, (w, h): (f64, f64), r: (f64, f64)) -> (f64, f64) {
+    let (pw, ph) = if g.turns % 2 == 1 { (h, w) } else { (w, h) };
+    let kh = f64::from(g.horizontal).to_radians().tan() / (pw / 2.0);
+    let kv = -f64::from(g.vertical).to_radians().tan() / (ph / 2.0);
+    let (dx, dy) = (r.0 - pw / 2.0, r.1 - ph / 2.0);
+    let d = 1.0 + kh * dx + kv * dy;
+    let (x, y) = (dx / d, dy / d);
+    let (s, c) = f64::from(g.angle).to_radians().sin_cos();
+    let (x, y) = (c * x - s * y, s * x + c * y);
+    let (x, y) = match g.turns % 4 {
+        0 => (x, y),
+        1 => (-y, x),
+        2 => (-x, -y),
+        _ => (y, -x),
+    };
+    let x = if g.flip { -x } else { x };
+    (w / 2.0 + x, h / 2.0 + y)
+}
+
+/// A view's center carried from one frame laid out to another, under
+/// random turns, mirrors, angles, keystones, and crops, shown cropped
+/// or whole: wherever the new frame holds it unclamped, it is over
+/// the same source pixel, measured by [`plane_to_source`].
+#[test]
+fn a_carried_center_stays_over_the_same_source_pixel() {
+    use greycard_edit::geometry::{Aspect, Crop};
+    let (sw, sh) = (6000.0f32, 4000.0f32);
+    let mut seed = 0x5eedu64;
+    let mut rnd = |a: f32, b: f32| {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        a + (b - a) * ((seed >> 40) as f32 / (1u64 << 24) as f32)
+    };
+    let of = Some((PathBuf::from("/nowhere/IMG_0000.CR3"), None));
+    let laid = |rnd: &mut dyn FnMut(f32, f32) -> f32| {
+        let w = rnd(0.1, 0.6);
+        let h = rnd(0.1, 0.6);
+        let geometry = Geometry {
+            turns: rnd(0.0, 4.0) as u8 % 4,
+            flip: rnd(0.0, 1.0) < 0.5,
+            angle: rnd(-45.0, 45.0),
+            vertical: rnd(-20.0, 20.0),
+            horizontal: rnd(-20.0, 20.0),
+            crop: (rnd(0.0, 1.0) < 0.5).then(|| Crop {
+                x: rnd(0.0, 1.0 - w),
+                y: rnd(0.0, 1.0 - h),
+                w,
+                h,
+            }),
+            aspect: Aspect::Free,
+            portrait: false,
+        };
+        let frame = if rnd(0.0, 1.0) < 0.3 {
+            geometry.bounds(sw, sh)
+        } else {
+            geometry.frame(sw, sh, None)
+        };
+        owners::Laid {
+            of: of.clone(),
+            geometry,
+            source: (sw, sh),
+            frame,
+        }
+    };
+    let source = |l: &owners::Laid, c: (f32, f32)| {
+        plane_to_source(
+            &l.geometry,
+            (f64::from(sw), f64::from(sh)),
+            (
+                f64::from(l.frame.origin.0) + f64::from(c.0),
+                f64::from(l.frame.origin.1) + f64::from(c.1),
+            ),
+        )
+    };
+    let (mut checked, mut worst) = (0, 0.0f64);
+    for _ in 0..400 {
+        let before = laid(&mut rnd);
+        let now = laid(&mut rnd);
+        let center = (rnd(0.0, before.frame.size.0), rnd(0.0, before.frame.size.1));
+        let want = source(&before, center);
+        if !(0.0..=f64::from(sw)).contains(&want.0) || !(0.0..=f64::from(sh)).contains(&want.1) {
+            continue;
+        }
+        let Some(got) = carried_center(&before, &now, center) else {
+            continue;
+        };
+        let held =
+            got.0 > 0.0 && got.1 > 0.0 && got.0 < now.frame.size.0 && got.1 < now.frame.size.1;
+        if !held {
+            continue;
+        }
+        let at = source(&now, got);
+        worst = worst.max(((at.0 - want.0).powi(2) + (at.1 - want.1).powi(2)).sqrt());
+        checked += 1;
+    }
+    assert!(checked > 50, "only {checked} cases the new frame holds");
+    assert!(worst < 0.05, "{worst} px off the source pixel");
+}
