@@ -153,12 +153,60 @@ const MEAN_TOLERANCE: f64 = 1e-6;
 /// thousand terms, and a tile with little to vote on divides two
 /// small sums whose rounding is the terms' fusing.
 const VOTE_TOLERANCE: f32 = 1e-3;
-/// The share of a synthetic mosaic's samples that may take the other
-/// side of a guard (a step). A count tuned to the devices at hand
-/// failed the next one: none steps on NVIDIA or lavapipe, one of the
-/// one-pass mosaic's 128,000 on RADV, and four (3.1e-5) on an AMD
-/// card on Windows. The real frames' share is [`REAL_STEP_SHARE`].
-const STEP_SHARE: f64 = 1e-4;
+/// How far, in pixels, the GPU's fit may be from the reference's on
+/// the same input where the fit is well conditioned: the 1e-4 the
+/// largest shifts were already held to, at every tile. Both fits are
+/// the reference's `fit_votes`, so they differ by the votes' rounding
+/// alone: an AMD card's largest shifts came within 1.3e-5 px of the
+/// reference's with its votes 3.1e-4 px apart, and the real frames'
+/// fits within [`REAL_FIT_PIXELS`].
+///
+/// Where the fit is not well conditioned the bound is its own
+/// conditioning, [`FIT_NUDGE_ULPS`]: a vote cast on little gradient
+/// energy moves by hundredths of a pixel an ulp, and the fit with it.
+///
+/// A synthetic mosaic's samples may step (take the other side of one
+/// of the resample's guards) only where a fit's move can move them,
+/// and [`step_reach`] counts those samples in the reference itself,
+/// its fit moved by this or by as far as the GPU's measured off it,
+/// whichever is more: the allowance is that share of the samples, the
+/// scene's own. Counts tuned to the devices at hand (three steps, and
+/// none on the one-pass mosaic) failed an RX 7700 XT on Windows at
+/// four of 128,000 and one; there the reference steps 9 and 3 samples
+/// for a fit only 1e-5 px off, and 228 and 66 for one 1e-4 off, a fifth
+/// of a percent at most. A desaturation 5% too strong steps 16% of the
+/// samples; a guard's threshold moved by a percent steps too few to
+/// tell from a fit's move, and [`check_passes`] fails it at the
+/// samples it sends the wrong way.
+///
+/// Zero steps is held only where it is the scene's: a mosaic no fit
+/// is made on comes back as it went in. The one-pass mosaic's zero on
+/// two vendors was luck, as RADV's one step and the AMD card's showed.
+const FIT_REACH: f64 = 1e-4;
+
+/// The fit's conditioning: how far the reference's own fit moves, at
+/// its farthest tile, when each sample of the pass's input is moved by
+/// this many parts in 2^23, up and down by a fixed pattern of signs
+/// and then the other way. A pass's GPU fit is held within that or
+/// [`FIT_REACH`], whichever is more.
+///
+/// A GPU makes the reference's votes from the same samples with each
+/// operation rounded once more or once less (a fused multiply and add,
+/// a sum in another order): an ulp of the values the votes are made
+/// of, as an ulp of each sample is. Both fits are polynomials over the
+/// tile grid (four or sixteen terms), and any move of either is
+/// largest at the grid's corners, where it extrapolates past the
+/// voting tiles; the farthest tiles are compared. The reference alone
+/// sets the bound, so no fault on the GPU's side can widen it.
+///
+/// The 672x448 mosaic measured on its own clipped copy is the case: on
+/// its first pass the clipping leaves an interior tile's red vertical
+/// vote on little gradient energy (8e-5 of the scaled sums), and an ulp
+/// moves that vote by 2e-2 px and the reference's fit by 1.5e-2 px at
+/// the corner, ten times the unclipped mosaic's. An RTX 5070 Ti's fit
+/// came 2.5e-4 px off the reference's there, past a flat 1e-4 and a
+/// sixtieth of this; its other passes' within 1e-6 px.
+const FIT_NUDGE_ULPS: f32 = 1.0;
 
 /// How far two mosaics are apart: the largest absolute and relative
 /// differences (relative to the reference's sample, floored at
@@ -199,6 +247,298 @@ fn apart(input: &[f32], reference: &[f32], other: &[f32]) -> Apart {
         mean: sum / reference.len() as f64,
         steps,
         step_ratio,
+    }
+}
+
+/// The whole run's steps held to the `reach` [`step_reach`] counted,
+/// the figures of both in the message.
+fn check_steps(what: &str, a: &Apart, samples: usize, reach: usize) {
+    let share = |n: usize| 100.0 * n as f64 / samples as f64;
+    assert!(
+        a.steps <= reach,
+        "{what}: {} of {samples} samples ({:.4}%) differ by more than {TOLERANCE:.0e} relative, \
+         the largest {:.2} of its correction; a fit as far off the reference's as step_reach \
+         printed steps {reach} ({:.4}%)",
+        a.steps,
+        share(a.steps),
+        a.step_ratio,
+        share(reach)
+    );
+}
+
+/// The reference's passes over `samples`, each fitted on `measured`'s
+/// passes (the same mosaic for a plain correction) with every vote on
+/// pass `p` moved by `offsets[p]` pixels (none past the list's end),
+/// vertical then horizontal, in both colors, which moves the fit by as
+/// much at every tile: the variance gate is blind to it, and the fit's
+/// constant term takes it. Returns the corrected samples before the
+/// color-shift guard and each pass's measured input.
+fn reference_passes(
+    measured: &[f32],
+    samples: &[f32],
+    (width, height): (usize, usize),
+    pattern: &CfaPattern,
+    iterations: usize,
+    offsets: &[[f32; 2]],
+) -> (Vec<f32>, Vec<Vec<f32>>) {
+    let (across, down) = (
+        reference::origins(width).len(),
+        reference::origins(height).len(),
+    );
+    let (mut xm, mut xn) = (measured.to_vec(), samples.to_vec());
+    let mut inputs = Vec::new();
+    for pass in 0..iterations.max(1) {
+        let offset = offsets.get(pass).copied().unwrap_or([0.0; 2]);
+        let mut votes = measure_votes(&xm, width, height, pattern).expect("the reference measures");
+        for vote in &mut votes {
+            for shifts in &mut vote.shift {
+                for (s, o) in shifts.iter_mut().zip(offset) {
+                    if *s != 17.0 {
+                        *s += o;
+                    }
+                }
+            }
+        }
+        let Ok(fit) = fit_votes(&votes, down, across) else {
+            break;
+        };
+        let resample = |x: &[f32]| {
+            resample_with(x, width, height, pattern, &fit)
+                .expect("the reference resamples")
+                .0
+        };
+        let next_m = resample(&xm);
+        xn = if measured == samples {
+            next_m.clone()
+        } else {
+            resample(&xn)
+        };
+        inputs.push(std::mem::replace(&mut xm, next_m));
+    }
+    (xn, inputs)
+}
+
+/// The fit's distance from the reference's at each tile, row-major,
+/// the most over both colors and directions.
+fn fit_distances(a: &Fit, b: &Fit, down: usize, across: usize) -> Vec<f64> {
+    let mut out = Vec::with_capacity(down * across);
+    for v in 1..=down {
+        for h in 1..=across {
+            let (p, q) = (a.shift_at(v, h), b.shift_at(v, h));
+            let mut most = 0f64;
+            for c in 0..2 {
+                for dir in 0..2 {
+                    most = most.max((p[c][dir] - q[c][dir]).abs());
+                }
+            }
+            out.push(most);
+        }
+    }
+    out
+}
+
+/// The reference's fit's conditioning on a pass's input `x` whose fit
+/// is `fit`: at each tile, how far the fit moves under the
+/// [`FIT_NUDGE_ULPS`] nudges, the most of both. A nudge that changes
+/// the fit's decisions puts the fit at a cliff, which the decisions'
+/// own check holds: infinite.
+fn fit_conditioning(
+    x: &[f32],
+    (width, height): (usize, usize),
+    pattern: &CfaPattern,
+    fit: &Fit,
+) -> Vec<f64> {
+    let (across, down) = (
+        reference::origins(width).len(),
+        reference::origins(height).len(),
+    );
+    let mut most = vec![0f64; down * across];
+    for sign in [1.0, -1.0] {
+        let votes = measure_votes(&nudged(x, FIT_NUDGE_ULPS, sign), width, height, pattern)
+            .expect("the reference measures");
+        match fit_votes(&votes, down, across) {
+            Ok(f) if (f.blocks, f.order) == (fit.blocks, fit.order) => {
+                for (m, d) in most.iter_mut().zip(fit_distances(fit, &f, down, across)) {
+                    *m = m.max(d);
+                }
+            }
+            _ => most.fill(f64::INFINITY),
+        }
+    }
+    most
+}
+
+/// How many of the run's samples may step. On each of the reference's
+/// passes' inputs the GPU's fit is held within [`FIT_REACH`] of the
+/// reference's, or within the reference's own [`fit_conditioning`] if
+/// that is more, both at their farthest tiles; then the samples the
+/// reference itself steps when its fit is moved by `FIT_REACH` or by
+/// as far as the GPU's was off it on that pass, whichever is more, at
+/// the four corners of the vertical and horizontal shift (a red or
+/// blue sample reads its own color's two shifts, and so small a move
+/// takes its guards one way) are counted. Before the color-shift
+/// guard, whose factors multiply both paths' samples alike and so
+/// leave a relative step as it is.
+fn step_reach(
+    ctx: &Context,
+    what: &str,
+    measured: &[f32],
+    samples: &[f32],
+    (width, height): (usize, usize),
+    pattern: &CfaPattern,
+    iterations: usize,
+) -> usize {
+    let size = (width, height);
+    let (across, down) = (
+        reference::origins(width).len(),
+        reference::origins(height).len(),
+    );
+    let (base, inputs) = reference_passes(measured, samples, size, pattern, iterations, &[]);
+    let mut reaches = Vec::new();
+    for (pass, x) in inputs.iter().enumerate() {
+        let cpu_votes = measure_votes(x, width, height, pattern).expect("the reference measures");
+        let gpu_votes = ctx
+            .ca_votes(x, width, height, pattern)
+            .expect("the GPU measures");
+        let cpu = fit_votes(&cpu_votes, down, across);
+        let gpu = fit_votes(&gpu_votes, down, across);
+        assert_eq!(
+            decisions(&cpu),
+            decisions(&gpu),
+            "{what} pass {pass}: the fits' decisions"
+        );
+        let mut reach = FIT_REACH;
+        if let (Ok(a), Ok(b)) = (&cpu, &gpu) {
+            let apart = fit_distances(a, b, down, across);
+            let cond = fit_conditioning(x, size, pattern, a);
+            let most = apart.iter().copied().fold(0.0, f64::max);
+            let conditioning = cond.iter().copied().fold(0.0, f64::max);
+            let bound = FIT_REACH.max(conditioning);
+            let t = apart.iter().position(|&d| d == most).unwrap_or(0);
+            let (v, h) = (t / across + 1, t % across + 1);
+            let cast = |votes: &[BlockVote]| {
+                votes[t]
+                    .shift
+                    .iter()
+                    .flatten()
+                    .filter(|&&s| s != 17.0)
+                    .count()
+            };
+            let report = format!(
+                "{what} pass {pass}: the fits are {most:.3e} px apart at tile {t} (row {}, column \
+                 {}, of {down}x{across}; {} votes cast there, weight {:.3e}; reference {:?}, GPU \
+                 {:?}), its conditioning {:.3e} px; the fit's {conditioning:.3e} px at most; the \
+                 bound {bound:.3e} px; {} blocks, order {}; reference fit there {:?}, GPU's {:?}",
+                v - 1,
+                h - 1,
+                cast(&cpu_votes),
+                cpu_votes[t].weight,
+                cpu_votes[t].shift,
+                gpu_votes[t].shift,
+                cond[t],
+                a.blocks,
+                a.order,
+                a.shift_at(v, h),
+                b.shift_at(v, h),
+            );
+            println!("{report}");
+            assert!(most <= bound, "{report}");
+            reach = reach.max(most);
+        }
+        reaches.push(reach as f32);
+    }
+    let reach = stepped_by(
+        measured, samples, size, pattern, iterations, &base, &reaches,
+    );
+    println!(
+        "{what} reach: a fit {:?} px off, a pass each, steps {reach} of the reference's {} \
+         samples ({:.4}%)",
+        reaches
+            .iter()
+            .map(|d| format!("{d:.3e}"))
+            .collect::<Vec<_>>(),
+        base.len(),
+        100.0 * reach as f64 / base.len() as f64
+    );
+    reach
+}
+
+/// The samples of `base`, the reference's run, that its run with the
+/// fit moved by `reaches` (a pass each) steps, at any of the four
+/// corners of the vertical and horizontal move.
+fn stepped_by(
+    measured: &[f32],
+    samples: &[f32],
+    size: (usize, usize),
+    pattern: &CfaPattern,
+    iterations: usize,
+    base: &[f32],
+    reaches: &[f32],
+) -> usize {
+    let mut stepped = vec![false; base.len()];
+    for signs in [[1.0, 1.0], [1.0, -1.0], [-1.0, 1.0], [-1.0, -1.0]] {
+        let offsets: Vec<[f32; 2]> = reaches.iter().map(|&d| signs.map(|s| s * d)).collect();
+        let (moved, _) = reference_passes(measured, samples, size, pattern, iterations, &offsets);
+        for ((s, &a), &b) in stepped.iter_mut().zip(base).zip(&moved) {
+            *s |= (a - b).abs() / a.abs().max(FLOOR) > TOLERANCE;
+        }
+    }
+    stepped.iter().filter(|&&s| s).count()
+}
+
+/// Each pass on the GPU's own trajectory against the reference's
+/// resample on the fit the GPU's votes give, as [`check_resample`]
+/// holds it: so a sample that steps is bounded where it lands, the
+/// reference's own value with one guard, at a tie, taken the other way.
+fn check_passes(
+    ctx: &Context,
+    what: &str,
+    measured: &[f32],
+    samples: &[f32],
+    (width, height): (usize, usize),
+    pattern: &CfaPattern,
+    iterations: usize,
+) {
+    let (across, down) = (
+        reference::origins(width).len(),
+        reference::origins(height).len(),
+    );
+    let one = CaOptions {
+        iterations: 1,
+        avoid_color_shift: false,
+    };
+    let same = measured == samples;
+    let (mut xm, mut xn) = (measured.to_vec(), samples.to_vec());
+    for pass in 0..iterations.max(1) {
+        let what = format!("{what} pass {pass}");
+        let votes = ctx
+            .ca_votes(&xm, width, height, pattern)
+            .expect("the GPU measures");
+        let Ok(fit) = fit_votes(&votes, down, across) else {
+            break;
+        };
+        let (out, stats) = if same {
+            ctx.correct_ca(&xn, width, height, pattern, &one)
+        } else {
+            ctx.correct_ca_measured_on(&xn, &xm, width, height, pattern, &one)
+        }
+        .expect("the GPU pass runs");
+        assert_eq!(
+            (stats.corrected, stats.blocks, stats.order),
+            (true, fit.blocks, fit.order),
+            "{what}: the stats of the GPU's own fit"
+        );
+        let (cpu, cond) =
+            resample_with(&xn, width, height, pattern, &fit).expect("the reference resamples");
+        check_resample(&what, &cpu, &cond, &out);
+        xm = if same {
+            out.clone()
+        } else {
+            ctx.correct_ca(&xm, width, height, pattern, &one)
+                .expect("the GPU pass runs")
+                .0
+        };
+        xn = out;
     }
 }
 
@@ -273,9 +613,11 @@ fn check_votes(
 
 /// Run both paths and compare: the stats' decisions equal (corrected,
 /// the voting tiles, the fit's order), the largest fitted shifts
-/// within `1e-4` px, the votes within [`VOTE_TOLERANCE`], and the
-/// mosaics within [`TOLERANCE`] relative at all but [`STEP_SHARE`] of
-/// the samples (guard flips), with the mean under [`MEAN_TOLERANCE`].
+/// within `1e-4` px, the votes within [`VOTE_TOLERANCE`], the fits
+/// as [`step_reach`] holds them, each pass as [`check_passes`] does, and
+/// the mosaics within [`TOLERANCE`] relative at all but the samples
+/// [`step_reach`] counts (guard flips), with the mean under
+/// [`MEAN_TOLERANCE`].
 fn check(
     ctx: &Context,
     what: &str,
@@ -315,14 +657,25 @@ fn check(
             gpu_stats.max_shift[c]
         );
     }
-    let share = a.steps as f64 / cpu.len() as f64;
-    assert!(
-        share <= STEP_SHARE,
-        "{what}: {} of {} samples differ by more than {TOLERANCE:.0e} relative, over {:.2}%",
-        a.steps,
-        cpu.len(),
-        100.0 * STEP_SHARE
+    check_passes(
+        ctx,
+        what,
+        mosaic,
+        mosaic,
+        (width, height),
+        pattern,
+        options.iterations,
     );
+    let reach = step_reach(
+        ctx,
+        what,
+        mosaic,
+        mosaic,
+        (width, height),
+        pattern,
+        options.iterations,
+    );
+    check_steps(what, &a, cpu.len(), reach);
     assert!(
         a.mean <= MEAN_TOLERANCE,
         "{what}: the mosaics are {:.3e} apart on average, over {MEAN_TOLERANCE:.0e}",
@@ -378,7 +731,25 @@ fn a_correction_measured_on_another_mosaic_matches_the_reference() {
                 (fit.stats.corrected, fit.stats.blocks, fit.stats.order),
                 "{what}"
             );
-            assert!(a.steps as f64 / cpu.len() as f64 <= STEP_SHARE, "{what}");
+            check_passes(
+                &ctx,
+                &what,
+                &measured,
+                &samples,
+                (w, h),
+                &pattern,
+                options.iterations,
+            );
+            let reach = step_reach(
+                &ctx,
+                &what,
+                &measured,
+                &samples,
+                (w, h),
+                &pattern,
+                options.iterations,
+            );
+            check_steps(&what, &a, cpu.len(), reach);
             assert!(a.mean <= MEAN_TOLERANCE, "{what}");
             // Not the samples' own correction: the fit is the other's.
             let (own, _) = correct_ca(&samples, w, h, &pattern, &options).unwrap();
@@ -1373,18 +1744,9 @@ fn decisions(fit: &Result<Fit, NoFit>) -> Result<(usize, usize), NoFit> {
 
 /// How far apart two fits' shifts are, in pixels, over every tile.
 fn fits_apart(a: &Fit, b: &Fit, down: usize, across: usize) -> f64 {
-    let mut most = 0f64;
-    for v in 1..=down {
-        for h in 1..=across {
-            let (p, q) = (a.shift_at(v, h), b.shift_at(v, h));
-            for c in 0..2 {
-                for dir in 0..2 {
-                    most = most.max((p[c][dir] - q[c][dir]).abs());
-                }
-            }
-        }
-    }
-    most
+    fit_distances(a, b, down, across)
+        .into_iter()
+        .fold(0.0, f64::max)
 }
 
 /// One pass's fit against the reference's, printed: whether the GPU's

@@ -70,10 +70,12 @@ the reasoning lives in `docs/notes.md`.
 - [ ] A mask's Shadows and Highlights summed with the picture's are
       not held to the slider's limit (Midtones' sum is, §644): a mask
       at +2 over a picture at +2 can fold the tones
-- [ ] The GPU aberration tests allow a count of guard flips tuned to
-      two vendors (3 and none): an RX 7700 XT on Windows gives 4 and
-      1 and fails both. A share of the samples, set from that card's
-      printed figures (discussion 89, 2026-11-11)
+- [ ] The GPU aberration tests hold each pass's fit within what the
+      reference's own fit moves under one ulp of input, shown on
+      NVIDIA and lavapipe; an RX 7700 XT's farthest-tile distance was
+      never printed (discussion 89). `check()` still holds the largest
+      shifts to a flat 1e-4, and the ignored real-frames test keeps
+      its flat share
 - [ ] A sidecar written again drops what the build does not know: no
       map keeps unknown keys, a value `meta::loose` cannot read is
       written back as its default, and only the edit's version gates
