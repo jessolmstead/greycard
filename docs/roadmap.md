@@ -1586,6 +1586,10 @@ clears or a tester asks for it.
 - [ ] A clearer name for the Lens section's From the file, which
       reads as the raw's own corrections (issue 189). The owner's
       wording
+- [ ] A generative fill's patch holds only sRGB's colors: its window
+      is clamped into sRGB on the way to the model and comes back so,
+      feather included, where the picture around it keeps the working
+      space's (audit, 2026-11-20; issue 190 asked about gamut)
 - [ ] The lens match (§723), what is left: a lens name with no line
       word on a body of another line; Sigma's and Tamron's own line
       words; the database's 36 bare-number names
