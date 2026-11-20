@@ -840,8 +840,6 @@ clears or a tester asks for it.
 - [ ] The long `run` and `develop_job` in `worker/` and `Look::run` in
       `roots/` cut into functions, a later round after the splits
       (§316, §318, §321)
-- [ ] The window's files cut by moves inside the crate (§720): the
-      browser's opening path into a file of its own, measured first
 - [ ] A `State` built without a window, so a test that touches only
       it runs off the window: unmeasured, a study first (§720)
 - [ ] "Write the XMP, then the sidecar" is written four times:
