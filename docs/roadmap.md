@@ -52,6 +52,15 @@ the reasoning lives in `docs/notes.md`.
       on a noisy frame (ISO 3200, Dehaze +50: to zero). The guide
       could be taken before Dehaze too, at the cost of changing
       Dehaze-only edits (§643); waits on a measurement
+- [ ] States that are never rewritten: a turn, a look rename, the ISO
+      seed, migrations, and an older build's save all change recorded
+      states under their ids, so no reconciliation can trust one; a
+      design is drafted and waits on the owner. It also answers: the
+      archive sync landing crop and masks a quarter turn off across a
+      turn difference; a look rename reaching only the open folder's
+      sidecars; a snapshot renamed on one copy returning as two; Swap
+      with original on one copy joining unrelated lines; a later
+      build's mask shape dropped at an older build's save
 - [ ] A save is last writer wins: `save_file` writes the whole sidecar
       from memory without asking whether the file is still the one
       read, where the archive path compares and joins, so a second
