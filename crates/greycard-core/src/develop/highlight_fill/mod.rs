@@ -25,7 +25,10 @@ pub mod synthesis;
 pub mod thumbnail;
 
 pub use apply::Fields;
-pub use camera::{BinnedCodes, Camera, CameraFill, Changes, FrameCodes, Through, camera_fields};
+pub use camera::{
+    BinnedCodes, Camera, CameraFill, Changes, FrameCodes, Through, camera_fields,
+    camera_fields_until,
+};
 pub use constants::*;
 pub use reduced::{down, down_codes, look_scale};
 
@@ -82,6 +85,34 @@ pub fn fill_fields_of(
     look: &FillLook,
     f: f64,
 ) -> Option<Fields> {
+    match fill_fields_until(x, codes, clips, weights, look, f, &|| false) {
+        Ok(fields) => fields,
+        Err(GaveWay) => unreachable!("never asked to give way"),
+    }
+}
+
+/// The fill asked to stop by its caller, between two of its parts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GaveWay;
+
+/// [`fill_fields_of`], asking `give_way` between its parts: after the
+/// region analysis, after the network, and after the synthesis, where
+/// what follows is the caller's apply. A yes drops what was made and
+/// returns [`GaveWay`]; nothing is half made, since only the fields
+/// leave here. The fields, when made, are [`fill_fields_of`]'s to the
+/// bit: the asks read nothing of the fill.
+///
+/// # Panics
+/// As [`fill_fields_of`].
+pub fn fill_fields_until(
+    x: &impl PixelSource,
+    codes: &impl PixelCodes,
+    clips: [f32; 3],
+    weights: &FillWeights,
+    look: &FillLook,
+    f: f64,
+    give_way: &dyn Fn() -> bool,
+) -> Result<Option<Fields>, GaveWay> {
     let (width, height) = x.size();
     assert_eq!(
         codes.size(),
@@ -90,11 +121,23 @@ pub fn fill_fields_of(
     );
     let look_scaled = synthesis::Scaled::new(look, f);
     if width == 0 || height == 0 {
-        return None;
+        return Ok(None);
     }
     let a = analysis::analyze_of(x, codes, clips, look.harmonic_bright as f32);
-    let outputs = region_outputs_of(&a, x, codes, weights)?;
-    Some(synthesis::fields(&a, &outputs, look_scaled))
+    if give_way() {
+        return Err(GaveWay);
+    }
+    let Some(outputs) = region_outputs_of(&a, x, codes, weights) else {
+        return Ok(None);
+    };
+    if give_way() {
+        return Err(GaveWay);
+    }
+    let fields = synthesis::fields(&a, &outputs, look_scaled);
+    if give_way() {
+        return Err(GaveWay);
+    }
+    Ok(Some(fields))
 }
 
 /// [`region_outputs_of`] of a slice, for the tests.

@@ -5777,6 +5777,7 @@ fn a_develop_shows_its_picture_and_then_makes_its_fills_one_a_round() {
             &mut None,
             &deliver,
             round,
+            &crate::walk::NoHold,
         );
         let Outcome::Developed { fills, .. } = outcome else {
             panic!("developed");
@@ -5838,6 +5839,7 @@ fn a_develop_past_its_retouch_still_has_its_fills_to_make() {
             &mut None,
             &deliver,
             round,
+            &crate::walk::NoHold,
         );
         let Outcome::Developed { fills, .. } = outcome else {
             panic!("developed");

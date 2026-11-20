@@ -866,3 +866,115 @@ fn the_changes_are_the_picture_s_size_whatever_the_noise() {
     assert!(changes.count() > w * h / 5, "{}", changes.count());
     assert_eq!(changes.bytes(), h * w.div_ceil(64) * 8);
 }
+
+/// Asked to give way between its parts, the fill stops there and makes
+/// nothing; never told to, it asks three times (after the analysis,
+/// the network, and the synthesis) and makes the fields it makes
+/// without asking, to the bit.
+#[test]
+fn the_fill_gives_way_between_its_parts() {
+    let weights = random_weights();
+    let (w, h) = (160, 112);
+    let (x, codes) = scene(w, h);
+    let plane = CodePlane {
+        codes: &codes,
+        width: w,
+    };
+    let camera = cameras()[1];
+    let rgb = camera_picture(&x, &camera);
+    let fields = |stop_at: usize, asked: &std::cell::Cell<usize>| {
+        camera_fields_until(
+            &rgb,
+            w,
+            h,
+            &camera,
+            Some(&plane),
+            [1.0; 3],
+            &weights,
+            &LOOK,
+            1.0,
+            &|| {
+                asked.set(asked.get() + 1);
+                asked.get() == stop_at
+            },
+        )
+    };
+    let asked = std::cell::Cell::new(0);
+    let made = fields(0, &asked).unwrap().unwrap();
+    assert_eq!(asked.get(), 3);
+    let want = camera_fields(
+        &rgb,
+        w,
+        h,
+        &camera,
+        Some(&plane),
+        [1.0; 3],
+        &weights,
+        &LOOK,
+        1.0,
+    )
+    .unwrap();
+    assert_eq!(made, want);
+    for stop_at in 1..=3 {
+        let asked = std::cell::Cell::new(0);
+        assert!(matches!(
+            fields(stop_at, &asked),
+            Err(super::super::GaveWay)
+        ));
+        assert_eq!(asked.get(), stop_at);
+    }
+}
+
+/// Fields taken through another camera apply through it: the same
+/// fields, the new matrix and scale. Through their own camera they are
+/// the fill they were; through another, the pixels changed are those
+/// whose bits changed, each the working-space apply of the same fields
+/// on that camera's input to rounding. A camera with no inverse or no
+/// scale takes none.
+#[test]
+fn fields_through_another_camera_apply_through_it() {
+    let weights = random_weights();
+    let (w, h) = (160, 112);
+    let (x, codes) = scene(w, h);
+    let plane = CodePlane {
+        codes: &codes,
+        width: w,
+    };
+    let cams = cameras();
+    let made = camera_fields(
+        &camera_picture(&x, &cams[1]),
+        w,
+        h,
+        &cams[1],
+        Some(&plane),
+        [1.0; 3],
+        &weights,
+        &LOOK,
+        1.0,
+    )
+    .unwrap();
+    assert_eq!(made.through(&cams[1]).unwrap(), made);
+    for other in [cams[0], cams[2]] {
+        let through = made.through(&other).unwrap();
+        assert_eq!(through.fields(), made.fields());
+        let rgb = camera_picture(&x, &other);
+        let mut out = rgb.clone();
+        let changes = through.apply(&mut out, &plane);
+        assert!(changes.count() > 0);
+        assert_eq!(differing(&rgb, &out), changed_set(&changes, w));
+        let mut want = materialized(&rgb, &other);
+        made.fields().apply(&mut want, &plane);
+        assert!(worst(&materialized(&out, &other), &want) < 1e-6);
+    }
+    let flat = Camera {
+        matrix: [[0.0; 3]; 3],
+        ..cams[0]
+    };
+    assert!(made.through(&flat).is_none());
+    let unscaled = Camera {
+        ceiling: 0.0,
+        ..cams[0]
+    };
+    assert!(made.through(&unscaled).is_none());
+    assert!(made.bytes() > made.fields().bytes());
+}

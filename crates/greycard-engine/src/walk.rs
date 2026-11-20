@@ -36,7 +36,7 @@ use greycard_gpu::wgpu;
 use greycard_render::detail::DetailPlanes;
 use greycard_render::finish::{Guide, Source, guide_plane};
 
-use crate::highlight_fill::Filled;
+use crate::highlight_fill::{Filled, KeptFill, StandIn};
 use crate::stages::{Delta, Facts, Fills, Keep, Masks, Purpose, Stage, Step, Steps, Tap, quarters};
 
 /// The open file: a raw to develop, or a picture already in the
@@ -482,6 +482,13 @@ pub trait Hold {
         false
     }
 
+    /// Asked inside a stage that can stop part way and leave its
+    /// picture as it was (the highlight fill, between its parts):
+    /// whether to stop the walk there.
+    fn give_way_inside(&self, _stage: &Stage) -> bool {
+        false
+    }
+
     /// Whether a device error short of a lost device leaves the
     /// session its context, this walk going on on the CPU: a walk
     /// nobody waits on (a prefetch) or a file's (an export) is not
@@ -525,11 +532,53 @@ enum KeptBuf {
     },
     Working(Arc<WorkingImage>),
     Device(Arc<greycard_gpu::Image>),
+    /// The camera picture before the highlight fill ([`Keep::Camera`]),
+    /// a learned pair's network half beside it, and what the move into
+    /// the working space reads of the prepare: its mosaic let go.
+    Camera {
+        prepared: Arc<Prepared>,
+        rgb: Arc<Vec<f32>>,
+        network: Option<Arc<Vec<f32>>>,
+    },
 }
 
 impl KeptBuf {
+    /// A camera picture kept: copied, since the walk goes on to fill
+    /// its own in place; the prepare's mosaic and the CA's reference,
+    /// which nothing after the demosaic reads, left out, and never
+    /// copied (set aside while the rest is, and put back).
+    fn camera(prepared: &mut Prepared, rgb: &[f32], network: Option<&[f32]>) -> Self {
+        let samples = std::mem::take(&mut prepared.samples);
+        let reference = prepared.ca_reference.take();
+        let copy = prepared.clone();
+        prepared.samples = samples;
+        prepared.ca_reference = reference;
+        KeptBuf::Camera {
+            prepared: Arc::new(copy),
+            rgb: Arc::new(rgb.to_vec()),
+            network: network.map(|n| Arc::new(n.to_vec())),
+        }
+    }
+
     fn buf(&self) -> Buf {
         match self {
+            KeptBuf::Camera {
+                prepared,
+                rgb,
+                network: None,
+            } => Buf::Camera {
+                prepared: (**prepared).clone(),
+                rgb: (**rgb).clone(),
+            },
+            KeptBuf::Camera {
+                prepared,
+                rgb,
+                network: Some(network),
+            } => Buf::CameraPair {
+                prepared: (**prepared).clone(),
+                network: (**network).clone(),
+                plain: (**rgb).clone(),
+            },
             KeptBuf::Pair { model, plain } => Buf::Pair {
                 model: model.clone(),
                 plain: plain.clone(),
@@ -613,6 +662,10 @@ pub struct Kept {
     /// The refined masks' picture, with the steps to the picture it
     /// was tapped from.
     mask_picture: Option<(Vec<Step>, Arc<greycard_render::refine::MaskPicture>)>,
+    /// The highlight fill's fields the last walk that made them made,
+    /// with the steps and places they were made by: applied again by a
+    /// walk of the same, and the window's stand-in under another white.
+    fill: Option<Arc<KeptFill>>,
 }
 
 /// An input as a [`Kept`] knows it: its own allocation, held weakly so
@@ -630,6 +683,15 @@ impl MadeFrom {
         match input {
             Input::Raw(frame) => MadeFrom::Raw(Arc::downgrade(frame)),
             Input::Picture { image, .. } => MadeFrom::Picture(Arc::downgrade(image)),
+        }
+    }
+
+    /// Whether two are one input's.
+    fn same(&self, other: &MadeFrom) -> bool {
+        match (self, other) {
+            (MadeFrom::Raw(a), MadeFrom::Raw(b)) => std::sync::Weak::ptr_eq(a, b),
+            (MadeFrom::Picture(a), MadeFrom::Picture(b)) => std::sync::Weak::ptr_eq(a, b),
+            _ => false,
         }
     }
 
@@ -754,6 +816,11 @@ impl Kept {
         self.from = Some(MadeFrom::of(input));
     }
 
+    /// Whether no point is kept: no picture to start a walk from.
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+
     /// Whether anything is kept at `keep`.
     pub fn holds(&self, keep: Keep) -> bool {
         self.points.iter().any(|p| p.keep == keep)
@@ -785,17 +852,7 @@ impl Kept {
             .enumerate()
             .filter_map(|(i, p)| {
                 let (at, map) = align(&p.steps, &steps.steps)?;
-                // The walk's next stage, past its own keeps there.
-                let next = (at..steps.steps.len())
-                    .find(|&k| !matches!(steps.steps[k], Step::Keep(_)))
-                    .unwrap_or(steps.steps.len());
-                let serves = allowed_at(&p.places, &map, plan)
-                    // A picture on the device serves only a walk that
-                    // goes on there: the viewport's texture is made by
-                    // a run, not from a picture left on the device.
-                    && (!matches!(p.buf, KeptBuf::Device(_))
-                        || (plan.get(next) == Some(&Place::Gpu)
-                            && !matches!(steps.steps.get(next), Some(Step::Op(Stage::Finish(_))))))
+                let serves = Self::point_serves(p, steps, plan, at, &map)
                     && match (&p.retouch, &p.buf) {
                         (Some(a), KeptBuf::Working(image)) if !a.unmade.is_empty() => {
                             !models.could_fill_more(&a.retouch, image)
@@ -819,6 +876,48 @@ impl Kept {
         Some(index)
     }
 
+    /// Whether point `p`, whose steps make the start of `steps`' picture
+    /// up to `at` ([`align`], `map`), serves a walk under `plan`: its
+    /// places allowed, and a picture on the device only for a walk that
+    /// goes on there. A retouch's unmade fills are [`Kept::resume`]'s.
+    fn point_serves(
+        p: &Point,
+        steps: &Steps,
+        plan: &[Place],
+        at: usize,
+        map: &[Option<usize>],
+    ) -> bool {
+        // The walk's next stage, past its own keeps there.
+        let next = (at..steps.steps.len())
+            .find(|&k| !matches!(steps.steps[k], Step::Keep(_)))
+            .unwrap_or(steps.steps.len());
+        allowed_at(&p.places, map, plan)
+            // A picture on the device serves only a walk that goes on
+            // there: the viewport's texture is made by a run, not from
+            // a picture left on the device.
+            && (!matches!(p.buf, KeptBuf::Device(_))
+                || (plan.get(next) == Some(&Place::Gpu)
+                    && !matches!(steps.steps.get(next), Some(Step::Op(Stage::Finish(_))))))
+    }
+
+    /// Whether point `p` is a base or a pair that [`Kept::turned`] turns
+    /// for a walk of `steps` under `plan`.
+    fn turns_to(p: &Point, steps: &Steps, plan: &[Place]) -> bool {
+        let want = turnless(&steps.steps);
+        let Some(to) = turn_of(&steps.steps[..]) else {
+            return false;
+        };
+        matches!(p.keep, Keep::Base | Keep::Pair)
+            && !matches!(p.buf, KeptBuf::Device(_))
+            && allowed(&p.places, plan)
+            && turnless(&p.steps) == want[..turnless(&p.steps).len().min(want.len())]
+            && commutes_after_turn(&p.steps)
+            && steps.at(p.keep).is_some()
+            && turn_of(&p.steps)
+                .and_then(|from| relative(from, to))
+                .is_some()
+    }
+
     /// The kept base and the learned pair made at another turn, each
     /// turned to this one where nothing after the turn minds which way
     /// up it is: the index of the later of them, now turned. A base
@@ -826,19 +925,8 @@ impl Kept {
     /// still does turned. The masks' tap reads the base, so it reads the
     /// turned one.
     fn turned(&mut self, steps: &Steps, plan: &[Place]) -> Option<usize> {
-        let want = turnless(&steps.steps);
         let to = turn_of(&steps.steps[..])?;
-        let fits = |p: &Point| {
-            matches!(p.keep, Keep::Base | Keep::Pair)
-                && !matches!(p.buf, KeptBuf::Device(_))
-                && allowed(&p.places, plan)
-                && turnless(&p.steps) == want[..turnless(&p.steps).len().min(want.len())]
-                && commutes_after_turn(&p.steps)
-                && steps.at(p.keep).is_some()
-                && turn_of(&p.steps)
-                    .and_then(|from| relative(from, to))
-                    .is_some()
-        };
+        let fits = |p: &Point| Self::turns_to(p, steps, plan);
         if !self.points.iter().any(fits) {
             return None;
         }
@@ -868,7 +956,7 @@ impl Kept {
                     plain: turn(plain),
                 },
                 KeptBuf::Working(image) => KeptBuf::Working(turn(image)),
-                KeptBuf::Device(_) => unreachable!("fits"),
+                KeptBuf::Device(_) | KeptBuf::Camera { .. } => unreachable!("fits"),
             };
             if let (KeptBuf::Working(image), Some((_, tapped))) = (&p.buf, p.taps.masks.as_mut()) {
                 *tapped = image.clone();
@@ -951,6 +1039,40 @@ impl Kept {
         self.planes = None;
         self.sharpen = None;
         self.mask_picture = None;
+        // The highlight fill's fields go with the last picture made by
+        // a fill: kept for a frame whose fill is off, they would hold up
+        // to 72 MB at 24 MP for nothing.
+        if !self.points.iter().any(|p| {
+            p.steps
+                .iter()
+                .any(|s| matches!(s, Step::Op(Stage::HighlightFill(_))))
+        }) {
+            self.fill = None;
+        }
+    }
+
+    /// Let go of the camera picture kept before the highlight fill: the
+    /// fill it was kept for is made, or not to be.
+    pub fn forget_camera(&mut self) {
+        self.points.retain(|p| p.keep != Keep::Camera);
+    }
+
+    /// Take `other`'s camera picture kept before the highlight fill, of
+    /// the same input: a stand-in's walk made it, and its steps are the
+    /// fill's list's up to there.
+    pub fn take_camera(&mut self, other: &mut Kept) {
+        let Some(i) = other.points.iter().position(|p| p.keep == Keep::Camera) else {
+            return;
+        };
+        if self
+            .from
+            .as_ref()
+            .zip(other.from.as_ref())
+            .is_none_or(|(a, b)| !a.same(b))
+        {
+            return;
+        }
+        self.put(other.points.remove(i));
     }
 
     /// Nothing kept at all.
@@ -1078,6 +1200,7 @@ impl Kept {
     pub fn bytes(&self) -> u64 {
         let mut seen: Vec<*const WorkingImage> = Vec::new();
         let mut total = 0u64;
+        let mut camera = 0u64;
         let mut count = |image: &Arc<WorkingImage>| {
             let at = Arc::as_ptr(image);
             if !seen.contains(&at) {
@@ -1093,13 +1216,42 @@ impl Kept {
                 }
                 KeptBuf::Working(image) => count(image),
                 KeptBuf::Device(_) => {}
+                KeptBuf::Camera {
+                    prepared,
+                    rgb,
+                    network,
+                } => {
+                    let floats = rgb.len() + network.as_ref().map_or(0, |n| n.len());
+                    let codes = prepared.clip_codes.as_ref().map_or(0, |c| c.codes.len());
+                    camera += (floats * std::mem::size_of::<f32>() + codes) as u64;
+                }
             }
             // Dehazed, the guide is a picture of its own.
             if let Some(SharpenGuide::Working(guide)) = &p.taps.sharpen_guide {
                 count(guide);
             }
         }
-        total + self.mask_picture().map_or(0, |p| p.bytes())
+        total
+            + camera
+            + self.mask_picture().map_or(0, |p| p.bytes())
+            + self.fill.as_ref().map_or(0, |f| f.bytes() as u64)
+    }
+
+    /// The highlight fill's fields kept, with what made them.
+    pub fn fill(&self) -> Option<&Arc<KeptFill>> {
+        self.fill.as_ref()
+    }
+
+    /// Whether a walk of `steps` under `plan` would start past step
+    /// `at`: from a point kept here that serves it ([`Kept::resume`],
+    /// a retouch's unmade fills aside), or from the base or the pair
+    /// turned ([`Kept::turned`]).
+    pub fn starts_past(&self, steps: &Steps, plan: &[Place], at: usize) -> bool {
+        self.points.iter().any(|p| {
+            align(&p.steps, &steps.steps).is_some_and(|(past, map)| {
+                past > at && Self::point_serves(p, steps, plan, past, &map)
+            }) || (p.steps.len() > at && Self::turns_to(p, steps, plan))
+        })
     }
 
     /// Whether the point at `keep` is a picture on the device.
@@ -1121,6 +1273,17 @@ impl Kept {
                 }
             }
         }
+    }
+
+    /// Whether any point kept here, or the fields kept, was made by a
+    /// step for which `stage` holds: for the tests of what is kept.
+    #[cfg(test)]
+    pub(crate) fn made_by(&self, stage: impl Fn(&Stage) -> bool) -> bool {
+        let any = |steps: &[Step]| steps.iter().any(|s| matches!(s, Step::Op(op) if stage(op)));
+        self.points.iter().any(|p| any(&p.steps))
+            || self.fill.as_ref().is_some_and(|f| any(&f.steps))
+            || self.planes.as_ref().is_some_and(|k| any(&k.steps))
+            || self.mask_picture.as_ref().is_some_and(|(s, _)| any(s))
     }
 
     /// The patched picture's upload, for the tests of what is kept.
@@ -1399,6 +1562,120 @@ fn walk_held(
     }
 }
 
+/// The round that makes the highlight fill the window's first round
+/// left (notes §719 §3): a walk of `steps` from what `kept` holds,
+/// asking `hold` before each stage up to the end of the fill, and inside
+/// it, whether to give way. Given way, or failed before the fill was
+/// made, `kept` is as it was and `aside` is handed back. What `kept`
+/// holds besides the points the walk starts from, and `aside` (the
+/// caller's own references to the picture without the fill), are held
+/// by the round only until the fill is made, and let go there, before
+/// the move into the working space makes the filled picture, so the two
+/// pictures are never held at once. Failed after that, `kept` keeps
+/// only the fields, so the next walk makes its base anew. Through, the
+/// camera picture kept before the fill goes too.
+#[allow(clippy::too_many_arguments)]
+pub fn walk_fill_round<T>(
+    steps: &Steps,
+    plan: &[Place],
+    input: &Input,
+    kept: &mut Kept,
+    models: &mut dyn Models,
+    gpu: &mut Option<greycard_gpu::Context>,
+    hold: &dyn Hold,
+    aside: T,
+) -> (Result<Walked, Stopped>, Option<T>) {
+    // The points and the fields alone: the bands, the sharpen's delta,
+    // the upload, and the masks' picture are the picture without the
+    // fill's, which this list's walk would never read.
+    let mut trial = Kept {
+        from: kept.from.clone(),
+        points: kept.points.clone(),
+        fill: kept.fill.clone(),
+        ..Kept::default()
+    };
+    let until = UntilFilled {
+        inner: hold,
+        old: std::cell::RefCell::new(Some((std::mem::take(kept), aside))),
+        past: std::cell::Cell::new(false),
+    };
+    let walked = walk(steps, plan, input, &mut trial, models, gpu, &until);
+    match (walked, until.old.into_inner()) {
+        (Err(e), Some((old, aside))) => {
+            *kept = old;
+            (Err(e), Some(aside))
+        }
+        (Err(e), None) => {
+            *kept = Kept {
+                from: trial.from,
+                fill: trial.fill,
+                ..Kept::default()
+            };
+            (Err(e), None)
+        }
+        (walked, _) => {
+            trial.forget_camera();
+            *kept = trial;
+            (walked, None)
+        }
+    }
+}
+
+/// A fill round's hold: `inner`'s give-way before each stage up to and
+/// including the highlight fill and inside it, and none after, where the
+/// work it would throw away is the fill's; and the frame's points as
+/// they were, `old`, held until then and let go there, with what the
+/// caller set aside beside them.
+struct UntilFilled<'a, T> {
+    inner: &'a dyn Hold,
+    old: std::cell::RefCell<Option<(Kept, T)>>,
+    past: std::cell::Cell<bool>,
+}
+
+impl<T> Hold for UntilFilled<'_, T> {
+    fn hold(&self, on: bool) {
+        self.inner.hold(on);
+    }
+
+    fn give_way(&self, next: &Stage) -> bool {
+        if self.past.get() {
+            return false;
+        }
+        let before = matches!(
+            next,
+            Stage::Prepare(_)
+                | Stage::Ca(_)
+                | Stage::CaFit(_)
+                | Stage::CaApply(_)
+                | Stage::Demosaic(..)
+                | Stage::Bin(_)
+                | Stage::Learned(_)
+                | Stage::Denoise(_)
+                | Stage::HighlightFill(_)
+        );
+        if !before {
+            self.past.set(true);
+            self.old.borrow_mut().take();
+            #[cfg(test)]
+            ON_PAST_BY_TEST.with(|f| {
+                if let Some(f) = f.borrow().as_ref() {
+                    f();
+                }
+            });
+            return false;
+        }
+        self.inner.give_way(next)
+    }
+
+    fn give_way_inside(&self, stage: &Stage) -> bool {
+        !self.past.get() && self.inner.give_way_inside(stage)
+    }
+
+    fn keeps_device(&self) -> bool {
+        self.inner.keeps_device()
+    }
+}
+
 /// `plan`, the places of `steps`, carried over to
 /// [`Steps::without_learned`]'s list: the steps it drops dropped, the
 /// demosaic standing in for the learned denoiser at the place the plan
@@ -1601,16 +1878,31 @@ fn attempt(
         {
             return Err(Retry::Stop(Stopped::GaveWay(stage.name())));
         }
+        #[cfg(test)]
+        if let Some(name) = match step {
+            Step::Op(s) => Some(s.name().to_string()),
+            Step::Keep(k) => Some(format!("keep {k:?}")),
+            Step::Tap(_) => None,
+        } && FAIL_AT_BY_TEST.with(|f| f.borrow().as_deref() == Some(name.as_str()))
+        {
+            return Err(failed(format!("failed at the {name}, as a test has it")));
+        }
         match step {
             Step::Keep(keep) => {
                 places.push(Place::Cpu);
-                let buf = match &st.buf {
+                let buf = match &mut st.buf {
                     Buf::Pair { model, plain } => KeptBuf::Pair {
                         model: model.clone(),
                         plain: plain.clone(),
                     },
                     Buf::Working(image) => KeptBuf::Working(image.clone()),
                     Buf::Device(image) => KeptBuf::Device(image.clone()),
+                    Buf::Camera { prepared, rgb } => KeptBuf::camera(prepared, rgb, None),
+                    Buf::CameraPair {
+                        prepared,
+                        network,
+                        plain,
+                    } => KeptBuf::camera(prepared, plain, Some(network)),
                     _ => unreachable!("a keep follows a picture"),
                 };
                 kept.put(Point {
@@ -1709,6 +2001,25 @@ fn attempt(
                 // The finish is the caller's: the shader's, or the
                 // render crate's on what the walk yields.
                 places.push(plan[i]);
+                i += 1;
+            }
+            // The highlight fill reads and keeps its fields, and may
+            // stop part way: the walk's own, on the CPU.
+            Step::Op(stage @ (Stage::HighlightFill(_) | Stage::HighlightStandIn(_))) => {
+                places.push(Place::Cpu);
+                let started = Instant::now();
+                fill_op(
+                    stage,
+                    &steps.steps[..=i],
+                    &places,
+                    kept,
+                    &mut st,
+                    &mut walked,
+                    hold,
+                )?;
+                walked
+                    .seconds
+                    .push((stage.name(), started.elapsed().as_secs_f64()));
                 i += 1;
             }
             Step::Op(stage) if plan[i] == Place::Gpu && !matches!(stage, Stage::Learned(_)) => {
@@ -1850,6 +2161,92 @@ fn run_end(steps: &Steps, plan: &[Place], i: usize) -> usize {
         }
     }
     end
+}
+
+/// The highlight fill's step `stage`, the last of `through`, the walk's
+/// steps so far, run at `places`: the fields `kept` holds for the same
+/// steps in the same places applied again, the same bits as making
+/// them; or made, asking `hold` between the fill's parts whether to
+/// stop, and kept; or, for the stand-in's step, its fields applied
+/// through this picture's white balance. Stopped part way, the walk
+/// gives way with the picture as it was and nothing kept.
+fn fill_op(
+    stage: &Stage,
+    through: &[Step],
+    places: &[Place],
+    kept: &mut Kept,
+    st: &mut Carried,
+    walked: &mut Walked,
+    hold: &dyn Hold,
+) -> Result<(), Retry> {
+    #[cfg(test)]
+    if FAIL_FILL_BY_TEST.with(std::cell::Cell::get) {
+        return Err(failed("the highlight fill failed, as a test has it"));
+    }
+    let bin = st.meta.bin;
+    let (prepared, plain, network) = match &mut st.buf {
+        Buf::Camera { prepared, rgb } => (prepared, rgb.as_mut_slice(), None),
+        Buf::CameraPair {
+            prepared,
+            network,
+            plain,
+        } => (prepared, plain.as_mut_slice(), Some(network.as_mut_slice())),
+        _ => unreachable!("the highlight fill is camera RGB's"),
+    };
+    let size = (prepared.width, prepared.height);
+    let filled = match stage {
+        Stage::HighlightFill(name) => match kept.fill.clone().filter(|k| k.is_for(through, places))
+        {
+            Some(k) => crate::highlight_fill::reapply(&k, prepared, plain, network, bin),
+            None => {
+                let made = crate::highlight_fill::run(name, prepared, plain, network, bin, &|| {
+                    hold.give_way_inside(stage)
+                })
+                .map_err(|_| Retry::Stop(Stopped::GaveWay(stage.name())))?;
+                made.map(|(filled, fill)| {
+                    kept.fill = Some(Arc::new(KeptFill {
+                        steps: through.to_vec(),
+                        places: places.to_vec(),
+                        version: filled.version,
+                        bin,
+                        size,
+                        fill,
+                    }));
+                    filled
+                })
+            }
+        },
+        Stage::HighlightStandIn(StandIn(k)) => {
+            crate::highlight_fill::stand_in(k, prepared, plain, network, bin)
+        }
+        _ => unreachable!("only the highlight fill's steps"),
+    };
+    if let Some(f) = &filled {
+        log::debug!(
+            "the highlight fill {} ({:?}): {} pixels at a look scale of {}, the range moved {:?}",
+            f.version,
+            f.how,
+            f.changed,
+            f.look_scale,
+            f.range_shift
+        );
+    }
+    st.meta.range_shift = filled.as_ref().and_then(|f| f.range_shift);
+    walked.filled = filled;
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The highlight fill fails on this thread, as a test has it.
+    pub(crate) static FAIL_FILL_BY_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Called on this thread as a fill round lets go of what it held
+    /// for a give-way: the fill made, before the filled base is.
+    #[allow(clippy::type_complexity)]
+    pub(crate) static ON_PAST_BY_TEST: std::cell::RefCell<Option<Box<dyn Fn()>>> = const { std::cell::RefCell::new(None) };
+    /// A walk on this thread fails at the step of this name (a stage's
+    /// name, or "keep" and the keep), as a test has it.
+    pub(crate) static FAIL_AT_BY_TEST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 /// A stage on the CPU.
@@ -2017,29 +2414,8 @@ fn cpu_op(
                 .map_err(failed)?;
             }
         }
-        Stage::HighlightFill(name) => {
-            let filled = match &mut st.buf {
-                Buf::Camera { prepared, rgb } => {
-                    crate::highlight_fill::run(name, prepared, rgb, None, st.meta.bin)
-                }
-                Buf::CameraPair {
-                    prepared,
-                    network,
-                    plain,
-                } => crate::highlight_fill::run(name, prepared, plain, Some(network), st.meta.bin),
-                _ => unreachable!("the highlight fill is camera RGB's"),
-            };
-            if let Some(f) = &filled {
-                log::debug!(
-                    "the highlight fill {}: {} pixels at a look scale of {}, the range moved {:?}",
-                    f.version,
-                    f.changed,
-                    f.look_scale,
-                    f.range_shift
-                );
-            }
-            st.meta.range_shift = filled.as_ref().and_then(|f| f.range_shift);
-            walked.filled = filled;
+        Stage::HighlightFill(_) | Stage::HighlightStandIn(_) => {
+            unreachable!("the walk runs the highlight fill itself (`fill_op`)")
         }
         Stage::Warp(options) => {
             let at = WarpPlacement::binned(options.area, st.meta.bin);

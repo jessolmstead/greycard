@@ -1236,8 +1236,8 @@ clears or a tester asks for it.
       left, and preferred by eye in the blind rounds. Ported in steps: a Python
       oracle with synthetic fixtures, the clip codes, the region
       analysis, the network, and the synthesis in core, and the
-      engine's stage and the edit's field; left are the fields kept
-      for a stand-in and a stage that gives way, then the UI. It
+      engine's stage, the edit's field, and the rounds that deliver
+      it; left is the UI. It
       invents, so it is an option, off by default; the classical fill
       stays the default
 - [ ] The learned fill's range shift drifts under a lens correction:

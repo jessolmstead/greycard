@@ -540,6 +540,12 @@ pub enum Stage {
     /// plain picture, applied to it and to a learned pair's network
     /// half. At a bin, look-scaled.
     HighlightFill(&'static str),
+    /// The last fields of the highlight fill applied through this
+    /// walk's white balance, standing in for the fill in the window's
+    /// first picture while a white balance moves (notes §719 §3): never
+    /// in a list an edit makes, and equal only to itself, so nothing a
+    /// walk of it keeps serves another list.
+    HighlightStandIn(crate::highlight_fill::StandIn),
     /// A DNG's own lens correction, on camera RGB: a resample, the
     /// camera's geometry before any turn, crop, or lens profile.
     Warp(Box<WarpOptions>),
@@ -681,6 +687,7 @@ impl Stage {
             | Stage::Denoise(_)
             // Before the turn, in the mosaic's own frame.
             | Stage::HighlightFill(_)
+            | Stage::HighlightStandIn(_)
             | Stage::Warp(_)
             | Stage::IntoWorking { .. }
             | Stage::Blend { .. }
@@ -704,6 +711,7 @@ impl Stage {
             Stage::Learned(_) => "learned denoiser",
             Stage::Denoise(_) => "denoise",
             Stage::HighlightFill(_) => "highlight fill",
+            Stage::HighlightStandIn(_) => "highlight fill's stand-in",
             Stage::Warp(_) => "the file's warp",
             Stage::IntoWorking { .. } => "move into the working space",
             Stage::Blend { .. } => "blend",
@@ -802,6 +810,11 @@ pub enum Tap {
 /// Where a walk leaves what it has for the next to start from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keep {
+    /// The camera picture just before the learned highlight fill, after
+    /// the demosaic, the bin, and the denoise: kept only by the window's
+    /// first round, which leaves the fill to the next, and let go once
+    /// the fill is made ([`Steps::kept_before_fill`]).
+    Camera,
     /// The learned denoiser's pair, before the blend.
     Pair,
     /// The base: everything before the retouch.
@@ -907,6 +920,51 @@ impl Steps {
         self.skipped
             .iter()
             .any(|(_, why)| matches!(why, Skip::Reduced | Skip::ModelsSee))
+    }
+
+    /// Where the list runs the learned highlight fill, if it does.
+    pub fn fill_at(&self) -> Option<usize> {
+        self.steps
+            .iter()
+            .position(|s| matches!(s, Step::Op(Stage::HighlightFill(_))))
+    }
+
+    /// The list with the camera picture kept just before its highlight
+    /// fill ([`Keep::Camera`]), for a round after to make the fill from;
+    /// as it is without a fill.
+    pub fn kept_before_fill(&self) -> Steps {
+        let mut out = self.clone();
+        if let Some(at) = self.fill_at() {
+            out.steps.insert(at, Step::Keep(Keep::Camera));
+        }
+        out
+    }
+
+    /// The list with its highlight fill's step taken out: the picture
+    /// without the fill, its cells still read for a fill after.
+    pub fn without_fill(&self) -> Steps {
+        let mut out = self.clone();
+        out.steps
+            .retain(|s| !matches!(s, Step::Op(Stage::HighlightFill(_))));
+        out
+    }
+
+    /// The list with the highlight fill's step given to the last fields
+    /// `kept` holds, standing in for it ([`Stage::HighlightStandIn`]).
+    pub fn with_stand_in(&self, kept: &Arc<crate::highlight_fill::KeptFill>) -> Steps {
+        Steps {
+            steps: self
+                .steps
+                .iter()
+                .map(|s| match s {
+                    Step::Op(Stage::HighlightFill(_)) => Step::Op(Stage::HighlightStandIn(
+                        crate::highlight_fill::StandIn(kept.clone()),
+                    )),
+                    s => s.clone(),
+                })
+                .collect(),
+            skipped: self.skipped.clone(),
+        }
     }
 
     /// The list a learned denoiser that is not to be had stands in
@@ -1345,6 +1403,59 @@ fn highlight_fill(edit: &Edit, facts: &Facts, s: &mut Steps) -> Option<&'static 
         return None;
     }
     Some(version.name)
+}
+
+/// Whether fields made by the steps `kept` (a list's steps through its
+/// highlight fill) may stand in for the fill of the steps `now` (another
+/// list's, through its fill), applied through `now`'s white balance
+/// (notes §719 §3): the same steps but for the white balance and the
+/// profiled denoise's settings, which move the camera picture's values
+/// and nothing of where its pixels are, which are clipped, or how they
+/// are counted.
+///
+/// Never across a version, a bin (and so a look scale), the demosaic or
+/// the learned denoiser (each another picture at every edge, the rim's
+/// included), the CA, the hot pixels, the levels, the highlights' mode,
+/// the profile, or anything else of the prepare: each may move a pixel
+/// or a cell's count, or is a click, where the fill made again is worth
+/// the wait. A frame's own crop and the frame itself are the input's,
+/// which the kept points are bound to.
+pub fn stands_in_for(kept: &[Step], now: &[Step]) -> bool {
+    kept.len() == now.len()
+        && matches!(now.last(), Some(Step::Op(Stage::HighlightFill(_))))
+        && kept.iter().zip(now).all(|(k, n)| match (k, n) {
+            (Step::Op(Stage::Prepare(k)), Step::Op(Stage::Prepare(n))) => {
+                let denoise = match (&k.settings.denoise, &n.settings.denoise) {
+                    (None, None) => true,
+                    (Some(k), Some(n)) => strength_alone(k, n),
+                    _ => false,
+                };
+                let moved = PrepareOptions {
+                    settings: DevelopSettings {
+                        white_point: k.settings.white_point,
+                        denoise: k.settings.denoise,
+                        ..n.settings.clone()
+                    },
+                    ..(**n).clone()
+                };
+                denoise && **k == moved
+            }
+            (Step::Op(Stage::Denoise(k)), Step::Op(Stage::Denoise(n))) => strength_alone(k, n),
+            (k, n) => k == n,
+        })
+}
+
+/// Whether two profiled denoises differ in their strength alone: every
+/// field named, so one added later is not taken to stand in unseen.
+fn strength_alone(k: &DenoiseOptions, n: &DenoiseOptions) -> bool {
+    let DenoiseOptions {
+        method,
+        strength: _,
+        chroma,
+        nlm,
+        hybrid_from,
+    } = k;
+    *method == n.method && *chroma == n.chroma && *nlm == n.nlm && *hybrid_from == n.hybrid_from
 }
 
 /// A merge's frame: the prepare with nothing clipped after the gains,

@@ -261,6 +261,67 @@ Two more things wait:
 - The stage cannot give way inside the fill, and its fields are
   dropped after the apply; step 7 needs both changed.
 
+## 1c. The fill in rounds, as built (2026-11-19)
+
+With the fill on, the window's develop is two rounds, on the mechanism
+the generative fills use (§566 to §569):
+
+- **The first round** develops without the fill and delivers at once,
+  marked pending (`FillReport::highlight_pending`). The frame says the
+  off edit: its edit, its `developed_as`, and the masks' print. A
+  point is kept in camera space just before the fill (`Keep::Camera`),
+  in this round's list alone; no export, prefetch, or reduced list has
+  it.
+- **The fill round** walks from that point, so it costs about the fill
+  alone, lets go of the picture without the fill before the filled one
+  is made, and lands the filled picture under the same generation. The
+  camera point goes once the filled base is kept.
+- **It gives way** only to a newer open or develop, before each stage
+  up to the fill and at three places inside it, and then leaves the
+  frame as it was. A round that fails before the fill does the same;
+  one that fails after it leaves the frame with no picture and the
+  fields, and the next develop makes the base.
+- **The fields are kept** with the frame (`Kept.fill`, counted in its
+  bytes), so a move after the fill, the lens or defringe, applies them
+  again to the bit. A frame shelved with its fill off drops them.
+- **Under a white balance or denoise-strength move** the last fields
+  stand in (`Stage::HighlightStandIn`, `CameraFill::through`), on a
+  walk whose pictures are thrown away, until the refill lands. Nothing
+  else may differ before the fill; a new field of the denoise fails
+  the build until it is named. The clip codes do not move with the
+  gains, a photosite clipping against its own white.
+
+Measured at 24 MP, 32 threads and one, seconds:
+
+| | off | one walk with the fill | first picture | filled after |
+|---|---|---|---|---|
+| 32 threads | 0.65 | 0.96 | 0.68 | 0.37 |
+| one thread | 5.9 | 7.8 | 5.9 | 2.2 |
+
+A machine under other builds measured the rounds 15 to 24% over one
+walk. The stand-in against a real refill: 0.010 stops at the median
+for a 500 K move (0.024 at most), 0.041 for 2000 K (0.104), where the
+picture without the fill is 0.15 to 0.18 off.
+
+Memory at 24 MP, through the worker: the first round peaks 88 MB over
+one walk with the fill, the camera point's copy; the fill round peaks
+at 1.7 to 1.8 pictures over what the frame holds. The camera point is
+280 MB, 1.25 GB at 100 MP, and twice that under a learned pair, for as
+long as a fill is pending. The fields are 3 KB a 32x32 tile they
+reach: 72 MB at most at 24 MP, 305 MB at 100 MP.
+
+What is not as §3 hoped:
+- With Highlights at -1.5, the fill landing moves pixels more than
+  8 px from the filled region by up to 51 of 65,535: the regional
+  guide spreads the filled light. Whites move nothing.
+- A before/after aside of an edit with the fill on makes the fill
+  inline, a whole walk.
+- After a round that fails past the fill the frame's picture is empty
+  until the next develop; no reader of it was found, and not every
+  one was looked at.
+- The learned pair's memory was measured on the bare walk at 6 MP,
+  the worker having no learned model in a test.
+
 ## 2. Everything in Rust
 
 The procedural part and the network's forward pass are both plain

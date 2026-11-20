@@ -885,6 +885,11 @@ pub(super) fn prefetch(
             }
         }
 
+        // Inside the highlight fill, the same ask, said nowhere.
+        fn give_way_inside(&self, _stage: &Stage) -> bool {
+            matches!((self.ahead)(self.facts), Ahead::Work)
+        }
+
         // A neighbor nobody waits on does not cost the session its
         // device over its own failure.
         fn keeps_device(&self) -> bool {

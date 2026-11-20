@@ -2,8 +2,9 @@
 //! from what its last walks kept.
 
 use super::*;
+use crate::highlight_fill::KeptFill;
 use crate::stages::{Keep, LEARNED_DENOISER, Skip, Stage, Step};
-use crate::walk::{Buf, NoHold, NoLearned, Place, walk};
+use crate::walk::{Buf, Hold, NoHold, NoLearned, Place, walk};
 
 /// [`develop_round`] with every fill made in the one walk, as the
 /// tests develop.
@@ -33,6 +34,7 @@ pub(super) fn develop_job(
         gpu,
         deliver,
         &mut Round::all(),
+        &NoHold,
     )
 }
 
@@ -40,7 +42,10 @@ pub(super) fn develop_job(
 /// develop had ahead and has made: the window's develop delivers its
 /// picture with no fill made ([`Round::first`]), then the worker walks
 /// it again for each fill left ([`Round::next`]), so the picture comes
-/// first and each fill lands as it is made.
+/// first and each fill lands as it is made. The learned highlight fill
+/// goes the same way: a first round whose walk would have to make it
+/// delivers the picture without it, or with the last fields standing
+/// in, and the next round makes it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Round {
     budget: Option<usize>,
@@ -48,6 +53,28 @@ pub(super) struct Round {
     /// A develop aside ([`develop_aside`]): what the device holds for
     /// the open frame's own develops is left as it is.
     aside: bool,
+    /// What the round does with a highlight fill its walk would make.
+    highlight: Highlight,
+    /// The round gave way to a newer develop part way through the
+    /// highlight fill's making: nothing of it was kept, and its outcome
+    /// is not to be delivered.
+    pub gave_way: bool,
+}
+
+/// What a round does with a learned highlight fill its walk would have
+/// to make (none kept past it, nor its fields for the same steps).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Highlight {
+    /// Makes it in the walk: an export's way, a test's, and a develop
+    /// aside's, which has no round after it.
+    Inline,
+    /// Delivers the picture without it, the develop of the edit with
+    /// the fill off, or with the last fields standing in under another
+    /// white balance ([`crate::stages::stands_in_for`]), and leaves it
+    /// to the next round ([`FillReport::highlight_pending`]).
+    First,
+    /// Makes it, giving way to a newer develop until it is made.
+    Make,
 }
 
 impl Round {
@@ -58,6 +85,8 @@ impl Round {
             budget: None,
             ahead: (0, 0),
             aside: false,
+            highlight: Highlight::Inline,
+            gave_way: false,
         }
     }
 
@@ -68,17 +97,40 @@ impl Round {
             budget: Some(0),
             ahead: (0, 0),
             aside: false,
+            highlight: Highlight::First,
+            gave_way: false,
         }
     }
 
-    /// The next fill of a develop whose rounds so far left `ahead`.
+    /// The next fill of a develop whose rounds so far left `ahead`, and
+    /// its highlight fill when it is still to make.
     pub(super) fn next(ahead: (usize, usize)) -> Self {
         Self {
             budget: Some(1),
             ahead,
             aside: false,
+            highlight: Highlight::Make,
+            gave_way: false,
         }
     }
+}
+
+/// How a round walks its list.
+enum Walk<'a> {
+    /// From what the frame keeps, never giving way.
+    Plain,
+    /// The list without its highlight fill, the camera picture kept
+    /// where the fill would run for the round after to make it from:
+    /// the picture is the fill-off edit's, to the bit, and so is what
+    /// the frame says of it (the edit its masks see, their print, and
+    /// the develop it last delivered).
+    Unfilled,
+    /// The list with these fields standing in for its highlight fill,
+    /// the camera picture kept before them.
+    StandIn(&'a Arc<KeptFill>),
+    /// The fill's round ([`crate::walk::walk_fill_round`]), asking
+    /// `hold` up to the fill's end whether to give way.
+    Fill(&'a dyn Hold),
 }
 
 /// Develop `edit` on the open frame at `turn`: a walk of the window's
@@ -95,6 +147,16 @@ impl Round {
 /// lets the context go for the session.
 /// The walk makes as many fills as `round` says and notes in it how
 /// far the develop's fills have got.
+///
+/// A learned highlight fill the walk would have to make (no point kept
+/// past it, nor fields for the same steps) is the round's to place: a
+/// first round leaves it pending and delivers the picture at once,
+/// the edit's with the fill off (its lists, keys, prints, and kept
+/// points that edit's own) or, under another white balance of the same
+/// steps, the last fields applied through the new one on a copy of
+/// what the frame keeps, which the frame never keeps; the next round
+/// makes it, asking `hold` up to its end whether to give way, and gives
+/// way with the frame's kept points as they were.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn develop_round(
     input: &Input,
@@ -103,6 +165,140 @@ pub(super) fn develop_round(
     generation: u64,
     held: &mut Option<FrameKept>,
     ai: &mut Ai,
+    stores: (
+        Option<&greycard_ai::DenoiseCache>,
+        Option<&greycard_lens::Database>,
+    ),
+    gpu: &mut Option<greycard_gpu::Context>,
+    deliver: &Deliver,
+    round: &mut Round,
+    hold: &dyn Hold,
+) -> (Outcome, Option<Arc<WorkingImage>>) {
+    let facts = input.walked().facts(turn);
+    let (steps, plan) = window_steps(edit, &facts, stores.1, gpu.is_some());
+    let h = match held {
+        Some(h) if h.facts == FrameKept::new(&facts).facts => h,
+        _ => held.insert(FrameKept::new(&facts)),
+    };
+    // The places the walk keeps to: all the CPU's with no device.
+    let plan: Vec<Place> = if gpu.is_some() {
+        plan
+    } else {
+        vec![Place::Cpu; plan.len()]
+    };
+    let pending = steps.fill_at().filter(|&at| {
+        round.highlight != Highlight::Inline
+            && !round.aside
+            && !h.kept.starts_past(&steps, &plan, at)
+            && !h
+                .kept
+                .fill()
+                .is_some_and(|k| k.steps[..] == steps.steps[..=at])
+    });
+    let Some(at) = pending else {
+        return develop_with(
+            input,
+            edit,
+            turn,
+            generation,
+            h,
+            ai,
+            stores,
+            gpu,
+            deliver,
+            round,
+            Walk::Plain,
+        );
+    };
+    if round.highlight == Highlight::Make {
+        return develop_with(
+            input,
+            edit,
+            turn,
+            generation,
+            h,
+            ai,
+            stores,
+            gpu,
+            deliver,
+            round,
+            Walk::Fill(hold),
+        );
+    }
+    let stand = h
+        .kept
+        .fill()
+        .filter(|k| crate::stages::stands_in_for(&k.steps, &steps.steps[..=at]))
+        .cloned();
+    let (mut outcome, picture) = match &stand {
+        // On a copy of the frame's: nothing of the stand-in's walk is
+        // kept, nor the base, stamp, and edit the masks see, but the
+        // camera picture it kept before the fill, which is the fill's
+        // list's and the round after's to start from.
+        Some(k) => {
+            let mut aside = FrameKept::new(&facts);
+            aside.kept = h.kept.clone();
+            aside.stamp = h.stamp;
+            aside.turn = h.turn;
+            aside.image = h.image.clone();
+            aside.edit = h.edit.clone();
+            aside.print = h.print;
+            aside.from_shelf = std::mem::take(&mut h.from_shelf);
+            let landed = develop_with(
+                input,
+                edit,
+                turn,
+                generation,
+                &mut aside,
+                ai,
+                stores,
+                gpu,
+                deliver,
+                round,
+                Walk::StandIn(k),
+            );
+            h.kept.take_camera(&mut aside.kept);
+            landed
+        }
+        None => develop_with(
+            input,
+            edit,
+            turn,
+            generation,
+            h,
+            ai,
+            stores,
+            gpu,
+            deliver,
+            round,
+            Walk::Unfilled,
+        ),
+    };
+    tracing::debug!(
+        "the highlight fill left for the next round; the picture is {}",
+        if stand.is_some() {
+            "the last fields' stand-in"
+        } else {
+            "without it"
+        }
+    );
+    if let Outcome::Developed { fills, .. } = &mut outcome {
+        fills.highlight_pending = true;
+        h.filling = true;
+    }
+    (outcome, picture)
+}
+
+/// [`develop_round`]'s walk of `edit` on the frame kept `h`, as `how`
+/// says.
+#[allow(clippy::too_many_arguments)]
+fn develop_with(
+    input: &Input,
+    edit: &Edit,
+    turn: u8,
+    generation: u64,
+    h: &mut FrameKept,
+    ai: &mut Ai,
     (cache, lenses): (
         Option<&greycard_ai::DenoiseCache>,
         Option<&greycard_lens::Database>,
@@ -110,22 +306,58 @@ pub(super) fn develop_round(
     gpu: &mut Option<greycard_gpu::Context>,
     deliver: &Deliver,
     round: &mut Round,
+    how: Walk<'_>,
 ) -> (Outcome, Option<Arc<WorkingImage>>) {
     let start = Instant::now();
     let walking = input.walked();
     let facts = walking.facts(turn);
     let (steps, plan) = window_steps(edit, &facts, lenses, gpu.is_some());
-    let h = match held {
-        Some(h) if h.facts == FrameKept::new(&facts).facts => h,
-        _ => held.insert(FrameKept::new(&facts)),
+    // The first round's lists: the camera picture kept where the fill
+    // would run, and the fill taken out or stood in for; each step's
+    // place carried over, the keep's the CPU's as every keep's is.
+    let (steps, plan) = match (&how, steps.fill_at()) {
+        (Walk::Unfilled | Walk::StandIn(_), Some(at)) => {
+            let mut plan = plan;
+            plan.insert(at, Place::Cpu);
+            let kept = steps.kept_before_fill();
+            match how {
+                Walk::StandIn(k) => (kept.with_stand_in(k), plan),
+                _ => {
+                    plan.remove(at + 1);
+                    (kept.without_fill(), plan)
+                }
+            }
+        }
+        _ => (steps, plan),
     };
-    let from_shelf = std::mem::take(&mut h.from_shelf);
-    h.developed_as = None;
-    // The developed picture the last walk kept is the export's and the
-    // save's to start from, not the window's: a walk from it would not
-    // run the sharpen, whose blend and measure the viewport shows, and
-    // a walk with a device ends at the viewport's texture.
-    h.kept.take_working(Keep::Developed);
+    // What the frame says it shows: the fill-off edit, when the fill is
+    // left for the next round.
+    let off;
+    let edit = match how {
+        Walk::Unfilled => {
+            off = Edit {
+                highlight_fill: None,
+                ..edit.clone()
+            };
+            &off
+        }
+        _ => edit,
+    };
+    // The fill's round leaves the frame as it was until it is through:
+    // given way, or failed before the fill was made, it is put back.
+    let fill_round = matches!(how, Walk::Fill(_));
+    let from_shelf = h.from_shelf;
+    if !fill_round {
+        h.from_shelf = false;
+        h.developed_as = None;
+        // The developed picture the last walk kept is the export's and
+        // the save's to start from, not the window's: a walk from it
+        // would not run the sharpen, whose blend and measure the
+        // viewport shows, and a walk with a device ends at the
+        // viewport's texture. (The fill round's list never starts from
+        // it: the picture without the fill is another list's.)
+        h.kept.take_working(Keep::Developed);
+    }
     let print = ai.base_print(edit, turn, crate::mask_base::Size::Full);
     // A round whose base is not kept makes it again, the learned
     // denoiser with it: not beside a UNet the queue held.
@@ -139,24 +371,91 @@ pub(super) fn develop_round(
     models.ahead = round.ahead;
     // A fill to make: the walk starts before the retouch, whatever a
     // point past it would serve.
-    if round.budget.is_some_and(|b| b > 0) {
+    if round.budget.is_some_and(|b| b > 0) && !fill_round {
         h.kept.drop_unmade();
     }
+    // What the frame holds of the picture without the fill besides its
+    // kept points: its base, its bands, the refined masks' picture, and
+    // its guide, set aside for the fill's round, so the round's walk is
+    // the last to hold that picture and lets it go once the fill is
+    // made.
+    let unfilled = fill_round.then(|| {
+        (
+            std::mem::replace(&mut h.image, Arc::new(WorkingImage::new(0, 0))),
+            h.planes.take(),
+            h.mask_picture.take(),
+            std::mem::replace(&mut h.guide, Arc::new(greycard_render::finish::Guide::NONE)),
+        )
+    });
     // The card's free memory before and after a develop on it, for the
     // log: what the window's own develop takes without asking, which
     // the floor the models' sessions are kept over is measured from.
     let free_before = gpu.as_ref().and_then(|_| crate::ai::card_free_for_log());
-    let walked = match walk(
-        &steps,
-        &plan,
-        &walking,
-        &mut h.kept,
-        &mut models,
-        gpu,
-        &NoHold,
-    ) {
+    let (walked, unfilled) = match how {
+        Walk::Plain | Walk::Unfilled | Walk::StandIn(_) => (
+            walk(
+                &steps,
+                &plan,
+                &walking,
+                &mut h.kept,
+                &mut models,
+                gpu,
+                &NoHold,
+            ),
+            None,
+        ),
+        Walk::Fill(hold) => crate::walk::walk_fill_round(
+            &steps,
+            &plan,
+            &walking,
+            &mut h.kept,
+            &mut models,
+            gpu,
+            hold,
+            unfilled,
+        ),
+    };
+    let unfilled = unfilled.flatten();
+    // A walk of the fill's list made or kept its filled picture: the
+    // camera picture kept for it is of no more use.
+    if matches!(how, Walk::Plain) && walked.is_ok() && steps.fill_at().is_some() {
+        h.kept.forget_camera();
+    }
+    // The frame as it was, handed back with its kept points by a round
+    // that gave way or failed before its fill was made; or emptied by
+    // one that failed after it: then the next develop makes its base
+    // anew, and the frame says it shows nothing yet.
+    if let Some((image, planes, mask_picture, guide)) = unfilled {
+        h.image = image;
+        h.planes = planes;
+        h.mask_picture = mask_picture;
+        h.guide = guide;
+    } else if fill_round && walked.is_err() {
+        debug_assert!(h.kept.is_empty());
+        h.developed_as = None;
+    }
+    if fill_round && walked.is_ok() {
+        h.from_shelf = false;
+    }
+    let walked = match walked {
         Ok(walked) => walked,
+        Err(crate::walk::Stopped::GaveWay(stage)) => {
+            tracing::debug!("the highlight fill's round gave way before or in the {stage}");
+            round.gave_way = true;
+            return (
+                Outcome::Failed {
+                    generation,
+                    message: format!("gave way in the {stage}"),
+                },
+                None,
+            );
+        }
         Err(e) => {
+            // A fill round that failed leaves nothing for the edit's
+            // pictures to wait on: it is said as any develop's failure.
+            if matches!(how, Walk::Fill(_)) {
+                h.filling = false;
+            }
             return (
                 Outcome::Failed {
                     generation,
@@ -172,7 +471,7 @@ pub(super) fn develop_round(
     // A base made in this walk is a new picture for the masks; one
     // turned where it stood is too, though it is the base kept.
     let turned = walked.from == Some(Keep::Base) && h.turn != turn && h.stamp > 0;
-    let made = matches!(walked.from, None | Some(Keep::Pair));
+    let made = matches!(walked.from, None | Some(Keep::Pair | Keep::Camera));
     if made || turned {
         h.stamp += 1;
     }
@@ -434,8 +733,10 @@ pub(super) fn develop_aside(
         aside.turn = h.turn;
         aside.image = h.image.clone();
     }
+    // No round comes after an aside: its highlight fill is made in it.
     let mut round = Round {
         aside: true,
+        highlight: Highlight::Inline,
         ..Round::first()
     };
     develop_round(
@@ -449,6 +750,7 @@ pub(super) fn develop_aside(
         gpu,
         deliver,
         &mut round,
+        &NoHold,
     )
     .0
 }

@@ -360,28 +360,109 @@ pub fn camera_fields<C: PixelCodes>(
     look: &FillLook,
     f: f64,
 ) -> Option<CameraFill> {
-    if width == 0 || height == 0 {
-        return None;
+    match camera_fields_until(
+        rgb,
+        width,
+        height,
+        camera,
+        codes,
+        clips,
+        weights,
+        look,
+        f,
+        &|| false,
+    ) {
+        Ok(fill) => fill,
+        Err(super::GaveWay) => unreachable!("never asked to give way"),
     }
-    let codes = codes?;
+}
+
+/// [`camera_fields`], asking `give_way` between the fill's parts
+/// ([`fill_fields_until`](super::fill_fields_until)): the same fields
+/// to the bit when it runs through, [`GaveWay`](super::GaveWay) and
+/// nothing made when it is told to stop.
+///
+/// # Panics
+/// As [`camera_fields`].
+#[allow(clippy::too_many_arguments)]
+pub fn camera_fields_until<C: PixelCodes>(
+    rgb: &[f32],
+    width: usize,
+    height: usize,
+    camera: &Camera,
+    codes: Option<&C>,
+    clips: [f32; 3],
+    weights: &FillWeights,
+    look: &FillLook,
+    f: f64,
+    give_way: &dyn Fn() -> bool,
+) -> Result<Option<CameraFill>, super::GaveWay> {
+    if width == 0 || height == 0 {
+        return Ok(None);
+    }
+    let Some(codes) = codes else {
+        return Ok(None);
+    };
     let source = Through::new(rgb, width, height, camera);
     let scale = camera.scale();
     if !(scale.is_finite() && scale > 0.0) {
-        return None;
+        return Ok(None);
     }
-    let inverse = camera.inverse()?;
-    let fields = super::fill_fields_of(&source, codes, clips, weights, look, f)?;
-    Some(CameraFill {
+    let Some(inverse) = camera.inverse() else {
+        return Ok(None);
+    };
+    let fields = super::fill_fields_until(&source, codes, clips, weights, look, f, give_way)?;
+    Ok(fields.map(|fields| CameraFill {
         fields,
         camera: *camera,
         inverse,
-    })
+    }))
 }
 
 impl CameraFill {
     /// The fields, in the picture's frame.
     pub fn fields(&self) -> &Fields {
         &self.fields
+    }
+
+    /// The same fields applied through `camera`: another white balance
+    /// of the same frame, where the fields made under the last one
+    /// stand in until the fill is made again (notes §719 §3). None for
+    /// a camera whose matrix has no finite inverse or whose scale is
+    /// not a positive number.
+    ///
+    /// The fields are a gain in stops and an Oklab ab offset at half
+    /// size, both read where they are applied as offsets from the
+    /// pixel's own luminance and chroma, so they mean the same lift
+    /// under any white balance. What a fill made again would change,
+    /// and this keeps:
+    /// - the network's answers, which read the clipped regions' rim
+    ///   and their context through the old white balance: the rim's
+    ///   color, the harmonic continuation's, and the clip levels
+    ///   (`clips`, each gain over the largest) it was given;
+    /// - the color hand-over's target, fitted to the old rim, so the
+    ///   ab offset is added to a chroma that moved with the white;
+    /// - the depth and the reach, which read only the codes and so do
+    ///   not change (the codes count photosites against their own
+    ///   white, not against a gain).
+    ///
+    /// The pixels it changes are those a fill made again would read:
+    /// the same codes, the same support.
+    pub fn through(&self, camera: &Camera) -> Option<CameraFill> {
+        let scale = camera.scale();
+        if !(scale.is_finite() && scale > 0.0) {
+            return None;
+        }
+        Some(CameraFill {
+            fields: self.fields.clone(),
+            camera: *camera,
+            inverse: camera.inverse()?,
+        })
+    }
+
+    /// The bytes the fill holds: its fields' tiles and their index.
+    pub fn bytes(&self) -> usize {
+        self.fields.bytes() + std::mem::size_of::<Self>()
     }
 
     /// Applies the fill to `rgb`, a camera picture of the fill's size

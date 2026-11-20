@@ -663,14 +663,17 @@ fn the_fill_lets_go_of_the_mosaic() {
         let mut prepared = prepare_with(&raw, &settings, false, None).unwrap();
         let (mut rgb, _, _) = demosaic_prepared(&prepared, &settings).unwrap();
         assert!(!prepared.samples.is_empty());
-        let filled = crate::highlight_fill::run(name, &mut prepared, &mut rgb, None, 1);
+        let filled = crate::highlight_fill::run(name, &mut prepared, &mut rgb, None, 1, &|| false)
+            .expect("never asked to give way");
         assert_eq!(filled.is_some(), name == "hl-1");
         assert!(prepared.samples.is_empty(), "{name}");
         assert_eq!(prepared.samples.capacity(), 0, "{name}");
     }
     let mut prepared = prepare_with(&raw, &settings, false, None).unwrap();
     let (mut rgb, _, _) = demosaic_prepared(&prepared, &settings).unwrap();
-    crate::highlight_fill::run("hl-1", &mut prepared, &mut rgb, None, 1).unwrap();
+    crate::highlight_fill::run("hl-1", &mut prepared, &mut rgb, None, 1, &|| false)
+        .unwrap()
+        .unwrap();
     assert!(prepared.clip_codes.is_none(), "the cells let go");
 }
 

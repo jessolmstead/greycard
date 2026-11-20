@@ -181,6 +181,9 @@ pub(super) fn run(
     let mut gpu_gone = false;
     // A job panicked with wgpu's words for a lost device.
     let mut lost_seen = false;
+    // A fill round in hand: the develop to make again on the CPU should
+    // the device be lost in it.
+    let mut fill_redo: Option<Job> = None;
     // The open frame's develop landed with fills still to make: its
     // edit, turn, and generation, how far its fills have got, and how
     // many are left. A develop asked for gives them up; leaving the
@@ -207,7 +210,8 @@ pub(super) fn run(
         if !gpu_gone && (told.is_some() || lost_seen || gpu.as_ref().is_some_and(|c| c.is_lost())) {
             gpu_gone = true;
             let again = told.unwrap_or(true);
-            let redo = lose_gpu(&mut gpu, &mut base, &mut shown, again);
+            let redo = lose_gpu(&mut gpu, &mut base, &mut shown, again)
+                .or_else(|| fill_redo.take().filter(|_| again));
             if let Some(job) = redo {
                 lock.lock()
                     .expect("worker queue")
@@ -216,6 +220,9 @@ pub(super) fn run(
             }
         }
         lost_seen = false;
+        // A fill round that ended, whatever its end, leaves nothing to
+        // develop again.
+        fill_redo = None;
         let job = {
             let mut q = lock.lock().expect("worker queue");
             loop {
@@ -1004,6 +1011,22 @@ pub(super) fn run(
         // A panic in a job is the hook's to write, with its
         // backtrace; here it becomes the failure the UI is waiting
         // on, and the develop state is dropped rather than trusted.
+        // The develop on screen, should the device be lost in a fill
+        // round: the window's picture is its first round's texture,
+        // which `shown` let go of.
+        fill_redo = match (&job, &fills_due) {
+            (Job::Fill { generation }, Some(due))
+                if due.generation == *generation && due.highlight =>
+            {
+                Some(Job::Develop {
+                    edit: due.edit.clone(),
+                    generation: *generation,
+                    turn: due.turn,
+                    of: None,
+                })
+            }
+            _ => None,
+        };
         let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
             Job::Open {
                 path,
@@ -1200,6 +1223,7 @@ pub(super) fn run(
                             &mut gpu,
                             &deliver,
                             &mut round,
+                            &Newer(lock),
                         );
                         ai.set_card_release(None);
                         fills_due =
@@ -1292,6 +1316,7 @@ pub(super) fn run(
                         &mut gpu,
                         &deliver,
                         &mut round,
+                        &Newer(lock),
                     );
                     ai.set_card_release(None);
                     fills_due =
@@ -1370,8 +1395,15 @@ pub(super) fn run(
                         &mut gpu,
                         &deliver,
                         &mut round,
+                        &Newer(lock),
                     );
                     ai.set_card_release(None);
+                    // Given way to a newer develop in the making of its
+                    // highlight fill: nothing kept, nothing delivered,
+                    // and the newer develop's rounds take over.
+                    if round.gave_way {
+                        return;
+                    }
                     // The fills still ahead, before a queue that ends
                     // stuck lets them go: what one asked again has left.
                     let ahead = match &outcome {
@@ -1413,6 +1445,7 @@ pub(super) fn run(
                             generation,
                             round: Round::next(round.ahead),
                             left: ahead.max(1),
+                            highlight: false,
                         },
                     );
                     if !gave && ended {
@@ -1613,6 +1646,9 @@ pub(super) fn run(
                 )
             }
         }));
+        if held.is_ok() {
+            fill_redo = None;
+        }
         if let Err(payload) = held {
             fills_due = None;
             ai.release_fills();
@@ -1680,6 +1716,34 @@ fn not_held(of: Option<&super::DevelopOf>, opened: Option<&std::path::Path>) {
     );
 }
 
+/// A newer open or develop of the window's, which a round making the
+/// highlight fill gives way to. A develop aside does not: it leaves the
+/// fills due as they are.
+struct Newer<'a>(&'a Mutex<Queue>);
+
+impl Newer<'_> {
+    fn asked(&self) -> bool {
+        #[allow(unused_mut)]
+        let mut q = self.0.lock().expect("worker queue");
+        // A test's develop, sent as the round asks its first.
+        #[cfg(test)]
+        if let Some(job) = q.develop_on_fill_ask.take() {
+            q.develop = Some(job);
+        }
+        q.stopping || matches!(q.develop, Some(Job::Open { .. } | Job::Develop { .. }))
+    }
+}
+
+impl crate::walk::Hold for Newer<'_> {
+    fn give_way(&self, _next: &crate::stages::Stage) -> bool {
+        self.asked()
+    }
+
+    fn give_way_inside(&self, _stage: &crate::stages::Stage) -> bool {
+        self.asked()
+    }
+}
+
 /// The fills the open frame's develop left to make after its picture
 /// landed: what the next round walks.
 struct FillsDue {
@@ -1689,6 +1753,8 @@ struct FillsDue {
     round: Round,
     /// How many are left to make.
     left: usize,
+    /// The highlight fill is among them.
+    highlight: bool,
 }
 
 impl FillsDue {
@@ -1733,7 +1799,7 @@ impl FillsDue {
                 h.left_out.extend(left);
             }
         }
-        if fills.pending.is_empty() {
+        if fills.pending.is_empty() && !fills.highlight_pending {
             return None;
         }
         Some(Self {
@@ -1742,6 +1808,7 @@ impl FillsDue {
             generation: *generation,
             round,
             left: fills.pending.len(),
+            highlight: fills.highlight_pending,
         })
     }
 }

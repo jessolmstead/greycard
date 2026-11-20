@@ -24,6 +24,8 @@ mod develop;
 mod engine;
 mod export;
 mod handle;
+#[cfg(test)]
+mod highlight_rounds;
 mod keep;
 mod masks;
 mod prefetch;
@@ -312,6 +314,11 @@ pub struct FillReport {
     /// delivered first, and the worker makes these after it, one a
     /// develop of the same generation.
     pub pending: Vec<u64>,
+    /// The learned highlight fill is still to make: the picture is the
+    /// edit's with the fill off, or the last fields standing in under
+    /// another white balance, and the worker's next round of the same
+    /// generation makes it (notes §719 §3).
+    pub highlight_pending: bool,
 }
 
 /// The white balance a develop used: camera gains and the camera to
@@ -812,6 +819,10 @@ struct Queue {
     /// The shelf's budget, as a test has it, for a shelf made anew.
     #[cfg(test)]
     shelf_by_test: Option<shelf::Budget>,
+    /// A develop a test sends as a fill round asks its hold first, as
+    /// the window would send one while the round runs.
+    #[cfg(test)]
+    develop_on_fill_ask: Option<Job>,
     /// The card's free memory, and what its sessions give back when
     /// dropped, as a test has them (`Ai::free_memory_by_test`).
     #[cfg(test)]
