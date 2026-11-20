@@ -41,6 +41,9 @@ design note behind it.
 
 ### Fixes
 
+- A save no longer writes over another window's or machine's edit:
+  the other copy is kept beside the frame
+  ([§722](https://github.com/jessolmstead/greycard/blob/master/docs/notes/722-a-save-that-looks-before-it-writes.md)).
 - A DNG with a linearization table, such as some DxO PureRAW files,
   no longer develops six stops dark and magenta.
 - A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows

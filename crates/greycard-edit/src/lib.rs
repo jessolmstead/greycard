@@ -85,12 +85,13 @@ pub use sections::{
     Demosaic, Detail, DisplayCurve, LEARNED_CHROMA, Learned, Light, Noise, STRUCTURE, Sharpen,
     Tone, WhiteBalance,
 };
-#[cfg(feature = "testing")]
-pub use sidecar::synced_writes;
 pub use sidecar::{
-    Placement, SIDECAR_FOLDER, Settled, Sidecar, Staged, replace_synced, sync_is_unsupported,
+    Asides, Bytes, Checked, FileStat, NotSaved, OnDisk, Placement, SIDECAR_FOLDER, Saved, Settled,
+    Sidecar, Staged, aside_at, asides_among, asides_of, replace_synced, sync_is_unsupported,
     write_synced,
 };
+#[cfg(feature = "testing")]
+pub use sidecar::{changed_reads, synced_writes};
 
 /// The schema version this build writes.
 pub const VERSION: u32 = 9;

@@ -1070,6 +1070,24 @@ fn a_file_changed_under_the_same_head_and_size_is_settled_by_its_whole_hash() {
     greycard_render::testing::remove_dir_retry(&dir);
 }
 
+/// A copy to the archive takes the frame's `.gcd` and XMPs, never what
+/// saves put aside beside it (other writers' files kept, files that
+/// would not parse): those stay with the frame where it is.
+#[test]
+fn a_copy_leaves_what_saves_put_aside() {
+    let dir = scratch("asides");
+    let files = shoot(&dir);
+    let a = &files[0];
+    Sidecar::default().save(a).unwrap();
+    let gcd = Sidecar::path_for(a);
+    for end in [".other", ".2.other", ".bad"] {
+        std::fs::write(format!("{}{end}", gcd.display()), b"aside").unwrap();
+    }
+    assert_eq!(greycard_edit::asides_of(&gcd).len(), 3);
+    assert_eq!(travelling(a), [gcd]);
+    greycard_render::testing::remove_dir_retry(&dir);
+}
+
 /// A frame with no sidecar of its own is still kept out by a sidecar
 /// left at its destination name, of either placement or an XMP, and
 /// with sidecars off too.

@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use greycard_edit::Checked;
 use greycard_edit_io::xmp;
 
 use crate::panel::browser::{camera_tag, file_name};
@@ -34,6 +35,21 @@ pub(crate) fn write_file(st: &mut State, file: usize) {
     }
     // Saved here, it is no longer a batch's to save.
     crate::panel::saves::take_back(st, file);
+    write_xmp(st, file);
+    // The save took or joined another writer's, whose meta the XMP
+    // written above did not have: it goes again, and the sidecar with
+    // its mark.
+    if save_file_checked(st, file).is_some_and(|c| matches!(c, Checked::Took | Checked::Joined))
+        && st.window.xmp_sidecars
+    {
+        write_xmp(st, file);
+        save_file(st, file);
+    }
+}
+
+/// [`write_file`]'s XMP: file `file`'s meta to the XMP beside it when
+/// that is asked for, its mark kept in the sidecar in memory.
+fn write_xmp(st: &mut State, file: usize) {
     // A frame followed to an archive's copy has its XMP written there
     // by the archive write, from the sidecar, off the window's thread.
     if st.window.xmp_sidecars && !crate::sync::followed(st, file) {
@@ -58,7 +74,6 @@ pub(crate) fn write_file(st: &mut State, file: usize) {
             Err(e) => tracing::warn!("{}: xmp not written: {e}", file_name(&path)),
         }
     }
-    save_file(st, file);
 }
 
 /// [`write_file`] of each of `files`: one alone on the window's
@@ -85,6 +100,19 @@ pub(crate) fn save_sidecar(st: &mut State, c: usize) -> bool {
 /// one revision, however many of its lines moved. True when the save
 /// was made.
 pub(crate) fn save_file(st: &mut State, file: usize) -> bool {
+    save_file_checked(st, file).is_some()
+}
+
+/// [`save_file`], saying what the save found on disk: none when it
+/// failed. The file is asked first whether it is still the one the
+/// window read or last wrote (§233's check, on the local copy:
+/// [`Sidecar::save_checked`]); when another writer saved it since, its
+/// file is taken, its meta joined, or it is kept beside the frame and
+/// ours written, and the window holds and shows what was saved, as a
+/// read of the file would.
+///
+/// [`Sidecar::save_checked`]: greycard_edit::Sidecar::save_checked
+fn save_file_checked(st: &mut State, file: usize) -> Option<Checked> {
     crate::panel::saves::take_back(st, file);
     if crate::sync::followed(st, file) {
         st.sidecars[file].advance(&greycard_edit::sync::Stamp::now());
@@ -95,20 +123,60 @@ pub(crate) fn save_file(st: &mut State, file: usize) -> bool {
         // The archive write has it now, and says for itself what waits.
         let path = st.files[file].clone();
         landed(st, &path);
-        return true;
+        return Some(Checked::Written);
     }
     let (path, placement) = (st.files[file].clone(), st.window.placement);
-    match st.sidecars[file].save_in(&path, placement) {
-        Ok(_) => {
+    let stamp = greycard_edit::sync::Stamp::now();
+    match st.sidecars[file].save_checked_said(&path, placement, &stamp) {
+        Ok(greycard_edit::Saved { checked, asides }) => {
+            let of = |l: Vec<PathBuf>| -> Vec<(PathBuf, PathBuf)> {
+                l.into_iter().map(|to| (path.clone(), to)).collect()
+            };
+            said_asides(st, &of(asides.bad), &of(asides.kept));
+            if checked != Checked::Written {
+                tracing::info!(
+                    "{}: its sidecar was saved by another writer since it was read; {}",
+                    file_name(&path),
+                    match checked {
+                        Checked::Joined => "the meta joined with it",
+                        Checked::Took => "behind it, and taken from it",
+                        _ => "that file kept beside the frame, and the edit here written",
+                    }
+                );
+            }
+            if matches!(checked, Checked::Took | Checked::Joined) {
+                taken_from_disk(st, file);
+            }
             crate::library::sidecar_written(st, file);
             landed(st, &path);
-            true
+            Some(checked)
         }
-        Err(e) => {
-            tracing::warn!("{}: sidecar not saved: {e}", file_name(&path));
-            failed(st, &path, Why::of(&e));
-            false
+        Err(greycard_edit::NotSaved { error, asides }) => {
+            tracing::warn!("{}: sidecar not saved: {error}", file_name(&path));
+            log_asides(&path, &asides);
+            failed(st, &path, Why::of(&error));
+            None
         }
+    }
+}
+
+/// File `file`'s sidecar in memory replaced by what its file holds (a
+/// join with another writer's save, or that save taken): shown as a
+/// read of the file shows it, in its cells' marks and pictures, the
+/// list following its versions, and on the frame on screen in the
+/// panel and the history, at the next turn of the event loop so that
+/// whatever saved is done with the panel first.
+pub(crate) fn taken_from_disk(st: &mut State, file: usize) {
+    let Some(app) = st.window.app.upgrade() else {
+        return;
+    };
+    if crate::rows::versions_differ(st, file) {
+        crate::versions::settle_later(&app);
+    }
+    crate::panel::browser::show_badges_of_file(st, &app, file);
+    crate::edited::refresh_file(st, file);
+    if st.current.is_some_and(|c| st.file_at(c) == Some(file)) {
+        crate::panel::history::show_settled_later(&app);
     }
 }
 
@@ -134,6 +202,9 @@ pub(crate) enum Why {
     Full,
     ReadOnly,
     Denied,
+    /// The sidecar on disk is from a newer build, which this one does
+    /// not write over.
+    Newer,
     /// Anything else, whose whole is in the log.
     Other,
 }
@@ -155,14 +226,20 @@ impl Why {
     pub(crate) fn of(e: &greycard_edit::Error) -> Self {
         match e {
             greycard_edit::Error::Io(e) => Self::of_io(e.kind()),
+            greycard_edit::Error::Newer(_) => Self::Newer,
             _ => Self::Other,
         }
     }
 
-    /// The reason in words for a save of `raw`'s, none when the log has
-    /// to say it.
-    fn words(self, raw: &Path) -> Option<String> {
+    /// The reason in words for a save of `raw`'s, or of `n` frames' the
+    /// first of which is `raw`, none when the log has to say it.
+    fn words(self, raw: &Path, n: usize) -> Option<String> {
         match self {
+            Self::Newer => Some(tr!(
+                "its sidecar is from a newer greycard; update greycard to save it here"
+                    | "their sidecars are from a newer greycard; update greycard to save them here"
+                        % n
+            )),
             Self::Full => Some(tr!("the disk is full")),
             Self::ReadOnly => Some(tr!("the disk is read-only")),
             Self::Denied => Some(tr!(
@@ -185,6 +262,9 @@ impl Why {
 pub(crate) struct Unsaved {
     /// Each frame by its path.
     pub(crate) edits: HashSet<PathBuf>,
+    /// The reason each frame's last save failed, for the word said when
+    /// its edit is let go.
+    why: std::collections::HashMap<PathBuf, Why>,
     /// The status line's word last said of them, taken off when the
     /// last of them lands while it still stands; never when it says
     /// that edits were let go (true), which no landing undoes.
@@ -200,8 +280,12 @@ impl Unsaved {
     pub(crate) fn file_moved(&mut self, was: &Path, to: &Path) {
         if self.edits.remove(was) {
             self.edits.insert(to.to_path_buf());
+            if let Some(why) = self.why.remove(was) {
+                self.why.insert(to.to_path_buf(), why);
+            }
         } else {
             self.edits.remove(to);
+            self.why.remove(to);
         }
     }
 
@@ -231,8 +315,9 @@ pub(crate) fn failed(st: &mut State, raw: &Path, why: Why) {
 pub(crate) fn failed_all(st: &mut State, failures: &[(PathBuf, Why)]) {
     let unsaved = &mut st.work.unsaved;
     let mut new = false;
-    for (raw, _) in failures {
+    for (raw, why) in failures {
         new |= unsaved.edits.insert(raw.clone());
+        unsaved.why.insert(raw.clone(), *why);
     }
     if new {
         say(st, detail(failures), false);
@@ -254,10 +339,70 @@ fn say(st: &mut State, line: String, lost: bool) {
     }
 }
 
+/// Sidecars put aside by a save that then landed (each frame and where
+/// its file went): those that would not parse (`bad`), said on the
+/// status line, or else other writers' files kept beside their frames
+/// (`kept`); the frame and the file named when there is one, a count
+/// when there are more. Each is said once, being a file of its own. A
+/// save that put one aside and then failed says its failure, and the
+/// file in the log ([`log_asides`]).
+pub(crate) fn said_asides(st: &mut State, bad: &[(PathBuf, PathBuf)], kept: &[(PathBuf, PathBuf)]) {
+    let line = match (bad, kept) {
+        ([], []) => return,
+        ([], [(raw, to)]) => tr!(
+            "{name} was also edited elsewhere; that copy is kept as {file}",
+            name = file_name(raw),
+            file = file_name(to)
+        ),
+        ([], more) => tr!(
+            "{n} frame was also edited elsewhere; its other copy is kept beside it"
+                | "{n} frames were also edited elsewhere; their other copies are kept beside them"
+                    % more.len()
+        ),
+        (set_aside, _) => said_bad(set_aside),
+    };
+    if st.window.batch {
+        return;
+    }
+    if let Some(app) = st.window.app.upgrade() {
+        app.set_status(line.into());
+    }
+}
+
+/// The status line's word for sidecars set aside that would not parse.
+fn said_bad(set_aside: &[(PathBuf, PathBuf)]) -> String {
+    match set_aside {
+        [(raw, to)] => tr!(
+            "{name}'s sidecar could not be read and was kept as {file}; the edit here is saved",
+            name = file_name(raw),
+            file = file_name(to)
+        ),
+        more => tr!(
+            "{n} sidecar could not be read and was kept beside its frame; the edit here is saved"
+                | "{n} sidecars could not be read and were kept beside their frames; the edits \
+                   here are saved"
+                    % more.len()
+        ),
+    }
+}
+
+/// The sidecars a save of `raw`'s put aside before it failed, in the
+/// log beside the failure: kept where they went, the edit not saved.
+pub(crate) fn log_asides(raw: &Path, asides: &greycard_edit::Asides) {
+    for to in asides.bad.iter().chain(&asides.kept) {
+        tracing::warn!(
+            "{}: its sidecar was put aside as {}; the edit here is not saved",
+            file_name(raw),
+            to.display()
+        );
+    }
+}
+
 /// A save of `raw`'s sidecar landed: its edit is on disk, and the note
 /// says one fewer; with none left, the status line's word of them
 /// comes off if it still stands.
 pub(crate) fn landed(st: &mut State, raw: &Path) {
+    st.work.unsaved.why.remove(raw);
     if !st.work.unsaved.edits.remove(raw) {
         return;
     }
@@ -331,6 +476,7 @@ pub(crate) fn retry_leaving(st: &mut State, wait: std::time::Duration) {
 /// it, a look renamed on a thread): an edit not saved there is gone,
 /// and the note says one fewer.
 pub(crate) fn reread(st: &mut State, raw: &Path) {
+    st.work.unsaved.why.remove(raw);
     if st.work.unsaved.edits.remove(raw) {
         tracing::warn!(
             "{}: its edit was never saved, and the file's is read over it",
@@ -389,7 +535,13 @@ pub(crate) fn listed(st: &mut State) {
         tracing::warn!("{}: its edit was never saved, and is let go", file_name(p));
         st.work.unsaved.edits.remove(p);
     }
-    let failures: Vec<(PathBuf, Why)> = lost.into_iter().map(|p| (p, Why::Other)).collect();
+    let failures: Vec<(PathBuf, Why)> = lost
+        .into_iter()
+        .map(|p| {
+            let why = st.work.unsaved.why.remove(&p).unwrap_or(Why::Other);
+            (p, why)
+        })
+        .collect();
     say(st, detail(&failures), true);
 }
 
@@ -414,7 +566,7 @@ fn detail(failures: &[(PathBuf, Why)]) -> String {
         [(_, w), rest @ ..] if rest.iter().all(|(_, r)| r == w) => *w,
         _ => Why::Other,
     }
-    .words(first);
+    .words(first, failures.len());
     let name = file_name(first);
     match (failures.len(), why) {
         (1, Some(why)) => tr!(
@@ -827,6 +979,414 @@ pub(crate) mod tests {
         remove_scratch(state, &dir);
     }
 
+    /// `count` frames in a scratch folder of their own, each with a
+    /// sidecar on disk at an exposure of 0.25 and read by the window as
+    /// a frame is opened, sidecars written beside them.
+    fn held(name: &str, count: usize) -> (App, Rc<Shared>, PathBuf, Vec<PathBuf>) {
+        let dir = std::env::temp_dir().join(format!("greycard-{name}-{}", std::process::id()));
+        crate::testing::remove_dir_retry(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let files: Vec<PathBuf> = (0..count)
+            .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
+            .collect();
+        for f in &files {
+            let mut s = greycard_edit::Sidecar::default();
+            s.record(exposed(0.25));
+            s.save_in(f, Placement::Beside).expect("written");
+        }
+        let app = window(count);
+        let (state, _worker) = state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.window.write_sidecars = true;
+            st.window.placement = Placement::Beside;
+            for f in 0..count {
+                assert!(crate::rows::reread_file(&mut st, &app, f));
+            }
+        }
+        (app, state, dir, files)
+    }
+
+    fn exposed(ev: f32) -> Edit {
+        let mut e = Edit::default();
+        e.light.exposure = ev;
+        e
+    }
+
+    /// What `greycard presets apply` does to `raw`'s sidecar: read from
+    /// disk, a preset laid over its current state under the preset's
+    /// label, the rating set by another hand beside it, and saved back
+    /// where it was found.
+    fn second_writer(raw: &Path) {
+        let mut other = greycard_edit::Sidecar::load(raw).unwrap().unwrap();
+        let mut grain = Edit::default();
+        grain.grain.amount = 0.4;
+        let preset = greycard_edit::Preset {
+            name: "Fine Grain".into(),
+            sections: vec![greycard_edit::Section::Grain],
+            edit: grain,
+            ..Default::default()
+        };
+        let edit = preset.applied(&other.current);
+        let label = greycard_edit::history::preset_label(&preset.name);
+        assert!(other.record_as(edit, Some(label)));
+        other.meta.rating = 4;
+        // A minute before the window's save, so which of the two is the
+        // later is not left to a tie within one second.
+        let mut stamp = greycard_edit::sync::Stamp::now();
+        stamp.at -= 60;
+        other
+            .save_in_stamped(raw, Placement::of(raw), &stamp)
+            .expect("written");
+    }
+
+    /// The other writer's file kept beside `raw`'s sidecar, read.
+    fn kept_copy(raw: &Path) -> greycard_edit::Sidecar {
+        let path = greycard_edit::Sidecar::path_for(raw);
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        greycard_edit::Sidecar::read(&path.with_file_name(format!("{name}.other"))).unwrap()
+    }
+
+    /// Whether `s` holds a state, in its history or as its current, with
+    /// `pick` of its edit.
+    fn has_state(s: &greycard_edit::Sidecar, pick: impl Fn(&Edit) -> bool) -> bool {
+        s.history.iter().any(|st| pick(&st.edit)) || pick(&s.current)
+    }
+
+    /// A second writer between two saves of a frame the window holds
+    /// (here the CLI's preset over the file), and a slider here: both
+    /// changed the lines, so the other's file is kept beside the frame,
+    /// said once on the status line, and the window's written as it is.
+    #[test]
+    fn a_second_writer_between_saves_is_kept_not_undone() {
+        let (app, state, dir, files) = held("second-writer", 1);
+        let raw = &files[0];
+        second_writer(raw);
+        let mut st = state.borrow_mut();
+        st.sidecars[0].record(exposed(1.0));
+        write_sidecar(&mut st, 0);
+        let back = greycard_edit::Sidecar::load(raw).unwrap().unwrap();
+        assert_eq!(back.current.light.exposure, 1.0, "the window's own");
+        assert!(!has_state(&back, |e| e.grain.amount == 0.4));
+        assert_eq!(st.sidecars[0], back, "the window holds what is on disk");
+        let kept = kept_copy(raw);
+        assert_eq!(kept.meta.rating, 4, "the other writer's rating");
+        assert_eq!(kept.current.grain.amount, 0.4, "the other writer's preset");
+        assert_eq!(
+            app.get_status(),
+            "IMG_0000.CR3 was also edited elsewhere; that copy is kept as IMG_0000.CR3.gcd.other"
+        );
+        assert!(st.work.unsaved.edits.is_empty());
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// Only a rating given in the window while the CLI laid its preset:
+    /// the preset stays current, on disk and in the window, and the
+    /// window's rating (the later) is the frame's.
+    #[test]
+    fn a_rating_in_the_window_keeps_the_presets_look() {
+        let (_app, state, dir, files) = held("second-writer-rating", 1);
+        second_writer(&files[0]);
+        let mut st = state.borrow_mut();
+        st.sidecars[0].meta.rating = 2;
+        write_sidecar(&mut st, 0);
+        let back = greycard_edit::Sidecar::load(&files[0]).unwrap().unwrap();
+        assert_eq!(back.current.grain.amount, 0.4);
+        assert_eq!(back.current.light.exposure, 0.25);
+        assert_eq!(back.meta.rating, 2);
+        assert_eq!(st.sidecars[0], back);
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// A batch that keeps another writer's file, landing after a newer
+    /// save of its frame on the window's thread: the newer save stands,
+    /// in the window and on disk, and the other's file is kept.
+    #[test]
+    fn a_batch_landing_late_does_not_undo_a_newer_save() {
+        let (_app, state, dir, files) = held("second-writer-late", 2);
+        second_writer(&files[1]);
+        let mut st = state.borrow_mut();
+        for s in &mut st.sidecars[..2] {
+            s.record(exposed(1.0));
+        }
+        crate::panel::saves::tests::HOLD.set(true);
+        write_files(&mut st, &[0, 1]);
+        crate::panel::saves::tests::HOLD.set(false);
+        crate::panel::saves::tests::wait_moved(&st);
+        st.sidecars[1].record(exposed(1.5));
+        write_sidecar(&mut st, 1);
+        assert!(crate::panel::saves::finish(&mut st, None));
+        let back = greycard_edit::Sidecar::load(&files[1]).unwrap().unwrap();
+        assert_eq!(st.sidecars[1].current.light.exposure, 1.5);
+        assert_eq!(st.sidecars[1], back);
+        assert_eq!(kept_copy(&files[1]).current.grain.amount, 0.4);
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// A sidecar that will not parse is set aside and the window's edit
+    /// written: nothing waits on a hand to delete it.
+    #[test]
+    fn a_torn_sidecar_is_set_aside_and_the_edit_saved() {
+        let (app, state, dir, files) = held("second-writer-torn", 2);
+        for f in &files {
+            let path = greycard_edit::Sidecar::path_for(f);
+            std::fs::remove_file(&path).unwrap();
+            std::fs::write(&path, "{\"current\": ").unwrap();
+        }
+        let mut st = state.borrow_mut();
+        for s in &mut st.sidecars[..2] {
+            s.record(exposed(1.0));
+        }
+        write_sidecar(&mut st, 0);
+        assert_eq!(
+            app.get_status(),
+            "IMG_0000.CR3's sidecar could not be read and was kept as IMG_0000.CR3.gcd.bad; \
+             the edit here is saved"
+        );
+        crate::panel::saves::save(&mut st, &[1]);
+        assert_eq!(
+            app.get_status(),
+            "IMG_0001.CR3's sidecar could not be read and was kept as IMG_0001.CR3.gcd.bad; \
+             the edit here is saved"
+        );
+        assert_eq!(app.get_sync_note(), "");
+        for (f, raw) in files.iter().enumerate() {
+            let back = greycard_edit::Sidecar::load(raw).unwrap().unwrap();
+            assert_eq!(st.sidecars[f], back, "{f}");
+            let bad = greycard_edit::Sidecar::path_for(raw).with_extension("gcd.bad");
+            assert_eq!(std::fs::read_to_string(bad).unwrap(), "{\"current\": ");
+        }
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// A batch with nothing of its own on a frame another writer laid a
+    /// preset and a rating on takes the file, and the XMP beside it
+    /// follows the taken meta at once.
+    #[test]
+    fn a_batch_that_takes_the_file_writes_its_xmp() {
+        let (_app, state, dir, files) = held("second-writer-took-xmp", 1);
+        second_writer(&files[0]);
+        let mut st = state.borrow_mut();
+        st.window.xmp_sidecars = true;
+        crate::panel::saves::save(&mut st, &[0]);
+        let back = greycard_edit::Sidecar::load(&files[0]).unwrap().unwrap();
+        assert_eq!(back.current.grain.amount, 0.4, "the preset current");
+        assert_eq!(st.sidecars[0], back);
+        let text = std::fs::read_to_string(files[0].with_extension("xmp")).expect("the XMP");
+        assert!(
+            text.contains("Rating=\"4\"") || text.contains("Rating>4<"),
+            "{text}"
+        );
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// An edit let go with its list, its save refused by a newer build's
+    /// sidecar, is said with that reason.
+    #[test]
+    fn an_edit_let_go_says_why_it_was_not_saved() {
+        let (app, state, dir, files) = held("second-writer-let-go", 1);
+        let path = greycard_edit::Sidecar::path_for(&files[0]);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "{\"current\": {\"version\": 99}}").unwrap();
+        let mut st = state.borrow_mut();
+        st.sidecars[0].record(exposed(1.0));
+        write_sidecar(&mut st, 0);
+        app.set_status("".into());
+        st.files.pop();
+        listed(&mut st);
+        assert_eq!(
+            app.get_status(),
+            "the edit of IMG_0000.CR3 is not saved: its sidecar is from a newer greycard; \
+             update greycard to save it here"
+        );
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    fn history_names(app: &App) -> Vec<String> {
+        use slint::Model;
+        let rows = app.get_history_rows();
+        (0..rows.row_count())
+            .map(|r| rows.row_data(r).unwrap().name.to_string())
+            .collect()
+    }
+
+    /// The frame on screen, rated here while another writer laid its
+    /// preset: the file is taken with the rating joined into it, and
+    /// shown as a read of the file would show it, its history and its
+    /// panel the file's, at the next turn of the event loop.
+    #[test]
+    fn the_frame_on_screen_shows_what_was_taken() {
+        let (app, state, dir, files) = held("second-writer-shown", 1);
+        let worker = Rc::new(crate::worker::Worker::new(|_| {}));
+        second_writer(&files[0]);
+        let mut st = state.borrow_mut();
+        st.current = Some(0);
+        crate::panel::history::show_settled_pending(&mut st, &app, &worker);
+        st.sidecars[0].meta.rating = 2;
+        write_sidecar(&mut st, 0);
+        assert!(crate::panel::history::show_settled_pending(&mut st, &app, &worker) >= 1);
+        let names = history_names(&app);
+        assert!(names.iter().any(|n| n.contains("Fine Grain")), "{names:?}");
+        assert_eq!(st.develop.edit, st.sidecars[0].current);
+        assert_eq!(st.sidecars[0].meta.rating, 2);
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// A batch (a paste, a preset over a selection) meets the second
+    /// writer's file at its rename: kept there beside the frame, the
+    /// batch's written, the other frames saved as they were.
+    #[test]
+    fn a_batch_keeps_a_second_writers_save() {
+        let (app, state, dir, files) = held("second-writer-batch", 3);
+        second_writer(&files[1]);
+        let mut st = state.borrow_mut();
+        for s in &mut st.sidecars[..3] {
+            s.record(exposed(1.0));
+        }
+        write_files(&mut st, &[0, 1, 2]);
+        assert!(!crate::panel::saves::out(&st));
+        for (f, raw) in files.iter().enumerate() {
+            let back = greycard_edit::Sidecar::load(raw).unwrap().unwrap();
+            assert_eq!(st.sidecars[f], back, "{f}");
+            assert_eq!(back.current.light.exposure, 1.0, "{f}");
+            assert!(!has_state(&back, |e| e.grain.amount == 0.4), "{f}");
+        }
+        assert_eq!(kept_copy(&files[1]).current.grain.amount, 0.4);
+        assert_eq!(
+            app.get_status(),
+            "IMG_0001.CR3 was also edited elsewhere; that copy is kept as IMG_0001.CR3.gcd.other"
+        );
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// Our own batch's rename, landed on disk before the window's next
+    /// save and taken in after it, is not another writer: the save
+    /// writes as it would, and nothing is joined.
+    #[test]
+    fn our_own_batch_is_not_a_second_writer() {
+        let (_app, state, dir, files) = held("second-writer-own", 2);
+        let mut st = state.borrow_mut();
+        for s in &mut st.sidecars[..2] {
+            s.record(exposed(1.0));
+        }
+        crate::panel::saves::tests::HOLD.set(true);
+        write_files(&mut st, &[0, 1]);
+        crate::panel::saves::tests::HOLD.set(false);
+        // The batch's renames done, its landing not yet taken in.
+        crate::panel::saves::tests::wait_moved(&st);
+        let states = st.sidecars[1].history.len();
+        st.sidecars[1].record(exposed(1.5));
+        write_sidecar(&mut st, 1);
+        assert!(crate::panel::saves::finish(&mut st, None));
+        let back = greycard_edit::Sidecar::load(&files[1]).unwrap().unwrap();
+        assert_eq!(st.sidecars[1], back);
+        assert_eq!(back.current.light.exposure, 1.5);
+        assert_eq!(back.history.len(), states + 1, "nothing joined");
+        assert!(
+            back.history
+                .iter()
+                .all(|s| !s.label.as_deref().unwrap_or("").contains("Reconciled"))
+        );
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// An edit whose save failed, kept in memory and saved again: the
+    /// retry asks the disk too, and keeps a sidecar another writer made
+    /// meanwhile beside the frame rather than writing over it unseen.
+    #[test]
+    fn a_retried_save_keeps_what_was_written_meanwhile() {
+        let (app, state, dir, missing) = unwritable("second-writer-retry", 1);
+        let mut st = state.borrow_mut();
+        write_sidecar(&mut st, 0);
+        assert_eq!(app.get_sync_note(), "1 edit not saved");
+        std::fs::create_dir_all(&missing).expect("the folder");
+        let raw = st.files[0].clone();
+        let mut other = greycard_edit::Sidecar::default();
+        let mut grain = Edit::default();
+        grain.grain.amount = 0.4;
+        other.record(grain);
+        other.meta.rating = 4;
+        other.save_in(&raw, Placement::Beside).unwrap();
+        retry(&mut st);
+        assert_eq!(app.get_sync_note(), "");
+        let back = greycard_edit::Sidecar::load(&raw).unwrap().unwrap();
+        assert!(has_state(&back, |e| e.light.exposure == 0.5));
+        assert_eq!(st.sidecars[0], back);
+        let kept = kept_copy(&raw);
+        assert_eq!((kept.meta.rating, kept.current.grain.amount), (4, 0.4));
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// A sidecar replaced by one from a newer build, or one that will
+    /// not read, is never written over: the edit stays in memory and is
+    /// noted not saved, as a save that failed is.
+    #[test]
+    fn a_newer_sidecar_on_disk_is_not_written_over() {
+        let (app, state, dir, files) = held("second-writer-newer", 1);
+        let path = greycard_edit::Sidecar::path_for(&files[0]);
+        let newer = "{\"current\": {\"version\": 99, \"light\": {\"exposure\": 2.0}}}";
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, newer).unwrap();
+        let mut st = state.borrow_mut();
+        st.sidecars[0].record(exposed(1.0));
+        write_sidecar(&mut st, 0);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+        assert_eq!(st.sidecars[0].current.light.exposure, 1.0);
+        assert_eq!(app.get_sync_note(), "1 edit not saved");
+        assert_eq!(
+            app.get_status(),
+            "the edit of IMG_0000.CR3 is not saved: its sidecar is from a newer greycard; \
+             update greycard to save it here"
+        );
+        // The batch holds to it as well.
+        st.sidecars[0].record(exposed(1.25));
+        crate::panel::saves::save(&mut st, &[0]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// The XMP beside the frame follows what the save takes: rated here
+    /// while the other writer laid its preset and rating, the file is
+    /// taken with the window's rating joined into it, and the XMP says
+    /// the joined rating, by hand and in a batch.
+    #[test]
+    fn the_xmp_follows_what_was_taken() {
+        let (_app, state, dir, files) = held("second-writer-xmp", 2);
+        for f in &files {
+            second_writer(f);
+        }
+        let mut st = state.borrow_mut();
+        st.window.xmp_sidecars = true;
+        st.sidecars[0].meta.flag = greycard_edit::meta::Flag::Pick;
+        write_sidecar(&mut st, 0);
+        st.sidecars[1].meta.flag = greycard_edit::meta::Flag::Pick;
+        crate::panel::saves::save(&mut st, &[1]);
+        for (f, raw) in files.iter().enumerate() {
+            let text = std::fs::read_to_string(raw.with_extension("xmp")).expect("the XMP");
+            assert!(
+                text.contains("Rating=\"4\"") || text.contains("Rating>4<"),
+                "{f}: {text}"
+            );
+            let back = greycard_edit::Sidecar::load(raw).unwrap().unwrap();
+            assert_eq!(back.meta.rating, 4);
+            assert_eq!(back.meta.flag, greycard_edit::meta::Flag::Pick);
+            assert_eq!(st.sidecars[f], back, "{f}");
+        }
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
     #[test]
     fn the_reasons_are_said_plainly() {
         use std::io::ErrorKind as K;
@@ -843,6 +1403,13 @@ pub(crate) mod tests {
         assert_eq!(
             Why::of(&greycard_edit::Error::Xmp("refused".into())),
             Why::Other
+        );
+        assert_eq!(Why::of(&greycard_edit::Error::Newer(99)), Why::Newer);
+        let raw = |n: &str| Path::new("shoot").join(format!("IMG_{n}.CR3"));
+        assert_eq!(
+            detail(&[(raw("1"), Why::Newer), (raw("2"), Why::Newer)]),
+            "the edits of IMG_1.CR3 and 1 other are not saved: their sidecars are from a newer \
+             greycard; update greycard to save them here"
         );
         let raw = |n: &str| Path::new("shoot").join(format!("IMG_{n}.CR3"));
         assert_eq!(
@@ -869,5 +1436,157 @@ pub(crate) mod tests {
             detail(&[(raw("1"), Why::Denied)]),
             "the edit of IMG_1.CR3 is not saved: shoot cannot be written to"
         );
+    }
+
+    /// A batch's own write is the file the window's sidecar knows after
+    /// it lands: the next save, by hand or by a batch, finds it as known
+    /// by a stat and reads nothing.
+    #[test]
+    fn a_batchs_own_write_is_known_at_the_next_save() {
+        let (_app, state, dir, files) = held("batch-known", 1);
+        let mut st = state.borrow_mut();
+        st.sidecars[0].record(exposed(1.0));
+        crate::panel::saves::save(&mut st, &[0]);
+        let reads = greycard_edit::changed_reads();
+        st.sidecars[0].record(exposed(1.5));
+        assert_eq!(save_file_checked(&mut st, 0), Some(Checked::Written));
+        assert_eq!(greycard_edit::changed_reads(), reads, "nothing read");
+        let back = greycard_edit::Sidecar::load(&files[0]).unwrap().unwrap();
+        assert_eq!(st.sidecars[0], back);
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// A batch that keeps another writer's file, and a slider moved in
+    /// the window after the batch started: the landing leaves the
+    /// window's sidecar, slider and all, and its next save writes it.
+    #[test]
+    fn a_change_made_while_a_batch_saves_is_kept() {
+        let (_app, state, dir, files) = held("batch-keep-change", 1);
+        second_writer(&files[0]);
+        let mut st = state.borrow_mut();
+        st.sidecars[0].record(exposed(1.0));
+        crate::panel::saves::tests::HOLD.set(true);
+        crate::panel::saves::save(&mut st, &[0]);
+        crate::panel::saves::tests::HOLD.set(false);
+        crate::panel::saves::tests::wait_moved(&st);
+        st.sidecars[0].record(exposed(1.5));
+        assert!(crate::panel::saves::finish(&mut st, None));
+        assert_eq!(
+            st.sidecars[0].current.light.exposure, 1.5,
+            "the slider kept"
+        );
+        save_file(&mut st, 0);
+        let back = greycard_edit::Sidecar::load(&files[0]).unwrap().unwrap();
+        assert_eq!(back.current.light.exposure, 1.5);
+        assert!(has_state(&back, |e| e.light.exposure == 1.0));
+        assert_eq!(st.sidecars[0], back);
+        assert_eq!(kept_copy(&files[0]).current.grain.amount, 0.4, "the preset");
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// A save that sets a torn sidecar aside and then fails on a newer
+    /// build's in the other place says the failure, not that the edit is
+    /// saved, by hand and in a batch; the torn file is kept all the same.
+    #[test]
+    fn a_save_that_sets_one_aside_and_fails_says_the_failure() {
+        let (app, state, dir, files) = held("set-aside-failed", 1);
+        let beside = greycard_edit::Sidecar::path_for(&files[0]);
+        let folder = greycard_edit::Sidecar::path_in(&files[0], Placement::Folder);
+        std::fs::create_dir_all(folder.parent().unwrap()).unwrap();
+        let newer = "{\"current\": {\"version\": 99, \"light\": {\"exposure\": 2.0}}}";
+        std::fs::write(&folder, newer).unwrap();
+        let failure = "the edit of IMG_0000.CR3 is not saved: its sidecar is from a newer \
+                       greycard; update greycard to save it here";
+        let mut st = state.borrow_mut();
+        st.sidecars[0].record(exposed(1.0));
+        for batch in [false, true] {
+            let _ = std::fs::remove_file(&beside);
+            std::fs::write(&beside, "{\"current\": ").unwrap();
+            app.set_status("".into());
+            if batch {
+                crate::panel::saves::save(&mut st, &[0]);
+            } else {
+                assert!(!save_file(&mut st, 0));
+            }
+            // Said once, by the first failure; the batch's adds nothing.
+            let said = if batch { "" } else { failure };
+            assert_eq!(app.get_status(), said, "batch {batch}");
+            assert_eq!(app.get_sync_note(), "1 edit not saved");
+            assert!(!beside.exists(), "batch {batch}");
+            assert_eq!(std::fs::read_to_string(&folder).unwrap(), newer);
+        }
+        let bad = beside.with_file_name("IMG_0000.CR3.gcd.bad");
+        let bad2 = beside.with_file_name("IMG_0000.CR3.gcd.2.bad");
+        for b in [bad, bad2] {
+            assert_eq!(std::fs::read_to_string(b).unwrap(), "{\"current\": ");
+        }
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// A batch that sets one frame's torn sidecar aside and saves it, and
+    /// fails on another's from a newer build: the failure is what the
+    /// status line says, not that the edits are saved.
+    #[test]
+    fn a_batchs_failure_is_not_said_over_by_a_set_aside() {
+        let (app, state, dir, files) = held("set-aside-and-failure", 2);
+        let torn = greycard_edit::Sidecar::path_for(&files[0]);
+        std::fs::remove_file(&torn).unwrap();
+        std::fs::write(&torn, "{\"current\": ").unwrap();
+        let newer = greycard_edit::Sidecar::path_for(&files[1]);
+        std::fs::remove_file(&newer).unwrap();
+        std::fs::write(&newer, "{\"current\": {\"version\": 99}}").unwrap();
+        let mut st = state.borrow_mut();
+        for s in &mut st.sidecars[..2] {
+            s.record(exposed(1.0));
+        }
+        let failure = "the edit of IMG_0001.CR3 is not saved: its sidecar is from a newer \
+                       greycard; update greycard to save it here";
+        crate::panel::saves::save(&mut st, &[0, 1]);
+        assert_eq!(app.get_status(), failure);
+        // Failing again says nothing new, and nothing over the failure.
+        std::fs::remove_file(&torn).unwrap();
+        std::fs::write(&torn, "{\"current\": ").unwrap();
+        app.set_status("".into());
+        crate::panel::saves::save(&mut st, &[0, 1]);
+        assert_eq!(app.get_status(), "");
+        let back = greycard_edit::Sidecar::load(&files[0]).unwrap().unwrap();
+        assert_eq!(st.sidecars[0], back);
+        assert!(torn.with_file_name("IMG_0000.CR3.gcd.2.bad").exists());
+        drop(st);
+        remove_scratch(state, &dir);
+    }
+
+    /// A frame noted not saved, whose batch join lands after the window
+    /// changed it again: the landing leaves the window's sidecar, so the
+    /// note stays until a save of what the window holds lands.
+    #[test]
+    fn a_refused_batch_landing_keeps_the_unsaved_note() {
+        let (app, state, dir, files) = held("batch-refused-note", 1);
+        let path = greycard_edit::Sidecar::path_for(&files[0]);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "{\"current\": {\"version\": 99}}").unwrap();
+        let mut st = state.borrow_mut();
+        st.sidecars[0].record(exposed(1.0));
+        assert!(!save_file(&mut st, 0));
+        assert_eq!(app.get_sync_note(), "1 edit not saved");
+        std::fs::remove_file(&path).unwrap();
+        let mut other = greycard_edit::Sidecar::default();
+        other.record(exposed(-1.0));
+        other.save_in(&files[0], Placement::Beside).unwrap();
+        crate::panel::saves::tests::HOLD.set(true);
+        crate::panel::saves::save(&mut st, &[0]);
+        crate::panel::saves::tests::HOLD.set(false);
+        crate::panel::saves::tests::wait_moved(&st);
+        st.sidecars[0].record(exposed(1.5));
+        assert!(crate::panel::saves::finish(&mut st, None));
+        assert_eq!(st.sidecars[0].current.light.exposure, 1.5);
+        assert_eq!(app.get_sync_note(), "1 edit not saved");
+        assert!(save_file(&mut st, 0));
+        assert_eq!(app.get_sync_note(), "");
+        drop(st);
+        remove_scratch(state, &dir);
     }
 }

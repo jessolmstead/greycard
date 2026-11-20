@@ -104,10 +104,7 @@ pub(crate) fn presets(
                 .applied(&sidecar.current);
             let label = greycard_edit::history::preset_label(&entry.preset.name);
             if sidecar.record_as(edit, Some(label)) {
-                // Back where it was found: the CLI has no setting.
-                sidecar
-                    .save_in(file, greycard_edit::Placement::of(file))
-                    .with_context(|| format!("writing the sidecar of {}", file.display()))?;
+                write_back(&mut sidecar, file)?;
                 println!("applied       {} to {}", entry.preset.name, file.display());
                 if !sidecar.versions.is_empty() {
                     println!(
@@ -144,6 +141,24 @@ pub(crate) fn presets(
         }
     }
     Ok(())
+}
+
+/// `sidecar` saved back where `file`'s was found (the CLI has no
+/// setting), asking the disk first: a save another writer made since
+/// the read (the editor's window on the same frame) is never written
+/// over unseen; it is kept beside the frame when both changed the
+/// frame's lines ([`greycard_edit::Sidecar::save_checked`]).
+fn write_back(
+    sidecar: &mut greycard_edit::Sidecar,
+    file: &std::path::Path,
+) -> Result<greycard_edit::Checked> {
+    sidecar
+        .save_checked(
+            file,
+            greycard_edit::Placement::of(file),
+            &greycard_edit::sync::Stamp::now(),
+        )
+        .with_context(|| format!("writing the sidecar of {}", file.display()))
 }
 
 /// A frame's sidecar to lay something over: the one it has, wherever
@@ -278,6 +293,42 @@ mod tests {
         let kept = super::sidecar_for(&raw, off).unwrap();
         assert!(kept.current.lens.enabled, "the file's own");
         assert_eq!(kept.meta.rating, 4);
+        greycard_core::testing::remove_dir_retry(&d);
+    }
+
+    /// The editor saving the frame between the CLI's read and its write:
+    /// the preset written, and the editor's file, with its state and
+    /// rating, kept beside the frame.
+    #[test]
+    fn a_save_between_the_read_and_the_write_is_kept() {
+        let d =
+            std::env::temp_dir().join(format!("greycard-cli-preset-gap-{}", std::process::id()));
+        greycard_core::testing::remove_dir_retry(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let raw = d.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        let mut first = greycard_edit::Sidecar::default();
+        first.record(greycard_edit::Edit::default());
+        first.save(&raw).unwrap();
+        let mut sidecar = super::sidecar_for(&raw, Fresh::default()).unwrap();
+        let mut grain = sidecar.current.clone();
+        grain.grain.amount = 0.4;
+        sidecar.record_as(grain, Some("Preset: Fine Grain".into()));
+        // The editor, between the two.
+        let mut editor = greycard_edit::Sidecar::load(&raw).unwrap().unwrap();
+        let mut bright = editor.current.clone();
+        bright.light.exposure = 1.0;
+        editor.record(bright);
+        editor.meta.rating = 2;
+        editor.save(&raw).unwrap();
+        let checked = super::write_back(&mut sidecar, &raw).unwrap();
+        assert_eq!(checked, greycard_edit::Checked::Kept);
+        let back = greycard_edit::Sidecar::load(&raw).unwrap().unwrap();
+        assert_eq!(back.current.grain.amount, 0.4);
+        let path = greycard_edit::Sidecar::path_for(&raw);
+        let kept = greycard_edit::Sidecar::read(&path.with_extension("gcd.other")).unwrap();
+        assert_eq!(kept.current.light.exposure, 1.0);
+        assert_eq!(kept.meta.rating, 2);
         greycard_core::testing::remove_dir_retry(&d);
     }
 

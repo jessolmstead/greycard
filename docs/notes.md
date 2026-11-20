@@ -733,3 +733,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§719. A learned highlight fill: the design](notes/719-a-learned-highlight-fill-the-design.md) (2026-11-19)
 - [§720. The panels stay one crate](notes/720-the-panels-stay-one-crate.md) (2026-11-19)
 - [§721. A vignette on the picture as shown](notes/721-a-vignette-on-the-picture-as-shown.md) (2026-11-19)
+- [§722. A save that looks before it writes](notes/722-a-save-that-looks-before-it-writes.md) (2026-11-20)

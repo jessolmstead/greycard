@@ -913,9 +913,22 @@ fn carry_sidecar(old: &Path, new: &Path) -> bool {
         );
         return false;
     }
+    // What saves put aside beside it goes along under the new name, so
+    // no later frame of the old name takes it for its own.
+    let asides = greycard_edit::asides_of(&from);
     match move_noreplace(&from, &to) {
         Ok(()) => {
             log::info!("{}: sidecar carried from {}", to.display(), from.display());
+            for aside in asides {
+                let there = greycard_edit::aside_at(&aside, &from, &to);
+                if let Err(e) = move_noreplace(&aside, &there) {
+                    log::warn!(
+                        "{}: not carried to {}: {e}",
+                        aside.display(),
+                        there.display()
+                    );
+                }
+            }
             true
         }
         Err(e) => {
@@ -5188,13 +5201,26 @@ pub(crate) mod tests {
         let row = lib.by_path(&r6_to).unwrap().unwrap();
         assert_eq!((row.meta.rating, row.meta.label), (2, Label::Red));
 
-        // Renamed within the folder, the raw alone: the same.
+        // Renamed within the folder, the raw alone: the same, and what
+        // saves put aside beside the sidecar goes along under the new
+        // name, none left for a later frame of the old one.
+        for aside in ["r5.tif.gcd.other", "r5.tif.gcd.3.other", "r5.tif.gcd.bad"] {
+            std::fs::write(picks.join(aside), aside).unwrap();
+        }
         let renamed = picks.join("z.tif");
         std::fs::rename(&r5_to, &renamed).unwrap();
         let report = lib.index_folder(&picks, &mut quiet()).unwrap();
         assert_eq!((report.moved, report.carried), (1, 1), "{report:?}");
         assert_eq!(Sidecar::find(&renamed), Some(Sidecar::path_for(&renamed)));
         assert!(Sidecar::find(&r5_to).is_none());
+        for (from, to) in [
+            ("r5.tif.gcd.other", "z.tif.gcd.other"),
+            ("r5.tif.gcd.3.other", "z.tif.gcd.3.other"),
+            ("r5.tif.gcd.bad", "z.tif.gcd.bad"),
+        ] {
+            assert_eq!(std::fs::read_to_string(picks.join(to)).unwrap(), from);
+            assert!(!picks.join(from).exists(), "{from} left behind");
+        }
         assert_eq!(lib.by_path(&renamed).unwrap().unwrap().meta.rating, 4);
 
         // A frame with no sidecar moves as before.

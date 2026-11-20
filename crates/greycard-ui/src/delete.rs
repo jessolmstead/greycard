@@ -198,11 +198,18 @@ fn deletable(path: &Path, allowed: &[PathBuf]) -> Result<bool, String> {
 }
 
 /// Every sidecar of `frame` that is there: its `.gcd` in both places
-/// (a folder whose setting was flipped can hold both), and its XMPs.
-pub fn sidecars_of(frame: &Path) -> Vec<PathBuf> {
+/// (a folder whose setting was flipped can hold both), with what saves
+/// put aside beside each ([`greycard_edit::asides_among`], of `folders`'
+/// names), and its XMPs.
+pub fn sidecars_of(frame: &Path, folders: &mut Folders) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = [Placement::Beside, Placement::Folder]
         .into_iter()
         .map(|p| Sidecar::path_in(frame, p))
+        .flat_map(|gcd| {
+            let names = gcd.parent().map_or(&[][..], |dir| folders.names(dir));
+            let asides = greycard_edit::asides_among(&gcd, names);
+            std::iter::once(gcd).chain(asides)
+        })
         .chain(greycard_edit_io::xmp::paths_of(frame))
         .filter(|p| std::fs::symlink_metadata(p).is_ok())
         .collect();
@@ -228,9 +235,9 @@ pub fn plan(frames: &[PathBuf], listed: &[PathBuf], allowed: &[PathBuf], apart: 
             continue;
         }
         let companions = pairs.remove(frame).unwrap_or_default();
-        let mut sidecars = sidecars_of(frame);
+        let mut sidecars = sidecars_of(frame, &mut folders);
         for c in &companions {
-            sidecars.extend(sidecars_of(c));
+            sidecars.extend(sidecars_of(c, &mut folders));
         }
         if !companions.is_empty()
             && let Some(shared) = shared_xmp(frame, &companions, &mut folders)
@@ -283,7 +290,7 @@ pub fn companions_of(
 pub struct Folders(HashMap<PathBuf, Vec<std::ffi::OsString>>);
 
 impl Folders {
-    fn names(&mut self, dir: &Path) -> &[std::ffi::OsString] {
+    pub(crate) fn names(&mut self, dir: &Path) -> &[std::ffi::OsString] {
         self.0.entry(dir.to_path_buf()).or_insert_with(|| {
             let read = if dir.as_os_str().is_empty() {
                 Path::new(".")
@@ -706,6 +713,70 @@ mod tests {
         assert_eq!(done.vanished, 0);
         assert!(done.failed.is_empty() && done.trash_refused.is_none());
         assert_eq!(all(&dir), ["C.CR3", "D.CR3", "D.xmp", "notes.txt"]);
+        greycard_render::testing::remove_dir_retry(&dir);
+    }
+
+    /// What saves put aside beside a frame's `.gcd`, in either place
+    /// (other writers' files kept, files that would not parse), goes to
+    /// the trash with it; names of the shape that are another frame's,
+    /// or none of ours, stay.
+    #[test]
+    fn what_saves_put_aside_goes_to_the_trash_with_the_frame() {
+        let dir = scratch("asides");
+        let bin = dir.join("bin");
+        let shoot_dir = dir.join("shoot");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(shoot_dir.join(greycard_edit::SIDECAR_FOLDER)).unwrap();
+        let files = shoot(&shoot_dir);
+        for name in [
+            "A.CR3.gcd.other",
+            "A.CR3.gcd.3.other",
+            "A.CR3.gcd.bad",
+            ".greycard/A.CR3.gcd.2.other",
+            "A.CR3.gcd.1.other",
+            "AA.CR3.gcd.other",
+            "C.CR3.gcd.other",
+        ] {
+            std::fs::write(shoot_dir.join(name), b"x").unwrap();
+        }
+        let ok = allowed(std::slice::from_ref(&shoot_dir));
+        let p = plan(&[files[0].clone()], &[], &ok, false);
+        assert_eq!(
+            p.sidecars(),
+            3 + 4,
+            "the .gcd, two XMPs, and four set aside"
+        );
+        let trashed = std::cell::RefCell::new(Vec::new());
+        let done = delete(&p, How::Trash, &ok, |paths: &[PathBuf]| {
+            for p in paths {
+                let to = bin.join(trashed.borrow().len().to_string());
+                greycard_core::testing::rename_retry(p, &to);
+                trashed
+                    .borrow_mut()
+                    .push(p.strip_prefix(&shoot_dir).unwrap().to_path_buf());
+            }
+            Ok(())
+        });
+        assert_eq!(done.sidecars, 7);
+        let mut trashed = trashed.into_inner();
+        trashed.sort();
+        let want: Vec<PathBuf> = [
+            ".greycard/A.CR3.gcd.2.other",
+            "A.CR3",
+            "A.CR3.gcd",
+            "A.CR3.gcd.3.other",
+            "A.CR3.gcd.bad",
+            "A.CR3.gcd.other",
+            "A.CR3.xmp",
+            "A.xmp",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+        assert_eq!(trashed, want);
+        for stays in ["A.CR3.gcd.1.other", "AA.CR3.gcd.other", "C.CR3.gcd.other"] {
+            assert!(shoot_dir.join(stays).exists(), "{stays}");
+        }
         greycard_render::testing::remove_dir_retry(&dir);
     }
 

@@ -324,7 +324,9 @@ pub fn frames_of(ask: &Ask, beat: &dyn Fn()) -> (Vec<PathBuf>, usize) {
 
 /// The sidecars that travel with a frame: the `.gcd` the editor would
 /// read ([`Sidecar::find`], beside or under the hidden folder), and the
-/// frame's XMPs.
+/// frame's XMPs. Not what saves put aside beside the `.gcd`
+/// ([`greycard_edit::asides_of`]): a copy leaves those with the frame
+/// where it is, as a move, a rename, or a delete takes them along.
 pub fn travelling(frame: &Path) -> Vec<PathBuf> {
     Sidecar::find(frame)
         .into_iter()

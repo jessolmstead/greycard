@@ -265,6 +265,19 @@ fn move_into(
         // own sidecars, and the short XMP the pair shares, which is
         // neither file's alone where they are and stays the pair's.
         let companions = pairs.remove(raw).unwrap_or_default();
+        // What saves put aside beside each `.gcd` (other writers' files
+        // kept, files that would not parse) goes with it, under the
+        // same name; left behind, a later frame of the name would take
+        // them for its own.
+        let mut asides = Vec::new();
+        for gcd in sidecar.iter().cloned().chain(
+            companions
+                .iter()
+                .filter_map(|c| greycard_edit::Sidecar::find(c)),
+        ) {
+            let names = gcd.parent().map_or(&[][..], |d| folders.names(d));
+            asides.extend(greycard_edit::asides_among(&gcd, names));
+        }
         let theirs: Vec<PathBuf> = companions
             .iter()
             .flat_map(|c| {
@@ -283,6 +296,7 @@ fn move_into(
             .cloned()
             .chain(greycard_edit_io::xmp::paths_of(raw))
             .chain(theirs)
+            .chain(asides)
             .filter_map(|from| {
                 let file = from.file_name()?;
                 let to = if from.parent().and_then(Path::file_name) == Some(hidden) {

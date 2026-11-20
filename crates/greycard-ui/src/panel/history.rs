@@ -376,6 +376,51 @@ pub(crate) fn take_current_settled(st: &mut State, app: &App, worker: &Worker) {
     take_current_settled_with(st, app, worker, true);
 }
 
+/// [`take_current_settled`] with nothing saved, at the next turn of the
+/// event loop: the frame on screen's sidecar was replaced in a save
+/// (another writer's save joined into it, `sidecars::taken_from_disk`),
+/// and whatever made the save is done with the panel first.
+pub(crate) fn show_settled_later(app: &App) {
+    #[cfg(test)]
+    {
+        let _ = app;
+        SHOWS_ASKED.with(|n| n.set(n.get() + 1));
+    }
+    #[cfg(not(test))]
+    {
+        let app_weak = app.as_weak();
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            let (Some(app), Some(state), Some(worker)) = (
+                app_weak.upgrade(),
+                crate::STATE.with(|s| s.borrow().clone()),
+                crate::WORKER.with(|w| w.borrow().clone()),
+            ) else {
+                return;
+            };
+            take_current_settled_with(&mut state.borrow_mut(), &app, &worker, false);
+        });
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many shows were asked for the next turn, which a test has
+    /// none of: `show_settled_pending` runs them.
+    static SHOWS_ASKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A test's turn of the event loop for the shows asked
+/// ([`show_settled_later`]): how many were asked, the panel shown once
+/// when any was.
+#[cfg(test)]
+pub(crate) fn show_settled_pending(st: &mut State, app: &App, worker: &Worker) -> usize {
+    let asked = SHOWS_ASKED.with(|n| n.replace(0));
+    if asked > 0 {
+        take_current_settled_with(st, app, worker, false);
+    }
+    asked
+}
+
 /// [`take_current_settled`], the sidecar written only with `save`.
 fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: bool) {
     let Some(c) = st.current else {

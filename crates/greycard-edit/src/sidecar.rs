@@ -71,6 +71,16 @@ pub struct Sidecar {
     /// part of equality, public as [`Self::baseline`] is.
     #[serde(skip)]
     pub modified: Option<u64>,
+    /// What this sidecar last read or wrote ([`OnDisk`]): the file as a
+    /// stat found it, and the lines and the meta as they stood then.
+    /// What [`Self::save_checked`] asks the disk about before it writes,
+    /// so a save never goes over a file another writer changed since,
+    /// and what tells this sidecar's own changes from the file's. None
+    /// for a sidecar never read, written, or made fresh for a frame
+    /// that had none. Not written, not part of equality, public as
+    /// [`Self::baseline`] is.
+    #[serde(skip)]
+    pub on_disk: Option<OnDisk>,
     /// Quarter turns clockwise on top of the camera's orientation
     /// tag, 0 to 3: the frames a camera got wrong (shot straight
     /// down, a body with no sensor for it, a scan).
@@ -164,6 +174,19 @@ pub struct Sidecar {
         deserialize_with = "sync::loose_hashes"
     )]
     pub absorbed: Vec<String>,
+    /// The latest revisions of other writers' files a checked save kept
+    /// beside the frame and wrote this over, the last
+    /// [`sync::ABSORBED`] of them. Never lineage: only that save's own rule reads it, so the
+    /// writer whose file was kept takes this one at its next save rather
+    /// than keep it in turn ([`Sidecar::checked_against`]). Left out
+    /// while empty, and read loosely; a build that does not know it drops
+    /// it, and the two keep each other's files again, as before it.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "sync::loose_hashes"
+    )]
+    pub set_aside: Vec<String>,
     /// The frame's further versions, each a line of its own under a
     /// name, in the order they were made. Left out while empty; a list
     /// that is not a list is none, and a version with no id is left out
@@ -193,6 +216,7 @@ impl PartialEq for Sidecar {
             meta_at,
             baseline: _,
             modified: _,
+            on_disk: _,
             turn,
             xmp,
             xmp_shared,
@@ -200,6 +224,7 @@ impl PartialEq for Sidecar {
             saved,
             revisions,
             absorbed,
+            set_aside,
             versions,
         } = self;
         *line == other.line
@@ -212,6 +237,7 @@ impl PartialEq for Sidecar {
             && *saved == other.saved
             && *revisions == other.revisions
             && *absorbed == other.absorbed
+            && *set_aside == other.set_aside
             && *versions == other.versions
     }
 }
@@ -406,10 +432,13 @@ impl Sidecar {
     /// turn as read are kept to stamp their times against at the next
     /// save.
     pub fn read(path: &Path) -> Result<Self> {
-        let modified = path
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
+        // Before the read: a write landing between the two leaves a stat
+        // older than the bytes, which the next checked save takes for a
+        // change and compares, at the cost of a read.
+        let meta = path.metadata().ok();
+        let modified = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
         let json = std::fs::read_to_string(path)?;
@@ -418,6 +447,8 @@ impl Sidecar {
         sidecar.fill_ids();
         sidecar.pin_times();
         sidecar.baseline = Some(sidecar.facts());
+        let stat = meta.map(|m| FileStat::from_meta(path, &m));
+        sidecar.remember_bytes(stat, Some(Bytes::of(json.as_bytes())), false);
         Ok(sidecar)
     }
 
@@ -665,9 +696,7 @@ impl Sidecar {
         stamp: &sync::Stamp,
     ) -> Result<()> {
         self.advance(stamp);
-        self.stage_in(raw, placement)?.commit()?;
-        Self::drop_other(raw, placement);
-        Ok(())
+        self.write_known(raw, placement)
     }
 
     /// The first half of a save already advanced ([`Self::advance`]):
@@ -682,7 +711,10 @@ impl Sidecar {
         {
             Self::folder_under(folder.parent().unwrap_or(Path::new("")))?;
         }
-        Ok(Staged::write(&path, self.to_json().as_bytes())?)
+        let text = self.to_json();
+        let mut staged = Staged::write(&path, text.as_bytes())?;
+        staged.bytes = Some(Bytes::of(text.as_bytes()));
+        Ok(staged)
     }
 
     /// The copy in the place `placement` does not name removed, after a
@@ -722,6 +754,21 @@ impl Sidecar {
     /// file again in another place, a copy of one frame on an archive
     /// (§233). [`Self::save_in`] is the save; this is only the write.
     pub fn write_to(&self, path: &Path) -> Result<()> {
+        self.write_text_to(path).map(drop)
+    }
+
+    /// [`Self::write_to`], the file written then the one this sidecar
+    /// knows: for a copy's sidecar written over the frame's own, which
+    /// the frame's next save asks the disk about.
+    pub fn write_to_known(&mut self, path: &Path) -> Result<()> {
+        let (bytes, stat) = self.write_text_to(path)?;
+        self.remember_written(stat, bytes);
+        Ok(())
+    }
+
+    /// The write, and what was written: its bytes, and the file as a
+    /// stat of it found it before the rename.
+    fn write_text_to(&self, path: &Path) -> Result<(Bytes, Option<FileStat>)> {
         // A copy's hidden folder may not be there yet: the archive's
         // shoot was copied before the folder was, or made by another
         // tool. Made and hidden as a save makes its own.
@@ -730,7 +777,11 @@ impl Sidecar {
         {
             Self::folder_under(shoot)?;
         }
-        Ok(replace_synced(path, self.to_json().as_bytes())?)
+        let text = self.to_json();
+        let staged = Staged::write(path, text.as_bytes())?;
+        let stat = staged.stat().ok();
+        staged.commit()?;
+        Ok((Bytes::of(text.as_bytes()), stat))
     }
 
     /// Whether `raw` has a sidecar in the place `placement` does not
@@ -800,6 +851,10 @@ pub struct Staged {
     temp: PathBuf,
     path: PathBuf,
     done: bool,
+    /// The length and hash of what was written, when it is a sidecar's
+    /// ([`Sidecar::stage_in`]): what the sidecar knows of its file once
+    /// this is in place.
+    bytes: Option<Bytes>,
 }
 
 impl Staged {
@@ -821,7 +876,22 @@ impl Staged {
             temp,
             path: path.to_path_buf(),
             done: false,
+            bytes: None,
         })
+    }
+
+    /// The length and hash of the sidecar this writes, when it is one's.
+    pub fn bytes(&self) -> Option<Bytes> {
+        self.bytes
+    }
+
+    /// The file this writes, as a stat of the temporary one finds it,
+    /// under the name it replaces: what the file is once renamed, since a
+    /// rename over another file keeps the inode and the mtime (POSIX
+    /// `rename`, and on Windows `MoveFileEx`, which keeps the last write
+    /// time; there is no inode there).
+    pub fn stat(&self) -> std::io::Result<FileStat> {
+        Ok(FileStat::from_meta(&self.path, &self.temp.metadata()?))
     }
 
     /// The file this replaces.
@@ -948,6 +1018,18 @@ fn hide_folder(dir: &Path) -> std::io::Result<()> {
         Ok(())
     }
 }
+
+mod checked;
+#[cfg(feature = "testing")]
+pub use checked::changed_reads;
+pub use checked::{
+    Asides, Bytes, Checked, FileStat, NotSaved, OnDisk, Saved, aside_at, asides_among, asides_of,
+};
+
+#[cfg(test)]
+mod checked_matrix;
+#[cfg(test)]
+mod checked_tests;
 
 #[cfg(test)]
 mod tests {

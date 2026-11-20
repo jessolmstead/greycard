@@ -518,6 +518,53 @@ fn a_copy_without_the_version_takes_its_cell_and_writes_nothing_back() {
     crate::testing::remove_scratch(state, &dir);
 }
 
+/// The archive's copy ahead of the window's while another writer also
+/// saved the local sidecar (the command line's preset): the copy is not
+/// written over the local file unseen; that file is kept beside the
+/// frame, the copy written, in one save, the frame on screen shown.
+#[test]
+fn a_copy_ahead_keeps_a_local_file_another_writer_saved() {
+    let dir = scratch("take-local-changed");
+    let (local, nas, files, db) = two_places(&dir);
+    let app = window(2);
+    let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+    save(&state, 0.5);
+    land_sent(&state, &app, &worker);
+    let copy = nas.join("shoot").join("a.tif");
+    let theirs = laptop_saves(&copy, -1.0);
+    // The other writer here, a minute back.
+    let mut cli = Sidecar::load(&files[0]).unwrap().unwrap();
+    let mut grain = cli.current.clone();
+    grain.grain.amount = 0.4;
+    cli.record_as(grain, Some("Preset: Fine Grain".into()));
+    cli.meta.rating = 4;
+    let mut at = greycard_edit::sync::Stamp::now();
+    at.at -= 60;
+    cli.save_in_stamped(&files[0], Placement::Beside, &at)
+        .unwrap();
+    let before = greycard_edit::synced_writes();
+    settle(&state, &app, &worker, &files[0], &nas, &copy, theirs);
+    assert_eq!(
+        greycard_edit::synced_writes() - before,
+        2,
+        "one save here, and the other writer's file kept beside it"
+    );
+    {
+        let mut st = state.borrow_mut();
+        assert!(crate::panel::history::show_settled_pending(&mut st, &app, &worker) >= 1);
+    }
+    land_sent(&state, &app, &worker);
+    let here = Sidecar::load(&files[0]).unwrap().unwrap();
+    assert!(exposures_of(&here).contains(&-1.0));
+    assert_eq!(state.borrow().sidecars[0], here);
+    let kept = Sidecar::read(&Sidecar::path_for(&files[0]).with_extension("gcd.other")).unwrap();
+    assert_eq!(kept.meta.rating, 4);
+    assert!(kept.current.grain.amount == 0.4);
+    let there = Sidecar::load(&copy).unwrap().unwrap();
+    assert_eq!(compare(&here, &there), Compared::Same, "written through");
+    crate::testing::remove_scratch(state, &dir);
+}
+
 /// Probe D: a copy handed back as behind what the job carried lands
 /// after the window saved again. The landing compares with what the
 /// window holds now, so the newer saves stand.

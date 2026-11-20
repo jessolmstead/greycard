@@ -61,15 +61,9 @@ the reasoning lives in `docs/notes.md`.
       sidecars; a snapshot renamed on one copy returning as two; Swap
       with original on one copy joining unrelated lines; a later
       build's mask shape dropped at an older build's save
-- [ ] A save is last writer wins: `save_file` writes the whole sidecar
-      from memory without asking whether the file is still the one
-      read, where the archive path compares and joins, so a second
-      writer on a loaded frame (another window or machine on a shared
-      folder, a sync tool, `greycard presets apply`) is undone,
-      silently, at our next change. §233's check wants running on the
-      local copy too: stat before the write, and on a mismatch read and
-      join instead (after `advance`). Check first whether a watcher
-      reloads a held frame (review, 2026-11-11)
+- [ ] The checked save (§722), what is left: the index's carry of a
+      hand-moved frame lists the old folder once a frame (cache it a
+      folder); the words of its three status lines wait on a sign-off
 - [ ] The note of edits not saved is out of sight in the lightbox,
       with every pane hidden, and in the grid while an import's line
       shows; so is the archive's note beside it

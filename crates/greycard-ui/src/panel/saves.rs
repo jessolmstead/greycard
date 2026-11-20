@@ -81,6 +81,17 @@ struct XmpAsk {
 enum Outcome {
     /// Renamed into place, with the mark for the XMP written beside it.
     Saved(Option<xmp::Adopted>),
+    /// The file was saved by another writer since the window read it or
+    /// last wrote it: what the check made of the two (the file taken,
+    /// the meta joined, or the batch's with the kept file in its lineage:
+    /// [`Checked`]) written in its place with the XMP from it, and to be
+    /// the window's.
+    ///
+    /// [`Checked`]: greycard_edit::Checked
+    Remade(Box<Sidecar>, greycard_edit::Checked),
+    /// The file was saved by another writer since, and the batch's was
+    /// behind it: nothing written, the file's to be the window's.
+    Took(Box<Sidecar>),
     /// Saved again on the window's thread before the rename: the
     /// batch's copy was dropped.
     TakenBack,
@@ -94,6 +105,16 @@ struct Done {
     /// The save count the batch wrote: the window's sidecar takes the
     /// XMP's mark only while it is still that save.
     saved: u64,
+    /// What the batch left on disk, as the window's sidecar is to know
+    /// it: what the window's next save asks the disk about.
+    known: Option<greycard_edit::OnDisk>,
+    /// The sidecars that would not parse, set aside on the way, and
+    /// other writers' files kept beside their frames.
+    asides: greycard_edit::Asides,
+    /// For a join or a file taken, the sidecar the batch started from:
+    /// the window's takes the result only while it is still exactly
+    /// that one.
+    started: Option<Box<Sidecar>>,
     outcome: Outcome,
 }
 
@@ -235,6 +256,9 @@ fn run(
                 file,
                 raw,
                 saved,
+                known: None,
+                asides: Default::default(),
+                started: None,
                 outcome: Outcome::Failed("the batch's thread failed".into(), Why::Other),
             })
             .collect()
@@ -321,42 +345,160 @@ fn commit_all(
 ) -> Vec<Done> {
     staged
         .into_iter()
-        .map(|(item, staged)| {
+        .map(|(mut item, staged)| {
+            let saved = item.sidecar.saved;
             let mut claims = claims.lock().unwrap_or_else(PoisonError::into_inner);
             let ours = claims.get(&item.raw) == Some(&id);
             if ours {
                 claims.remove(&item.raw);
             }
-            let outcome = match staged {
+            let committed = match staged {
                 // Dropped, its temporary files go with it.
-                _ if !ours => Outcome::TakenBack,
-                Err((e, why)) => Outcome::Failed(e, why),
-                // The XMP first, as a single save writes it, so the
-                // sidecar never names one that is not there; the
-                // window's own save waits for the pair at the claims.
-                // An XMP that will not go into place keeps the sidecar
-                // from it too: the edit is not saved.
-                Ok((xmp, sidecar)) => match xmp.map(xmp::Staged::commit).transpose() {
-                    Err(e) => Outcome::Failed(format!("xmp: {e}"), Why::of_io(e.kind())),
-                    Ok(mark) => match sidecar.commit() {
-                        Ok(()) => Outcome::Saved(mark),
-                        Err(e) => Outcome::Failed(e.to_string(), Why::of_io(e.kind())),
-                    },
-                },
+                _ if !ours => Committed::of(Outcome::TakenBack),
+                Err((e, why)) => Committed::of(Outcome::Failed(e, why)),
+                Ok(staged) => checked_commit(&mut item, staged, placement),
             };
             drop(claims);
             moved.fetch_add(1, Ordering::Relaxed);
-            if matches!(outcome, Outcome::Saved(_)) {
-                Sidecar::drop_other(&item.raw, placement);
-            }
+            let Committed {
+                outcome,
+                bytes,
+                stat,
+                asides,
+                started,
+            } = committed;
+            let known = match (&outcome, bytes) {
+                (Outcome::Saved(_) | Outcome::Remade(..), Some(bytes)) => {
+                    Sidecar::drop_other(&item.raw, placement);
+                    item.sidecar.remember_written(stat, bytes);
+                    item.sidecar.on_disk.clone()
+                }
+                _ => None,
+            };
             Done {
                 file: item.file,
-                saved: item.sidecar.saved,
+                saved,
+                known,
+                asides,
+                started,
                 raw: item.raw,
                 outcome,
             }
         })
         .collect()
+}
+
+/// What one file's commit did: the outcome, the length and hash of the
+/// sidecar written, the files set aside for not parsing (whether the
+/// save then landed or not), and for a join or a file taken the sidecar
+/// the batch started from.
+struct Committed {
+    outcome: Outcome,
+    bytes: Option<greycard_edit::Bytes>,
+    /// The sidecar's staged file as a stat found it before the rename.
+    stat: Option<greycard_edit::FileStat>,
+    asides: greycard_edit::Asides,
+    started: Option<Box<Sidecar>>,
+}
+
+impl Committed {
+    fn of(outcome: Outcome) -> Self {
+        Self {
+            outcome,
+            bytes: None,
+            stat: None,
+            asides: Default::default(),
+            started: None,
+        }
+    }
+}
+
+/// One file's commit, the files on disk asked first whether they are
+/// still the ones the window read or last wrote, as a single save asks
+/// ([`Sidecar::save_checked`]), right before the rename. When they are,
+/// or another writer's save is behind the batch's, `staged` goes into
+/// place; when the batch's has nothing of its own, the file's is taken
+/// and nothing written (but the XMP from it, when XMPs are written, and
+/// the sidecar with its mark); otherwise what the check made (the meta
+/// joined, or the batch's with the other's file kept beside the frame)
+/// is written with an XMP from it. A file from a newer build is never
+/// written over.
+fn checked_commit(
+    item: &mut Item,
+    staged: (Option<xmp::Staged>, greycard_edit::Staged),
+    placement: greycard_edit::Placement,
+) -> Committed {
+    use greycard_edit::Checked;
+    let stamp = greycard_edit::sync::Stamp::now();
+    let (reconciled, asides) = item.sidecar.reconciled(&item.raw, placement, &stamp);
+    let mut done = Committed {
+        asides,
+        ..Committed::of(Outcome::TakenBack)
+    };
+    let (checked, kept) = match reconciled {
+        Ok(r) => r,
+        Err(e) => {
+            done.outcome = Outcome::Failed(e.to_string(), Why::of(&e));
+            return done;
+        }
+    };
+    match (checked, kept) {
+        (Checked::Took, Some(theirs)) if item.xmp.is_none() => {
+            done.started = Some(Box::new(item.sidecar.clone()));
+            done.outcome = Outcome::Took(Box::new(theirs));
+        }
+        // Taken, joined, or ours with the kept file's revision in its
+        // lineage: staged again from what is to be written.
+        (Checked::Took | Checked::Joined | Checked::Kept, Some(mut theirs)) => {
+            drop(staged);
+            if checked == Checked::Took {
+                theirs.advance(&stamp);
+            }
+            if let Some(ask) = &mut item.xmp {
+                ask.meta = theirs.meta.clone();
+                ask.quarters = theirs.turn;
+            }
+            done.started = Some(Box::new(std::mem::replace(&mut item.sidecar, theirs)));
+            // The XMP's mark is the sidecar's own, set as it is staged.
+            done.outcome = match stage(item, placement) {
+                Err((e, why)) => Outcome::Failed(e, why),
+                Ok(staged) => {
+                    let (bytes, stat) = (staged.1.bytes(), staged.1.stat().ok());
+                    match commit(staged) {
+                        Outcome::Saved(_) => {
+                            (done.bytes, done.stat) = (bytes, stat);
+                            Outcome::Remade(Box::new(item.sidecar.clone()), checked)
+                        }
+                        failed => failed,
+                    }
+                }
+            };
+        }
+        // Ours written: the files were as known, held only what ours
+        // knew, or were behind it.
+        (_, kept) => {
+            if let Some(kept) = kept {
+                item.sidecar = kept;
+            }
+            (done.bytes, done.stat) = (staged.1.bytes(), staged.1.stat().ok());
+            done.outcome = commit(staged);
+        }
+    }
+    done
+}
+
+/// The XMP into place first, as a single save writes it, so the
+/// sidecar never names one that is not there; the window's own save
+/// waits for the pair at the claims. An XMP that will not go into place
+/// keeps the sidecar from it too: the edit is not saved.
+fn commit((xmp, sidecar): (Option<xmp::Staged>, greycard_edit::Staged)) -> Outcome {
+    match xmp.map(xmp::Staged::commit).transpose() {
+        Err(e) => Outcome::Failed(format!("xmp: {e}"), Why::of_io(e.kind())),
+        Ok(mark) => match sidecar.commit() {
+            Ok(()) => Outcome::Saved(mark),
+            Err(e) => Outcome::Failed(e.to_string(), Why::of_io(e.kind())),
+        },
+    }
 }
 
 /// One file's XMP and sidecar written and synced, neither renamed. An
@@ -430,7 +572,14 @@ fn land(st: &mut State, id: u64) {
     let mut not_written = Vec::new();
     // Told as one line once every file is seen.
     let mut failures = Vec::new();
+    let (mut bad, mut kept) = (Vec::new(), Vec::new());
     for d in done {
+        if matches!(d.outcome, Outcome::Failed(..)) {
+            crate::sidecars::log_asides(&d.raw, &d.asides);
+        } else {
+            bad.extend(d.asides.bad.iter().map(|to| (d.raw.clone(), to.clone())));
+            kept.extend(d.asides.kept.iter().map(|to| (d.raw.clone(), to.clone())));
+        }
         // The list may have been replaced or sorted under the batch:
         // the file found by its path.
         let file = Some(d.file)
@@ -440,6 +589,10 @@ fn land(st: &mut State, id: u64) {
         // the window's thread since has said for itself whether the
         // edit is on disk, and this one says nothing over it.
         let latest = file.is_some_and(|f| st.sidecars[f].saved == d.saved);
+        let remade = match &d.outcome {
+            Outcome::Remade(_, checked) => Some(*checked),
+            _ => None,
+        };
         match d.outcome {
             Outcome::Saved(mark) => {
                 saved += 1;
@@ -455,11 +608,56 @@ fn land(st: &mut State, id: u64) {
                     crate::sync::after_disk_save(st, &d.raw);
                     continue;
                 };
-                // The mark only while the sidecar is the save written: a
-                // later save has its own.
-                if mark.is_some() && st.sidecars[file].saved == d.saved {
-                    st.sidecars[file].xmp = mark;
+                // The mark, and the file as written, only while the
+                // sidecar is the save written: a later save has its own.
+                if latest {
+                    if mark.is_some() {
+                        st.sidecars[file].xmp = mark;
+                    }
+                    st.sidecars[file].on_disk = d.known;
                 }
+                crate::library::sidecar_written(st, file);
+            }
+            Outcome::Remade(sidecar, _) | Outcome::Took(sidecar) => {
+                saved += 1;
+                tracing::info!(
+                    "{}: its sidecar was saved by another writer since it was read; {}",
+                    crate::panel::browser::file_name(&d.raw),
+                    match remade {
+                        Some(greycard_edit::Checked::Joined) => "the meta joined with it",
+                        Some(greycard_edit::Checked::Kept) => {
+                            "that file kept beside the frame, and the edit here written"
+                        }
+                        _ => "behind it, and taken from it",
+                    }
+                );
+                // A save made on the window's thread since, or a change
+                // made there after the batch started, meets the file for
+                // itself at the next save, and joins what is there.
+                let exact = |f: usize| {
+                    d.started.as_ref().is_some_and(|started| {
+                        let mut started = started.clone();
+                        // The XMP's mark, set as the batch staged.
+                        started.xmp = st.sidecars[f].xmp.clone();
+                        *started == st.sidecars[f]
+                    })
+                };
+                let Some(file) = file.filter(|&f| latest && exact(f)) else {
+                    if file.is_none() {
+                        if let Some(indexer) = &st.views.index {
+                            indexer.file(d.raw.clone());
+                        }
+                        crate::sync::after_disk_save(st, &d.raw);
+                    }
+                    continue;
+                };
+                crate::sidecars::landed(st, &d.raw);
+                let mut sidecar = *sidecar;
+                if d.known.is_some() {
+                    sidecar.on_disk = d.known;
+                }
+                st.sidecars[file] = sidecar;
+                crate::sidecars::taken_from_disk(st, file);
                 crate::library::sidecar_written(st, file);
             }
             Outcome::TakenBack => taken += 1,
@@ -472,6 +670,18 @@ fn land(st: &mut State, id: u64) {
                     failures.push((d.raw, why));
                 }
             }
+        }
+    }
+    // Not over a failure's word: the log has them then.
+    if failures.is_empty() {
+        crate::sidecars::said_asides(st, &bad, &kept);
+    } else {
+        for (raw, to) in bad.iter().chain(&kept) {
+            tracing::warn!(
+                "{}: its sidecar was put aside as {}",
+                crate::panel::browser::file_name(raw),
+                to.display()
+            );
         }
     }
     crate::sidecars::failed_all(st, &failures);
@@ -574,6 +784,20 @@ pub(crate) mod tests {
         /// ([`super::finish`]); otherwise a test's batch lands as it
         /// is sent, there being no event loop to land it on.
         pub(crate) static HOLD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// Wait for every batch out to have done its work on its thread,
+    /// none of them landed.
+    pub(crate) fn wait_moved(st: &State) {
+        while st
+            .work
+            .saves
+            .out
+            .values()
+            .any(|o| o.thread.as_ref().is_some_and(|t| !t.is_finished()))
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     /// Three frames in a folder of their own, their sidecars written
@@ -748,15 +972,7 @@ pub(crate) mod tests {
         save(&mut st, &[0, 1]);
         HOLD.set(false);
         // The batch's thread done, its failures not landed.
-        while st
-            .work
-            .saves
-            .out
-            .values()
-            .any(|o| o.thread.as_ref().is_some_and(|t| !t.is_finished()))
-        {
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        wait_moved(&st);
         std::fs::create_dir_all(&missing).expect("the folder");
         write_sidecar(&mut st, 0);
         assert!(finish(&mut st, None));

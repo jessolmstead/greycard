@@ -724,6 +724,37 @@ fn move_back_keeps_a_sidecar_under_the_hidden_folder() {
     greycard_render::testing::remove_dir_retry(&dir);
 }
 
+/// What saves put aside beside a frame's `.gcd` (other writers' files
+/// kept, a file that would not parse) moves with it, both ways, and
+/// nothing of it is left for a later frame of the name to take up.
+#[test]
+fn what_saves_put_aside_moves_with_the_frame() {
+    let (dir, rejects) = shoot_with_rejects("asides");
+    let a = dir.join("A.CR3");
+    rejected_frame(&a, greycard_edit::Placement::Beside);
+    let asides = ["A.CR3.gcd.other", "A.CR3.gcd.2.other", "A.CR3.gcd.bad"];
+    for name in asides {
+        std::fs::write(dir.join(name), name).unwrap();
+    }
+    std::fs::write(dir.join("AB.CR3.gcd.other"), b"another frame's").unwrap();
+    let moved = move_rejects(std::slice::from_ref(&a), &[0]).unwrap();
+    assert_eq!((moved.files.len(), moved.sidecars), (1, 1));
+    for name in asides {
+        assert_eq!(std::fs::read_to_string(rejects.join(name)).unwrap(), name);
+        assert!(!dir.join(name).exists(), "{name} left behind");
+    }
+    assert!(dir.join("AB.CR3.gcd.other").exists());
+    assert!(!rejects.join("AB.CR3.gcd.other").exists());
+    // A later frame of the name starts its own pile.
+    assert!(greycard_edit::asides_of(&dir.join("A.CR3.gcd")).is_empty());
+    let back = move_back(&[rejects.join("A.CR3")], &[0], false);
+    assert_eq!(back.files, [0]);
+    for name in asides {
+        assert!(dir.join(name).exists() && !rejects.join(name).exists());
+    }
+    greycard_render::testing::remove_dir_retry(&dir);
+}
+
 /// A raw of the name in the folder above, or an XMP of one of the
 /// frame's names there that a frame there answers to, leaves the
 /// frame whole in the rejects folder, the clash named; the files

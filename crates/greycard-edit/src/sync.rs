@@ -1119,7 +1119,7 @@ fn states_of(sidecar: &Line) -> Vec<Step> {
 impl Sidecar {
     /// Whether this copy has the revision `hash` in its lineage: in
     /// its list, or absorbed from a copy a join took in.
-    fn knows(&self, hash: &str) -> bool {
+    pub(crate) fn knows(&self, hash: &str) -> bool {
         self.revisions.iter().any(|r| r.hash == hash) || self.absorbed.iter().any(|a| a == hash)
     }
 

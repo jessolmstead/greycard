@@ -90,19 +90,35 @@ impl Default for Fresh {
 /// default, its lens section as `fresh` says, and for a picture that
 /// is not a raw its own ([`Edit::for_picture`]).
 pub fn fresh_sidecar(f: &Path, fresh: Fresh) -> Sidecar {
-    if greycard_core::picture::is_picture_path(f) {
-        Sidecar {
-            line: Line::of(Edit::for_picture()),
+    // Known as the frame's start, so a save that finds a sidecar some
+    // other writer made meanwhile takes it rather than joining a default
+    // edit over it (`Sidecar::save_checked`). There are three starts,
+    // each made and remembered once: a folder's open holds thousands,
+    // and remembering one prints it.
+    static STARTS: std::sync::OnceLock<[Sidecar; 3]> = std::sync::OnceLock::new();
+    let starts = STARTS.get_or_init(|| {
+        let of = |edit| Sidecar {
+            line: Line::of(edit),
             ..Sidecar::default()
-        }
+        };
+        [
+            of(Edit::for_picture()),
+            Sidecar::default(),
+            of(Edit::raw_without_lens()),
+        ]
+        .map(|mut s| {
+            s.remember_fresh();
+            s
+        })
+    });
+    let start = if greycard_core::picture::is_picture_path(f) {
+        0
     } else if fresh.lens {
-        Sidecar::default()
+        1
     } else {
-        Sidecar {
-            line: Line::of(Edit::raw_without_lens()),
-            ..Sidecar::default()
-        }
-    }
+        2
+    };
+    starts[start].clone()
 }
 
 /// [`load_sidecar_said`] for a reader that does not know where

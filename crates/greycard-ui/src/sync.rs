@@ -1559,12 +1559,25 @@ fn settle_held(
         }
         Compared::Behind(Side::Local) => {
             // Taken whole: the copy's bytes over the local sidecar, no
-            // new revision, and nothing to write back.
+            // new revision, and nothing to write back. Unless another
+            // writer saved the local file since the window read it:
+            // then the copy's is taken in memory only, still knowing the
+            // file as the window did, and its save below keeps that
+            // writer's file beside the frame before it goes over it.
+            let mut theirs = theirs;
+            let mut moved_here = false;
             if !followed(&st, c) {
                 let (path, placement) = (st.files[c].clone(), st.window.placement);
+                theirs.on_disk = st.sidecars[c].on_disk.clone();
+                moved_here = !st.sidecars[c].changed_on_disk(&path, placement).is_empty();
                 let dest =
                     Sidecar::find(&path).unwrap_or_else(|| Sidecar::path_in(&path, placement));
-                if let Err(e) = theirs.write_to(&dest) {
+                if moved_here {
+                    tracing::info!(
+                        "{}: its sidecar here was saved by another writer too; kept at its save",
+                        file_name(frame)
+                    );
+                } else if let Err(e) = theirs.write_to_known(&dest) {
                     // The local root may be gone (the frame is about to
                     // follow its copy): the window takes the copy's
                     // anyway, and the file here stays behind it, as
@@ -1573,6 +1586,9 @@ fn settle_held(
                 }
             }
             st.sidecars[c] = theirs;
+            if moved_here {
+                crate::sidecars::save_file(&mut st, c);
+            }
             // The copy's versions may not be the cells': one made or
             // deleted on the other machine moves the list once this is
             // done with its numbers.
@@ -1594,13 +1610,23 @@ fn settle_held(
             // the "to join" row would stand for good.
             after_save(&mut st, c);
             if st.current.is_some_and(|x| st.file_at(x) == Some(c)) {
+                if moved_here {
+                    // Saved once above, with the join: shown without a
+                    // second save.
+                    crate::panel::history::show_settled_later(app);
+                    return true;
+                }
                 drop(st);
                 show_settled(state, app, worker);
                 return true;
             }
         }
         Compared::SameEdit | Compared::Diverged => {
-            let joined = join(&st.sidecars[c], &theirs);
+            // The join knows the local file as the window did, so its
+            // save below still asks whether another writer saved that
+            // file since.
+            let mut joined = join(&st.sidecars[c], &theirs);
+            joined.on_disk = st.sidecars[c].on_disk.clone();
             st.sidecars[c] = joined;
             // A version the join took out (deleted on the other copy
             // after it had seen every save of this one) or brought in
