@@ -870,8 +870,11 @@ pub(crate) fn turn_frames(
     // fitted afresh; the culling loupe reads the turn out of the
     // same matrix on its next frame, which is a redraw and not a
     // decode. A develop zoomed into keeps the picture point in the
-    // middle, turned about it (`viewport::frame_on_show`).
-    if st.develop.zoom == 0.0 || crate::panel::cull::loupe_draws(st) {
+    // middle, turned about it (`viewport::frame_on_show`), and so does
+    // Cull's loupe and compare (`cull::lay_out_current`); a camera
+    // picture standing in for a develop is centered afresh.
+    let standing = st.culling.cull.is_none() && crate::panel::cull::loupe_draws(st);
+    if st.develop.zoom == 0.0 || standing {
         st.develop.image_size = (0, 0);
     }
     // Whatever the panel was holding was recorded on the way in; the
@@ -2329,6 +2332,8 @@ fn follow_paths(st: &mut State, was: &Path, to: &Path) {
                 // then open.
                 drawn: _,
                 owed: _,
+                // By path and version, as the develop's `laid` is.
+                laid: _,
             },
         views:
             Views {

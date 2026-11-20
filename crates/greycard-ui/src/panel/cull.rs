@@ -1417,8 +1417,11 @@ fn standing_plane(
 /// The loupe's current frame `c` laid out for the view: its picture's
 /// size as drawn (`standing_plane`) is the view's image size, and a
 /// new frame, or a fit view, is centered; a zoomed view of the same
-/// frame keeps its place. The size drawn and turned, for its tile
-/// (`tile_view`) and for the other tiles to follow.
+/// frame keeps its place, and across the frame's own turn or mirror
+/// keeps the same point of the picture in the middle, turned about it
+/// as the develop view's is (`viewport::carried_center`). The size
+/// drawn and turned, for its tile (`tile_view`) and for the other
+/// tiles to follow.
 fn lay_out_current(
     st: &mut State,
     app: &App,
@@ -1427,7 +1430,34 @@ fn lay_out_current(
 ) -> Option<((u32, u32), (f32, f32))> {
     let (source, full) = standing_plane(st, app, c, panel)?;
     let size = (full.0.round() as u32, full.1.round() as u32);
-    if size != st.develop.image_size {
+    // The picture drawn is the same source whichever way the frame
+    // stands; the turns and the mirror are the geometry's.
+    let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, c, app, panel);
+    let geometry = Geometry {
+        turns,
+        flip,
+        ..Geometry::default()
+    };
+    let (sw, sh) = (source.0 as f32, source.1 as f32);
+    let cell = &st.cells[c];
+    let laid = crate::owners::Laid {
+        of: Some((st.files[cell.file].clone(), cell.version.clone())),
+        frame: geometry.frame(sw, sh, None),
+        geometry,
+        source: (sw, sh),
+        turn: 0,
+    };
+    let before = st.culling.laid.replace(laid.clone());
+    // Only a zoom on the same picture standing another way: a fit, a
+    // view re-centered (a size of none), and a frame drawn again as it
+    // was are laid out as they always were.
+    let carried = before
+        .filter(|b| st.develop.zoom > 0.0 && st.develop.image_size != (0, 0) && *b != laid)
+        .and_then(|b| crate::panel::viewport::carried_center(&b, &laid, st.develop.center));
+    if let Some(center) = carried {
+        st.develop.image_size = size;
+        st.develop.center = center;
+    } else if size != st.develop.image_size {
         st.develop.image_size = size;
         st.develop.center = (full.0 / 2.0, full.1 / 2.0);
     }

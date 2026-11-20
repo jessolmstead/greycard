@@ -904,6 +904,7 @@ impl State {
                 compare_tiles: Rc::new(VecModel::default()),
                 drawn: None,
                 owed: None,
+                laid: None,
             },
             views: owners::Views {
                 companions: HashMap::new(),

@@ -284,8 +284,10 @@ pub(crate) fn frame_on_show(
 /// another size of source, or a point that does not come back finite
 /// (past a keystone's horizon), which is laid out as a new frame is;
 /// the center as it was where nothing changed, so a frame drawn again
-/// does not drift.
-fn carried_center(
+/// does not drift. The culling loupe's frames go through it as well
+/// (`cull::lay_out_current`), their turns in the geometry over a
+/// source that does not turn.
+pub(crate) fn carried_center(
     before: &owners::Laid,
     now: &owners::Laid,
     center: (f32, f32),

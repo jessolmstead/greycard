@@ -65,4 +65,9 @@ pub(crate) struct Culling {
     /// write once a second at most and never per frame
     /// (`startup::keep_last_file`).
     pub(crate) owed: Option<PathBuf>,
+    /// The frame the loupe last laid out for the view, which
+    /// `develop.center` is a point of while the loupe draws, so a zoom
+    /// carries the same point across the frame's own turn
+    /// (`cull::lay_out_current`).
+    pub(crate) laid: Option<crate::owners::Laid>,
 }

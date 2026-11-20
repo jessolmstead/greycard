@@ -6418,3 +6418,233 @@ fn the_loupes_1_to_1_is_the_pictures_whatever_copy_stands() {
         }
     }
 }
+
+/// The camera pictures' size in the turn tests below.
+const TURNED_SOURCE: (u32, u32) = (6000, 4000);
+
+/// A window in Cull with `compare` frames up from frame 1, every
+/// frame's camera picture of `TURNED_SOURCE` in hand, frame 1
+/// mirrored if `mirror`, at `zoom` (0 the fit) about `at` on frame 1
+/// (the middle for none).
+fn loupe_at(
+    compare: usize,
+    mirror: bool,
+    zoom: f32,
+    at: Option<(f32, f32)>,
+) -> (App, Rc<Shared>, Rc<Worker>) {
+    let app = window(4);
+    app.window()
+        .set_size(slint::LogicalSize::new(1200.0, 800.0));
+    let (state, worker) = state_for(&app, folder(4));
+    {
+        let mut st = state.borrow_mut();
+        st.current = Some(1);
+        st.sidecars[1].line.current.geometry.flip = mirror;
+        enter_cull(&mut st, &app, compare);
+        let cull = st.culling.cull.as_mut().unwrap();
+        for f in 0..4 {
+            let preview = cull::Preview::new(8, 6, vec![0; 192], TURNED_SOURCE, false);
+            cull.cache.insert(f, Arc::new(preview));
+        }
+        st.develop.zoom = zoom;
+    }
+    lay_out_loupe(&app, &state);
+    if let Some(at) = at {
+        state.borrow_mut().develop.center = at;
+    }
+    (app, state, worker)
+}
+
+/// The loupe's frame laid out, as `draw_cull` does first.
+fn lay_out_loupe(app: &App, state: &Rc<Shared>) -> Option<((u32, u32), (f32, f32))> {
+    let mut st = state.borrow_mut();
+    let c = st.current.unwrap();
+    lay_out_current(&mut st, app, c, false)
+}
+
+/// The point of `file`'s picture under `center` as the loupe draws it.
+fn picture_point(st: &State, app: &App, file: usize, center: (f32, f32)) -> (f32, f32) {
+    let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, file, app, false);
+    let (sw, sh) = (TURNED_SOURCE.0 as f32, TURNED_SOURCE.1 as f32);
+    Geometry {
+        turns,
+        flip,
+        ..Geometry::default()
+    }
+    .to_source(center, sw, sh)
+}
+
+/// `p`, a point of a frame of `TURNED_SOURCE` standing as it was
+/// shot, on the frame turned `quarters` quarter turns clockwise.
+fn turned_on_screen((x, y): (f32, f32), quarters: i32) -> (f32, f32) {
+    let (w, h) = (TURNED_SOURCE.0 as f32, TURNED_SOURCE.1 as f32);
+    match quarters.rem_euclid(4) {
+        1 => (h - y, x),
+        2 => (w - x, h - y),
+        3 => (y, w - x),
+        _ => (x, y),
+    }
+}
+
+fn within_a_pixel(a: (f32, f32), b: (f32, f32)) -> bool {
+    (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0
+}
+
+/// The point the zoomed view is turned about, off the middle.
+const TURNED_AT: (f32, f32) = (1500.0, 1200.0);
+
+/// The frame's own Turn left and Turn right in Cull's loupe and in a
+/// compare of two, zoomed in off the middle: the picture turns about
+/// the view's center, so the same picture point stays there at the
+/// same zoom, mirrored or not, and four turns bring the view back
+/// where it was. It went back to the middle of the frame.
+#[test]
+fn the_frames_own_turn_in_the_loupe_while_zoomed_keeps_the_point() {
+    let cases: [&[i32]; 5] = [&[1], &[-1], &[1, 1], &[-1, 1, 1], &[1, 1, 1, 1]];
+    for compare in [1, 2] {
+        for mirror in [false, true] {
+            for turns in cases {
+                let (app, state, _worker) = loupe_at(compare, mirror, 2.0, Some(TURNED_AT));
+                let what = format!("{compare} up, mirrored {mirror}, {turns:?}");
+                let point = picture_point(&state.borrow(), &app, 1, TURNED_AT);
+                let mut total = 0;
+                for &q in turns {
+                    app.invoke_frame_turned(q);
+                    total += q;
+                    assert_eq!(
+                        i32::from(state.borrow().sidecars[1].turn),
+                        total.rem_euclid(4),
+                        "{what}: turned"
+                    );
+                    // Laid out twice: a frame drawn again does not drift.
+                    lay_out_loupe(&app, &state);
+                    lay_out_loupe(&app, &state);
+                    let st = state.borrow();
+                    assert_eq!(st.develop.zoom, 2.0, "{what}: the zoom");
+                    let center = st.develop.center;
+                    let under = picture_point(&st, &app, 1, center);
+                    assert!(
+                        within_a_pixel(under, point),
+                        "{what}: {under:?} under the middle, not {point:?}"
+                    );
+                    if !mirror {
+                        let want = turned_on_screen(TURNED_AT, total);
+                        assert!(
+                            within_a_pixel(center, want),
+                            "{what}: {center:?}, not {want:?}"
+                        );
+                    }
+                }
+                if total.rem_euclid(4) == 0 {
+                    let center = state.borrow().develop.center;
+                    assert!(
+                        within_a_pixel(center, TURNED_AT),
+                        "{what}: {center:?} after four turns"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A compare zoomed in, its panes' pan linked: the frame turned
+/// alone keeps its point, and the pane not turned follows the shared
+/// center as a fraction of its frame, as it always does, so the link
+/// holds afterward; both turned together each keep their point.
+#[test]
+fn a_compare_turned_while_zoomed_keeps_the_turned_frames_point_and_its_link() {
+    for both in [false, true] {
+        let (app, state, worker) = loupe_at(2, false, 2.0, Some(TURNED_AT));
+        // The pane beside frame 1.
+        let (rows, other_file) = {
+            let st = state.borrow();
+            let rows = st.culling.cull.as_ref().unwrap().rows(&st.views.shown);
+            let other = rows
+                .iter()
+                .map(|&r| st.views.shown[r])
+                .find(|&f| f != 1)
+                .expect("another frame is up");
+            (rows, other)
+        };
+        assert_eq!(rows.len(), 2);
+        let other_point = picture_point(&state.borrow(), &app, other_file, TURNED_AT);
+        if both {
+            let frames = [1, other_file];
+            crate::panel::browser::turn_frames(&mut state.borrow_mut(), &app, &worker, &frames, 1);
+        } else {
+            app.invoke_frame_turned(1);
+        }
+        let current = lay_out_loupe(&app, &state);
+        let st = state.borrow();
+        assert_eq!(st.sidecars[1].turn, 1, "frame 1 turned");
+        assert_eq!(
+            st.sidecars[other_file].turn,
+            u8::from(both),
+            "the other turned"
+        );
+        let center = st.develop.center;
+        let want = turned_on_screen(TURNED_AT, 1);
+        assert!(
+            within_a_pixel(center, want),
+            "both {both}: {center:?}, not {want:?}"
+        );
+        let rects = cull::tile_rects(1200, 800, 2);
+        let views = tile_views(&st, &app, 1, current, &rows, &rects, [0.0; 3]);
+        let other = rows
+            .iter()
+            .position(|&r| st.views.shown[r] == other_file)
+            .unwrap();
+        let (view, _) = views[other].clone().expect("the other's picture");
+        let other_center = (view.center.0 / view.pixel, view.center.1 / view.pixel);
+        let (_, cur) = current.expect("frame 1 laid out");
+        let (turns, flip) = thumb_turns_of(
+            &st.sidecars,
+            &st.from_row,
+            &st.cells,
+            other_file,
+            &app,
+            false,
+        );
+        let other_full = Geometry {
+            turns,
+            flip,
+            ..Geometry::default()
+        }
+        .plane_size(TURNED_SOURCE.0 as f32, TURNED_SOURCE.1 as f32);
+        let linked = (
+            center.0 / cur.0 * other_full.0,
+            center.1 / cur.1 * other_full.1,
+        );
+        assert!(
+            within_a_pixel(other_center, linked),
+            "both {both}: the other pane at {other_center:?}, not {linked:?}"
+        );
+        if both {
+            let under = picture_point(&st, &app, other_file, other_center);
+            assert!(
+                within_a_pixel(under, other_point),
+                "the other pane's {under:?}, not {other_point:?}"
+            );
+        }
+    }
+}
+
+/// At fit, the frame's own turn in the loupe and in a compare leaves
+/// the frame fitted and in the middle.
+#[test]
+fn the_frames_own_turn_in_the_loupe_at_fit_stays_fitted_in_the_middle() {
+    for compare in [1, 2] {
+        for q in [1, -1, 2] {
+            let (app, state, _worker) = loupe_at(compare, false, 0.0, None);
+            app.invoke_frame_turned(q);
+            let (_, full) = lay_out_loupe(&app, &state).expect("laid out");
+            let st = state.borrow();
+            assert_eq!(st.develop.zoom, 0.0, "{compare} up, {q}");
+            assert_eq!(
+                st.develop.center,
+                (full.0 / 2.0, full.1 / 2.0),
+                "{compare} up, {q}"
+            );
+        }
+    }
+}

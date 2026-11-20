@@ -94,9 +94,6 @@ the reasoning lives in `docs/notes.md`.
       machines; the Lightroom import reads the label too, and history
       rows stay English in a translated window. A step's kind as a
       field instead (review, 2026-11-11)
-- [ ] The culling loupe and the compare view, zoomed in, still throw
-      the view to the middle at the frame's own Turn: they draw through
-      another path than the develop view's carry (review, 2026-11-20)
 - [ ] The frame's limit of 200 megapixels, what is left: a small
       export of a frame past it is refused too, the cut being made at
       full size before the export shrinks it; the detail bands frame
