@@ -117,6 +117,21 @@ pub struct Logits {
     pub masks: Vec<f32>,
 }
 
+impl Logits {
+    /// The logits when every one is finite. A card out of memory
+    /// answers with nothing rather than an error (the denoiser's
+    /// lesson): NaNs are not a sky, in the classes or in the masks.
+    fn finite(self) -> Result<Self> {
+        if self.class.iter().any(|v| !v.is_finite()) {
+            return Err(Error::Implausible("the class logits are not finite".into()));
+        }
+        if self.masks.iter().any(|v| !v.is_finite()) {
+            return Err(Error::Implausible("the mask logits are not finite".into()));
+        }
+        Ok(self)
+    }
+}
+
 impl Sky {
     /// Load from the store, on the first provider that runs it.
     pub fn load(store: &Store, providers: &[Provider]) -> Result<Self> {
@@ -167,16 +182,11 @@ impl Sky {
         if masks.len() != QUERIES * MASK_SIDE * MASK_SIDE {
             return Err(Error::Shape(format!("masks_queries_logits {shape}")));
         }
-        let logits = Logits {
+        Logits {
             class: class.to_vec(),
             masks: masks.to_vec(),
-        };
-        // A card out of memory answers with nothing rather than an
-        // error (the denoiser's lesson): NaNs are not a sky.
-        if logits.class.iter().any(|v| !v.is_finite()) {
-            return Err(Error::Implausible("the class logits are not finite".into()));
         }
-        Ok(logits)
+        .finite()
     }
 
     /// The prior for `image`, at its size.
@@ -1064,6 +1074,23 @@ fn window(s: &[u32], w: usize, h: usize, x: usize, y: usize, r: usize) -> (u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A NaN in the masks is as implausible as one in the classes: the
+    /// prior would come out wrong rather than fail.
+    #[test]
+    fn logits_that_are_not_finite_are_refused() {
+        let good = || Logits {
+            class: vec![0.5; QUERIES * CLASSES],
+            masks: vec![-1.0; QUERIES * MASK_SIDE * MASK_SIDE],
+        };
+        assert!(good().finite().is_ok());
+        let mut class = good();
+        class.class[7] = f32::NAN;
+        assert!(matches!(class.finite(), Err(Error::Implausible(_))));
+        let mut masks = good();
+        masks.masks[QUERIES * MASK_SIDE * MASK_SIDE - 1] = f32::INFINITY;
+        assert!(matches!(masks.finite(), Err(Error::Implausible(_))));
+    }
 
     /// A prior of `w` × `h` from a soft sky map, labeled sky where it
     /// is over a half and something else (tree) where not.

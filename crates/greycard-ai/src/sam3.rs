@@ -151,8 +151,13 @@ impl Presets {
         Self::parse(&std::fs::read(path)?)
     }
 
-    /// The table in the model's store.
+    /// The table in the model's store, read only when the whole model
+    /// is there: a store without it, or half fetched, is missing the
+    /// model, as [`Sam3::load`] says, not a table that would not read.
     pub fn of(store: &Store) -> Result<Self> {
+        if !store.have(&SAM3) {
+            return Err(runtime::Error::Missing(SAM3.name).into());
+        }
         Self::read(&store.path(&SAM3, &SAM3.files[2]))
     }
 
@@ -2306,6 +2311,35 @@ mod tests {
     }
 
     use super::*;
+
+    /// A store with the graphs at their sizes but no phrase table (a
+    /// fetch stopped before it) is missing the model, not failing to
+    /// read a file.
+    #[test]
+    fn a_store_without_the_phrase_table_is_missing_the_model() {
+        let root = std::env::temp_dir().join(format!(
+            "greycard-sam3-presets-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        greycard_core::testing::remove_dir_retry(&root);
+        let store = Store::at(&root);
+        for file in &SAM3.files[..2] {
+            let path = store.path(&SAM3, file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            // Sparse: the size is all `have` looks at.
+            std::fs::File::create(path)
+                .unwrap()
+                .set_len(file.bytes)
+                .unwrap();
+        }
+        let got = Presets::of(&store);
+        assert!(
+            matches!(got, Err(Error::Model(runtime::Error::Missing(_)))),
+            "{got:?}"
+        );
+        greycard_core::testing::remove_dir_retry(&root);
+    }
 
     #[test]
     fn the_resample_is_pillows() {

@@ -858,6 +858,34 @@ mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
+    /// A part left by a process killed mid-download is written over by
+    /// the next fetch of its model, not appended to or left beside the
+    /// file (a large one is resumed instead, as above).
+    #[test]
+    fn a_fetch_writes_over_a_part_left_by_a_killed_process() {
+        use crate::registry::DENOISE_BEST;
+        let body = body();
+        let (file, _) = serve(body, false);
+        let root = scratch("killed");
+        // The server drops its first answer; spend it elsewhere.
+        assert!(fetch_to(&file, &root.join("spent.part"), &mut |_| {}).is_err());
+        let model = Model {
+            files: Box::leak(Box::new([file])),
+            ..DENOISE_BEST
+        };
+        let store = Store::at(&root);
+        let path = store.path(&model, &file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let part = path.with_file_name(format!("{}.part", file.name));
+        // Longer than the file and not of it.
+        std::fs::write(&part, vec![7u8; body.len() + 1000]).unwrap();
+        store.fetch(&model, |_| {}).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), body);
+        assert!(!part.exists());
+        assert!(store.have(&model));
+        greycard_core::testing::remove_dir_retry(&root);
+    }
+
     /// A server that answers a range with the whole file in a 200:
     /// the part is started over, not appended to, and the file still
     /// arrives whole.
