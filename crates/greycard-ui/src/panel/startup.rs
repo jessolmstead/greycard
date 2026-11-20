@@ -2186,10 +2186,32 @@ pub(crate) fn save_at_quit(
     wait: std::time::Duration,
 ) -> crate::sync::QuitWrites {
     save_edit(st, edit);
+    // The edits whose save failed earlier are tried once more: the
+    // folder may take them now, and they are lost with the window.
     // A batch of sidecars out is waited for while it moves; one that
     // has stopped (a share that stopped answering) is left, its files
     // not yet renamed keeping their old sidecars.
     crate::panel::saves::finish(st, Some(wait));
+    crate::sidecars::retry_leaving(st, wait);
+    for p in &st.work.unsaved.edits {
+        tracing::warn!(
+            "{}: its edit was never saved, and is lost at the quit",
+            crate::panel::browser::file_name(p)
+        );
+    }
+    // A merge's edit whose own save failed, its file never listed (in a
+    // session that writes no sidecars, none is ever saved).
+    for p in st
+        .work
+        .merge_edits
+        .keys()
+        .filter(|_| st.window.write_sidecars)
+    {
+        tracing::warn!(
+            "{}: the merge's edit was never saved, and is lost at the quit",
+            crate::panel::browser::file_name(p)
+        );
+    }
     let followed = crate::sync::write_followed_at_quit(st, wait);
     crate::sync::note_unsent_at_quit(st);
     followed

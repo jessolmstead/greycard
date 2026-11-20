@@ -508,10 +508,17 @@ impl Merge {
                     line: Line::of(merged_edit),
                     ..Sidecar::default()
                 };
-                if let Err(e) = sidecar.save_in(&out, self.placement) {
-                    tracing::warn!("merge: {}: the edit not written: {e}", out.display());
+                match sidecar.save_in(&out, self.placement) {
+                    Ok(()) => None,
+                    // Held in memory as a session without sidecars
+                    // holds it, and saved from the window once the
+                    // file is listed (`held`), where a failure is the
+                    // window's to say.
+                    Err(e) => {
+                        tracing::warn!("merge: {}: the edit not written: {e}", out.display());
+                        Some(sidecar.line.current.clone())
+                    }
                 }
-                None
             } else {
                 Some(merged_edit)
             };
@@ -846,6 +853,10 @@ pub(crate) fn held(st: &mut State) {
     for (path, f) in listed {
         if let Some(edit) = st.work.merge_edits.remove(&path) {
             st.sidecars[f].line = Line::of(edit);
+            // Held because the merge's own save failed: saved again
+            // here, and said if it fails again. In a session that
+            // writes no sidecars this writes nothing.
+            crate::sidecars::write_file(st, f);
         }
     }
 }

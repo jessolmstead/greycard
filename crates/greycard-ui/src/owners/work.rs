@@ -66,4 +66,7 @@ pub(crate) struct Work {
     /// The batches of sidecars being saved off the window's thread:
     /// see [`crate::panel::saves`].
     pub(crate) saves: crate::panel::saves::Saves,
+    /// The frames whose last write failed and what the status line was
+    /// told of them: see [`crate::sidecars::Unsaved`].
+    pub(crate) unsaved: crate::sidecars::Unsaved,
 }

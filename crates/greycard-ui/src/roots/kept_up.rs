@@ -257,6 +257,8 @@ pub(crate) fn merge(
     st.views.index_ids = index_ids;
     st.views.index_passed = vec![true; count];
     st.views.index_pass_ready = false;
+    // An edit not saved goes with its frame when the frame left.
+    crate::sidecars::listed(st);
     crate::panel::merge::held(st);
     // The cells by the new files, each that stays with its picture and
     // its place in the selection; a cell gone (its file, or a version

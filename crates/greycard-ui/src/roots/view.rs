@@ -266,9 +266,10 @@ fn send_view(
     on: On,
 ) {
     let mut st = state.borrow_mut();
-    // As a folder's listing: a batch of sidecars out lands before
-    // the rows are read.
+    // As a folder's listing: a batch of sidecars out lands before the
+    // rows are read, and an edit whose save failed is tried once more.
     crate::panel::saves::finish(&mut st, None);
+    crate::sidecars::retry_leaving(&mut st, crate::sidecars::LEAVE_WRITE_WAIT);
     st.views.view_generation += 1;
     // The frame on screen stays on screen when it is in the new list;
     // else the last one open, as a folder's open does.
@@ -346,6 +347,9 @@ pub(crate) fn open_listing(
     // of them still being saved lands first, or the read would take
     // the files it had not renamed yet.
     crate::panel::saves::finish(&mut st, None);
+    // An edit whose save failed is tried once more, for so long, before
+    // the list that holds it may go (`sidecars::listed`).
+    crate::sidecars::retry_leaving(&mut st, crate::sidecars::LEAVE_WRITE_WAIT);
     let asked = Instant::now();
     // A view of the roots still being read is dropped by the
     // generation, and nothing is loading any more.

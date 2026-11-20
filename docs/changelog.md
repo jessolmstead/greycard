@@ -32,6 +32,9 @@ design note behind it.
   with Try again to bring them back, and greycard no longer quits
   (discussion 168,
   [§712](https://github.com/jessolmstead/greycard/blob/master/docs/notes/712-a-learned-denoiser-that-loses-the-card-rests-there.md)).
+- A save that fails, on a full or read-only disk, is said: a lasting
+  note counts the edits not saved, a click tries again, and so do
+  leaving the folder and quitting.
 - A lens switch is greyed when the profile has no data of its kind, as
   Vignetting is for many database lenses, and keeps its setting
   (issue 182).

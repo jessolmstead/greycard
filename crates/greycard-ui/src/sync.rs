@@ -1376,6 +1376,9 @@ pub(crate) fn catch_up(st: &mut State, app: &App, archive: &Path) {
 /// The status line's click: every archive with writes waiting is
 /// taken up now.
 pub(crate) fn retry(st: &mut State, app: &App) {
+    // The edits not saved here first: their save lands, or fails
+    // again without a word, and the note follows either way.
+    crate::sidecars::retry(st);
     let counts = st
         .views
         .index_reader
@@ -1662,7 +1665,9 @@ fn settle_on_disk(st: &mut State, frame: &Path, archive: &Path, copy: &Path, the
 
 /// The status line's word for what waits: "3 edits waiting for
 /// Archive", one clause an archive, nothing while nothing waits. A
-/// click on it is [`retry`].
+/// click on it is [`retry`]. The edits whose save here failed come
+/// first ("2 edits not saved", `sidecars::note`): they are in memory
+/// only, where the archive's are on this disk at least.
 pub(crate) fn refresh_note(st: &State, app: &App) {
     let counts = st
         .views
@@ -1670,9 +1675,9 @@ pub(crate) fn refresh_note(st: &State, app: &App) {
         .as_ref()
         .and_then(|l| l.pending_counts().ok())
         .unwrap_or_default();
-    let note = counts
-        .iter()
-        .map(|count| {
+    let note = crate::sidecars::note(st)
+        .into_iter()
+        .chain(counts.iter().map(|count| {
             let name = crate::roots::root_name(&st.views.library.roots, &count.archive);
             let n = count.total;
             let mut clause = tr!(
@@ -1687,7 +1692,7 @@ pub(crate) fn refresh_note(st: &State, app: &App) {
                     | "; {n} can't tell which copy are their own" % u));
             }
             clause
-        })
+        }))
         .collect::<Vec<_>>()
         .join("; ");
     app.set_sync_note(note.into());

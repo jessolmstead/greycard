@@ -61,8 +61,9 @@ the reasoning lives in `docs/notes.md`.
       local copy too: stat before the write, and on a mismatch read and
       join instead (after `advance`). Check first whether a watcher
       reloads a held frame (review, 2026-11-11)
-- [ ] A failed save (full disk, a rename refused) is only logged;
-      the old file is intact but the user is not told. Wants words
+- [ ] The note of edits not saved is out of sight in the lightbox,
+      with every pane hidden, and in the grid while an import's line
+      shows; so is the archive's note beside it
 - [ ] An export leaves the window's device-kept points on the card
       (the sharpen guide's among them, §643) while its denoiser or
       removal asks for room; on a short card the release could drop
@@ -217,7 +218,6 @@ steps aside on a card it cannot run on.
 
 - [ ] An edit from a newer version opens in an older one
 - [ ] The window's tests find a control by its id
-- [ ] A failed save tells the user
 
 ### Speed
 

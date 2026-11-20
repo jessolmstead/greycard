@@ -2855,6 +2855,7 @@ pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
     // again; one after it finds the row moved. Either way the row keeps
     // its id and has the flag as written.
     let old: Vec<PathBuf> = moved.files.iter().map(|&i| st.files[i].clone()).collect();
+    let before = st.work.unsaved.said_count();
     for (&i, to) in moved.files.iter().zip(&moved.to) {
         st.move_file(i, to.clone());
         unreject(st, i);
@@ -2862,9 +2863,16 @@ pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
     for (&i, from) in moved.files.iter().zip(old) {
         st.move_file(i, from);
     }
+    // A flag that would not come off says so over the move's line,
+    // which the log keeps: the frames leave the list, and the note,
+    // as the move's line is said.
+    let unsaved = crate::sidecars::said_since(st, before);
     hand_moves(st, &moved);
     hand_folders(st, &moved);
     drop_files(st, app, worker, &moved.files, status);
+    if let Some(line) = unsaved {
+        app.set_status(line.into());
+    }
 }
 
 /// The reject flag taken off frame `i`, moved back to the path the list
@@ -2902,8 +2910,13 @@ fn unreject(st: &mut State, i: usize) {
                     // The archive's copy, from the file: the sidecar in
                     // memory is the row standing in, not this.
                     crate::sync::after_disk_save(st, &path);
+                    crate::sidecars::landed(st, &path);
                 }
-                Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&path)),
+                Err(e) => {
+                    tracing::warn!("{}: sidecar not saved: {e}", file_name(&path));
+                    let why = crate::sidecars::Why::of(&e);
+                    crate::sidecars::failed(st, &path, why);
+                }
             }
         }
         Ok(_) => {}
@@ -2965,6 +2978,8 @@ pub(crate) fn drop_files(
     st.files = files;
     st.sidecars = kept.iter().map(|&i| st.sidecars[i].clone()).collect();
     st.from_row = kept.iter().map(|&i| st.from_row[i].clone()).collect();
+    // A frame gone takes an edit not saved with it.
+    crate::sidecars::listed(st);
     // The index's answers by the new numbering, and a pass over the
     // folder, which marks the rows of frames moved out missing (a
     // delete has had its rows forgotten already).

@@ -2048,6 +2048,9 @@ pub(crate) fn open_loaded(
         from_row.push(h.from_row);
         ids.push(h.id);
     }
+    // An edit not saved is in memory only: the disk's copy just read
+    // would put the older edit back.
+    let carried = crate::sidecars::carried(&st);
     st.sidecars = sidecars;
     st.from_row = from_row;
     let ids = ids_known.then_some(ids);
@@ -2057,6 +2060,10 @@ pub(crate) fn open_loaded(
     // of its own: the grid's zoom does not carry its appetite for large
     // pictures over to it.
     st.files = files.clone();
+    // Each frame still listed keeps its edit not saved over the disk's;
+    // one gone from the list lets it go, and says so.
+    crate::sidecars::put_back(&mut st, carried);
+    crate::sidecars::listed(&mut st);
     crate::panel::merge::held(&mut st);
     crate::versions::list(&mut st);
     st.views.thumb_want = worker::THUMB_WIDTH;
@@ -3042,6 +3049,8 @@ fn follow_paths(st: &mut State, was: &Path, to: &Path) {
                 export_presets: _,
                 edit_in: _,
                 saves: _,
+                // By the frame's path, followed below.
+                unsaved,
             },
         culling:
             Culling {
@@ -3281,6 +3290,7 @@ fn follow_paths(st: &mut State, was: &Path, to: &Path) {
     follow_key(merge_edits, was, to);
     follow_member(monochromes, was, to);
     follow_member(reframed, was, to);
+    unsaved.file_moved(was, to);
     for (p, _) in opened_sizes.iter_mut() {
         follow(p, was, to);
     }

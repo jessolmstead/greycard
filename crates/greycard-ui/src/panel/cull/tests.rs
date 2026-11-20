@@ -6359,3 +6359,46 @@ fn a_paired_jpeg_of_another_shape_has_no_point() {
     assert!(at(&mut st, (6000, 3990), Orientation::Normal).is_some());
     assert!(at(&mut st, (4000, 6000), Orientation::Rotate270).is_some());
 }
+
+/// Move back whose flag will not come off where the frame lands (a
+/// file stands where the hidden folder would be made): the frame leaves
+/// the list, and with it the note, so the status line says over the
+/// move's own line that its edit is not saved.
+#[test]
+fn a_move_back_whose_flag_will_not_come_off_says_so() {
+    let (dir, shoot, files) = shoot_with_rejects("unsaved");
+    let app = window(files.len());
+    let (state, _worker) = opened_with_sidecars(&app, &files);
+    state.borrow_mut().window.placement = greycard_edit::Placement::Folder;
+    std::fs::write(shoot.join(greycard_edit::SIDECAR_FOLDER), b"in the way").unwrap();
+    app.invoke_select(1);
+    app.invoke_move_back_asked();
+    assert!(shoot.join("a.tif").exists());
+    let status = app.get_status().to_string();
+    assert!(status.contains("is not saved"), "status: {status}");
+    // Out of the list, the edit is let go: nothing left to count.
+    assert_eq!(app.get_sync_note(), "");
+    assert!(state.borrow().work.unsaved.edits.is_empty());
+    drop(state);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A reject flag taken off where the frame's folder will not take the
+/// sidecar: the edit is not saved, and the note says so until a save
+/// of it lands.
+#[test]
+fn an_unreject_that_will_not_save_is_noted() {
+    let (app, state, dir, missing) = crate::sidecars::tests::unwritable("unreject-unsaved", 1);
+    let mut st = state.borrow_mut();
+    st.sidecars[0].meta.flag = meta::Flag::Reject;
+    unreject(&mut st, 0);
+    assert_eq!(st.sidecars[0].meta.flag, meta::Flag::None);
+    assert_eq!(app.get_sync_note(), "1 edit not saved");
+    std::fs::create_dir_all(&missing).expect("the folder");
+    crate::sidecars::retry(&mut st);
+    assert_eq!(app.get_sync_note(), "");
+    let back = Sidecar::load(&st.files[0]).unwrap().expect("written");
+    assert_eq!(back.meta.flag, meta::Flag::None);
+    drop(st);
+    crate::testing::remove_scratch(state, &dir);
+}

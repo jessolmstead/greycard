@@ -872,6 +872,7 @@ impl State {
                 merge_edits: HashMap::new(),
                 sync: sync::Sync::default(),
                 saves: Default::default(),
+                unsaved: Default::default(),
             },
             culling: owners::Culling {
                 cull: None,

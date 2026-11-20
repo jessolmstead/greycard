@@ -1257,6 +1257,7 @@ fn take_outcomes(
         let now = st.sidecars[i].revisions.last().map(|r| r.hash.clone());
         if sent.is_none() || sent == Some(now) {
             st.sidecars[i] = sidecar;
+            crate::sidecars::reread(st, &path);
             if crate::rows::versions_differ(st, i) {
                 crate::versions::settle_later(app);
             }

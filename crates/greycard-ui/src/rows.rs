@@ -1396,7 +1396,9 @@ pub(crate) fn load_file(st: &mut State, app: &App, file: usize) -> bool {
 /// the window held of it: another writer (the Lightroom import) wrote
 /// it. False when the read did not take.
 pub(crate) fn reread_file(st: &mut State, app: &App, file: usize) -> bool {
-    let held = from_disk(&st.files[file], st.window.sidecars(), st.window.fresh());
+    let path = st.files[file].clone();
+    let held = from_disk(&path, st.window.sidecars(), st.window.fresh());
+    crate::sidecars::reread(st, &path);
     take(st, app, file, held)
 }
 
