@@ -1577,6 +1577,11 @@ clears or a tester asks for it.
       and its strip would do; upstream, rawler's `preview_image`
       takes the first preview listed, and a public
       `apply_linearization` would spare consumers the table
+- [ ] The Lens section says more about its profile: the source
+      (lensfun or an Adobe profile) beside the lens found, a tooltip
+      on a greyed switch saying the profile has no such data, and a
+      clearer name for From the file, which reads as the raw's own
+      corrections (issue 189)
 - [ ] The lens match (§723), what is left: a lens name with no line
       word on a body of another line; Sigma's and Tamron's own line
       words; the database's 36 bare-number names
