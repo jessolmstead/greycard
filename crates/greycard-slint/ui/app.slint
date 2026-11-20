@@ -2068,6 +2068,9 @@ export component App inherits Window {
     // found anything, whether there is a database at all, and the
     // edit's choices.
     in property <string> lens-profile: "";
+    // Where the lens profile comes from: the database or an Adobe
+    // profile; empty where the line names no profile.
+    in property <string> lens-source: "";
     // Whether the open file is a raw: the sections before the lens
     // have nothing to act on in a picture that is not.
     in property <bool> raw-input: true;
@@ -4893,6 +4896,7 @@ export component App inherits Window {
                                     pick-started(a) => { root.pick-started(a); }
                                     hue-circle: root.hue-circle;
                                     lens-profile: root.lens-profile;
+                                    lens-source: root.lens-source;
                                     lens-available: root.lens-available;
                                     lens-database: root.lens-database;
                                     lens-choice-labels: root.lens-choice-labels;

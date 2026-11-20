@@ -1581,11 +1581,12 @@ clears or a tester asks for it.
       186). Read from the code, unproven: its menu is the one native
       menu opened from a worker's answer instead of a click. Waits on
       a run on the Mac (`--sheet landscape`) and the crashed run's log
-- [ ] The Lens section says more about its profile: the source
-      (lensfun or an Adobe profile) beside the lens found, a tooltip
-      on a greyed switch saying the profile has no such data, and a
-      clearer name for From the file, which reads as the raw's own
-      corrections (issue 189)
+- [ ] A clearer name for the Lens section's From the file, which
+      reads as the raw's own corrections (issue 189). The owner's
+      wording
+- [ ] A switch has no action for a screen reader to press: `Toggle`
+      lacks the `accessible-action-default` the other controls have
+      (review, 2026-11-20)
 - [ ] The lens match (§723), what is left: a lens name with no line
       word on a body of another line; Sigma's and Tamron's own line
       words; the database's 36 bare-number names

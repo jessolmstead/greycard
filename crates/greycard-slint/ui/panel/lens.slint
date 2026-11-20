@@ -12,6 +12,8 @@ export component LensSection inherits Section {
     callback pick-started(string);
     in property <brush> hue-circle;
     in property <string> lens-profile;
+    // Where the profile comes from, after its name; empty for none.
+    in property <string> lens-source;
     in property <bool> lens-available;
     in property <bool> lens-database;
     in property <[string]> lens-choice-labels;
@@ -104,7 +106,8 @@ export component LensSection inherits Section {
         padding-top: Theme.space-3;
         padding-bottom: Theme.space-2;
         Text {
-            text: root.lens-profile;
+            text: root.lens-source == "" ? root.lens-profile
+                : root.lens-profile + " · " + root.lens-source;
             color: root.lens-available ? Theme.text : Theme.text-secondary;
             font-size: Theme.font-sm;
             wrap: word-wrap;
@@ -126,21 +129,27 @@ export component LensSection inherits Section {
     }
     // A correction the profile has no data for, or data that moves and
     // shades nothing, has nothing to apply: its switch stands down and
-    // keeps its setting for a profile that has it.
+    // keeps its setting for a profile that has it, and says why.
+    property <bool> profile-applies: root.lens-available && root.lens-profile-on;
+    // Lens section: a greyed correction switch's hover text
+    property <string> no-data: @tr("The lens profile has no data for this correction.");
     distortion-switch := Toggle {
         label: @tr("Distortion");
+        tip: root.profile-applies && !root.lens-has-distortion ? root.no-data : "";
         enabled: root.lens-available && root.lens-profile-on && root.lens-has-distortion;
         checked <=> root.lens-distortion;
         toggled => { root.develop-changed(); }
     }
     ca-switch := Toggle {
         label: @tr("Chromatic aberration");
+        tip: root.profile-applies && !root.lens-has-ca ? root.no-data : "";
         enabled: root.lens-available && root.lens-profile-on && root.lens-has-ca && !root.lens-ca-measured;
         checked <=> root.lens-ca;
         toggled => { root.develop-changed(); }
     }
     vignetting-switch := Toggle {
         label: @tr("Vignetting");
+        tip: root.profile-applies && !root.lens-has-vignetting ? root.no-data : "";
         enabled: root.lens-available && root.lens-profile-on && root.lens-has-vignetting;
         checked <=> root.lens-vignetting;
         toggled => { root.develop-changed(); }

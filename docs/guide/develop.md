@@ -529,7 +529,8 @@ lens the file names. **Maker**, above it, narrows the list to one
 maker's lenses, or **All**. The field beside **Maker**, **Find a
 lens**, narrows it further to the lenses whose name or maker holds
 every word typed, such as "24-70" or "sigma art". The line under
-**Lens** names the profile found, or says why none was:
+**Lens** names the profile found and its source, lensfun or an Adobe
+profile, or says why none was:
 
 - "no lens profiles on this machine": click **Get lens profiles**.
 - "the file names no lens": for example a manual or adapted lens. Pick
@@ -592,7 +593,8 @@ These are all on by default when a profile is found:
 - **Vignetting** brightens the darkened corners.
 
 A switch is greyed when the profile has no data of its kind, as many
-database entries have no vignetting. Its setting is kept for a lens
+database entries have no vignetting; resting the pointer on it says
+so. Its setting is kept for a lens
 that has it.
 
 ### By hand

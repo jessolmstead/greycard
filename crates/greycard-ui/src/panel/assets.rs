@@ -909,6 +909,7 @@ fn show_lens_as(
     app.set_lens_has_ca(has.chromatic_aberration);
     app.set_lens_has_vignetting(has.vignetting);
     app.set_lens_available(carries.is_some());
+    app.set_lens_source(lens_source(report, chosen).unwrap_or_default().into());
     if !chosen.is_from_file() {
         app.set_lens_profile(label.into());
         return;
@@ -939,6 +940,28 @@ fn show_lens_as(
         }
         .into(),
     );
+}
+
+/// Where the lens line's profile comes from, after its name: the
+/// database for the file's own lens found or one of its lenses picked,
+/// an Adobe profile for one of those picked. None where the line names
+/// no profile.
+fn lens_source(report: &LensReport, chosen: &greycard_edit::LensChoice) -> Option<String> {
+    use greycard_edit::LensChoice;
+    match chosen {
+        LensChoice::FromFile => matches!(report, LensReport::Found { .. }).then(lensfun),
+        LensChoice::Database(_) => Some(lensfun()),
+        LensChoice::Lcp(_) => Some(
+            // Lens section, after the lens name: profile from an Adobe .lcp file
+            tr!("Adobe profile"),
+        ),
+    }
+}
+
+/// The lens database's name, as a source.
+fn lensfun() -> String {
+    // Lens section, after the lens name: profile from the lensfun database
+    tr!("lensfun")
 }
 
 /// The open file's camera, as a profile's fit reads it.

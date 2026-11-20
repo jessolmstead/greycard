@@ -2083,6 +2083,10 @@ export component Toggle inherits Rectangle {
     accessible-checkable: true;
     accessible-checked: root.checked;
     accessible-enabled: root.enabled;
+    /// Why the switch stands down, when that wants saying: at the
+    /// pointer after a rest, greyed or not, and to a screen reader.
+    in property <string> tip;
+    accessible-description: root.tip;
     height: Theme.control-height;
     property <bool> active: enabled && (ta.has-hover || ta.pressed || fs.has-focus);
     /// The switch at the row's right edge, the label up against it on
@@ -2158,13 +2162,16 @@ export component Toggle inherits Rectangle {
         }
     }
     // The click's target, and the pointer's: the label, the gap, and
-    // the switch, never the empty run of the row past them.
-    ta := TouchArea {
+    // the switch, never the empty run of the row past them. A greyed
+    // switch with a tip still hears the pointer, for the tip alone.
+    ta := TipArea {
         x: min(lbl.x, knob-track.x);
         width: knob-track.x + knob-track.width - self.x;
-        enabled: root.enabled;
+        words: root.tip;
+        enabled: root.enabled || root.tip != "";
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         clicked => {
+            if (!root.enabled) { return; }
             fs.focus();
             if (!root.follows) {
                 root.checked = !root.checked;

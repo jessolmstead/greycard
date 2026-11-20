@@ -15,7 +15,7 @@ use crate::testing::{Bounds, ToggleParts, click, press};
 #[allow(deprecated)]
 mod bench_ui {
     slint::slint! {
-        import { Toggle } from "../../greycard-slint/ui/controls.slint";
+        import { Toggle, Tips } from "../../greycard-slint/ui/controls.slint";
         export component Bench inherits Window {
             width: 400px;
             height: 60px;
@@ -23,6 +23,10 @@ mod bench_ui {
             in property <length> row-width: 300px;
             in property <bool> at-end;
             in-out property <bool> on;
+            in property <bool> enabled: true;
+            in property <string> tip;
+            // The hover text up, from the controls' own global.
+            out property <string> tip-up: Tips.text;
             out property <length> label-x: t.label-x;
             out property <length> label-width: t.label-width;
             out property <length> switch-x: t.switch-x;
@@ -39,6 +43,8 @@ mod bench_ui {
                 width: root.row-width;
                 label: root.label;
                 switch-at-end: root.at-end;
+                enabled: root.enabled;
+                tip: root.tip;
                 checked <=> root.on;
             }
         }
@@ -265,4 +271,48 @@ fn the_editors_switches_sit_where_their_rows_ask() {
     let was = was_sub;
     click(&app, left(sub.label) + 4.0, middle_y(sub.row));
     assert_eq!(app.get_folder_tree_subfolders(), !was, "the words");
+}
+
+/// The pointer moved onto `x` on the row and left to rest there.
+fn rest_at(b: &Bench, x: f32) {
+    use slint::platform::WindowEvent;
+    let position = LogicalPosition::new(x, ROW_Y + ROW_H / 2.0);
+    b.window()
+        .dispatch_event(WindowEvent::PointerMoved { position });
+    slint::platform::update_timers_and_animations();
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(800));
+    slint::platform::update_timers_and_animations();
+}
+
+/// A greyed switch with a tip says it at the pointer after a rest, on
+/// the label and on the switch, and a click there still flips nothing
+/// and takes no keys; one with no tip says nothing; and a tip goes
+/// when the pointer leaves.
+#[test]
+fn a_greyed_switch_says_its_tip_and_still_flips_nothing() {
+    const WHY: &str = "The lens profile has no data for this correction.";
+    let b = bench("Vignetting", false);
+    b.set_enabled(false);
+    let p = parts(&b);
+    rest_at(&b, left(p.label) + 4.0);
+    assert_eq!(b.get_tip_up(), "", "no tip, nothing said");
+    rest_at(&b, right(p.row) - 4.0);
+
+    b.set_tip(WHY.into());
+    rest_at(&b, left(p.switch) + 4.0);
+    assert_eq!(b.get_tip_up(), WHY);
+    rest_at(&b, right(p.row) - 4.0);
+    assert_eq!(b.get_tip_up(), "", "gone on leaving");
+    rest_at(&b, left(p.label) + 4.0);
+    assert_eq!(b.get_tip_up(), WHY);
+    click_at(&b, left(p.label) + 4.0);
+    click_at(&b, left(p.switch) + 4.0);
+    assert!(!b.get_on(), "greyed, it flips nothing");
+    assert!(b.get_behind_focused(), "nor takes the keys");
+
+    // Back in hand, the tip taken away: a click flips it again.
+    b.set_tip("".into());
+    b.set_enabled(true);
+    click_at(&b, left(p.switch) + 4.0);
+    assert!(b.get_on());
 }

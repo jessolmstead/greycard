@@ -975,28 +975,79 @@ fn a_lens_switch_stands_down_for_what_the_profile_has_not() {
         assert!(app.get_lens_distortion() && app.get_lens_ca() && app.get_lens_vignetting());
         assert!(edit.lens.distortion && edit.lens.chromatic_aberration && edit.lens.vignetting);
     };
+    // Each switch's tip, which a screen reader hears as its
+    // description: whether it says the profile has no data.
+    let said = |id: &str| {
+        let id = format!("LensSection::{id}");
+        let words = ElementHandle::find_by_element_id(&app, &id)
+            .next()
+            .and_then(|e| e.accessible_description())
+            .unwrap_or_default();
+        match words.as_str() {
+            "" => false,
+            "The lens profile has no data for this correction." => true,
+            other => panic!("{id} says {other:?}"),
+        }
+    };
+    let tips = || {
+        [
+            said("distortion-switch"),
+            said("ca-switch"),
+            said("vignetting-switch"),
+        ]
+    };
+    let line = |app: &App| {
+        (
+            app.get_lens_profile().to_string(),
+            app.get_lens_source().to_string(),
+        )
+    };
+    let lensfun = |lens: &str| (lens.to_string(), "lensfun".to_string());
+    let adobe = |lens: &str| (lens.to_string(), "Adobe profile".to_string());
 
     show_lens(&found, &options, &LensChoice::FromFile, &app);
     assert_eq!(switches(), [true, true, false]);
+    assert_eq!(tips(), [false, false, true]);
+    assert_eq!(line(&app), lensfun("Nikkor Z DX 16-50mm f/3.5-6.3 VR"));
     kept(&app);
 
     show_lens(&found, &options, &options[0].choice, &app);
     assert_eq!(switches(), [true, true, true]);
+    assert_eq!(tips(), [false, false, false]);
+    assert_eq!(line(&app), lensfun("Nikkor Z DX 18-140mm f/3.5-6.3 VR"));
     kept(&app);
 
     show_lens(&found, &options, &options[1].choice, &app);
     assert_eq!(switches(), [true, true, false]);
+    assert_eq!(tips(), [false, false, true]);
+    assert_eq!(line(&app), adobe("Hand 35mm"));
     kept(&app);
 
     show_lens(&found, &options, &options[2].choice, &app);
     assert_eq!(switches(), [true, false, true]);
+    assert_eq!(tips(), [false, true, false]);
     kept(&app);
 
     show_lens(&found, &options, &options[3].choice, &app);
     assert_eq!(switches(), [false, false, true]);
+    assert_eq!(tips(), [true, true, false]);
+    assert_eq!(line(&app), adobe("Shade 24mm"));
     kept(&app);
 
-    // No profile: all three stand down on that, as before.
+    // Greyed for another reason, no tip: the profile switched off,
+    // and the aberration measured from the picture.
+    app.set_lens_profile_on(false);
+    assert_eq!(switches(), [false, false, false]);
+    assert_eq!(tips(), [false, false, false]);
+    app.set_lens_profile_on(true);
+    show_lens(&found, &options, &options[0].choice, &app);
+    app.set_lens_ca_measured(true);
+    assert_eq!(switches(), [true, false, true]);
+    assert_eq!(tips(), [false, false, false]);
+    app.set_lens_ca_measured(false);
+
+    // No profile: all three stand down on that, as before, with no
+    // tip, and the line names no source.
     show_lens(
         &LensReport::NoLensName,
         &options,
@@ -1004,6 +1055,11 @@ fn a_lens_switch_stands_down_for_what_the_profile_has_not() {
         &app,
     );
     assert_eq!(switches(), [false, false, false]);
+    assert_eq!(tips(), [false, false, false]);
+    assert_eq!(
+        line(&app),
+        ("the file names no lens".to_string(), String::new())
+    );
     kept(&app);
 }
 

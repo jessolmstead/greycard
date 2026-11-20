@@ -26,6 +26,9 @@ design note behind it.
 
 - Light's sliders sit in two groups, a hairline between Shadows and
   Whites.
+- The line under Lens names its profile's source, lensfun or an Adobe
+  profile, and a switch greyed for lack of data says why on hover
+  (issue 189).
 - The Vignette has a Style: Overlay darkens the picture as shown, so a
   bright corner darkens too; Natural is the falloff as before
   (discussion 170,
