@@ -76,7 +76,8 @@ pub(crate) fn seen_of_picture(p: &Picture) -> Seen {
 /// [`Seen`] of the camera's JPEG in a raw, box-averaged by a whole
 /// factor to about [`LONG_EDGE`], so its blocks are the develop's.
 pub(crate) fn seen_of(path: &Path) -> Result<Seen, String> {
-    let (rgb, _) = greycard_core::decode::preview_path(path)
+    // Of a raw with several previews, the smallest at the blocks' size.
+    let (rgb, _) = greycard_core::decode::preview_path_at_least(path, LONG_EDGE)
         .map_err(|e| e.to_string())?
         .ok_or("the file carries no camera JPEG")?;
     let (w, h) = (rgb.width() as usize, rgb.height() as usize);

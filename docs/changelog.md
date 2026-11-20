@@ -44,6 +44,10 @@ design note behind it.
 
 ### Fixes
 
+- A DNG with a linearization table, such as some DxO PureRAW files,
+  no longer develops six stops dark and magenta.
+- A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows
+  its full preview in the grid, the loupe, and the camera match.
 - Zoomed in, the view stays on the same spot while Angle, the level,
   the perspective sliders, the aspect, a turn, or a flip changes.
 - On a short window the Masks tab's list gives up rows sooner, so a

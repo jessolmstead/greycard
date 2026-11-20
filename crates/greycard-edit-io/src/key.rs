@@ -113,7 +113,9 @@ fn contents(path: &Path) -> Option<[u8; 32]> {
 /// linear gradient's ramp ([`LINEAR_RAMP`]), an aspect's framing with
 /// no crop stored ([`ASPECT_FRAME`]), the highlight fill's
 /// implementation ([`HIGHLIGHT_FILL`]), the saturation table's version
-/// ([`greycard_core::decode::HEADROOM`]), the lens database's name as the caller gives
+/// ([`greycard_core::decode::HEADROOM`]), how a DNG's linearization
+/// table is read ([`greycard_core::decode::LINEARIZATION`]), the lens
+/// database's name as the caller gives
 /// it, and the look and profile directories as they stand (each file's
 /// name, length and modification time; not their contents, which only
 /// the files an edit names are read for). A store of keys made under
@@ -170,9 +172,10 @@ pub fn keys_made_under_in(
     format!(
         "recipe {DEVELOP_RECIPE}; masks {SKY_PIPELINE} {LANDSCAPE_PIPELINE} {PART_PIPELINE} \
          {PERSON_EDGE}; {SHARPEN_GUIDE}; {MIDTONES_SHAPE}; {WHITES_SHAPE}; {LINEAR_RAMP}; \
-         {ASPECT_FRAME}; {HIGHLIGHT_FILL}; {}; \
+         {ASPECT_FRAME}; {HIGHLIGHT_FILL}; {}; {}; \
          lenses {lenses:?}; files {}",
         greycard_core::decode::HEADROOM,
+        greycard_core::decode::LINEARIZATION,
         &files.to_hex()[..16]
     )
 }
@@ -284,6 +287,7 @@ mod tests {
             ASPECT_FRAME,
             HIGHLIGHT_FILL,
             greycard_core::decode::HEADROOM,
+            greycard_core::decode::LINEARIZATION,
         ] {
             assert!(first.contains(&format!("; {part};")), "{part}: {first}");
         }

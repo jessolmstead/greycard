@@ -100,6 +100,10 @@ pub fn print(file: Option<&Path>, edit: &Edit, turn: u8, size: Size) -> Print {
             if greycard_core::decode::may_have_headroom(&file) {
                 greycard_core::decode::HEADROOM.hash(&mut h);
             }
+            // A DNG: how its linearization table is read, likewise.
+            if greycard_core::decode::may_have_linearization(&file) {
+                greycard_core::decode::LINEARIZATION.hash(&mut h);
+            }
             let meta = std::fs::metadata(&file).ok();
             meta.as_ref().map(|m| m.len()).hash(&mut h);
             meta.and_then(|m| m.modified().ok())

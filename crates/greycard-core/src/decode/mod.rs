@@ -40,6 +40,16 @@ pub fn preview_path(path: impl AsRef<Path>) -> Result<Option<(image::RgbImage, O
     rawler_backend::preview_path(path.as_ref())
 }
 
+/// [`preview_path`] for a picture made `long_edge` or smaller: a file
+/// with several previews gives the smallest that size or past it; see
+/// `rawler_backend::preview_path_at_least`.
+pub fn preview_path_at_least(
+    path: impl AsRef<Path>,
+    long_edge: u32,
+) -> Result<Option<(image::RgbImage, Orientation)>> {
+    rawler_backend::preview_path_at_least(path.as_ref(), long_edge)
+}
+
 /// Decode with the default backend.
 pub fn decode_path(path: impl AsRef<Path>) -> Result<RawFrame> {
     RawlerDecoder.decode_path(path.as_ref())
@@ -167,6 +177,25 @@ pub fn may_have_headroom(path: &Path) -> bool {
 /// 3: and the 850D (Rebel T8i, Kiss X10i) first curtain at ISO 200,
 /// 2026-11-19.
 pub const HEADROOM: &str = "headroom-3";
+
+/// Whether the file at `path` may carry a `LinearizationTable`, by its
+/// name alone: a DNG, the one format whose decoder hands one over.
+/// What the keys of the pictures kept of a frame take [`LINEARIZATION`]
+/// in by, since they are made without a decode.
+pub fn may_have_linearization(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("dng"))
+}
+
+/// How a DNG's `LinearizationTable` is read, for the keys of whatever
+/// is kept of a frame [`may_have_linearization`]: raise it when that
+/// changes, and the pictures, fills, and mask bases kept of every DNG
+/// are made again, those of every other file found again as they were.
+/// The index learns of it through `keys_made_under`, as of
+/// [`HEADROOM`].
+/// 1: the table applied at decode, before the levels, 2026-11-19.
+pub const LINEARIZATION: &str = "linearization-1";
 
 /// Whether the file at `path` is of a kind [`camera_frame_path`] can
 /// find a frame in, by its name alone: what spares every other file a

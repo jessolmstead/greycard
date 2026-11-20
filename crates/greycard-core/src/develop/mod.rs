@@ -1410,7 +1410,9 @@ fn apply_dng_mosaic(
 /// (`stored`) constant against the file's stored values, the second's
 /// against the values as they stand, scaled to 0..65535 as the SDK's
 /// 16-bit stage holds them. Answers how many were made again; a linear
-/// frame has none made, said in the log.
+/// frame has none made, said in the log. A frame whose samples a
+/// `LinearizationTable` changed has its first list's constants made
+/// lists at decode, while the stored values are at hand.
 fn fix_bad_pixels(
     frame: &RawFrame,
     samples: &mut [f32],

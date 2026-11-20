@@ -158,7 +158,18 @@ pub(crate) fn read_preview(path: &Path) -> Option<image::RgbImage> {
             .ok()?
             .to_rgb8()
     } else {
-        greycard_core::decode::preview_path(path).ok()??.0
+        // Of a raw with several previews, the smallest at the focus
+        // score's edge. The score downscales by a whole factor to no
+        // more than that edge, so one just past it (2112 pixels) is
+        // scored at half the edge: a step of a few hundredths from a
+        // full-size preview's, the same for every frame of the camera,
+        // which is what a burst and a sort compare.
+        greycard_core::decode::preview_path_at_least(
+            path,
+            greycard_core::sharpness::SCORE_EDGE as u32,
+        )
+        .ok()??
+        .0
     })
 }
 

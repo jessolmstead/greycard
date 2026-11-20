@@ -565,8 +565,7 @@ impl Edited {
             ),
             None => greycard_edit_io::key::develop_key(edit, lenses.as_deref()),
         };
-        let key =
-            greycard_edit::key::headroom_key(key, greycard_core::decode::may_have_headroom(path));
+        let key = greycard_edit::key::decode_key(key, path);
         greycard_edit::key::framed_key(
             key,
             edit.geometry.crop.is_none(),
@@ -1397,6 +1396,22 @@ pub mod tests {
         let headroom = greycard_edit::key::headroom_key(own, true);
         assert_eq!(edited.key_known(cr3, &edit), headroom);
         assert_eq!(edited.key_of(cr3, &edit), headroom);
+    }
+
+    /// A DNG's pictures are keyed with the linearization's version, as
+    /// its index row is; a CR3's and a RAF's are not.
+    #[test]
+    fn a_dngs_pictures_take_the_linearization_in() {
+        let edited = Edited::new(Arc::new(Mutex::new(None)));
+        let edit = Edit::default();
+        let raf = Path::new("not-there/a.RAF");
+        let own = edited.key_known(raf, &edit);
+        assert_eq!(edited.key_of(raf, &edit), own);
+        let dng = greycard_edit::key::linearization_key(own, true);
+        assert_eq!(edited.key_known(Path::new("not-there/a.DNG"), &edit), dng);
+        assert_eq!(edited.key_of(Path::new("not-there/a.dng"), &edit), dng);
+        let cr3 = edited.key_known(Path::new("not-there/a.CR3"), &edit);
+        assert_eq!(cr3, greycard_edit::key::headroom_key(own, true));
     }
 
     /// What the camera's frames are known by: a read only where asked

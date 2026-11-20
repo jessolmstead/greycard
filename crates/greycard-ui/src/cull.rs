@@ -1016,7 +1016,16 @@ fn decode_keeping(
     fallback: Fallback,
 ) -> anyhow::Result<(Preview, image::RgbImage, Orientation)> {
     let started = Instant::now();
-    match camera_picture(path) {
+    // Of a raw with several previews, the largest only for 1:1; for a
+    // view the smallest that fills it and the local preview made from
+    // the same picture (`previews::SIZE`).
+    let picture = match size {
+        0 => camera_picture(path),
+        _ => {
+            greycard_engine::camera::camera_picture_at_least(path, size.max(crate::previews::SIZE))
+        }
+    };
+    match picture {
         Ok((image, orientation)) => Ok(shaped(image, orientation, size, started)),
         Err(e) => develop_instead(path, e, fallback, size, started),
     }

@@ -2665,12 +2665,12 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
     // at the write (by its blend) has one too; a develop with no edit
     // to read gets the mark that says so.
     // Keyed with the headroom's version where the raw may decode with
-    // one, as the engine keys what it keeps (`headroom_key`).
-    let headroom = greycard_core::decode::may_have_headroom(raw);
+    // one, and the linearization's where it may carry a table, as the
+    // engine keys what it keeps (`decode_key`).
     let develop_key = if p.current.is_some() {
-        Some(greycard_edit::key::headroom_key(
+        Some(greycard_edit::key::decode_key(
             greycard_edit_io::key::develop_key(&sidecar.current, crate::lens_database().as_deref()),
-            headroom,
+            raw,
         ))
     } else if edited {
         Some(0)
@@ -2690,9 +2690,9 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
                     .is_some_and(|c| !crate::is_default_edit(c, raw, None));
             VersionSummary {
                 develop_key: match &v.current {
-                    Some(c) => Some(greycard_edit::key::headroom_key(
+                    Some(c) => Some(greycard_edit::key::decode_key(
                         greycard_edit_io::key::develop_key(c, lenses.as_deref()),
-                        headroom,
+                        raw,
                     )),
                     None => edited.then_some(0),
                 },
@@ -4582,6 +4582,53 @@ pub(crate) mod tests {
         assert_eq!(row(&lib, &framed).0, text);
         drop(lib);
         drop(held);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A schema 17 library forgets its DNGs' focus scores and looks,
+    /// made from the first preview listed, and keeps every other file's.
+    #[test]
+    fn a_schema_17_library_scores_its_dngs_again() {
+        let dir = scratch("migrate-17");
+        let db = dir.join("library.sqlite");
+        let shoot = dir.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        for name in ["a.DNG", "b.dng", "c.CR3"] {
+            std::fs::write(shoot.join(name), b"not a raw").unwrap();
+        }
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&shoot, &mut quiet()).unwrap();
+            lib.conn
+                .execute_batch(
+                    "UPDATE files SET focus = 0.5;
+                     INSERT INTO looks (file, mtime, signature, focus)
+                         SELECT id, mtime, x'00', 0.5 FROM files;
+                     PRAGMA user_version = 17;",
+                )
+                .unwrap();
+        }
+        let lib = Library::open(&db).unwrap();
+        let rows: Vec<(String, Option<f64>, bool)> = lib
+            .conn
+            .prepare(
+                "SELECT name, focus, EXISTS (SELECT 1 FROM looks WHERE looks.file = files.id)
+                 FROM files ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            [
+                ("a.DNG".to_string(), None, false),
+                ("b.dng".to_string(), None, false),
+                ("c.CR3".to_string(), Some(0.5), true),
+            ]
+        );
+        drop(lib);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
@@ -7666,6 +7713,29 @@ pub(crate) mod tests {
             Some(greycard_edit::key::headroom_key(own, true))
         );
         assert_ne!(cr3.develop_key, nef.develop_key);
+    }
+
+    /// A row's key takes the linearization's version in for a DNG, as
+    /// the engine's does, and for a CR3 or a RAF not.
+    #[test]
+    fn a_dng_rows_key_takes_the_linearization_in() {
+        let mut sidecar = greycard_edit::Sidecar::default();
+        sidecar.line.current.light.exposure = 0.5;
+        let json = serde_json::to_vec(&sidecar).unwrap();
+        let own = greycard_edit_io::key::develop_key(
+            &sidecar.line.current,
+            crate::lens_database().as_deref(),
+        );
+        let row = |raw: &str| summary_from_json(&json, Path::new("x.gcd"), Some(Path::new(raw)));
+        assert_eq!(
+            row("x.DNG").develop_key,
+            Some(greycard_edit::key::linearization_key(own, true))
+        );
+        assert_eq!(row("x.RAF").develop_key, Some(own));
+        assert_eq!(
+            row("x.cr3").develop_key,
+            Some(greycard_edit::key::headroom_key(own, true))
+        );
     }
 
     /// A sidecar whose edit this build cannot read still gives up its

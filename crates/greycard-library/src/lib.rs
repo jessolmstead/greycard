@@ -104,7 +104,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 17;
+pub const SCHEMA_VERSION: i32 = 18;
 
 /// `taken_at`'s expression, one text for [`SCHEMA`] and the step from
 /// schema 11 both: `taken` moved by `shift` seconds, worked out by
@@ -274,6 +274,15 @@ const MIGRATIONS: &[(i32, &str)] = &[
         16,
         "UPDATE files SET style_read = 0
              WHERE make LIKE 'OLYMPUS%' OR make LIKE 'OM Digital%';",
+    ),
+    // A DNG's focus score and look made again: they were made from the
+    // first preview its file lists, which a camera may write as a
+    // 160 px thumbnail ahead of its full-size one.
+    (
+        17,
+        "UPDATE files SET focus = NULL WHERE lower(name) LIKE '%.dng';
+         DELETE FROM looks WHERE file IN
+             (SELECT id FROM files WHERE lower(name) LIKE '%.dng');",
     ),
 ];
 

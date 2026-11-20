@@ -4,12 +4,20 @@ use super::*;
 
 /// How [`thumbnail`] makes a picture, as the cache's entries record
 /// it in their names: raise it when the picture it makes changes (the
-/// downscale, the turn, rawler's choice of preview, or the fallback
+/// downscale, the turn, the choice of preview, or the fallback
 /// develop through `DevelopSettings::default()`, whose definition in
 /// core names this constant), and every entry made the old way is a
 /// miss and is made again. The long edge is in the key already, so a
 /// change of the sizes made (`made::MADE`) needs no bump.
-pub const THUMB_RECIPE: u16 = 4;
+pub const THUMB_RECIPE: u16 = 5;
+
+/// How much larger than a thumbnail the preview it is made from is
+/// asked to be, where the file has several to choose from: from five
+/// times the size, the whole-factor downscale gives at least five
+/// sixths of it, and every size made (`made::MADE`) comes from the
+/// 720 or 2112 pixel preview of a camera whose DNG lists a 160 px
+/// thumbnail first, not its full-size one.
+const PREVIEW_OVER: u32 = 5;
 
 /// Count what `cache` holds on a thread of its own, walking the disk
 /// without its lock, and hand `then` what is known after: the count
@@ -239,8 +247,15 @@ pub fn thumbnail(path: &std::path::Path, size: u32) -> anyhow::Result<(u32, u32,
     }
     // Neither read maps the file: the pool walks every frame of a
     // folder, a share's among them, and a mapped file whose volume
-    // goes away is a SIGBUS.
-    if let Ok(Some((preview, orientation))) = greycard_core::decode::preview_path(path) {
+    // goes away is a SIGBUS. Of a file with several previews, one at
+    // least `PREVIEW_OVER` times the size: the downscale is by a whole
+    // factor, which from a preview nearer the size leaves the
+    // thumbnail well short of it.
+    let preview = greycard_core::decode::preview_path_at_least(
+        path,
+        (size as u32).saturating_mul(PREVIEW_OVER),
+    );
+    if let Ok(Some((preview, orientation))) = preview {
         return Ok(thumbnail_of_preview(&preview, orientation, size));
     }
     let frame = greycard_core::decode::decode_path_unmapped(path)?;

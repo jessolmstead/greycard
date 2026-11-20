@@ -213,6 +213,32 @@ pub fn headroom_key(key: u64, headroom: bool) -> u64 {
     u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("eight bytes"))
 }
 
+/// The key of an edit's picture on a frame that may carry a DNG
+/// `LinearizationTable` (`linearization`, by
+/// [`greycard_core::decode::may_have_linearization`] of its file):
+/// `key` with [`greycard_core::decode::LINEARIZATION`] taken in, as
+/// [`headroom_key`] takes the headroom in, so only such files'
+/// pictures are made again when how the table is read changes. Taken
+/// before [`framed_key`].
+pub fn linearization_key(key: u64, linearization: bool) -> u64 {
+    if !linearization {
+        return key;
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"greycard linearization\0");
+    hasher.update(&key.to_le_bytes());
+    hasher.update(greycard_core::decode::LINEARIZATION.as_bytes());
+    let hash = hasher.finalize();
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("eight bytes"))
+}
+
+/// [`headroom_key`] and [`linearization_key`] of `key`, each where the
+/// file at `path` may need it: the decode's part of a picture's key.
+pub fn decode_key(key: u64, path: &std::path::Path) -> u64 {
+    let key = headroom_key(key, greycard_core::decode::may_have_headroom(path));
+    linearization_key(key, greycard_core::decode::may_have_linearization(path))
+}
+
 /// A file the develop of an edit reads outside the sidecar, as the key
 /// takes it: its file name, and BLAKE3 of its contents, `None` for a
 /// file that is not there or will not read.
@@ -806,5 +832,33 @@ mod tests {
         for other in ["c.CR2", "d.dng", "e.NEF", "f.cr3.gcd", "cr3"] {
             assert!(!may_have_headroom(Path::new(other)), "{other}");
         }
+    }
+
+    /// The linearization's version is in the key of a DNG's pictures
+    /// and of no other file's; a CR3's takes the headroom alone.
+    #[test]
+    fn the_linearization_is_keyed_only_for_a_dng() {
+        use greycard_core::decode::may_have_linearization;
+        use std::path::Path;
+        let key = key(&Edit::default(), None);
+        assert_eq!(linearization_key(key, false), key);
+        let dng = linearization_key(key, true);
+        assert_ne!(dng, key);
+        assert_ne!(dng, headroom_key(key, true));
+        assert_eq!(
+            linearization_key(key, true),
+            dng,
+            "the same for the same key"
+        );
+        assert_ne!(linearization_key(key ^ 1, true), dng);
+        assert!(may_have_linearization(Path::new("a/L1000001.DNG")));
+        assert!(may_have_linearization(Path::new("b.dng")));
+        for other in ["c.CR3", "d.RAF", "e.NEF", "f.dng.gcd", "dng"] {
+            assert!(!may_have_linearization(Path::new(other)), "{other}");
+        }
+        assert_eq!(decode_key(key, Path::new("x.DNG")), dng);
+        assert_eq!(decode_key(key, Path::new("x.cr3")), headroom_key(key, true));
+        assert_eq!(decode_key(key, Path::new("x.RAF")), key);
+        assert_eq!(decode_key(key, Path::new("x.nef")), key);
     }
 }

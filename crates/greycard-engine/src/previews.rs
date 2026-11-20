@@ -250,7 +250,7 @@ impl Previews {
         let started = Instant::now();
         // The camera's picture, or the picture file itself; a raw with
         // neither goes the thumbnail's way, through a quick develop.
-        let thumb = match crate::camera::camera_picture(path) {
+        let thumb = match crate::camera::camera_picture_at_least(path, SIZE) {
             Ok((picture, orientation)) => sized(&picture, orientation),
             Err(_) => {
                 let (width, height, rgb) = thumbnail(path, SIZE)?;

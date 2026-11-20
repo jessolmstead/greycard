@@ -17,8 +17,24 @@ use greycard_core::raw::Orientation;
 pub static FILE_READS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// The camera's own rendering of a file, and the orientation it is
-/// to be shown in.
+/// to be shown in: of a raw with several, the largest.
 pub fn camera_picture(path: &Path) -> anyhow::Result<(image::RgbImage, Orientation)> {
+    camera_picture_sized(path, None)
+}
+
+/// [`camera_picture`] for a picture made `long_edge` or smaller: of a
+/// raw with several previews, the smallest that size or past it.
+pub fn camera_picture_at_least(
+    path: &Path,
+    long_edge: u32,
+) -> anyhow::Result<(image::RgbImage, Orientation)> {
+    camera_picture_sized(path, Some(long_edge))
+}
+
+fn camera_picture_sized(
+    path: &Path,
+    long_edge: Option<u32>,
+) -> anyhow::Result<(image::RgbImage, Orientation)> {
     #[cfg(any(test, feature = "testing"))]
     FILE_READS
         .lock()
@@ -35,7 +51,11 @@ pub fn camera_picture(path: &Path) -> anyhow::Result<(image::RgbImage, Orientati
         let rgb = image::DynamicImage::from_decoder(decoder)?.to_rgb8();
         return Ok((rgb, orientation));
     }
-    match greycard_core::decode::preview_path(path)? {
+    let preview = match long_edge {
+        Some(edge) => greycard_core::decode::preview_path_at_least(path, edge)?,
+        None => greycard_core::decode::preview_path(path)?,
+    };
+    match preview {
         Some(found) => Ok(found),
         None => anyhow::bail!("no camera preview in the file"),
     }

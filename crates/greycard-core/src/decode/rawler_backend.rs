@@ -431,8 +431,9 @@ fn judge_rows(frame: &RawFrame, up_front: UpFront) -> Result<()> {
 
 /// Whether the last row inside the frame's crop (the whole frame's
 /// last row without one) reads nothing but zeros, across the crop's
-/// columns. The samples are the file's own, before the black level is
-/// taken off. Rows below the crop are not looked at, since a camera
+/// columns. The samples are the frame's, before the black level is
+/// taken off: a RAF's as the file stores them (only a DNG's are mapped
+/// through a `LinearizationTable` first). Rows below the crop are not looked at, since a camera
 /// may write those as zeros (see [`refuse_a_half_copy`]).
 fn last_row_unwritten(frame: &RawFrame) -> bool {
     // `RawFrame::validate` holds the crop inside the frame; the
@@ -535,7 +536,18 @@ impl RawlerDecoder {
 /// head through its embedded JPEG, which its header locates; every
 /// other format is read whole into memory. See [`preview_counted`].
 pub fn preview_path(path: &Path) -> Result<Option<(image::RgbImage, Orientation)>> {
-    preview_counted(path).map(|(preview, _)| preview)
+    preview_counted(path, PreviewSize::Largest).map(|(preview, _)| preview)
+}
+
+/// [`preview_path`] for a picture to be made `long_edge` on its long
+/// edge or smaller: of a file with several previews, the smallest that
+/// size or past it, else the largest ([`PreviewSize::AtLeast`]). Only
+/// a DNG lists several; every other format's is `preview_path`'s.
+pub fn preview_path_at_least(
+    path: &Path,
+    long_edge: u32,
+) -> Result<Option<(image::RgbImage, Orientation)>> {
+    preview_counted(path, PreviewSize::AtLeast(long_edge)).map(|(preview, _)| preview)
 }
 
 /// What [`preview_path`] answers.
@@ -548,12 +560,12 @@ type Preview = Option<(image::RgbImage, Orientation)>;
 /// thumbnail, which from the whole file it would not have. So any
 /// error, panic, or answer short of the preview from the ends reads the
 /// whole file, which gives `preview_path`'s answer as it always did.
-fn preview_counted(path: &Path) -> Result<(Preview, u64)> {
+fn preview_counted(path: &Path, want: PreviewSize) -> Result<(Preview, u64)> {
     let mut tried = 0;
     match read_preview_ends(path) {
         Ok(Some((buf, read))) => {
             let source = RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path);
-            match guarded(|| None, || preview_source(&source, false)) {
+            match guarded(|| None, || preview_source(&source, false, want)) {
                 Ok(Some(found)) => return Ok((Some(found), read)),
                 Ok(None) => log::debug!("{}: no preview from its ends; read whole", path.display()),
                 Err(e) => log::debug!(
@@ -570,20 +582,34 @@ fn preview_counted(path: &Path) -> Result<(Preview, u64)> {
         || half_copy_at(path),
         || {
             let (source, whole) = read_whole(path)?;
-            preview_source(&source, true).map(|preview| (preview, tried + whole))
+            preview_source(&source, true, want).map(|preview| (preview, tried + whole))
         },
     )
 }
 
-/// The preview from one source: the largest preview JPEG, else, when
-/// `thumbnail` says, the thumbnail.
-fn preview_source(source: &RawSource, thumbnail: bool) -> Result<Preview> {
+/// The preview from one source: the camera's preview `want` picks,
+/// else, when `thumbnail` says, the thumbnail.
+fn preview_source(source: &RawSource, thumbnail: bool, want: PreviewSize) -> Result<Preview> {
     let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
-    let image = match decoder.preview_image(source, &params) {
-        Ok(Some(i)) => Some(i),
-        _ if thumbnail => decoder.thumbnail_image(source, &params).ok().flatten(),
-        _ => None,
+    let thumb = || {
+        decoder
+            .thumbnail_image(source, &params)
+            .ok()
+            .flatten()
+            .map(|i| i.to_rgb8())
+    };
+    // A DNG's previews are ours to pick (`dng_preview`), among the
+    // ones rawler's `preview_image` looks at, so a DNG none of whose
+    // previews holds up has the thumbnail and not rawler's first.
+    let image = if decoder.format_hint() == ::rawler::decoders::FormatHint::DNG {
+        dng_preview(decoder.as_ref(), source, want).or_else(|| thumbnail.then(thumb).flatten())
+    } else {
+        match decoder.preview_image(source, &params) {
+            Ok(Some(i)) => Some(i.to_rgb8()),
+            _ if thumbnail => thumb(),
+            _ => None,
+        }
     };
     let Some(image) = image else {
         return Ok(None);
@@ -594,7 +620,237 @@ fn preview_source(source: &RawSource, thumbnail: bool) -> Result<Preview> {
         .and_then(|m| m.exif.orientation)
         .and_then(Orientation::from_exif)
         .unwrap_or_default();
-    Ok(Some((image.to_rgb8(), orientation)))
+    Ok(Some((image, orientation)))
+}
+
+/// Which of a file's previews a caller wants, where the file has
+/// several (a DNG may: a Leica writes a thumbnail first, then the
+/// full size, then two between).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewSize {
+    /// The largest: a picture looked at whole, or measured.
+    Largest,
+    /// The smallest whose long edge is this or more, else the largest:
+    /// a picture made smaller, which a larger preview only costs.
+    AtLeast(u32),
+}
+
+/// The most pixels a DNG preview's tags are believed for: past a
+/// 200 MP sensor's, so a tag past it is a damaged one.
+const MAX_PREVIEW_PIXELS: u64 = 256 << 20;
+
+/// The most DNG previews tried: a camera writes up to four.
+const MAX_PREVIEWS: usize = 16;
+
+/// A DNG preview a `SubIFDs` entry describes, by its tags.
+struct DngPreview<'a> {
+    ifd: &'a ::rawler::formats::tiff::IFD,
+    width: u32,
+    height: u32,
+}
+
+/// The order a DNG's previews are tried in for `want`: the largest
+/// first, or the smallest at `AtLeast`'s edge or past it first, then
+/// the rest from the largest down. A sort, so the file's order (the
+/// thumbnail first, or any other) does not matter.
+fn preview_order(mut sizes: Vec<(u32, u32)>, want: PreviewSize) -> Vec<(u32, u32)> {
+    let area = |&(w, h): &(u32, u32)| u64::from(w) * u64::from(h);
+    sizes.sort_by_key(|s| std::cmp::Reverse(area(s)));
+    if let PreviewSize::AtLeast(edge) = want {
+        let (mut big, small): (Vec<_>, Vec<_>) =
+            sizes.into_iter().partition(|&(w, h)| w.max(h) >= edge);
+        big.reverse();
+        big.extend(small);
+        sizes = big;
+    }
+    sizes
+}
+
+/// A DNG's preview as `want` picks it among the previews its root's
+/// `SubIFDs` list, decoded to 8-bit RGB: rawler's `preview_image` takes
+/// the first, which is a thumbnail in a file that lists that first.
+/// Each candidate's tags and bytes are checked before it is decoded,
+/// and one that fails ([`dng_preview_of`]) gives way to the next;
+/// `None` when none decodes, and [`preview_source`] takes the root's
+/// thumbnail then.
+fn dng_preview(
+    decoder: &dyn ::rawler::decoders::Decoder,
+    source: &RawSource,
+    want: PreviewSize,
+) -> Option<image::RgbImage> {
+    let root = decoder
+        .ifd(::rawler::decoders::WellKnownIFD::Root)
+        .ok()
+        .flatten()?;
+    let mut previews = dng_previews_of(&root);
+    let order = preview_order(previews.iter().map(|p| (p.width, p.height)).collect(), want);
+    for size in order {
+        let at = previews.iter().position(|p| (p.width, p.height) == size)?;
+        let preview = previews.swap_remove(at);
+        match dng_preview_of(&preview, source) {
+            Ok(rgb) => {
+                log::debug!(
+                    "DNG preview {}x{} for {want:?}",
+                    preview.width,
+                    preview.height
+                );
+                return Some(rgb);
+            }
+            Err(why) => log::debug!(
+                "DNG preview {}x{} passed over: {why}",
+                preview.width,
+                preview.height
+            ),
+        }
+    }
+    None
+}
+
+/// The previews a DNG's root lists in its `SubIFDs`, by their tags:
+/// one a strip, the first [`MAX_PREVIEWS`] of them, each of a size to
+/// believe.
+fn dng_previews_of(root: &::rawler::formats::tiff::IFD) -> Vec<DngPreview<'_>> {
+    use ::rawler::tags::TiffCommonTag;
+    let u32_of = |ifd: &::rawler::formats::tiff::IFD, tag| {
+        ifd.get_entry(tag)
+            .and_then(|e| e.value.get_u32(0).ok().flatten())
+    };
+    // One candidate a strip, and no more than a camera writes: a
+    // hostile file's thousand entries at one strip would otherwise be
+    // a thousand decodes of it.
+    let mut seen = std::collections::HashSet::new();
+    root.get_sub_ifd_all(TiffCommonTag::SubIFDs)
+        .into_iter()
+        .flatten()
+        .filter(|ifd| u32_of(ifd, TiffCommonTag::NewSubFileType) == Some(1))
+        .filter_map(|ifd| {
+            let (width, height) = (
+                u32_of(ifd, TiffCommonTag::ImageWidth)?,
+                u32_of(ifd, TiffCommonTag::ImageLength)?,
+            );
+            let pixels = u64::from(width) * u64::from(height);
+            (pixels > 0 && pixels <= MAX_PREVIEW_PIXELS).then_some(DngPreview {
+                ifd,
+                width,
+                height,
+            })
+        })
+        .filter(|p| seen.insert(u32_of(p.ifd, TiffCommonTag::StripOffsets)))
+        .take(MAX_PREVIEWS)
+        .collect()
+}
+
+/// One DNG preview decoded, or why not: 8 bits a sample, one or three
+/// samples a pixel, its strips inside the file and not empty, and a
+/// JPEG's bytes a JPEG of the size its tags say, decoded then; an
+/// uncompressed one rawler decodes (as its `preview_image` would), its
+/// panic caught as an error.
+///
+/// Passed over, where rawler would decode one listed first: a JPEG XL
+/// preview, a tiled one, one of 9 to 16 bits, and one under the
+/// alternate subfile type (0x10001). No camera or converter seen
+/// writes one of those as its only preview: they come beside an 8-bit
+/// JPEG, which is then taken, and a file with nothing else falls to
+/// its thumbnail. A preview missed costs a smaller picture; one
+/// misread would cost a wrong one.
+fn dng_preview_of(
+    preview: &DngPreview,
+    source: &RawSource,
+) -> std::result::Result<image::RgbImage, String> {
+    use ::rawler::tags::TiffCommonTag;
+    let ifd = preview.ifd;
+    let entry = |tag| ifd.get_entry(tag).map(|e| &e.value);
+    let values = |tag| -> Vec<u64> {
+        entry(tag).map_or(Vec::new(), |v| {
+            (0..v.count())
+                .map_while(|i| v.get_u32(i).ok().flatten().map(u64::from))
+                .collect()
+        })
+    };
+    let spp = values(TiffCommonTag::SamplesPerPixel)
+        .first()
+        .copied()
+        .unwrap_or(1);
+    let bits = values(TiffCommonTag::BitsPerSample);
+    if !matches!(spp, 1 | 3) || bits.is_empty() || bits.iter().any(|&b| b != 8) {
+        return Err(format!("{spp} samples of {bits:?} bits"));
+    }
+    let compression = values(TiffCommonTag::Compression)
+        .first()
+        .copied()
+        .unwrap_or(1);
+    let (offsets, counts) = (
+        values(TiffCommonTag::StripOffsets),
+        values(TiffCommonTag::StripByteCounts),
+    );
+    if offsets.is_empty() || offsets.len() != counts.len() {
+        return Err(format!(
+            "{} strips with {} lengths",
+            offsets.len(),
+            counts.len()
+        ));
+    }
+    let len = source.buf().len() as u64;
+    for (&at, &n) in offsets.iter().zip(&counts) {
+        if n == 0 || at.checked_add(n).is_none_or(|end| end > len) {
+            return Err(format!("a strip of {n} bytes at {at} in a file of {len}"));
+        }
+    }
+    let (w, h) = (preview.width, preview.height);
+    match compression {
+        // Uncompressed: the strips hold the pixels and no more.
+        1 if counts.iter().sum::<u64>() < u64::from(w) * u64::from(h) * spp => {
+            return Err("strips shorter than the pixels".into());
+        }
+        1 => {}
+        // JPEG, the old form's code too: one strip, its header the size.
+        6 | 7 if offsets.len() == 1 => {
+            let bytes = &source.buf()[offsets[0] as usize..(offsets[0] + counts[0]) as usize];
+            if !bytes.starts_with(&[0xFF, 0xD8]) {
+                return Err("not a JPEG".into());
+            }
+            use image::ImageDecoder;
+            let header = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes))
+                .map_err(|e| format!("its JPEG: {e}"))?
+                .dimensions();
+            if header != (w, h) {
+                return Err(format!("a JPEG of {header:?}"));
+            }
+            // Decoded here, from the bytes just checked, with the
+            // `image` crate rawler's own JPEG strip decoder calls (one
+            // version of it in the build), so the pixels are those its
+            // `preview_image` gives, without its copy into 16-bit
+            // samples and back: a 60 MP preview peaks near a third of
+            // the memory. RGB for three samples, grey for one, as
+            // rawler takes them.
+            let decoded = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg)
+                .map_err(|e| format!("its JPEG: {e}"))?;
+            return match (decoded, spp) {
+                (image::DynamicImage::ImageRgb8(rgb), 3) => Ok(rgb),
+                (grey @ image::DynamicImage::ImageLuma8(_), 1) => Ok(grey.to_rgb8()),
+                (other, _) => Err(format!("a JPEG of {:?} for {spp} samples", other.color())),
+            };
+        }
+        c => return Err(format!("compression {c} in {} strips", offsets.len())),
+    }
+    let samples = match guarded(
+        || None,
+        || ::rawler::decoders::plain_image_from_ifd(ifd, source).map_err(decoder_error),
+    ) {
+        Ok(RawImageData::Integer(v)) => v,
+        Ok(RawImageData::Float(_)) => return Err("float samples".into()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let pixels = w as usize * h as usize;
+    if samples.len() != pixels * spp as usize {
+        return Err(format!("{} samples for {w}x{h}", samples.len()));
+    }
+    let rgb: Vec<u8> = if spp == 3 {
+        samples.iter().map(|&s| s as u8).collect()
+    } else {
+        samples.iter().flat_map(|&s| [s as u8; 3]).collect()
+    };
+    image::RgbImage::from_raw(w, h, rgb).ok_or_else(|| "no picture".into())
 }
 
 /// The bytes of the file at `path` its preview is read from, in a
@@ -722,9 +978,16 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
         width: r.d.w,
         height: r.d.h,
     });
+    let mut dng = dng_tags(decoder.as_ref());
+    if image.linearization_table.is_some()
+        && image.cpp == 1
+        && let RawImageData::Integer(stored) = &image.data
+    {
+        list_stored_constants(&mut dng.mosaic, stored, image.width);
+    }
     let mut frame = frame_from_rawler(image)?;
     judge_rows(&frame, up_front)?;
-    frame.dng = dng_tags(decoder.as_ref());
+    frame.dng = dng;
     if !frame.dng.mosaic.is_empty() || !frame.dng.warps.is_empty() {
         frame.dng.opcode_area = active_area;
     }
@@ -1121,10 +1384,22 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
         height,
         cpp,
         data,
+        linearization_table,
         ..
     } = image;
     let samples = match data {
-        RawImageData::Integer(v) => Samples::U16(v),
+        RawImageData::Integer(mut v) => {
+            // rawler hands a DNG's table over unapplied (its develop
+            // applies it, which we do not call) and clears it once
+            // applied, so a table it reports is one still owed.
+            if let Some(table) = linearization_table.as_deref() {
+                linearize(&mut v, table);
+                log::info!("LinearizationTable of {} entries applied", table.len());
+            }
+            Samples::U16(v)
+        }
+        // rawler drops a table on float samples, which the
+        // specification does not allow one on.
         RawImageData::Float(v) => Samples::F32(v),
     };
 
@@ -1152,6 +1427,51 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
     };
     frame.validate()?;
     Ok(frame)
+}
+
+/// A DNG's `LinearizationTable` on its stored samples, in place: each
+/// sample is replaced by the table's entry at it, and one past the
+/// table's end by its last entry (DNG 1.7, chapter 5). The black and
+/// white levels are in the table's units, so they apply after it, as
+/// does every reader of the frame's samples. An empty table leaves the
+/// samples as they are.
+pub(crate) fn linearize(samples: &mut [u16], table: &[u16]) {
+    use rayon::prelude::*;
+    let Some(&last) = table.last() else {
+        return;
+    };
+    samples.par_chunks_mut(1 << 16).for_each(|run| {
+        run.iter_mut()
+            .for_each(|s| *s = *table.get(usize::from(*s)).unwrap_or(&last))
+    });
+}
+
+/// A DNG's `OpcodeList1` constant bad-pixel tests made lists of the
+/// photosites they find, read on the stored samples (`stored`, `width`
+/// wide), for a frame whose samples a `LinearizationTable` is about to
+/// change: the first list runs on the stored values, before the table
+/// (DNG 1.7, chapter 7), and the develop reads the frame's samples,
+/// which are the table's by then.
+fn list_stored_constants(mosaic: &mut [crate::opcodes::MosaicOp], stored: &[u16], width: usize) {
+    use crate::opcodes::{BadPixels, MosaicOp, OpcodeList};
+    for op in mosaic {
+        if let MosaicOp::BadPixels(OpcodeList::One, BadPixels::Constant { value, phase }) = op {
+            let points = stored
+                .iter()
+                .enumerate()
+                .filter(|&(_, &s)| u32::from(s) == *value)
+                .map(|(i, _)| [(i / width) as i32, (i % width) as i32])
+                .collect();
+            *op = MosaicOp::BadPixels(
+                OpcodeList::One,
+                BadPixels::List {
+                    phase: *phase,
+                    points,
+                    rects: Vec::new(),
+                },
+            );
+        }
+    }
 }
 
 /// A capture of a Canon body whose CR3 white (Canon's "specular"
@@ -2006,6 +2326,449 @@ mod tests {
         decoder
             .raw_image(&source, &RawDecodeParams::default(), false)
             .unwrap()
+    }
+
+    /// A linear DNG's image, three samples a pixel, 8 by 6.
+    fn a_linear() -> RawImage {
+        use ::rawler::decoders::Camera;
+        use ::rawler::pixarray::PixU16;
+        use ::rawler::rawimage::{BlackLevel, WhiteLevel};
+
+        let (w, h) = (8usize, 6usize);
+        let data: Vec<u16> = (0..w * h * 3)
+            .map(|i| 700 + (i as u16 * 53) % 1300)
+            .collect();
+        let mut camera = Camera::new();
+        camera.make = "Test".into();
+        camera.model = "Linear".into();
+        camera.clean_make = camera.make.clone();
+        camera.clean_model = camera.model.clone();
+        RawImage::new(
+            camera,
+            PixU16::new_with(data, w * 3, h),
+            3,
+            [1.0, 1.0, 1.0, f32::NAN],
+            RawPhotometricInterpretation::LinearRaw,
+            Some(BlackLevel::new(&[100u16, 100, 100], 1, 1, 3)),
+            Some(WhiteLevel::new(vec![4000; 3])),
+            false,
+        )
+    }
+
+    /// `raw` with `table` written as its `LinearizationTable`, decoded
+    /// whole as a file is.
+    fn decoded_with_table(mut raw: RawImage, table: Option<Vec<u16>>) -> RawFrame {
+        raw.linearization_table = table;
+        RawlerDecoder
+            .decode_bytes(&dng_bytes(&raw, |_| {}))
+            .unwrap()
+    }
+
+    fn u16_samples(frame: &RawFrame) -> &[u16] {
+        match &frame.samples {
+            Samples::U16(v) => v,
+            Samples::F32(_) => panic!("float samples"),
+        }
+    }
+
+    /// A DNG's `LinearizationTable` maps every stored sample, a mosaic's
+    /// and a linear one's: an identity table changes nothing, a curve
+    /// gives its entries, and a sample past a short table's end takes
+    /// its last entry. The levels stay as the file has them, in the
+    /// table's units.
+    #[test]
+    fn a_dngs_linearization_table_maps_its_samples() {
+        // The fixtures' samples 0 and 7 are 600 and 859 (the mosaic),
+        // 700 and 1071 (the linear), so three halves of them are these.
+        for (raw, by_hand) in [
+            (
+                a_mosaic(::rawler::rawimage::BlackLevel::new(&[100u16], 1, 1, 1)),
+                [900, 1288],
+            ),
+            (a_linear(), [1050, 1606]),
+        ] {
+            let stored = u16_samples(&decoded_with_table(raw.clone(), None)).to_vec();
+            assert!(stored.iter().all(|&s| (600..2000).contains(&s)));
+
+            let identity: Vec<u16> = (0..=4095).collect();
+            let same = decoded_with_table(raw.clone(), Some(identity));
+            assert_eq!(u16_samples(&same), &stored[..]);
+
+            let curve: Vec<u16> = (0..4096u32).map(|i| (i * 3 / 2) as u16).collect();
+            let mapped = decoded_with_table(raw.clone(), Some(curve));
+            let got = u16_samples(&mapped);
+            assert_eq!([got[0], got[7]], by_hand);
+            assert!(got.iter().zip(&stored).all(|(&g, &s)| g == s * 3 / 2));
+            assert_eq!(mapped.levels.black.values[0], 100.0);
+            assert_eq!(mapped.levels.white.values[0], 4000.0);
+
+            // A table of 1000 entries: every sample at or past 1000
+            // takes entry 999.
+            let short: Vec<u16> = (0..1000u16).map(|i| i * 2).collect();
+            let clamped = decoded_with_table(raw.clone(), Some(short));
+            for (&g, &s) in u16_samples(&clamped).iter().zip(&stored) {
+                assert_eq!(g, if s < 1000 { s * 2 } else { 1998 }, "stored {s}");
+            }
+            assert!(stored.iter().any(|&s| s >= 1000) && stored.iter().any(|&s| s < 1000));
+        }
+    }
+
+    /// The levels apply after the table: a stored value the table maps
+    /// to the white normalizes to 1, and one it maps to the black to 0,
+    /// whatever the stored values themselves.
+    #[test]
+    fn a_dngs_levels_apply_after_its_table() {
+        let raw = a_linear();
+        let stored = u16_samples(&decoded_with_table(raw.clone(), None)).to_vec();
+        let (low, high) = (stored[0], stored[1]);
+        assert!(low < high);
+        let table: Vec<u16> = (0..4096u16)
+            .map(|i| match i {
+                i if i == low => 100,
+                i if i == high => 4000,
+                _ => 2050,
+            })
+            .collect();
+        let frame = decoded_with_table(raw, Some(table));
+        let norm = crate::develop::normalize_levels(&frame);
+        for (&n, &s) in norm.iter().zip(&stored) {
+            let want = match s {
+                s if s == low => 0.0,
+                s if s == high => 1.0,
+                _ => 0.5,
+            };
+            assert!((n - want).abs() < 1e-6, "stored {s}: {n}");
+        }
+    }
+
+    /// `linearize` on its own: an empty table leaves the samples, and a
+    /// table of one entry gives every sample that entry.
+    #[test]
+    fn linearize_holds_past_the_tables_end() {
+        let mut v = vec![0u16, 1, 65535];
+        linearize(&mut v, &[]);
+        assert_eq!(v, [0, 1, 65535]);
+        linearize(&mut v, &[7]);
+        assert_eq!(v, [7, 7, 7]);
+        let mut v = vec![0u16, 2, 3, 65535];
+        linearize(&mut v, &[10, 20, 30]);
+        assert_eq!(v, [10, 30, 30, 30]);
+    }
+
+    /// The first opcode list's constant bad-pixel tests, which run on
+    /// the stored values, are made lists of the photosites found while
+    /// those values are at hand; every other opcode stays as it was.
+    #[test]
+    fn a_first_list_constant_is_listed_on_the_stored_values() {
+        use crate::opcodes::{BadPixels, MosaicOp, OpcodeList};
+        let stored = [5u16, 0, 9, 0, 0, 3];
+        let constant = |list| MosaicOp::BadPixels(list, BadPixels::Constant { value: 0, phase: 1 });
+        let mut ops = vec![constant(OpcodeList::One), constant(OpcodeList::Two)];
+        list_stored_constants(&mut ops, &stored, 3);
+        assert_eq!(
+            ops,
+            vec![
+                MosaicOp::BadPixels(
+                    OpcodeList::One,
+                    BadPixels::List {
+                        phase: 1,
+                        points: vec![[0, 1], [1, 0], [1, 1]],
+                        rects: Vec::new(),
+                    }
+                ),
+                constant(OpcodeList::Two),
+            ]
+        );
+    }
+
+    /// A DNG with a first-list constant bad-pixel test and a table:
+    /// the decode lists the photosites whose stored value is the
+    /// constant (none of the table's values is), the develop repairs
+    /// them, and with an identity table the picture is the one the
+    /// constant gives with no table.
+    #[test]
+    fn a_first_list_constant_with_a_table_is_listed_and_repaired() {
+        use crate::opcodes::{BadPixels, MosaicOp, OpcodeList};
+        use ::rawler::dng::opcodes::{FixBadPixelsConstant, Opcode, OpcodeList as RList};
+        let mut raw = a_mosaic(::rawler::rawimage::BlackLevel::new(&[100u16], 1, 1, 1));
+        let RawImageData::Integer(v) = &mut raw.data else {
+            panic!("integer samples")
+        };
+        // Under every other sample, and three halves of it is none.
+        let constant = 555u16;
+        for i in [13usize, 50, 51, 119] {
+            v[i] = constant;
+        }
+        let stored = v.clone();
+        raw.dng_opcodes_1 = Some(RList::new(vec![Opcode::FixBadPixelsConstant(
+            FixBadPixelsConstant {
+                version: 0x01030000,
+                flags: 0,
+                constant: u32::from(constant),
+                bayer_phase: 0,
+            },
+        )]));
+        let identity: Vec<u16> = (0..=4095).collect();
+        let curve: Vec<u16> = (0..4096u32).map(|i| (i * 3 / 2) as u16).collect();
+        let none = decoded_with_table(raw.clone(), None);
+        let same = decoded_with_table(raw.clone(), Some(identity));
+        let mapped = decoded_with_table(raw.clone(), Some(curve));
+        let MosaicOp::BadPixels(OpcodeList::One, BadPixels::List { points, .. }) =
+            &mapped.dng.mosaic[0]
+        else {
+            panic!("not listed: {:?}", mapped.dng.mosaic)
+        };
+        let w = mapped.width;
+        assert_eq!(
+            points,
+            &[13usize, 50, 51, 119].map(|i| [(i / w) as i32, (i % w) as i32])
+        );
+        assert!(stored.iter().filter(|&&s| s == constant).count() == 4);
+        let s = crate::develop::DevelopSettings::default();
+        // The fixture has no matrix: the camera's own space will do.
+        let develop = |f: &RawFrame| {
+            let mut f = f.clone();
+            f.calibrations = vec![Calibration {
+                illuminant: 21,
+                color_matrix: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                forward_matrix: None,
+            }];
+            crate::develop::develop(&f, &s).unwrap().image.data
+        };
+        assert_eq!(
+            develop(&none),
+            develop(&same),
+            "listed as the constant finds them"
+        );
+        let mut unrepaired = mapped.clone();
+        unrepaired.dng.mosaic.clear();
+        assert_ne!(
+            develop(&mapped),
+            develop(&unrepaired),
+            "the listed sites repaired"
+        );
+    }
+
+    /// How a test preview is written wrong, or not.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Spoil {
+        None,
+        /// Its strip past the file's end.
+        Outside,
+        /// A strip of no bytes.
+        Empty,
+        /// A strip of four billion bytes.
+        Absurd,
+        /// Bytes that are not a JPEG.
+        NotJpeg,
+        /// Its tags say twice the JPEG's width.
+        Lying,
+    }
+
+    /// A mosaic DNG with a thumbnail on its root, as Adobe writes one
+    /// (rawler's writer makes it 180 by 120), the raw in its first `SubIFDs` entry, and a JPEG
+    /// preview in one after it of each size given, in that order,
+    /// spoiled as given.
+    fn dng_with_previews(previews: &[(u32, u32, Spoil)]) -> Vec<u8> {
+        use ::rawler::dng::writer::DngWriter;
+        use ::rawler::dng::{
+            CompressionParams, CropMode, DNG_VERSION_V1_4, DngCompression, DngPhotometricConversion,
+        };
+        use ::rawler::formats::tiff::Value;
+        use ::rawler::tags::TiffCommonTag;
+        let raw = a_mosaic(::rawler::rawimage::BlackLevel::new(&[100u16], 1, 1, 1));
+        let mut file = std::io::Cursor::new(Vec::new());
+        let mut dng = DngWriter::new(&mut file, DNG_VERSION_V1_4).unwrap();
+        let picture = |w: u32, h: u32| {
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, h, |x, y| {
+                image::Rgb([(x * 7) as u8, (y * 5) as u8, 128])
+            }))
+        };
+        dng.thumbnail(&picture(48, 32)).unwrap();
+        let mut main = dng.subframe(0);
+        main.raw_image(
+            &raw,
+            CropMode::ActiveArea,
+            DngCompression::Uncompressed,
+            DngPhotometricConversion::Original,
+            &CompressionParams::default(),
+        )
+        .unwrap();
+        main.finalize().unwrap();
+        for &(w, h, spoil) in previews {
+            let mut sub = dng.subframe(1);
+            sub.preview(&picture(w, h), 0.9).unwrap();
+            let ifd = sub.ifd_mut();
+            match spoil {
+                Spoil::None => {}
+                Spoil::Outside => {
+                    ifd.add_tag(TiffCommonTag::StripOffsets, Value::Long(vec![1 << 30]))
+                }
+                Spoil::Empty => ifd.add_tag(TiffCommonTag::StripByteCounts, Value::Long(vec![0])),
+                Spoil::Absurd => {
+                    ifd.add_tag(TiffCommonTag::StripByteCounts, Value::Long(vec![u32::MAX]))
+                }
+                // The raw's own samples, which are not a JPEG.
+                Spoil::NotJpeg => ifd.add_tag(TiffCommonTag::StripOffsets, Value::Long(vec![8])),
+                Spoil::Lying => ifd.add_tag(TiffCommonTag::ImageWidth, Value::Long(vec![w * 2])),
+            }
+            sub.finalize().unwrap();
+        }
+        dng.load_base_tags(&raw).unwrap();
+        dng.close().unwrap();
+        file.into_inner()
+    }
+
+    /// The size of the preview `want` gets of `bytes`.
+    fn preview_size(bytes: &[u8], want: PreviewSize) -> Option<(u32, u32)> {
+        let source = RawSource::new_from_slice(bytes);
+        preview_source(&source, true, want)
+            .unwrap()
+            .map(|(rgb, _)| rgb.dimensions())
+    }
+
+    /// Of a DNG's several previews, the largest is taken whatever their
+    /// order in the file, and for a picture made smaller the smallest at
+    /// its size or past it, else the largest; rawler alone takes the
+    /// first, a thumbnail when the file lists that first.
+    #[test]
+    fn a_dngs_preview_is_picked_by_size_not_order() {
+        use PreviewSize::{AtLeast, Largest};
+        let ok = |w, h| (w, h, Spoil::None);
+        for order in [
+            [ok(40, 30), ok(400, 300), ok(200, 150), ok(96, 64)],
+            [ok(400, 300), ok(96, 64), ok(40, 30), ok(200, 150)],
+            [ok(96, 64), ok(200, 150), ok(400, 300), ok(40, 30)],
+        ] {
+            let bytes = dng_with_previews(&order);
+            assert_eq!(preview_size(&bytes, Largest), Some((400, 300)));
+            assert_eq!(preview_size(&bytes, AtLeast(1)), Some((40, 30)));
+            assert_eq!(preview_size(&bytes, AtLeast(41)), Some((96, 64)));
+            assert_eq!(preview_size(&bytes, AtLeast(96)), Some((96, 64)));
+            assert_eq!(preview_size(&bytes, AtLeast(150)), Some((200, 150)));
+            assert_eq!(preview_size(&bytes, AtLeast(401)), Some((400, 300)));
+        }
+        // A portrait preview is measured on its long edge too.
+        let bytes = dng_with_previews(&[ok(30, 40), ok(150, 200)]);
+        assert_eq!(preview_size(&bytes, AtLeast(41)), Some((150, 200)));
+        assert_eq!(preview_size(&bytes, AtLeast(40)), Some((30, 40)));
+        // rawler's own pick, the first listed.
+        let first = dng_with_previews(&[ok(40, 30), ok(400, 300)]);
+        let source = RawSource::new_from_slice(&first);
+        let decoder = ::rawler::get_decoder(&source).unwrap();
+        let theirs = decoder
+            .preview_image(&source, &RawDecodeParams::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!((theirs.width(), theirs.height()), (40, 30));
+    }
+
+    /// A preview whose strip lies outside the file, is empty or absurdly
+    /// long, is not a JPEG, or is a JPEG of another size than its tags
+    /// say gives way to the next; with none left, the root's thumbnail,
+    /// as rawler reads it, and with no previews at all the same.
+    #[test]
+    fn a_dngs_spoiled_previews_give_way_to_the_next() {
+        use PreviewSize::{AtLeast, Largest};
+        for spoil in [
+            Spoil::Outside,
+            Spoil::Empty,
+            Spoil::Absurd,
+            Spoil::NotJpeg,
+            Spoil::Lying,
+        ] {
+            let bytes = dng_with_previews(&[
+                (40, 30, Spoil::None),
+                (400, 300, spoil),
+                (200, 150, Spoil::None),
+            ]);
+            assert_eq!(preview_size(&bytes, Largest), Some((200, 150)));
+            assert_eq!(preview_size(&bytes, AtLeast(300)), Some((200, 150)));
+            assert_eq!(preview_size(&bytes, AtLeast(10)), Some((40, 30)));
+            let none_good = dng_with_previews(&[(400, 300, spoil)]);
+            assert_eq!(preview_size(&none_good, Largest), Some((180, 120)));
+            // Passed over for its own fault, by the check meant for it.
+            let source = RawSource::new_from_slice(&none_good);
+            let decoder = ::rawler::get_decoder(&source).unwrap();
+            let root = decoder
+                .ifd(::rawler::decoders::WellKnownIFD::Root)
+                .unwrap()
+                .unwrap();
+            let subs = root
+                .get_sub_ifd_all(::rawler::tags::TiffCommonTag::SubIFDs)
+                .unwrap();
+            let width = if spoil == Spoil::Lying { 800 } else { 400 };
+            let why = dng_preview_of(
+                &DngPreview {
+                    ifd: &subs[1],
+                    width,
+                    height: 300,
+                },
+                &source,
+            )
+            .unwrap_err();
+            let said = match spoil {
+                Spoil::Outside | Spoil::Empty | Spoil::Absurd => "a strip of",
+                Spoil::NotJpeg => "not a JPEG",
+                Spoil::Lying => "a JPEG of (400, 300)",
+                Spoil::None => unreachable!(),
+            };
+            assert!(why.starts_with(said), "{why}");
+        }
+        let bare = dng_with_previews(&[]);
+        assert_eq!(preview_size(&bare, Largest), Some((180, 120)));
+        assert_eq!(preview_size(&bare, AtLeast(100)), Some((180, 120)));
+    }
+
+    /// No more than [`MAX_PREVIEWS`] previews are tried, the first
+    /// listed, and entries that share a strip are tried once.
+    #[test]
+    fn a_dngs_previews_are_capped_and_one_a_strip() {
+        let candidates = |bytes: &[u8]| -> Vec<(u32, u32)> {
+            let source = RawSource::new_from_slice(bytes);
+            let decoder = ::rawler::get_decoder(&source).unwrap();
+            let root = decoder
+                .ifd(::rawler::decoders::WellKnownIFD::Root)
+                .unwrap()
+                .unwrap();
+            dng_previews_of(&root)
+                .iter()
+                .map(|p| (p.width, p.height))
+                .collect()
+        };
+        let many: Vec<_> = (1..=40).map(|i| (8 * i, 6 * i, Spoil::None)).collect();
+        let bytes = dng_with_previews(&many);
+        let tried = candidates(&bytes);
+        assert_eq!(tried.len(), MAX_PREVIEWS);
+        assert_eq!(tried[15], (128, 96), "the first listed");
+        // Of the sixteen the largest, not the 40th listed.
+        assert_eq!(preview_size(&bytes, PreviewSize::Largest), Some((128, 96)));
+        // Forty entries at one strip (all past the file's end): one.
+        let shared: Vec<_> = (1..=40).map(|i| (8 * i, 6 * i, Spoil::Outside)).collect();
+        assert_eq!(candidates(&dng_with_previews(&shared)), [(8, 6)]);
+    }
+
+    /// [`preview_path_at_least`] reads the file as [`preview_path`] does
+    /// and picks by the size.
+    #[test]
+    fn a_dngs_preview_by_size_from_its_file() {
+        let dir = std::env::temp_dir().join(format!("greycard-previews-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("several.dng");
+        std::fs::write(
+            &path,
+            dng_with_previews(&[
+                (40, 30, Spoil::None),
+                (400, 300, Spoil::None),
+                (96, 64, Spoil::None),
+            ]),
+        )
+        .unwrap();
+        let largest = preview_path(&path);
+        let small = preview_path_at_least(&path, 50);
+        crate::testing::remove_dir_retry(&dir);
+        assert_eq!(largest.unwrap().unwrap().0.dimensions(), (400, 300));
+        assert_eq!(small.unwrap().unwrap().0.dimensions(), (96, 64));
     }
 
     /// A mosaic DNG's `BlackLevelDeltaH` and `BlackLevelDeltaV` come
@@ -3146,7 +3909,11 @@ mod tests {
             );
             // Our DNG carries no preview; asked for one, the file is
             // read whole once and says so.
-            assert_eq!(preview_counted(&path).unwrap().1, len, "{name}");
+            assert_eq!(
+                preview_counted(&path, PreviewSize::Largest).unwrap().1,
+                len,
+                "{name}"
+            );
             assert!(preview_path(&path).unwrap().is_none(), "{name}");
             let unmapped = RawlerDecoder.decode_path_unmapped(&path).unwrap();
             assert_eq!(
@@ -3394,8 +4161,12 @@ mod tests {
                     );
                 }
             }
-            let (preview, preview_read) = preview_counted(path).unwrap();
-            let expected = guarded(|| None, || preview_source(&whole(), true)).unwrap();
+            let (preview, preview_read) = preview_counted(path, PreviewSize::Largest).unwrap();
+            let expected = guarded(
+                || None,
+                || preview_source(&whole(), true, PreviewSize::Largest),
+            )
+            .unwrap();
             assert_eq!(
                 preview.as_ref().map(|(i, o)| (i.dimensions(), *o)),
                 expected.as_ref().map(|(i, o)| (i.dimensions(), *o)),
