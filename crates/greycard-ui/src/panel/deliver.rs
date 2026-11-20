@@ -1506,6 +1506,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         } => {
             let at = format!("{} of {}", index + 1, set.total);
             let ran = !matches!(done, queue::Done::Canceled);
+            let failed = matches!(done, queue::Done::Failed { .. });
             crate::panel::edit_in::frame_done(&mut state.borrow_mut(), app, &set, &done);
             match done {
                 queue::Done::Exported {
@@ -1554,7 +1555,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
                 queue::Done::Canceled => {}
             }
-            crate::panel::export_queue::frame_done(&mut state.borrow_mut(), &set, index, ran);
+            crate::panel::export_queue::frame_done(
+                &mut state.borrow_mut(),
+                &set,
+                index,
+                ran,
+                failed,
+            );
             crate::panel::queue_view::marks(&state.borrow(), app);
         }
         Outcome::SetDone { set, tally } => {

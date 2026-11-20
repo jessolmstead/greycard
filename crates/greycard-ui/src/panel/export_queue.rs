@@ -36,6 +36,9 @@ pub(crate) struct Run {
     /// The entry's frames done with, by their place in it: written,
     /// skipped or failed. The rest stay queued.
     pub(crate) done: Vec<bool>,
+    /// The ids of the entry's frames done with because they failed:
+    /// their tiles are not marked exported while the set runs.
+    pub(crate) failed: Vec<u64>,
     /// The frames of this run's earlier entries, and of this one, that
     /// were not there to send and were left queued.
     pub(crate) left_behind: usize,
@@ -432,6 +435,7 @@ fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize, whole: 
         set: None,
         at: Vec::new(),
         done: vec![false; checks.len()],
+        failed: Vec::new(),
         left_behind,
         whole,
         probe,
@@ -674,9 +678,16 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
 }
 
 /// Frame `index` of `set` came back; `ran` when it was begun, not
-/// passed over by a cancel. A frame begun is done with, however it
-/// went, and the file says so at once.
-pub(crate) fn frame_done(st: &mut State, set: &Arc<queue::Set>, index: usize, ran: bool) {
+/// passed over by a cancel, and `failed` when it failed. A frame begun
+/// is done with, however it went, and the file says so at once.
+pub(crate) fn frame_done(
+    st: &mut State,
+    set: &Arc<queue::Set>,
+    index: usize,
+    ran: bool,
+    failed: bool,
+) {
+    let id = id_in_run(st, set, index);
     if let Some(run) = st.work.queue_run.as_mut()
         && run.is(set)
         && ran
@@ -684,9 +695,12 @@ pub(crate) fn frame_done(st: &mut State, set: &Arc<queue::Set>, index: usize, ra
         && let Some(d) = run.done.get_mut(i)
     {
         *d = true;
+        if failed && let Some(id) = id {
+            run.failed.push(id);
+        }
         keep(st);
     }
-    if st.work.queue_busy.is_some() && st.work.queue_busy == id_in_run(st, set, index) {
+    if st.work.queue_busy.is_some() && st.work.queue_busy == id {
         st.work.queue_busy = None;
     }
 }

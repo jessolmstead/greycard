@@ -521,7 +521,8 @@ pub(crate) fn show(st: &mut State, app: &App) {
 }
 
 /// The tiles' marks while the queue runs: the frames of the running
-/// entry written so far (the exported mark), and the one the worker
+/// entry written or skipped so far (the exported mark; a failed one
+/// has none), and the one the worker
 /// said it began and has not finished (the running bar). The rest, and
 /// every tile outside the queue's view, carry none.
 pub(crate) fn marks(st: &State, app: &App) {
@@ -533,7 +534,9 @@ pub(crate) fn marks(st: &State, app: &App) {
         let r = refs.get(c).copied().flatten();
         let done = r.is_some_and(|r| {
             run.is_some_and(|run| {
-                run.entry == r.entry && run.done.get(r.frame).copied().unwrap_or(false)
+                run.entry == r.entry
+                    && run.done.get(r.frame).copied().unwrap_or(false)
+                    && !run.failed.contains(&r.id)
             })
         });
         let running = r.is_some_and(|r| busy == Some(r.id));
@@ -981,6 +984,7 @@ mod tests {
             set: None,
             at: Vec::new(),
             done: vec![false; 2],
+            failed: Vec::new(),
             left_behind: 0,
             whole: crate::panel::export_queue::Whole::new(),
             probe: 0,
@@ -1001,6 +1005,103 @@ mod tests {
         take_out(&mut st, &s.app, &[first, second]);
         assert_eq!(st.work.export_queue.len(), 1);
         assert_eq!(st.work.queue_run.as_ref().unwrap().entry, 0);
+        drop(st);
+        teardown(s);
+    }
+
+    /// While its set runs, a frame that failed wears no exported mark on
+    /// its tile, and one written does; at the set's end the failed frame
+    /// has left the queue all the same.
+    #[test]
+    fn a_failed_frame_is_not_marked_exported_while_its_set_runs() {
+        let s = setup("failed-mark", 3);
+        queue(
+            &s,
+            vec![
+                entry(&s, &[0, 1], None, "JPEG"),
+                entry(&s, &[2], None, "PNG"),
+            ],
+        );
+        open(&s);
+        s.app.invoke_export_queue_run();
+        let (failed, written) = {
+            let st = s.state.borrow();
+            let f = &st.work.export_queue[0].frames;
+            (f[0].id, f[1].id)
+        };
+        let done = |index: usize, done: crate::queue::Done| {
+            let (set, source, edit) = {
+                let st = s.state.borrow();
+                let run = st.work.queue_run.as_ref().unwrap();
+                let f = &st.work.export_queue[run.entry].frames[run.at[index]];
+                (
+                    run.set.clone().unwrap(),
+                    run.sent[index].clone(),
+                    f.edit.clone(),
+                )
+            };
+            crate::panel::deliver::deliver(
+                &s.app,
+                crate::worker::Outcome::SetFrameDone {
+                    set,
+                    index,
+                    source,
+                    edit,
+                    version: None,
+                    done,
+                },
+            );
+        };
+        // The tile's exported mark, found by the queued frame's id.
+        let marked = |id: u64| {
+            let st = s.state.borrow();
+            let ids = ids_of_cells(&st);
+            let row = st
+                .views
+                .shown
+                .iter()
+                .position(|&c| ids.get(c).copied().flatten() == Some(id))
+                .expect("the frame has a tile");
+            s.app.get_thumbs().row_data(row).unwrap().queue_done
+        };
+        done(
+            0,
+            crate::queue::Done::Failed {
+                message: "too large".into(),
+            },
+        );
+        done(
+            1,
+            crate::queue::Done::Exported {
+                path: PathBuf::from("/nowhere/IMG_0001.jpg"),
+                seconds: 1.0,
+                note: None,
+                left_out: Vec::new(),
+            },
+        );
+        assert!(!marked(failed), "a failed frame is not marked exported");
+        assert!(marked(written), "a written frame is");
+        let set = s
+            .state
+            .borrow()
+            .work
+            .queue_run
+            .as_ref()
+            .unwrap()
+            .set
+            .clone();
+        let set = set.unwrap();
+        let tally = set.tally();
+        crate::panel::deliver::deliver(&s.app, crate::worker::Outcome::SetDone { set, tally });
+        let st = s.state.borrow();
+        assert_eq!(st.work.export_queue.len(), 1, "the entry is done with");
+        assert!(
+            st.work
+                .export_queue
+                .iter()
+                .all(|e| e.frames.iter().all(|f| f.id != failed)),
+            "the failed frame left the queue"
+        );
         drop(st);
         teardown(s);
     }
