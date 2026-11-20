@@ -87,3 +87,15 @@ on rawler's `RawImage` would let `S` come from the file.
   with highlight tone priority, long exposure noise reduction, dual pixel
   raw, or HDR PQ; a frame of each is still wanted.
 - Only the bodies, shutters, and ISOs of the table get the headroom.
+
+**A third body (2026-11-19).** The EOS 850D (Rebel T8i, Kiss X10i: a
+cell's model now also matches the other names rawler gives the frame's
+own body) clips at 16383 in every channel, harder than the R bodies:
+97 to 99% of each position's top 32 levels sit on 16383 itself, with
+no pile under it. First curtain at ISO 200 is in the table, 0.133
+stops. ISO 100 is not: Canon's white there is at 0.70 of the range,
+so the headroom would be 0.45 stops, three times any other row, and
+no bracket has shown that band linear on this sensor. On one of three
+frames it gave muted lavender in exactly that band (7,370 pixels with
+green under 0.95 of the lesser of red and blue). It waits on a
+bracket. `HEADROOM` is "headroom-3".

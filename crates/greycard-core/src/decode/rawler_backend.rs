@@ -1159,7 +1159,8 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
 /// every channel saturates: the body, one shutter, and the ISOs at
 /// which a blown frame of it was measured.
 pub(crate) struct CanonCell {
-    /// rawler's clean model name.
+    /// rawler's clean model name, or one the body is also sold under
+    /// ([`RawFrame::other_names`]).
     pub model: &'static str,
     /// The ShutterMode code (0 mechanical, 1 electronic first curtain,
     /// 2 electronic).
@@ -1174,6 +1175,7 @@ pub(crate) struct CanonCell {
 
 const R6_II: (i64, i64) = (6000, 4000);
 const R5_II: (i64, i64) = (8192, 5464);
+const EOS_850D: (i64, i64) = (6000, 4000);
 
 /// The captures with headroom over their white. An ISO is in a cell
 /// only when a frame of that body, shutter, and ISO, under a second,
@@ -1189,8 +1191,12 @@ const R5_II: (i64, i64) = (8192, 5464);
 /// green piles and red does not (at the top in 2 of 8 frames at 640,
 /// by at most 11 samples at 800); at none does blue reach it. The four
 /// positions share one converter, so a channel short of the top is
-/// the scenes', and the rule errs toward leaving a frame out.
-pub(crate) const CANON_HEADROOM: [CanonCell; 4] = [
+/// the scenes', and the rule errs toward leaving a frame out. The 850D
+/// (Rebel T8i, Kiss X10i), in live view, from three frames: its white
+/// 14338 at ISO 200, every channel at exactly 16383. Its ISO 100 was
+/// blown in every channel too and is out: the white sits at 0.70 of
+/// the range, 0.45 stops no bracket has shown linear.
+pub(crate) const CANON_HEADROOM: [CanonCell; 5] = [
     CanonCell {
         model: "EOS R6 Mark II",
         shutter: 0,
@@ -1216,6 +1222,12 @@ pub(crate) const CANON_HEADROOM: [CanonCell; 4] = [
         shutter: 2,
         isos: &[100],
         frame: R5_II,
+    },
+    CanonCell {
+        model: "EOS 850D",
+        shutter: 1,
+        isos: &[200],
+        frame: EOS_850D,
     },
 ];
 
@@ -1250,7 +1262,7 @@ pub(crate) fn canon_saturation(
     let exposure = frame.shot.exposure_time?;
     let shutter = modes.shutter?;
     let measured = CANON_HEADROOM.iter().any(|cell| {
-        cell.model == frame.model
+        (cell.model == frame.model || frame.other_names.iter().any(|n| n == cell.model))
             && cell.shutter == shutter
             && cell.isos.contains(&iso)
             && modes
@@ -2322,6 +2334,7 @@ mod tests {
                 ("EOS R6 Mark II", 1, first_curtain, r6),
                 ("EOS R5 Mark II", 1, &[100u32][..], r5),
                 ("EOS R5 Mark II", 2, &[100u32][..], r5),
+                ("EOS 850D", 1, &[200u32][..], (6000, 4000)),
             ]
         );
         assert_eq!(SATURATION_SHARE, SHARE);
@@ -2443,6 +2456,56 @@ mod tests {
         let mut sony = canon_frame("EOS R6 Mark II", 512.0, 14008.0, 100, 0.01);
         sony.make = "Sony".into();
         assert_eq!(canon_saturation(&sony, Some(&r6)), None);
+    }
+
+    /// The 850D is in under each name it is sold by, as rawler reads
+    /// them: first curtain at ISO 200, and no other ISO or shutter. A
+    /// name with no other names behind it is only itself.
+    #[test]
+    fn the_850d_is_in_under_each_of_its_names() {
+        use super::super::style::CanonModes;
+        let fc = plain((6000, 4000));
+        let named = |model: &str, white: f32, iso: u32| {
+            let mut frame = canon_frame(model, 511.0, white, iso, 0.5);
+            frame.other_names = other_names("Canon", model);
+            frame
+        };
+        let top = 511.0 + SHARE * (16383.0 - 511.0);
+        for model in ["EOS 850D", "EOS Rebel T8i", "EOS Kiss X10i"] {
+            assert_eq!(
+                canon_saturation(&named(model, 14338.0, 200), Some(&fc)),
+                Some(top),
+                "{model} 200"
+            );
+            // ISO 100's white sits at 0.70 of the range: 0.45 stops
+            // unverified, lavender in that band on one frame; it waits
+            // on a bracket.
+            assert_eq!(
+                canon_saturation(&named(model, 11606.0, 100), Some(&fc)),
+                None,
+                "{model} 100"
+            );
+            for iso in [125, 160, 250, 400, 800] {
+                assert_eq!(
+                    canon_saturation(&named(model, 14338.0, iso), Some(&fc)),
+                    None,
+                    "{model} {iso}"
+                );
+            }
+            for shutter in [0, 2] {
+                let modes = CanonModes {
+                    shutter: Some(shutter),
+                    ..fc
+                };
+                assert_eq!(
+                    canon_saturation(&named(model, 14338.0, 200), Some(&modes)),
+                    None,
+                    "{model} shutter {shutter}"
+                );
+            }
+        }
+        let alone = canon_frame("EOS Rebel T8i", 511.0, 14338.0, 200, 0.5);
+        assert_eq!(canon_saturation(&alone, Some(&fc)), None);
     }
 
     /// Never a wrong yes: a frame that is in the table in every other

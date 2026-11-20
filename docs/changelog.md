@@ -30,6 +30,9 @@ design note behind it.
   shows as a line on a smooth sky; existing ones render slightly softer
   (issue 182,
   [§718](https://github.com/jessolmstead/greycard/blob/master/docs/notes/718-a-linear-gradient-eases-out-of-both-ends.md)).
+- Canon Rebel T8i (850D) raws at ISO 200 keep the light above Canon's
+  white level too, about an eighth of a stop
+  ([§716](https://github.com/jessolmstead/greycard/blob/master/docs/notes/716-light-between-canons-white-and-its-clip.md)).
 - Canon R6 II and R5 II raws keep the light between Canon's white level
   and the sensor's clip, up to 0.17 stops more highlight
   ([§716](https://github.com/jessolmstead/greycard/blob/master/docs/notes/716-light-between-canons-white-and-its-clip.md)).

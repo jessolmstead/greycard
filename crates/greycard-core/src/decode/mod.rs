@@ -164,7 +164,9 @@ pub fn may_have_headroom(path: &Path) -> bool {
 /// 2: Canon's R6 II and R5 II, at the ISOs, shutters, and full frame
 /// measured blown in every channel and with no capture mode that could
 /// move the clip, trusted to 0.955 of their range, 2026-11-17.
-pub const HEADROOM: &str = "headroom-2";
+/// 3: and the 850D (Rebel T8i, Kiss X10i) first curtain at ISO 200,
+/// 2026-11-19.
+pub const HEADROOM: &str = "headroom-3";
 
 /// Whether the file at `path` is of a kind [`camera_frame_path`] can
 /// find a frame in, by its name alone: what spares every other file a

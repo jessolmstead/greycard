@@ -7395,8 +7395,19 @@ mod tests {
             earlier[1],
             fill_slot_under(root, cr3, &patch, &region, size, window, Some("headroom-1"))
         );
+        assert_eq!(
+            earlier[2],
+            fill_slot_under(root, cr3, &patch, &region, size, window, Some("headroom-2"))
+        );
         assert!(earlier_fill_slots(root, file, &patch, &region, size, window).is_empty());
-        assert_eq!(earlier_headrooms(), [None, Some("headroom-1".to_string())]);
+        assert_eq!(
+            earlier_headrooms(),
+            [
+                None,
+                Some("headroom-1".to_string()),
+                Some("headroom-2".to_string())
+            ]
+        );
         // The print hashes the patch's JSON, which is as it was.
         let json = serde_json::to_string(&patch).unwrap();
         assert!(!json.contains("more"), "{json}");
@@ -8172,12 +8183,12 @@ mod tests {
             .map(|i| i as f32 * 0.001 + 0.1)
             .collect();
         // Fills of the CR3's from before the headroom and from under
-        // headroom-1, in their old slots: let go when the new one is
-        // written.
+        // headroom-1 and headroom-2, in their old slots: let go when the
+        // new one is written.
         let size = (image.width, image.height);
         let root = ai.fills_root().unwrap();
         let earlier = earlier_fill_slots(&root, &file, &patch, &region, size, window);
-        assert_eq!(earlier.len(), 2, "none, and headroom-1");
+        assert_eq!(earlier.len(), 3, "none, headroom-1, and headroom-2");
         let orphans: Vec<PathBuf> = earlier.iter().map(|s| slot_files(s)[1].clone()).collect();
         for orphan in &orphans {
             std::fs::create_dir_all(orphan.parent().unwrap()).unwrap();

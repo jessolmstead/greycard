@@ -1529,6 +1529,10 @@ clears or a tester asks for it.
       2026-11-18)
 - [ ] A relative sync: the change, not the value, applied across the
       selected frames (issue 106)
+- [ ] Canon headroom (§716) on more bodies and ISOs: the 850D at ISO
+      100 holds 0.45 stops and waits on a bracket to show that band
+      linear; any other CR3 body needs a frame blown in every channel
+      a shutter and ISO
 - [ ] Leica in camera match: the film style read from an M's DNG
       (`Maker::Leica`; the maker note's tags are unnamed until frames
       in each style say which is which), fitted against its JPEG or
