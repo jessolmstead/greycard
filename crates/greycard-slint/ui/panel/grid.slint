@@ -458,6 +458,10 @@ export component GridSheet inherits Rectangle {
                         overflow: elide;
                     }
                     if root.import-line == "" && root.sync-note != "": Text {
+                        // A click tries the sync again: a button to a
+                        // screen reader, named by its words.
+                        accessible-role: button;
+                        accessible-action-default => { root.sync-retry(); }
                         text: root.sync-note;
                         color: Theme.text-secondary;
                         font-size: Theme.font-xs;

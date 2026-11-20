@@ -115,6 +115,18 @@ export component SnapshotsSection inherits Section {
                     background: self.part != "" ? Theme.hover : transparent;
                     animate background { duration: Theme.quick; }
                     snapshot-row := TouchArea {
+                        // To a screen reader a button, named by the
+                        // snapshot; its press restores it as a click does.
+                        accessible-role: button;
+                        accessible-label: name;
+                        accessible-enabled: self.enabled;
+                        accessible-action-default => {
+                            if (self.enabled) {
+                                root.restore-pending = i;
+                                restore-wait.running = true;
+                                restore-wait.restart();
+                            }
+                        }
                         mouse-cursor: MouseCursor.pointer;
                         enabled: root.selected >= 0 && root.snapshot-editing != i;
                         pointer-event(e) => {
@@ -142,6 +154,8 @@ export component SnapshotsSection inherits Section {
                         padding-right: Theme.space-1 + Theme.scrollbar-band;
                         spacing: 0px;
                         if root.snapshot-editing == i: LineEdit {
+                            // The snapshot's name, as it is typed.
+                            accessible-label: @tr("Name");
                             text: name;
                             font-size: Theme.font-xs;
                             height: snapshot-box.height - 2px;
@@ -170,6 +184,8 @@ export component SnapshotsSection inherits Section {
                             init => { self.focus(); self.select-all(); }
                         }
                         if root.snapshot-editing != i: Text {
+                            // Said by the control it names.
+                            accessible-role: none;
                             text: name;
                             color: snapshot-box.part != "" ? Theme.text : Theme.text-secondary;
                             font-size: Theme.font-xs;
@@ -276,6 +292,13 @@ export component HistorySection inherits Section {
                         : history-row.has-hover ? Theme.hover : transparent;
                     animate background { duration: Theme.quick; }
                     history-row := TouchArea {
+                        // To a screen reader a button, named by its step,
+                        // the current one chosen.
+                        accessible-role: button;
+                        accessible-label: row.name;
+                        accessible-item-selectable: true;
+                        accessible-item-selected: i == root.history-current;
+                        accessible-action-default => { root.history-clicked(i); }
                         mouse-cursor: MouseCursor.pointer;
                         clicked => { root.history-clicked(i); }
                         changed has-hover => { root.history-hovered(self.has-hover ? i : -1); }
@@ -301,6 +324,8 @@ export component HistorySection inherits Section {
                             }
                         }
                         Text {
+                            // Said by the control it names.
+                            accessible-role: none;
                             text: row.name;
                             // Muted when undone: a step waiting to be
                             // redone, or an export made from one. The

@@ -11,6 +11,12 @@ import { QueueRow } from "../structs.slint";
 // Nine places for a watermark, three by three, one chosen.
 component PositionGrid inherits Rectangle {
     in-out property <string> current;
+    /// The grid's name to a screen reader, and a place's words for it.
+    in property <string> name;
+    pure callback words(string) -> string;
+    accessible-role: radio-group;
+    accessible-label: root.name;
+    accessible-value: root.words(root.current);
     property <[[string]]> rows: [
         ["Top left", "Top", "Top right"],
         ["Left", "Center", "Right"],
@@ -23,6 +29,12 @@ component PositionGrid inherits Rectangle {
         for row in root.rows: HorizontalLayout {
             spacing: 3px;
             for name in row: Rectangle {
+                // Each place a radio button, said in its words.
+                accessible-role: radio-button;
+                accessible-label: root.words(name);
+                accessible-checkable: true;
+                accessible-checked: on;
+                accessible-action-default => { root.current = name; }
                 property <bool> on: name == root.current;
                 width: 22px;
                 height: 16px;
@@ -264,8 +276,9 @@ export component ExportSheet inherits Rectangle {
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text { text: @tr("Preset"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        preset-words := Text { accessible-role: none; text: @tr("Preset"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         presets := ComboBox {
+                            accessible-label: preset-words.text;
                             horizontal-stretch: 1;
                             model: root.export-presets;
                             current-value <=> root.export-preset;
@@ -299,8 +312,9 @@ export component ExportSheet inherits Rectangle {
                     }
                     if root.naming: HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text { text: @tr("Name"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        name-words := Text { accessible-role: none; text: @tr("Name"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         LineEdit {
+                            accessible-label: name-words.text;
                             horizontal-stretch: 1;
                             text <=> root.new-name;
                             // Export sheet: the built-in preset's name
@@ -359,8 +373,9 @@ export component ExportSheet inherits Rectangle {
                         }
                         if root.export-size == "Custom": HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Pixels"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            pixels-words := Text { accessible-role: none; text: @tr("Pixels"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
+                                accessible-label: pixels-words.text;
                                 width: 96px;
                                 text <=> root.export-custom;
                                 placeholder-text: "1600";
@@ -407,8 +422,9 @@ export component ExportSheet inherits Rectangle {
                         // with no chooser; left empty, the chooser asks.
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Subfolder"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            subfolder-words := Text { accessible-role: none; text: @tr("Subfolder"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
+                                accessible-label: subfolder-words.text;
                                 horizontal-stretch: 1;
                                 text <=> root.export-subfolder;
                                 // Export subfolder: none, the folder itself
@@ -428,8 +444,9 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Name"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            name-2-words := Text { accessible-role: none; text: @tr("Name"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
+                                accessible-label: name-2-words.text;
                                 horizontal-stretch: 1;
                                 text <=> root.export-name;
                                 placeholder-text: "{name}";
@@ -457,14 +474,15 @@ export component ExportSheet inherits Rectangle {
                         }
                         if root.export-mark == "Text": HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Text"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            text-words := Text { accessible-role: none; text: @tr("Text"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
+                                accessible-label: text-words.text;
                                 horizontal-stretch: 1;
                                 text <=> root.export-mark-text;
                                 // Export watermark: the text's default, which the user replaces
                                 placeholder-text: @tr("© Your Name");
                             }
-                            Segmented { width: 110px; options: ["White", "Black"]; labels: [@tr("White"), @tr("Black")]; current <=> root.export-mark-color; }
+                            Segmented { width: 110px; name: @tr("Color"); options: ["White", "Black"]; labels: [@tr("White"), @tr("Black")]; current <=> root.export-mark-color; }
                         }
                         if root.export-mark == "Image": HorizontalLayout {
                             spacing: Theme.space-2;
@@ -490,7 +508,13 @@ export component ExportSheet inherits Rectangle {
                                 width: 68px;
                                 alignment: center;
                                 spacing: Theme.space-1;
-                                PositionGrid { current <=> root.export-mark-position; }
+                                PositionGrid {
+                                    // Spoken by a screen reader: the watermark's
+                                    // three by three grid of places
+                                    name: @tr("Position");
+                                    current <=> root.export-mark-position;
+                                    words(place) => { return root.position-words(place); }
+                                }
                                 Text {
                                     text: root.position-words(root.export-mark-position);
                                     color: Theme.text-secondary;
@@ -543,7 +567,9 @@ export component ExportSheet inherits Rectangle {
                         // color both picks it and turns the border on.
                         HorizontalLayout {
                             spacing: 4px;
-                            Text { text: @tr("Border"); width: 68px + Theme.space-2 - 4px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            // The row's word is its radio group to a screen
+                            // reader: the row has no box of its own to be one.
+                            Text { accessible-role: radio-group; accessible-label: self.text; text: @tr("Border"); width: 68px + Theme.space-2 - 4px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             for choice in [
                                 // Export border: no border
                                 { name: "Off", fill: Theme.base, word: @tr("Off"), wide: true },
@@ -554,6 +580,21 @@ export component ExportSheet inherits Rectangle {
                                 // Export border: a border in the canvas shade
                                 { name: "Match", fill: Theme.base, word: @tr("Match"), wide: true },
                             ]: Rectangle {
+                                // Each a radio button to a screen reader,
+                                // said in its words or its color's, in the
+                                // group the row's word, Border, names.
+                                accessible-role: radio-button;
+                                accessible-label: choice.word != "" ? choice.word : root.border-words(choice.name);
+                                accessible-checkable: true;
+                                accessible-checked: on;
+                                accessible-action-default => {
+                                    if (choice.name == "Off") {
+                                        root.export-border = false;
+                                    } else {
+                                        root.export-border = true;
+                                        root.export-border-color = choice.name;
+                                    }
+                                }
                                 property <bool> on: choice.name == "Off" ? !root.export-border
                                     : root.export-border && choice.name == root.export-border-color;
                                 width: choice.wide ? 48px : 24px;
@@ -563,6 +604,7 @@ export component ExportSheet inherits Rectangle {
                                 border-color: on ? Theme.accent : Theme.border-strong;
                                 background: choice.wide && t.has-hover ? Theme.hover : choice.fill;
                                 Text {
+                                    accessible-role: none;
                                     text: choice.word;
                                     color: on ? Theme.text : Theme.text-secondary;
                                     font-size: Theme.font-xs;

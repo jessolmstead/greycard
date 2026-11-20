@@ -501,8 +501,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Scale"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                scale-words := Text { accessible-role: none; text: @tr("Scale"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
+                                    accessible-label: scale-words.text;
                                     width: 96px;
                                     text <=> root.ui-scale;
                                     input-type: number;
@@ -565,10 +566,10 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Language"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                language-words := Text { accessible-role: none; text: @tr("Language"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 ComboBox {
                                     width: 160px;
-                                    accessible-label: @tr("Language");
+                                    accessible-label: language-words.text;
                                     model: root.languages;
                                     current-index <=> root.language-index;
                                     selected => { root.language-changed(); }
@@ -636,6 +637,9 @@ export component SettingsSheet inherits Rectangle {
                                 spacing: Theme.space-2;
                                 Rectangle { width: 68px; }
                                 Segmented {
+                                    // Spoken by a screen reader: the row under Start in
+                                    // that picks the view greycard opens in, Loupe or Library
+                                    name: @tr("Start view");
                                     options: ["Loupe", "Library"];
                                     labels: [@tr("Loupe"), @tr("Library")];
                                     current <=> root.start-view;
@@ -649,8 +653,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Cell size"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                cell-size-words := Text { accessible-role: none; text: @tr("Cell size"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
+                                    accessible-label: cell-size-words.text;
                                     width: 96px;
                                     text <=> root.grid-cell-typed;
                                     input-type: number;
@@ -797,8 +802,9 @@ export component SettingsSheet inherits Rectangle {
                             if root.thumb-cache-on: HorizontalLayout {
                                 spacing: Theme.space-2;
                                 // Thumbnails: before the size field
-                                Text { text: @tr("Keep up to"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                keep-up-to-words := Text { accessible-role: none; text: @tr("Keep up to"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
+                                    accessible-label: keep-up-to-words.text;
                                     width: 96px;
                                     text <=> root.thumb-cache-cap;
                                     placeholder-text: "300";
@@ -810,8 +816,9 @@ export component SettingsSheet inherits Rectangle {
                             }
                             if root.thumb-cache-on: HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Previews up to"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                previews-up-to-words := Text { accessible-role: none; text: @tr("Previews up to"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
+                                    accessible-label: previews-up-to-words.text;
                                     width: 96px;
                                     text <=> root.preview-cache-cap;
                                     placeholder-text: "8192";
@@ -836,8 +843,9 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 // Network folders: before the minutes field
-                                Text { text: @tr("Rescan every"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                rescan-every-words := Text { accessible-role: none; text: @tr("Rescan every"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
+                                    accessible-label: rescan-every-words.text;
                                     width: 96px;
                                     text <=> root.network-poll-minutes;
                                     placeholder-text: "10";
@@ -897,6 +905,9 @@ export component SettingsSheet inherits Rectangle {
                             if root.display-profile == "System" && root.monitors.length > 1: HorizontalLayout {
                                 padding-left: 68px + Theme.space-2;
                                 Segmented {
+                                    // Which of several monitors: under the Monitor row,
+                                    // named by its label, told apart by its value.
+                                    name: monitor-words.text;
                                     options: root.monitors;
                                     current <=> root.display-monitor;
                                     selected(m) => { root.display-changed(); }
@@ -949,6 +960,9 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 padding-left: 68px + Theme.space-2;
                                 intent-row := Segmented {
+                                    // Spoken by a screen reader: the soft proof's rendering intent,
+                                    // Perceptual or Relative
+                                    name: @tr("Intent");
                                     options: ["Perceptual", "Relative"];
                                     labels: [@tr("Perceptual"), @tr("Relative")];
                                     current <=> root.proof-intent;
@@ -1106,8 +1120,9 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 // Editing: the name every export carries
-                                Text { text: @tr("Author"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                author-words := Text { accessible-role: none; text: @tr("Author"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 author-field := LineEdit {
+                                    accessible-label: author-words.text;
                                     horizontal-stretch: 1;
                                     text <=> root.author;
                                     accepted => { root.rights-changed(); }
@@ -1116,8 +1131,9 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 // Editing: the copyright notice every export carries
-                                Text { text: @tr("Copyright"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                copyright-words := Text { accessible-role: none; text: @tr("Copyright"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 copyright-field := LineEdit {
+                                    accessible-label: copyright-words.text;
                                     horizontal-stretch: 1;
                                     text <=> root.copyright;
                                     accepted => { root.rights-changed(); }
@@ -1330,7 +1346,7 @@ export component SettingsSheet inherits Rectangle {
                             if root.settings-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
                                 min-height: settings-path.preferred-height;
-                                Text { text: @tr("Settings"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                settings-row-words := Text { accessible-role: none; text: @tr("Settings"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 settings-path := Text {
                                     text: root.settings-dir;
                                     font-size: Theme.font-sm;
@@ -1338,6 +1354,12 @@ export component SettingsSheet inherits Rectangle {
                                     wrap: char-wrap;
                                     horizontal-stretch: 1;
                                     settings-open := TouchArea {
+                                        // To a screen reader a button, named
+                                        // by the row, that shows the folder.
+                                        accessible-role: button;
+                                        accessible-label: settings-row-words.text;
+                                        accessible-description: settings-path.text;
+                                        accessible-action-default => { root.dir-clicked(0); }
                                         mouse-cursor: MouseCursor.pointer;
                                         clicked => { root.dir-clicked(0); }
                                     }
@@ -1346,7 +1368,7 @@ export component SettingsSheet inherits Rectangle {
                             if root.library-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
                                 min-height: library-path.preferred-height;
-                                Text { text: @tr("Library"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                library-row-words := Text { accessible-role: none; text: @tr("Library"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 library-path := Text {
                                     text: root.library-dir;
                                     font-size: Theme.font-sm;
@@ -1354,6 +1376,12 @@ export component SettingsSheet inherits Rectangle {
                                     wrap: char-wrap;
                                     horizontal-stretch: 1;
                                     library-open := TouchArea {
+                                        // To a screen reader a button, named
+                                        // by the row, that shows the folder.
+                                        accessible-role: button;
+                                        accessible-label: library-row-words.text;
+                                        accessible-description: library-path.text;
+                                        accessible-action-default => { root.dir-clicked(1); }
                                         mouse-cursor: MouseCursor.pointer;
                                         clicked => { root.dir-clicked(1); }
                                     }
@@ -1363,7 +1391,7 @@ export component SettingsSheet inherits Rectangle {
                                 spacing: Theme.space-2;
                                 min-height: caches-path.preferred-height;
                                 // About: the cache folder's row
-                                Text { text: @tr("Caches"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                caches-row-words := Text { accessible-role: none; text: @tr("Caches"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 caches-path := Text {
                                     text: root.caches-dir;
                                     font-size: Theme.font-sm;
@@ -1371,6 +1399,12 @@ export component SettingsSheet inherits Rectangle {
                                     wrap: char-wrap;
                                     horizontal-stretch: 1;
                                     caches-open := TouchArea {
+                                        // To a screen reader a button, named
+                                        // by the row, that shows the folder.
+                                        accessible-role: button;
+                                        accessible-label: caches-row-words.text;
+                                        accessible-description: caches-path.text;
+                                        accessible-action-default => { root.dir-clicked(2); }
                                         mouse-cursor: MouseCursor.pointer;
                                         clicked => { root.dir-clicked(2); }
                                     }
@@ -1380,7 +1414,7 @@ export component SettingsSheet inherits Rectangle {
                                 spacing: Theme.space-2;
                                 min-height: log-path.preferred-height;
                                 // About: the log folder's row
-                                Text { text: @tr("Log"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                log-row-words := Text { accessible-role: none; text: @tr("Log"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 log-path := Text {
                                     text: root.log-dir;
                                     font-size: Theme.font-sm;
@@ -1388,6 +1422,12 @@ export component SettingsSheet inherits Rectangle {
                                     wrap: char-wrap;
                                     horizontal-stretch: 1;
                                     log-open := TouchArea {
+                                        // To a screen reader a button, named
+                                        // by the row, that shows the folder.
+                                        accessible-role: button;
+                                        accessible-label: log-row-words.text;
+                                        accessible-description: log-path.text;
+                                        accessible-action-default => { root.dir-clicked(3); }
                                         mouse-cursor: MouseCursor.pointer;
                                         clicked => { root.dir-clicked(3); }
                                     }

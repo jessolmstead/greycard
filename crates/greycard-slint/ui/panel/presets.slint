@@ -150,6 +150,21 @@ export component PresetsSection inherits Section {
                         ? Theme.hover : transparent;
                     animate background { duration: Theme.quick; }
                     preset-row := TouchArea {
+                        // To a screen reader a button: a group's heading,
+                        // which folds, or a preset, which a press lays
+                        // over the frame as a click does.
+                        accessible-role: button;
+                        accessible-label: row.header && row.group == "" ? PresetWords.favorites : row.text;
+                        accessible-expandable: row.header;
+                        accessible-expanded: row.header && !row.folded;
+                        accessible-enabled: row.header || root.selected >= 0;
+                        accessible-action-default => {
+                            if (row.header) {
+                                root.fold-toggled(row.key);
+                            } else if (root.selected >= 0) {
+                                root.preset-applied(row.index);
+                            }
+                        }
                         property <bool> skip;
                         // With no frame a preset row is not laid over
                         // anything, and still has its menu and star.

@@ -83,8 +83,9 @@ export component CropSection inherits Section {
         }
         HorizontalLayout {
             spacing: Theme.space-2;
-            Text { text: @tr("Aspect"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+            aspect-words := Text { text: @tr("Aspect"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
             aspect-box := ComboBox {
+                accessible-label: aspect-words.text;
                 // Crop aspect choices
                 model: [@tr("Free"), @tr("aspect" => "Original"), "1:1", "3:2", "4:3", "5:4", "16:9", "65:24", @tr("Custom")];
                 current-index: root.aspect-index(root.aspect-name);

@@ -78,12 +78,14 @@ export component ArchiveSheet inherits Rectangle {
                     color: Theme.text-muted;
                     wrap: word-wrap;
                 }
-                Text {
+                to-folder-words := Text {
+                    accessible-role: none;
                     text: @tr("To this folder:");
                     font-size: Theme.font-xs;
                     color: Theme.text-secondary;
                 }
                 LineEdit {
+                    accessible-label: to-folder-words.text;
                     text <=> root.dest;
                     accepted(t) => { root.look-again(); }
                 }

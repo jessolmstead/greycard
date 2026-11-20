@@ -55,7 +55,7 @@ export component TimeShiftSheet inherits Rectangle {
             sheet := VerticalLayout {
                 padding: Theme.space-5;
                 spacing: Theme.space-3;
-                Text {
+                title := Text {
                     text: root.shift-title;
                     font-size: Theme.font-lg;
                     font-weight: Theme.weight-medium;
@@ -68,13 +68,17 @@ export component TimeShiftSheet inherits Rectangle {
                     color: Theme.text-secondary;
                     wrap: word-wrap;
                 }
-                Segmented {
+                // Named by the sheet's title; each field below by the
+                // option it is for.
+                shift-choice := Segmented {
+                    name: title.text;
                     options: ["Shift by", "Set this frame to"];
                     labels: [@tr("Shift by"), @tr("Set this frame to")];
                     current <=> root.shift-mode;
                     selected(o) => { root.shift-edited(); }
                 }
                 if root.shift-mode == "Shift by": LineEdit {
+                    accessible-label: shift-choice.labels[0];
                     text <=> root.shift-delta;
                     placeholder-text: "+1:00:00, 5m, -30s";
                     edited(t) => { root.shift-edited(); }
@@ -84,6 +88,7 @@ export component TimeShiftSheet inherits Rectangle {
                     init => { self.focus(); self.select-all(); }
                 }
                 if root.shift-mode != "Shift by": LineEdit {
+                    accessible-label: shift-choice.labels[1];
                     text <=> root.shift-to;
                     placeholder-text: "2026-09-20 14:05:00";
                     edited(t) => { root.shift-edited(); }

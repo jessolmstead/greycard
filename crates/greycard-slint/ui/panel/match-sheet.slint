@@ -83,7 +83,7 @@ export component MatchSheet inherits Rectangle {
             padding-right: Theme.space-5 + Theme.scrollbar-band;
             padding-bottom: Theme.space-2;
             spacing: Theme.space-3;
-            Text {
+            heading := Text {
                 text: @tr("Fit this camera's look");
                 font-size: Theme.font-lg;
                 font-weight: Theme.weight-medium;
@@ -96,6 +96,8 @@ export component MatchSheet inherits Rectangle {
                 wrap: word-wrap;
             }
             scope := Segmented {
+                // Where the match looks, named by the sheet's heading.
+                name: heading.text;
                 options: root.match-scopes;
                 current <=> root.match-scope;
                 enabled: !root.match-running;

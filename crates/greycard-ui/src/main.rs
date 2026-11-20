@@ -47,6 +47,8 @@ mod scope;
 mod settings;
 mod shared;
 mod sidecars;
+#[cfg(test)]
+mod spoken_names;
 mod stacks;
 mod sync;
 #[cfg(test)]

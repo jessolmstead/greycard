@@ -4113,6 +4113,9 @@ export component App inherits Window {
                     if !root.frozen: Segmented {
                         // The panel's Tab is the window's: no stop here.
                         tab-stop: false;
+                        // Spoken by a screen reader: the Loupe's row of
+                        // Develop, Crop, Masks, and Retouch
+                        name: @tr("Panel tabs");
                         options: ["Develop", "Crop", "Masks", "Retouch"];
                         // The Loupe's mode buttons at the top of the develop panel
                         labels: [@tr("Develop"), @tr("Crop"), @tr("Masks"), @tr("Retouch")];
@@ -5040,6 +5043,7 @@ export component App inherits Window {
                                     choose-display-file => { root.choose-display-file(); }
                                     canvas-choice <=> root.canvas-choice;
                                     canvas-colors: root.canvas-colors;
+                                    canvas-names: root.canvas-names;
                                     canvas-changed => { root.canvas-changed(); }
                                 }
                                 if section == "demosaic" && root.shown-tab == "Develop": DemosaicSection {

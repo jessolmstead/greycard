@@ -180,6 +180,10 @@ export component CarryList inherits VerticalLayout {
                     y: 1px;
                     width: parent.width - 3px;
                     height: parent.height - 2px;
+                    // Spoken by a screen reader: the sync sheet's row that
+                    // replaces the masks or adds to them, as "Edits go" names
+                    // where edits are kept
+                    name: @tr("Masks go");
                     options: ["Replace masks", "Add to masks"];
                     // Sync sheet: how the masks go across
                     labels: [@tr("Replace masks"), @tr("Add to masks")];

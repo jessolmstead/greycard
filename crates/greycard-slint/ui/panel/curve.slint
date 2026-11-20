@@ -46,6 +46,7 @@ export component CurvesSection inherits Section {
     Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
+        name: @tr("Curves");
         options: ["Parametric", "Point"];
         labels: [@tr("Parametric"), @tr("Point")];
         equal-width: true;
@@ -55,6 +56,8 @@ export component CurvesSection inherits Section {
     if root.curve-mode == "Point": Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
+        // Spoken by a screen reader: the point curve's row of channels
+        name: @tr("Channel");
         options: ["RGB", "Red", "Green", "Blue", "R/G", "B/Y"];
         labels: ["RGB", @tr("Red"), @tr("Green"), @tr("Blue"), "R/G", "B/Y"];
         current <=> root.curve-channel;

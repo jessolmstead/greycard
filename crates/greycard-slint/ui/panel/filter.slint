@@ -51,6 +51,8 @@ component Chip inherits Rectangle {
             y: (parent.height - self.height) / 2;
         }
         if root.text != "": Text {
+            // Said once, by the chip.
+            accessible-role: none;
             text: root.text;
             color: root.out ? Theme.warn-red : root.on ? Theme.text : Theme.text-secondary;
             font-size: Theme.font-xs;
@@ -58,6 +60,8 @@ component Chip inherits Rectangle {
             vertical-alignment: center;
         }
         if root.shows-count: Text {
+            // Said by the control it names.
+            accessible-role: none;
             text: root.count;
             color: Theme.text-muted;
             font-size: Theme.font-xs;
@@ -74,11 +78,29 @@ component Chip inherits Rectangle {
         }
         clicked => { root.clicked(self.ctrl); }
     }
+    /// Its name to a screen reader: its words, or for a chip with none
+    /// (a color label's) what its color is called.
+    in property <string> name: root.text;
+    // To a screen reader a button, on or off, with the frames it would
+    // leave as its value; its press ticks it as a plain click does.
+    accessible-role: button;
+    accessible-label: root.name;
+    accessible-checkable: true;
+    accessible-checked: root.on;
+    accessible-value: root.shows-count ? root.count : "";
+    accessible-action-default => { root.clicked(false); }
 }
 
 // A label chip, which says its color rather than its name.
 component LabelChip inherits Chip {
     in property <int> label-code;
+    name: root.text != "" ? root.text
+        : root.label-code == 1 ? @tr("Red")
+        : root.label-code == 2 ? @tr("Yellow")
+        : root.label-code == 3 ? @tr("Green")
+        : root.label-code == 4 ? @tr("Blue")
+        : root.label-code == 5 ? @tr("Purple")
+        : "";
     has-dot: true;
     outlined: root.label-code == 0;
     dot: root.label-code == 1 ? Theme.label-red
@@ -629,6 +651,8 @@ export component FilterBar inherits Rectangle {
                 text <=> root.text;
                 // Filter bar's search hint; camera: and iso>= stay English
                 placeholder-text: @tr("Name, keyword, or camera:R6 iso>=3200");
+                // Named as its hint says.
+                accessible-label: self.placeholder-text;
                 // Wide enough for a few words and no wider: a field
                 // the width of the window reads as the header rather
                 // than as one control in it. In the header it gives

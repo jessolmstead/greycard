@@ -202,6 +202,14 @@ export component AdjustmentsList inherits Section {
                             padding-right: Theme.space-1 + Theme.scrollbar-band;
                             spacing: Theme.space-2;
                             if i > 0: Rectangle {
+                                // To a screen reader the mask's switch,
+                                // named by the mask, as a section's is
+                                // by its title.
+                                accessible-role: switch;
+                                accessible-label: name;
+                                accessible-checkable: true;
+                                accessible-checked: lit;
+                                accessible-action-default => { root.adjustment-toggled(i - 1); }
                                 width: 14px;
                                 Rectangle {
                                     width: 8px;
@@ -222,6 +230,8 @@ export component AdjustmentsList inherits Section {
                                 }
                             }
                             Text {
+                                // Said by the control it names.
+                                accessible-role: none;
                                 text: name;
                                 color: !lit ? Theme.text-secondary : on ? Theme.text : Theme.text-secondary;
                                 font-size: Theme.font-xs;
@@ -460,6 +470,13 @@ export component AdjustmentsSection inherits Section {
                         background: on ? Theme.selection : (shape-row.has-hover ? Theme.hover : transparent);
                         animate background { duration: Theme.quick; }
                         shape-row := TouchArea {
+                            // To a screen reader a button, named by the
+                            // shape, chosen or not.
+                            accessible-role: button;
+                            accessible-label: name;
+                            accessible-item-selectable: true;
+                            accessible-item-selected: on;
+                            accessible-action-default => { root.component-changed(i); }
                             mouse-cursor: MouseCursor.pointer;
                             clicked => { root.component-changed(i); }
                         }
@@ -469,6 +486,11 @@ export component AdjustmentsSection inherits Section {
                             spacing: Theme.space-2;
                             // The shape's switch, as an adjustment's.
                             Rectangle {
+                                accessible-role: switch;
+                                accessible-label: name;
+                                accessible-checkable: true;
+                                accessible-checked: lit;
+                                accessible-action-default => { root.shape-toggled(i); }
                                 width: 14px;
                                 Rectangle {
                                     width: 8px;
@@ -484,6 +506,8 @@ export component AdjustmentsSection inherits Section {
                                 }
                             }
                             Text {
+                                // Said by the control it names.
+                                accessible-role: none;
                                 text: name;
                                 color: !lit ? Theme.text-secondary : on ? Theme.text : Theme.text-secondary;
                                 opacity: lit ? 1.0 : 0.5;
@@ -720,7 +744,7 @@ export component AdjustmentsSection inherits Section {
                                 primary: root.picking == "Range";
                                 clicked => { root.pick-started("Range"); }
                             }
-                            Text {
+                            sample-words := Text {
                                 // Color range: the button that reads a color off the picture
                                 text: @tr("Sample");
                                 color: Theme.text-secondary;
@@ -732,6 +756,7 @@ export component AdjustmentsSection inherits Section {
                             Segmented {
                                 // The panel's Tab is the window's: no stop here.
                                 tab-stop: false;
+                                name: sample-words.text;
                                 options: ["5", "11", "21", "41"];
                                 current: root.range-sample;
                                 picks: false;
@@ -860,6 +885,7 @@ export component AdjustmentsSection inherits Section {
                 Segmented {
                     // The panel's Tab is the window's: no stop here.
                     tab-stop: false;
+                    name: @tr("Brush");
                     options: ["Add", "Subtract", "Erase"];
                     // Brush: what a stroke does
                     labels: [@tr("Add"), @tr("Subtract"), @tr("Erase")];
@@ -895,9 +921,8 @@ export component AdjustmentsSection inherits Section {
                     if root.component-names.length > 0: Segmented {
                         // The panel's Tab is the window's: no stop here.
                         tab-stop: false;
-                        accessible-role: button;
-                        // Spoken by a screen reader: the shape mode button
-                        accessible-label: @tr("Next shape mode");
+                        // Spoken by a screen reader: the shape mode row
+                        name: @tr("Next shape mode");
                         options: ["Add", "Subtract", "Intersect"];
                         // Shape mode: the shape cuts the mask down to where both are
                         labels: [@tr("Add"), @tr("Subtract"), @tr("Intersect")];

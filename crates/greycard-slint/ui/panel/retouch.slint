@@ -127,18 +127,13 @@ export component RetouchSection inherits Section {
     if root.fill-shown: Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
+        name: @tr("Fill");
         options: ["Patch", "Fast", "Best"];
         labels: [@tr("Patch"), @tr("Fast"), @tr("Best")];
         tips: [@tr("From the picture around it, at once"), @tr("The remove in four steps: quicker, rougher on large areas"), @tr("The remove in full")];
         why-not: root.fill-why-not;
         current: root.fill-choice;
         picks: false;
-        accessible-role: list;
-        // Spoken as the label shown.
-        accessible-value: self.current == "Patch" ? @tr("Patch")
-            : self.current == "Fast" ? @tr("Fast")
-            : self.current == "Best" ? @tr("Best")
-            : self.current;
         selected(c) => { root.fill-chosen(c); }
     }
     // The Fill's strokes are painted first and made here, or by Enter.
@@ -166,6 +161,13 @@ export component RetouchSection inherits Section {
                 // The row's buttons inside it, so the row keeps its
                 // hover over them.
                 prow := TouchArea {
+                    // To a screen reader a button, named by the patch,
+                    // chosen or not.
+                    accessible-role: button;
+                    accessible-label: name;
+                    accessible-item-selectable: true;
+                    accessible-item-selected: on;
+                    accessible-action-default => { root.patch-changed(i); }
                     mouse-cursor: MouseCursor.pointer;
                     changed has-hover => {
                         if (self.has-hover) {

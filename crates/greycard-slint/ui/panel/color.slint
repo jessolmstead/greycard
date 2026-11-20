@@ -5,6 +5,13 @@ import { Theme } from "../theme.slint";
 import { Section, EditSlider, Steps, Toggle, PanelButton, Segmented, CurveEditor, Swatches } from "../controls.slint";
 import { WheelGuide } from "../structs.slint";
 
+// The mixer's eight bands, red round to magenta, in words: what a
+// screen reader says for each swatch of the mixer and the black and
+// white, which show only their colors.
+global BandWords {
+    out property <[string]> names: [@tr("Red"), @tr("Orange"), @tr("Yellow"), @tr("Green"), @tr("Aqua"), @tr("Blue"), @tr("Purple"), @tr("Magenta")];
+}
+
 export component WhiteBalanceSection inherits Section {
     in-out property <bool> as-shot;
     in-out property <bool> collapsed-wb;
@@ -312,6 +319,8 @@ export component MixerSection inherits Section {
     superseded: root.mixer-superseded;
     switched => { root.view-changed(); }
     Swatches {
+        name: @tr("Color");
+        names: BandWords.names;
         colors: root.band-colors;
         enabled: root.mixer-acts;
         current <=> root.mixer-band;
@@ -425,6 +434,9 @@ export component BlackWhiteSection inherits Section {
     Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
+        // Spoken by a screen reader: the black and white's row of
+        // color filters
+        name: @tr("Filter");
         options: ["None", "Red", "Orange", "Yellow", "Green", "Blue"];
         // Black & white: the color filters, None for no filter
         labels: [@tr("None"), @tr("Red"), @tr("Orange"), @tr("Yellow"), @tr("Green"), @tr("Blue")];
@@ -433,6 +445,8 @@ export component BlackWhiteSection inherits Section {
     }
     Rectangle { height: Theme.space-2; }
     Swatches {
+        name: @tr("Color");
+        names: BandWords.names;
         colors: root.band-colors;
         enabled: root.bw-enabled;
         current <=> root.bw-band;

@@ -134,7 +134,7 @@ export component LightSection inherits Section {
     }
     if root.show-display-curve: VerticalLayout {
         spacing: 4px;
-        Text {
+        display-curve-words := Text {
             text: @tr("Display curve");
             color: root.display-curve-inert ? Theme.text-muted : Theme.text;
             font-size: Theme.font-sm;
@@ -143,6 +143,7 @@ export component LightSection inherits Section {
         display-curve-choice := Segmented {
             // The panel's Tab is the window's: no stop here.
             tab-stop: false;
+            name: display-curve-words.text;
             options: ["Per channel", "AgX"];
             labels: [@tr("Per channel"), "AgX"];
             enabled: !root.display-curve-inert;
@@ -209,6 +210,7 @@ export component NoiseSection inherits Section {
         Segmented {
             // The panel's Tab is the window's: no stop here.
             tab-stop: false;
+            name: @tr("Denoise");
             options: root.learned-unavailable == "" ? root.denoise-tiers
                 : root.denoise-learned == "off" ? ["off"] : ["off", root.denoise-learned];
             // The tiers' names are the values; only the "off" this side
@@ -264,6 +266,7 @@ export component NoiseSection inherits Section {
         Segmented {
             // The panel's Tab is the window's: no stop here.
             tab-stop: false;
+            name: @tr("Denoise");
             options: root.denoise-tiers;
             enabled: root.unavailable == "" && !root.merging;
             current <=> root.again-tier;
@@ -602,7 +605,7 @@ export component VignetteSection inherits Section {
     VerticalLayout {
         spacing: 4px;
         padding-top: Theme.space-1;
-        Text {
+        vignette-place-words := Text {
             // Vignette: where it acts, the scene or the picture
             text: @tr("Style");
             color: Theme.text;
@@ -612,6 +615,7 @@ export component VignetteSection inherits Section {
         vignette-place-choice := Segmented {
             // The panel's Tab is the window's: no stop here.
             tab-stop: false;
+            name: vignette-place-words.text;
             options: ["Scene", "Display"];
             // Vignette: a falloff in the scene; laid over the picture
             labels: [@tr("Exposure"), @tr("Overlay")];
@@ -663,6 +667,7 @@ export component GrainSection inherits Section {
     Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
+        name: @tr("Type");
         options: ["Cubic", "Tabular"];
         // Grain: the two kinds of grain
         labels: [@tr("Cubic"), @tr("Tabular")];
@@ -690,6 +695,7 @@ export component DemosaicSection inherits Section {
     if root.raw-input: Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
+        name: @tr("Demosaic");
         options: root.demosaics;
         enabled: root.menu-hint == "";
         current <=> root.demosaic;

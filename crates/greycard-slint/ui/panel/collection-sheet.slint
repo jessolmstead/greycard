@@ -53,7 +53,7 @@ export component CollectionSheet inherits Rectangle {
             sheet := VerticalLayout {
                 padding: Theme.space-5;
                 spacing: Theme.space-3;
-                Text {
+                heading := Text {
                     text: root.title;
                     font-size: Theme.font-lg;
                     font-weight: Theme.weight-medium;
@@ -67,6 +67,8 @@ export component CollectionSheet inherits Rectangle {
                     wrap: word-wrap;
                 }
                 if root.asks-name: LineEdit {
+                    // Named by the sheet's heading, which asks for it.
+                    accessible-label: heading.text;
                     text <=> root.name;
                     placeholder-text: root.placeholder;
                     accepted(t) => { root.done(); }

@@ -1504,6 +1504,10 @@ export component Viewport inherits Rectangle {
             height: 100%;
         }
         sync-text := Text {
+            // A click tries the sync again: a button to a screen
+            // reader, named by its words.
+            accessible-role: button;
+            accessible-action-default => { root.sync-retry(); }
             visible: root.sync-note != "";
             text: root.sync-note;
             color: Theme.over-text-secondary;

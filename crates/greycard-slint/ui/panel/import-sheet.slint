@@ -114,13 +114,15 @@ export component ImportSheet inherits Rectangle {
                         padding-right: Theme.space-5 + Theme.scrollbar-band;
                         padding-bottom: Theme.space-2;
                         spacing: Theme.space-2;
-                        Text {
+                        heading := Text {
                             text: @tr("Import");
                             font-size: Theme.font-lg;
                             font-weight: Theme.weight-medium;
                             color: Theme.text;
                         }
                         Segmented {
+                            // Named by the sheet's heading: how to import.
+                            name: heading.text;
                             options: ["Copy", "Add in place"];
                             // Import sheet: copy the files in, or add them where they are
                             labels: [@tr("Copy"), @tr("Add in place")];
@@ -184,8 +186,9 @@ export component ImportSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 // Import sheet: the subfolder pattern row
-                                Text { text: @tr("Folders"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                folders-words := Text { accessible-role: none; text: @tr("Folders"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
+                                    accessible-label: folders-words.text;
                                     horizontal-stretch: 1;
                                     text <=> root.import-subfolder;
                                     // Import sheet: the subfolder pattern when it is empty
@@ -194,8 +197,9 @@ export component ImportSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Name"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                name-words := Text { accessible-role: none; text: @tr("Name"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
+                                    accessible-label: name-words.text;
                                     horizontal-stretch: 1;
                                     text <=> root.import-name;
                                     placeholder-text: "{name}";
@@ -223,8 +227,9 @@ export component ImportSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: @tr("Preset"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                preset-words := Text { accessible-role: none; text: @tr("Preset"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 ComboBox {
+                                    accessible-label: preset-words.text;
                                     horizontal-stretch: 1;
                                     model: root.import-presets;
                                     current-value <=> root.import-preset;

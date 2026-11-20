@@ -60,6 +60,8 @@ export component PresetSheet inherits Rectangle {
                 preset-name-edit := LineEdit {
                     text <=> root.preset-name;
                     placeholder-text: @tr("Name");
+                    // Named as its hint says.
+                    accessible-label: self.placeholder-text;
                     accepted(t) => { root.preset-saved(); }
                     init => { self.focus(); }
                 }

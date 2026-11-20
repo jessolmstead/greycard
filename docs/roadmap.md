@@ -570,6 +570,10 @@ comes across with its ratings and collections.
       and Page Down with a handle focused change the frame; both
       handles say one label to a screen reader; `mm<=35` typed is a
       word, not a term
+- [ ] Left for a screen reader: grid and strip cells cannot be
+      pressed; the curve editor, crop handles, and pane edges have no
+      role; popup menus are unwalked; a filter chip held out says
+      "not checked"; the panel's rows say their label twice
 - [ ] Several values of one number field in the filter text,
       `focal:35,85` or `iso:400,800,1600`, for the picks a range
       cannot make (two primes, full stops only); how a range shows

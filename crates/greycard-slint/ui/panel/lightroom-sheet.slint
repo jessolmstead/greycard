@@ -284,13 +284,15 @@ export component LightroomSheet inherits Rectangle {
                     spacing: Theme.space-2;
                     HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text {
+                        set-words := Text {
+                            accessible-role: none;
                             text: @tr("Collection set");
                             color: Theme.text;
                             font-size: Theme.font-sm;
                             vertical-alignment: center;
                         }
                         LineEdit {
+                            accessible-label: set-words.text;
                             horizontal-stretch: 1;
                             text <=> root.lr-set;
                             placeholder-text: @tr("None: the collections at the top");

@@ -513,6 +513,15 @@ export component Section inherits VerticalLayout {
         background: root.lit ? Theme.hover : transparent;
         animate background { duration: Theme.quick; }
         row := TouchArea {
+            // To a screen reader the fold: a button named by the
+            // section's title, open or folded, whose press folds it as
+            // a click does.
+            accessible-role: button;
+            accessible-label: root.title;
+            accessible-expandable: true;
+            accessible-expanded: !root.collapsed;
+            accessible-action-default => { root.fold-clicked(); }
+            accessible-action-expand => { if (root.collapsed) { root.fold-clicked(); } }
             mouse-cursor: root.reorder-dragging ? MouseCursor.grabbing : MouseCursor.pointer;
             pointer-event(e) => { root.reorder-press(e, self.absolute-position.y + self.mouse-y); }
             moved => { root.reorder-motion(self.absolute-position.x + self.mouse-x,
@@ -2329,8 +2338,11 @@ export component Segmented inherits Rectangle {
     /// never gives it the keys, so the window's arrows stay the
     /// window's after one.
     in property <bool> tab-stop: true;
-    /// The row's name to a screen reader, as the words beside it say
-    /// it; empty for a row with none.
+    /// The row's name to a screen reader: the words beside it, bound
+    /// to that `Text`'s own, or a word of its own for a row with none.
+    /// Every row has one: a screen reader would say its options with
+    /// nothing to tell what they choose, and the window's walk of its
+    /// controls fails on a row without (`spoken_names`).
     in property <string> name;
     callback selected(string);
     /// Whether it has the keys.
@@ -2413,6 +2425,15 @@ export component Segmented inherits Rectangle {
             }
             return ButtonKeys.pass(e) ? accept : reject;
         }
+    }
+    // A row off the walk is a radio group to a screen reader all the
+    // same, named once, here, as the scope names a stop's. The Cull
+    // button, one option with no name, is a button and no group; a row
+    // down to one option (the denoise tiers' off alone) is its group.
+    if !root.tab-stop && (root.options.length > 1 || root.name != ""): Rectangle {
+        accessible-role: radio-group;
+        accessible-label: root.name;
+        accessible-value: root.spoken;
     }
     HorizontalLayout {
         padding: root.padded ? 3px : 0px;
@@ -2560,11 +2581,26 @@ export component Swatches inherits Rectangle {
     // A hairline round each swatch, for shades one of which may be the
     // ground's own (a canvas grey on a section's box).
     in property <bool> ringed: false;
+    /// The row's name to a screen reader, as `Segmented`'s, and each
+    /// swatch's words by index: a color is nothing it can say.
+    in property <string> name;
+    in property <[string]> names;
     callback selected(int);
     height: Theme.control-height;
+    accessible-role: radio-group;
+    accessible-label: root.name;
+    accessible-value: root.current < root.names.length ? root.names[root.current] : "";
     HorizontalLayout {
         spacing: Theme.space-1;
         for color[i] in root.colors: Rectangle {
+            accessible-role: radio-button;
+            accessible-label: i < root.names.length ? root.names[i] : "";
+            accessible-checkable: true;
+            accessible-checked: on;
+            accessible-enabled: root.enabled;
+            accessible-action-default => {
+                if (root.enabled) { Typing.close-all(); root.current = i; root.selected(i); }
+            }
             property <bool> on: i == root.current;
             // A pale swatch (the white canvas) under a ring of the
             // text's color would show none on a dark theme.
@@ -2695,7 +2731,14 @@ export component ClipMark inherits Rectangle {
     in property <bool> lit;
     in property <color> mark;
     in property <bool> on;
+    /// Its name to a screen reader: which end's warning it turns.
+    in property <string> label;
     callback clicked();
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.on;
+    accessible-action-default => { root.clicked(); }
     width: 16px;
     height: 16px;
     border-radius: Theme.radius-sm;

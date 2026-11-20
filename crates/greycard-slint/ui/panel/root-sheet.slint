@@ -44,7 +44,7 @@ export component RootSheet inherits Rectangle {
             sheet := VerticalLayout {
                 padding: Theme.space-5;
                 spacing: Theme.space-3;
-                Text {
+                heading := Text {
                     text: @tr("Name this library folder");
                     font-size: Theme.font-lg;
                     font-weight: Theme.weight-medium;
@@ -57,6 +57,8 @@ export component RootSheet inherits Rectangle {
                     wrap: word-wrap;
                 }
                 LineEdit {
+                    // Named by the sheet's heading, which asks for it.
+                    accessible-label: heading.text;
                     text <=> root.name;
                     placeholder-text: root.folder;
                     accepted(t) => { root.done(); }

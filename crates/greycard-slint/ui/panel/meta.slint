@@ -252,6 +252,10 @@ export component MetaSection inherits Section {
                     overflow: elide;
                 }
                 row := TouchArea {
+                    // To a screen reader a button, named by its word.
+                    accessible-role: button;
+                    accessible-label: word;
+                    accessible-action-default => { root.take(i); keyword-field.focus(); }
                     mouse-cursor: MouseCursor.pointer;
                     clicked => { root.take(i); keyword-field.focus(); }
                 }
