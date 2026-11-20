@@ -1239,15 +1239,21 @@ fn label_text(app: &App, label: &str) -> ElementHandle {
         .unwrap_or_else(|| panic!("the {label:?} label"))
 }
 
-/// A slider's label column and its track's width, as laid out:
-/// from the label's left to the track, and from there to the value
-/// field less the gap before it.
-fn slider_parts(app: &App, label: &str) -> (f32, f32) {
-    let (at, size) = crate::testing::labeled(app, label);
-    let text = label_text(app, label);
-    let field = ElementHandle::find_by_accessible_label(app, &format!("{label} value"))
-        .next()
-        .unwrap_or_else(|| panic!("{label}'s value"));
+/// The part `part` (as `EditSlider::label-words`) of the slider `id`.
+fn slider_part(app: &App, id: &str, part: &str) -> ElementHandle {
+    ElementHandle::find_by_element_id(app, id)
+        .find_map(|e| e.query_descendants().match_id(part).find_first())
+        .unwrap_or_else(|| panic!("{id}'s {part}"))
+}
+
+/// The slider `id`'s label column and its track's width, as laid
+/// out: from the label's left to the track, and from there to the
+/// value field less the gap before it.
+fn slider_parts(app: &App, id: &str) -> (f32, f32) {
+    let (at, size) = crate::testing::by_id(app, id);
+    let text = slider_part(app, id, "EditSlider::label-words");
+    let field = slider_part(app, id, "EditSlider::field");
+    let label = id;
     assert_eq!(text.absolute_position().x, at.x, "{label}");
     let column = text.size().width + GAP;
     let track = field.absolute_position().x - GAP - (at.x + column);
@@ -1275,34 +1281,38 @@ fn a_wider_panel_widens_the_labels_first() {
     let app = loupe();
     let column = |app: &App| app.global::<crate::LabelColumn>().get_width();
     assert_eq!(column(&app), REST);
-    let (label, track) = slider_parts(&app, "Roundness");
+    let (label, track) = slider_parts(&app, ROUNDNESS_SLIDER);
     assert_eq!(label, REST);
     // The narrowest panel gives the labels' extra back, then takes
     // its room from the tracks.
     right_at(&app, 280.0);
     assert_eq!(column(&app), LEAST);
-    assert_eq!(slider_parts(&app, "Roundness"), (LEAST, track - 40.0));
+    assert_eq!(slider_parts(&app, ROUNDNESS_SLIDER), (LEAST, track - 40.0));
     // Wider: the labels first.
     for (panel, label) in [(344.0, 92.0), (FROM + MOST - LEAST, MOST)] {
         right_at(&app, panel);
         assert_eq!(column(&app), label, "at {panel}");
         assert_eq!(
-            slider_parts(&app, "Roundness"),
+            slider_parts(&app, ROUNDNESS_SLIDER),
             (label, track),
             "at {panel}"
         );
-        assert_eq!(slider_parts(&app, "Exposure"), (label, track), "at {panel}");
+        assert_eq!(
+            slider_parts(&app, "LightSection::exposure"),
+            (label, track),
+            "at {panel}"
+        );
     }
     // Past the cap, the tracks.
     right_at(&app, 420.0);
     assert_eq!(column(&app), MOST);
     let grown = 420.0 - FROM - (MOST - LEAST);
-    assert_eq!(slider_parts(&app, "Roundness"), (MOST, track + grown));
+    assert_eq!(slider_parts(&app, ROUNDNESS_SLIDER), (MOST, track + grown));
     // As wide as the window lets it, a third of it.
     right_at(&app, W / 3.0);
     assert_eq!(column(&app), MOST);
     let grown = W / 3.0 - FROM - (MOST - LEAST);
-    assert_eq!(slider_parts(&app, "Roundness"), (MOST, track + grown));
+    assert_eq!(slider_parts(&app, ROUNDNESS_SLIDER), (MOST, track + grown));
     // The Crop tab's rows with a control keep to the same column.
     app.set_panel_tab("Crop".into());
     settle(&app);
@@ -1323,13 +1333,13 @@ fn a_wider_panel_widens_the_labels_first() {
 fn roundness_is_whole_from_a_324_px_panel() {
     const ROUNDNESS: f32 = 62.6;
     let app = loupe();
-    let (label, _) = slider_parts(&app, "Roundness");
+    let (label, _) = slider_parts(&app, ROUNDNESS_SLIDER);
     assert!(label - GAP >= ROUNDNESS, "whole at the default: {label}");
     right_at(&app, 320.0);
-    let (label, _) = slider_parts(&app, "Roundness");
+    let (label, _) = slider_parts(&app, ROUNDNESS_SLIDER);
     assert!(label - GAP < ROUNDNESS, "cut at 320");
     right_at(&app, 324.0);
-    let (label, _) = slider_parts(&app, "Roundness");
+    let (label, _) = slider_parts(&app, ROUNDNESS_SLIDER);
     assert!(label - GAP >= ROUNDNESS, "whole at 324: {label}");
 }
 
@@ -1354,6 +1364,9 @@ fn a_kept_width_sets_the_column_at_the_start() {
     assert_eq!(app.global::<crate::LabelColumn>().get_width(), MOST);
 }
 
+/// The vignette's Roundness slider's id.
+const ROUNDNESS_SLIDER: &str = "VignetteSection::roundness-slider";
+
 /// The export sheet keeps its own 68 px column, however wide the
 /// panel.
 #[test]
@@ -1363,7 +1376,16 @@ fn the_export_sheet_keeps_its_column() {
     app.set_export_open(true);
     settle(&app);
     settle(&app);
-    assert_eq!(label_text(&app, "Quality").size().width, LEAST - GAP);
+    assert_eq!(
+        slider_part(
+            &app,
+            "ExportSheet::quality-slider",
+            "EditSlider::label-words"
+        )
+        .size()
+        .width,
+        LEAST - GAP
+    );
     // The row's words, which its choice says to a screen reader.
     let format = ElementHandle::find_by_element_id(&app, "ExportSheet::format-words")
         .next()

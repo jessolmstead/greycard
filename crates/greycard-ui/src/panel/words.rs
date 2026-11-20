@@ -808,7 +808,7 @@ mod tests {
         assert_eq!(state.borrow().sidecars[0].meta.rating, 2);
         assert!(keywords_of(&state.borrow(), 0).is_empty());
 
-        let (at, size) = testing::labeled(&app, "Add keywords");
+        let (at, size) = testing::by_id(&app, "MetaSection::keyword-field");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         type_text(&app, "sea");
         assert_eq!(app.get_keyword_text(), "sea");
@@ -834,12 +834,12 @@ mod tests {
             "the keys are back"
         );
 
-        let (at, size) = testing::labeled(&app, "Frame title");
+        let (at, size) = testing::by_id(&app, "MetaSection::title-field");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         type_text(&app, "Dusk");
         press(&app, Key::Return);
         assert_eq!(state.borrow().sidecars[0].meta.title, "Dusk");
-        let (at, size) = testing::labeled(&app, "Frame title");
+        let (at, size) = testing::by_id(&app, "MetaSection::title-field");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         type_text(&app, "x");
         press(&app, Key::Escape);
@@ -860,16 +860,16 @@ mod tests {
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (state, _worker) = state_for(&app, folder(2));
         app.invoke_select(0);
-        testing::labeled(&app, "Add keywords");
-        assert_eq!(testing::count_labeled(&app, "Frame title"), 1);
+        testing::by_id(&app, "MetaSection::keyword-field");
+        assert_eq!(testing::count_id(&app, "MetaSection::title-field"), 1);
         crate::panel::cull::enter_cull(&mut state.borrow_mut(), &app, 1);
         assert_eq!(app.get_panel_tab(), "Cull");
-        testing::labeled(&app, "Add keywords");
-        assert_eq!(testing::count_labeled(&app, "Add keywords"), 1);
+        testing::by_id(&app, "MetaSection::keyword-field");
+        assert_eq!(testing::count_id(&app, "MetaSection::keyword-field"), 1);
         app.set_grid_open(true);
         // The panel's own are under the grid, and one of the panel's
         // tabs is always up: the left pane's is the second.
-        assert_eq!(testing::count_labeled(&app, "Add keywords"), 2);
+        assert_eq!(testing::count_id(&app, "MetaSection::keyword-field"), 2);
     }
 
     /// However many words are on a frame, the field under them keeps
@@ -884,7 +884,7 @@ mod tests {
         app.invoke_select(0);
         app.set_panel_tab("Develop".into());
         app.set_collapsed_metadata(false);
-        let empty = testing::labeled(&app, "Add keywords").1.height;
+        let empty = testing::by_id(&app, "MetaSection::keyword-field").1.height;
         assert!(empty > 10.0, "a line of its own: {empty}");
         let words: Vec<String> = (0..20)
             .map(|i| format!("{}{i}", ["harbor", "dusk", "fishing boats"][i % 3]))
@@ -894,15 +894,16 @@ mod tests {
         // The section's fold moves to its new height.
         testing::settle(&app);
         testing::settle(&app);
-        let full = testing::labeled(&app, "Add keywords").1.height;
+        let full = testing::by_id(&app, "MetaSection::keyword-field").1.height;
         assert_eq!(full, empty, "on the Develop tab");
         app.set_grid_open(true);
         testing::settle(&app);
         testing::settle(&app);
         use i_slint_backend_testing::ElementHandle;
-        let heights: Vec<f32> = ElementHandle::find_by_accessible_label(&app, "Add keywords")
-            .map(|e| e.size().height)
-            .collect();
+        let heights: Vec<f32> =
+            ElementHandle::find_by_element_id(&app, "MetaSection::keyword-field")
+                .map(|e| e.size().height)
+                .collect();
         assert_eq!(
             heights.len(),
             2,
@@ -924,7 +925,7 @@ mod tests {
         let (state, _worker) = state_for(&app, folder(3));
         app.invoke_select(0);
         app.set_panel_tab("Develop".into());
-        let (at, size) = testing::labeled(&app, "Frame title");
+        let (at, size) = testing::by_id(&app, "MetaSection::title-field");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         type_text(&app, "Dusk");
         let (x, y) = testing::strip_cell(&app, 1);
@@ -938,7 +939,7 @@ mod tests {
         // a title of its own, not "Dusk" and more.
         assert_eq!(app.get_title_text(), "");
         assert!(!app.get_title_dirty());
-        let (at, size) = testing::labeled(&app, "Frame title");
+        let (at, size) = testing::by_id(&app, "MetaSection::title-field");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         type_text(&app, "x");
         press(&app, Key::Return);
@@ -964,7 +965,7 @@ mod tests {
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (state, _worker) = state_for(&app, folder(3));
         app.invoke_select(0);
-        let (at, size) = testing::labeled(&app, "Frame title");
+        let (at, size) = testing::by_id(&app, "MetaSection::title-field");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         type_text(&app, "Dusk");
         let (x, y) = testing::strip_cell(&app, 2);

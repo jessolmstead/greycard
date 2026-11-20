@@ -786,6 +786,14 @@ clears or a tester asks for it.
 
 #### Editor
 
+- [ ] Window tests find their controls by element id: 319 lookups
+      by translated words are left in 38 files (the guard,
+      `testing/by_label.rs`, lets a file's count only fall), about 150
+      of them a control that needs an id and an edit; items in a
+      repeater (grading wheels, look rows, mask rows, menus) share one
+      id and need a key each; 78 lookups by position are untouched.
+      The suite in French (`GREYCARD_TEST_LANG=fr`) fails 500 tests,
+      618 before
 - [ ] The strings added since the French catalog was made
       translated (`scripts/translations-check.py --list` names them);
       waits on a translator

@@ -84,7 +84,7 @@ export component CurvesSection inherits Section {
             font-size: Theme.font-sm;
             vertical-alignment: center;
         }
-        ValueField {
+        point-in-field := ValueField {
             width: 48px;
             height: Theme.control-height - 4px;
             boxed: true;
@@ -101,7 +101,7 @@ export component CurvesSection inherits Section {
             font-size: Theme.font-sm;
             vertical-alignment: center;
         }
-        ValueField {
+        point-out-field := ValueField {
             width: 48px;
             height: Theme.control-height - 4px;
             boxed: true;
@@ -111,7 +111,7 @@ export component CurvesSection inherits Section {
             committed(typed) => { root.curve-typed("out", typed); }
         }
     }
-    if root.curve-mode == "Parametric": EditSlider {
+    if root.curve-mode == "Parametric": highlights-slider := EditSlider {
         label: @tr("Highlights");
         enabled: root.curves-enabled;
         minimum: -1;
@@ -124,7 +124,7 @@ export component CurvesSection inherits Section {
         text: (root.para-highlights >= 0 ? "+" : "") + round(root.para-highlights * 100);
         changed(v) => { root.parametric-changed(); }
     }
-    if root.curve-mode == "Parametric": EditSlider {
+    if root.curve-mode == "Parametric": lights-slider := EditSlider {
         // Parametric curve: the slider for the light tones
         label: @tr("Lights");
         enabled: root.curves-enabled;
@@ -138,7 +138,7 @@ export component CurvesSection inherits Section {
         text: (root.para-lights >= 0 ? "+" : "") + round(root.para-lights * 100);
         changed(v) => { root.parametric-changed(); }
     }
-    if root.curve-mode == "Parametric": EditSlider {
+    if root.curve-mode == "Parametric": darks-slider := EditSlider {
         // Parametric curve: the slider for the dark tones
         label: @tr("Darks");
         enabled: root.curves-enabled;
@@ -152,7 +152,7 @@ export component CurvesSection inherits Section {
         text: (root.para-darks >= 0 ? "+" : "") + round(root.para-darks * 100);
         changed(v) => { root.parametric-changed(); }
     }
-    if root.curve-mode == "Parametric": EditSlider {
+    if root.curve-mode == "Parametric": shadows-slider := EditSlider {
         label: @tr("Shadows");
         enabled: root.curves-enabled;
         minimum: -1;

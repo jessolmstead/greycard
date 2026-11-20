@@ -628,7 +628,7 @@ export component Section inherits VerticalLayout {
             if root.has-reset: reset-slot := Rectangle {
                 property <bool> live: root.reset-live && !root.superseded;
                 width: root.reset-width;
-                if reset-slot.live: Rectangle {
+                if reset-slot.live: reset-button := Rectangle {
                     border-radius: Theme.radius-sm;
                     background: reset-area.pressed ? Theme.pressed : reset-area.has-hover ? Theme.hover : transparent;
                     animate background { duration: Theme.quick; }
@@ -655,7 +655,7 @@ export component Section inherits VerticalLayout {
                     clicked => { if (reset-slot.live) { root.reset-clicked(); } }
                 }
             }
-            if root.switchable: Switch {
+            if root.switchable: header-switch := Switch {
                 label: root.title;
                 checked <=> root.on;
                 enabled: !root.superseded;

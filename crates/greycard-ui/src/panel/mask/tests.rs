@@ -1439,7 +1439,7 @@ fn a_drawn_shapes_name_survives_a_later_read_edit() {
 /// release path, not the "drawn" one a Linear or a Radial takes).
 #[test]
 fn a_brush_strokes_name_survives_a_later_read_edit() {
-    use crate::testing::{labeled, press};
+    use crate::testing::press;
     let app = window(1);
     let (state, _worker) = crate::testing::state_for(&app, Vec::new());
     app.set_panel_tab("Masks".into());
@@ -1461,7 +1461,7 @@ fn a_brush_strokes_name_survives_a_later_read_edit() {
     // stroke; if the list were rebuilt for it, the row (and the
     // focus on it) would be a fresh one, and Space would do
     // nothing.
-    let (at, size) = labeled(&app, "Invert this shape");
+    let (at, size) = crate::testing::by_id(&app, "AdjustmentsSection::invert-button");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     let inverted_by_click = state.borrow().develop.edit.adjustments[0].mask.components[0].invert;
     app.invoke_place_pressed(320.0, 220.0, false);
@@ -1547,14 +1547,14 @@ fn a_shapes_invert_is_its_own_row_and_does_not_need_it_chosen() {
 /// Enter toggles it from there.
 #[test]
 fn a_shapes_invert_is_reachable_from_the_keyboard() {
-    use crate::testing::{labeled, press};
+    use crate::testing::press;
     use slint::platform::Key;
     let app = window(1);
     let (state, _worker) = crate::testing::state_for(&app, Vec::new());
     app.set_panel_tab("Masks".into());
     app.invoke_new_mask();
     app.invoke_add_shape("Luminance".into(), "Add".into());
-    let (at, size) = labeled(&app, "Invert this shape");
+    let (at, size) = crate::testing::by_id(&app, "AdjustmentsSection::invert-button");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert!(
         state.borrow().develop.edit.adjustments[0].mask.components[0].invert,
@@ -1687,7 +1687,7 @@ fn new_mask_brings_the_sections_back_to_their_top() {
     app.set_panel_tab("Masks".into());
     app.invoke_new_mask();
     app.set_panel_scroll(-900.0);
-    let (at, size) = crate::testing::labeled(&app, "New mask");
+    let (at, size) = crate::testing::by_id(&app, "AdjustmentsList::new-mask-button");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert_eq!(state.borrow().develop.edit.adjustments.len(), 2);
     assert_eq!(app.get_panel_scroll(), 0.0, "the sections are at their top");
@@ -1782,7 +1782,7 @@ fn an_object_mask_never_leaves_the_panel_scrolled_past_its_end() {
 /// second mask, made with the section already up, does the same.
 #[test]
 fn a_new_masks_name_takes_the_keys() {
-    use crate::testing::{labeled, press, settle, type_text};
+    use crate::testing::{press, settle, type_text};
     use slint::platform::Key;
     let app = window(1);
     app.window()
@@ -1791,7 +1791,7 @@ fn a_new_masks_name_takes_the_keys() {
     app.set_panel_tab("Masks".into());
     app.set_collapsed_mask(true);
     for (mask, name) in [(1, "Sky"), (2, "Face")] {
-        let (at, size) = labeled(&app, "New mask");
+        let (at, size) = crate::testing::by_id(&app, "AdjustmentsList::new-mask-button");
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         settle(&app);
         assert_eq!(app.get_target(), mask);
@@ -1815,7 +1815,10 @@ fn new_mask_is_there_with_nothing_chosen_and_no_shape_button_yet() {
     let app = window(1);
     let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
     app.set_panel_tab("Masks".into());
-    assert_eq!(count_labeled(&app, "New mask"), 1);
+    assert_eq!(
+        crate::testing::count_id(&app, "AdjustmentsList::new-mask-button"),
+        1
+    );
     assert_eq!(count_labeled(&app, "Subject"), 0);
     assert_eq!(count_labeled(&app, "Background"), 0);
 }
@@ -1838,7 +1841,11 @@ fn the_shape_buttons_and_new_mask_each_appear_once() {
     // a control already there, finding nothing (a quirk of the
     // testing backend's element cache, not of the layout).
     app.invoke_new_mask();
-    assert_eq!(count_labeled(&app, "New mask"), 1, "New mask once");
+    assert_eq!(
+        crate::testing::count_id(&app, "AdjustmentsList::new-mask-button"),
+        1,
+        "New mask once"
+    );
     settle_layout(&app);
     let bounds = |id: &str| {
         let e = ElementHandle::find_by_element_id(&app, id)
@@ -2521,6 +2528,17 @@ fn settle_layout(app: &App) {
     }
 }
 
+/// Where each element `id` is, top first.
+fn placed_id(app: &App, id: &str) -> Vec<(slint::LogicalPosition, slint::LogicalSize)> {
+    use i_slint_backend_testing::ElementHandle;
+    crate::testing::count_id(app, id);
+    let mut found: Vec<_> = ElementHandle::find_by_element_id(app, id)
+        .map(|e| (e.absolute_position(), e.size()))
+        .collect();
+    found.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
+    found
+}
+
 /// Where each element labeled `label` is, whatever its role, top
 /// first.
 fn placed(app: &App, label: &str) -> Vec<(slint::LogicalPosition, slint::LogicalSize)> {
@@ -2558,12 +2576,12 @@ fn the_adjustments_list_stays_in_reach_from_far_down_the_tab() {
 
     // Far down: the tint's Amount, at the foot of the tab, is in
     // the view under the list.
-    let (amount, _) = crate::testing::labeled(&app, "Amount");
+    let (amount, _) = crate::testing::by_id(&app, "TintSection::amount-slider");
     assert!(app.get_panel_scroll() < -1500.0, "the sections scrolled");
     let global = buttons(&app, "Global");
     assert_eq!(global.len(), 1);
     assert_eq!(global[0].0.y, global_at.y, "the list does not scroll");
-    let foot = placed(&app, "New mask")[0];
+    let foot = placed_id(&app, "AdjustmentsList::new-mask-button")[0];
     assert!(
         foot.0.y + foot.1.height <= amount.y,
         "the list is above the view"
@@ -2576,7 +2594,7 @@ fn the_adjustments_list_stays_in_reach_from_far_down_the_tab() {
     // And from far down to another mask.
     app.invoke_target_changed(1);
     settle_layout(&app);
-    crate::testing::labeled(&app, "Amount");
+    crate::testing::by_id(&app, "TintSection::amount-slider");
     assert!(app.get_panel_scroll() < -1500.0, "the sections scrolled");
     let second = buttons(&app, "Mask 2");
     assert_eq!(second.len(), 1);
@@ -2603,7 +2621,7 @@ fn a_long_adjustments_list_scrolls_inside_itself() {
     settle_layout(&app);
     // Global alone: the list's top, and how far below it New mask is.
     let top = buttons(&app, "Global")[0].0.y;
-    let alone = placed(&app, "New mask")[0].0.y - top;
+    let alone = placed_id(&app, "AdjustmentsList::new-mask-button")[0].0.y - top;
     app.invoke_new_mask();
     settle_layout(&app);
     let pitch = buttons(&app, "Mask 1")[0].0.y - top;
@@ -2614,7 +2632,7 @@ fn a_long_adjustments_list_scrolls_inside_itself() {
     }
     settle_layout(&app);
     assert_eq!(app.get_target(), 10);
-    let new_mask = placed(&app, "New mask")[0];
+    let new_mask = placed_id(&app, "AdjustmentsList::new-mask-button")[0];
     assert!(
         (new_mask.0.y - top - (alone + 5.0 * pitch)).abs() < 1.0,
         "six rows shown, not eleven: New mask {} below the list's top",
@@ -2647,7 +2665,7 @@ fn a_long_adjustments_list_scrolls_inside_itself() {
     assert_eq!(app.get_adjustment_names().row_count(), 4);
     let global = buttons(&app, "Global")[0];
     assert!((global.0.y - top).abs() < 0.5, "Global at the head again");
-    let new_mask = placed(&app, "New mask")[0];
+    let new_mask = placed_id(&app, "AdjustmentsList::new-mask-button")[0];
     assert!((new_mask.0.y - top - (alone + 3.0 * pitch)).abs() < 1.0);
 }
 
@@ -2664,7 +2682,7 @@ fn the_folded_adjustments_list_names_the_chosen_row() {
     app.set_collapsed_adjustments(true);
     settle_layout(&app);
     assert!(
-        placed(&app, "New mask").is_empty(),
+        placed_id(&app, "AdjustmentsList::new-mask-button").is_empty(),
         "the rows are folded away"
     );
     assert!(placed(&app, "Mask 2").is_empty());
@@ -3199,8 +3217,11 @@ fn the_last_shape_is_deleted_by_its_cross_and_one_undo_restores_it() {
     app.invoke_add_shape("Luminance".into(), "Add".into());
     rest();
     crate::testing::settle(&app);
-    assert_eq!(count_labeled(&app, "Remove this shape"), 1);
-    let (at, size) = crate::testing::labeled(&app, "Remove this shape");
+    assert_eq!(
+        crate::testing::count_id(&app, "AdjustmentsSection::remove-shape-button"),
+        1
+    );
+    let (at, size) = crate::testing::by_id(&app, "AdjustmentsSection::remove-shape-button");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     rest();
     {
@@ -3294,7 +3315,7 @@ fn esc_puts_a_shapes_handles_down_and_a_press_brings_them_back() {
         "none drawn"
     );
     // Its row, beside its own invert.
-    let (at, size) = crate::testing::labeled(&app, "Invert this shape");
+    let (at, size) = crate::testing::by_id(&app, "AdjustmentsSection::invert-button");
     click(&app, at.x - 60.0, at.y + size.height / 2.0);
     assert!(!app.get_handles_down(), "the row brought them back");
     press(&app, Key::Escape);

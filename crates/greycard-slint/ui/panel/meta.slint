@@ -124,7 +124,7 @@ export component MetaSection inherits Section {
         vertical-alignment: center;
     }
     Rectangle { height: Theme.space-1; }
-    LineEdit {
+    title-field := LineEdit {
         text <=> root.title-text;
         accessible-label: @tr("Frame title");
         enabled: root.frame-meta-on;

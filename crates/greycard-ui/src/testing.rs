@@ -7,6 +7,8 @@ use slint::{ComponentHandle, ModelRc};
 use crate::worker::Worker;
 use crate::{App, Shared, State, Thumb, grid, install_callbacks};
 
+mod by_label;
+
 // The helpers the render crate's tests share with these.
 pub(crate) use greycard_engine::testing::{linear_dng, monochrome_dng, scratch_dir};
 pub(crate) use greycard_render::testing::{bar_png, remove_dir_retry};
@@ -122,8 +124,13 @@ pub(crate) fn window(count: usize) -> App {
     ));
     let app = App::new().expect("the window builds");
     // English, whatever the machine's locale, which Slint would pick
-    // for its bundled catalogs on its own.
-    slint::select_bundled_translation("").expect("the window's catalogs are bundled");
+    // for its bundled catalogs on its own. `GREYCARD_TEST_LANG` names a
+    // catalog to run the suite in instead: what fails then is a test
+    // that finds a control by its words rather than its id, or one
+    // whose subject is the words.
+    let language = std::env::var("GREYCARD_TEST_LANG").unwrap_or_default();
+    slint::select_bundled_translation(&language).expect("the window's catalogs are bundled");
+    crate::i18n::select(&language);
     crate::panel::prefs::show_languages(&app, "");
     crate::panel::startup::show_unopened(&app);
     let thumbs: Vec<Thumb> = (0..count)
@@ -334,12 +341,43 @@ pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint:
     labeled_where(app, label, |_| true)
 }
 
-/// The reset in the header of the section titled `title` (as its
-/// header shows it, in capitals), scrolled into the panel's view as
-/// [`labeled`] scrolls.
-pub(crate) fn header_reset(app: &App, title: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
-    labeled_where(app, "Reset", |e| {
-        e.accessible_description().as_deref() == Some(title)
+/// The part `part` (as `Section::row`) of the first section of the
+/// type `section` (as `LightSection`) that has it built.
+pub(crate) fn section_part(
+    app: &App,
+    section: &str,
+    part: &str,
+) -> Option<i_slint_backend_testing::ElementHandle> {
+    i_slint_backend_testing::ElementHandle::find_by_element_id(app, &format!("{section}::root"))
+        .find_map(|e| e.query_descendants().match_id(part).find_first())
+}
+
+/// The header of the section of the type `section` (as
+/// `LightSection`), the row a click folds it by, scrolled into the
+/// panel's view as [`by_id`] scrolls.
+pub(crate) fn header(app: &App, section: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
+    section_bounds(app, section, "Section::row")
+}
+
+/// The reset in the header of the section of the type `section` (as
+/// `LightSection`), scrolled into the panel's view as [`by_id`]
+/// scrolls.
+pub(crate) fn header_reset(
+    app: &App,
+    section: &str,
+) -> (slint::LogicalPosition, slint::LogicalSize) {
+    section_bounds(app, section, "Section::reset-button")
+}
+
+/// The bounds of [`section_part`], scrolled into the panel's view as
+/// [`by_id`] scrolls.
+pub(crate) fn section_bounds(
+    app: &App,
+    section: &str,
+    part: &str,
+) -> (slint::LogicalPosition, slint::LogicalSize) {
+    in_panel_view(app, &format!("{part} of {section}"), |app| {
+        section_part(app, section, part)
     })
 }
 
@@ -544,6 +582,23 @@ pub(crate) fn toggle(app: &App, label: &str) -> ToggleParts {
     toggle_parts(&root)
 }
 
+/// The parts of the `Toggle` `id` (as
+/// `WhiteBalanceSection::as-shot-toggle`), scrolled into the panel's
+/// view first as [`by_id`] scrolls.
+pub(crate) fn toggle_by_id(app: &App, id: &str) -> ToggleParts {
+    by_id(app, id);
+    let root = i_slint_backend_testing::ElementHandle::find_by_element_id(app, id)
+        .next()
+        .unwrap_or_else(|| panic!("no Toggle {id}"));
+    toggle_parts(&root)
+}
+
+/// A click at the middle of the switch of the `Toggle` `id`.
+pub(crate) fn click_switch_by_id(app: &App, id: &str) {
+    let (at, size) = toggle_by_id(app, id).switch;
+    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+}
+
 /// A click at the middle of the switch of the `Toggle` labeled
 /// `label`.
 pub(crate) fn click_switch(app: &App, label: &str) {
@@ -646,6 +701,19 @@ pub(crate) fn rest_on(app: &App, label: &str) -> (f32, f32) {
     (x, y)
 }
 
+/// [`rest_on`] the element `id`.
+pub(crate) fn rest_on_id(app: &App, id: &str) -> (f32, f32) {
+    let (at, size) = by_id(app, id);
+    let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(x, y),
+    });
+    slint::platform::update_timers_and_animations();
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(800));
+    slint::platform::update_timers_and_animations();
+    (x, y)
+}
+
 /// Timers and animations a few frames on, after a control a property
 /// has just brought in is built on the next event: a sheet's layout
 /// settled.
@@ -734,17 +802,106 @@ pub(crate) fn keeps_its_last_line(app: &App, last: &str, pane_width: (f32, f32),
     wheel_brings_in(app, last, pane_width);
 }
 
-/// The middle of a panel slider's track, where a centered slider
-/// rests: a click there focuses it and moves nothing. The row's own
-/// middle is not it, the label's column and the value's field being
-/// different widths.
-pub(crate) fn track_middle(app: &App, label: &str) -> (f32, f32) {
-    use i_slint_backend_testing::ElementHandle;
-    let (at, size) = labeled(app, label);
-    let field = ElementHandle::find_by_accessible_label(app, &format!("{label} value"))
-        .next()
-        .unwrap_or_else(|| panic!("{label}'s value"));
+/// The middle of the panel slider `id`'s track (as
+/// `LightSection::exposure`), where a centered slider rests: a click
+/// there focuses it and moves nothing. The row's own middle is not
+/// it, the label's column and the value's field being different
+/// widths.
+pub(crate) fn track_middle(app: &App, id: &str) -> (f32, f32) {
+    let (at, size) = by_id(app, id);
+    let (field, _) = slider_field(app, id);
     let from = at.x + app.global::<crate::LabelColumn>().get_width();
-    let to = field.absolute_position().x - 8.0;
+    let to = field.x - 8.0;
     ((from + to) / 2.0, at.y + size.height / 2.0)
+}
+
+/// The value field of the panel slider `id`, scrolled into the
+/// panel's view as [`by_id`] scrolls: where a click types a value.
+pub(crate) fn slider_field(app: &App, id: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
+    by_id(app, id);
+    i_slint_backend_testing::ElementHandle::find_by_element_id(app, id)
+        .find_map(|e| {
+            e.query_descendants()
+                .match_id("EditSlider::field")
+                .find_first()
+        })
+        .map(|e| bounds_of(&e))
+        .unwrap_or_else(|| panic!("{id} has its value field"))
+}
+
+/// A point on the label of the panel slider `id`, scrolled into the
+/// panel's view: a press there focuses it and moves nothing.
+pub(crate) fn slider_label(app: &App, id: &str) -> (f32, f32) {
+    by_id(app, id);
+    let (at, size) = i_slint_backend_testing::ElementHandle::find_by_element_id(app, id)
+        .find_map(|e| {
+            e.query_descendants()
+                .match_id("EditSlider::label-words")
+                .find_first()
+        })
+        .map(|e| bounds_of(&e))
+        .unwrap_or_else(|| panic!("{id} has its label"));
+    (at.x + 8.0, at.y + size.height / 2.0)
+}
+
+/// A click at the middle of the element `id`, scrolled into the
+/// panel's view as [`by_id`] scrolls.
+pub(crate) fn click_id(app: &App, id: &str) {
+    let (at, size) = by_id(app, id);
+    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+}
+
+/// The panel's tabs, as the row `App::panel-tabs` lists its options.
+pub(crate) const PANEL_TABS: [&str; 4] = ["Develop", "Crop", "Masks", "Retouch"];
+
+/// The option `option` of the `Segmented` row `id`, whose options are
+/// `options` in their order: its top left and size.
+pub(crate) fn segment(
+    app: &App,
+    id: &str,
+    options: &[&str],
+    option: &str,
+) -> (slint::LogicalPosition, slint::LogicalSize) {
+    let at = options
+        .iter()
+        .position(|o| *o == option)
+        .unwrap_or_else(|| panic!("no option {option:?} in {options:?}"));
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(0.0, 0.0),
+    });
+    i_slint_backend_testing::ElementHandle::find_by_element_id(app, id)
+        .find_map(|row| {
+            row.query_descendants()
+                .match_id("Segmented::seg")
+                .find_all()
+                .into_iter()
+                .nth(at)
+        })
+        .map(|e| bounds_of(&e))
+        .unwrap_or_else(|| panic!("{id} has its option {option:?}"))
+}
+
+/// A click on the panel's tab `tab` (one of [`PANEL_TABS`]).
+pub(crate) fn click_panel_tab(app: &App, tab: &str) {
+    let (at, size) = segment(app, "App::panel-tabs", &PANEL_TABS, tab);
+    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+}
+
+/// Whether the control `id` is pressed, as a screen reader is told;
+/// `None` when there is no such control.
+pub(crate) fn pressed_id(app: &App, id: &str) -> Option<bool> {
+    count_id(app, id);
+    i_slint_backend_testing::ElementHandle::find_by_element_id(app, id)
+        .next()
+        .and_then(|e| e.accessible_checked())
+}
+
+/// How many elements anywhere in the window have the id `id`, as
+/// [`count_labeled`] counts by a label: whether a control the layout
+/// means to show is there.
+pub(crate) fn count_id(app: &App, id: &str) -> usize {
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(0.0, 0.0),
+    });
+    i_slint_backend_testing::ElementHandle::find_by_element_id(app, id).count()
 }

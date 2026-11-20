@@ -3,6 +3,10 @@ use greycard_edit::Edit;
 use super::*;
 use crate::worker::{Outcome, WhiteBase};
 
+/// The white balance's sliders' ids.
+const TEMPERATURE: &str = "WhiteBalanceSection::temperature-slider";
+const TINT: &str = "WhiteBalanceSection::tint-slider";
+
 #[test]
 fn a_hue_circle_is_painted_the_colors_its_slider_track_carries() {
     // The `hue-circle` gradient in `app.slint` is Oklab at this
@@ -939,15 +943,10 @@ fn a_masks_tint_switches_off_and_on_and_hides_the_overlay() {
 
 // A monochrome sensor's frame: the WHITE BALANCE rests.
 
-/// A click on the switch at the right of the header titled `title`.
-fn click_header_switch(app: &App, title: &str) {
-    use i_slint_backend_testing::ElementHandle;
-    let (head, size) = crate::testing::labeled(app, title);
-    let y = head.y + size.height / 2.0;
-    let (at, size) = ElementHandle::find_by_element_id(app, "Switch::root")
-        .map(|e| (e.absolute_position(), e.size()))
-        .find(|(at, s)| y >= at.y - 4.0 && y <= at.y + s.height + 4.0)
-        .unwrap_or_else(|| panic!("no switch on {title:?}"));
+/// A click on the switch at the right of the header of the section
+/// of the type `section`.
+fn click_header_switch(app: &App, section: &str) {
+    let (at, size) = crate::testing::section_bounds(app, section, "Section::header-switch");
     crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     slint::platform::update_timers_and_animations();
 }
@@ -1097,11 +1096,11 @@ fn a_dead_switch_takes_the_click() {
     app.set_collapsed_mixer(false);
     app.set_bw_enabled(true);
     let on = app.get_mixer_enabled();
-    click_header_switch(&app, "COLOR MIXER");
+    click_header_switch(&app, "MixerSection");
     assert_eq!(app.get_mixer_enabled(), on, "not switched");
     assert!(!app.get_collapsed_mixer(), "not folded");
     app.set_bw_enabled(false);
-    click_header_switch(&app, "COLOR MIXER");
+    click_header_switch(&app, "MixerSection");
     assert_eq!(app.get_mixer_enabled(), !on, "live, switched");
     assert!(!app.get_collapsed_mixer(), "not folded");
 }
@@ -1247,19 +1246,19 @@ impl Mono {
         )
     }
 
-    /// Whether the slider labeled `label` takes a hand.
-    fn enabled(&self, label: &str) -> bool {
-        let (at, _) = crate::testing::labeled(&self.app, label);
-        assert!(at.x > 0.0, "{label:?} on screen");
-        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&self.app, label)
+    /// Whether the slider `id` takes a hand.
+    fn enabled(&self, id: &str) -> bool {
+        let (at, _) = crate::testing::by_id(&self.app, id);
+        assert!(at.x > 0.0, "{id:?} on screen");
+        i_slint_backend_testing::ElementHandle::find_by_element_id(&self.app, id)
             .find_map(|e| e.accessible_enabled())
-            .unwrap_or_else(|| panic!("no slider {label:?}"))
+            .unwrap_or_else(|| panic!("no slider {id:?}"))
     }
 
-    /// A drag along the slider labeled `label`, from its handle's
-    /// side of the track a fifth of the way across.
-    fn drag(&self, label: &str) {
-        let (at, size) = crate::testing::labeled(&self.app, label);
+    /// A drag along the slider `id`, from its handle's side of the
+    /// track a fifth of the way across.
+    fn drag(&self, id: &str) {
+        let (at, size) = crate::testing::by_id(&self.app, id);
         let (left, right) = (at.x + 68.0, at.x + size.width - 60.0);
         let x = left + 0.3 * (right - left);
         let y = at.y + size.height / 2.0;
@@ -1267,10 +1266,10 @@ impl Mono {
         self.settle();
     }
 
-    /// A double-click on the slider labeled `label`, a reset.
-    fn double_click(&self, label: &str) {
+    /// A double-click on the slider `id`, a reset.
+    fn double_click(&self, id: &str) {
         self.settle();
-        let (at, size) = crate::testing::labeled(&self.app, label);
+        let (at, size) = crate::testing::by_id(&self.app, id);
         let (x, y) = (at.x + 30.0, at.y + size.height / 2.0);
         crate::testing::click(&self.app, x, y);
         crate::testing::click(&self.app, x, y);
@@ -1312,7 +1311,7 @@ impl Mono {
     /// them, so no white moves.
     fn keys(&self) {
         use slint::platform::Key;
-        let (at, size) = crate::testing::labeled(&self.app, "Exposure");
+        let (at, size) = crate::testing::by_id(&self.app, "LightSection::exposure");
         crate::testing::click(&self.app, at.x + 30.0, at.y + size.height / 2.0);
         crate::testing::press(&self.app, ",");
         crate::testing::press(&self.app, ",");
@@ -1325,7 +1324,7 @@ impl Mono {
     /// balance's row of Neutral, and on its right edge (a menu's
     /// chevron) too.
     fn click_row(&self, label: &str) {
-        let (neutral, _) = crate::testing::labeled(&self.app, "Neutral");
+        let (neutral, _) = crate::testing::by_id(&self.app, "WhiteBalanceSection::neutral-button");
         let (at, size) =
             i_slint_backend_testing::ElementHandle::find_by_accessible_label(&self.app, label)
                 .map(|e| (e.absolute_position(), e.size()))
@@ -1337,10 +1336,10 @@ impl Mono {
         self.settle();
     }
 
-    /// A click on the switch at the right of the header titled
-    /// `title`.
-    fn click_header_switch(&self, title: &str) {
-        click_header_switch(&self.app, title);
+    /// A click on the switch at the right of the header of the
+    /// section of the type `section`.
+    fn click_header_switch(&self, section: &str) {
+        click_header_switch(&self.app, section);
         self.settle();
     }
 
@@ -1385,14 +1384,14 @@ fn a_monochrome_frames_white_balance_rests() {
     assert!(!app.get_as_shot());
 
     let before = m.moved();
-    assert!(!m.enabled("Temperature") && !m.enabled("Tint"));
+    assert!(!m.enabled(TEMPERATURE) && !m.enabled(TINT));
     assert!(!control_enabled(app, "Toggle::root", "As shot"));
     assert!(!control_enabled(app, "PanelButton::root", "Neutral"));
-    m.drag("Temperature");
-    m.drag("Tint");
-    m.double_click("Temperature");
-    m.double_click("Tint");
-    crate::testing::click_switch(app, "As shot");
+    m.drag(TEMPERATURE);
+    m.drag(TINT);
+    m.double_click(TEMPERATURE);
+    m.double_click(TINT);
+    crate::testing::click_switch_by_id(app, "WhiteBalanceSection::as-shot-toggle");
     m.settle();
     m.click_row("Auto");
     assert!(!app.get_menu_up(), "no presets' menu");
@@ -1444,7 +1443,7 @@ fn a_monochrome_frames_white_balance_rests() {
 
     // It folds and opens as any section does.
     let folded = app.get_collapsed_wb();
-    let (at, size) = crate::testing::labeled(app, "WHITE BALANCE");
+    let (at, size) = crate::testing::header(app, "WhiteBalanceSection");
     crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert_eq!(app.get_collapsed_wb(), !folded);
     crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
@@ -1455,11 +1454,11 @@ fn a_monochrome_frames_white_balance_rests() {
     // a drag moves it.
     m.open(1);
     assert!(!app.get_monochrome_open());
-    assert!(m.enabled("Temperature") && m.enabled("Tint"));
+    assert!(m.enabled(TEMPERATURE) && m.enabled(TINT));
     assert!(control_enabled(app, "Toggle::root", "As shot"));
     assert!(control_enabled(app, "PanelButton::root", "Neutral"));
     let before = m.moved();
-    m.drag("Temperature");
+    m.drag(TEMPERATURE);
     assert_ne!(m.moved(), before);
     assert_ne!(m.state.borrow().develop.edit.white_balance, ARRIVED);
     crate::testing::press(app, "w");
@@ -1506,19 +1505,19 @@ fn a_monochrome_frames_mask_white_balance_rests() {
     assert!(app.get_local_wb_on());
 
     let before = m.moved();
-    assert!(!m.enabled("Temperature") && !m.enabled("Tint"));
+    assert!(!m.enabled(TEMPERATURE) && !m.enabled(TINT));
     assert!(!control_enabled(app, "Toggle::root", "Follow global"));
     assert!(!control_enabled(app, "PanelButton::root", "Neutral"));
-    m.drag("Temperature");
-    m.drag("Tint");
-    m.double_click("Temperature");
+    m.drag(TEMPERATURE);
+    m.drag(TINT);
+    m.double_click(TEMPERATURE);
     crate::testing::click_switch(app, "Follow global");
     m.settle();
-    let (at, size) = crate::testing::labeled(app, "Neutral");
+    let (at, size) = crate::testing::by_id(app, "WhiteBalanceSection::neutral-button");
     crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     crate::testing::press(app, "w");
     let folded = app.get_collapsed_wb();
-    m.click_header_switch("WHITE BALANCE");
+    m.click_header_switch("WhiteBalanceSection");
     assert_eq!(
         app.get_collapsed_wb(),
         folded,
@@ -1551,11 +1550,11 @@ fn a_monochrome_frames_mask_white_balance_rests() {
     m.open(1);
     assert!(!app.get_monochrome_open());
     to_mask();
-    assert!(m.enabled("Temperature") && m.enabled("Tint"));
+    assert!(m.enabled(TEMPERATURE) && m.enabled(TINT));
     assert!(control_enabled(app, "Toggle::root", "Follow global"));
     assert!(control_enabled(app, "PanelButton::root", "Neutral"));
     let before = m.moved();
-    m.drag("Temperature");
+    m.drag(TEMPERATURE);
     assert_ne!(m.moved(), before);
     assert_ne!(mask_white(), MASK_ARRIVED);
 }
@@ -1591,12 +1590,12 @@ fn a_double_click_puts_a_masks_slider_back_to_the_globals() {
         unreachable!()
     };
     let before = steps();
-    m.double_click("Temperature");
+    m.double_click(TEMPERATURE);
     assert!(app.get_local_wb_on() && app.get_local_wb_kept());
     assert_eq!(app.get_local_temperature() as f64, global_temperature);
     assert_eq!(app.get_local_tint() as f64, mask_tint);
     assert_eq!(steps(), before + 1);
-    m.double_click("Tint");
+    m.double_click(TINT);
     assert!(app.get_local_wb_on());
     assert_eq!(app.get_local_temperature() as f64, global_temperature);
     assert_eq!(app.get_local_tint() as f64, global_tint);
@@ -1702,7 +1701,7 @@ fn stored_arrived(m: &Mono) {
 }
 
 fn click_as_shot(m: &Mono) {
-    crate::testing::click_switch(&m.app, "As shot");
+    crate::testing::click_switch_by_id(&m.app, "WhiteBalanceSection::as-shot-toggle");
     m.settle();
 }
 
@@ -1730,7 +1729,7 @@ fn a_focused_mask_switch_takes_no_key_on_a_monochrome_frame() {
         "mono-focus-switch",
         true,
         Route::Decode,
-        |m| m.click_header_switch("WHITE BALANCE"),
+        |m| m.click_header_switch("WhiteBalanceSection"),
         &button_keys(),
     );
 }
@@ -1765,7 +1764,7 @@ fn a_focused_temperature_takes_no_step_on_a_monochrome_frame() {
         Route::Home,
         |m| {
             // On the label: focused, the value left where it is.
-            let (at, size) = crate::testing::labeled(&m.app, "Temperature");
+            let (at, size) = crate::testing::by_id(&m.app, TEMPERATURE);
             crate::testing::click(&m.app, at.x + 30.0, at.y + size.height / 2.0);
             m.settle();
         },

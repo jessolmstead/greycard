@@ -73,7 +73,7 @@ export component WhiteBalanceSection inherits Section {
     icon: @image-url("../icons/thermometer.svg");
     collapsed <=> root.collapsed-wb;
     superseded: root.monochrome;
-    if !root.local: Toggle {
+    if !root.local: as-shot-toggle := Toggle {
         label: @tr("As shot");
         switch-at-end: true;
         enabled: !root.monochrome;
@@ -91,7 +91,7 @@ export component WhiteBalanceSection inherits Section {
     // The tracks show what the picture becomes: a
     // higher temperature renders warmer, a positive
     // tint (a green white point) renders magenta.
-    EditSlider {
+    temperature-slider := EditSlider {
         label: @tr("Temperature");
         enabled: root.live;
         tinted: true;
@@ -115,7 +115,7 @@ export component WhiteBalanceSection inherits Section {
         owner-resets: true;
         reset => { root.wb-slider-reset("temperature"); }
     }
-    EditSlider {
+    tint-slider := EditSlider {
         label: @tr("Tint");
         enabled: root.live;
         tinted: true;
@@ -206,7 +206,7 @@ export component WhiteBalanceSection inherits Section {
                 }
             }
         }
-        PanelButton {
+        neutral-button := PanelButton {
             // White balance: the dropper's button, click something neutral
             text: @tr("Neutral");
             icon: @image-url("../icons/pipette.svg");
@@ -250,7 +250,7 @@ export component ColorSection inherits Section {
     switchable: true;
     on <=> root.color-enabled;
     switched => { root.view-changed(); }
-    EditSlider {
+    vibrance-slider := EditSlider {
         label: @tr("Vibrance");
         enabled: root.color-enabled;
         tinted: true;
@@ -265,7 +265,7 @@ export component ColorSection inherits Section {
         text: (root.vibrance >= 0 ? "+" : "") + round(root.vibrance * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    saturation-slider := EditSlider {
         label: @tr("Saturation");
         enabled: root.color-enabled;
         tinted: true;
@@ -327,7 +327,7 @@ export component MixerSection inherits Section {
         selected(i) => { root.mixer-band-changed(); }
     }
     Rectangle { height: Theme.space-2; }
-    EditSlider {
+    hue-slider := EditSlider {
         label: @tr("Hue");
         enabled: root.mixer-acts;
         // Which way each way goes: the band's
@@ -347,7 +347,7 @@ export component MixerSection inherits Section {
         text: (root.mixer-hue >= 0 ? "+" : "") + round(root.mixer-hue) + "°";
         changed(v) => { root.mixer-changed(); }
     }
-    EditSlider {
+    saturation-slider := EditSlider {
         label: @tr("Saturation");
         enabled: root.mixer-acts;
         minimum: -1;
@@ -360,7 +360,7 @@ export component MixerSection inherits Section {
         text: (root.mixer-saturation >= 0 ? "+" : "") + round(root.mixer-saturation * 100) + "%";
         changed(v) => { root.mixer-changed(); }
     }
-    EditSlider {
+    luminance-slider := EditSlider {
         label: @tr("Luminance");
         enabled: root.mixer-acts;
         minimum: -1;
@@ -453,7 +453,7 @@ export component BlackWhiteSection inherits Section {
         selected(i) => { root.bw-band-changed(); }
     }
     Rectangle { height: Theme.space-2; }
-    EditSlider {
+    weight-slider := EditSlider {
         // Black & white: the filter's slider
         label: @tr("Weight");
         enabled: root.bw-enabled;
@@ -482,7 +482,7 @@ export component BlackWhiteSection inherits Section {
     // One scalar over the whole set, so a
     // filter keeps its shape and only its
     // depth changes: the row still says Red.
-    EditSlider {
+    strength-slider := EditSlider {
         label: @tr("Strength");
         enabled: root.bw-enabled;
         minimum: 0;
@@ -741,7 +741,7 @@ export component GradingSection inherits Section {
         }
     }
     Rectangle { height: Theme.space-1; }
-    EditSlider {
+    hue-slider := EditSlider {
         label: @tr("Hue");
         enabled: root.grading-enabled;
         minimum: 0;
@@ -753,7 +753,7 @@ export component GradingSection inherits Section {
         text: round(root.grade-hue) + "°";
         changed(v) => { root.grade-changed(); }
     }
-    EditSlider {
+    strength-slider := EditSlider {
         label: @tr("Strength");
         enabled: root.grading-enabled;
         minimum: 0;
@@ -766,7 +766,7 @@ export component GradingSection inherits Section {
         text: round(root.grade-saturation * 100) + "%";
         changed(v) => { root.grade-changed(); }
     }
-    EditSlider {
+    balance-slider := EditSlider {
         label: @tr("Balance");
         enabled: root.grading-enabled;
         minimum: -1;
@@ -866,7 +866,7 @@ export component TintSection inherits Section {
         }
     }
     Rectangle { height: Theme.space-1; }
-    EditSlider {
+    hue-slider := EditSlider {
         label: @tr("Hue");
         enabled: root.tint-enabled;
         // The Oklab hue circle along the
@@ -886,7 +886,7 @@ export component TintSection inherits Section {
         text: root.tint-hue-text;
         changed(v) => { root.tint-changed(); }
     }
-    EditSlider {
+    amount-slider := EditSlider {
         // Tint section: the slider
         label: @tr("Amount");
         enabled: root.tint-enabled;

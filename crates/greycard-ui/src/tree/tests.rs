@@ -498,7 +498,7 @@ fn a_click_on_a_folder_sends_the_title_typed_to_its_own_frame() {
     assert_eq!(state.borrow().files[0], d1);
     assert!(crate::rows::is_loaded(&state.borrow(), 0));
     slint::platform::update_timers_and_animations();
-    let (at, size) = labeled(&app, "Frame title");
+    let (at, size) = crate::testing::by_id(&app, "MetaSection::title-field");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     crate::testing::type_text(&app, "Dusk");
     assert!(app.get_title_dirty());

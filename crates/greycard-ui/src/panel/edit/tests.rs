@@ -220,7 +220,7 @@ fn one_section_open_folds_the_tabs_others() {
 /// opened on Cull folds LIGHT the same way.
 #[test]
 fn a_fold_two_tabs_share_folds_the_other_tabs_sections() {
-    use crate::testing::{click, labeled, settle};
+    use crate::testing::{click, settle};
     let app = window(3);
     app.window()
         .set_size(slint::LogicalSize::new(1500.0, 950.0));
@@ -229,8 +229,8 @@ fn a_fold_two_tabs_share_folds_the_other_tabs_sections() {
     }
     app.set_one_section(true);
     settle(&app);
-    let header = |l: &str| {
-        let (at, size) = labeled(&app, l);
+    let header = |section: &str| {
+        let (at, size) = crate::testing::header(&app, section);
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         for _ in 0..6 {
             settle(&app);
@@ -243,7 +243,7 @@ fn a_fold_two_tabs_share_folds_the_other_tabs_sections() {
             .map(|(n, _, _)| *n)
             .collect()
     };
-    header("SHARPEN");
+    header("SharpenSection");
     app.set_adjustment_names(
         std::rc::Rc::new(slint::VecModel::from(vec![
             slint::SharedString::from("Global"),
@@ -254,7 +254,7 @@ fn a_fold_two_tabs_share_folds_the_other_tabs_sections() {
     app.set_target(1);
     app.set_panel_tab("Masks".into());
     settle(&app);
-    header("LIGHT");
+    header("LightSection");
     app.set_panel_tab("Develop".into());
     settle(&app);
     assert_eq!(open(), ["light"], "Develop shows one open");
@@ -275,7 +275,7 @@ fn a_fold_two_tabs_share_folds_the_other_tabs_sections() {
     settle(&app);
     app.set_panel_tab("Develop".into());
     settle(&app);
-    header("LIGHT");
+    header("LightSection");
     app.set_panel_tab("Masks".into());
     settle(&app);
     assert_eq!(open(), ["light"], "Masks shows one open");
@@ -298,7 +298,7 @@ fn a_fold_two_tabs_share_folds_the_other_tabs_sections() {
 #[test]
 fn the_sharpen_threshold_runs_to_200_percent() {
     use crate::testing::settle;
-    use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+    use i_slint_backend_testing::ElementHandle;
     let app = window(1);
     app.window()
         .set_size(slint::LogicalSize::new(1500.0, 4000.0));
@@ -309,10 +309,8 @@ fn the_sharpen_threshold_runs_to_200_percent() {
     app.set_sharpen_auto_threshold(false);
     app.set_sharpen_threshold(2.0);
     settle(&app);
-    let sliders: Vec<_> = ElementHandle::find_by_accessible_label(&app, "Threshold")
-        .filter(|e| e.accessible_role() == Some(AccessibleRole::Slider))
-        .filter(|e| e.accessible_value().is_some_and(|v| v.ends_with('%')))
-        .collect();
+    let sliders: Vec<_> =
+        ElementHandle::find_by_element_id(&app, "SharpenSection::threshold-slider").collect();
     assert_eq!(sliders.len(), 1, "the sharpen's Threshold, built once");
     let s = &sliders[0];
     assert_eq!(s.accessible_value_minimum(), Some(0.0));
@@ -326,7 +324,7 @@ fn the_sharpen_threshold_runs_to_200_percent() {
 /// view, its header first, rather than carried up out of sight.
 #[test]
 fn a_section_opened_under_one_at_a_time_comes_into_view() {
-    use crate::testing::{click, labeled, settle};
+    use crate::testing::{click, settle};
     use i_slint_backend_testing::ElementHandle;
     let app = window(3);
     // Short, so the panel scrolls.
@@ -349,14 +347,13 @@ fn a_section_opened_under_one_at_a_time_comes_into_view() {
         )
     };
     // DETAIL's header in the view, under the open LIGHT.
-    let (at, size) = labeled(&app, "DETAIL");
+    let (at, size) = crate::testing::header(&app, "DetailSection");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     for _ in 0..6 {
         settle(&app);
     }
     assert!(!app.get_collapsed_detail() && app.get_collapsed_light());
-    let header = ElementHandle::find_by_accessible_label(&app, "DETAIL")
-        .next()
+    let header = crate::testing::section_part(&app, "DetailSection", "Section::row")
         .expect("DETAIL's header in the view, the only part the panel builds");
     let (top, bottom) = view();
     let y = header.absolute_position().y;
@@ -370,7 +367,7 @@ fn a_section_opened_under_one_at_a_time_comes_into_view() {
 /// go of, not pulled back into view against it.
 #[test]
 fn the_wheel_lets_go_of_a_section_being_brought_into_view() {
-    use crate::testing::{click, labeled, settle};
+    use crate::testing::{click, settle};
     use slint::platform::WindowEvent;
     let app = window(3);
     app.window()
@@ -382,7 +379,7 @@ fn the_wheel_lets_go_of_a_section_being_brought_into_view() {
     settle(&app);
     app.set_collapsed_light(false);
     settle(&app);
-    let (at, size) = labeled(&app, "DETAIL");
+    let (at, size) = crate::testing::header(&app, "DetailSection");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     // A frame of the folds, then the wheel up to the top.
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
@@ -508,7 +505,7 @@ fn a_wheel_click_on_a_slider_is_one_step() {
     app.invoke_select(0);
     app.set_panel_tab("Develop".into());
     app.set_exposure(0.0);
-    let center = testing::track_middle(&app, "Exposure");
+    let center = testing::track_middle(&app, "LightSection::exposure");
     // A click on the slider focuses it, so the wheel is its own.
     testing::click(&app, center.0, center.1);
     let scroll = |delta_y: f32| {
@@ -557,7 +554,7 @@ fn shift_with_a_sideways_wheel_reads_as_the_vertical_it_was() {
     app.invoke_select(0);
     app.set_panel_tab("Develop".into());
     app.set_exposure(0.0);
-    let center = testing::track_middle(&app, "Exposure");
+    let center = testing::track_middle(&app, "LightSection::exposure");
     testing::click(&app, center.0, center.1);
     let sideways = |delta_x: f32| {
         app.window().dispatch_event(WindowEvent::PointerScrolled {
@@ -610,7 +607,7 @@ fn natural_scrolling_moves_a_slider_the_way_the_fingers_went() {
     app.invoke_select(0);
     app.set_panel_tab("Develop".into());
     app.set_exposure(0.0);
-    let center = testing::track_middle(&app, "Exposure");
+    let center = testing::track_middle(&app, "LightSection::exposure");
     testing::click(&app, center.0, center.1);
     let vertical = |delta_y: f32| {
         app.window().dispatch_event(WindowEvent::PointerScrolled {
@@ -709,8 +706,7 @@ fn the_folders_section_keeps_a_fold_for_each_view() {
     settle(&app);
     assert!(app.get_grid_open());
     assert!(!app.get_collapsed_folders());
-    let header = ElementHandle::find_by_accessible_label(&app, "FOLDERS")
-        .next()
+    let header = crate::testing::section_part(&app, "FoldersSection", "Section::row")
         .expect("FOLDERS in the left pane");
     let (at, size) = (header.absolute_position(), header.size());
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);

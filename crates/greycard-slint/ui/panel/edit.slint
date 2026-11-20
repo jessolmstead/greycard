@@ -61,7 +61,7 @@ export component LightSection inherits Section {
         text: (root.exposure >= 0 ? "+" : "") + round(root.exposure * 100) / 100 + " EV";
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    contrast-slider := EditSlider {
         label: @tr("Contrast");
         logarithmic: true;
         minimum: 0.5;
@@ -73,7 +73,7 @@ export component LightSection inherits Section {
         text: round(root.contrast * 100) / 100;
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    highlights-slider := EditSlider {
         label: @tr("Highlights");
         minimum: -2;
         maximum: 2;
@@ -84,7 +84,7 @@ export component LightSection inherits Section {
         text: (root.highlights >= 0 ? "+" : "") + round(root.highlights * 100) / 100 + " EV";
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    midtones-slider := EditSlider {
         label: @tr("Midtones");
         minimum: -2;
         maximum: 2;
@@ -95,7 +95,7 @@ export component LightSection inherits Section {
         text: (root.midtones >= 0 ? "+" : "") + round(root.midtones * 100) / 100 + " EV";
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    shadows-slider := EditSlider {
         label: @tr("Shadows");
         minimum: -2;
         maximum: 2;
@@ -119,7 +119,7 @@ export component LightSection inherits Section {
         padding-bottom: Theme.space-1;
         Rectangle { height: 1px; background: Theme.border; }
     }
-    EditSlider {
+    whites-slider := EditSlider {
         label: @tr("Whites");
         minimum: -2;
         maximum: 2;
@@ -130,7 +130,7 @@ export component LightSection inherits Section {
         text: (root.whites >= 0 ? "+" : "") + round(root.whites * 100) / 100 + " EV";
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    blacks-slider := EditSlider {
         label: @tr("Blacks");
         minimum: -0.3;
         maximum: 0.3;
@@ -254,7 +254,7 @@ export component NoiseSection inherits Section {
             }
         }
     }
-    EditSlider {
+    luma-slider := EditSlider {
         label: @tr("Luma");
         enabled: root.unavailable == "" && root.learned-unavailable == "" && root.denoise-learned != "off";
         minimum: 0;
@@ -269,7 +269,7 @@ export component NoiseSection inherits Section {
     }
     // The blend's chroma alone: the color noise can go while the
     // grain stays.
-    EditSlider {
+    chroma-slider := EditSlider {
         label: NoiseWords.chroma;
         enabled: root.unavailable == "" && root.learned-unavailable == "" && root.denoise-learned != "off";
         minimum: 0;
@@ -306,7 +306,7 @@ export component NoiseSection inherits Section {
         checked <=> root.denoise;
         toggled => { root.develop-changed(); }
     }
-    EditSlider {
+    strength-slider := EditSlider {
         label: @tr("Strength");
         enabled: root.unavailable == "" && root.denoise && root.denoise-learned == "off";
         // greycard_edit::Noise::STRENGTH_MIN and STRENGTH_MAX.
@@ -352,7 +352,7 @@ export component DetailSection inherits Section {
     switchable: true;
     on <=> root.detail-enabled;
     switched => { root.develop-changed(); }
-    EditSlider {
+    texture-slider := EditSlider {
         label: @tr("Texture");
         enabled: root.detail-enabled;
         minimum: -1;
@@ -365,7 +365,7 @@ export component DetailSection inherits Section {
         text: (root.detail-texture >= 0 ? "+" : "") + round(root.detail-texture * 100);
         changed(v) => { root.develop-changed(); }
     }
-    EditSlider {
+    clarity-slider := EditSlider {
         label: @tr("Clarity");
         enabled: root.detail-enabled;
         minimum: -1;
@@ -378,7 +378,7 @@ export component DetailSection inherits Section {
         text: (root.detail-clarity >= 0 ? "+" : "") + round(root.detail-clarity * 100);
         changed(v) => { root.develop-changed(); }
     }
-    EditSlider {
+    structure-slider := EditSlider {
         label: DetailWords.structure;
         enabled: root.detail-enabled;
         minimum: -1;
@@ -391,7 +391,7 @@ export component DetailSection inherits Section {
         text: (root.detail-structure >= 0 ? "+" : "") + round(root.detail-structure * 100);
         changed(v) => { root.develop-changed(); }
     }
-    EditSlider {
+    dehaze-slider := EditSlider {
         label: @tr("Dehaze");
         enabled: root.detail-enabled;
         minimum: -1;
@@ -404,7 +404,7 @@ export component DetailSection inherits Section {
         text: (root.detail-dehaze >= 0 ? "+" : "") + round(root.detail-dehaze * 100);
         changed(v) => { root.develop-changed(); }
     }
-    if root.local: EditSlider {
+    if root.local: sharpen-slider := EditSlider {
         label: @tr("Sharpen");
         enabled: root.detail-enabled;
         minimum: -1;
@@ -445,7 +445,7 @@ export component SharpenSection inherits Section {
         checked <=> root.sharpen-auto-radius;
         toggled => { root.develop-changed(); }
     }
-    EditSlider {
+    radius-slider := EditSlider {
         label: @tr("Radius");
         enabled: root.sharpen && !root.sharpen-auto-radius;
         minimum: 0.4;
@@ -460,7 +460,7 @@ export component SharpenSection inherits Section {
             : round(root.sharpen-radius * 100) / 100;
         changed(v) => { root.develop-changed(); }
     }
-    EditSlider {
+    iterations-slider := EditSlider {
         label: @tr("Iterations");
         enabled: root.sharpen;
         minimum: 5;
@@ -478,7 +478,7 @@ export component SharpenSection inherits Section {
         checked <=> root.sharpen-auto-threshold;
         toggled => { root.develop-changed(); }
     }
-    EditSlider {
+    threshold-slider := EditSlider {
         label: @tr("Threshold");
         enabled: root.sharpen && !root.sharpen-auto-threshold;
         minimum: 0;
@@ -519,7 +519,7 @@ export component OutputSharpenSection inherits Section {
     switchable: true;
     on <=> root.output-sharpen-enabled;
     switched => { root.view-changed(); }
-    EditSlider {
+    amount-slider := EditSlider {
         label: @tr("Amount");
         enabled: root.output-sharpen-enabled;
         minimum: 0;
@@ -532,7 +532,7 @@ export component OutputSharpenSection inherits Section {
         text: round(root.output-sharpen-amount * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    radius-slider := EditSlider {
         label: @tr("Radius");
         enabled: root.output-sharpen-enabled;
         minimum: 0.5;
@@ -544,7 +544,7 @@ export component OutputSharpenSection inherits Section {
         text: round(root.output-sharpen-radius * 100) / 100;
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    threshold-slider := EditSlider {
         label: @tr("Threshold");
         enabled: root.output-sharpen-enabled;
         minimum: 0;
@@ -587,7 +587,7 @@ export component VignetteSection inherits Section {
         text: (root.vignette-amount >= 0 ? "+" : "") + round(root.vignette-amount * 100) / 100 + " EV";
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    midpoint-slider := EditSlider {
         label: @tr("Midpoint");
         minimum: 0;
         maximum: 1;
@@ -599,7 +599,7 @@ export component VignetteSection inherits Section {
         text: round(root.vignette-midpoint * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    feather-slider := EditSlider {
         label: @tr("Feather");
         minimum: 0;
         maximum: 1;
@@ -611,7 +611,7 @@ export component VignetteSection inherits Section {
         text: round(root.vignette-feather * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    roundness-slider := EditSlider {
         label: @tr("Roundness");
         minimum: -1;
         maximum: 1;
@@ -664,7 +664,7 @@ export component GrainSection inherits Section {
     switchable: true;
     on <=> root.grain-enabled;
     switched => { root.view-changed(); }
-    EditSlider {
+    amount-slider := EditSlider {
         label: @tr("Amount");
         minimum: 0;
         maximum: 1;
@@ -676,7 +676,7 @@ export component GrainSection inherits Section {
         text: round(root.grain-amount * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
-    EditSlider {
+    size-slider := EditSlider {
         label: @tr("Size");
         minimum: 0.1;
         maximum: 2;

@@ -4093,7 +4093,7 @@ export component App inherits Window {
                         font-size: Theme.font-xs;
                         wrap: word-wrap;
                     }
-                    if !root.frozen: Segmented {
+                    if !root.frozen: cull-mode-button := Segmented {
                         // The panel's Tab is the window's: no stop here.
                         tab-stop: false;
                         width: 40px;
@@ -4118,7 +4118,7 @@ export component App inherits Window {
                             root.cull-asked();
                         }
                     }
-                    if !root.frozen: Segmented {
+                    if !root.frozen: panel-tabs := Segmented {
                         // The panel's Tab is the window's: no stop here.
                         tab-stop: false;
                         // Spoken by a screen reader: the Loupe's row of
@@ -5680,7 +5680,7 @@ export component App inherits Window {
             padding-top: Theme.space-3;
             padding-bottom: Theme.space-3;
             spacing: Theme.space-2;
-            PanelButton {
+            library-view-button := PanelButton {
                 // The view button at the top left: the grid
                 text: @tr("Library");
                 icon: @image-url("icons/library.svg");
@@ -5698,7 +5698,7 @@ export component App inherits Window {
                     if (root.queue-view-on) { root.queue-leave(false); }
                 }
             }
-            PanelButton {
+            loupe-view-button := PanelButton {
                 // The view button at the top left: one frame
                 text: @tr("Loupe");
                 icon: @image-url("icons/image.svg");

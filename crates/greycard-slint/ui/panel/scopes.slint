@@ -106,7 +106,7 @@ export component PanelHead inherits VerticalLayout {
                     downs: file-ta.downs;
                 }
             }
-            PanelButton {
+            undo-button := PanelButton {
                 icon: @image-url("../icons/rotate-ccw.svg");
                 words: @tr("Undo");
                 accessible-role: button;
@@ -172,7 +172,7 @@ export component PanelHead inherits VerticalLayout {
     // frames chosen beside this one, the sheet that lays this one's
     // settings over them, which Ctrl+Shift+S and the frame menu open
     // too, and whose words these are.
-    if root.set-count > 1: PanelButton {
+    if root.set-count > 1: sync-button := PanelButton {
         text: @tr("Sync {n} frame to this one..." | "Sync {n} frames to this one..." % (root.set-count - 1));
         icon: @image-url("../icons/layers.svg");
         accessible-role: button;

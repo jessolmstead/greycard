@@ -948,6 +948,10 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    /// The point fields' ids.
+    const IN: &str = "CurvesSection::point-in-field";
+    const OUT: &str = "CurvesSection::point-out-field";
+
     /// A point moved, by a drag or a typed number, keeps between its
     /// neighbors' In with a gap to each; the ends slide along their
     /// edges, kept a gap from their one neighbor and inside 0 to 1;
@@ -1016,8 +1020,8 @@ mod tests {
             app.on_view_changed(move || changes.set(changes.get() + 1));
         }
         let points = || curve_points(&app, Channel::Rgb);
-        let type_into = |label: &str, text: &str| {
-            let (at, size) = testing::labeled(&app, label);
+        let type_into = |id: &str, text: &str| {
+            let (at, size) = testing::by_id(&app, id);
             testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
             testing::type_text(&app, text);
             testing::press(&app, Key::Return);
@@ -1046,13 +1050,13 @@ mod tests {
         app.invoke_curve_press(1.0, 1.0);
         app.invoke_curve_release();
         assert_eq!(app.get_curve_selected(), 1);
-        type_into("Point in", "200");
+        type_into(IN, "200");
         assert_eq!(points()[1], [200.0 / 255.0, 1.0]);
         assert_eq!(app.get_curve_point_in(), "200");
-        type_into("Point in", "10");
+        type_into(IN, "10");
         assert_eq!(points()[1][0], 0.2 + curve::MIN_GAP);
         assert_eq!(app.get_curve_point_in(), "54");
-        type_into("Point in", "200");
+        type_into(IN, "200");
         // The drag, the press on the white point, three typed.
         assert_eq!(changes.get(), 5);
 
@@ -1151,8 +1155,8 @@ mod tests {
             app.on_view_changed(move || changes.set(changes.get() + 1));
         }
         let points = || curve_points(&app, Channel::Rgb);
-        let type_into = |label: &str, text: &str, key: Key| {
-            let (at, size) = testing::labeled(&app, label);
+        let type_into = |id: &str, text: &str, key: Key| {
+            let (at, size) = testing::by_id(&app, id);
             testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
             testing::type_text(&app, text);
             testing::press(&app, key);
@@ -1173,28 +1177,28 @@ mod tests {
 
         // Enter on the reading as it was: 128 is not 0.5, and reading
         // it back would move the point. Nothing happens.
-        let (at, size) = testing::labeled(&app, "Point in");
+        let (at, size) = testing::by_id(&app, IN);
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         testing::press(&app, Key::Return);
         assert_eq!(points()[1], [0.5, 0.5]);
         assert_eq!(changes.get(), after_press);
 
-        type_into("Point out", "200", Key::Return);
+        type_into(OUT, "200", Key::Return);
         assert_eq!(points()[1], [0.5, 200.0 / 255.0]);
         assert_eq!(app.get_curve_selected(), 1, "still selected");
         assert_eq!(app.get_curve_point_out(), "200");
         assert_eq!(changes.get(), after_press + 1, "one change");
 
         // In past the left neighbor: kept a gap from it.
-        type_into("Point in", "0", Key::Return);
+        type_into(IN, "0", Key::Return);
         assert_eq!(points()[1][0], curve::MIN_GAP);
         assert_eq!(app.get_curve_point_in(), "3");
         assert_eq!(app.get_curve_selected(), 1);
         assert_eq!(changes.get(), after_press + 2);
 
         // Escape and a non-number: nothing.
-        type_into("Point in", "100", Key::Escape);
-        type_into("Point out", "abc", Key::Return);
+        type_into(IN, "100", Key::Escape);
+        type_into(OUT, "abc", Key::Return);
         assert_eq!(points()[1], [curve::MIN_GAP, 200.0 / 255.0]);
         assert_eq!(changes.get(), after_press + 2);
 
@@ -1211,7 +1215,7 @@ mod tests {
                 k == "5"
             });
         }
-        let (at, size) = testing::labeled(&app, "Point out");
+        let (at, size) = testing::by_id(&app, OUT);
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         let (at, size) = testing::labeled(&app, "Blue");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);

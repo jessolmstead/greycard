@@ -101,7 +101,7 @@ pub(crate) fn reopen(window: &slint::Window, maximized: bool) {
 #[cfg(all(test, not(target_os = "macos")))]
 mod tests {
     use crate::App;
-    use crate::testing::{click, labeled, press, type_text};
+    use crate::testing::{click, press, type_text};
     use slint::ComponentHandle;
     use slint::platform::{Key, WindowEvent};
 
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn f11_in_a_field_is_as_the_panes_keys_are() {
         let (app, _state, _worker) = develop_window();
-        let (at, size) = labeled(&app, "Frame title");
+        let (at, size) = crate::testing::by_id(&app, "MetaSection::title-field");
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         type_text(&app, "Du");
         assert!(!app.get_right_hidden());

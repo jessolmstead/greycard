@@ -352,7 +352,7 @@ export component ExportSheet inherits Rectangle {
                             format-words := Text { accessible-role: none; text: @tr("Format"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             Segmented { name: format-words.text; options: ["JPEG", "PNG", "TIFF 16-bit", "WebP"]; labels: ["JPEG", "PNG", @tr("TIFF 16-bit"), "WebP"]; current <=> root.export-format; }
                         }
-                        EditSlider {
+                        quality-slider := EditSlider {
                             label: @tr("Quality");
                             // The sheet's own column, not the panel's.
                             label-width: 68px;
@@ -524,7 +524,7 @@ export component ExportSheet inherits Rectangle {
                             VerticalLayout {
                                 horizontal-stretch: 1;
                                 spacing: 0;
-                                EditSlider {
+                                size-slider := EditSlider {
                                     // Export watermark: the slider
                                     label: @tr("Size");
                                     label-width: 68px;
@@ -536,7 +536,7 @@ export component ExportSheet inherits Rectangle {
                                     value <=> root.export-mark-size;
                                     text: round(root.export-mark-size * 10) / 10 + " %";
                                 }
-                                EditSlider {
+                                margin-slider := EditSlider {
                                     // Export watermark: the slider
                                     label: @tr("Margin");
                                     label-width: 68px;
@@ -548,7 +548,7 @@ export component ExportSheet inherits Rectangle {
                                     value <=> root.export-mark-margin;
                                     text: round(root.export-mark-margin * 10) / 10 + " %";
                                 }
-                                EditSlider {
+                                opacity-slider := EditSlider {
                                     // Export watermark: the slider
                                     label: @tr("Opacity");
                                     label-width: 68px;
@@ -634,7 +634,7 @@ export component ExportSheet inherits Rectangle {
                                 overflow: elide;
                             }
                         }
-                        if root.export-border: EditSlider {
+                        if root.export-border: width-slider := EditSlider {
                             // Export border: the slider
                             label: @tr("Width");
                             label-width: 68px;

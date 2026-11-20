@@ -75,7 +75,7 @@ export component RetouchSection inherits Section {
     // with none, which is made again once its slider is let go.
     if root.retouch-mode != "" || root.fill-shown: VerticalLayout {
         spacing: Theme.space-2;
-        EditSlider {
+        size-slider := EditSlider {
             label: @tr("Size");
             minimum: 0.002;
             maximum: 0.3;
@@ -91,7 +91,7 @@ export component RetouchSection inherits Section {
             }
             changed moving => { if (!self.moving) { root.patch-settled(); } }
         }
-        EditSlider {
+        feather-slider := EditSlider {
             label: @tr("Feather");
             minimum: 0;
             maximum: 1;
@@ -107,7 +107,7 @@ export component RetouchSection inherits Section {
             }
             changed moving => { if (!self.moving) { root.patch-settled(); } }
         }
-        EditSlider {
+        opacity-slider := EditSlider {
             label: @tr("Opacity");
             minimum: 0;
             maximum: 1;

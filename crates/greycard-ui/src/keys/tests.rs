@@ -426,7 +426,7 @@ fn r_takes_the_crop_in_and_out_as_its_button_does() {
     // button, which reads Done.
     press(&app, "r");
     assert!(app.get_crop_mode());
-    let (at, size) = crate::testing::labeled(&app, "Done");
+    let (at, size) = crate::testing::by_id(&app, "CropSection::crop-done-button");
     crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert!(!app.get_crop_mode());
 }
@@ -1542,7 +1542,7 @@ fn escape_leaves_the_crop_once_nothing_is_in_hand() {
     let (app, _state, _worker) = develop_window();
     press(&app, "r");
     assert!(app.get_crop_mode());
-    let (at, size) = crate::testing::labeled(&app, "Angle value");
+    let (at, size) = crate::testing::slider_field(&app, "RotateSection::angle");
     crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     press(&app, Key::Escape);
     assert!(app.get_crop_mode(), "the typed value went first");
@@ -1609,11 +1609,11 @@ fn a_held_escape_leaves_the_crop_and_does_nothing_more() {
 /// again.
 #[test]
 fn a_custom_aspect_box_taken_away_hands_the_keys_back() {
-    use crate::testing::{click, labeled, type_text};
+    use crate::testing::{click, type_text};
     let (app, state, _worker) = develop_window();
     press(&app, "r");
     app.set_aspect_name("Custom".into());
-    let (at, size) = labeled(&app, "Custom aspect");
+    let (at, size) = crate::testing::by_id(&app, "CropSection::custom-aspect-field");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert_eq!(app.global::<crate::Typing>().get_boxes(), 1);
     app.invoke_select(1);
@@ -1651,7 +1651,7 @@ fn an_aspect_change_leaves_another_box_its_keys() {
 /// gives them back to the window.
 #[test]
 fn a_text_box_keeps_the_keys_over_the_picture() {
-    use crate::testing::{click, labeled, type_text};
+    use crate::testing::{click, type_text};
     let (app, state, _worker) = develop_window();
     let rating = |state: &std::rc::Rc<crate::Shared>| state.borrow().sidecars[0].meta.rating;
     let over_the_picture = |app: &App| {
@@ -1659,8 +1659,8 @@ fn a_text_box_keeps_the_keys_over_the_picture() {
             position: slint::LogicalPosition::new(700.0, 400.0),
         });
     };
-    let click_on = |app: &App, label: &str| {
-        let (at, size) = labeled(app, label);
+    let click_on = |app: &App, id: &str| {
+        let (at, size) = crate::testing::by_id(app, id);
         click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     };
     let mut expected = 0;
@@ -1673,12 +1673,12 @@ fn a_text_box_keeps_the_keys_over_the_picture() {
     };
 
     // The title and the keywords, on the Develop tab.
-    click_on(&app, "Frame title");
+    click_on(&app, "MetaSection::title-field");
     over_the_picture(&app);
     type_text(&app, "5");
     assert_eq!(app.get_title_text(), "5");
     keys_back(&app, "the title");
-    click_on(&app, "Add keywords");
+    click_on(&app, "MetaSection::keyword-field");
     over_the_picture(&app);
     type_text(&app, "5");
     assert_eq!(app.get_keyword_text(), "5");
@@ -1688,7 +1688,7 @@ fn a_text_box_keeps_the_keys_over_the_picture() {
     // back and leaves the crop on.
     press(&app, "r");
     app.set_aspect_name("Custom".into());
-    click_on(&app, "Custom aspect");
+    click_on(&app, "CropSection::custom-aspect-field");
     over_the_picture(&app);
     type_text(&app, "5");
     assert!(app.get_aspect_custom().ends_with('5'));
@@ -1700,7 +1700,7 @@ fn a_text_box_keeps_the_keys_over_the_picture() {
     press(&app, "m");
     press(&app, Key::Escape);
     assert_eq!(app.get_placing(), "");
-    click_on(&app, "Mask name");
+    click_on(&app, "AdjustmentsSection::name-field");
     over_the_picture(&app);
     type_text(&app, "5");
     assert!(app.get_adjustment_name().ends_with('5'));
@@ -1748,27 +1748,27 @@ fn a_press_on_the_picture_ends_a_text_boxs_typing() {
 /// the panel.
 #[test]
 fn escape_after_a_click_on_level_or_a_guide_puts_it_down() {
-    use crate::testing::{click, labeled};
+    use crate::testing::click;
     let (app, _state, _worker) = develop_window();
     press(&app, "r");
-    let click_on = |app: &App, label: &str| {
-        let (at, size) = labeled(app, label);
+    let click_on = |app: &App, id: &str| {
+        let (at, size) = crate::testing::by_id(app, id);
         click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     };
-    click_on(&app, "Level");
+    click_on(&app, "RotateSection::level-button");
     assert!(app.get_level_mode());
     press(&app, Key::Escape);
     assert!(!app.get_level_mode(), "the level put down");
     assert!(app.get_crop_mode());
-    click_on(&app, "Verticals");
+    click_on(&app, "PerspectiveSection::verticals-button");
     assert_eq!(app.get_guide_mode(), "Vertical");
     press(&app, Key::Escape);
     assert_eq!(app.get_guide_mode(), "", "the guide put down");
-    click_on(&app, "Horizontals");
+    click_on(&app, "PerspectiveSection::horizontals-button");
     assert_eq!(app.get_guide_mode(), "Horizontal");
     press(&app, Key::Escape);
     assert_eq!(app.get_guide_mode(), "");
-    click_on(&app, "Draw");
+    click_on(&app, "CropSection::draw-button");
     assert!(app.get_crop_draw_armed());
     press(&app, Key::Escape);
     assert!(!app.get_crop_draw_armed(), "the Draw put down");
@@ -1791,12 +1791,12 @@ fn ctrl(app: &App, key: &str) {
 /// window: Ctrl+Z undoes the reset.
 #[test]
 fn ctrl_z_after_a_reset_button_undoes_the_reset() {
-    use crate::testing::{click, labeled};
+    use crate::testing::click;
     let (app, state, _worker) = develop_window();
     press(&app, "r");
     app.set_geo_angle(3.0);
     crate::panel::edit::record_panel(&mut state.borrow_mut(), &app);
-    let (at, size) = labeled(&app, "Reset all");
+    let (at, size) = crate::testing::by_id(&app, "PerspectiveSection::reset-all-button");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert_eq!(app.get_geo_angle(), 0.0, "reset");
     ctrl(&app, "z");
@@ -1807,11 +1807,11 @@ fn ctrl_z_after_a_reset_button_undoes_the_reset() {
 /// Tab, Slint's move on; the rest are the window's, Escape too.
 #[test]
 fn a_clicked_button_keeps_its_own_keys_and_passes_the_rest() {
-    use crate::testing::{click, labeled};
+    use crate::testing::click;
     let (app, _state, _worker) = develop_window();
     let passed = || app.global::<crate::ButtonKeys>().get_passed();
     press(&app, "r");
-    let (at, size) = labeled(&app, "Flip");
+    let (at, size) = crate::testing::by_id(&app, "RotateSection::flip-button");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert!(app.get_geo_flip());
     press(&app, Key::Return);
@@ -2000,11 +2000,11 @@ fn alt_and_the_arrows_go_back_and_forward_in_the_grid() {
 /// them on: G and then Alt+← still go back.
 #[test]
 fn alt_left_after_a_clicked_button_goes_back() {
-    use crate::testing::{click, labeled};
+    use crate::testing::click;
     let (app, _state, _worker) = develop_window();
     let visits = visits_of(&app);
     press(&app, "r");
-    let (at, size) = labeled(&app, "Flip");
+    let (at, size) = crate::testing::by_id(&app, "RotateSection::flip-button");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     let passed = app.global::<crate::ButtonKeys>().get_passed();
     press(&app, "g");
@@ -2364,7 +2364,7 @@ fn every_sheet_holds_the_focus() {
     for (name, set, get) in sheets {
         for back in [false, true] {
             let (app, state, _worker) = develop_window();
-            let (x, y) = crate::testing::track_middle(&app, "Exposure");
+            let (x, y) = crate::testing::track_middle(&app, "LightSection::exposure");
             crate::testing::click(&app, x, y);
             set(&app, true);
             crate::testing::settle(&app);

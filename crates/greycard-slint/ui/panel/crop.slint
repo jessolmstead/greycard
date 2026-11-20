@@ -55,7 +55,7 @@ export component CropSection inherits Section {
         spacing: Theme.space-2;
         HorizontalLayout {
             spacing: Theme.space-2;
-            PanelButton {
+            crop-done-button := PanelButton {
                 // Crop section: the button that leaves the crop
                 text: root.crop-mode ? @tr("Done") : @tr("Crop");
                 icon: @image-url("../icons/crop.svg");
@@ -66,7 +66,7 @@ export component CropSection inherits Section {
             // start a drag, and a drag inside moves it: this one shot
             // makes the next drag draw wherever it starts. As the Level
             // does, it brings crop mode with it.
-            PanelButton {
+            draw-button := PanelButton {
                 // Crop section: the button that starts a new crop drawn by hand
                 text: @tr("Draw");
                 icon: @image-url("../icons/pencil.svg");
@@ -98,7 +98,7 @@ export component CropSection inherits Section {
         if root.aspect-name == "Custom": HorizontalLayout {
             spacing: Theme.space-2;
             Text { text: @tr("Custom"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-            LineEdit {
+            custom-aspect-field := LineEdit {
                 text <=> root.aspect-custom;
                 placeholder-text: "W:H";
                 accessible-label: @tr("Custom aspect");
@@ -163,7 +163,7 @@ export component RotateSection inherits Section {
         // leveled as if it had been drawn.
         HorizontalLayout {
             spacing: Theme.space-2;
-            PanelButton {
+            level-button := PanelButton {
                 // Rotate section: the button that takes the level tool in hand
                 text: @tr("Level");
                 icon: @image-url("../icons/ruler.svg");
@@ -200,7 +200,7 @@ export component RotateSection inherits Section {
                 accessible-label: @tr("Rotate right");
                 clicked => { root.geometry-turned(-1); }
             }
-            PanelButton {
+            flip-button := PanelButton {
                 text: "";
                 icon: @image-url("../icons/flip-horizontal.svg");
                 // Rotate section: flip the frame left to right
@@ -285,7 +285,7 @@ export component PerspectiveSection inherits Section {
         // turn and that way's keystone at once.
         HorizontalLayout {
             spacing: Theme.space-2;
-            PanelButton {
+            verticals-button := PanelButton {
                 // Perspective section: the slider
                 text: @tr("Verticals");
                 icon: @image-url("../icons/ruler.svg");
@@ -298,7 +298,7 @@ export component PerspectiveSection inherits Section {
                     root.focus-keys();
                 }
             }
-            PanelButton {
+            horizontals-button := PanelButton {
                 // Perspective section: the slider
                 text: @tr("Horizontals");
                 icon: @image-url("../icons/ruler.svg");
@@ -344,7 +344,7 @@ export component PerspectiveSection inherits Section {
         // once, from the end of it: the three
         // sections are one edit, and a Reset inside
         // any one of them would read as that one's.
-        PanelButton {
+        reset-all-button := PanelButton {
             text: @tr("Reset all");
             icon: @image-url("../icons/undo-2.svg");
             clicked => { root.geometry-reset(); }

@@ -1239,13 +1239,13 @@ fn a_shift_placed_linear_is_level_on_a_straightened_view() {
 /// has from a slider, and the next drag paints.
 #[test]
 fn a_key_a_slider_passes_on_never_leaves_the_hand_up() {
-    use crate::testing::{click, drag, labeled, press};
+    use crate::testing::{click, drag, press};
     use slint::platform::{Key, WindowEvent};
     let (app, state, _worker) = hover_frame(1.0);
     state.borrow_mut().develop.zoom = 1.0;
     app.invoke_retouch_toggled("Heal".into());
     app.set_panel_tab("Retouch".into());
-    let (at, size) = labeled(&app, "Size");
+    let (at, size) = crate::testing::by_id(&app, "RetouchSection::size-slider");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert_ne!(
         app.global::<crate::SliderKeys>().get_holder(),
@@ -2135,7 +2135,7 @@ fn moving_temperature_turns_as_shot_off_and_as_shot_puts_it_back() {
 
     // A drag of the Temperature handle, a third of the track to
     // the right: live under As shot, and the move turns it off.
-    let (at, size) = crate::testing::labeled(&app, "Temperature");
+    let (at, size) = crate::testing::by_id(&app, "WhiteBalanceSection::temperature-slider");
     let (left, right) = (at.x + 68.0, at.x + size.width - 60.0);
     let fraction = (as_shot.0 - 2000.0) / 10000.0;
     let x = left + fraction * (right - left);
@@ -2166,7 +2166,7 @@ fn moving_temperature_turns_as_shot_off_and_as_shot_puts_it_back() {
 
     // As shot back on: the camera's white on the sliders and on
     // the picture.
-    crate::testing::click_switch(&app, "As shot");
+    crate::testing::click_switch_by_id(&app, "WhiteBalanceSection::as-shot-toggle");
     wait();
     assert!(app.get_as_shot());
     assert_eq!((app.get_temperature(), app.get_tint()), as_shot);
@@ -2178,41 +2178,53 @@ fn moving_temperature_turns_as_shot_off_and_as_shot_puts_it_back() {
     assert_eq!(state.borrow().sidecars[0].history.len(), steps + 2);
 
     // A custom pair, from a drag of each slider.
-    let drag_slider = |label: &str, value: f32, low: f32, high: f32, by: f32| {
-        let (at, size) = crate::testing::labeled(&app, label);
+    let drag_slider = |id: &str, value: f32, low: f32, high: f32, by: f32| {
+        let (at, size) = crate::testing::by_id(&app, id);
         let (left, right) = (at.x + 68.0, at.x + size.width - 60.0);
         let x = left + (value - low) / (high - low) * (right - left);
         let y = at.y + size.height / 2.0;
         crate::testing::drag(&app, &[(x, y), (x + by / 6.0, y), (x + by, y)]);
         wait();
     };
-    drag_slider("Temperature", as_shot.0, 2000.0, 12000.0, 60.0);
-    drag_slider("Tint", as_shot.1, -0.05, 0.05, -40.0);
+    drag_slider(
+        "WhiteBalanceSection::temperature-slider",
+        as_shot.0,
+        2000.0,
+        12000.0,
+        60.0,
+    );
+    drag_slider(
+        "WhiteBalanceSection::tint-slider",
+        as_shot.1,
+        -0.05,
+        0.05,
+        -40.0,
+    );
     let custom = (app.get_temperature(), app.get_tint());
     assert!(!app.get_as_shot());
     assert!(custom.0 > as_shot.0 && custom.1 < as_shot.1, "{custom:?}");
     let steps = state.borrow().sidecars[0].history.len();
     // A double-click on a slider puts it alone back to the camera's
     // value, and nothing else: As shot stays off. One step each.
-    let double_click = |label: &str| {
+    let double_click = |id: &str| {
         // Clear of the last click, so the two here are a pair.
         slint::platform::update_timers_and_animations();
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(600));
         slint::platform::update_timers_and_animations();
-        let (at, size) = crate::testing::labeled(&app, label);
+        let (at, size) = crate::testing::by_id(&app, id);
         let (x, y) = (at.x + 30.0, at.y + size.height / 2.0);
         crate::testing::click(&app, x, y);
         crate::testing::click(&app, x, y);
         wait();
     };
-    double_click("Temperature");
+    double_click("WhiteBalanceSection::temperature-slider");
     assert_eq!(
         (app.get_temperature(), app.get_tint()),
         (as_shot.0, custom.1)
     );
     assert!(!app.get_as_shot());
     assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
-    double_click("Tint");
+    double_click("WhiteBalanceSection::tint-slider");
     assert_eq!((app.get_temperature(), app.get_tint()), as_shot);
     assert!(!app.get_as_shot(), "both at the camera's, and still custom");
     assert_eq!(
@@ -2226,11 +2238,23 @@ fn moving_temperature_turns_as_shot_off_and_as_shot_puts_it_back() {
 
     // As shot switched on from a custom pair: both sliders, and the
     // picture, at the camera's.
-    drag_slider("Temperature", as_shot.0, 2000.0, 12000.0, -60.0);
-    drag_slider("Tint", as_shot.1, -0.05, 0.05, 40.0);
+    drag_slider(
+        "WhiteBalanceSection::temperature-slider",
+        as_shot.0,
+        2000.0,
+        12000.0,
+        -60.0,
+    );
+    drag_slider(
+        "WhiteBalanceSection::tint-slider",
+        as_shot.1,
+        -0.05,
+        0.05,
+        40.0,
+    );
     assert!(!app.get_as_shot());
     assert_ne!(patch(&app), neutral);
-    crate::testing::click_switch(&app, "As shot");
+    crate::testing::click_switch_by_id(&app, "WhiteBalanceSection::as-shot-toggle");
     wait();
     assert!(app.get_as_shot());
     assert_eq!((app.get_temperature(), app.get_tint()), as_shot);
@@ -2569,7 +2593,7 @@ fn autos_menu_holds_the_presets_on_a_raw_alone() {
     // A click on the chevron, just right of the section's Auto
     // (the one on Neutral's row; the Light section has one too),
     // opens it.
-    let (neutral, _) = crate::testing::labeled(&app, "Neutral");
+    let (neutral, _) = crate::testing::by_id(&app, "WhiteBalanceSection::neutral-button");
     let auto = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Auto")
         .map(|e| (e.absolute_position(), e.size()))
         .find(|(at, _)| (at.y - neutral.y).abs() < 4.0)
@@ -2616,7 +2640,7 @@ fn the_presets_menu_hands_the_keys_back() {
     let counted = picks.clone();
     app.on_pick_pressed(move |_, _| counted.set(counted.get() + 1));
     let chevron = || {
-        let (neutral, _) = crate::testing::labeled(&app, "Neutral");
+        let (neutral, _) = crate::testing::by_id(&app, "WhiteBalanceSection::neutral-button");
         let auto = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Auto")
             .map(|e| (e.absolute_position(), e.size()))
             .find(|(at, _)| (at.y - neutral.y).abs() < 4.0)
@@ -2929,7 +2953,6 @@ fn auto_light_sets_the_sliders_in_one_step() {
 /// the picture and not for a mask, whose light it does not set.
 #[test]
 fn auto_light_is_a_button_under_the_light_sliders() {
-    use crate::testing::labeled;
     use greycard_edit::auto::MIDDLE;
     use i_slint_backend_testing::ElementHandle;
     let app = window(1);
@@ -2954,7 +2977,7 @@ fn auto_light_is_a_button_under_the_light_sliders() {
 
     // The white balance has an Auto of its own above: the Light
     // section's is the first one under its last slider.
-    let (blacks, _) = labeled(&app, "Blacks");
+    let (blacks, _) = crate::testing::by_id(&app, "LightSection::blacks-slider");
     let (at, size) = ElementHandle::find_by_accessible_label(&app, "Auto")
         .map(|e| (e.absolute_position(), e.size()))
         .find(|(at, _)| at.y > blacks.y)
@@ -2982,7 +3005,7 @@ fn auto_light_is_a_button_under_the_light_sliders() {
     assert_eq!(app.get_target(), 1);
     // The history's row for the step is named Auto too: only the
     // panel on the right is looked in.
-    let (blacks, _) = labeled(&app, "Blacks");
+    let (blacks, _) = crate::testing::by_id(&app, "LightSection::blacks-slider");
     let panel = ElementHandle::find_by_element_id(&app, "App::panel-view")
         .next()
         .expect("the panel's view")
@@ -3146,7 +3169,7 @@ fn a_pictures_white_balance_is_an_offset_from_its_own_white() {
         "{m0} {m1}"
     );
     // A drag from where none is on the track.
-    let (at, size) = crate::testing::labeled(&app, "Temperature");
+    let (at, size) = crate::testing::by_id(&app, "WhiteBalanceSection::temperature-slider");
     let (left, right) = (at.x + 68.0, at.x + size.width - 60.0);
     let x = left + (0.0 - m0) / (m1 - m0) * (right - left);
     let y = at.y + size.height / 2.0;
@@ -3181,7 +3204,7 @@ fn a_pictures_white_balance_is_an_offset_from_its_own_white() {
     slint::platform::update_timers_and_animations();
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(600));
     slint::platform::update_timers_and_animations();
-    let (at, size) = crate::testing::labeled(&app, "Temperature");
+    let (at, size) = crate::testing::by_id(&app, "WhiteBalanceSection::temperature-slider");
     let (x, y) = (at.x + 30.0, at.y + size.height / 2.0);
     crate::testing::click(&app, x, y);
     crate::testing::click(&app, x, y);
@@ -4031,26 +4054,20 @@ fn ctrl_and_a_touchpad_scroll_zooms() {
 /// both. The Loupe's modes are `panel::cull`'s tests.
 #[test]
 fn library_and_loupe_switch_the_view_and_the_one_on_screen_is_pressed() {
-    use i_slint_backend_testing::ElementHandle;
     let app = window(6);
     app.window()
         .set_size(slint::LogicalSize::new(1500.0, 950.0));
     let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(6));
     app.invoke_select(0);
-    let pressed = |label: &str| {
-        crate::testing::count_labeled(&app, label);
-        ElementHandle::find_by_accessible_label(&app, label)
-            .next()
-            .and_then(|e| e.accessible_checked())
-    };
-    let middle = |label: &str| {
-        let (at, size) = crate::testing::labeled(&app, label);
+    let pressed = |id: &str| crate::testing::pressed_id(&app, id);
+    let middle = |id: &str| {
+        let (at, size) = crate::testing::by_id(&app, id);
         (at.x + size.width / 2.0, at.y + size.height / 2.0, at)
     };
     assert!(!app.get_grid_open());
-    assert_eq!(pressed("Loupe view"), Some(true));
-    assert_eq!(pressed("Library view"), Some(false));
-    let (lx, ly, library_at) = middle("Library view");
+    assert_eq!(pressed("App::loupe-view-button"), Some(true));
+    assert_eq!(pressed("App::library-view-button"), Some(false));
+    let (lx, ly, library_at) = middle("App::library-view-button");
     // The pane's top left, above everything that scrolls.
     assert!(
         library_at.x < 240.0 && library_at.y < 40.0,
@@ -4058,23 +4075,26 @@ fn library_and_loupe_switch_the_view_and_the_one_on_screen_is_pressed() {
     );
     click(&app, lx, ly);
     assert!(app.get_grid_open());
-    assert_eq!(pressed("Library view"), Some(true));
-    assert_eq!(pressed("Loupe view"), Some(false));
+    assert_eq!(pressed("App::library-view-button"), Some(true));
+    assert_eq!(pressed("App::loupe-view-button"), Some(false));
     // Where it was in the loupe.
-    let (_, _, there) = middle("Library view");
+    let (_, _, there) = middle("App::library-view-button");
     assert_eq!((there.x, there.y), (library_at.x, library_at.y));
     // Library again is still the library; G agrees with the two.
     click(&app, lx, ly);
     assert!(app.get_grid_open());
-    let (dx, dy, _) = middle("Loupe view");
+    let (dx, dy, _) = middle("App::loupe-view-button");
     click(&app, dx, dy);
     assert!(!app.get_grid_open());
     crate::testing::press(&app, "g");
     assert!(app.get_grid_open());
-    assert_eq!(pressed("Library view"), Some(true));
+    assert_eq!(pressed("App::library-view-button"), Some(true));
     // From the lightbox with the pane brought back: Loupe leaves
     // it for the frame, Library for the grid, as its own ways out.
-    for (label, grid) in [("Loupe view", false), ("Library view", true)] {
+    for (label, grid) in [
+        ("App::loupe-view-button", false),
+        ("App::library-view-button", true),
+    ] {
         app.invoke_lightbox_enter();
         assert!(app.get_lightbox());
         app.set_left_hidden(false);
@@ -4239,7 +4259,7 @@ fn the_edge_arrows_and_undo_say_their_words_after_a_rest() {
     // The panel scrolled under a resting pointer takes the word
     // down; the Develop tab is long enough to scroll.
     app.set_panel_tab("Develop".into());
-    rest_on(&app, "Undo");
+    crate::testing::rest_on_id(&app, "PanelHead::undo-button");
     assert_eq!(app.get_tip_text(), "Undo");
     app.set_panel_scroll(-40.0);
     assert_ne!(app.get_panel_scroll(), 0.0, "the panel scrolls");
@@ -4249,7 +4269,7 @@ fn the_edge_arrows_and_undo_say_their_words_after_a_rest() {
     // A key takes the word down, and a panel the key puts away
     // takes its controls with it: F8 over a resting Undo.
     away();
-    rest_on(&app, "Undo");
+    crate::testing::rest_on_id(&app, "PanelHead::undo-button");
     assert_eq!(app.get_tip_text(), "Undo");
     crate::testing::press(&app, slint::platform::Key::F8);
     slint::platform::update_timers_and_animations();

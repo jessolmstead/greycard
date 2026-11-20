@@ -257,9 +257,10 @@ fn open_files(edit: Edit, files: Vec<std::path::PathBuf>) -> (App, Rc<Shared>) {
     (app, state)
 }
 
-/// A click at the middle of the reset in `title`'s header.
-fn click_reset(app: &App, title: &str) {
-    let (at, size) = header_reset(app, title);
+/// A click at the middle of the reset in the header of the section
+/// of the type `section`.
+fn click_reset(app: &App, section: &str) {
+    let (at, size) = header_reset(app, section);
     click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
 }
 
@@ -320,7 +321,7 @@ fn light_resets_through_its_header() {
     let (app, state) = open_with(edit.clone());
     let mut expect = edit.clone();
     expect.light = Default::default();
-    resets_through_the_window(&app, &state, "LIGHT", "light", &expect);
+    resets_through_the_window(&app, &state, "LightSection", "light", &expect);
 }
 
 #[test]
@@ -338,8 +339,14 @@ fn white_balance_resets_to_as_shot_through_its_header() {
     assert!(!app.get_as_shot());
     let mut expect = edit.clone();
     expect.white_balance = WhiteBalance::AsShot;
-    resets_through_the_window(&app, &state, "WHITE BALANCE", "white-balance", &expect);
-    click_reset(&app, "WHITE BALANCE");
+    resets_through_the_window(
+        &app,
+        &state,
+        "WhiteBalanceSection",
+        "white-balance",
+        &expect,
+    );
+    click_reset(&app, "WhiteBalanceSection");
     assert!(app.get_as_shot());
 }
 
@@ -354,7 +361,7 @@ fn the_tone_curve_resets_through_its_header() {
     let (app, state) = open_with(edit.clone());
     let mut expect = edit.clone();
     expect.curves = Default::default();
-    resets_through_the_window(&app, &state, "CURVES", "curves", &expect);
+    resets_through_the_window(&app, &state, "CurvesSection", "curves", &expect);
 }
 
 /// Color grading had a Reset button already; the header's does the
@@ -370,7 +377,7 @@ fn color_grading_resets_through_its_header_beside_its_button() {
     let (app, state) = open_with(edit.clone());
     let mut expect = edit.clone();
     expect.grading = Default::default();
-    resets_through_the_window(&app, &state, "COLOR GRADING", "grading", &expect);
+    resets_through_the_window(&app, &state, "GradingSection", "grading", &expect);
     // The panel builds only what is in its view, and what sits
     // above a section depends on the machine, so the button is
     // looked for by its id down the whole panel, never by where
@@ -407,10 +414,10 @@ fn the_crop_resets_through_its_header() {
     let mut expect = edit.clone();
     expect.geometry.crop = None;
     expect.geometry.aspect = Aspect::Free;
-    resets_through_the_window(&app, &state, "CROP", "crop", &expect);
+    resets_through_the_window(&app, &state, "CropSection", "crop", &expect);
     let mut expect = edit.clone();
     expect.geometry.vertical = 0.0;
-    resets_through_the_window(&app, &state, "PERSPECTIVE", "perspective", &expect);
+    resets_through_the_window(&app, &state, "PerspectiveSection", "perspective", &expect);
 }
 
 /// On the Masks tab the chosen mask's white balance goes to none of
@@ -445,12 +452,18 @@ fn a_masks_white_balance_resets_to_none_of_its_own() {
     assert!(app.get_local_wb_on() && app.get_local_wb_relative());
     let mut expect = edit.clone();
     expect.adjustments[0].look.white_balance = LocalWhite::Off;
-    resets_through_the_window(&app, &state, "WHITE BALANCE", "white-balance", &expect);
-    click_reset(&app, "WHITE BALANCE");
+    resets_through_the_window(
+        &app,
+        &state,
+        "WhiteBalanceSection",
+        "white-balance",
+        &expect,
+    );
+    click_reset(&app, "WhiteBalanceSection");
     assert!(!app.get_local_wb_on() && !app.get_local_wb_kept() && !app.get_local_wb_relative());
     let mut expect = current(&state);
     expect.adjustments[0].look.light = Default::default();
-    click_reset(&app, "LIGHT");
+    click_reset(&app, "LightSection");
     assert_eq!(current(&state), expect);
     assert_eq!(current(&state).adjustments[1].look, moved_look());
     assert_eq!(current(&state).white_balance, edit.white_balance);
@@ -468,7 +481,7 @@ fn the_reset_neither_drags_nor_folds_its_section() {
     let order = app.get_develop_order();
     let folded = app.get_collapsed_light();
     let n = steps(&state);
-    let (at, size) = header_reset(&app, "LIGHT");
+    let (at, size) = header_reset(&app, "LightSection");
     let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
     let path: Vec<(f32, f32)> = (0..=12).map(|i| (x, y + 6.0 * i as f32)).collect();
     crate::testing::drag(&app, &path);
@@ -483,10 +496,9 @@ fn the_reset_neither_drags_nor_folds_its_section() {
 
     // At its defaults the color section's is not there to click.
     assert!(!live(&app, "color"));
-    crate::testing::labeled(&app, "COLOR");
+    crate::testing::header(&app, "ColorSection");
     assert!(
-        !i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Reset")
-            .any(|e| e.accessible_description().as_deref() == Some("COLOR")),
+        crate::testing::section_part(&app, "ColorSection", "Section::reset-button").is_none(),
         "hidden at its defaults"
     );
     // One arriving all the same is nothing.
@@ -498,7 +510,7 @@ fn the_reset_neither_drags_nor_folds_its_section() {
     app.set_saturation(0.5);
     app.invoke_view_changed();
     assert!(live(&app, "color"));
-    click_reset(&app, "COLOR");
+    click_reset(&app, "ColorSection");
     assert_eq!(steps(&state), n + 2);
     assert_eq!(current(&state), edit);
     assert_eq!(app.get_collapsed_color(), folded);
@@ -517,7 +529,7 @@ fn color_resets_its_switch_too() {
     let mut expect = edit.clone();
     expect.color = Default::default();
     assert!(expect.color.enabled);
-    resets_through_the_window(&app, &state, "COLOR", "color", &expect);
+    resets_through_the_window(&app, &state, "ColorSection", "color", &expect);
 }
 
 /// A section whose switch is dead does not reset, though a click
@@ -562,7 +574,7 @@ fn light_leaves_a_pictures_display_curve() {
     let (app, state) = open_files(edit.clone(), files);
     let mut expect = edit.clone();
     expect.light = Default::default();
-    resets_through_the_window(&app, &state, "LIGHT", "light", &expect);
+    resets_through_the_window(&app, &state, "LightSection", "light", &expect);
 
     let edit = Edit {
         display_curve: DisplayCurve::Agx,
@@ -570,7 +582,7 @@ fn light_leaves_a_pictures_display_curve() {
     };
     let (app, state) = open_with(edit.clone());
     assert!(live(&app, "light"), "the curve alone is the section moved");
-    resets_through_the_window(&app, &state, "LIGHT", "light", &Edit::default());
+    resets_through_the_window(&app, &state, "LightSection", "light", &Edit::default());
 }
 
 /// Rotate's reset on a crop that is not the whole plane, at a real
@@ -593,7 +605,7 @@ fn rotate_refits_a_crop_its_straighten_took_back() {
     };
     let (app, state) = open_with(edit);
     crop_tab(&app);
-    click_reset(&app, "ROTATE");
+    click_reset(&app, "RotateSection");
     let after = current(&state).geometry;
     assert_eq!(after.angle, 0.0);
     let crop = after.crop.expect("kept");
@@ -638,7 +650,7 @@ fn review_rotate_reset_after_a_quarter_turn_keeps_the_crops_pixels() {
     };
     let (app, state) = open_with(edit.clone());
     crop_tab(&app);
-    click_reset(&app, "ROTATE");
+    click_reset(&app, "RotateSection");
     let after = current(&state).geometry;
     assert_eq!(after.turns, 0);
     assert!(
@@ -671,7 +683,7 @@ fn review_rotate_reset_after_a_flip_keeps_the_crops_pixels() {
     };
     let (app, state) = open_with(edit.clone());
     crop_tab(&app);
-    click_reset(&app, "ROTATE");
+    click_reset(&app, "RotateSection");
     let after = current(&state).geometry;
     assert!(!after.flip);
     assert!(
@@ -740,7 +752,7 @@ fn review_dimming_follows_a_frame_switch_and_undo_redo() {
     assert!(!live(&app, "light"), "back on frame 0");
     app.invoke_select(1);
     crate::testing::settle(&app);
-    click_reset(&app, "LIGHT");
+    click_reset(&app, "LightSection");
     assert!(!live(&app, "light"));
     app.invoke_undo();
     assert!(live(&app, "light"));
@@ -792,7 +804,7 @@ fn review_a_reset_records_no_spurious_step_for_a_wb_the_slider_rounds() {
     edit.light.exposure = 0.5;
     let (app, state) = open_with(edit.clone());
     let n = steps(&state);
-    click_reset(&app, "LIGHT");
+    click_reset(&app, "LightSection");
     assert_eq!(steps(&state), n + 1, "one step");
     assert_eq!(
         current(&state).white_balance,
@@ -819,12 +831,11 @@ fn the_empty_room_folds_as_the_header_either_way() {
     // The switch, found whether or not the reset is there, and the
     // reset's room a fixed way left of it.
     let switch = |app: &App| {
-        let (at, size) = crate::testing::labeled_where(app, "LIGHT", |e| {
-            e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Switch)
-        });
+        let (at, size) =
+            crate::testing::section_bounds(app, "LightSection", "Section::header-switch");
         (at.x, at.y + size.height / 2.0)
     };
-    let (at, size) = header_reset(&app, "LIGHT");
+    let (at, size) = header_reset(&app, "LightSection");
     let left = switch(&app).0 - (at.x + size.width / 2.0);
     let room = |app: &App| {
         let (x, y) = switch(app);
@@ -1016,7 +1027,7 @@ fn review_double_click_on_reset_does_not_fold() {
     edit.light.exposure = 0.75;
     let (app, state) = open_with(edit);
     let folded = app.get_collapsed_light();
-    let (at, size) = header_reset(&app, "LIGHT");
+    let (at, size) = header_reset(&app, "LightSection");
     let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
     click(&app, x, y);
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(60));
@@ -1062,7 +1073,7 @@ fn review_pending_then_reset_on_disk() {
     app.set_saturation(0.5);
     app.invoke_view_changed();
     assert!(state.borrow().develop.save_timer.running());
-    click_reset(&app, "LIGHT");
+    click_reset(&app, "LightSection");
     assert!(
         !state.borrow().develop.save_timer.running(),
         "the save's timer stopped"
@@ -1113,7 +1124,7 @@ fn review_no_pending_one_step_bit_for_bit_on_disk() {
     app.invoke_select(0);
     state.borrow_mut().develop.source_size = (6000, 4000);
     let n = steps(&state);
-    click_reset(&app, "COLOR");
+    click_reset(&app, "ColorSection");
     assert_eq!(steps(&state), n + 1);
     let mut expect = edit.clone();
     expect.color = Default::default();
@@ -1205,7 +1216,7 @@ fn capture_the_header_resets() {
         app.invoke_tab_changed("Develop".into());
         away();
         shot(&format!("develop-{t}-rest"));
-        hover("LIGHT");
+        hover("LightSection");
         shot(&format!("develop-{t}-hover"));
         away();
 
@@ -1214,14 +1225,14 @@ fn capture_the_header_resets() {
         app.invoke_target_changed(1);
         away();
         shot(&format!("masks-{t}-rest"));
-        hover("LIGHT");
+        hover("LightSection");
         shot(&format!("masks-{t}-hover"));
 
         app.set_panel_tab("Crop".into());
         app.invoke_tab_changed("Crop".into());
         away();
         shot(&format!("crop-{t}-rest"));
-        hover("CROP");
+        hover("CropSection");
         shot(&format!("crop-{t}-hover"));
         away();
     }

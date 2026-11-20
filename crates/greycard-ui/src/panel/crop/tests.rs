@@ -407,7 +407,7 @@ fn full_frame_setup(app: &App) -> slint::LogicalPosition {
 }
 
 fn click_draw(app: &App) {
-    let (at, size) = crate::testing::labeled(app, "Draw");
+    let (at, size) = crate::testing::by_id(app, "CropSection::draw-button");
     crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
 }
 
@@ -492,7 +492,7 @@ fn leaving_crop_mode_puts_draw_down() {
     let _base = full_frame_setup(&app);
     // By the section's own button.
     click_draw(&app);
-    let (at, size) = crate::testing::labeled(&app, "Done");
+    let (at, size) = crate::testing::by_id(&app, "CropSection::crop-done-button");
     crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert!(!app.get_crop_mode());
     assert!(!app.get_crop_draw_armed());

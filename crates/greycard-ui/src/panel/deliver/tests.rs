@@ -1383,6 +1383,18 @@ fn shown(app: &App, label: &str) -> Option<(slint::LogicalPosition, slint::Logic
         .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
 }
 
+/// [`shown`] of the element `id`.
+fn shown_id(app: &App, id: &str) -> Option<(slint::LogicalPosition, slint::LogicalSize)> {
+    use i_slint_backend_testing::ElementHandle;
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(0.0, 0.0),
+        });
+    ElementHandle::find_by_element_id(app, id)
+        .map(|e| (e.absolute_position(), e.size()))
+        .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
+}
+
 fn wheel(app: &App, x: f32, y: f32, delta_y: f32) {
     app.window()
         .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
@@ -1496,14 +1508,15 @@ fn the_export_sheet_fits_a_short_window_and_its_choices_scroll() {
     // The watermark's strength is past the fold, until the choices
     // are scrolled to it.
     assert!(
-        shown(&app, "Opacity").is_none(),
+        shown_id(&app, "ExportSheet::opacity-slider").is_none(),
         "the choices are taller than their view"
     );
     let (format, _) = shown(&app, "Format").expect("the Format row");
     for _ in 0..20 {
         wheel(&app, format.x + 4.0, format.y + 4.0, -60.0);
     }
-    let (opacity, size) = shown(&app, "Opacity").expect("scrolled to Opacity");
+    let (opacity, size) =
+        shown_id(&app, "ExportSheet::opacity-slider").expect("scrolled to Opacity");
     assert!(
         opacity.y + size.height <= folder.y,
         "above the folder and buttons"
@@ -1841,7 +1854,7 @@ fn enter_exports_and_escape_cancels_unless_a_field_has_it() {
 #[test]
 fn the_sheets_fields_and_sliders_hand_enter_back_to_the_sheet() {
     use crate::testing::{click, press, type_text};
-    use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+    use i_slint_backend_testing::ElementHandle;
     use slint::platform::Key;
     let app = crate::testing::window(2);
     let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
@@ -1855,8 +1868,8 @@ fn the_sheets_fields_and_sliders_hand_enter_back_to_the_sheet() {
             .dispatch_event(slint::platform::WindowEvent::PointerMoved {
                 position: slint::LogicalPosition::new(0.0, 0.0),
             });
-        let e = ElementHandle::find_by_accessible_label(&app, "Quality")
-            .find(|e| e.accessible_role() == Some(AccessibleRole::Slider))
+        let e = ElementHandle::find_by_element_id(&app, "ExportSheet::quality-slider")
+            .next()
             .expect("the Quality slider");
         (e.absolute_position(), e.size())
     };

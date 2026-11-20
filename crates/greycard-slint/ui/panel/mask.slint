@@ -269,7 +269,7 @@ export component AdjustmentsList inherits Section {
             }
         }
     }
-    PanelButton {
+    new-mask-button := PanelButton {
         text: @tr("New mask");
         icon: @image-url("../icons/plus.svg");
         clicked => { root.new-mask(); }
@@ -525,7 +525,7 @@ export component AdjustmentsSection inherits Section {
                             // whichever row happens to be chosen: a
                             // half-filled circle, which reads as
                             // invert rather than mirror.
-                            Rectangle {
+                            invert-button := Rectangle {
                                 width: Theme.control-height - 4px;
                                 border-radius: Theme.radius-sm;
                                 border-width: invert-focus.has-focus ? 2px : 0;
@@ -578,7 +578,7 @@ export component AdjustmentsSection inherits Section {
                             }
                             // The last one too: the mask stays, empty,
                             // as New mask leaves one.
-                            Rectangle {
+                            remove-shape-button := Rectangle {
                                 width: Theme.control-height - 4px;
                                 accessible-role: button;
                                 accessible-label: @tr("Remove this shape");
@@ -661,7 +661,7 @@ export component AdjustmentsSection inherits Section {
                         letter-spacing: 0.8px;
                         overflow: elide;
                     }
-                    if root.has-feather: EditSlider {
+                    if root.has-feather: feather-slider := EditSlider {
                         label: @tr("Feather");
                         minimum: 0;
                         maximum: 1;
@@ -677,7 +677,7 @@ export component AdjustmentsSection inherits Section {
                     // Low to High, and how far past each it fades to nothing.
                     if root.component-kind == "Luminance": VerticalLayout {
                         spacing: Theme.space-2;
-                        EditSlider {
+                        low-slider := EditSlider {
                             label: @tr("Low");
                             minimum: 0;
                             maximum: 1;
@@ -693,7 +693,7 @@ export component AdjustmentsSection inherits Section {
                                 root.view-changed();
                             }
                         }
-                        EditSlider {
+                        low-fade-slider := EditSlider {
                             // Luminance range: the fade at the dark end
                             label: @tr("Low fade");
                             minimum: 0;
@@ -706,7 +706,7 @@ export component AdjustmentsSection inherits Section {
                             text: round(root.lum-low-feather * 100);
                             changed(v) => { root.view-changed(); }
                         }
-                        EditSlider {
+                        high-slider := EditSlider {
                             label: @tr("High");
                             minimum: 0;
                             maximum: 1;
@@ -721,7 +721,7 @@ export component AdjustmentsSection inherits Section {
                                 root.view-changed();
                             }
                         }
-                        EditSlider {
+                        high-fade-slider := EditSlider {
                             // Luminance range: the fade at the light end
                             label: @tr("High fade");
                             minimum: 0;
@@ -768,7 +768,7 @@ export component AdjustmentsSection inherits Section {
                                 selected(v) => { root.range-sample = v.to-float(); }
                             }
                         }
-                        EditSlider {
+                        hue-slider := EditSlider {
                             label: @tr("Hue");
                             label-width: max(84px, LabelColumn.width);
                             tinted: true;
@@ -782,7 +782,7 @@ export component AdjustmentsSection inherits Section {
                             text: round(root.range-hue) + "\u{00b0}";
                             changed(v) => { root.view-changed(); }
                         }
-                        EditSlider {
+                        width-slider := EditSlider {
                             label: @tr("Width");
                             label-width: max(84px, LabelColumn.width);
                             minimum: 0;
@@ -794,7 +794,7 @@ export component AdjustmentsSection inherits Section {
                             text: round(root.range-width) + "\u{00b0}";
                             changed(v) => { root.view-changed(); }
                         }
-                        EditSlider {
+                        hue-fade-slider := EditSlider {
                             // Color range: the fade
                             label: @tr("Hue fade");
                             label-width: max(84px, LabelColumn.width);
@@ -807,7 +807,7 @@ export component AdjustmentsSection inherits Section {
                             text: round(root.range-hue-feather) + "\u{00b0}";
                             changed(v) => { root.view-changed(); }
                         }
-                        EditSlider {
+                        chroma-slider := EditSlider {
                             label: @tr("Chroma");
                             label-width: max(84px, LabelColumn.width);
                             minimum: 0;
@@ -824,7 +824,7 @@ export component AdjustmentsSection inherits Section {
                                 root.view-changed();
                             }
                         }
-                        EditSlider {
+                        chroma-fade-slider := EditSlider {
                             // Color range: the fade
                             label: @tr("Chroma fade");
                             label-width: max(84px, LabelColumn.width);
@@ -850,7 +850,7 @@ export component AdjustmentsSection inherits Section {
             // shape's own settings while a brush is chosen.
             if root.placing == "Brush": VerticalLayout {
                 spacing: Theme.space-2;
-                EditSlider {
+                brush-size-slider := EditSlider {
                     label: @tr("Size");
                     minimum: 0.002;
                     maximum: 0.5;
@@ -862,7 +862,7 @@ export component AdjustmentsSection inherits Section {
                     text: round(root.brush-size * 1000) / 10 + "%";
                     changed(v) => { }
                 }
-                EditSlider {
+                brush-feather-slider := EditSlider {
                     label: @tr("Feather");
                     minimum: 0;
                     maximum: 1;
@@ -874,7 +874,7 @@ export component AdjustmentsSection inherits Section {
                     text: round(root.brush-feather * 100) + "%";
                     changed(v) => { }
                 }
-                EditSlider {
+                brush-opacity-slider := EditSlider {
                     // Brush: the slider
                     label: @tr("Opacity");
                     minimum: 0;

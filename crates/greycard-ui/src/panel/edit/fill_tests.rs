@@ -407,7 +407,7 @@ fn light_s_switch_reset_and_copy_leave_the_fill_alone() {
     assert_eq!(now.highlight_fill.as_deref(), Some("hl-1"));
     assert_eq!(switch(&app).accessible_checked(), Some(true));
     // Light's reset, through its header and as the table has it.
-    let (at, size) = crate::testing::header_reset(&app, "LIGHT");
+    let (at, size) = crate::testing::header_reset(&app, "LightSection");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     let reset = current(&state, 0);
     assert_eq!(reset.light, Edit::default().light);

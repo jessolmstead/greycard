@@ -190,7 +190,7 @@ fn a_number_typed_into_a_slider_sets_it_as_a_drag_would() {
     let before = states();
     let done = || app.global::<Typing>().get_done();
     let open_field = || {
-        let (at, size) = testing::labeled(&app, "Exposure value");
+        let (at, size) = testing::slider_field(&app, EXPOSURE);
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     };
 
@@ -285,7 +285,7 @@ fn a_field_taken_away_while_open_hands_the_keys_back() {
     }
 
     // A tab switched by a click on it.
-    let (at, size) = testing::labeled(&app, "Exposure value");
+    let (at, size) = testing::slider_field(&app, EXPOSURE);
     testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     testing::type_text(&app, "1");
     assert!(keys.borrow().is_empty(), "typed into the field");
@@ -299,7 +299,7 @@ fn a_field_taken_away_while_open_hands_the_keys_back() {
     // A tab switched from elsewhere, the field's section gone
     // under it with nothing clicked.
     app.set_panel_tab("Develop".into());
-    let (at, size) = testing::labeled(&app, "Exposure value");
+    let (at, size) = testing::slider_field(&app, EXPOSURE);
     testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     testing::type_text(&app, "1");
     assert_eq!(keys.borrow().len(), 1);
@@ -378,15 +378,18 @@ fn exposure_focused() -> (
         .set_size(slint::LogicalSize::new(1500.0, 950.0));
     let (state, worker) = testing::state_for(&app, testing::folder(3));
     app.invoke_select(0);
-    focus_slider(&app, "Exposure");
+    focus_slider(&app, EXPOSURE);
     assert_eq!(app.get_exposure(), 0.0, "the press moved nothing");
     (app, state, worker)
 }
 
-/// A press on a slider's label: focus, no jump.
-fn focus_slider(app: &App, label: &str) {
-    let (at, size) = crate::testing::labeled(app, label);
-    crate::testing::click(app, at.x + 8.0, at.y + size.height / 2.0);
+/// The exposure slider's id.
+const EXPOSURE: &str = "LightSection::exposure";
+
+/// A press on the label of the slider `id`: focus, no jump.
+fn focus_slider(app: &App, id: &str) {
+    let (x, y) = crate::testing::slider_label(app, id);
+    crate::testing::click(app, x, y);
 }
 
 fn shifted(app: &App, key: impl Into<slint::SharedString>) {
@@ -466,7 +469,7 @@ fn a_focused_slider_is_nudged_by_its_steps() {
 fn a_drag_starts_smoothly_and_shift_makes_it_fine() {
     use slint::platform::{Key, PointerEventButton, WindowEvent};
     let (app, _state, _worker) = exposure_focused();
-    let (at, size) = crate::testing::labeled(&app, "Exposure");
+    let (at, size) = crate::testing::by_id(&app, EXPOSURE);
     let y = std::cell::Cell::new(at.y + size.height / 2.0);
     // On the track, well left of the handle at zero.
     let x0 = at.x + size.width * 0.35;
@@ -496,7 +499,7 @@ fn a_drag_starts_smoothly_and_shift_makes_it_fine() {
     // Not a double click.
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(2));
     // The focus scrolled the panel: where the slider is now.
-    let (at, size) = crate::testing::labeled(&app, "Exposure");
+    let (at, size) = crate::testing::by_id(&app, EXPOSURE);
     y.set(at.y + size.height / 2.0);
     pointer("move", x0);
 
@@ -602,12 +605,16 @@ fn midtones_sits_between_highlights_and_shadows_and_is_one_step() {
     };
     settle();
     let sliders = slider_values(&app);
-    let row = |label: &str| {
-        let rows: Vec<_> = sliders.iter().filter(|s| s.0 == label).collect();
-        assert_eq!(rows.len(), 1, "{label}: {rows:?}");
+    let row = |id: &str| {
+        let rows: Vec<_> = sliders.iter().filter(|s| s.0 == id).collect();
+        assert_eq!(rows.len(), 1, "{id}: {rows:?}");
         rows[0].clone()
     };
-    let (high, mid, shadows) = (row("Highlights"), row("Midtones"), row("Shadows"));
+    let (high, mid, shadows) = (
+        row("LightSection::highlights-slider"),
+        row(MIDTONES),
+        row("LightSection::shadows-slider"),
+    );
     assert!(
         high.2 < mid.2 && mid.2 < shadows.2,
         "{high:?} {mid:?} {shadows:?}"
@@ -618,7 +625,7 @@ fn midtones_sits_between_highlights_and_shadows_and_is_one_step() {
     let current = || state.borrow().sidecars[0].current.clone();
     let before = states();
     let was = current();
-    focus_slider(&app, "Midtones");
+    focus_slider(&app, MIDTONES);
     testing::press(&app, Key::UpArrow);
     assert!(near(app.get_midtones(), 0.05), "{}", app.get_midtones());
     settle();
@@ -631,12 +638,11 @@ fn midtones_sits_between_highlights_and_shadows_and_is_one_step() {
         greycard_edit::history::describe(&was, &now, &[]),
         "Midtones +0.05"
     );
-    assert_eq!(row_value(&app, "Midtones"), "+0.05 EV");
+    assert_eq!(row_value(&app, MIDTONES), "+0.05 EV");
 
     // A double-click on it: back to zero, one more step.
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(2));
-    let (at, size) = testing::labeled(&app, "Midtones");
-    let (x, y) = (at.x + 8.0, at.y + size.height / 2.0);
+    let (x, y) = testing::slider_label(&app, MIDTONES);
     testing::click(&app, x, y);
     testing::click(&app, x, y);
     assert_eq!(app.get_midtones(), 0.0);
@@ -645,64 +651,46 @@ fn midtones_sits_between_highlights_and_shadows_and_is_one_step() {
     assert_eq!(current().look().light.tone.midtones, 0.0);
 }
 
-/// A slider's value as a screen reader has it.
-fn row_value(app: &App, label: &str) -> String {
+/// The midtones slider's id.
+const MIDTONES: &str = "LightSection::midtones-slider";
+
+/// The value of the slider `id` as a screen reader has it.
+fn row_value(app: &App, id: &str) -> String {
     slider_values(app)
         .into_iter()
-        .find(|s| s.0 == label)
+        .find(|s| s.0 == id)
         .map(|s| s.1)
         .unwrap_or_default()
 }
 
-/// The Develop tab's sliders by their labels, and each one's value
-/// as a screen reader has it, its top, and its height.
+/// The window's sliders by their ids, and each one's value as a
+/// screen reader has it, its top, and its height.
 fn slider_values(app: &App) -> Vec<(String, String, f32, f32)> {
-    use i_slint_backend_testing::{AccessibleRole, ElementHandle};
-    const LABELS: &[&str] = &[
-        "Temperature",
-        "Tint",
-        "Exposure",
-        "Contrast",
-        "Highlights",
-        "Midtones",
-        "Shadows",
-        "Whites",
-        "Blacks",
-        "Vibrance",
-        "Saturation",
-        "Luma",
-        greycard_edit::LEARNED_CHROMA,
-        "Strength",
-        "Texture",
-        "Clarity",
-        greycard_edit::STRUCTURE,
-        "Dehaze",
-        "Radius",
-        "Iterations",
-        "Threshold",
-        "Amount",
-        "Midpoint",
-        "Feather",
-        "Roundness",
-        "Size",
-    ];
+    use i_slint_backend_testing::{AccessibleRole, ElementQuery};
     app.window()
         .dispatch_event(slint::platform::WindowEvent::PointerMoved {
             position: slint::LogicalPosition::new(0.0, 0.0),
         });
-    LABELS
-        .iter()
-        .flat_map(|label| ElementHandle::find_by_accessible_label(app, label))
-        .filter(|e| e.accessible_role() == Some(AccessibleRole::Slider))
+    ElementQuery::from_root(app)
+        .match_descendants()
+        .match_accessible_role(AccessibleRole::Slider)
+        .find_all()
+        .into_iter()
         .map(|e| {
             (
-                e.accessible_label().unwrap_or_default().to_string(),
+                e.id().unwrap_or_default().to_string(),
                 e.accessible_value().unwrap_or_default().to_string(),
                 e.absolute_position().y,
                 e.size().height,
             )
         })
-        .collect()
+        // The query can return a slider more than once: each once.
+        .fold(Vec::new(), |mut all, s| {
+            if !all.contains(&s) {
+                all.push(s);
+            }
+            all
+        })
 }
 
 /// The slider Up moves, and where it is: found by the value that
@@ -765,7 +753,7 @@ fn a_slider_reached_by_a_key_is_scrolled_into_view() {
     // the slider is pushed down past the view's foot, and the
     // panel follows it.
     let (label, _, _) = focused_slider(&app);
-    click_header(&app, "WHITE BALANCE", top, bottom);
+    click_header(&app, "WhiteBalanceSection", top, bottom);
     settle();
     assert!(!app.get_collapsed_wb());
     let (again, y0, y1) = focused_slider(&app);
@@ -775,8 +763,8 @@ fn a_slider_reached_by_a_key_is_scrolled_into_view() {
     for _ in 0..steps {
         press(&app, ",");
     }
-    let (label, y0, y1) = focused_slider(&app);
-    assert_eq!(label, "Exposure");
+    let (id, y0, y1) = focused_slider(&app);
+    assert_eq!(id, EXPOSURE);
     assert!(y0 >= top && y1 <= bottom, "{y0}..{y1} in {top}..{bottom}");
     // The wheel takes the panel to its foot, from under it.
     wheel_to_foot(&app);
@@ -917,12 +905,13 @@ fn the_wheel_taking_a_focused_slider_out_of_view_lets_it_go() {
     assert_eq!(app.get_exposure(), 0.0);
 }
 
-/// A click on a section's header in view, found without scrolling
-/// the panel (as `testing::labeled` would).
-fn click_header(app: &App, title: &str, top: f32, bottom: f32) {
-    let header = i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, title)
-        .next()
-        .unwrap_or_else(|| panic!("no {title:?}"));
+/// A click on the header of the section of the type `section` in
+/// view, found without scrolling the panel (as `testing::header`
+/// would).
+fn click_header(app: &App, section: &str, top: f32, bottom: f32) {
+    let title = section;
+    let header = crate::testing::section_part(app, section, "Section::row")
+        .unwrap_or_else(|| panic!("no {section:?}"));
     let (at, size) = (header.absolute_position(), header.size());
     let y = at.y + size.height / 2.0;
     assert!(
@@ -940,7 +929,7 @@ fn folding_the_focused_sliders_section_hands_the_keys_back() {
     use slint::platform::Key;
     let (app, state, _worker) = exposure_focused();
     let (top, bottom) = panel_view(&app);
-    click_header(&app, "LIGHT", top, bottom);
+    click_header(&app, "LightSection", top, bottom);
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1000));
     slint::platform::update_timers_and_animations();
     assert!(app.get_collapsed_light());
@@ -957,7 +946,7 @@ fn tab_goes_from_one_typed_value_to_the_next() {
     use crate::testing;
     use slint::platform::Key;
     let (app, _state, _worker) = exposure_focused();
-    let (at, size) = testing::labeled(&app, "Exposure value");
+    let (at, size) = testing::slider_field(&app, EXPOSURE);
     testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     testing::type_text(&app, "1");
     testing::press(&app, Key::Tab);
@@ -1009,7 +998,7 @@ fn a_nudge_is_one_history_step() {
     settle();
     let states = || state.borrow().sidecars[0].states();
     let before = states();
-    focus_slider(&app, "Exposure");
+    focus_slider(&app, EXPOSURE);
     testing::press(&app, Key::UpArrow);
     settle();
     assert_eq!(states(), before + 1, "one step");
@@ -1060,7 +1049,7 @@ fn a_focused_slider_takes_only_its_own_keys() {
         "the arrow reached the strip"
     );
 
-    focus_slider(&app, "Exposure");
+    focus_slider(&app, EXPOSURE);
     press(&app, Key::RightArrow);
     assert_eq!(state.borrow().current, Some(1), "the slider took the arrow");
     assert!(near(app.get_exposure(), 0.1));
@@ -1205,7 +1194,7 @@ fn a_slider_near_the_top_is_kept_as_the_sections_above_it_fold() {
         set(&app, false);
     }
     step(1000);
-    focus_slider(&app, "Exposure");
+    focus_slider(&app, EXPOSURE);
     step(1000);
     // Period down to the panel's last slider, near its foot.
     let (mut last, mut still) = (0.0, 0);

@@ -145,7 +145,7 @@ export component LensSection inherits Section {
         checked <=> root.lens-vignetting;
         toggled => { root.develop-changed(); }
     }
-    EditSlider {
+    manual-slider := EditSlider {
         // Lens section: the heading over the corrections set by hand
         label: @tr("Manual");
         minimum: -0.5;
@@ -161,7 +161,7 @@ export component LensSection inherits Section {
     // The aberration by hand: each channel's
     // radius scaled beyond the green's, in
     // tenths of a percent.
-    EditSlider {
+    red-cyan-slider := EditSlider {
         // Lens section: the chromatic aberration slider set by hand
         label: @tr("Red / cyan");
         minimum: -0.01;
@@ -174,7 +174,7 @@ export component LensSection inherits Section {
         text: (root.lens-ca-red >= 0 ? "+" : "") + round(root.lens-ca-red * 10000) / 10 + "\u{2030}";
         changed(v) => { root.develop-changed(); }
     }
-    EditSlider {
+    blue-yellow-slider := EditSlider {
         // Lens section: the chromatic aberration slider set by hand
         label: @tr("Blue / yellow");
         minimum: -0.01;
@@ -192,7 +192,7 @@ export component LensSection inherits Section {
         checked <=> root.lens-auto-scale;
         toggled => { root.develop-changed(); }
     }
-    EditSlider {
+    scale-slider := EditSlider {
         label: @tr("Scale");
         enabled: !root.lens-auto-scale;
         minimum: 0.5;
@@ -213,7 +213,7 @@ export component LensSection inherits Section {
         checked <=> root.lens-defringe;
         toggled => { root.develop-changed(); }
     }
-    EditSlider {
+    radius-slider := EditSlider {
         label: @tr("Radius");
         enabled: root.lens-defringe;
         minimum: 0.5;
@@ -225,7 +225,7 @@ export component LensSection inherits Section {
         text: round(root.lens-defringe-radius * 10) / 10 + " px";
         changed(v) => { root.develop-changed(); }
     }
-    EditSlider {
+    threshold-slider := EditSlider {
         label: @tr("Threshold");
         enabled: root.lens-defringe;
         minimum: 0;
@@ -255,7 +255,7 @@ export component LensSection inherits Section {
         horizontal-alignment: left;
     }
     Rectangle { height: Theme.space-1; }
-    EditSlider {
+    purple-center-slider := EditSlider {
         // Defringe: the slider for the hue it centers on
         label: @tr("Center");
         enabled: root.lens-defringe;
@@ -270,7 +270,7 @@ export component LensSection inherits Section {
         text: round(root.lens-defringe-purple-center) + "\u{00b0}";
         changed(v) => { root.develop-changed(); }
     }
-    EditSlider {
+    purple-width-slider := EditSlider {
         label: @tr("Width");
         enabled: root.lens-defringe;
         minimum: 10;
@@ -282,7 +282,7 @@ export component LensSection inherits Section {
         text: round(root.lens-defringe-purple-width) + "\u{00b0}";
         changed(v) => { root.develop-changed(); }
     }
-    EditSlider {
+    purple-amount-slider := EditSlider {
         label: @tr("Amount");
         enabled: root.lens-defringe;
         minimum: 0;
@@ -305,7 +305,7 @@ export component LensSection inherits Section {
         horizontal-alignment: left;
     }
     Rectangle { height: Theme.space-1; }
-    EditSlider {
+    green-center-slider := EditSlider {
         label: @tr("Center");
         enabled: root.lens-defringe;
         tinted: true;
@@ -319,7 +319,7 @@ export component LensSection inherits Section {
         text: round(root.lens-defringe-green-center) + "\u{00b0}";
         changed(v) => { root.develop-changed(); }
     }
-    EditSlider {
+    green-width-slider := EditSlider {
         label: @tr("Width");
         enabled: root.lens-defringe;
         minimum: 10;
@@ -331,7 +331,7 @@ export component LensSection inherits Section {
         text: round(root.lens-defringe-green-width) + "\u{00b0}";
         changed(v) => { root.develop-changed(); }
     }
-    EditSlider {
+    green-amount-slider := EditSlider {
         label: @tr("Amount");
         enabled: root.lens-defringe;
         minimum: 0;

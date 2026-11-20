@@ -169,14 +169,14 @@ fn the_strips_names_cut_short_come_up_whole() {
     // A re-flow (a thumbnail's shape come in, which the strip shares
     // with the grid) leaves another control's word alone.
     app.set_can_undo(true);
-    crate::testing::rest_on(&app, "Undo");
+    crate::testing::rest_on_id(&app, "PanelHead::undo-button");
     assert_eq!(app.get_tip_text(), "Undo");
     assert!(crate::cells::note_aspect(&app, 2, 0.5));
     assert!(crate::cells::take_aspects(&app));
     slint::platform::update_timers_and_animations();
     assert_eq!(app.get_tip_text(), "Undo", "a re-flow left the word up");
     away(&app);
-    crate::testing::rest_on(&app, "Undo");
+    crate::testing::rest_on_id(&app, "PanelHead::undo-button");
     assert_eq!(app.get_tip_text(), "Undo", "and it comes again");
     away(&app);
     let long = *texts(&app, LONG)

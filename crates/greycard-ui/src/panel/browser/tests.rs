@@ -2072,7 +2072,7 @@ fn wheel(app: &App, x: f32, y: f32, by: f32) {
 fn the_scroll_bar_sits_at_the_sheets_edge_and_its_thumb_drags() {
     let (app, seen) = grid_with_reports(120);
     let max = shaped(120).max_scroll(805.0, 0.0);
-    let (at, size) = crate::testing::labeled(&app, "Grid scroll");
+    let (at, size) = crate::testing::by_id(&app, "GridSheet::band");
     // The band down the sheet's right edge, under the header.
     assert_eq!((at.x, size.width), (1500.0 - 14.0, 14.0));
     assert_eq!((at.y, size.height), (950.0 - 805.0, 805.0));
@@ -2131,7 +2131,7 @@ fn the_scroll_bar_sits_at_the_sheets_edge_and_its_thumb_drags() {
 fn a_press_in_the_track_pages_and_the_wheel_over_the_bar_scrolls() {
     let (app, seen) = grid_with_reports(120);
     let max = shaped(120).max_scroll(805.0, 0.0);
-    let (at, _) = crate::testing::labeled(&app, "Grid scroll");
+    let (at, _) = crate::testing::by_id(&app, "GridSheet::band");
     let x = at.x + 7.0;
     // Below the thumb: a sheet's height down.
     crate::testing::click(&app, x, 950.0 - 20.0);
@@ -2241,7 +2241,7 @@ fn no_bar_when_the_folder_fits() {
     let visible = |app: &App| {
         use i_slint_backend_testing::ElementHandle;
         press(app, Key::Shift);
-        ElementHandle::find_by_accessible_label(app, "Grid scroll").count() > 0
+        ElementHandle::find_by_element_id(app, "GridSheet::band").count() > 0
     };
     assert!(!visible(&app));
     // Neither a press nor the wheel down the band moves anything.
@@ -2263,7 +2263,7 @@ fn no_bar_when_the_folder_fits() {
 fn a_thumb_dragged_past_the_end_and_back_follows_without_a_jump() {
     let (app, seen) = grid_with_reports(120);
     let max = shaped(120).max_scroll(805.0, 0.0);
-    let (at, _) = crate::testing::labeled(&app, "Grid scroll");
+    let (at, _) = crate::testing::by_id(&app, "GridSheet::band");
     let x = at.x + 7.0;
     let grab = at.y + grid::bar_offset(805.0, max, 0.0) + 10.0;
     let to = |y: f32| slint::LogicalPosition::new(x, y);
@@ -2299,7 +2299,7 @@ fn a_thumb_dragged_past_the_end_and_back_follows_without_a_jump() {
 #[test]
 fn a_press_on_the_bar_with_a_menu_up_only_closes_the_menu() {
     let (app, seen) = grid_with_reports(120);
-    let (at, _) = crate::testing::labeled(&app, "Grid scroll");
+    let (at, _) = crate::testing::by_id(&app, "GridSheet::band");
     // The frame menu up over the first frame.
     let position = slint::LogicalPosition::new(400.0, 250.0);
     let button = slint::platform::PointerEventButton::Right;

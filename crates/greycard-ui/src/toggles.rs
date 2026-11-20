@@ -232,7 +232,7 @@ fn the_editors_switches_sit_where_their_rows_ask() {
     let app = crate::testing::window(1);
     app.set_panel_tab("Develop".into());
     app.set_collapsed_wb(false);
-    let shot = crate::testing::toggle(&app, "As shot");
+    let shot = crate::testing::toggle_by_id(&app, "WhiteBalanceSection::as-shot-toggle");
     assert_eq!(right(shot.switch), right(shot.row), "{shot:?}");
     assert_eq!(right(shot.label) + GAP, left(shot.switch), "{shot:?}");
     let was = app.get_as_shot();
@@ -259,7 +259,7 @@ fn the_editors_switches_sit_where_their_rows_ask() {
         "Space after the row's empty right"
     );
 
-    crate::testing::click_switch(&app, "As shot");
+    crate::testing::click_switch_by_id(&app, "WhiteBalanceSection::as-shot-toggle");
     assert_eq!(app.get_as_shot(), !was);
     let sub = crate::testing::toggle(&app, "With subfolders");
     let was = was_sub;

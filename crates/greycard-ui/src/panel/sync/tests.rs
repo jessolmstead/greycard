@@ -3493,7 +3493,7 @@ fn the_panels_sync_button_opens_the_sheet_on_the_selection() {
     let (x, y) = strip_cell(&app, 1);
     click(&app, x, y);
     assert_eq!(
-        crate::testing::count_labeled(&app, "Sync"),
+        crate::testing::count_id(&app, "PanelHead::sync-button"),
         0,
         "one frame, no button"
     );
@@ -3504,8 +3504,8 @@ fn the_panels_sync_button_opens_the_sheet_on_the_selection() {
         click(&app, x, y);
     });
     assert_eq!(chosen_frames(&state.borrow()), vec![1, 3, 4]);
-    assert_eq!(crate::testing::count_labeled(&app, "Sync"), 1);
-    let (at, size) = crate::testing::labeled(&app, "Sync");
+    assert_eq!(crate::testing::count_id(&app, "PanelHead::sync-button"), 1);
+    let (at, size) = crate::testing::by_id(&app, "PanelHead::sync-button");
     // In the panel's head, on the right, above the tabs.
     assert!(at.x > 1500.0 - crate::panel::sizes::RIGHT, "{at:?}");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
@@ -3558,7 +3558,7 @@ fn a_middle_click_on_the_panels_sync_syncs_without_the_sheet() {
 
     app.set_exposure(-0.4);
     app.invoke_view_changed();
-    let (at, size) = crate::testing::labeled(&app, "Sync");
+    let (at, size) = crate::testing::by_id(&app, "PanelHead::sync-button");
     let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
     crate::testing::click_with(&app, PointerEventButton::Middle, x, y);
     assert!(!app.get_sync_open(), "no sheet");

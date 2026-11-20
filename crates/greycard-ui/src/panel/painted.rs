@@ -924,7 +924,7 @@ mod tests {
     fn enter_in_a_number_field_makes_nothing() {
         let (app, state, _worker) = painting(1);
         paint(&app, &state, &[(0.2, 0.5)]);
-        let (p, size) = labeled(&app, "Size");
+        let (p, size) = crate::testing::by_id(&app, "RetouchSection::size-slider");
         // The value: its field, typed in.
         crate::testing::click(&app, p.x + size.width - 20.0, p.y + size.height / 2.0);
         press(&app, Key::Return);
@@ -1494,7 +1494,7 @@ mod tests {
         app.invoke_patch_changed(0);
         assert_eq!(app.get_retouch_mode(), "");
         let asks = Rc::new(std::cell::Cell::new(0));
-        let (mid, y) = crate::testing::track_middle(&app, "Size");
+        let (mid, y) = crate::testing::track_middle(&app, "RetouchSection::size-slider");
         let window = app.window();
         let at = |x: f32| slint::LogicalPosition::new(x, y);
         use slint::platform::{PointerEventButton, WindowEvent};

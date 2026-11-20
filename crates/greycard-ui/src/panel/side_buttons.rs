@@ -320,7 +320,7 @@ mod tests {
         app.set_culling(true);
         app.invoke_select(1);
         settle();
-        let (at, size) = crate::testing::labeled(&app, "Frame title");
+        let (at, size) = crate::testing::by_id(&app, "MetaSection::title-field");
         crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         settle();
         assert_eq!(typing.get_boxes(), 1, "the box has the focus");
