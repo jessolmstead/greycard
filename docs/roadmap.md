@@ -97,9 +97,11 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The frame's limit of 200 megapixels, what is left: a small
       export of a frame past it is refused too, the cut being made at
       full size before the export shrinks it; the detail bands frame
-      at the same size, so an export just under it peaks near 10 GB;
-      a frame that failed stays in its queue entry unmarked, its
-      reason only in the status line and the log (review, 2026-11-20)
+      at the same size, so an export just under it peaks near 10 GB
+      (review, 2026-11-20)
+- [ ] A frame whose export failed leaves the queue (§213) with its
+      reason only in the status line, when it is the one failure, and
+      in the log; nowhere to read why afterwards
 - [ ] `greycard.exe` beside the editor on Windows: double-clicked,
       or run from Win+R, the command line is a console that opens and
       closes. A name or a place that keeps it out of the way (§684)
