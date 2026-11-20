@@ -196,6 +196,14 @@ pub const MAX_TILT: f32 = 40.0;
 /// outside the source rather than nowhere or, worse, mirrored back
 /// inside it.
 const HORIZON: f32 = 1e-4;
+/// The least divisor a point of the source takes to the plane with
+/// and still bounds the frame ([`Geometry::bounds`]): a sixteenth,
+/// where a point stands sixteen times farther out than it would with
+/// no keystone.
+pub const BOUNDS_FRONT: f32 = 1.0 / 16.0;
+/// The farthest the frame's bounds reach from the plane's center, in
+/// the plane's half sides: one keystone at its limit reaches six.
+pub const BOUNDS_REACH: f32 = 8.0;
 /// The smallest crop, as a fraction of the source's shorter side.
 pub const MIN_CROP: f32 = 0.02;
 
@@ -540,19 +548,33 @@ impl Geometry {
     }
 
     /// Whether a rectangle of the leveled plane lies wholly on the
-    /// source.
+    /// source, and within the frame's bounds ([`Geometry::bounds`]):
+    /// where a keystone stretches the source toward the horizon, a
+    /// crop out past them could make a frame of billions of pixels.
     pub fn fits(&self, crop: &Crop, w: f32, h: f32) -> bool {
         let inside =
             |p: (f32, f32)| p.0 >= -0.01 && p.1 >= -0.01 && p.0 <= w + 0.01 && p.1 <= h + 0.01;
         let (pw, ph) = self.plane_size(w, h);
+        let k = self.perspective(w, h);
+        // Within the bounds: no farther out than their reach, and on
+        // the near side of their cut, where a source point divides by
+        // at least `BOUNDS_FRONT` on its way to the plane, which is a
+        // plane point dividing by at most its inverse on the way back.
+        let within = |p: (f32, f32)| {
+            let (dx, dy) = (p.0 - pw / 2.0, p.1 - ph / 2.0);
+            dx.abs() <= BOUNDS_REACH * pw / 2.0
+                && dy.abs() <= BOUNDS_REACH * ph / 2.0
+                && 1.0 + k[0] * dx + k[1] * dy <= 1.0 / BOUNDS_FRONT
+        };
         let (x0, y0) = (crop.x * pw, crop.y * ph);
         let (x1, y1) = ((crop.x + crop.w) * pw, (crop.y + crop.h) * ph);
         // A rectangle's corners bound it through the perspective too,
         // since straight lines stay straight; but only in front of
         // the horizon, past which a corner would come back mirrored.
+        // The bounds are convex, so its corners within them hold it.
         [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
             .into_iter()
-            .all(|p| self.in_front(p, w, h) && inside(self.to_source(p, w, h)))
+            .all(|p| self.in_front(p, w, h) && inside(self.to_source(p, w, h)) && within(p))
     }
 
     /// A drag of a handle by `dx, dy` (fractions of the plane) kept on
@@ -1000,15 +1022,50 @@ impl Geometry {
     }
 
     /// The turned source's whole extent in the leveled plane, for the
-    /// crop's editing.
+    /// crop's editing, about the plane's center.
+    ///
+    /// Two keystones together, or one with an angle, can tilt a corner
+    /// of the source to the horizon or past it, where its point on the
+    /// plane is at infinity or comes back on the far side: such a
+    /// corner never defines the frame. The source is cut first where
+    /// the perspective's divisor falls to [`BOUNDS_FRONT`], its edges
+    /// meeting that line in place of the corner, and the extent each
+    /// way is held to [`BOUNDS_REACH`] of the plane's half side, so the
+    /// frame is finite at every slider position and never more than
+    /// that squared times the plane's pixels. Any keystone short of
+    /// those reaches the corners as it always did.
     pub fn bounds(&self, w: f32, h: f32) -> Frame {
         let (pw, ph) = self.plane_size(w, h);
+        let m = self.matrix();
+        let k = self.perspective(w, h);
+        // The divisor `to_plane` takes for a source point: linear in it.
+        let divisor = |s: (f32, f32)| {
+            let (dx, dy) = (s.0 - w / 2.0, s.1 - h / 2.0);
+            let (ux, uy) = (m[0][0] * dx + m[1][0] * dy, m[0][1] * dx + m[1][1] * dy);
+            1.0 - k[0] * ux - k[1] * uy
+        };
+        let corners = [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)];
         let (mut hx, mut hy) = (0.0f32, 0.0f32);
-        for corner in [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)] {
-            let p = self.to_plane(corner, w, h);
+        let mut reach = |s: (f32, f32)| {
+            let p = self.to_plane(s, w, h);
             hx = hx.max((p.0 - pw / 2.0).abs());
             hy = hy.max((p.1 - ph / 2.0).abs());
+        };
+        // The source's outline cut to the near side of the line: each
+        // corner in front of it, and where each edge crosses it.
+        for (i, &a) in corners.iter().enumerate() {
+            let b = corners[(i + 1) % 4];
+            let (da, db) = (divisor(a) - BOUNDS_FRONT, divisor(b) - BOUNDS_FRONT);
+            if da >= 0.0 {
+                reach(a);
+            }
+            if (da < 0.0) != (db < 0.0) {
+                let t = da / (da - db);
+                reach((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
+            }
         }
+        let hx = hx.min(BOUNDS_REACH * pw / 2.0);
+        let hy = hy.min(BOUNDS_REACH * ph / 2.0);
         Frame {
             origin: (pw / 2.0 - hx, ph / 2.0 - hy),
             size: ((2.0 * hx).ceil(), (2.0 * hy).ceil()),
@@ -1892,6 +1949,366 @@ mod tests {
         ));
         let b = far.bounds(W, H);
         assert!(b.size.0.is_finite() && b.size.1.is_finite());
+    }
+
+    /// `Geometry::bounds` as it was before the source was cut at the
+    /// horizon: the reference for the slider positions it was right at.
+    fn bounds_before(g: &Geometry, w: f32, h: f32) -> Frame {
+        let (pw, ph) = g.plane_size(w, h);
+        let (mut hx, mut hy) = (0.0f32, 0.0f32);
+        for corner in [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)] {
+            let p = g.to_plane(corner, w, h);
+            hx = hx.max((p.0 - pw / 2.0).abs());
+            hy = hy.max((p.1 - ph / 2.0).abs());
+        }
+        Frame {
+            origin: (pw / 2.0 - hx, ph / 2.0 - hy),
+            size: ((2.0 * hx).ceil(), (2.0 * hy).ceil()),
+        }
+    }
+
+    /// Every slider position the panel reaches: both keystones over
+    /// their whole range, with angles, quarter turns, and mirrors, on a
+    /// wide source and a tall one.
+    fn every_keystone(mut each: impl FnMut(Geometry, f32, f32)) {
+        let steps =
+            |lo: f32, hi: f32, n: i32| (0..=n).map(move |i| lo + (hi - lo) * i as f32 / n as f32);
+        for (w, h) in [(W, H), (H, W)] {
+            for vertical in steps(-MAX_TILT, MAX_TILT, 32) {
+                for horizontal in steps(-MAX_TILT, MAX_TILT, 32) {
+                    for angle in [-45.0, -30.0, -10.0, 0.0, 3.0, 10.0, 30.0, 45.0] {
+                        for turns in 0..4 {
+                            for flip in [false, true] {
+                                let g = Geometry {
+                                    turns,
+                                    flip,
+                                    angle,
+                                    vertical,
+                                    horizontal,
+                                    ..Default::default()
+                                };
+                                each(g, w, h);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The crops a frame is laid out with: none, an aspect over none,
+    /// the whole frame, and one in a corner.
+    fn with_crops(g: &Geometry) -> [Geometry; 4] {
+        let crop = |x, y, w, h| Geometry {
+            crop: Some(Crop { x, y, w, h }),
+            ..g.clone()
+        };
+        [
+            g.clone(),
+            Geometry {
+                aspect: Aspect::Ratio { w: 1.0, h: 1.0 },
+                ..g.clone()
+            },
+            crop(0.0, 0.0, 1.0, 1.0),
+            crop(0.05, 0.6, 0.3, 0.3),
+        ]
+    }
+
+    /// Both keystones far over, alone or with an angle and a crop: a
+    /// corner of the source at or past the horizon sent the bounds tens
+    /// of millions of pixels wide. At every slider position the bounds
+    /// and the frame are finite and at most 64 times the source's
+    /// pixels (eight times its side each way), and the bounds hold the
+    /// frame laid out with no crop.
+    #[test]
+    fn the_frame_is_finite_and_bounded_at_every_keystone() {
+        // The stated limit, written out rather than read from the
+        // constant it checks.
+        const SIDE: f32 = 8.0;
+        let most = f64::from(SIDE * SIDE);
+        let pixels = |f: &Frame| f64::from(f.size.0) * f64::from(f.size.1);
+        // As found: both at their ends, and both past 30 degrees.
+        for (v, k) in [(40.0, 40.0), (31.0, 31.0), (-35.0, 32.0)] {
+            let g = Geometry {
+                vertical: v,
+                horizontal: k,
+                ..Default::default()
+            };
+            let b = g.bounds(W, H);
+            assert!(pixels(&b) <= most * f64::from(W * H), "{v}, {k}: {b:?}");
+        }
+        let mut worst = 0.0f64;
+        every_keystone(|g, w, h| {
+            let source = f64::from(w) * f64::from(h);
+            // A pixel each way of rounding up.
+            let (pw, ph) = g.plane_size(w, h);
+            let most = f64::from(SIDE * pw + 1.0) * f64::from(SIDE * ph + 1.0) / source;
+            let b = g.bounds(w, h);
+            assert!(
+                b.origin.0.is_finite()
+                    && b.origin.1.is_finite()
+                    && b.size.0 >= 1.0
+                    && b.size.1 >= 1.0,
+                "{g:?}: {b:?}"
+            );
+            assert!(pixels(&b) / source <= most, "{g:?}: {b:?}");
+            worst = worst.max(pixels(&b) / source);
+            // The plane's center, the source's own, is always inside.
+            assert!(
+                b.origin.0 <= pw / 2.0 && b.origin.1 <= ph / 2.0,
+                "{g:?}: {b:?}"
+            );
+            let f = g.frame(w, h, None);
+            assert!(
+                f.origin.0 >= b.origin.0 - 0.5
+                    && f.origin.1 >= b.origin.1 - 0.5
+                    && f.origin.0 + f.size.0 <= b.origin.0 + b.size.0 + 1.0
+                    && f.origin.1 + f.size.1 <= b.origin.1 + b.size.1 + 1.0,
+                "{g:?}: the frame {f:?} outside the bounds {b:?}"
+            );
+            for c in with_crops(&g) {
+                let f = c.frame(w, h, None);
+                assert!(
+                    f.origin.0.is_finite() && f.origin.1.is_finite(),
+                    "{c:?}: {f:?}"
+                );
+                assert!(pixels(&f) / source <= most, "{c:?}: {f:?}");
+            }
+        });
+        assert!(worst > 30.0, "the reach is used: {worst}");
+    }
+
+    /// The cut at the horizon, not only the reach, shapes the bounds:
+    /// with an angle and a keystone far over, the corner past the
+    /// horizon, which the reach alone would hold at the reach, gives
+    /// way to where the source's edges cross the cut, short of it.
+    #[test]
+    fn the_cut_at_the_horizon_shapes_the_bounds() {
+        for (v, k) in [(30.0, 0.0), (0.0, 40.0), (35.0, -35.0), (-30.0, 10.0)] {
+            let g = Geometry {
+                vertical: v,
+                horizontal: k,
+                angle: 45.0,
+                ..Default::default()
+            };
+            let b = g.bounds(W, H);
+            assert!(
+                b.size.0 < BOUNDS_REACH * W - 1000.0 || b.size.1 < BOUNDS_REACH * H - 1000.0,
+                "{v}, {k}: {b:?} is the reach both ways"
+            );
+            assert!(b.size.0 > W && b.size.1 > H, "{v}, {k}: {b:?}");
+        }
+    }
+
+    /// `Geometry::fits` as it was before it held a crop within the
+    /// bounds: the reference for the crops it was right about.
+    fn fits_before(g: &Geometry, crop: &Crop, w: f32, h: f32) -> bool {
+        let inside =
+            |p: (f32, f32)| p.0 >= -0.01 && p.1 >= -0.01 && p.0 <= w + 0.01 && p.1 <= h + 0.01;
+        let (pw, ph) = g.plane_size(w, h);
+        let (x0, y0) = (crop.x * pw, crop.y * ph);
+        let (x1, y1) = ((crop.x + crop.w) * pw, (crop.y + crop.h) * ph);
+        [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
+            .into_iter()
+            .all(|p| g.in_front(p, w, h) && inside(g.to_source(p, w, h)))
+    }
+
+    /// A stored crop far out where both keystones stretch the source
+    /// toward the horizon fitted it, and the frame and the export's
+    /// buffer came out 32 million by 129 million pixels: a sidecar
+    /// written by hand or imported was enough. It no longer fits, and
+    /// is refitted as a crop a turn has left off the source is.
+    #[test]
+    fn a_stored_crop_out_toward_the_horizon_is_refitted() {
+        let (w, h) = (8192.0f32, 5464.0f32);
+        let far = Crop {
+            x: 5398.8,
+            y: -27635.7,
+            w: 3950.0,
+            h: 23688.0,
+        };
+        let g = Geometry {
+            vertical: 40.0,
+            horizontal: 40.0,
+            crop: Some(far),
+            ..Default::default()
+        };
+        assert!(fits_before(&g, &far, w, h), "it fitted");
+        assert!(!g.fits(&far, w, h));
+        let f = g.frame(w, h, None);
+        let pixels = f64::from(f.size.0) * f64::from(f.size.1);
+        assert!(pixels <= 64.0 * f64::from(w) * f64::from(h), "{f:?}");
+        let refit = Geometry {
+            crop: None,
+            ..g.clone()
+        };
+        assert_eq!(
+            g.effective_crop(w, h, None),
+            refit.largest_fit((0.5, 0.5), w / h, w, h)
+        );
+    }
+
+    /// At every slider position, the largest crop the old test let fit
+    /// about points all over the source, in three shapes: the frame
+    /// it makes is never more than 64 times the source's pixels.
+    #[test]
+    fn no_stored_crop_makes_a_frame_past_the_limit() {
+        let mut worst = 0.0f64;
+        for (w, h) in [(W, H), (H, W)] {
+            for vi in -8..=8 {
+                for ki in -8..=8 {
+                    for angle in [0.0, 10.0, -30.0, 45.0] {
+                        for turns in [0u8, 1] {
+                            let g = Geometry {
+                                turns,
+                                angle,
+                                vertical: vi as f32 * 5.0,
+                                horizontal: ki as f32 * 5.0,
+                                ..Default::default()
+                            };
+                            let b = g.bounds(w, h);
+                            let (pw, ph) = g.plane_size(w, h);
+                            let source = f64::from(w) * f64::from(h);
+                            // Far past the bounds: the old test's reach.
+                            let span = (b.size.0 / pw).max(b.size.1 / ph).max(1.0) * 1e4;
+                            // About points of the source all over it, the
+                            // stretched ones toward the horizon among them.
+                            let along = [0.002f32, 0.05, 0.3, 0.5, 0.7, 0.95, 0.998];
+                            for sx in along {
+                                for sy in along {
+                                    let p = g.to_plane((sx * w, sy * h), w, h);
+                                    let (cx, cy) = (p.0 / pw, p.1 / ph);
+                                    for (a, r) in [(1.0f32, 1.0f32), (4.0, 1.0), (1.0, 4.0)] {
+                                        let at = |s: f32| Crop {
+                                            x: cx - a * s / 2.0,
+                                            y: cy - r * s / 2.0,
+                                            w: a * s,
+                                            h: r * s,
+                                        };
+                                        let fits = |s: f32| fits_before(&g, &at(s), w, h);
+                                        if !fits(1e-4) {
+                                            continue;
+                                        }
+                                        // Grown until it no longer fits,
+                                        // then the largest that does.
+                                        let (mut lo, mut hi) = (1e-4f32, 1e-4f32);
+                                        while hi < span && fits(hi) {
+                                            lo = hi;
+                                            hi *= 2.0;
+                                        }
+                                        for _ in 0..24 {
+                                            let mid = (lo + hi) / 2.0;
+                                            if fits(mid) {
+                                                lo = mid;
+                                            } else {
+                                                hi = mid;
+                                            }
+                                        }
+                                        let c = Geometry {
+                                            crop: Some(at(lo)),
+                                            ..g.clone()
+                                        };
+                                        let f = c.frame(w, h, None);
+                                        let px = f64::from(f.size.0) * f64::from(f.size.1);
+                                        let most =
+                                            f64::from(8.0 * pw + 1.0) * f64::from(8.0 * ph + 1.0);
+                                        assert!(px <= most, "{c:?} on {w}x{h}: {f:?}");
+                                        worst = worst.max(px / source);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(worst > 4.0, "the crops reach out: {worst}");
+    }
+
+    /// Every crop that lies on the plane's own rectangle fits exactly
+    /// as it did, at every slider position: only crops out past the
+    /// bounds' reach or their cut at the horizon are refitted.
+    #[test]
+    fn a_crop_on_the_plane_fits_as_it_did() {
+        let mut seed = 0x0c40u64;
+        let mut rnd = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 40) as f32 / (1u64 << 24) as f32
+        };
+        let (mut fitted, mut checked) = (0, 0);
+        every_keystone(|g, w, h| {
+            for _ in 0..4 {
+                let (x0, x1) = (rnd(), rnd());
+                let (y0, y1) = (rnd(), rnd());
+                let c = Crop {
+                    x: x0.min(x1),
+                    y: y0.min(y1),
+                    w: (x1 - x0).abs(),
+                    h: (y1 - y0).abs(),
+                };
+                let before = fits_before(&g, &c, w, h);
+                assert_eq!(g.fits(&c, w, h), before, "{c:?} under {g:?} on {w}x{h}");
+                fitted += usize::from(before);
+                checked += 1;
+            }
+            // The whole plane, and a hair past it, as a drag to the
+            // edge leaves a crop.
+            for c in [
+                Crop {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                },
+                Crop {
+                    x: -1e-4,
+                    y: -1e-4,
+                    w: 1.0 + 2e-4,
+                    h: 1.0 + 2e-4,
+                },
+            ] {
+                assert_eq!(g.fits(&c, w, h), fits_before(&g, &c, w, h), "{c:?} {g:?}");
+            }
+        });
+        assert!(fitted > checked / 10, "{fitted} of {checked} fit");
+    }
+
+    /// Wherever no corner of the source came near the horizon and the
+    /// bounds were within reach, they are what they were, to the bit:
+    /// both keystones within 20 degrees at any angle, and either one
+    /// alone over its whole range with no angle, among them.
+    #[test]
+    fn the_bounds_are_as_they_were_wherever_they_were_sane() {
+        let (mut same, mut ordinary) = (0, 0);
+        every_keystone(|g, w, h| {
+            let before = bounds_before(&g, w, h);
+            let (pw, ph) = g.plane_size(w, h);
+            let m = g.matrix();
+            let k = g.perspective(w, h);
+            let front = [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)].iter().all(|c| {
+                let (dx, dy) = (c.0 - w / 2.0, c.1 - h / 2.0);
+                let (ux, uy) = (m[0][0] * dx + m[1][0] * dy, m[0][1] * dx + m[1][1] * dy);
+                1.0 - k[0] * ux - k[1] * uy >= BOUNDS_FRONT
+            });
+            let within = before.size.0 <= BOUNDS_REACH * pw && before.size.1 <= BOUNDS_REACH * ph;
+            let plain = (g.vertical.abs() <= 20.0 && g.horizontal.abs() <= 20.0)
+                || (g.angle == 0.0 && (g.vertical == 0.0 || g.horizontal == 0.0));
+            if plain {
+                ordinary += 1;
+                assert!(
+                    front && within,
+                    "an ordinary position cut: {g:?} on {w}x{h}"
+                );
+            }
+            if front && within {
+                assert_eq!(g.bounds(w, h), before, "{g:?} on {w}x{h}");
+                same += 1;
+            }
+        });
+        assert!(ordinary > 10_000, "{ordinary} ordinary positions");
+        assert!(same > ordinary, "{same} the same");
     }
 
     #[test]

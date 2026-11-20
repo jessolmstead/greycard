@@ -41,6 +41,8 @@ design note behind it.
 
 ### Fixes
 
+- Both perspective sliders near their ends no longer make a frame
+  millions of pixels wide, in the crop view or from a stored crop.
 - Turn left and Turn right keep the point you are zoomed in on, where
   the view jumped to the frame's middle.
 - A save no longer writes over another window's or machine's edit:
