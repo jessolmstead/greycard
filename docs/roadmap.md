@@ -1023,7 +1023,6 @@ clears or a tester asks for it.
       offset for a clock left on the wrong time, a matching tolerance,
       the position written to the sidecar and the XMP, as digiKam and
       darktable do
-
 - [ ] Folders opened outside every root looked at again as a root's
       folders are: opening a folder indexes it, but nothing passes over
       it afterwards, so when it is deleted its rows are never marked
@@ -1258,7 +1257,7 @@ clears or a tester asks for it.
 - [ ] Camera tethering
 - [ ] Red-eye correction (issue 175): click an eye, or the eyes found
       by the Parts mask, and the red pupil goes dark and neutral
-- [ ] Idea: AI sharpening
+- [ ] AI upscaling
 - [ ] Idea: AI color grade matching to a reference
 - [ ] Learned highlight reconstruction, for 0.13.0 (§719): a small
       model trained on unclipped frames clipped by the benchmark
@@ -1322,8 +1321,6 @@ clears or a tester asks for it.
       beside it from a pure-Rust decoder
 - [ ] A toolbar of common actions, the set the user's, with the
       menu bar (pixls, 2026-10-22)
-- [ ] Clear the card after an import, behind a confirmation and only
-      once every copy's hash has been checked (pixls, 2026-10-19)
 - [ ] The toolchain that rendered an export embedded in its metadata,
       so opening the export can find the source and reapply the edit
       (pixls, 2026-10-19)
@@ -1486,9 +1483,6 @@ clears or a tester asks for it.
       lossless only, so lossy wants libwebp (BSD, a C build) or a
       pure-Rust encoder found; lossless is in (§632; issue 121,
       2026-11-10)
-- [ ] White balance, Light, Color, and Detail as one Basic panel with
-      a subsection each, as Lightroom's; undecided, and it meets the
-      section-order items above (discussion 118, 2026-11-10)
 - [ ] Dehaze on luminance alone, or a blend between that and the
       color one, so the haze's blue shift is dialed in (discussion 59,
       2026-11-10)
@@ -1600,7 +1594,7 @@ clears or a tester asks for it.
 - [ ] A generative fill's patch holds only sRGB's colors: its window
       is clamped into sRGB on the way to the model and comes back so,
       feather included, where the picture around it keeps the working
-      space's (audit, 2026-11-20; issue 190 asked about gamut)
+      space's (audit, 2026-11-20; discussion 193 asked about gamut)
 - [ ] The lens match (§723), what is left: a lens name with no line
       word on a body of another line; Sigma's and Tamron's own line
       words; the database's 36 bare-number names
