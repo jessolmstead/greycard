@@ -1324,8 +1324,6 @@ clears or a tester asks for it.
 - [ ] The toolchain that rendered an export embedded in its metadata,
       so opening the export can find the source and reapply the edit
       (pixls, 2026-10-19)
-- [ ] The picture zoomed in steps from the keyboard, as the grid's
-      tiles are with plus and minus (pixls, 2026-10-22)
 - [ ] Saturation in the shadows or the highlights alone, with the
       hue held (pixls, 2026-10-24)
 - [ ] Structure's strength judged on real frames (§507): +100 reads
