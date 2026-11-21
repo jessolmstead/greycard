@@ -797,9 +797,15 @@ clears or a tester asks for it.
       id and need a key each; 78 lookups by position are untouched.
       The suite in French (`GREYCARD_TEST_LANG=fr`) fails 456 tests,
       618 before
-- [ ] The strings added since the French catalog was made
-      translated (`scripts/translations-check.py --list` names them);
-      waits on a translator
+- [ ] Words left in English in a translated window, each waiting on
+      new strings: the scope tabs (Wave, Parade, Vector); the models'
+      descriptions under Settings, Models (greycard-ai's registry);
+      the noise model's choices; a new mask's default name. And the
+      filter's flag chips share the frame menu's verbs ("Pick",
+      "Reject"): a "flag" context of their own
+- [ ] The draft catalogs (de, es, it, nl, pl, pt_BR) read by native
+      speakers; each has its glossary and the choices most in doubt
+      listed for the reader
 - [ ] Failures as a dialog queue, not a status line: a failed outcome
       today becomes "failed: {message}" in the status bar
       (deliver.rs); a queue of typed errors with a kind, the frame it
