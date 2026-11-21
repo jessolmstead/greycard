@@ -662,11 +662,22 @@ impl Vst {
     /// the shifted value `d`: with `D = d + 2 s0 / a` the inverse is
     /// `a (D^2/4 + c1/D - c2/D^2 + c3/D^3 - 1/8 - b/a^2)`, and `a/D` is
     /// `a^2 / (a d + 2 s0)`, finite for every `a`.
+    ///
+    /// The series has a pole where `a d + 2 s0` is zero, at
+    /// `d = -2 s0 / a`, the transform of `-s0^2 / a`, and means nothing
+    /// past it; with `a` and `b` both zero it is `0 / 0`. At or past it
+    /// we take the algebraic inverse, which meets the floor of
+    /// [`Vst::forward`]'s range there. The develop never comes near it,
+    /// since it hands the denoise nothing below zero.
     #[inline]
     pub fn inverse(&self, d: f32) -> f32 {
         let (a, s0) = (self.a, self.s0);
         let sqrt_3_2 = 1.5f32.sqrt();
-        let r = a / (a * d + 2.0 * s0);
+        let below = a * d + 2.0 * s0;
+        if below <= 0.0 {
+            return self.inverse_clean(d);
+        }
+        let r = a / below;
         a * d * d / 4.0
             + d * s0
             + a / 4.0
@@ -1338,6 +1349,44 @@ mod tests {
                 let back = vst.inverse_clean(vst.forward(x));
                 assert!((back - x).abs() < 2e-6, "a {a} b {b}: {x} -> {back}");
             }
+        }
+    }
+
+    /// The unbiased inverse at and past its pole, `a d + 2 s0 = 0`, is
+    /// the algebraic one, finite; short of it, the series to the bit.
+    /// `b` is chosen so `s0` is exactly 1 and the pole exactly at
+    /// `d = -2 / a`, which a value under `-1 / a` is transformed to;
+    /// with `a` and `b` both zero the series is `0 / 0` everywhere.
+    #[test]
+    fn the_unbiased_inverse_has_no_pole() {
+        let series = |vst: &Vst, d: f32| {
+            let (a, s0) = (vst.a, vst.s0);
+            let sqrt_3_2 = 1.5f32.sqrt();
+            let r = a / (a * d + 2.0 * s0);
+            a * d * d / 4.0
+                + d * s0
+                + a / 4.0
+                + a * (0.25 * sqrt_3_2 * r - 11.0 / 8.0 * r * r + 5.0 / 8.0 * sqrt_3_2 * r * r * r)
+        };
+        for a in [1.0f32, 0.5, 0.25] {
+            let vst = Vst::new(a, 1.0 - 3.0 / 8.0 * a * a);
+            assert_eq!(vst.s0, 1.0);
+            let pole = -2.0 / a;
+            assert_eq!(vst.forward(-1.0 / a), pole);
+            assert!(vst.inverse(pole).is_finite(), "a {a}: at the pole");
+            assert_eq!(vst.inverse(pole), vst.inverse_clean(pole));
+            for i in 0..=400 {
+                let d = pole - 4.0 + i as f32 / 40.0;
+                let got = vst.inverse(d);
+                assert!(got.is_finite(), "a {a}: {d} -> {got}");
+                if a * d + 2.0 > 0.0 {
+                    assert_eq!(got.to_bits(), series(&vst, d).to_bits(), "a {a}: {d}");
+                }
+            }
+        }
+        let silent = Vst::new(0.0, 0.0);
+        for d in [-1.0, 0.0, 1.0] {
+            assert_eq!(silent.inverse(d), 0.0, "{d}");
         }
     }
 

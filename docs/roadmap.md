@@ -1085,10 +1085,6 @@ clears or a tester asks for it.
 - [ ] A mix with the original for the profiled denoise, as the
       learned one's Luma and Chroma: weighed against a lower
       Strength, which keeps edges better at the same grain
-- [ ] The profiled denoise's unbiased inverse has a pole below zero
-      when the fitted `b` is zero (`Vst`, §549): nothing reaches it
-      today, since the develop never hands the denoise a negative, but
-      a guard belongs there
 - [ ] `stack.rs` and `register.rs` warps: rows written the way the lens
       correction's were, with captured models re-read per pixel; the
       lens gain (§165) says they are the next place to look
