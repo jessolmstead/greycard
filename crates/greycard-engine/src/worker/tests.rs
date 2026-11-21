@@ -3096,8 +3096,9 @@ fn the_base_in_hand_under_a_camera_profile_outlives_a_listing() {
 
 /// An export whose edit names a camera profile not in the profile
 /// directory is developed under the file's own matrices and says so,
-/// as a missing look is said; with the profile there it says nothing
-/// and the profile is in the picture.
+/// as a missing look is said, and so does one there that will not
+/// read; with the profile there it says nothing and the profile is in
+/// the picture.
 #[test]
 fn an_export_says_a_camera_profile_it_went_without() {
     let dir = crate::testing::scratch_dir("export-profile");
@@ -3142,17 +3143,25 @@ fn an_export_says_a_camera_profile_it_went_without() {
     );
     assert!(pixels(folder) == own);
 
-    // A profile there that will not read (cut short): developed under
-    // the file's own as the develop decides, said in the log only.
+    // A profile there that will not read (cut short, or garbage):
+    // developed under the file's own as the develop decides, and said.
     let whole = std::fs::read(dir.join("Test Cam Neutral.dcp")).unwrap();
     std::fs::write(dir.join("Broken.dcp"), &whole[..whole.len() / 3]).unwrap();
-    edit.camera.profile = greycard_edit::camera::ProfileChoice::Named("Broken".into());
-    let (broken, said) = export_held(&frame, &edit, None, &mut ai, &settings);
-    assert!(said.is_empty(), "{said:?}");
-    assert!(
-        pixels(broken) == own,
-        "the file's own, as the develop has it"
-    );
+    std::fs::write(dir.join("Garbage.dcp"), b"not a profile").unwrap();
+    for name in ["Broken", "Garbage"] {
+        edit.camera.profile = greycard_edit::camera::ProfileChoice::Named(name.into());
+        let (broken, said) = export_held(&frame, &edit, None, &mut ai, &settings);
+        assert_eq!(
+            said,
+            [format!(
+                "the camera profile {name}: it would not read; written without it"
+            )]
+        );
+        assert!(
+            pixels(broken) == own,
+            "the file's own, as the develop has it"
+        );
+    }
     profiles_in(None);
     crate::testing::remove_dir_retry(&dir);
 }

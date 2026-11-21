@@ -124,8 +124,9 @@ pub struct Plan {
 pub struct Finished {
     pub tally: queue::Tally,
     /// The frames written without something their edit names: a
-    /// camera profile not in the profile directory, a look not in the
-    /// look directory, a learned model not downloaded or failing.
+    /// camera profile not in the profile directory or that would not
+    /// read, a look not in the look directory, a learned model not
+    /// downloaded or failing.
     pub left_out: usize,
     /// The line the run ends on, for whoever ran it.
     pub line: String,
@@ -135,7 +136,7 @@ pub struct Finished {
 /// `--on-exists skip` asks); a frame not written, or a run that could
 /// not begin; every frame written, but some without something their
 /// edit names that this machine has not got (a camera profile, a look,
-/// a learned model) or could not run.
+/// a learned model) or could not read or run.
 pub const WRITTEN: u8 = 0;
 pub const FAILED: u8 = 1;
 pub const LEFT_OUT: u8 = 2;

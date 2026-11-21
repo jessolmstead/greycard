@@ -70,8 +70,9 @@ design note behind it.
 - No preset and no look read "None" in the window's language in the
   export sheet's and the Look section's pickers.
 - The filter bar's flag chips say their names in the window's language.
-- An export whose edit names a camera profile that is not there says so
-  in its report, and the headless export exits 2 as for a missing look.
+- An export whose edit names a camera profile that is not there, or that
+  will not read, says so in its report, and the headless export exits 2
+  as for a missing look.
 - `mm<=35` typed in the filter bar filters by focal length, where it was
   searched for as a word.
 - A mask's Shadows or Highlights stacked on the picture's past the

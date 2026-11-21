@@ -242,6 +242,33 @@ fn an_export_runs_with_no_display_and_its_exit_code_says_how_it_went() {
     );
     assert!(unprofiled.is_file());
 
+    // One there that will not read (a few bytes of garbage): written
+    // under the file's own, said, and exit 2, as for one not there.
+    let profiles = home.0.join("data").join("greycard").join("profiles");
+    std::fs::create_dir_all(&profiles).unwrap();
+    std::fs::write(profiles.join("Garbage.dcp"), b"not a profile").unwrap();
+    sidecar.current.camera.profile = greycard_edit::camera::ProfileChoice::Named("Garbage".into());
+    sidecar
+        .save_in(&profiled, greycard_edit::Placement::Beside)
+        .unwrap();
+    let unread = home.0.join("unread.jpg");
+    let ran = editor(
+        &home.0,
+        &[
+            profiled.as_os_str(),
+            "--export".as_ref(),
+            unread.as_os_str(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(2), "{said}");
+    assert!(
+        said.contains("profiled.dng")
+            && said.contains("the camera profile Garbage: it would not read; written without it"),
+        "{said}"
+    );
+    assert!(unread.is_file());
+
     // A frame that will not decode: exit 1, and why on stderr.
     let broken = home.0.join("broken.CR3");
     std::fs::write(&broken, b"not a raw").unwrap();

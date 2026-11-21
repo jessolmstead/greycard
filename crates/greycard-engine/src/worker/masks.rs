@@ -68,8 +68,8 @@ pub(super) fn look_left_out(edit: &Edit) -> Option<String> {
 /// under the file's own matrices, as the window draws it. Decided by
 /// the develop's own (cached) read, so the two cannot disagree. One
 /// not in the directory (a folder named like one included) is said as
-/// a missing look is; one there that will not read is said in the log
-/// only, and the export counts as written whole.
+/// a missing look is, and so is one there that will not read (cut
+/// short, not a profile, not ours to read); the read logs why.
 pub(super) fn profile_left_out(edit: &Edit, raw: bool) -> Option<String> {
     use greycard_edit::Loader;
     let greycard_edit::camera::ProfileChoice::Named(name) = &edit.camera.profile else {
@@ -81,14 +81,13 @@ pub(super) fn profile_left_out(edit: &Edit, raw: bool) -> Option<String> {
     }
     let there = greycard_edit_io::profiles::path_in(stores.profiles.as_deref(), name)
         .is_some_and(|path| path.is_file());
-    if there {
-        tracing::warn!(
-            "the camera profile {name} would not read; the export is written without it"
-        );
-        return None;
-    }
+    let why = if there {
+        "it would not read"
+    } else {
+        "not in the profile directory"
+    };
     Some(format!(
-        "the camera profile {name}: not in the profile directory; written without it"
+        "the camera profile {name}: {why}; written without it"
     ))
 }
 

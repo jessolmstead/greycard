@@ -170,6 +170,30 @@ fn an_export_s_exit_code_says_how_it_went() {
     );
     assert!(without.is_file());
 
+    // An edit that names a camera profile in the run's profile folder
+    // that will not read (a few bytes of garbage): written under the
+    // file's own, the profile named on stderr, and exit 2.
+    let profiles = home.0.join("data").join("greycard").join("profiles");
+    std::fs::create_dir_all(&profiles).unwrap();
+    std::fs::write(profiles.join("Garbage.dcp"), b"not a profile").unwrap();
+    let profiled = home.0.join("profiled.dng");
+    std::fs::copy(&source, &profiled).unwrap();
+    let mut sidecar = greycard_edit::Sidecar::default();
+    sidecar.current.camera.profile = greycard_edit::camera::ProfileChoice::Named("Garbage".into());
+    sidecar
+        .save_in(&profiled, greycard_edit::Placement::Beside)
+        .unwrap();
+    let unread = home.0.join("unread.jpg");
+    let ran = export(&home.0, &[profiled.as_os_str(), unread.as_os_str()]);
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(2), "{said}");
+    assert!(
+        said.contains("profiled.dng")
+            && said.contains("the camera profile Garbage: it would not read; written without it"),
+        "{said}"
+    );
+    assert!(unread.is_file());
+
     // A frame that will not decode: exit 1, and why on stderr.
     let broken = home.0.join("broken.CR3");
     std::fs::write(&broken, b"not a raw").unwrap();
