@@ -7,6 +7,8 @@ design note behind it.
 
 ### The window
 
+- Each white balance preset has an icon beside it in the menu: sun,
+  cloud, shade, bulb, tube, and flash.
 - ART's `.arp` profiles beside a raw are offered and imported as
   RawTherapee's `.pp3` are; with both, the `.arp` is read and the `.pp3`
   named.

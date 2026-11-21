@@ -171,36 +171,50 @@ export component WhiteBalanceSection inherits Section {
                 height: 0px;
                 enabled: false;
                 // The names are the Rust table's keys
-                // (`panel::color::WHITE_PRESETS`), in its order.
+                // (`panel::color::WHITE_PRESETS`), in its order. Each
+                // has a Lucide icon beside it (the tube is ours, in
+                // Lucide's style), drawn in a fixed mid grey: Slint's
+                // menu does not tint an entry's icon, and on macOS and
+                // Windows the menu is the platform's own, light or dark
+                // as the system is rather than as our theme is, so one
+                // grey reads on both. The menu's icons are 12 px, so
+                // each is cut to its strokes' reach and drawn a quarter
+                // heavier, to stand as the panel's 16 px ones do.
                 Menu {
                     MenuItem {
                         // White balance preset: sunlight
                         title: @tr("Daylight");
+                        icon: @image-url("../icons/menu/sun.svg");
                         activated => { root.wb-preset("Daylight"); }
                     }
                     MenuItem {
                         // White balance preset: an overcast sky
                         title: @tr("Cloudy");
+                        icon: @image-url("../icons/menu/cloud.svg");
                         activated => { root.wb-preset("Cloudy"); }
                     }
                     MenuItem {
                         // White balance preset: in the shade on a sunny day
                         title: @tr("Shade");
+                        icon: @image-url("../icons/menu/tree-deciduous.svg");
                         activated => { root.wb-preset("Shade"); }
                     }
                     MenuItem {
                         // White balance preset: incandescent light bulbs
                         title: @tr("Tungsten");
+                        icon: @image-url("../icons/menu/lightbulb.svg");
                         activated => { root.wb-preset("Tungsten"); }
                     }
                     MenuItem {
                         // White balance preset: fluorescent tubes
                         title: @tr("Fluorescent");
+                        icon: @image-url("../icons/menu/fluorescent-tube.svg");
                         activated => { root.wb-preset("Fluorescent"); }
                     }
                     MenuItem {
                         // White balance preset: a camera's flash
                         title: @tr("Flash");
+                        icon: @image-url("../icons/menu/zap.svg");
                         activated => { root.wb-preset("Flash"); }
                     }
                 }

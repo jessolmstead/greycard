@@ -2614,6 +2614,93 @@ fn autos_menu_holds_the_presets_on_a_raw_alone() {
     assert_eq!(sliders(&app), was);
 }
 
+/// Each of the presets' six has its icon drawn beside its words, in
+/// the column Slint's menu keeps for one, in either theme; Fit's
+/// zooms, which have none, leave that column bare, so the
+/// words of every menu stand at the same place.
+#[test]
+fn each_white_balance_preset_has_its_icon_beside_it() {
+    use i_slint_backend_testing::ElementHandle;
+    crate::testing::drawing_backend();
+    let app = window(1);
+    app.window().set_size(slint::PhysicalSize::new(1500, 950));
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::Resized {
+            size: slint::LogicalSize::new(1500.0, 950.0),
+        });
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    a_raw_up(&app, &state);
+    settle();
+    // The ink in each open menu entry's icon column, top to bottom:
+    // the pixels that differ from the entry's own ground, read at its
+    // left padding. The column is the Fluent style's: 11 px of
+    // padding, then 12 px. An entry's place is the menu's own, so
+    // the menu's place in the window is added to it.
+    let inks = |app: &App| {
+        use i_slint_core::window::PopupWindowLocation;
+        use slint::private_unstable_api::re_exports::WindowInner;
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        let origin = WindowInner::from_pub(app.window())
+            .active_popups()
+            .iter()
+            .map(|p| match &p.location {
+                PopupWindowLocation::ChildWindow(at) => (at.x, at.y),
+                PopupWindowLocation::TopLevel(_) => panic!("a menu in a window of its own"),
+            })
+            .next_back();
+        let Some((ox, oy)) = origin else {
+            return Vec::new();
+        };
+        let shot = app.window().take_snapshot().expect("a drawing backend");
+        let px = |x: f32, y: f32| shot.as_slice()[y as usize * shot.width() as usize + x as usize];
+        let mut entries: Vec<_> = ElementHandle::find_by_element_type_name(app, "MenuItemBase")
+            .map(|e| (e.absolute_position(), e.size()))
+            .collect();
+        entries.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
+        entries
+            .iter()
+            .map(|(at, size)| {
+                let (x0, y0) = (ox + at.x, oy + at.y);
+                let ground = px(x0 + 3.0, y0 + size.height / 2.0);
+                let mut ink = 0;
+                for y in y0 as u32 + 2..(y0 + size.height) as u32 - 2 {
+                    for x in x0 as u32 + 11..x0 as u32 + 23 {
+                        let p = px(x as f32, y as f32);
+                        let far = |a: u8, b: u8| a.abs_diff(b) > 40;
+                        if far(p.r, ground.r) || far(p.g, ground.g) || far(p.b, ground.b) {
+                            ink += 1;
+                        }
+                    }
+                }
+                ink
+            })
+            .collect::<Vec<usize>>()
+    };
+    for theme in ["Charcoal", "Light"] {
+        app.global::<crate::Theme>().set_name(theme.into());
+        app.set_wb_presets_shown(true);
+        let ink = inks(&app);
+        assert_eq!(ink.len(), 6, "{theme}: the presets' six");
+        assert!(
+            ink.iter().all(|&n| n >= 12),
+            "{theme}: an icon each, {ink:?}"
+        );
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        slint::platform::update_timers_and_animations();
+        assert!(inks(&app).is_empty(), "{theme}: the menu is away");
+
+        app.set_zoom_menu_shown(true);
+        let ink = inks(&app);
+        assert!(!ink.is_empty(), "{theme}: the zooms are open");
+        assert!(ink.iter().all(|&n| n == 0), "{theme}: no icons, {ink:?}");
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        slint::platform::update_timers_and_animations();
+    }
+}
+
 /// The presets' menu keeps the keys as Fit's does: the click that
 /// closes it, on the strip or on the picture with the dropper in
 /// hand, is no click; and after a pick Return and Space are the

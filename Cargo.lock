@@ -2236,6 +2236,7 @@ dependencies = [
  "greycard-viewport",
  "half",
  "i-slint-backend-testing",
+ "i-slint-core",
  "image",
  "lcms2",
  "libc",

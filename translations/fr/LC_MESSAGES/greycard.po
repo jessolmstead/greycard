@@ -577,139 +577,139 @@ msgid "Auto"
 msgstr "Auto"
 
 #. White balance preset: sunlight
-#: crates/greycard-slint/ui/panel/color.slint:178
+#: crates/greycard-slint/ui/panel/color.slint:186
 msgid "Daylight"
 msgstr "Lumière du jour"
 
 #. White balance preset: an overcast sky
-#: crates/greycard-slint/ui/panel/color.slint:183
+#: crates/greycard-slint/ui/panel/color.slint:192
 msgid "Cloudy"
 msgstr "Nuageux"
 
 #. White balance preset: in the shade on a sunny day
-#: crates/greycard-slint/ui/panel/color.slint:188
+#: crates/greycard-slint/ui/panel/color.slint:198
 msgid "Shade"
 msgstr "Ombragé"
 
 #. White balance preset: incandescent light bulbs
-#: crates/greycard-slint/ui/panel/color.slint:193
+#: crates/greycard-slint/ui/panel/color.slint:204
 msgid "Tungsten"
 msgstr "Tungstène"
 
 #. White balance preset: fluorescent tubes
-#: crates/greycard-slint/ui/panel/color.slint:198
+#: crates/greycard-slint/ui/panel/color.slint:210
 msgid "Fluorescent"
 msgstr "Fluorescent"
 
 #. White balance preset: a camera's flash
-#: crates/greycard-slint/ui/panel/color.slint:203
+#: crates/greycard-slint/ui/panel/color.slint:216
 msgid "Flash"
 msgstr "Flash"
 
 #. White balance: the dropper's button, click something neutral
-#: crates/greycard-slint/ui/panel/color.slint:211
+#: crates/greycard-slint/ui/panel/color.slint:225
 msgid "Neutral"
 msgstr "Neutre"
 
-#: crates/greycard-slint/ui/panel/color.slint:246
+#: crates/greycard-slint/ui/panel/color.slint:260
 msgid "COLOR"
 msgstr "COULEUR"
 
-#: crates/greycard-slint/ui/panel/color.slint:254
+#: crates/greycard-slint/ui/panel/color.slint:268
 msgid "Vibrance"
 msgstr "Vibrance"
 
-#: crates/greycard-slint/ui/panel/color.slint:269
+#: crates/greycard-slint/ui/panel/color.slint:283
 msgid "Saturation"
 msgstr "Saturation"
 
-#: crates/greycard-slint/ui/panel/color.slint:308
+#: crates/greycard-slint/ui/panel/color.slint:322
 msgid "COLOR MIXER"
 msgstr "MÉLANGEUR DE COULEURS"
 
 #. Export sheet: the color profile row
-#: crates/greycard-slint/ui/panel/color.slint:322
+#: crates/greycard-slint/ui/panel/color.slint:336
 msgid "Color"
 msgstr "Couleur"
 
-#: crates/greycard-slint/ui/panel/color.slint:331
+#: crates/greycard-slint/ui/panel/color.slint:345
 msgid "Hue"
 msgstr "Teinte"
 
-#: crates/greycard-slint/ui/panel/color.slint:364
+#: crates/greycard-slint/ui/panel/color.slint:378
 msgid "Luminance"
 msgstr "Luminance"
 
-#: crates/greycard-slint/ui/panel/color.slint:380
+#: crates/greycard-slint/ui/panel/color.slint:394
 msgctxt "picker"
 msgid "Pick"
 msgstr "Sélectionner"
 
-#: crates/greycard-slint/ui/panel/color.slint:424
+#: crates/greycard-slint/ui/panel/color.slint:438
 msgid "BLACK & WHITE"
 msgstr "NOIR ET BLANC"
 
 #. color filters
-#: crates/greycard-slint/ui/panel/color.slint:439
+#: crates/greycard-slint/ui/panel/color.slint:453
 msgid "Filter"
 msgstr "Filtre"
 
 #. Black & white: the color filters, None for no filter
-#: crates/greycard-slint/ui/panel/color.slint:442
+#: crates/greycard-slint/ui/panel/color.slint:456
 msgid "None"
 msgstr "Aucun"
 
 #. Black & white: the filter's slider
-#: crates/greycard-slint/ui/panel/color.slint:458
+#: crates/greycard-slint/ui/panel/color.slint:472
 msgid "Weight"
 msgstr "Pondération"
 
-#: crates/greycard-slint/ui/panel/color.slint:653
+#: crates/greycard-slint/ui/panel/color.slint:667
 msgid "COLOR GRADING"
 msgstr "ÉTALONNAGE DES COULEURS"
 
 #. Spoken by a screen reader: the color grading wheel shown large
-#: crates/greycard-slint/ui/panel/color.slint:674
+#: crates/greycard-slint/ui/panel/color.slint:688
 msgid "Enlarged wheel"
 msgstr "Roue agrandie"
 
-#: crates/greycard-slint/ui/panel/color.slint:683
+#: crates/greycard-slint/ui/panel/color.slint:697
 msgid "Highlights"
 msgstr "Hautes lumières"
 
-#: crates/greycard-slint/ui/panel/color.slint:683
+#: crates/greycard-slint/ui/panel/color.slint:697
 msgid "Midtones"
 msgstr "Tons moyens"
 
-#: crates/greycard-slint/ui/panel/color.slint:683
+#: crates/greycard-slint/ui/panel/color.slint:697
 msgid "Shadows"
 msgstr "Ombres"
 
 #. Spoken by a screen reader: the color grading wheel for {}
-#: crates/greycard-slint/ui/panel/color.slint:693
+#: crates/greycard-slint/ui/panel/color.slint:707
 msgid "{} wheel"
 msgstr "Roue {}"
 
 #. Color grading: show the {} wheel large, or small again
-#: crates/greycard-slint/ui/panel/color.slint:706
+#: crates/greycard-slint/ui/panel/color.slint:720
 msgid "Enlarge {}"
 msgstr "Agrandir {}"
 
 #. Color grading: show the {} wheel large, or small again
-#: crates/greycard-slint/ui/panel/color.slint:706
+#: crates/greycard-slint/ui/panel/color.slint:720
 msgid "Shrink {}"
 msgstr "Réduire {}"
 
-#: crates/greycard-slint/ui/panel/color.slint:770
+#: crates/greycard-slint/ui/panel/color.slint:784
 msgid "Balance"
 msgstr "Balance"
 
-#: crates/greycard-slint/ui/panel/color.slint:816
+#: crates/greycard-slint/ui/panel/color.slint:830
 msgid "TINT"
 msgstr "TEINTE"
 
 #. Tint section: the slider
-#: crates/greycard-slint/ui/panel/color.slint:891
+#: crates/greycard-slint/ui/panel/color.slint:905
 msgid "Amount"
 msgstr "Quantité"
 
