@@ -54,16 +54,14 @@ the reasoning lives in `docs/notes.md`.
       Dehaze-only edits (§643); waits on a measurement
 - [ ] States that are never rewritten: a turn, a look rename, the ISO
       seed, migrations, and an older build's save all change recorded
-      states under their ids, so no reconciliation can trust one; a
-      design is drafted and waits on the owner. It also answers: the
+      states under their ids, so no reconciliation can trust one.
+      Designed and agreed (§724), built in its seven steps behind one
+      bump to version 10, the turn first. It also answers: the
       archive sync landing crop and masks a quarter turn off across a
       turn difference; a look rename reaching only the open folder's
       sidecars; a snapshot renamed on one copy returning as two; Swap
       with original on one copy joining unrelated lines; a later
       build's mask shape dropped at an older build's save
-- [ ] The checked save (§722), what is left: the index's carry of a
-      hand-moved frame lists the old folder once a frame (cache it a
-      folder); the words of its three status lines wait on a sign-off
 - [ ] The note of edits not saved is out of sight in the lightbox,
       with every pane hidden, and in the grid while an import's line
       shows; so is the archive's note beside it
