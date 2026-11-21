@@ -414,8 +414,11 @@ fn the_window_selects_a_bundled_language() {
     let names: Vec<String> = app.get_languages().iter().map(|s| s.to_string()).collect();
     assert_eq!(names.len(), crate::i18n::languages().len() + 2);
     assert_eq!(names[1], "English");
-    assert!(names.contains(&"Français".to_string()));
-    assert_eq!(app.get_language_index(), 2);
+    let french = names
+        .iter()
+        .position(|n| n == "Français")
+        .expect("French is listed");
+    assert_eq!(app.get_language_index(), i32::try_from(french).unwrap());
     slint::select_bundled_translation("").expect("English is the source");
     start_language(&app, "en");
     assert_eq!(app.get_language_index(), 1);
@@ -433,20 +436,27 @@ fn the_language_row_lists_the_catalogs() {
     app.invoke_settings_asked();
     assert!(crate::testing::count_id(&app, "SettingsSheet::language-box") >= 1);
     let names: Vec<String> = app.get_languages().iter().map(|s| s.to_string()).collect();
-    assert_eq!(names[..3], ["System", "English", "Français"]);
+    // The catalogs follow English in their tags' order, French among
+    // them wherever the other languages put it.
+    assert_eq!(names[..2], ["System", "English"]);
+    let french = names
+        .iter()
+        .position(|n| n == "Français")
+        .expect("French is listed");
+    let french = i32::try_from(french).unwrap();
     assert_eq!(app.get_language_index(), 0);
     assert_eq!(language_chosen(0), "");
     assert_eq!(language_chosen(1), "en");
-    assert_eq!(language_chosen(2), "fr");
+    assert_eq!(language_chosen(french), "fr");
     assert_eq!(language_chosen(-1), "");
     assert_eq!(language_chosen(99), "");
-    app.set_language_index(2);
+    app.set_language_index(french);
     app.invoke_language_changed();
     assert_eq!(language_chosen(app.get_language_index()), "fr");
     show_languages(&app, "fr");
-    assert_eq!(app.get_language_index(), 2);
+    assert_eq!(app.get_language_index(), french);
     show_languages(&app, "fr-CA");
-    assert_eq!(app.get_language_index(), 2);
+    assert_eq!(app.get_language_index(), french);
     show_languages(&app, "en");
     assert_eq!(app.get_language_index(), 1);
     show_languages(&app, "xx");

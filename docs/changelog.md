@@ -7,6 +7,8 @@ design note behind it.
 
 ### The window
 
+- A draft German translation, not yet read by a native speaker; corrections are welcome
+  ([how to send one](https://github.com/jessolmstead/greycard/blob/master/docs/translating.md)).
 - A screen reader can open a frame from the grid or the strip, hears a
   held-out filter chip as excluded, and hears each label once.
 - A screen reader can press a switch, a section's switch, a mask's row
