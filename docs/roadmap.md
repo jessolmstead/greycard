@@ -888,11 +888,10 @@ clears or a tester asks for it.
       lib, the catalog reader, browser) and the first to split are
       startup and mask
 - [ ] A missing camera profile said where the user looks: the
-      status line, the export's report of what the edit went without
-      (with the headless export's exit code 2 as for a missing
-      look), and a preset or a sync that would spread the missing
-      name; today only the Camera section says it, and only while
-      open (§373)
+      status line, and a preset or a sync that would spread the
+      missing name; the export's report says it. A profile that is
+      there but will not read is still only in the log, and exits 0:
+      it waits on its sentence (§373)
 - [ ] A sidecar batch's writes a few at a time (four or eight) where
       the share rewards it, measured on a network share and on a Mac
       first (§498)

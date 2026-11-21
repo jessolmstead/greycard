@@ -63,6 +63,35 @@ pub(super) fn look_left_out(edit: &Edit) -> Option<String> {
     })
 }
 
+/// A camera profile the edit names that the develop goes without, for
+/// a raw, which alone a profile is read for: the picture is developed
+/// under the file's own matrices, as the window draws it. Decided by
+/// the develop's own (cached) read, so the two cannot disagree. One
+/// not in the directory (a folder named like one included) is said as
+/// a missing look is; one there that will not read is said in the log
+/// only, and the export counts as written whole.
+pub(super) fn profile_left_out(edit: &Edit, raw: bool) -> Option<String> {
+    use greycard_edit::Loader;
+    let greycard_edit::camera::ProfileChoice::Named(name) = &edit.camera.profile else {
+        return None;
+    };
+    let stores = crate::stages::stores();
+    if !raw || stores.profile(name).is_some() {
+        return None;
+    }
+    let there = greycard_edit_io::profiles::path_in(stores.profiles.as_deref(), name)
+        .is_some_and(|path| path.is_file());
+    if there {
+        tracing::warn!(
+            "the camera profile {name} would not read; the export is written without it"
+        );
+        return None;
+    }
+    Some(format!(
+        "the camera profile {name}: not in the profile directory; written without it"
+    ))
+}
+
 /// The picture the learned masks are made on, and what the models'
 /// cache knows it by.
 pub(super) struct On<'a> {

@@ -57,6 +57,8 @@ design note behind it.
 
 ### Fixes
 
+- An export whose edit names a camera profile that is not there says so
+  in its report, and the headless export exits 2 as for a missing look.
 - `mm<=35` typed in the filter bar filters by focal length, where it was
   searched for as a word.
 - A mask's Shadows or Highlights stacked on the picture's past the

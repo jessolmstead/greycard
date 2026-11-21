@@ -259,6 +259,7 @@ pub(super) fn walk_for_export(
         (None, None) => learned,
     };
     let mut left_out = left_out_words(&learned, walked.meta.gave_way.as_ref(), &fills);
+    left_out.extend(super::masks::profile_left_out(edit, facts.is_raw()));
     left_out.extend(super::masks::look_left_out(edit));
     left_out.extend(masks);
     let mut walked = walked;

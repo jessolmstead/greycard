@@ -1092,7 +1092,7 @@ fn look_read_at(edit: &Edit, facts: &Facts, profile_curve: bool) -> f32 {
 
 /// The profile and look directories a list reads its camera profile
 /// through: the user's, or in a test the ones it set (`TEST_STORES`).
-fn stores() -> greycard_edit_io::Stores {
+pub(crate) fn stores() -> greycard_edit_io::Stores {
     #[cfg(test)]
     if let Some(stores) = TEST_STORES.with(|s| s.borrow().clone()) {
         return stores;

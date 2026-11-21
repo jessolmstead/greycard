@@ -211,6 +211,37 @@ fn an_export_runs_with_no_display_and_its_exit_code_says_how_it_went() {
     );
     assert!(without.is_file());
 
+    // An edit that names a camera profile not in the run's profile
+    // folder (the test's own, and empty): written under the file's
+    // own, the profile named on stderr, and exit 2, as for a look.
+    let profiled = home.0.join("profiled.dng");
+    std::fs::copy(&source, &profiled).unwrap();
+    let mut sidecar = greycard_edit::Sidecar::default();
+    sidecar.current.camera.profile =
+        greycard_edit::camera::ProfileChoice::Named("Camera/Gone".into());
+    sidecar
+        .save_in(&profiled, greycard_edit::Placement::Beside)
+        .unwrap();
+    let unprofiled = home.0.join("unprofiled.jpg");
+    let ran = editor(
+        &home.0,
+        &[
+            profiled.as_os_str(),
+            "--export".as_ref(),
+            unprofiled.as_os_str(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(2), "{said}");
+    assert!(
+        said.contains("profiled.dng")
+            && said.contains(
+                "the camera profile Camera/Gone: not in the profile directory; written without it"
+            ),
+        "{said}"
+    );
+    assert!(unprofiled.is_file());
+
     // A frame that will not decode: exit 1, and why on stderr.
     let broken = home.0.join("broken.CR3");
     std::fs::write(&broken, b"not a raw").unwrap();

@@ -3094,6 +3094,69 @@ fn the_base_in_hand_under_a_camera_profile_outlives_a_listing() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// An export whose edit names a camera profile not in the profile
+/// directory is developed under the file's own matrices and says so,
+/// as a missing look is said; with the profile there it says nothing
+/// and the profile is in the picture.
+#[test]
+fn an_export_says_a_camera_profile_it_went_without() {
+    let dir = crate::testing::scratch_dir("export-profile");
+    write_profile(&dir, "Test Cam Neutral", 0.8);
+    profiles_in(Some(&dir));
+    let frame = Arc::new(aberrated_frame(120, 80));
+    let settings = greycard_render::export::Settings::default();
+    let mut ai = Ai::new();
+    let mut edit = Edit::default();
+    edit.camera.profile = greycard_edit::camera::ProfileChoice::Named("Test Cam Neutral".into());
+    let pixels = |r: greycard_render::export::Rendered| -> Vec<u16> {
+        match r.pixels {
+            greycard_render::export::Pixels::Eight(p) => p.into_iter().map(u16::from).collect(),
+            greycard_render::export::Pixels::Sixteen(p) => p,
+        }
+    };
+    let (with, said) = export_held(&frame, &edit, None, &mut ai, &settings);
+    assert!(said.is_empty(), "{said:?}");
+    let (own, said) = export_held(&frame, &Edit::default(), None, &mut ai, &settings);
+    assert!(said.is_empty(), "{said:?}");
+    let (with, own) = (pixels(with), pixels(own));
+    assert!(with != own, "the profile is applied");
+
+    edit.camera.profile = greycard_edit::camera::ProfileChoice::Named("Camera/Gone".into());
+    let (without, said) = export_held(&frame, &edit, None, &mut ai, &settings);
+    assert_eq!(
+        said,
+        ["the camera profile Camera/Gone: not in the profile directory; written without it"]
+    );
+    assert!(
+        pixels(without) == own,
+        "the file's own, as the window draws it"
+    );
+
+    // A folder named like a profile is no profile: not there, and said.
+    std::fs::create_dir_all(dir.join("Folder.dcp")).unwrap();
+    edit.camera.profile = greycard_edit::camera::ProfileChoice::Named("Folder".into());
+    let (folder, said) = export_held(&frame, &edit, None, &mut ai, &settings);
+    assert_eq!(
+        said,
+        ["the camera profile Folder: not in the profile directory; written without it"]
+    );
+    assert!(pixels(folder) == own);
+
+    // A profile there that will not read (cut short): developed under
+    // the file's own as the develop decides, said in the log only.
+    let whole = std::fs::read(dir.join("Test Cam Neutral.dcp")).unwrap();
+    std::fs::write(dir.join("Broken.dcp"), &whole[..whole.len() / 3]).unwrap();
+    edit.camera.profile = greycard_edit::camera::ProfileChoice::Named("Broken".into());
+    let (broken, said) = export_held(&frame, &edit, None, &mut ai, &settings);
+    assert!(said.is_empty(), "{said:?}");
+    assert!(
+        pixels(broken) == own,
+        "the file's own, as the develop has it"
+    );
+    profiles_in(None);
+    crate::testing::remove_dir_retry(&dir);
+}
+
 /// A frame whose edit asks for the learned denoiser, with the model not
 /// to be had: its base is the engine's own path standing in, shelved
 /// when the frame is left and taken back on the return, the same
