@@ -669,6 +669,13 @@ pub struct Ai {
     /// The card's whole memory, as a test has it ([`Ai::card_whole`]).
     #[cfg(any(test, feature = "testing"))]
     pub card_by_test: Option<Option<u64>>,
+    /// The card's budget each read of a test's free figure reads, kept
+    /// at its most as the backend's is ([`Ai::card_offer`]).
+    #[cfg(any(test, feature = "testing"))]
+    pub offer_by_test: Option<u64>,
+    /// The most of [`Ai::offer_by_test`] read so far, 0 for none.
+    #[cfg(any(test, feature = "testing"))]
+    offer_read_by_test: std::sync::atomic::AtomicU64,
     /// The last run refused for the card's memory since it was taken
     /// ([`Ai::take_short`]): an export asks again on it, and fails its
     /// item when it stays short.
@@ -1400,7 +1407,9 @@ impl NeverHere {
                 remove_f16_refusal(Some(&(false, card.clone()))).unwrap_or_default()
             }
             NeverHere::ShortCard(card, size, need) => {
-                short_of(card, *size, *need, "a removal at 512").unwrap_or_default()
+                // The whole card is all it offers.
+                let small = removal_small(512, Some(*size));
+                short_of(card, *size, *need, "a removal at 512", small).unwrap_or_default()
             }
             NeverHere::OtherSubject(true) => "its GPU copy runs here".into(),
             NeverHere::OtherSubject(false) => "the original runs here".into(),
@@ -1831,16 +1840,100 @@ pub fn mask_needs(model: MaskModel) -> u64 {
 /// Why `what` is not begun on `card` with `free` bytes free when it
 /// needs `need`, or `None` when it fits: ONNX Runtime does not fail
 /// cleanly when the card runs out of memory, the driver takes the
-/// process down, so a run the card cannot hold is not begun.
-pub fn short_of(card: &str, free: u64, need: u64, what: &str) -> Option<String> {
+/// process down, so a run the card cannot hold is not begun. `small`
+/// is what the card is too small for, where the run is past what the
+/// card offers in total (`too_small`); else the free memory is
+/// another program's.
+pub fn short_of(
+    card: &str,
+    free: u64,
+    need: u64,
+    what: &str,
+    small: Option<&str>,
+) -> Option<String> {
     let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
     (free < need).then(|| {
+        let why = match small {
+            Some(it) => format!("this card is too small for {it}"),
+            None => "another program may be using it".into(),
+        };
         format!(
-            "{card} has {:.1} GiB free, short of the {:.1} GiB {what} needs; another program may be using it",
+            "{card} has {:.1} GiB free, short of the {:.1} GiB {what} needs; {why}",
             gib(free),
             gib(need)
         )
     })
+}
+
+/// Whether `need` is past `offer`, the most the card has offered this
+/// process ([`greycard_ai::runtime::webgpu_budget_most`]): no room
+/// whatever of ours lets go. Not known, it is not.
+fn too_small(need: u64, offer: Option<u64>) -> bool {
+    offer.is_some_and(|o| need > o)
+}
+
+/// What a removal at `size` is said to be too small for where its
+/// cold need is past `offer` ([`short_of`]), else none: judged with no
+/// UNet held, as a card that can never run it has it. "a fill this
+/// large" only where a smaller window, run at 512, would fit.
+fn removal_small(size: usize, offer: Option<u64>) -> Option<&'static str> {
+    if !too_small(remove_needs(size, false), offer) {
+        return None;
+    }
+    Some(
+        if size > 512 && !too_small(remove_needs(512, false), offer) {
+            "a fill this large"
+        } else {
+            "it"
+        },
+    )
+}
+
+/// The least share of the card's whole heap its largest offer must
+/// reach to be the card's own size: below it, another program has held
+/// memory since before we first read the budget (a 16 GB card with 10
+/// held elsewhere offers 5.5), and "too small" would be false. Issue
+/// 142's 8 GB laptop card offers 7.0, 87.5%.
+const OFFER_OF_HEAP: f64 = 0.8;
+
+/// `offer` as the card's size for "too small", where it is at least
+/// [`OFFER_OF_HEAP`] of `heap`, the card's whole memory; else, or with
+/// the heap not known, none.
+fn offer_as_size(offer: Option<u64>, heap: Option<u64>) -> Option<u64> {
+    let heap = heap?;
+    offer.filter(|&o| o as f64 >= OFFER_OF_HEAP * heap as f64)
+}
+
+/// What the learned denoiser at `tile` is said to be too small for
+/// ([`short_of`]): where its least tile is past `offer` too, else none.
+fn denoise_small(tile: usize, offer: Option<u64>) -> Option<&'static str> {
+    too_small(denoise_needs(denoise_least(tile)), offer).then_some("it")
+}
+
+/// The least tile the learned denoiser at `tile` steps down to
+/// ([`DENOISE_SMALLER_TILES`]), or `tile` itself.
+fn denoise_least(tile: usize) -> usize {
+    DENOISE_SMALLER_TILES
+        .into_iter()
+        .filter(|&t| t < tile)
+        .min()
+        .unwrap_or(tile)
+}
+
+/// The most the card has offered this process
+/// ([`greycard_ai::runtime::webgpu_budget_most`]) against its whole
+/// heap ([`offer_as_size`]); none while a test has the free figure
+/// ([`set_free_by_test`]). Read after the free figure, so the reading
+/// that refuses is in it.
+fn card_offer_now() -> Option<u64> {
+    #[cfg(any(test, feature = "testing"))]
+    if FREE_BY_TEST.with(|f| f.borrow().is_some()) {
+        return None;
+    }
+    offer_as_size(
+        greycard_ai::runtime::webgpu_budget_most(),
+        greycard_ai::runtime::webgpu_memory(),
+    )
 }
 
 /// `bytes` in GiB for the log: to a tenth, or to a hundredth where a
@@ -1856,13 +1949,21 @@ pub fn gib_said(bytes: u64) -> String {
     }
 }
 
-/// [`short_of`] for a removal at `size`.
-pub fn short_of_memory(card: &str, free: u64, size: usize, held: bool) -> Option<String> {
+/// [`short_of`] for a removal at `size`, the card having offered
+/// `offer` at most.
+pub fn short_of_memory(
+    card: &str,
+    free: u64,
+    offer: Option<u64>,
+    size: usize,
+    held: bool,
+) -> Option<String> {
     short_of(
         card,
         free,
         remove_needs(size, held),
         &format!("a removal at {size}"),
+        removal_small(size, offer),
     )
 }
 
@@ -2107,8 +2208,12 @@ pub fn give_back_due(ais: &[&Ai]) -> bool {
 /// waited. Where the card's free memory is not known it may.
 pub fn denoise_room(tile: usize) -> Result<(), CardShort> {
     let what = format!("the learned denoiser at a tile of {tile}");
-    match card_free_now().and_then(|(free, card)| short_of(&card, free, denoise_needs(tile), &what))
-    {
+    match card_free_now().and_then(|(free, card)| {
+        // Read after the free figure; too small only where its least
+        // tile is past the card too.
+        let small = denoise_small(tile, card_offer_now());
+        short_of(&card, free, denoise_needs(tile), &what, small)
+    }) {
         Some(why) => Err(CardShort(why)),
         None => Ok(()),
     }
@@ -2352,6 +2457,10 @@ impl Ai {
             unet_held_by_test: None,
             #[cfg(any(test, feature = "testing"))]
             card_by_test: None,
+            #[cfg(any(test, feature = "testing"))]
+            offer_by_test: None,
+            #[cfg(any(test, feature = "testing"))]
+            offer_read_by_test: std::sync::atomic::AtomicU64::new(0),
             short: None,
             fills_ran: false,
             fill_short: false,
@@ -2955,7 +3064,8 @@ impl Ai {
                 .insert(patch.id, (patch.clone(), window, free, needs, why.clone()));
             NoFill::Failed(why)
         };
-        match self.room(&what, &need, keep_unet, true) {
+        let small = move |offer| removal_small(size, offer);
+        match self.room(&what, &need, &small, keep_unet, true) {
             Ok(()) => Ok(()),
             Err(why) => Err(refuse(self, why)),
         }
@@ -2981,8 +3091,9 @@ impl Ai {
             return Ok(());
         }
         let (short, hit_short) = (self.short.clone(), self.hit_short);
-        let Err(why) = self.room("a learned mask", &move |_| mask_needs(model), false, false)
-        else {
+        let need = move |_: &Ai| mask_needs(model);
+        let small = move |offer| too_small(mask_needs(model), offer).then_some("it");
+        let Err(why) = self.room("a learned mask", &need, &small, false, false) else {
             self.leave_cpu();
             return Ok(());
         };
@@ -3160,7 +3271,10 @@ impl Ai {
         // Asked at its own tile without an export's waits: a smaller tile
         // the card has the room for is no reason to wait.
         let patience = self.patience.take();
-        let first = self.room(&what, &|_| denoise_needs(tile), false, release);
+        // Too small for it only where its least tile is past the card too.
+        let least = denoise_least(tile);
+        let small = move |offer| denoise_small(tile, offer);
+        let first = self.room(&what, &|_| denoise_needs(tile), &small, false, release);
         self.patience = patience;
         let Err(mut why) = first else {
             return Ok(DenoiseOn::Card);
@@ -3216,15 +3330,10 @@ impl Ai {
         }
         // Short at every tile: an export waits its tries at the smallest,
         // then runs at the largest it has the room for.
-        let least = DENOISE_SMALLER_TILES
-            .into_iter()
-            .filter(|&t| t < tile)
-            .min()
-            .unwrap_or(tile);
         if self.patience.is_some() {
             let what = format!("the learned denoiser at a tile of {least}");
             if self
-                .room(&what, &|_| denoise_needs(least), false, false)
+                .room(&what, &|_| denoise_needs(least), &small, false, false)
                 .is_ok()
                 && let Some(t) = fitting(self, tile)
             {
@@ -3233,10 +3342,10 @@ impl Ai {
                 return Ok(at(t));
             }
             // Said at its own tile, as it always was, the card as it is.
-            if let Some(w) = self
-                .free_memory()
-                .and_then(|(free, card)| short_of(&card, free, denoise_needs(tile), &what_at(tile)))
-            {
+            if let Some(w) = self.free_memory().and_then(|(free, card)| {
+                let small = small(self.card_offer());
+                short_of(&card, free, denoise_needs(tile), &what_at(tile), small)
+            }) {
                 why = w;
             }
         }
@@ -3257,18 +3366,25 @@ impl Ai {
     /// a merge ([`Patience`]), asked again its tries in all, its wait
     /// apart, unless the export is canceled or a short was met already
     /// in this walk. Short past all of them, the walk has met it. Where
-    /// the free memory is not known it may.
+    /// the free memory is not known it may. Refused, `small` is given
+    /// what the card offers ([`Ai::card_offer`]), read after the free
+    /// figure, and answers what the card is too small for, if anything
+    /// ([`short_of`]); it never changes whether the run is refused.
     fn room(
         &mut self,
         what: &str,
         need: &dyn Fn(&Ai) -> u64,
+        small: &dyn Fn(Option<u64>) -> Option<&'static str>,
         keep_unet: bool,
         release: bool,
     ) -> Result<(), String> {
         let short = |ai: &Ai| -> Result<(), String> {
             let need = need(ai);
             match ai.free_memory() {
-                Some((free, card)) => short_of(&card, free, need, what).map_or(Ok(()), Err),
+                Some((free, card)) => {
+                    let small = small(ai.card_offer());
+                    short_of(&card, free, need, what, small).map_or(Ok(()), Err)
+                }
                 None => Ok(()),
             }
         };
@@ -3603,6 +3719,10 @@ impl Ai {
                 unet_held_by_test: _,
             #[cfg(any(test, feature = "testing"))]
                 card_by_test: _,
+            #[cfg(any(test, feature = "testing"))]
+                offer_by_test: _,
+            #[cfg(any(test, feature = "testing"))]
+                offer_read_by_test: _,
             short: _,
             fills_ran: _,
             fill_short: _,
@@ -3687,6 +3807,10 @@ impl Ai {
                 unet_held_by_test: _,
             #[cfg(any(test, feature = "testing"))]
                 card_by_test: _,
+            #[cfg(any(test, feature = "testing"))]
+                offer_by_test: _,
+            #[cfg(any(test, feature = "testing"))]
+                offer_read_by_test: _,
             short: _,
             fills_ran: _,
             fill_short: _,
@@ -3743,9 +3867,30 @@ impl Ai {
     fn free_memory(&self) -> Option<(u64, String)> {
         #[cfg(any(test, feature = "testing"))]
         if self.free_memory_by_test.is_some() || self.fill_by_test.is_some() {
+            // The budget read with the free figure, as the backend's is.
+            if self.free_memory_by_test.is_some()
+                && let Some(offer) = self.offer_by_test
+            {
+                self.offer_read_by_test
+                    .fetch_max(offer, std::sync::atomic::Ordering::Relaxed);
+            }
             return self.free_memory_by_test.map(|b| (b, "the card".into()));
         }
         card_free_now()
+    }
+
+    /// The most the card has offered this process against its whole
+    /// heap ([`card_offer_now`]), or as a test has them, beside its free
+    /// figure ([`Ai::card_size`]): only what a free read has read.
+    fn card_offer(&self) -> Option<u64> {
+        #[cfg(any(test, feature = "testing"))]
+        if self.free_memory_by_test.is_some() || self.fill_by_test.is_some() {
+            let read = self
+                .offer_read_by_test
+                .load(std::sync::atomic::Ordering::Relaxed);
+            return offer_as_size((read > 0).then_some(read), self.card_size());
+        }
+        card_offer_now()
     }
 
     /// The patch's window and depth in `image`, found once for the
@@ -8026,7 +8171,8 @@ mod tests {
             NeverHere::ShortCard("RTX 2060".into(), 6 << 30, remove_needs(512, false))
         );
         assert!(
-            why.words().starts_with("RTX 2060 has 6.0 GiB"),
+            why.words().starts_with("RTX 2060 has 6.0 GiB")
+                && why.words().ends_with("; this card is too small for it"),
             "{}",
             why.words()
         );
@@ -10586,19 +10732,84 @@ mod tests {
     #[test]
     fn a_removal_needs_its_peak_free() {
         const GIB: u64 = 1 << 30;
-        assert!(short_of_memory("the card", 6 * GIB, 512, false).is_some());
-        assert!(short_of_memory("the card", 7 * GIB, 512, false).is_none());
-        assert!(short_of_memory("the card", 7 * GIB, 1024, false).is_some());
-        assert!(short_of_memory("the card", 8 * GIB, 1024, false).is_none());
-        assert!(short_of_memory("the card", 2 * GIB, 512, true).is_some());
-        assert!(short_of_memory("the card", 3 * GIB, 512, true).is_none());
-        assert!(short_of_memory("the card", 5 * GIB, 1024, true).is_some());
-        assert!(short_of_memory("the card", 6 * GIB, 1024, true).is_none());
-        let why = short_of_memory("the card", 3 * GIB, 1024, false).unwrap();
+        assert!(short_of_memory("the card", 6 * GIB, None, 512, false).is_some());
+        assert!(short_of_memory("the card", 7 * GIB, None, 512, false).is_none());
+        assert!(short_of_memory("the card", 7 * GIB, None, 1024, false).is_some());
+        assert!(short_of_memory("the card", 8 * GIB, None, 1024, false).is_none());
+        assert!(short_of_memory("the card", 2 * GIB, None, 512, true).is_some());
+        assert!(short_of_memory("the card", 3 * GIB, None, 512, true).is_none());
+        assert!(short_of_memory("the card", 5 * GIB, None, 1024, true).is_some());
+        assert!(short_of_memory("the card", 6 * GIB, None, 1024, true).is_none());
+        let why = short_of_memory("the card", 3 * GIB, None, 1024, false).unwrap();
         assert_eq!(
             why,
             "the card has 3.0 GiB free, short of the 7.1 GiB a removal at 1024 needs; another program may be using it"
         );
+    }
+
+    /// Issue 142's 8 GB laptop card offers 7.0 GiB at most: a removal
+    /// at 1024 (7.1) is past it, and the card is said too small, not
+    /// another program's. One the card could hold, or a card whose
+    /// offer is not known, keeps the words it had.
+    #[test]
+    fn a_removal_past_what_the_card_offers_says_the_card_is_too_small() {
+        const GIB: u64 = 1 << 30;
+        let said = |offer, size| short_of_memory("the card", 6 * GIB, offer, size, false).unwrap();
+        assert_eq!(
+            said(Some(7 * GIB), 1024),
+            "the card has 6.0 GiB free, short of the 7.1 GiB a removal at 1024 needs; this card is too small for a fill this large"
+        );
+        let busy = "the card has 6.0 GiB free, short of the 7.1 GiB a removal at 1024 needs; another program may be using it";
+        assert_eq!(said(Some(8 * GIB), 1024), busy);
+        assert_eq!(said(None, 1024), busy);
+        // At 512, the least, it is the card that is too small.
+        assert_eq!(
+            said(Some(6 * GIB), 512),
+            "the card has 6.0 GiB free, short of the 6.3 GiB a removal at 512 needs; this card is too small for it"
+        );
+    }
+
+    /// An offer under 80% of the card's whole heap is another program's
+    /// hold from before our first read, not the card's size: a 16 GiB
+    /// card offering 5.5 keeps the old words for a removal at 512 (6.3);
+    /// issue 142's card, 7.0 of 8.0, is too small at 1024; a heap not
+    /// known keeps the old words.
+    #[test]
+    fn a_low_offer_beside_a_large_heap_is_not_the_cards_size() {
+        const GIB: u64 = 1 << 30;
+        let offer = |o: u64, heap| offer_as_size(Some(o), heap);
+        let said = |offer, size| short_of_memory("the card", 5 * GIB, offer, size, false).unwrap();
+        let busy = "another program may be using it";
+        assert!(said(offer(55 * GIB / 10, Some(16 * GIB)), 512).ends_with(busy));
+        assert!(
+            said(offer(7 * GIB, Some(8 * GIB)), 1024).ends_with("too small for a fill this large")
+        );
+        assert!(said(offer(55 * GIB / 10, None), 512).ends_with(busy));
+        assert_eq!(offer(8 * GIB, Some(10 * GIB)), Some(8 * GIB));
+        assert_eq!(offer(8 * GIB - 1, Some(10 * GIB)), None);
+    }
+
+    /// With its UNet held a removal at 1024 needs less of the card free
+    /// (5.7), but a card offering 7.0 can never run it cold (7.1): too
+    /// small all the same, the refusal itself as it was.
+    #[test]
+    fn a_held_unet_does_not_hide_a_card_too_small() {
+        const GIB: u64 = 1 << 30;
+        let why = short_of_memory("the card", 5 * GIB, Some(7 * GIB), 1024, true).unwrap();
+        assert!(
+            why.ends_with("; this card is too small for a fill this large"),
+            "{why}"
+        );
+        assert!(short_of_memory("the card", 6 * GIB, Some(7 * GIB), 1024, true).is_none());
+    }
+
+    /// Where 512 is past the offer too, a smaller window would not run
+    /// either: the card is too small for it, not for a fill this large.
+    #[test]
+    fn a_fill_this_large_only_where_a_smaller_one_fits() {
+        const GIB: u64 = 1 << 30;
+        let why = short_of_memory("the card", 5 * GIB, Some(6 * GIB), 1024, false).unwrap();
+        assert!(why.ends_with("; this card is too small for it"), "{why}");
     }
 
     /// The learned denoiser's need follows its tile, measured at 256,
@@ -10611,17 +10822,24 @@ mod tests {
         assert!(denoise_needs(384) < denoise_needs(512));
         assert_eq!(denoise_needs(500), denoise_needs(512));
         // The 4 GB card's 1.8 GiB: short at 512, room at 384.
-        assert!(short_of("c", 18 * GIB / 10, denoise_needs(512), "d").is_some());
-        assert!(short_of("c", 18 * GIB / 10, denoise_needs(384), "d").is_none());
-        assert!(short_of("c", 2 * GIB, denoise_needs(512), "d").is_none());
-        assert!(short_of("c", 4 * GIB, denoise_needs(1024), "d").is_some());
-        assert!(short_of("c", 5 * GIB, denoise_needs(1024), "d").is_none());
+        assert!(short_of("c", 18 * GIB / 10, denoise_needs(512), "d", None).is_some());
+        assert!(short_of("c", 18 * GIB / 10, denoise_needs(384), "d", None).is_none());
+        assert!(short_of("c", 2 * GIB, denoise_needs(512), "d", None).is_none());
+        assert!(short_of("c", 4 * GIB, denoise_needs(1024), "d", None).is_some());
+        assert!(short_of("c", 5 * GIB, denoise_needs(1024), "d", None).is_none());
         assert!(denoise_needs(2048) > 4 * denoise_needs(1024) - 4 * CARD_MARGIN);
-        assert!(short_of("c", 4 * GIB, mask_needs(MaskModel::People), "m").is_some());
-        assert!(short_of("c", 2 * GIB, mask_needs(MaskModel::Sky), "m").is_none());
-        assert!(short_of("c", 5 * GIB, mask_needs(MaskModel::People), "m").is_none());
-        assert!(short_of("c", 6 * GIB, mask_needs(MaskModel::Subject), "m").is_some());
-        let why = short_of("the card", GIB, denoise_needs(1024), "the learned denoiser").unwrap();
+        assert!(short_of("c", 4 * GIB, mask_needs(MaskModel::People), "m", None).is_some());
+        assert!(short_of("c", 2 * GIB, mask_needs(MaskModel::Sky), "m", None).is_none());
+        assert!(short_of("c", 5 * GIB, mask_needs(MaskModel::People), "m", None).is_none());
+        assert!(short_of("c", 6 * GIB, mask_needs(MaskModel::Subject), "m", None).is_some());
+        let why = short_of(
+            "the card",
+            GIB,
+            denoise_needs(1024),
+            "the learned denoiser",
+            None,
+        )
+        .unwrap();
         assert!(
             why.starts_with("the card has 1.0 GiB free, short of the 4.3 GiB"),
             "{why}"
@@ -10729,7 +10947,7 @@ mod tests {
         assert_eq!(released.load(Ordering::Relaxed), 0);
         assert_eq!(told.load(Ordering::Relaxed), 0);
         // What the log says of each.
-        let why = short_of("the card", need - GIB / 2, need, "a learned mask").unwrap();
+        let why = short_of("the card", need - GIB / 2, need, "a learned mask", None).unwrap();
         assert_eq!(
             second_ask_said(&why, &sets, Some(GIB), Some(5 * GIB / 2), true),
             "a learned mask: begun on the card once the engine let go of the sharpen's \
@@ -11093,6 +11311,37 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
 
+    /// A removal refused on a card that never offered its need is said
+    /// too small for it; one that offered it, or whose offer is not
+    /// known, is said as before. The offer is read after the free
+    /// figure: on a fresh card the refusing read is the first, and its
+    /// budget is in the offer judged.
+    #[test]
+    fn a_removal_past_the_cards_offer_is_refused_as_too_small() {
+        let image = WorkingImage::new(200, 100);
+        let patch = remove_patch(22);
+        let region = patch.region(image.width, image.height).unwrap();
+        let refused = |offer| {
+            let mut ai = on_card(59 * GIB / 10, 0);
+            ai.card_by_test = Some(Some(7 * GIB));
+            ai.offer_by_test = offer;
+            // No budget read before the refusal's own.
+            assert_eq!(ai.card_offer(), None);
+            match ai.fill(&patch, &region, &image) {
+                Err(NoFill::Failed(why)) => why,
+                other => panic!("{:?}", other.map(|(_, e)| e)),
+            }
+        };
+        let said = "the card has 5.9 GiB free, short of the 6.3 GiB a removal at 512 needs";
+        assert_eq!(
+            refused(Some(6 * GIB)),
+            format!("{said}; this card is too small for it")
+        );
+        let busy = format!("{said}; another program may be using it");
+        assert_eq!(refused(Some(7 * GIB)), busy);
+        assert_eq!(refused(None), busy);
+    }
+
     /// Short of a removal because of its own sessions, the Ai gives the
     /// card back and asks once more, and the fill is made; short after
     /// that, it is refused and the worker told.
@@ -11314,6 +11563,40 @@ mod tests {
         }));
         assert!(ai.denoise_room_at(512).is_err());
         assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+
+    /// The learned denoiser short at every tile is said too small for
+    /// the card only where its least tile (256, 0.95 GiB) is past what
+    /// the card offers too, in an export's ask as in a develop's.
+    #[test]
+    fn a_denoiser_past_the_cards_offer_at_every_tile_is_said_too_small() {
+        // Short of 512's 1.95 is past these whole cards: the free figure
+        // said is as the ladder leaves it.
+        let said = "GiB free, short of the 1.9 GiB the learned denoiser at a tile of 512 needs";
+        for patient in [false, true] {
+            let refused = |offer: Option<u64>| {
+                let (mut ai, _) = denoiser_on_card(GIB / 2, GIB / 10);
+                ai.card_by_test = Some(Some(offer.map_or(GIB, |o| o + GIB / 10)));
+                ai.offer_by_test = offer;
+                if patient {
+                    ai.set_patience(Some(Patience {
+                        tries: 1,
+                        wait: std::time::Duration::ZERO,
+                        canceled: Arc::new(|| false),
+                    }));
+                }
+                ai.denoise_room_at(512).expect_err("refused").0
+            };
+            let small = format!("{said}; this card is too small for it");
+            let why = refused(Some(9 * GIB / 10));
+            assert!(why.ends_with(&small), "{why}");
+            // Its own tile is past 1.5 GiB, its least is not.
+            let busy = format!("{said}; another program may be using it");
+            let why = refused(Some(15 * GIB / 10));
+            assert!(why.ends_with(&busy), "{why}");
+            let why = refused(None);
+            assert!(why.ends_with(&busy), "{why}");
+        }
     }
 
     /// A patient walk (an export) short of the denoiser's tile runs at a

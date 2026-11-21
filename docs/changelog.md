@@ -48,6 +48,8 @@ design note behind it.
 
 ### Fixes
 
+- A model run refused for memory says so when the card is too small for
+  it, where it blamed another program (issue 142).
 - A DNG whose color matrix names no illuminant, as a film scanner's may,
   develops where it was refused (issue 191).
 - A folder of raws moved by hand carries its sidecars faster: the old

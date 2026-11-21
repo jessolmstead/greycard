@@ -544,6 +544,34 @@ pub fn webgpu_free_memory() -> Option<(u64, &'static str)> {
     }
 }
 
+/// The most of the card's own memory the backend has offered this
+/// process so far: the largest budget [`webgpu_free_memory`] has read,
+/// this process's own use counted in (Vulkan's heap budget, DXGI's
+/// budget). A run needing more had no room even with nothing of ours
+/// on the card. `None` until a free figure has been read, and wherever
+/// none is.
+pub fn webgpu_budget_most() -> Option<u64> {
+    // Where a budget is read: Vulkan's or DXGI's, not Metal's.
+    #[cfg(all(webgpu_ep, any(windows, target_os = "linux", target_os = "android")))]
+    {
+        let most = BUDGET_MOST.load(std::sync::atomic::Ordering::Relaxed);
+        return (most > 0).then_some(most);
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+/// The largest budget [`adapter_free_memory`] has read ([`webgpu_budget_most`]).
+#[cfg(all(webgpu_ep, any(windows, target_os = "linux", target_os = "android")))]
+static BUDGET_MOST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `budget` kept as [`webgpu_budget_most`]'s answer where it is the
+/// largest yet.
+#[cfg(all(webgpu_ep, any(windows, target_os = "linux", target_os = "android")))]
+fn budget_read(budget: u64) {
+    BUDGET_MOST.fetch_max(budget, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The heap the allocator keeps after the models' sessions are dropped
 /// given back to the system: on Linux with glibc, `malloc_trim(0)`,
 /// which took a process from 3.65 GiB resident to 0.18 after a removal
@@ -725,6 +753,7 @@ fn adapter_free_memory(adapter: &wgpu::Adapter) -> Option<(u64, &'static str)> {
                 .collect();
             let largest = card_heap(&sized)?;
             let (budget, used) = (budget.heap_budget[largest], budget.heap_usage[largest]);
+            budget_read(budget);
             return (budget > 0).then_some((budget.saturating_sub(used), "Vulkan's memory budget"));
         }
     }
@@ -738,6 +767,7 @@ fn adapter_free_memory(adapter: &wgpu::Adapter) -> Option<(u64, &'static str)> {
                 .raw_adapter()
                 .query_video_memory_info(Default::default())
                 .ok()?;
+            budget_read(info.Budget);
             return (info.Budget > 0).then_some((
                 info.Budget.saturating_sub(info.CurrentUsage),
                 "DXGI's local video memory budget",
