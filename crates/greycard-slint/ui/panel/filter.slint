@@ -504,7 +504,7 @@ export component FilterBar inherits Rectangle {
                         HorizontalLayout {
                             spacing: 3px;
                             alignment: start;
-                            for chip[i] in root.flags: Chip {
+                            for chip[i] in root.flags: flag-chip := Chip {
                                 text: chip.text;
                                 count: chip.count;
                                 on: chip.on;
@@ -628,7 +628,7 @@ export component FilterBar inherits Rectangle {
                     Rectangle { width: Theme.space-2; }
                     Rectangle { width: 1px; background: Theme.border; }
                     Rectangle { width: Theme.space-2; }
-                    for chip[i] in root.flags: Chip {
+                    for chip[i] in root.flags: bar-flag-chip := Chip {
                         text: chip.text;
                         count: chip.count;
                         on: chip.on;

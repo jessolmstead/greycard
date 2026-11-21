@@ -3101,14 +3101,14 @@ pub(crate) fn show_filter(st: &State, app: &App) {
             code: n as i32,
         })
         .collect();
-    // By the chip's place in the row, which is what the callback
-    // gets back and what `Counts` is indexed by; the code is only
-    // what the badge draws.
+    // By the chip's place in the row, which is what the callback gets
+    // back and what `Counts` is indexed by; the code is only what the
+    // badge draws. The names are marked for the catalog in `filter`.
     let flags: Vec<FilterChip> = meta::Flag::ALL
         .iter()
         .enumerate()
         .map(|(n, f)| FilterChip {
-            text: f.name().into(),
+            text: crate::i18n::text(f.name()).into(),
             count: counts.flags[n] as i32,
             on: st.views.filter.flags.contains(f),
             out: st.views.filter.not_flags.contains(f),

@@ -3807,6 +3807,49 @@ fn a_filter_leaves_the_rows_it_says_it_leaves() {
     assert!(!app.get_filter_on());
 }
 
+/// In French the flag chips say the catalog's words for the flags,
+/// which English names and compares, and a press still filters by
+/// the flag.
+#[test]
+fn the_flag_chips_say_their_flags_in_the_window_language() {
+    use i_slint_backend_testing::ElementHandle;
+    let app = window(0);
+    let (state, _worker) = state_for(&app, folder(4));
+    {
+        let mut st = state.borrow_mut();
+        st.sidecars[1].meta.flag = meta::Flag::Pick;
+        st.sidecars[3].meta.flag = meta::Flag::Reject;
+        st.views.shown = (0..4).collect();
+    }
+    let _french = crate::testing::in_language("fr");
+    app.set_culling(true);
+    app.set_panel_tab(crate::panel::cull::CULL_TAB.into());
+    rebuild_browser(&mut state.borrow_mut(), &app);
+    crate::testing::settle(&app);
+    let said: Vec<String> = meta::Flag::ALL
+        .iter()
+        .map(|f| crate::i18n::text(f.name()))
+        .collect();
+    for (f, word) in meta::Flag::ALL.iter().zip(&said) {
+        assert_ne!(word, f.name(), "French has a word for {}", f.name());
+    }
+    let chips: Vec<String> = ElementHandle::find_by_element_id(&app, "FilterBar::flag-chip")
+        .filter_map(|c| c.accessible_label())
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(chips, said, "the flag chips in French");
+    app.invoke_filter_flag_toggled(1, false);
+    assert_eq!(state.borrow().views.shown, vec![1]);
+    assert!(
+        state
+            .borrow()
+            .views
+            .filter
+            .flags
+            .contains(&meta::Flag::Pick)
+    );
+}
+
 /// A star that takes the frame on screen out of the filtered list
 /// does what a reject under "No rejects" has always done: the
 /// selection goes to the nearest frame still shown and that one

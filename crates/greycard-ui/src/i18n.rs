@@ -11,6 +11,7 @@
 //! does anything compared or stored; only what is shown is translated.
 //! A test sets no language, so the tests read English.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::LazyLock;
@@ -125,9 +126,16 @@ static CATALOGS: LazyLock<Vec<Catalog>> =
 /// place in [`CATALOGS`]. Set once, at the start.
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
 
+std::thread_local! {
+    /// A language held by one thread over [`CURRENT`], as [`CURRENT`]
+    /// counts them: a test's, whose window runs on its thread beside
+    /// the other tests' in English. The window never sets one.
+    static HERE: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
 fn current() -> Option<&'static Catalog> {
-    CURRENT
-        .load(Ordering::Relaxed)
+    HERE.with(Cell::get)
+        .unwrap_or_else(|| CURRENT.load(Ordering::Relaxed))
         .checked_sub(1)
         .and_then(|i| CATALOGS.get(i))
 }
@@ -236,6 +244,23 @@ pub fn select(tag: &str) {
         .position(|c| c.tag == tag)
         .map_or(0, |i| i + 1);
     CURRENT.store(index, Ordering::Relaxed);
+}
+
+/// [`select`] for the calling thread alone, over the language in
+/// force; `None` hands it back. For a test, whose window shares the
+/// process with others: what the window shows in a language is proved
+/// in that language without turning the words of the tests beside it.
+/// Only tests call it (the binary's, which reach the library from
+/// outside), so it is no part of the library's face.
+#[doc(hidden)]
+pub fn select_on_this_thread(tag: Option<&str>) {
+    let index = tag.map(|tag| {
+        CATALOGS
+            .iter()
+            .position(|c| c.tag == tag)
+            .map_or(0, |i| i + 1)
+    });
+    HERE.with(|here| here.set(index));
 }
 
 /// The tag in force, empty for English.
@@ -508,6 +533,19 @@ msgstr "\a\b\f\v\101\x42\t"
         let marked = Catalog::from_po("fr", &format!("\u{feff}{FRENCH}"));
         assert_eq!(marked.text("Done"), "Terminé");
         assert_eq!(marked.forms, 2);
+    }
+
+    /// A language selected on a thread is that thread's: another reads
+    /// the language in force, and so does the thread once it lets go.
+    #[test]
+    fn a_thread_holds_its_own_language() {
+        let process = std::thread::spawn(selected).join().expect("a thread reads");
+        select_on_this_thread(Some("fr"));
+        assert_eq!(selected(), "fr");
+        let beside = std::thread::spawn(selected).join().expect("a thread reads");
+        assert_eq!(beside, process);
+        select_on_this_thread(None);
+        assert_eq!(selected(), process);
     }
 
     /// A message in a context is its own entry: found by the context

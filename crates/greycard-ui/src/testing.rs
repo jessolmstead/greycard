@@ -164,6 +164,29 @@ pub(crate) fn window(count: usize) -> App {
     app
 }
 
+/// The window's words in the bundled language of `tag`, on both sides
+/// (Slint's catalogs and `tr!`), for this test's thread alone, until
+/// the guard drops and hands back the suite's language. A thread the
+/// test spawns does not inherit it: it reads the suite's language.
+pub(crate) fn in_language(tag: &str) -> Language {
+    slint::select_bundled_translation(tag).expect("the language is bundled");
+    crate::i18n::select_on_this_thread(Some(tag));
+    Language
+}
+
+/// [`in_language`]'s guard.
+pub(crate) struct Language;
+
+impl Drop for Language {
+    fn drop(&mut self) {
+        let suite = std::env::var("GREYCARD_TEST_LANG").unwrap_or_default();
+        // A test that failed has its window gone; the catalogs may be
+        // too, and a panic here would hide the failure.
+        let _ = slint::select_bundled_translation(&suite);
+        crate::i18n::select_on_this_thread(None);
+    }
+}
+
 /// A press and a release at a point of the window, logical pixels
 /// from its top left: what a click on whatever is there does.
 pub(crate) fn click(app: &App, x: f32, y: f32) {
