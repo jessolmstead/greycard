@@ -1460,9 +1460,6 @@ clears or a tester asks for it.
 - [ ] The Library's roots in name order, or an order to choose: they
       stand in the order added, which reads as disorder to someone
       who added each shoot as its own root (issue 154)
-- [ ] "Edit in" another program reads the export sheet's Metadata
-      choice: today it takes the sheet's defaults, so its TIFF carries
-      everything under None too (§658)
 - [ ] `.greycard` off the name of an export written beside its raw
       (issue 116, 2026-11-10). Today the tag is also what keeps
       `IMG_0001.jpg` from being paired with `IMG_0001.CR3` as the

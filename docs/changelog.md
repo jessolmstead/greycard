@@ -53,6 +53,7 @@ design note behind it.
 
 ### Fixes
 
+- Edit in another program honors the export sheet's Metadata choice; its TIFF carried everything even under None.
 - Report a problem fills in the CPU, as it fills in the system and the graphics card.
 - A model run refused for memory says so when the card is too small for
   it, where it blamed another program (issue 142).

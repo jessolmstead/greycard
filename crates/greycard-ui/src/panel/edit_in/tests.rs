@@ -215,12 +215,14 @@ fn edit_in_exports_beside_the_raw_and_hands_the_file_over() {
     state.borrow_mut().current = Some(1);
     app.set_export_space("Display P3".into());
     app.set_export_format("JPEG".into());
+    app.set_export_metadata(crate::export::Metadata::None.name().into());
     let gimp = choose_app(&state, &app, &dir, "gimp");
     app.invoke_menu_edit_in(0);
     let set = state.borrow().work.exporting.clone().expect("the set");
     assert_eq!(set.total, 1);
     assert_eq!(set.settings.format, Format::Tiff);
     assert_eq!(set.settings.space, crate::export::Space::DisplayP3);
+    assert_eq!(set.settings.metadata, crate::export::Metadata::None);
     assert_eq!(set.settings.long_edge, None);
     assert_eq!(set.on_exists, OnExists::Increment);
     assert_eq!((set.folder.as_ref(), set.sub.as_ref()), (None, None));
@@ -308,6 +310,20 @@ fn edit_in_exports_beside_the_raw_and_hands_the_file_over() {
     assert_eq!(LAUNCHED.with(|l| l.borrow().len()), 2);
     assert_eq!(watches(&state).len(), 1);
     crate::testing::remove_dir_retry(&dir);
+}
+
+/// Each of the sheet's Metadata choices is the one Edit in exports
+/// with, the format staying TIFF whatever the sheet's.
+#[test]
+fn edit_in_takes_the_sheets_metadata() {
+    let app = window(1);
+    app.set_export_format("JPEG".into());
+    for metadata in crate::export::Metadata::ALL {
+        app.set_export_metadata(metadata.name().into());
+        let settings = settings_for(&app);
+        assert_eq!(settings.metadata, metadata);
+        assert_eq!(settings.format, Format::Tiff);
+    }
 }
 
 struct Setup {

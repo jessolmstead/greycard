@@ -7,8 +7,9 @@
 //! the list shows it beside its raw, stacked with it.
 //!
 //! The export is the sheet's defaults but for the format, TIFF 16-bit,
-//! and the color space, which is the sheet's: the space the last export
-//! went out in unless it has been changed since. The name goes through
+//! and the color space and the metadata, which are the sheet's: what
+//! the last export went out with unless they have been changed since,
+//! so a sheet set to None hands over a file with none. The name goes through
 //! the set's naming, so a file there already is never written over.
 //! The frame right-clicked is the one exported, a version as itself.
 //!
@@ -298,11 +299,12 @@ pub(crate) fn offer(app: &App, edit_in: &mut EditIn) {
 }
 
 /// The export Edit in writes: the sheet's defaults as TIFF 16-bit, in
-/// the color space the sheet holds.
+/// the color space and with the metadata the sheet holds.
 pub(crate) fn settings_for(app: &App) -> crate::export::Settings {
     Sheet {
         format: Format::Tiff.name().into(),
         space: app.get_export_space().into(),
+        metadata: app.get_export_metadata().into(),
         ..Sheet::default()
     }
     .settings()
