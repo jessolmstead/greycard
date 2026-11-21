@@ -57,6 +57,8 @@ design note behind it.
 
 ### Fixes
 
+- `mm<=35` typed in the filter bar filters by focal length, where it was
+  searched for as a word.
 - A mask's Shadows or Highlights stacked on the picture's past the
   slider's limit no longer folds the tones; the sum is held at the limit.
 - The curve's backdrop no longer shows another mask's histogram, or the

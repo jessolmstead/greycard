@@ -319,6 +319,10 @@ const FIELDS: [&str; 19] = [
     "flag", "label", "keyword", "name", "folder", "missing", "has", "kind", "focus",
 ];
 
+/// Short names a term may take beside [`FIELDS`], read as terms but
+/// not listed in the error: `mm<=35` is `focal<=35`.
+const SHORT: [&str; 1] = ["mm"];
+
 /// The kind [`kind_of`] gives a raw.
 pub const RAW: &str = "raw";
 
@@ -684,7 +688,7 @@ fn looks_like_a_term(token: &str) -> bool {
     // Only a field this language has: `C:\Users\...` in a quoted
     // folder is a drive letter, not a term.
     let name = token[..name_len].to_ascii_lowercase();
-    if !FIELDS.contains(&name.as_str()) {
+    if !FIELDS.contains(&name.as_str()) && !SHORT.contains(&name.as_str()) {
         return false;
     }
     let rest = &token[name_len..];
@@ -1295,6 +1299,11 @@ mod tests {
         assert_eq!(value("iso:ISO800"), 800.0);
         assert_eq!(value("rating:0"), 0.0);
         assert_eq!(value("focal:23.9"), 23.9);
+        // `mm` is `focal`, and a term as typed in the bar.
+        assert_eq!(one("mm<=35"), one("focal<=35"));
+        assert_eq!(value("MM>=24mm"), 24.0);
+        assert!(is_term("mm<=35") && is_term("mm:50"));
+        assert!(!is_term("mm") && !is_term("mmm<=35"));
         assert!(refused("iso:high").contains("number"));
         assert!(refused("rating>9").contains("0 to 5"));
         assert!(refused("shutter:1/0").contains("number"));

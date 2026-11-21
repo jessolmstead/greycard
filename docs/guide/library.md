@@ -339,6 +339,7 @@ You can also type tests, with no spaces inside them:
 | `name:`, `folder:` | Part of the file name, or of the folder's path |
 | `keyword:` | Part of a keyword |
 | `iso`, `focal`, `aperture`, `shutter` | A number: `iso>=3200`, `focal<=35`, `aperture:1.8`, `shutter<1/60` |
+| `mm` | The focal length, as `focal`: `mm<=35` |
 | `rating` | 0 to 5 stars: `rating>=3` |
 | `focus` | The [focus score](#sort-order), 0 to 1: `focus>0.6`; a frame on a network drive has one only if it is a CR3 or a RAF |
 | `date` | A year, month or day: `date:2026-09`, `date<=2026-09-21` |

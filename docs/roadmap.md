@@ -568,8 +568,7 @@ comes across with its ratings and collections.
       and the filter remembered between sessions are there since §174
 - [ ] The filter's ranges, what is left (§695): Home, End, Page Up,
       and Page Down with a handle focused change the frame; both
-      handles say one label to a screen reader; `mm<=35` typed is a
-      word, not a term
+      handles say one label to a screen reader
 - [ ] Left for a screen reader: menu items have names but no role
       (Slint has no menu-item role: upstream); pane edges as sliders
       need a name each ("Left panel width", and so on, the owner's
