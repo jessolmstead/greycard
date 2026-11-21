@@ -444,10 +444,16 @@ fn the_language_row_lists_the_catalogs() {
         .position(|n| n == "Français")
         .expect("French is listed");
     let french = i32::try_from(french).unwrap();
+    let spanish = names
+        .iter()
+        .position(|n| n == "Español")
+        .expect("Spanish is listed");
+    let spanish = i32::try_from(spanish).unwrap();
     assert_eq!(app.get_language_index(), 0);
     assert_eq!(language_chosen(0), "");
     assert_eq!(language_chosen(1), "en");
     assert_eq!(language_chosen(french), "fr");
+    assert_eq!(language_chosen(spanish), "es");
     assert_eq!(language_chosen(-1), "");
     assert_eq!(language_chosen(99), "");
     app.set_language_index(french);
@@ -457,6 +463,8 @@ fn the_language_row_lists_the_catalogs() {
     assert_eq!(app.get_language_index(), french);
     show_languages(&app, "fr-CA");
     assert_eq!(app.get_language_index(), french);
+    show_languages(&app, "es-MX");
+    assert_eq!(app.get_language_index(), spanish);
     show_languages(&app, "en");
     assert_eq!(app.get_language_index(), 1);
     show_languages(&app, "xx");
@@ -1292,12 +1300,12 @@ fn the_author_and_copyright_kept_in_the_file_are_left_out_empty() {
 }
 
 /// The Editing category with the two fields filled, at 150 % and in
-/// French as in English: the card in the smallest window, the
+/// Spanish and French as in English: the card in the smallest window, the
 /// fields inside the card and wide enough to type in.
 #[test]
 fn the_author_and_copyright_rows_fit_at_150_percent_in_french() {
     use i_slint_backend_testing::ElementHandle;
-    for language in ["", "fr"] {
+    for language in ["", "es", "fr"] {
         let (app, _state, _worker) = develop_window();
         slint::select_bundled_translation(language).expect("bundled");
         app.window()

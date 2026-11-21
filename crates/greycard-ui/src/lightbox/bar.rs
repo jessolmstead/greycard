@@ -556,13 +556,13 @@ fn the_surround_is_the_canvas_shade() {
 
 /// The grid's header keeps every word it had beside its new slider at
 /// the narrowest window the editor is made for, with the left pane at
-/// each width it allows, in English and in French: each label is not
+/// each width it allows, in English, Spanish, and French: each label is not
 /// cut, as wide as the same words on a wide window, and inside the
 /// header. The selection's name and the status line are the ones meant
 /// to give.
 #[test]
 fn the_header_keeps_its_words_beside_the_slider_at_1366() {
-    for lang in ["", "fr"] {
+    for lang in ["", "es", "fr"] {
         let (app, _state) = session(24);
         slint::select_bundled_translation(lang).expect("bundled");
         key(&app, "g");
@@ -627,10 +627,10 @@ fn the_header_keeps_its_words_beside_the_slider_at_1366() {
         let wide = header_texts(&app);
         assert_eq!(app.get_tile_cell(), 512.0);
         // The words checked: the count and the size, and the buttons.
-        let (count, rejects, lightbox) = if lang == "fr" {
-            ("24 photos", "Photos rejetées", "Table lumineuse")
-        } else {
-            ("24 frames", "Rejects", "Lightbox")
+        let (count, rejects, lightbox) = match lang {
+            "es" => ("24 fotos", "Rechazadas", "Mesa de luz"),
+            "fr" => ("24 photos", "Photos rejetées", "Table lumineuse"),
+            _ => ("24 frames", "Rejects", "Lightbox"),
         };
         for word in [count, rejects, lightbox] {
             assert!(
