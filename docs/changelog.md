@@ -32,6 +32,9 @@ design note behind it.
 
 ### Develop
 
+- Lens profiles (`.lcp`) are read from the profile folder's subfolders, so Adobe's
+  maker folders can be copied or linked in whole
+  ([§725](https://github.com/jessolmstead/greycard/blob/master/docs/notes/725-lens-profiles-from-subfolders.md)).
 - The crop has a choice of guides (golden ratio, golden spiral,
   diagonals, triangles); O steps through them and Shift+O, now taken,
   turns one.

@@ -3,7 +3,10 @@
 //! database's for the body or an Adobe profile in the profile
 //! directory; and the list a picker offers.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use greycard_core::develop::lens::LensCorrection;
 use greycard_core::raw::{Orientation, Shot};
@@ -15,19 +18,133 @@ use greycard_lens::{Database, Pick, lcp};
 pub type Identity<'a> = (&'a str, &'a str, &'a Shot, bool);
 
 /// A lens the picker offers.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct LensOption {
     pub choice: LensChoice,
     /// The lens's name.
     pub label: String,
     /// Who made the lens, one spelling a maker (see [`options_in`]).
     pub maker: String,
-    /// A lens of the database's on none of the body's mounts, for a
-    /// lens on an adapter: its label names its mounts, and the picker
-    /// lists it only when words typed match it.
+    /// A lens for another mount than the body's, for one on an
+    /// adapter: a lens of the database's on none of the body's mounts,
+    /// its label naming its mounts, or an Adobe profile made on
+    /// another maker's body. The picker lists it only when words
+    /// typed match it.
     pub off_mount: bool,
-    /// Which corrections its profile has for the frame.
-    pub carries: Carries,
+    /// Which corrections its profile has for the frame: see
+    /// [`LensOption::carries`].
+    carries: Carried,
+}
+
+/// A row's corrections: known when it is listed, or an Adobe
+/// profile's, read from its file the first time they are asked.
+#[derive(Debug, Clone)]
+enum Carried {
+    Known(Carries),
+    Adobe(Arc<AdobeRow>),
+}
+
+impl From<Carries> for Carried {
+    fn from(c: Carries) -> Self {
+        Carried::Known(c)
+    }
+}
+
+/// What an Adobe profile's row needs to say what it carries: its file,
+/// and the body and shot it is for.
+#[derive(Debug)]
+struct AdobeRow {
+    path: PathBuf,
+    body: Arc<Body>,
+    read: OnceLock<Carries>,
+    /// A read of its file aside under way ([`LensOption::claim_read`]).
+    reading: AtomicBool,
+}
+
+/// The frame a list of rows is for: the body's sensor size when the
+/// database knows it, the body, and the shot.
+#[derive(Debug)]
+struct Body {
+    crop: Option<f32>,
+    make: String,
+    model: String,
+    shot: Shot,
+}
+
+impl LensOption {
+    /// A row whose corrections are known.
+    pub fn new(
+        choice: LensChoice,
+        label: String,
+        maker: String,
+        off_mount: bool,
+        carries: Carries,
+    ) -> Self {
+        Self {
+            choice,
+            label,
+            maker,
+            off_mount,
+            carries: Carried::Known(carries),
+        }
+    }
+
+    /// Which corrections its profile has for the frame. An Adobe
+    /// profile's are read from its whole file the first time they are
+    /// asked, once a row: only a row chosen (on the worker, before the
+    /// list is handed over) or picked is, never the list, and never on
+    /// the window's thread (see [`LensOption::carries_known`]).
+    pub fn carries(&self) -> Carries {
+        match &self.carries {
+            Carried::Known(c) => *c,
+            Carried::Adobe(row) => *row.read.get_or_init(|| {
+                let b = &row.body;
+                lcp_carries(&row.path, b.crop, (&b.make, &b.model, &b.shot))
+            }),
+        }
+    }
+}
+
+impl LensOption {
+    /// What [`LensOption::carries`] says, when it is known without a
+    /// read: always for a lens of the database's, for an Adobe profile
+    /// once its file has been read. For the window, which reads no file.
+    pub fn carries_known(&self) -> Option<Carries> {
+        match &self.carries {
+            Carried::Known(c) => Some(*c),
+            Carried::Adobe(row) => row.read.get().copied(),
+        }
+    }
+
+    /// Whether the caller is the one to read this row's file aside (on
+    /// a thread of its own, through [`LensOption::carries`]): an Adobe
+    /// profile not yet read whose read nobody has claimed. One read at
+    /// most is in flight a row, however often the row is shown.
+    pub fn claim_read(&self) -> bool {
+        match &self.carries {
+            Carried::Adobe(row) => {
+                row.read.get().is_none() && !row.reading.swap(true, Ordering::AcqRel)
+            }
+            Carried::Known(_) => false,
+        }
+    }
+}
+
+/// Two rows are one when all they show is: what an Adobe row carries
+/// is compared as far as it is known, so a comparison reads no file.
+impl PartialEq for LensOption {
+    fn eq(&self, other: &Self) -> bool {
+        let file = |o: &Self| match &o.carries {
+            Carried::Adobe(row) => Some(row.path.clone()),
+            Carried::Known(_) => None,
+        };
+        self.choice == other.choice
+            && self.label == other.label
+            && self.maker == other.maker
+            && self.off_mount == other.off_mount
+            && self.carries_known() == other.carries_known()
+            && (self.carries_known().is_some() || file(self) == file(other))
+    }
 }
 
 /// Which of the three corrections a profile has something to apply
@@ -178,30 +295,65 @@ pub fn profile_correction_in(
 
 /// What the picker offers for a file: the database's lenses for its
 /// body, then those on other mounts, then the Adobe profiles in the
-/// profile directory, one a lens name.
-pub fn options(db: Option<&Database>, identity: Identity) -> Vec<LensOption> {
-    options_in(
-        db,
-        identity,
-        greycard_edit_io::profiles::store_dir().as_deref(),
+/// profile directory, one a lens name, from the listing held since the
+/// last look ([`lcp::held_in`]), so an open never waits on a walk; the
+/// lens `chosen` is listed whether the listing holds it or not. Its
+/// generation beside, none for no listing held: a look ending with
+/// another ([`lcp::look_in`]) means another list.
+pub fn options(
+    db: Option<&Database>,
+    identity: Identity,
+    chosen: &LensChoice,
+) -> (Vec<LensOption>, Option<u64>) {
+    let dir = greycard_edit_io::profiles::store_dir();
+    let held = dir.as_deref().and_then(lcp::held_in);
+    let listed = held.as_ref().map_or(&[][..], |l| l.entries.as_slice());
+    (
+        options_from(db, identity, dir.as_deref(), listed, chosen),
+        held.map(|l| l.generation),
     )
 }
 
-/// [`options`] with the profile directory named.
+/// [`options`] with the profile directory named and looked at now.
+pub fn options_in(
+    db: Option<&Database>,
+    identity: Identity,
+    profiles: Option<&Path>,
+    chosen: &LensChoice,
+) -> Vec<LensOption> {
+    let listing = profiles.map(|dir| lcp::refresh_in(dir, false));
+    let listed = listing.as_ref().map_or(&[][..], |l| l.entries.as_slice());
+    options_from(db, identity, profiles, listed, chosen)
+}
+
+/// [`options`] over the Adobe profiles `listed` in `profiles`.
 ///
-/// Two Adobe profiles of one lens (one made on raws and one on the
-/// camera's JPEGs, or one made on this body and one on another) are
-/// one row: the one made on the kind of picture this is, then the one
-/// made on this body, then the first by file name.
+/// An Adobe profile is for this body's mount when it was made on this
+/// body, or on a body the database puts on a mount this one takes, or,
+/// where the database cannot say, on a body of this one's maker.
+/// Another is a lens for another mount, listed only for words typed, as
+/// a lens of the database's on another mount is. Two Adobe profiles of
+/// one lens (one made on raws and one on the camera's JPEGs, or one
+/// made on this body and one on another) are one row: the chosen one,
+/// then one for this mount, then the one made on the kind of picture
+/// this is, then the one made on this body, then one made on a body on
+/// this body's mount, then the first by file name. Each profile's body
+/// is looked up in the database once a call.
 ///
 /// A maker is spelled one way across the rows: the database writes
 /// "Nikon" and "Nikon Corporation", "Olympus" and "Olympus Imaging
 /// Corp.", and the shortest of those sharing a first word stands for
 /// them all. An Adobe profile is filed as `Makers::of_profile` says.
-pub fn options_in(
+///
+/// Only the profiles' heads are read here; the chosen row's whole file
+/// is read before it is returned, and another's when it is picked
+/// ([`LensOption::carries`]).
+pub fn options_from(
     db: Option<&Database>,
     (make, model, shot, raw): Identity,
     profiles: Option<&Path>,
+    listed: &[lcp::Listed],
+    chosen: &LensChoice,
 ) -> Vec<LensOption> {
     let makers = Makers::of(db);
     let body = db.and_then(|db| db.camera(make, model).map(|c| (db, c)));
@@ -219,12 +371,14 @@ pub fn options_in(
         .map(|(db, c)| db.lenses_for(c))
         .unwrap_or_default()
         .into_iter()
-        .map(|l| LensOption {
-            choice: LensChoice::Database(l.name().to_string()),
-            label: l.name().to_string(),
-            maker: makers.spelled(&l.maker),
-            off_mount: false,
-            carries: carries(l),
+        .map(|l| {
+            LensOption::new(
+                LensChoice::Database(l.name().to_string()),
+                l.name().to_string(),
+                makers.spelled(&l.maker),
+                false,
+                carries(l),
+            )
         })
         .collect();
     // The lenses on other mounts, for one on an adapter: labeled with
@@ -234,55 +388,148 @@ pub fn options_in(
         body.map(|(db, c)| db.lenses_off_mount(c))
             .unwrap_or_default()
             .into_iter()
-            .map(|l| LensOption {
-                choice: LensChoice::Database(l.name().to_string()),
-                label: format!("{} ({})", l.name(), l.mounts.join(", ")),
-                maker: makers.spelled(&l.maker),
-                off_mount: true,
-                carries: carries(l),
+            .map(|l| {
+                LensOption::new(
+                    LensChoice::Database(l.name().to_string()),
+                    format!("{} ({})", l.name(), l.mounts.join(", ")),
+                    makers.spelled(&l.maker),
+                    true,
+                    carries(l),
+                )
             }),
     );
     // A profile made on another body is read at this body's sensor
     // size, which only the database knows: without it, only this
     // body's own are offered.
     let sized = body.is_some();
-    // The body's sensor size, looked up once for every profile's row.
-    let body_crop = body.map(|(_, c)| c.crop_factor);
-    let made_here = |l: &lcp::Listed| lcp::load(&l.path).is_some_and(|p| p.made_on(make, model));
-    let rank = |l: &lcp::Listed| (l.raw != raw, !made_here(l));
-    let mut adobe: Vec<lcp::Listed> = Vec::new();
-    let listed = profiles.map(lcp::list_in).unwrap_or_default();
-    for l in listed.into_iter().filter(|l| sized || made_here(l)) {
-        match adobe.iter_mut().find(|o| o.lens == l.lens) {
-            Some(o) => {
-                if rank(&l) < rank(o) {
-                    *o = l;
+    // The mounts the frame's body takes, and each profile's body looked
+    // up once a call, however many profiles were made on it.
+    let taken: Vec<&str> = body.map_or_else(Vec::new, |(db, c)| db.mounts_taken(&c.mount));
+    let mut cameras: HashMap<(&str, &str), Option<&greycard_lens::Camera>> = HashMap::new();
+    // The chosen profile, listed whether the listing has it yet or not.
+    let chosen_row = match (chosen, profiles) {
+        (LensChoice::Lcp(file), Some(dir)) if !listed.iter().any(|l| l.file == *file) => {
+            lcp::row_in(dir, file)
+        }
+        _ => None,
+    };
+    struct Fact<'a> {
+        l: &'a lcp::Listed,
+        chosen: bool,
+        made_here: bool,
+        /// Whether its body is on a mount the frame's body takes (its
+        /// own, or one the database says it takes on an adapter), as
+        /// the database knows both; none when it cannot say.
+        on_mount: Option<bool>,
+        /// Whether its body is on the frame body's own mount.
+        same_mount: bool,
+        off_mount: bool,
+    }
+    let mut facts: Vec<Fact> = Vec::new();
+    for l in listed.iter().chain(chosen_row.as_ref()) {
+        let made_here = l.made_on(make, model);
+        if !(sized || made_here) {
+            continue;
+        }
+        let mount = match (body, l.make.as_deref(), l.model.as_deref()) {
+            // Made on this body: on its mount, without a look.
+            _ if made_here => Some((true, true)),
+            (Some((db, c)), Some(m), Some(n)) => {
+                let camera = *cameras.entry((m, n)).or_insert_with(|| db.camera(m, n));
+                camera.map(|o| (taken.contains(&o.mount.as_str()), o.mount == c.mount))
+            }
+            _ => None,
+        };
+        let on_mount = mount.map(|(taken, _)| taken);
+        // For this mount: made on this body, or on a body the database
+        // puts on a mount it takes; where the database cannot say, made
+        // on a body of its maker.
+        let same_make = || {
+            l.make
+                .as_deref()
+                .is_some_and(|m| greycard_lens::matching::same_maker(m, make))
+        };
+        let off_mount = !(made_here || on_mount.unwrap_or_else(same_make));
+        facts.push(Fact {
+            l,
+            chosen: LensChoice::Lcp(l.file.clone()) == *chosen,
+            made_here,
+            on_mount,
+            same_mount: mount.is_some_and(|(_, same)| same),
+            off_mount,
+        });
+    }
+    // Of two profiles of one lens: the chosen one; then one for this
+    // mount, so a lens is never listed only for words typed while a
+    // profile of it for this mount is there; then the one made on the
+    // kind of picture this is; then on this body; then on a body on
+    // this body's own mount; then on one that takes it; then the first
+    // by path.
+    let rank = |f: &Fact| {
+        (
+            !f.chosen,
+            f.off_mount,
+            f.l.raw != raw,
+            !f.made_here,
+            !f.same_mount,
+            f.on_mount != Some(true),
+        )
+    };
+
+    let mut group: HashMap<&str, usize> = HashMap::new();
+    let mut adobe: Vec<Fact> = Vec::new();
+    for f in facts {
+        match group.get(f.l.lens.as_str()) {
+            Some(&at) => {
+                if rank(&f) < rank(&adobe[at]) {
+                    adobe[at] = f;
                 }
             }
-            None => adobe.push(l),
+            None => {
+                group.insert(f.l.lens.as_str(), adobe.len());
+                adobe.push(f);
+            }
         }
     }
-    adobe.sort_by_key(|l| l.lens.to_lowercase());
-    out.extend(adobe.into_iter().map(|l| LensOption {
-        maker: makers.of_profile(&l),
-        carries: lcp_carries(&l, body_crop, (make, model, shot)),
-        choice: LensChoice::Lcp(l.file),
-        label: l.lens,
-        off_mount: false,
-    }));
+    adobe.sort_by_cached_key(|f| (f.off_mount, f.l.lens.to_lowercase()));
+    let frame = Arc::new(Body {
+        crop: body.map(|(_, c)| c.crop_factor),
+        make: make.to_string(),
+        model: model.to_string(),
+        shot: shot.clone(),
+    });
+    for f in adobe {
+        let row = LensOption {
+            maker: makers.of_profile(f.l),
+            choice: LensChoice::Lcp(f.l.file.clone()),
+            label: f.l.lens.clone(),
+            off_mount: f.off_mount,
+            carries: Carried::Adobe(Arc::new(AdobeRow {
+                path: f.l.path.clone(),
+                body: frame.clone(),
+                read: OnceLock::new(),
+                reading: AtomicBool::new(false),
+            })),
+        };
+        // The chosen row's file read here, on the worker, so the
+        // window has its corrections without reading it.
+        if f.chosen {
+            row.carries();
+        }
+        out.push(row);
+    }
     out
 }
 
-/// What an Adobe profile's row has for the frame: its correction at
-/// the body's sensor size `body_crop`, as a pick of it develops, or
-/// at its own for one made on this body the database does not know.
-/// The body is the caller's, looked up once for every row.
+/// What an Adobe profile has for the frame: its correction at the
+/// body's sensor size `body_crop`, as a pick of it develops, or at its
+/// own for one made on this body the database does not know.
 fn lcp_carries(
-    l: &lcp::Listed,
+    path: &Path,
     body_crop: Option<f32>,
     (make, model, shot): (&str, &str, &Shot),
 ) -> Carries {
-    let Some(p) = lcp::load(&l.path) else {
+    let Some(p) = lcp::load(path) else {
         return Carries::of_any(None);
     };
     let crop = body_crop.or_else(|| p.made_on(make, model).then_some(p.crop_factor));
@@ -467,7 +714,12 @@ mod tests {
         ))
         .unwrap();
         let shot = Shot::default();
-        let options = options_in(Some(&db), ("Canon", "EOS R6", &shot, true), Some(&dir));
+        let options = options_in(
+            Some(&db),
+            ("Canon", "EOS R6", &shot, true),
+            Some(&dir),
+            &LensChoice::FromFile,
+        );
         let makers: Vec<(&str, &str)> = options
             .iter()
             .map(|o| (o.label.as_str(), o.maker.as_str()))
@@ -518,7 +770,7 @@ mod tests {
             ..Default::default()
         };
         let id = ("Sony", "ILCE-7M4", &shot, true);
-        let options = options_in(Some(&db), id, None);
+        let options = options_in(Some(&db), id, None, &LensChoice::FromFile);
         assert_eq!(
             options,
             [
@@ -527,14 +779,14 @@ mod tests {
                     label: "Sony FE 50mm F1.8".into(),
                     maker: "Sony".into(),
                     off_mount: false,
-                    carries: DISTORTION_ONLY,
+                    carries: DISTORTION_ONLY.into(),
                 },
                 LensOption {
                     choice: LensChoice::Database(name.into()),
                     label: format!("{name} (Canon EF, Nikon F AF)"),
                     maker: "Sigma".into(),
                     off_mount: true,
-                    carries: DISTORTION_ONLY,
+                    carries: DISTORTION_ONLY.into(),
                 },
             ]
         );
@@ -557,7 +809,11 @@ mod tests {
     #[test]
     fn the_picker_offers_one_adobe_row_a_lens_and_the_choice_corrects() {
         let dir = crate::testing::scratch_dir("lens-options");
-        std::fs::write(dir.join("a.lcp"), lcp("Other Body", false)).unwrap();
+        // Made on another body of the frame body's maker, on JPEGs.
+        let canon = |text: String| {
+            text.replace("stCamera:Model=", "stCamera:Make=\"Canon\" stCamera:Model=")
+        };
+        std::fs::write(dir.join("a.lcp"), canon(lcp("Other Body", false))).unwrap();
         std::fs::write(dir.join("b.lcp"), lcp("Other Body", true)).unwrap();
         std::fs::write(dir.join("c.lcp"), lcp("Canon EOS R6", true)).unwrap();
         let shot = Shot {
@@ -565,7 +821,11 @@ mod tests {
             ..Default::default()
         };
         let id = ("Canon", "EOS R6", &shot, true);
-        let options = options_in(None, id, Some(&dir));
+        let options = options_in(None, id, Some(&dir), &LensChoice::FromFile);
+        // Each row's file read, as a pick reads it, to be compared.
+        for o in &options {
+            o.carries();
+        }
         // One row for the lens: the raw profile made on this body.
         assert_eq!(
             options,
@@ -574,14 +834,14 @@ mod tests {
                 label: "Hand 35mm".into(),
                 maker: "Hand".into(),
                 off_mount: false,
-                carries: DISTORTION_ONLY,
+                carries: DISTORTION_ONLY.into(),
             }]
         );
         // A rendered picture takes the one made on JPEGs, once the
         // database knows the body's size; until then only this body's
         // own are offered.
         let jpeg = ("Canon", "EOS R6", &shot, false);
-        let own = options_in(None, jpeg, Some(&dir));
+        let own = options_in(None, jpeg, Some(&dir), &LensChoice::FromFile);
         assert_eq!(own[0].choice, LensChoice::Lcp("c.lcp".into()));
         let mut db = Database::default();
         db.read_xml(
@@ -590,7 +850,7 @@ mod tests {
             <cropfactor>1</cropfactor></camera></lensdatabase>"#,
         )
         .unwrap();
-        let sized = options_in(Some(&db), jpeg, Some(&dir));
+        let sized = options_in(Some(&db), jpeg, Some(&dir), &LensChoice::FromFile);
         assert_eq!(sized[0].choice, LensChoice::Lcp("a.lcp".into()));
 
         let picked = greycard_edit::Lens {
@@ -766,6 +1026,7 @@ mod tests {
                 Some(&db),
                 ("Nikon Corporation", "Nikon Z 50", shot, true),
                 Some(&dir),
+                &LensChoice::FromFile,
             );
             assert_eq!(
                 greycard_lens::matching::camera_lookups() - before,
@@ -774,7 +1035,7 @@ mod tests {
             );
             options
                 .into_iter()
-                .map(|o| (o.label, o.carries))
+                .map(|o| (o.label.clone(), o.carries()))
                 .collect::<std::collections::BTreeMap<_, _>>()
         };
         let has = |distortion, chromatic_aberration, vignetting| Carries {
@@ -809,5 +1070,355 @@ mod tests {
         );
         assert_eq!(Carries::of_any(None), Carries::NONE);
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// An Adobe profile made on a body of another maker is a lens for
+    /// another mount, listed only for words typed; of two profiles of
+    /// one lens, the one made on a body of the frame body's maker is
+    /// taken over the first by path, and of two made on its maker's
+    /// bodies, the one on its mount.
+    #[test]
+    fn a_profile_made_on_another_makers_body_is_for_another_mount() {
+        let dir = crate::testing::scratch_dir("lens-makes");
+        let made = |folder: &str, make: &str, model: &str, lens: &str| {
+            std::fs::create_dir_all(dir.join(folder)).unwrap();
+            let text = lcp(model, true).replace("Hand 35mm", lens).replace(
+                "stCamera:Model=",
+                &format!("stCamera:Make=\"{make}\" stCamera:Model="),
+            );
+            std::fs::write(dir.join(folder).join("p.lcp"), text).unwrap();
+        };
+        made("1", "NIKON CORPORATION", "NIKON D810", "Sigma 35mm Art");
+        made("2", "Canon", "Canon EOS 5D Mark III", "Sigma 35mm Art");
+        made("3", "NIKON CORPORATION", "NIKON D810", "Nikkor 35mm");
+        made("4", "Canon", "Canon EOS 5D Mark III", "Canon 50mm");
+        made("5", "Canon", "Canon EOS R5", "Canon 50mm");
+        // An RF body takes EF lenses on an adapter, as lensfun has it.
+        let mut db = Database::default();
+        db.read_xml(
+            r#"<lensdatabase version="2">
+            <mount><name>Canon RF</name><compat>Canon EF</compat></mount>
+            <camera><maker>Canon</maker><model>Canon EOS R6</model>
+            <mount>Canon RF</mount><cropfactor>1</cropfactor></camera>
+            <camera><maker>Canon</maker><model>Canon EOS R5</model>
+            <mount>Canon RF</mount><cropfactor>1</cropfactor></camera>
+            <camera><maker>Canon</maker><model>Canon EOS 5D Mark III</model>
+            <mount>Canon EF</mount><cropfactor>1</cropfactor></camera>
+            </lensdatabase>"#,
+        )
+        .unwrap();
+        let shot = Shot {
+            focal_length: Some(35.0),
+            ..Default::default()
+        };
+        let id = ("Canon", "EOS R6", &shot, true);
+        let options = options_in(Some(&db), id, Some(&dir), &LensChoice::FromFile);
+        let rows: Vec<(&str, String, bool)> = options
+            .iter()
+            .map(|o| (o.label.as_str(), o.choice.key(), o.off_mount))
+            .collect();
+        let key = |file: &str| LensChoice::Lcp(file.into()).key();
+        assert_eq!(
+            rows,
+            [
+                ("Canon 50mm", key("5/p.lcp"), false),
+                ("Sigma 35mm Art", key("2/p.lcp"), false),
+                ("Nikkor 35mm", key("3/p.lcp"), true),
+            ]
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A profile's text as made on the body `make` `model` for `lens`.
+    fn made_on(make: &str, model: &str, lens: &str) -> String {
+        lcp(model, true).replace("Hand 35mm", lens).replace(
+            "stCamera:Model=",
+            &format!("stCamera:Make=\"{make}\" stCamera:Model="),
+        )
+    }
+
+    /// Profiles in `dir`, each `(folder, make, model, lens)`, a file a
+    /// folder.
+    fn profiles_in(dir: &Path, made: &[(&str, &str, &str, &str)]) {
+        for (folder, make, model, lens) in made {
+            std::fs::create_dir_all(dir.join(folder)).unwrap();
+            std::fs::write(dir.join(folder).join("p.lcp"), made_on(make, model, lens)).unwrap();
+        }
+    }
+
+    /// The rows' labels and whether each is for another mount.
+    fn mounts(options: &[LensOption]) -> Vec<(&str, bool)> {
+        options
+            .iter()
+            .map(|o| (o.label.as_str(), o.off_mount))
+            .collect()
+    }
+
+    /// Each profile's body is looked up in the database once a list,
+    /// however many profiles were made on it and however many of one
+    /// lens there are.
+    #[test]
+    fn each_body_is_looked_up_once_a_list() {
+        let dir = crate::testing::scratch_dir("lens-lookups");
+        let bodies = [
+            ("Canon", "Canon EOS 5D Mark III"),
+            ("Canon", "Canon EOS R5"),
+            ("NIKON CORPORATION", "NIKON D810"),
+        ];
+        let mut made = Vec::new();
+        let folders: Vec<String> = (0..12).map(|i| i.to_string()).collect();
+        for (i, folder) in folders.iter().enumerate() {
+            let (make, model) = bodies[i % 3];
+            let lens = ["Lens A", "Lens B", "Lens C", "Lens D"][i / 3];
+            made.push((folder.as_str(), make, model, lens));
+        }
+        profiles_in(&dir, &made);
+        let mut db = Database::default();
+        db.read_xml(
+            r#"<lensdatabase version="2">
+            <camera><maker>Canon</maker><model>Canon EOS R6</model>
+            <mount>Canon RF</mount><cropfactor>1</cropfactor></camera>
+            <camera><maker>Canon</maker><model>Canon EOS R5</model>
+            <mount>Canon RF</mount><cropfactor>1</cropfactor></camera>
+            <camera><maker>Canon</maker><model>Canon EOS 5D Mark III</model>
+            <mount>Canon EF</mount><cropfactor>1</cropfactor></camera>
+            </lensdatabase>"#,
+        )
+        .unwrap();
+        let shot = Shot::default();
+        let id = ("Canon", "EOS R6", &shot, true);
+        let listed = lcp::list_in(&dir);
+        assert_eq!(listed.len(), 12);
+        let before = greycard_lens::matching::camera_lookups();
+        let options = options_from(Some(&db), id, Some(&dir), &listed, &LensChoice::FromFile);
+        assert_eq!(
+            greycard_lens::matching::camera_lookups() - before,
+            1 + bodies.len(),
+            "the frame's body, then each profile's once"
+        );
+        // One row a lens: the one made on the R5, on the body's mount
+        // (folder 3k + 1 for the k-th lens).
+        assert_eq!(options.len(), 4);
+        for (k, lens) in ["Lens A", "Lens B", "Lens C", "Lens D"].iter().enumerate() {
+            let o = options.iter().find(|o| o.label == *lens).unwrap();
+            let r5 = LensChoice::Lcp(format!("{}/p.lcp", 3 * k + 1));
+            assert_eq!(o.choice, r5, "{lens}");
+            assert!(!o.off_mount, "{lens}");
+        }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A profile is for the body's mount when the database puts both
+    /// bodies on one, whatever the makers are called: an OM System
+    /// body takes Olympus's profiles, a Pentax made by Ricoh takes
+    /// Pentax's, and one L-mount body takes another maker's. One whose
+    /// mount is known to differ is for another mount, and so is one of
+    /// another maker the database cannot place; one of the same maker
+    /// it cannot place is taken.
+    #[test]
+    fn a_profile_on_the_bodys_mount_is_listed_whatever_its_maker() {
+        let dir = crate::testing::scratch_dir("lens-mounts");
+        profiles_in(
+            &dir,
+            &[
+                (
+                    "1",
+                    "OLYMPUS IMAGING CORP.",
+                    "E-M1MarkII",
+                    "M.Zuiko 12-40mm",
+                ),
+                ("2", "Panasonic", "DC-G9", "Leica DG 12-60mm"),
+                ("3", "PENTAX", "PENTAX K-3", "HD Pentax-D FA 24-70mm"),
+                ("4", "SIGMA", "fp", "Sigma 45mm F2.8 DG DN"),
+                ("5", "LEICA CAMERA AG", "LEICA SL2", "Summicron-SL 50mm"),
+                ("6", "Canon", "Canon EOS R5", "RF 50mm F1.8"),
+                ("7", "FUJIFILM", "X-T5", "XF 33mm F1.4"),
+                ("8", "OM Digital Solutions", "OM-5", "M.Zuiko 40-150mm"),
+            ],
+        );
+        let mut db = Database::default();
+        db.read_xml(
+            r#"<lensdatabase version="2">
+            <camera><maker>OM Digital Solutions</maker><model>OM-1</model>
+            <mount>Micro 4/3 System</mount><cropfactor>2</cropfactor></camera>
+            <camera><maker>Olympus</maker><model>E-M1MarkII</model>
+            <mount>Micro 4/3 System</mount><cropfactor>2</cropfactor></camera>
+            <camera><maker>Panasonic</maker><model>DC-G9</model>
+            <mount>Micro 4/3 System</mount><cropfactor>2</cropfactor></camera>
+            <camera><maker>Ricoh Imaging Company, Ltd.</maker><model>PENTAX K-1</model>
+            <mount>Pentax KAF2</mount><cropfactor>1</cropfactor></camera>
+            <camera><maker>Pentax</maker><model>PENTAX K-3</model>
+            <mount>Pentax KAF2</mount><cropfactor>1.5</cropfactor></camera>
+            <camera><maker>Panasonic</maker><model>DC-S5</model>
+            <mount>L</mount><cropfactor>1</cropfactor></camera>
+            <camera><maker>Sigma</maker><model>fp</model>
+            <mount>L</mount><cropfactor>1</cropfactor></camera>
+            <camera><maker>Leica</maker><model>SL2</model>
+            <mount>L</mount><cropfactor>1</cropfactor></camera>
+            <camera><maker>Canon</maker><model>Canon EOS R5</model>
+            <mount>Canon RF</mount><cropfactor>1</cropfactor></camera>
+            </lensdatabase>"#,
+        )
+        .unwrap();
+        let shot = Shot::default();
+        let on = |make: &str, model: &str| -> Vec<String> {
+            let id = (make, model, &shot, true);
+            let options = options_in(Some(&db), id, Some(&dir), &LensChoice::FromFile);
+            mounts(&options)
+                .into_iter()
+                .filter(|(_, off)| !off)
+                .map(|(l, _)| l.to_string())
+                .collect()
+        };
+        assert_eq!(
+            on("OM Digital Solutions", "OM-1"),
+            ["Leica DG 12-60mm", "M.Zuiko 12-40mm", "M.Zuiko 40-150mm"],
+            "Olympus and Panasonic on its mount; an OM body it cannot place, of its maker"
+        );
+        assert_eq!(
+            on("RICOH IMAGING COMPANY, LTD.", "PENTAX K-1"),
+            ["HD Pentax-D FA 24-70mm"]
+        );
+        assert_eq!(
+            on("Panasonic", "DC-S5"),
+            ["Sigma 45mm F2.8 DG DN", "Summicron-SL 50mm"],
+            "L-mount across its makers; Panasonic's own G9 is on another mount"
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The chosen profile wins its lens's row, though another of the
+    /// lens ranks before it, so the picker shows it as the one in use.
+    #[test]
+    fn the_chosen_profile_wins_its_lens() {
+        let dir = crate::testing::scratch_dir("lens-chosen-wins");
+        profiles_in(
+            &dir,
+            &[
+                ("1", "Canon", "Canon EOS R6", "Lens A"),
+                ("2", "Canon", "Canon EOS 5D Mark III", "Lens A"),
+            ],
+        );
+        let shot = Shot::default();
+        let id = ("Canon", "EOS R6", &shot, true);
+        let mut db = Database::default();
+        db.read_xml(
+            r#"<lensdatabase version="2"><camera><maker>Canon</maker>
+            <model>Canon EOS R6</model><mount>Canon RF</mount>
+            <cropfactor>1</cropfactor></camera></lensdatabase>"#,
+        )
+        .unwrap();
+        let own = options_in(Some(&db), id, Some(&dir), &LensChoice::FromFile);
+        assert_eq!(own.len(), 1);
+        assert_eq!(
+            own[0].choice,
+            LensChoice::Lcp("1/p.lcp".into()),
+            "made here"
+        );
+        let chosen = LensChoice::Lcp("2/p.lcp".into());
+        let picked = options_in(Some(&db), id, Some(&dir), &chosen);
+        assert_eq!(picked.len(), 1);
+        assert_eq!(picked[0].choice, chosen);
+        assert!(picked[0].carries_known().is_some(), "read on the worker");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Only the chosen row's profile is read whole for the list, on the
+    /// worker; another's when it is asked (a pick). A chosen profile
+    /// the listing does not hold yet is listed all the same.
+    #[test]
+    fn only_the_chosen_profile_is_read_for_the_list() {
+        let dir = crate::testing::scratch_dir("lens-chosen");
+        std::fs::create_dir_all(dir.join("Canon")).unwrap();
+        std::fs::write(dir.join("Canon/a.lcp"), lcp("Canon EOS R6", true)).unwrap();
+        let other = lcp("Canon EOS R6", true).replace("Hand 35mm", "Hand 50mm");
+        std::fs::write(dir.join("Canon/b.lcp"), other).unwrap();
+        let shot = Shot {
+            focal_length: Some(35.0),
+            ..Default::default()
+        };
+        let id = ("Canon", "EOS R6", &shot, true);
+        let chosen = LensChoice::Lcp("Canon/b.lcp".into());
+        let read = |o: &LensOption| match &o.carries {
+            Carried::Adobe(row) => row.read.get().is_some(),
+            Carried::Known(_) => true,
+        };
+        let options = options_in(None, id, Some(&dir), &chosen);
+        assert_eq!(options.len(), 2);
+        for o in &options {
+            assert_eq!(read(o), o.choice == chosen, "{}", o.label);
+        }
+        // A pick reads it then, and says what it carries.
+        assert_eq!(options[0].carries(), DISTORTION_ONLY);
+        assert!(read(&options[0]));
+        // Not in the listing handed in (none held yet): listed anyway.
+        let alone = options_from(None, id, Some(&dir), &[], &chosen);
+        assert_eq!(alone.len(), 1);
+        assert_eq!(alone[0].choice, chosen);
+        assert_eq!(alone[0].label, "Hand 50mm");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The picker's list over a tree of Adobe profiles, timed: the
+    /// first open and later ones. Run by hand against a tree made by a
+    /// script, `GREYCARD_LCP_TREE` naming it.
+    #[test]
+    #[ignore = "a timing, against a tree on disk"]
+    fn adobe_tree_timed() {
+        let Some(dir) = std::env::var_os("GREYCARD_LCP_TREE").map(std::path::PathBuf::from) else {
+            return;
+        };
+        // The lensfun database `GREYCARD_LENSFUN_DIR` names, the whole
+        // of it, else one camera.
+        let db = match std::env::var_os("GREYCARD_LENSFUN_DIR") {
+            Some(lensfun) => Database::load_dir(std::path::Path::new(&lensfun)).unwrap(),
+            None => {
+                let mut db = Database::default();
+                db.read_xml(
+                    r#"<lensdatabase version="2"><camera><maker>Canon</maker>
+                    <model>Canon EOS 5D Mark III</model><mount>Canon EF</mount>
+                    <cropfactor>1</cropfactor></camera></lensdatabase>"#,
+                )
+                .unwrap();
+                db
+            }
+        };
+        eprintln!("{} cameras in the database", db.cameras.len());
+        let shot = Shot {
+            focal_length: Some(35.0),
+            ..Default::default()
+        };
+        let id = ("Canon", "Canon EOS 5D Mark III", &shot, true);
+        // As an open lists: from the listing held, never a walk, the
+        // chosen profile read whole.
+        let chosen = LensChoice::Lcp(
+            "Canon/Canon Canon EOS 5D Mark III (Canon 10-70mm F2.8 Series 0) - RAW.lcp".into(),
+        );
+        let open = |what: &str| {
+            let t = std::time::Instant::now();
+            let lookups = greycard_lens::matching::camera_lookups();
+            let held = lcp::held_in(&dir);
+            let listed = held.as_ref().map_or(&[][..], |l| l.entries.as_slice());
+            let rows = options_from(Some(&db), id, Some(&dir), listed, &chosen);
+            let shown = rows.iter().filter(|o| !o.off_mount).count();
+            eprintln!(
+                "{what} open: {} rows ({shown} on the mount) in {:?}, {} camera lookups",
+                rows.len(),
+                t.elapsed(),
+                greycard_lens::matching::camera_lookups() - lookups
+            );
+        };
+        open("first");
+        for what in ["first walk, off the open", "later look", "later look"] {
+            let t = std::time::Instant::now();
+            let listing = lcp::refresh_in(&dir, false);
+            eprintln!(
+                "{what}: {} profiles in {:?}",
+                listing.entries.len(),
+                t.elapsed()
+            );
+        }
+        open("later");
+        open("later");
     }
 }

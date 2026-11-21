@@ -113,6 +113,31 @@ pub fn rename_retry(from: impl AsRef<std::path::Path>, to: impl AsRef<std::path:
     }
 }
 
+/// Wait until the file system stamps a new file later than `path`'s
+/// own clock, so a change made to it next moves that clock: a few
+/// milliseconds where the clock is fine, up to its step where it is
+/// coarse (two seconds on FAT, one on HFS+, a tick of 15.6 ms on NTFS).
+/// The probe is written beside the folder `path` is or is in, never in
+/// it.
+pub fn a_moment(path: &std::path::Path) {
+    let was = std::fs::metadata(path).unwrap().modified().unwrap();
+    let folder = match path.is_dir() {
+        true => path,
+        false => path.parent().unwrap(),
+    };
+    let probe = folder.with_extension("probe");
+    for _ in 0..300 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&probe, b"").unwrap();
+        let now = std::fs::metadata(&probe).unwrap().modified().unwrap();
+        std::fs::remove_file(&probe).unwrap();
+        if now > was {
+            return;
+        }
+    }
+    panic!("the clock at {} did not move", path.display());
+}
+
 /// A camera's frame shot at 3:2 on a 4:3 sensor, as an Olympus body
 /// keeps it: the 5184 by 3888 area at (8, 8) and the band of 3456 rows
 /// 216 below its top, under the orientation tag `orientation`.

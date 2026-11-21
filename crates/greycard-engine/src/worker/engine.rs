@@ -101,6 +101,11 @@ pub(super) fn run(
         .and_then(|s| s.load())
         .map(|(db, _)| Arc::new(db));
     set_lenses(lenses.clone());
+    // The Adobe lens profiles listed ahead, off this thread, so an open
+    // lists them from the listing held and never waits on the walk.
+    if let Some(dir) = greycard_edit_io::profiles::store_dir() {
+        greycard_lens::lcp::look_in(&dir, false, Box::new(|_| {}));
+    }
     // The learned models for the masks of frames not open
     // (`Job::MasksFor`), made on the first such frame and dropped when
     // none is waiting, as `set_ai` is for a set's frames.
@@ -1154,19 +1159,27 @@ pub(super) fn run(
                             }
                             Input::Picture { .. } => None,
                         };
+                        let (lens_options, lens_look, used) = {
+                            let (make, model, shot) = opened.identity();
+                            let identity = (make, model, shot, opened.is_raw());
+                            let (options, used) = crate::lens::options(
+                                lenses.as_deref(),
+                                identity,
+                                &edit.lens.chosen,
+                            );
+                            (
+                                options,
+                                LensLook::of(lenses.clone(), identity, generation),
+                                used,
+                            )
+                        };
                         deliver(Outcome::Opened {
                             generation,
                             as_shot,
                             frame,
                             profile,
                             lens: lens_report(lenses.as_deref(), &opened),
-                            lens_options: {
-                                let (make, model, shot) = opened.identity();
-                                crate::lens::options(
-                                    lenses.as_deref(),
-                                    (make, model, shot, opened.is_raw()),
-                                )
-                            },
+                            lens_options,
                             kind,
                             shot: {
                                 let (make, model, shot) = opened.identity();
@@ -1175,6 +1188,11 @@ pub(super) fn run(
                             taken,
                             blend,
                         });
+                        // The look behind the open, asked once its list is
+                        // out, so another list it finds lands after it; kept
+                        // for the window to ask again.
+                        lock.lock().expect("worker queue").lens_look = Some(lens_look.clone());
+                        lens_look.ask(&edit.lens.chosen, used, false, &deliver);
                         // The base in hand is shelved for a return to its
                         // file, and this file's taken back if it is there:
                         // a raw's base on the shelf was made from the same
@@ -1702,6 +1720,76 @@ pub(super) fn run(
                 .unwrap_or(None);
             }
         }
+    }
+}
+
+/// The open frame's body and shot, for a look at the profile folder
+/// behind its open ([`LensLook::ask`]): kept on the queue so the window
+/// can ask one again ([`super::Worker::look_at_lens_profiles`]).
+#[derive(Clone)]
+pub(super) struct LensLook {
+    lenses: Option<Arc<greycard_lens::Database>>,
+    make: String,
+    model: String,
+    shot: greycard_core::raw::Shot,
+    raw: bool,
+    /// The open's generation, which the window takes the list for.
+    generation: u64,
+}
+
+impl LensLook {
+    pub(super) fn of(
+        lenses: Option<Arc<greycard_lens::Database>>,
+        (make, model, shot, raw): crate::lens::Identity,
+        generation: u64,
+    ) -> Self {
+        Self {
+            lenses,
+            make: make.to_string(),
+            model: model.to_string(),
+            shot: shot.clone(),
+            raw,
+            generation,
+        }
+    }
+
+    /// A look at the profile folder off the caller's thread, walking it
+    /// again when `force` is set: the rows shown came from the listing
+    /// of generation `used` (none for none held), so a look ending with
+    /// another (a profile added, removed, or rewritten since, or the
+    /// start's walk landing after the open) is another list, said as
+    /// [`Outcome::LensOptions`] for the open, with `chosen` among them.
+    pub(super) fn ask(
+        self,
+        chosen: &greycard_edit::LensChoice,
+        used: Option<u64>,
+        force: bool,
+        deliver: &Deliver,
+    ) {
+        let Some(dir) = greycard_edit_io::profiles::store_dir() else {
+            return;
+        };
+        let (chosen, deliver, profiles) = (chosen.clone(), deliver.clone(), dir.clone());
+        greycard_lens::lcp::look_in(
+            &dir,
+            force,
+            Box::new(move |listing| {
+                if used == Some(listing.generation) {
+                    return;
+                }
+                let options = crate::lens::options_from(
+                    self.lenses.as_deref(),
+                    (&self.make, &self.model, &self.shot, self.raw),
+                    Some(&profiles),
+                    &listing.entries,
+                    &chosen,
+                );
+                deliver(Outcome::LensOptions {
+                    generation: self.generation,
+                    options,
+                });
+            }),
+        );
     }
 }
 

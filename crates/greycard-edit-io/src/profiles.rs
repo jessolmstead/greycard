@@ -9,8 +9,8 @@
 //! at the top by its bare file name, as before there were subfolders.
 
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::{Component, Path, PathBuf};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::SystemTime;
@@ -90,187 +90,26 @@ fn other_case(path: &Path) -> Option<PathBuf> {
         .min_by(|a, b| a.file_name().cmp(&b.file_name()))
 }
 
-/// Whether `name` is a profile's name: folders and a file under the
-/// directory, joined by `/`, each one plain part of a path. Nothing
-/// empty, no `.` or `..`, no `\`, no root and no drive.
-pub fn is_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains('\\')
-        && name.split('/').all(|part| {
-            let mut parts = Path::new(part).components();
-            matches!(
-                (parts.next(), parts.next()),
-                (Some(Component::Normal(p)), None) if p == part
-            )
-        })
-}
+pub use greycard_core::profile_folder::is_name;
+use greycard_core::profile_folder::{BOUNDS, Bounds, Kind};
 
-/// How many folders below the directory a profile is looked for.
-/// Adobe's tree is two deep; the rest is room for a copy of it put a
-/// folder or two down, and a stop for a tree that never ends.
-const DEPTH: usize = 8;
-/// How many files and folders one listing looks at. Adobe's tree is
-/// some thousands; past this the listing stops where it is, says so,
-/// and lists what it found.
-const EXAMINED: usize = 50_000;
-/// How many profiles one listing keeps.
-const KEPT: usize = 20_000;
-
-/// The bounds a walk keeps to: [`DEPTH`], [`EXAMINED`], and [`KEPT`],
-/// smaller in the tests.
-#[derive(Clone, Copy)]
-struct Bounds {
-    depth: usize,
-    examined: usize,
-    kept: usize,
-}
-
-const BOUNDS: Bounds = Bounds {
-    depth: DEPTH,
-    examined: EXAMINED,
-    kept: KEPT,
-};
-
-/// Every profile file under `root`, with the name the edit gives it:
-/// the folders, top first and in name order within each, to the
-/// bounds' depth, within their counts. A link is followed to what it
-/// names, a copy of Adobe's folder linked in being the common way to
-/// bring it, but a folder already walked (a link back up, or two links
-/// to one place) is walked once. A hidden folder, a folder that will
-/// not read, and a name the edit could not hold are passed over, the
-/// last two with a word in the log.
-///
-/// Each folder read is noted in `folders` with its clock as the walk
-/// found it, the root even when it is not there: a profile added,
-/// removed, or renamed in a folder moves that folder's clock, which is
-/// how [`refresh_in`] tells a listing is out of date without a look at
+/// Every profile file under `root`, with the name the edit gives it,
+/// as `greycard_core::profile_folder::walk` finds them. Each folder
+/// read is noted in `folders` with its clock as the walk found it, the
+/// root even when it is not there: a profile added, removed, or
+/// renamed in a folder moves that folder's clock, which is how
+/// [`refresh_in`] tells a listing is out of date without a look at
 /// every file.
 fn walk(root: &Path, bounds: Bounds, folders: &mut Vec<Folder>) -> Vec<(String, PathBuf)> {
     WALKS.with(|w| w.set(w.get() + 1));
-    let mut out = Vec::new();
-    let Ok(real) = std::fs::canonicalize(root) else {
-        folders.push(Folder::now(root));
-        return out;
+    let kind = Kind {
+        extension: EXTENSION,
+        what: "camera profiles",
+        named_with_extension: false,
     };
-    let mut visited = HashSet::from([real]);
-    let mut queue = VecDeque::from([(root.to_path_buf(), String::new(), 0usize)]);
-    let mut examined = 0usize;
-    while let Some((dir, under, depth)) = queue.pop_front() {
-        folders.push(Folder::now(&dir));
-        let read = match std::fs::read_dir(&dir) {
-            Ok(read) => read,
-            Err(e) => {
-                log::warn!("camera profiles: {} not read: {e}", dir.display());
-                continue;
-            }
-        };
-        let mut children: Vec<std::fs::DirEntry> = Vec::new();
-        for entry in read {
-            examined += 1;
-            if examined > bounds.examined {
-                log::warn!(
-                    "camera profiles: stopped after {} files and folders under {}; {} profiles \
-                     listed",
-                    bounds.examined,
-                    root.display(),
-                    out.len()
-                );
-                return out;
-            }
-            match entry {
-                Ok(entry) => children.push(entry),
-                Err(e) => log::warn!("camera profiles: in {}: {e}", dir.display()),
-            }
-        }
-        children.sort_by_key(|e| e.file_name());
-        for entry in children {
-            let path = entry.path();
-            let Some(file) = entry.file_name().to_str().map(str::to_string) else {
-                log::warn!(
-                    "camera profiles: {} has a name that is not text; passed over",
-                    path.display()
-                );
-                continue;
-            };
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            // What a link names, else the entry itself.
-            let (is_dir, is_file) = if kind.is_symlink() {
-                std::fs::metadata(&path).map_or((false, false), |m| (m.is_dir(), m.is_file()))
-            } else {
-                (kind.is_dir(), kind.is_file())
-            };
-            let join = |part: &str| match under.as_str() {
-                "" => part.to_string(),
-                under => format!("{under}/{part}"),
-            };
-            if is_dir {
-                if file.starts_with('.') {
-                    continue;
-                }
-                if depth >= bounds.depth {
-                    log::warn!(
-                        "camera profiles: {} is more than {} folders down; not read",
-                        path.display(),
-                        bounds.depth
-                    );
-                    continue;
-                }
-                match std::fs::canonicalize(&path) {
-                    Ok(real) => {
-                        if visited.insert(real) {
-                            queue.push_back((path, join(&file), depth + 1));
-                        } else {
-                            log::info!(
-                                "camera profiles: {} is a folder already read; not read again",
-                                path.display()
-                            );
-                        }
-                    }
-                    Err(e) => log::warn!("camera profiles: {} not read: {e}", path.display()),
-                }
-                continue;
-            }
-            let is_profile = path
-                .extension()
-                .is_some_and(|x| x.eq_ignore_ascii_case(EXTENSION));
-            // A device, a pipe, or a broken link named like a profile
-            // is never opened: reading one may never end or start.
-            if is_profile && !is_file {
-                log::warn!(
-                    "camera profiles: {} is not a regular file; passed over",
-                    path.display()
-                );
-                continue;
-            }
-            let Some(stem) = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .filter(|_| is_profile)
-            else {
-                continue;
-            };
-            let name = join(stem);
-            if !is_name(&name) {
-                log::warn!(
-                    "camera profiles: {} has a name an edit cannot hold; passed over",
-                    path.display()
-                );
-                continue;
-            }
-            if out.len() >= bounds.kept {
-                log::warn!(
-                    "camera profiles: {} profiles listed under {}; the rest are not",
-                    bounds.kept,
-                    root.display()
-                );
-                return out;
-            }
-            out.push((name, path));
-        }
-    }
-    out
+    greycard_core::profile_folder::walk(root, kind, bounds, &mut |dir| {
+        folders.push(Folder::now(dir));
+    })
 }
 
 /// A profile file's header as last read, with the length and the
@@ -733,6 +572,7 @@ fn let_go_of_changed() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use greycard_core::testing::a_moment;
     use greycard_edit::camera::{Body, EMBEDDED, ProfileChoice, listed, warning};
 
     #[test]
@@ -1321,30 +1161,6 @@ mod tests {
         if kept.is_none() {
             greycard_core::testing::remove_dir_retry(&dir);
         }
-    }
-
-    /// Wait until the file system stamps a new file later than `path`'s
-    /// own clock, so a change made to it next moves that clock: a few
-    /// milliseconds where the clock is fine, up to its step where it is
-    /// coarse (two seconds on FAT, one on HFS+). The probe is written
-    /// beside the folder `path` is or is in, never in it.
-    fn a_moment(path: &Path) {
-        let was = std::fs::metadata(path).unwrap().modified().unwrap();
-        let folder = match path.is_dir() {
-            true => path,
-            false => path.parent().unwrap(),
-        };
-        let probe = folder.with_extension("probe");
-        for _ in 0..300 {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            std::fs::write(&probe, b"").unwrap();
-            let now = std::fs::metadata(&probe).unwrap().modified().unwrap();
-            std::fs::remove_file(&probe).unwrap();
-            if now > was {
-                return;
-            }
-        }
-        panic!("the clock at {} did not move", path.display());
     }
 
     /// The listing held is shown without a walk; a refresh looks at

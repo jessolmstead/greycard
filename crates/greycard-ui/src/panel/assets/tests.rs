@@ -759,6 +759,239 @@ fn a_batch_run_is_never_offered_the_lens_profiles() {
     assert!(!app.get_fetch_open());
 }
 
+/// A look at the profile folder behind an open that finds another list
+/// puts its rows on the picker for the frame still open; one for an
+/// open since left behind is not taken.
+#[test]
+fn a_later_list_of_lens_profiles_is_shown_for_the_frame_open() {
+    use greycard_edit::LensChoice;
+    use greycard_engine::lens::{Carries, LensOption};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../target/scratch/lens-options-later-{}",
+        std::process::id()
+    ));
+    crate::testing::remove_dir_retry(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let jpeg = dir.join("IMG_0001.JPG");
+    let app = crate::testing::window(1);
+    let (state, _worker) = crate::testing::state_for(&app, vec![jpeg.clone()]);
+    app.invoke_select(0);
+    let generation = state.borrow().develop.generation;
+    crate::panel::deliver::deliver(
+        &app,
+        crate::worker::Outcome::Opened {
+            generation,
+            as_shot: (6504.0, 0.0),
+            frame: None,
+            profile: None,
+            lens: LensReport::NoLensName,
+            lens_options: Vec::new(),
+            kind: crate::worker::SourceKind::Picture {
+                space: "sRGB".into(),
+                bits: 8,
+            },
+            shot: Default::default(),
+            taken: None,
+            blend: None,
+        },
+    );
+    let labels = |app: &App| -> Vec<String> {
+        app.get_lens_choice_labels()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    };
+    assert_eq!(labels(&app), [FROM_THE_FILE]);
+    let row = |label: &str| {
+        LensOption::new(
+            LensChoice::Lcp(format!("Canon/{label}.lcp")),
+            label.into(),
+            "Hand".into(),
+            false,
+            Carries::ALL,
+        )
+    };
+    let landed = |generation, label: &str| crate::worker::Outcome::LensOptions {
+        generation,
+        options: vec![row(label)],
+    };
+    crate::panel::deliver::deliver(&app, landed(generation + 50, "Stale 24mm"));
+    assert_eq!(labels(&app), [FROM_THE_FILE], "another open's list");
+    crate::panel::deliver::deliver(&app, landed(generation, "Hand 35mm"));
+    assert_eq!(labels(&app), [FROM_THE_FILE, "Hand 35mm"]);
+    assert_eq!(state.borrow().develop.lens_options, [row("Hand 35mm")]);
+
+    // While Find a lens has the keys, a list that comes is held, so
+    // the rows do not move under the typing; it shows when the field
+    // lets go.
+    let typing = app.global::<crate::Typing>();
+    typing.set_lens_filter(true);
+    crate::testing::settle(&app);
+    crate::panel::deliver::deliver(&app, landed(generation, "Hand 50mm"));
+    assert_eq!(labels(&app), [FROM_THE_FILE, "Hand 35mm"]);
+    app.invoke_lens_rows_changed();
+    assert_eq!(labels(&app), [FROM_THE_FILE, "Hand 35mm"], "still typing");
+    typing.set_lens_filter(false);
+    crate::testing::settle(&app);
+    assert_eq!(labels(&app), [FROM_THE_FILE, "Hand 50mm"]);
+    assert!(state.borrow().develop.lens_options_held.is_none());
+    crate::testing::remove_scratch(state, &dir);
+}
+
+/// Find a lens clicked, then taken away with its focus (another tab,
+/// the grid, a frame frozen in the export queue), which tells it
+/// nothing: the window lets go of it all the same, and a list held
+/// while it had the keys is shown then.
+#[test]
+fn find_a_lens_taken_away_lets_go_of_a_held_list() {
+    use greycard_edit::LensChoice;
+    use greycard_engine::lens::{Carries, LensOption};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../target/scratch/lens-filter-gone-{}",
+        std::process::id()
+    ));
+    crate::testing::remove_dir_retry(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let jpeg = dir.join("IMG_0001.JPG");
+    let app = crate::testing::window(1);
+    let (state, _worker) = crate::testing::state_for(&app, vec![jpeg.clone()]);
+    app.invoke_select(0);
+    let generation = state.borrow().develop.generation;
+    let row = |label: &str| {
+        LensOption::new(
+            LensChoice::Lcp(format!("Canon/{label}.lcp")),
+            label.into(),
+            "Hand".into(),
+            false,
+            Carries::ALL,
+        )
+    };
+    crate::panel::deliver::deliver(
+        &app,
+        crate::worker::Outcome::Opened {
+            generation,
+            as_shot: (6504.0, 0.0),
+            frame: None,
+            profile: None,
+            lens: LensReport::NoLensName,
+            lens_options: vec![row("Hand 24mm")],
+            kind: crate::worker::SourceKind::Picture {
+                space: "sRGB".into(),
+                bits: 8,
+            },
+            shot: Default::default(),
+            taken: None,
+            blend: None,
+        },
+    );
+    let ways: [(&str, &dyn Fn()); 3] = [
+        ("another tab", &|| {
+            // The Masks tab, by its place in the row.
+            crate::testing::click_panel_tab(&app, crate::testing::PANEL_TABS[2])
+        }),
+        ("the grid", &|| app.set_grid_open(true)),
+        ("the export queue", &|| app.set_frozen(true)),
+    ];
+    for (i, (way, take_away)) in ways.iter().enumerate() {
+        app.set_grid_open(false);
+        app.set_frozen(false);
+        app.set_panel_tab("Develop".into());
+        crate::testing::settle(&app);
+        crate::testing::click_id(&app, "LensSection::find-lens");
+        crate::testing::settle(&app);
+        assert!(app.get_lens_filter_focused(), "{way}: clicked");
+        let label = format!("Hand {}mm", 35 + i);
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::LensOptions {
+                generation,
+                options: vec![row(&label)],
+            },
+        );
+        assert!(
+            state.borrow().develop.lens_options_held.is_some(),
+            "{way}: held"
+        );
+        take_away();
+        crate::testing::settle(&app);
+        assert!(!app.get_lens_filter_focused(), "{way}: let go of");
+        assert!(state.borrow().develop.lens_options_held.is_none(), "{way}");
+        assert_eq!(
+            state.borrow().develop.lens_options,
+            [row(&label)],
+            "{way}: shown"
+        );
+    }
+    app.set_grid_open(false);
+    app.set_frozen(false);
+    crate::testing::remove_scratch(state, &dir);
+}
+
+/// A picked Adobe profile whose file the list never read is not read
+/// on the window's thread: its switches show all three meanwhile, and
+/// its file is read on a thread of its own.
+#[test]
+fn a_picked_profile_is_read_off_the_windows_thread() {
+    use greycard_edit::LensChoice;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../target/scratch/lens-carries-aside-{}",
+        std::process::id()
+    ));
+    crate::testing::remove_dir_retry(&dir);
+    std::fs::create_dir_all(dir.join("Canon")).unwrap();
+    std::fs::write(
+        dir.join("Canon").join("a.lcp"),
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:stCamera="http://ns.adobe.com/photoshop/1.0/camera-profile"
+   xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/">
+  <rdf:Description rdf:about="">
+   <photoshop:CameraProfiles><rdf:Seq>
+    <rdf:li><rdf:Description stCamera:LensPrettyName="Hand 35mm"
+      stCamera:Make="Canon" stCamera:Model="Canon EOS R6"
+      stCamera:CameraRawProfile="True"
+      stCamera:FocalLength="35" stCamera:ApertureValue="4">
+     <stCamera:PerspectiveModel><rdf:Description stCamera:FocalLengthX="1"
+       stCamera:RadialDistortParam1="-0.1"/></stCamera:PerspectiveModel>
+    </rdf:Description></rdf:li>
+   </rdf:Seq></photoshop:CameraProfiles>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"#,
+    )
+    .unwrap();
+    let shot = greycard_core::raw::Shot {
+        focal_length: Some(35.0),
+        ..Default::default()
+    };
+    let id = ("Canon", "EOS R6", &shot, true);
+    let options = greycard_engine::lens::options_in(None, id, Some(&dir), &LensChoice::FromFile);
+    assert_eq!(options.len(), 1);
+    assert!(
+        options[0].carries_known().is_none(),
+        "the list reads no file"
+    );
+    let app = crate::testing::window(1);
+    let picked = options[0].choice.clone();
+    show_lens(&LensReport::NoLensName, &options, &picked, &app);
+    // Shown at once, all three, available; read aside, once: shown
+    // again meanwhile, the row asks for no second read.
+    assert!(app.get_lens_available());
+    assert!(app.get_lens_has_ca() && app.get_lens_has_vignetting());
+    show_lens(&LensReport::NoLensName, &options, &picked, &app);
+    assert!(!options[0].claim_read(), "one read in flight");
+    let started = std::time::Instant::now();
+    while options[0].carries_known().is_none() {
+        assert!(started.elapsed().as_secs() < 30, "never read");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    // Shown again with what it carries: distortion alone.
+    show_lens(&LensReport::NoLensName, &options, &picked, &app);
+    assert!(app.get_lens_has_distortion());
+    assert!(!app.get_lens_has_ca() && !app.get_lens_has_vignetting());
+    crate::testing::remove_dir_retry(&dir);
+}
+
 /// A picture opens with its lens matched and shown and the
 /// profile's three corrections off; one switched on goes into the
 /// edit and the sidecar written for it, the others left off.
@@ -841,20 +1074,20 @@ fn the_lens_picker_lists_the_options_and_keeps_the_choice() {
     use greycard_engine::lens::LensOption;
     let app = crate::testing::window(1);
     let options = vec![
-        LensOption {
-            choice: LensChoice::Database("Canon RF 50mm F1.8 STM".into()),
-            label: "Canon RF 50mm F1.8 STM".into(),
-            maker: "Canon".into(),
-            off_mount: false,
-            carries: greycard_engine::lens::Carries::ALL,
-        },
-        LensOption {
-            choice: LensChoice::Lcp("hand.lcp".into()),
-            label: "Hand 35mm".into(),
-            maker: "Hand".into(),
-            off_mount: false,
-            carries: greycard_engine::lens::Carries::ALL,
-        },
+        LensOption::new(
+            LensChoice::Database("Canon RF 50mm F1.8 STM".into()),
+            "Canon RF 50mm F1.8 STM".into(),
+            "Canon".into(),
+            false,
+            greycard_engine::lens::Carries::ALL,
+        ),
+        LensOption::new(
+            LensChoice::Lcp("hand.lcp".into()),
+            "Hand 35mm".into(),
+            "Hand".into(),
+            false,
+            greycard_engine::lens::Carries::ALL,
+        ),
     ];
     let found = LensReport::Found {
         lens: "Canon RF 50mm F1.8 STM".into(),
@@ -914,40 +1147,40 @@ fn a_lens_switch_stands_down_for_what_the_profile_has_not() {
         ..Carries::ALL
     };
     let options = vec![
-        LensOption {
-            choice: LensChoice::Database("Nikkor Z DX 18-140mm f/3.5-6.3 VR".into()),
-            label: "Nikkor Z DX 18-140mm f/3.5-6.3 VR".into(),
-            maker: "Nikon".into(),
-            off_mount: false,
-            carries: Carries::ALL,
-        },
-        LensOption {
-            choice: LensChoice::Lcp("hand.lcp".into()),
-            label: "Hand 35mm".into(),
-            maker: "Hand".into(),
-            off_mount: false,
-            carries: no_vignetting,
-        },
-        LensOption {
-            choice: LensChoice::Database("Nikkor Z DX 50-250mm f/4.5-6.3 VR".into()),
-            label: "Nikkor Z DX 50-250mm f/4.5-6.3 VR".into(),
-            maker: "Nikon".into(),
-            off_mount: false,
-            carries: Carries {
+        LensOption::new(
+            LensChoice::Database("Nikkor Z DX 18-140mm f/3.5-6.3 VR".into()),
+            "Nikkor Z DX 18-140mm f/3.5-6.3 VR".into(),
+            "Nikon".into(),
+            false,
+            Carries::ALL,
+        ),
+        LensOption::new(
+            LensChoice::Lcp("hand.lcp".into()),
+            "Hand 35mm".into(),
+            "Hand".into(),
+            false,
+            no_vignetting,
+        ),
+        LensOption::new(
+            LensChoice::Database("Nikkor Z DX 50-250mm f/4.5-6.3 VR".into()),
+            "Nikkor Z DX 50-250mm f/4.5-6.3 VR".into(),
+            "Nikon".into(),
+            false,
+            Carries {
                 chromatic_aberration: false,
                 ..Carries::ALL
             },
-        },
-        LensOption {
-            choice: LensChoice::Lcp("shade.lcp".into()),
-            label: "Shade 24mm".into(),
-            maker: "Shade".into(),
-            off_mount: false,
-            carries: Carries {
+        ),
+        LensOption::new(
+            LensChoice::Lcp("shade.lcp".into()),
+            "Shade 24mm".into(),
+            "Shade".into(),
+            false,
+            Carries {
                 vignetting: true,
                 ..Carries::NONE
             },
-        },
+        ),
     ];
     let found = LensReport::Found {
         lens: "Nikkor Z DX 16-50mm f/3.5-6.3 VR".into(),
@@ -1143,12 +1376,14 @@ fn a_screen_reader_presses_a_lens_switch_as_a_click_does() {
 fn maker_options() -> Vec<greycard_engine::lens::LensOption> {
     use greycard_edit::LensChoice;
     use greycard_engine::lens::LensOption;
-    let row = |choice, label: &str, maker: &str| LensOption {
-        choice,
-        label: label.into(),
-        maker: maker.into(),
-        off_mount: false,
-        carries: greycard_engine::lens::Carries::ALL,
+    let row = |choice, label: &str, maker: &str| {
+        LensOption::new(
+            choice,
+            label.into(),
+            maker.into(),
+            false,
+            greycard_engine::lens::Carries::ALL,
+        )
     };
     let db = |name: &str| LensChoice::Database(name.into());
     vec![
@@ -1277,13 +1512,13 @@ fn the_lens_rows_narrow_by_maker_and_words_and_keep_the_choice() {
 
     // The words find a lens by its maker too, where its name
     // does not say it.
-    let laowa = vec![greycard_engine::lens::LensOption {
-        choice: LensChoice::Database("Laowa 15mm f/2 Zero-D".into()),
-        label: "Laowa 15mm f/2 Zero-D".into(),
-        maker: "Venus".into(),
-        off_mount: false,
-        carries: greycard_engine::lens::Carries::ALL,
-    }];
+    let laowa = vec![greycard_engine::lens::LensOption::new(
+        LensChoice::Database("Laowa 15mm f/2 Zero-D".into()),
+        "Laowa 15mm f/2 Zero-D".into(),
+        "Venus".into(),
+        false,
+        greycard_engine::lens::Carries::ALL,
+    )];
     let venus = lens_rows(&laowa, &from, None, "venus 15mm");
     assert_eq!(labels(&venus), [FROM_THE_FILE, "Laowa 15mm f/2 Zero-D"]);
 }
@@ -1494,34 +1729,34 @@ fn a_lens_off_the_mount_is_listed_when_words_find_it() {
     let name = "Sigma 35mm f/1.4 DG HSM | A";
     let label = format!("{name} (Canon EF, Nikon F AF)");
     let options = vec![
-        LensOption {
-            choice: LensChoice::Database("Sony FE 35mm F1.8".into()),
-            label: "Sony FE 35mm F1.8".into(),
-            maker: "Sony".into(),
-            off_mount: false,
-            carries: greycard_engine::lens::Carries::ALL,
-        },
-        LensOption {
-            choice: LensChoice::Database(name.into()),
-            label: label.clone(),
-            maker: "Sigma".into(),
-            off_mount: true,
-            carries: greycard_engine::lens::Carries::ALL,
-        },
-        LensOption {
-            choice: LensChoice::Database("Minolta AF 50mm F1.7".into()),
-            label: "Minolta AF 50mm F1.7 (Sony Alpha)".into(),
-            maker: "Minolta".into(),
-            off_mount: true,
-            carries: greycard_engine::lens::Carries::ALL,
-        },
-        LensOption {
-            choice: LensChoice::Lcp("hand.lcp".into()),
-            label: "Hand 35mm".into(),
-            maker: "Hand".into(),
-            off_mount: false,
-            carries: greycard_engine::lens::Carries::ALL,
-        },
+        LensOption::new(
+            LensChoice::Database("Sony FE 35mm F1.8".into()),
+            "Sony FE 35mm F1.8".into(),
+            "Sony".into(),
+            false,
+            greycard_engine::lens::Carries::ALL,
+        ),
+        LensOption::new(
+            LensChoice::Database(name.into()),
+            label.clone(),
+            "Sigma".into(),
+            true,
+            greycard_engine::lens::Carries::ALL,
+        ),
+        LensOption::new(
+            LensChoice::Database("Minolta AF 50mm F1.7".into()),
+            "Minolta AF 50mm F1.7 (Sony Alpha)".into(),
+            "Minolta".into(),
+            true,
+            greycard_engine::lens::Carries::ALL,
+        ),
+        LensOption::new(
+            LensChoice::Lcp("hand.lcp".into()),
+            "Hand 35mm".into(),
+            "Hand".into(),
+            false,
+            greycard_engine::lens::Carries::ALL,
+        ),
     ];
     state.borrow_mut().develop.lens_options = options.clone();
     let strings = |m: ModelRc<slint::SharedString>| -> Vec<String> {
@@ -1558,6 +1793,42 @@ fn a_lens_off_the_mount_is_listed_when_words_find_it() {
         lens_rows(&options, &from, None, "minolta").labels,
         [FROM_THE_FILE, "Minolta AF 50mm F1.7 (Sony Alpha)"]
     );
+    // An Adobe profile made on another maker's body, in a maker's
+    // folder: left out until words find it, by the lens its file
+    // names, not by the file's path.
+    let mut with_adobe = options.clone();
+    with_adobe.push(LensOption::new(
+        LensChoice::Lcp("Nikon/NIKON D810 (Nikkor 28mm).lcp".into()),
+        "Nikkor 28mm f/2.8".into(),
+        "Nikon".into(),
+        true,
+        greycard_engine::lens::Carries::ALL,
+    ));
+    state.borrow_mut().develop.lens_options = with_adobe.clone();
+    app.set_lens_filter("".into());
+    show_lens_opened(&report, &with_adobe, &from, &app, true);
+    assert_eq!(
+        strings(app.get_lens_choice_labels()),
+        [FROM_THE_FILE, "Sony FE 35mm F1.8", "Hand 35mm"]
+    );
+    app.set_lens_filter("nikkor 28".into());
+    app.invoke_lens_rows_changed();
+    assert_eq!(
+        strings(app.get_lens_choice_labels()),
+        [FROM_THE_FILE, "Nikkor 28mm f/2.8"]
+    );
+    assert_eq!(
+        strings(app.get_lens_makers()),
+        [ALL_MAKERS, "Hand", "Nikon", "Sony"]
+    );
+    assert_eq!(
+        lens_rows(&with_adobe, &from, None, "d810").labels,
+        [FROM_THE_FILE]
+    );
+    state.borrow_mut().develop.lens_options = options.clone();
+    show_lens_opened(&report, &options, &from, &app, true);
+    app.set_lens_filter("35".into());
+    app.invoke_lens_rows_changed();
     // Under its maker, with the words: listed.
     let sigma = lens_rows(&options, &from, Some("Sigma"), "35");
     assert_eq!(sigma.labels, [FROM_THE_FILE, label.as_str()]);

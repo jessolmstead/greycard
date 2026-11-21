@@ -374,6 +374,21 @@ impl Worker {
         }
     }
 
+    /// The profile folder walked again behind the open frame, off the
+    /// window's thread, as the LENS section opens: on a file system whose
+    /// folders keep their clock when a file is added (FAT, exFAT, a
+    /// share's cache), only a walk finds it. Another list than the one
+    /// shown comes as [`Outcome::LensOptions`], with `chosen` among it:
+    /// always, since this look may take the place of one asked for the
+    /// open that has not run, whose list the window has not had.
+    /// Nothing for no frame open.
+    pub fn look_at_lens_profiles(&self, chosen: &greycard_edit::LensChoice) {
+        let look = self.queue.0.lock().expect("worker queue").lens_look.clone();
+        if let Some(look) = look {
+            look.ask(chosen, None, true, &self.deliver);
+        }
+    }
+
     /// Whether the worker's thread is still there to take a job: a
     /// panic outside any job's guard ends it, and whoever waits on an
     /// outcome would otherwise wait for ever.

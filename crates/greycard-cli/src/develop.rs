@@ -664,7 +664,7 @@ fn lens_database(lens: &greycard_edit::Lens) -> Result<Option<greycard_lens::Dat
     // An Adobe profile picked by hand wants no database; one there
     // gives it the body's sensor size.
     if let greycard_edit::LensChoice::Lcp(file) = &lens.chosen {
-        let path = lcp_path(file)?;
+        let path = lcp_path(file, greycard_edit_io::profiles::store_dir().as_deref())?;
         greycard_lens::Lcp::read(&path)
             .with_context(|| format!("reading {} as a lens profile", path.display()))?;
         return Ok(greycard_lens::Store::user()
@@ -699,16 +699,38 @@ fn picked_lens(value: &str) -> greycard_edit::LensChoice {
     }
 }
 
-/// Where an Adobe profile named on the command line is: a path as it
-/// is, a bare file name in the profile directory.
-fn lcp_path(file: &str) -> Result<PathBuf> {
-    if file.contains(['/', '\\']) {
-        return Ok(PathBuf::from(file));
+/// Where the Adobe profile `--lens-pick` names is, as `profile_path`
+/// finds a camera profile: the value as typed, a file named by its
+/// path when one is there, else a name in the profile directory `dir`,
+/// its folders joined by `/` as an edit names it (or by `\` on
+/// Windows, as a path is typed there). Only a value typed on the
+/// command line comes here: the develop reads no sidecar, so no
+/// edit's name is ever read against the working directory. A value
+/// that is neither says which it failed to be.
+fn lcp_path(typed: &str, dir: Option<&std::path::Path>) -> Result<PathBuf> {
+    let as_path = std::path::Path::new(typed);
+    if as_path.is_file() {
+        return Ok(as_path.to_path_buf());
     }
-    let dir = greycard_edit_io::profiles::store_dir()
-        .context("finding the profile directory for the lens profile")?;
-    greycard_lens::lcp::path_in(&dir, file)
-        .with_context(|| format!("{file:?} is not a lens profile's name"))
+    #[cfg(windows)]
+    let name = typed.replace('\\', "/");
+    #[cfg(not(windows))]
+    let name = typed.to_string();
+    // A path that is not there, not a name: said once, here.
+    if !greycard_core::profile_folder::is_name(&name) {
+        anyhow::bail!("{typed}: no such file");
+    }
+    let Some(dir) = dir else {
+        anyhow::bail!("{typed}: no such file, and no profile directory on this machine");
+    };
+    match greycard_lens::lcp::path_in(dir, &name) {
+        Some(path) if path.is_file() => Ok(path),
+        Some(_) => anyhow::bail!(
+            "{typed}: no such file, and no lens profile of that name in {}",
+            dir.display()
+        ),
+        None => anyhow::bail!("{typed}: no such file, and not a lens profile's name (FILE.lcp)"),
+    }
 }
 
 /// The lens's corrections on the developed picture, standing at
@@ -776,7 +798,7 @@ fn correct_lens(
         greycard_edit::LensChoice::FromFile => greycard_lens::Pick::FromFile,
         greycard_edit::LensChoice::Database(name) => greycard_lens::Pick::Named(name),
         greycard_edit::LensChoice::Lcp(file) => {
-            path = lcp_path(file)?;
+            path = lcp_path(file, greycard_edit_io::profiles::store_dir().as_deref())?;
             greycard_lens::Pick::Adobe(&path)
         }
     };
@@ -1537,6 +1559,60 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(said.contains("no profile of that name"), "{said}");
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// `--lens-pick`'s profile is a file named by its path when one is
+    /// there, else a name in the profile directory, folders and all; a
+    /// value that is neither names both in its error.
+    #[test]
+    fn a_lens_profile_is_a_path_or_a_name_in_the_directory() {
+        let dir =
+            std::env::temp_dir().join(format!("greycard-cli-lcp-path-{}", std::process::id()));
+        greycard_core::testing::remove_dir_retry(&dir);
+        let store = dir.join("profiles");
+        std::fs::create_dir_all(store.join("Canon")).unwrap();
+        let loose = dir.join("loose.lcp");
+        std::fs::write(&loose, b"x").unwrap();
+        let named = store.join("Canon").join("EF 50mm.lcp");
+        std::fs::write(&named, b"x").unwrap();
+        // A path that is there, as given.
+        let path = loose.to_str().unwrap();
+        assert_eq!(lcp_path(path, Some(&store)).unwrap(), loose);
+        // A name in the directory, at the top or in a maker's folder.
+        std::fs::write(store.join("Top.LCP"), b"x").unwrap();
+        assert_eq!(
+            lcp_path("Top.LCP", Some(&store)).unwrap(),
+            store.join("Top.LCP")
+        );
+        assert_eq!(lcp_path("Canon/EF 50mm.lcp", Some(&store)).unwrap(), named);
+        // Typed as Windows separates its folders: a name there, and on
+        // other systems a file name with a `\` in it, which no
+        // directory's name is.
+        let typed = lcp_path("Canon\\EF 50mm.lcp", Some(&store));
+        #[cfg(windows)]
+        assert_eq!(typed.unwrap(), named);
+        #[cfg(not(windows))]
+        assert!(typed.unwrap_err().to_string().ends_with("no such file"));
+        // Neither a file nor a profile in the directory: both named.
+        let said = lcp_path("Canon/EF 85mm.lcp", Some(&store))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            said.contains("no such file") && said.contains("no lens profile of that name"),
+            "{said}"
+        );
+        let said = lcp_path("Canon/EF 85mm.lcp", None).unwrap_err().to_string();
+        assert!(said.contains("no profile directory"), "{said}");
+        let said = lcp_path("Canon/EF 50mm.txt", Some(&store))
+            .unwrap_err()
+            .to_string();
+        assert!(said.contains("not a lens profile's name"), "{said}");
+        let missing = dir.join("gone.lcp");
+        let said = lcp_path(missing.to_str().unwrap(), Some(&store))
+            .unwrap_err()
+            .to_string();
+        assert!(said.ends_with("no such file"), "{said}");
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

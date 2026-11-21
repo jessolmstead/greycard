@@ -27,7 +27,9 @@
 //! against.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::SystemTime;
 
@@ -231,9 +233,31 @@ impl Lcp {
         })
     }
 
-    /// A profile from a file.
+    /// A profile from a file: a regular file (after any link) of at
+    /// most [`LARGEST`] bytes, read no further than that.
     pub fn read(path: &Path) -> Result<Self, Error> {
-        Self::parse(&std::fs::read_to_string(path)?)
+        let refuse =
+            |why: String| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, why));
+        let meta = std::fs::metadata(path)?;
+        if !meta.is_file() {
+            return Err(refuse("not a regular file".into()));
+        }
+        let too_large = || {
+            refuse(format!(
+                "larger than {LARGEST} bytes, too large for a lens profile"
+            ))
+        };
+        if meta.len() > LARGEST {
+            return Err(too_large());
+        }
+        let mut text = String::new();
+        std::fs::File::open(path)?
+            .take(LARGEST + 1)
+            .read_to_string(&mut text)?;
+        if text.len() as u64 > LARGEST {
+            return Err(too_large());
+        }
+        Self::parse(&text)
     }
 
     /// The focal lengths sampled, shortest and longest.
@@ -261,14 +285,7 @@ impl Lcp {
     /// its model, or its make and model together, the same letters and
     /// digits as the body's model, or as its make and model together.
     pub fn made_on(&self, make: &str, model: &str) -> bool {
-        let Some(own) = self.model.as_deref() else {
-            return false;
-        };
-        let own_make = self.make.as_deref().unwrap_or("");
-        let body = [fold(model), fold(&format!("{make}{model}"))];
-        [fold(own), fold(&format!("{own_make}{own}"))]
-            .iter()
-            .any(|o| !o.is_empty() && body.contains(o))
+        made_on(self.make.as_deref(), self.model.as_deref(), make, model)
     }
 
     /// A word in the log, once a profile, when its optical center sits
@@ -725,6 +742,19 @@ fn sample(entry: roxmltree::Node, longer: f32) -> Option<Sample> {
     })
 }
 
+/// Whether a profile whose body is `own_make` and `own_model` was made
+/// on the body of `make` and `model`: see [`Lcp::made_on`].
+fn made_on(own_make: Option<&str>, own_model: Option<&str>, make: &str, model: &str) -> bool {
+    let Some(own) = own_model else {
+        return false;
+    };
+    let own_make = own_make.unwrap_or("");
+    let body = [fold(model), fold(&format!("{make}{model}"))];
+    [fold(own), fold(&format!("{own_make}{own}"))]
+        .iter()
+        .any(|o| !o.is_empty() && body.contains(o))
+}
+
 /// A name as its letters and digits alone, in lower case: how a
 /// profile's camera is matched to a body's.
 pub fn fold(s: &str) -> String {
@@ -749,10 +779,13 @@ pub(crate) fn warn_once(message: String) {
     }
 }
 
-/// A profile in the folder, as a picker lists it.
+/// A profile in the folder, as a picker lists it: what the head of the
+/// file says, not its samples, which are read only for a profile
+/// chosen or picked ([`load`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Listed {
-    /// The file's name with its extension: what an edit stores.
+    /// The file's name with its extension, under the folder with its
+    /// folders joined by `/`: what an edit stores.
     pub file: String,
     pub path: PathBuf,
     /// The lens, as the file names it.
@@ -762,53 +795,400 @@ pub struct Listed {
     pub raw: bool,
 }
 
-/// Every profile in `dir`, by file name. A file that will not read is
-/// passed over with a word in the log.
-pub fn list_in(dir: &Path) -> Vec<Listed> {
-    let Ok(read) = std::fs::read_dir(dir) else {
-        return Vec::new();
+impl Listed {
+    /// Whether the profile was made on the body of `make` and `model`,
+    /// as [`Lcp::made_on`] says.
+    pub fn made_on(&self, make: &str, model: &str) -> bool {
+        made_on(self.make.as_deref(), self.model.as_deref(), make, model)
+    }
+}
+
+/// How much of a file's head a listing reads for its row. Camera Raw
+/// and Adobe's creator write the lens, the body, and the raw flag in
+/// the first entry, in its first kilobyte or two.
+const HEAD: u64 = 16 * 1024;
+/// The largest file read as a profile. Adobe's largest are some
+/// hundreds of kilobytes; a file past this is no lens profile.
+const LARGEST: u64 = 16 * 1024 * 1024;
+/// How many profiles read whole are kept: the chosen, the picked, and
+/// the develop's, of a few frames.
+const KEEP: usize = 16;
+
+/// A row's fields from the head of a profile: the lens (its pretty
+/// name, else its plain one), the body's make and model, and whether it
+/// was made on raws, each the first value given, as [`Lcp::parse`]
+/// takes them. None when the head names no lens.
+fn header_of(head: &str) -> Option<(String, Option<String>, Option<String>, bool)> {
+    let lens = field(head, "LensPrettyName").or_else(|| field(head, "Lens"))?;
+    let raw = field(head, "CameraRawProfile").is_none_or(|s| s.eq_ignore_ascii_case("true"));
+    Some((lens, field(head, "Make"), field(head, "Model"), raw))
+}
+
+/// The first value of the property `name` in `text` that is not
+/// empty: an attribute (`stCamera:Make="..."`) or an element
+/// (`<stCamera:Make>...</...>`), under any prefix, its entities
+/// undone. A value the head cuts off is not taken.
+fn field(text: &str, name: &str) -> Option<String> {
+    let mut found: Vec<(usize, String)> = Vec::new();
+    for (open, close) in [("=\"", '"'), ("='", '\''), (">", '<')] {
+        let pattern = format!(":{name}{open}");
+        for (at, _) in text.match_indices(&pattern) {
+            let rest = &text[at + pattern.len()..];
+            let Some(end) = rest.find(close) else {
+                break;
+            };
+            let value = unescape(rest[..end].trim());
+            if !value.is_empty() {
+                found.push((at, value));
+                break;
+            }
+        }
+    }
+    found.into_iter().min_by_key(|(at, _)| *at).map(|(_, v)| v)
+}
+
+/// XML's five named entities and its numeric ones, undone.
+fn unescape(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let Some(end) = rest.find(';') else {
+            break;
+        };
+        let entity = &rest[1..end];
+        let ch = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            _ => entity
+                .strip_prefix("#x")
+                .and_then(|h| u32::from_str_radix(h, 16).ok())
+                .or_else(|| entity.strip_prefix('#').and_then(|d| d.parse().ok()))
+                .and_then(char::from_u32),
+        };
+        match ch {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A row as last read, with the length and clock of the file it was
+/// read from: a listing reads again only what changed.
+struct Header {
+    len: u64,
+    stamp: Option<SystemTime>,
+    /// `None` for a file whose head names no lens, said once.
+    row: Option<(String, Option<String>, Option<String>, bool)>,
+}
+
+static HEADERS: LazyLock<Mutex<HashMap<PathBuf, Header>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The listing's row for the file at `path`, from its first [`HEAD`]
+/// bytes, read once while its length and clock stand.
+fn listed(file: String, path: PathBuf) -> Option<Listed> {
+    let meta = std::fs::metadata(&path).ok().filter(|m| m.is_file())?;
+    let stat = (meta.len(), meta.modified().ok());
+    let kept = HEADERS.lock().ok().and_then(|h| {
+        h.get(&path)
+            .filter(|h| (h.len, h.stamp) == stat)
+            .map(|h| h.row.clone())
+    });
+    let row = match kept {
+        Some(row) => row,
+        None => {
+            let mut head = Vec::new();
+            let read = std::fs::File::open(&path)
+                .and_then(|f| std::io::Read::read_to_end(&mut f.take(HEAD), &mut head));
+            let row = match &read {
+                Ok(_) => header_of(&String::from_utf8_lossy(&head)),
+                Err(e) => {
+                    warn_once(format!("lens profile {}: {e}", path.display()));
+                    None
+                }
+            };
+            if read.is_ok() && row.is_none() {
+                warn_once(format!(
+                    "lens profile {}: no lens named in its first {HEAD} bytes; not listed",
+                    path.display()
+                ));
+            }
+            if let Ok(mut headers) = HEADERS.lock() {
+                headers.insert(
+                    path.clone(),
+                    Header {
+                        len: stat.0,
+                        stamp: stat.1,
+                        row: row.clone(),
+                    },
+                );
+            }
+            row
+        }
     };
-    let mut out: Vec<Listed> = read
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .is_some_and(|x| x.eq_ignore_ascii_case(EXTENSION))
-        })
-        .filter_map(|path| {
-            let file = path.file_name()?.to_string_lossy().into_owned();
-            let p = load(&path)?;
-            Some(Listed {
-                file,
-                lens: p.lens.clone(),
-                make: p.make.clone(),
-                model: p.model.clone(),
-                raw: p.raw,
-                path,
-            })
-        })
+    let (lens, make, model, raw) = row?;
+    Some(Listed {
+        file,
+        path,
+        lens,
+        make,
+        model,
+        raw,
+    })
+}
+
+/// A folder the walk read, and its clock as it found it: a profile
+/// added, removed, or renamed in it moves the clock.
+#[derive(Clone)]
+struct Folder {
+    path: PathBuf,
+    stamp: Option<SystemTime>,
+}
+
+impl Folder {
+    fn now(path: &Path) -> Folder {
+        Folder {
+            path: path.to_path_buf(),
+            stamp: std::fs::metadata(path).and_then(|m| m.modified()).ok(),
+        }
+    }
+}
+
+/// Every profile in `dir` and its subfolders, by name: its path under
+/// `dir` with folders joined by `/`, a file at the top by its bare file
+/// name. The folder is walked as the camera profiles' is
+/// (`greycard_core::profile_folder`), so Adobe's LensProfiles tree, one
+/// folder a maker, can be copied or linked in whole. Only each file's
+/// head is read, once while it stands; a file whose head names no lens
+/// is passed over with a word in the log. Walked now, not held.
+pub fn list_in(dir: &Path) -> Vec<Listed> {
+    list_within(dir, &mut Vec::new())
+}
+
+/// The row of the profile named `file` in `dir`, read from its head as
+/// a listing reads it: for a profile an edit names that the listing
+/// held does not have yet.
+pub fn row_in(dir: &Path, file: &str) -> Option<Listed> {
+    listed(file.to_string(), path_in(dir, file)?)
+}
+
+fn list_within(dir: &Path, folders: &mut Vec<Folder>) -> Vec<Listed> {
+    let kind = greycard_core::profile_folder::Kind {
+        extension: EXTENSION,
+        what: "lens profiles",
+        named_with_extension: true,
+    };
+    let found = greycard_core::profile_folder::walk(
+        dir,
+        kind,
+        greycard_core::profile_folder::BOUNDS,
+        &mut |folder| folders.push(Folder::now(folder)),
+    );
+    let seen: std::collections::HashSet<PathBuf> = found.iter().map(|(_, p)| p.clone()).collect();
+    let mut out: Vec<Listed> = found
+        .into_iter()
+        .filter_map(|(file, path)| listed(file, path))
         .collect();
+    // The heads of files no longer there are let go.
+    if let Ok(mut headers) = HEADERS.lock() {
+        headers.retain(|p, _| !p.starts_with(dir) || seen.contains(p));
+    }
     out.sort_by(|a, b| a.file.cmp(&b.file));
     out
 }
 
-/// Where a profile of this file name is in `dir`; none for a name that
-/// is a path or climbs out of it.
-pub fn path_in(dir: &Path, file: &str) -> Option<PathBuf> {
-    if file.is_empty()
-        || file.contains(['/', '\\'])
-        || file.contains("..")
-        || Path::new(file).is_absolute()
-    {
-        log::warn!("lens profile {file:?} is not a name in the profile directory");
-        return None;
+/// The folder's profiles as last walked.
+#[derive(Clone, Debug)]
+pub struct Listing {
+    /// Changes when, and only when, a look finds a different list.
+    pub generation: u64,
+    pub entries: Arc<Vec<Listed>>,
+}
+
+/// A listing and the folders its walk read.
+struct Held {
+    listing: Listing,
+    folders: Vec<Folder>,
+}
+
+static HELD: LazyLock<Mutex<HashMap<PathBuf, Held>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// The listing of `dir` held from the last look, without a look at
+/// the disk: what an open lists from, so it never waits on a walk.
+/// None before the first look has ended.
+pub fn held_in(dir: &Path) -> Option<Listing> {
+    HELD.lock().ok()?.get(dir).map(|h| h.listing.clone())
+}
+
+/// The listing of `dir` brought up to date, now, on this thread: the
+/// folder walked again when one of its folders' clocks has moved (a
+/// profile added, removed, or renamed), when nothing is held, or when
+/// `force`; else each listed file's head looked at again, which reads
+/// only the files rewritten in place. Its generation moves only when
+/// the list differs.
+pub fn refresh_in(dir: &Path, force: bool) -> Listing {
+    let held = HELD
+        .lock()
+        .ok()
+        .and_then(|h| h.get(dir).map(|h| (h.listing.clone(), h.folders.clone())));
+    let (entries, folders) = match held {
+        Some((listing, folders))
+            if !force
+                && folders
+                    .iter()
+                    .all(|f| Folder::now(&f.path).stamp == f.stamp) =>
+        {
+            let entries: Vec<Listed> = listing
+                .entries
+                .iter()
+                .filter_map(|l| listed(l.file.clone(), l.path.clone()))
+                .collect();
+            (entries, folders)
+        }
+        _ => {
+            let mut folders = Vec::new();
+            (list_within(dir, &mut folders), folders)
+        }
+    };
+    let Ok(mut all) = HELD.lock() else {
+        return Listing {
+            generation: 0,
+            entries: Arc::new(entries),
+        };
+    };
+    let listing = match all.get(dir) {
+        Some(h) if *h.listing.entries == entries => h.listing.clone(),
+        _ => Listing {
+            generation: GENERATION.fetch_add(1, Ordering::Relaxed) + 1,
+            entries: Arc::new(entries),
+        },
+    };
+    all.insert(
+        dir.to_path_buf(),
+        Held {
+            listing: listing.clone(),
+            folders,
+        },
+    );
+    listing
+}
+
+/// What a look hands its listing to when it ends.
+pub type Then = Box<dyn FnOnce(&Listing) + Send>;
+
+/// The look asked for next, and whether a thread is looking.
+struct Looks {
+    running: bool,
+    /// The folder, whether it is to be walked whatever its clocks say,
+    /// and what the listing is handed to.
+    next: Option<(PathBuf, bool, Then)>,
+}
+
+static LOOKS: Mutex<Looks> = Mutex::new(Looks {
+    running: false,
+    next: None,
+});
+
+/// The looking thread's mark taken down when a look or its `then`
+/// panics, so a later look starts a thread again, and the panic said in
+/// the log. (A thread that ends as it should takes it down itself, in
+/// the step that finds nothing asked.)
+struct Running;
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            log::error!("lens profiles: a look panicked; the next look starts afresh");
+            LOOKS.lock().unwrap_or_else(|e| e.into_inner()).running = false;
+        }
     }
-    Some(dir.join(file))
+}
+
+/// A look at `dir` ([`refresh_in`], walking it whatever its folders'
+/// clocks say when `force` is set) off the caller's thread, `then`
+/// handed the listing when it ends. One look runs at a time; one asked
+/// meanwhile runs after it, and of several asked meanwhile only the
+/// last `then` is kept (an open since has its own), walking if any of
+/// them asked to.
+pub fn look_in(dir: &Path, force: bool, then: Then) {
+    let mut looks = LOOKS.lock().unwrap_or_else(|e| e.into_inner());
+    let force = force
+        || looks
+            .next
+            .as_ref()
+            .is_some_and(|(d, f, _)| *f && d.as_path() == dir);
+    looks.next = Some((dir.to_path_buf(), force, then));
+    if looks.running {
+        return;
+    }
+    looks.running = true;
+    drop(looks);
+    let spawned = std::thread::Builder::new()
+        .name("lens profiles".into())
+        .spawn(|| {
+            let _running = Running;
+            loop {
+                // Idle in the same locked step that finds nothing
+                // asked, so no request is left without a thread.
+                let next = {
+                    let mut looks = LOOKS.lock().unwrap_or_else(|e| e.into_inner());
+                    match looks.next.take() {
+                        Some(next) => next,
+                        None => {
+                            looks.running = false;
+                            return;
+                        }
+                    }
+                };
+                let (dir, force, then) = next;
+                then(&refresh_in(&dir, force));
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("lens profiles: no thread to list them on: {e}");
+        let mut looks = LOOKS.lock().unwrap_or_else(|e| e.into_inner());
+        looks.running = false;
+        looks.next = None;
+    }
+}
+
+/// Where the profile of this name is in `dir`: a file name ending in
+/// `.lcp` in any case, at the top or under folders joined by `/`, as
+/// [`list_in`] names it. None for a name that is not a plain path
+/// under `dir` or not a lens profile's.
+pub fn path_in(dir: &Path, file: &str) -> Option<PathBuf> {
+    let is_lcp = Path::new(file)
+        .extension()
+        .is_some_and(|x| x.eq_ignore_ascii_case(EXTENSION));
+    let path = is_lcp
+        .then(|| greycard_core::profile_folder::join(dir, file))
+        .flatten();
+    if path.is_none() {
+        log::warn!("lens profile {file:?} is not a lens profile's name in the profile directory");
+    }
+    path
 }
 
 /// The profile in a file, read once and kept while the file's length
-/// and time stay as they were. None, with a word in the log, for one
-/// that is not there or will not read.
+/// and time stay as they were, [`KEEP`] of them at most. None, with a
+/// word in the log, for one that is not there or will not read.
 pub fn load(path: &Path) -> Option<Arc<Lcp>> {
     type Kept = HashMap<PathBuf, (u64, Option<SystemTime>, Option<Arc<Lcp>>)>;
     static KEPT: LazyLock<Mutex<Kept>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -832,6 +1212,9 @@ pub fn load(path: &Path) -> Option<Arc<Lcp>> {
         }
     };
     if let Ok(mut kept) = KEPT.lock() {
+        if kept.len() >= KEEP && !kept.contains_key(path) {
+            kept.clear();
+        }
         kept.insert(path.to_path_buf(), (stat.0, stat.1, read.clone()));
     }
     read
@@ -1202,6 +1585,267 @@ mod tests {
         assert!(Arc::ptr_eq(&load(&path).unwrap(), &load(&path).unwrap()));
         assert!(path_in(&dir, "../b.LCP").is_none());
         assert!(load(&dir.join("gone.lcp")).is_none());
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Adobe's LensProfiles tree, one folder a maker, is read whole: a
+    /// profile in a subfolder is named by its path under the folder, a
+    /// file at the top by its bare name as before, one file name in two
+    /// folders is two profiles, and a hidden folder is passed over.
+    #[test]
+    fn the_subfolders_are_read() {
+        let dir = std::env::temp_dir().join(format!("greycard-lcp-tree-{}", std::process::id()));
+        for sub in ["Canon", "Sigma/Art", "Nikon", ".Trash"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        for file in [
+            "Top.lcp",
+            "Canon/EF 24-70.lcp",
+            "Sigma/Art/EF 24-70.lcp",
+            ".Trash/Gone.lcp",
+        ] {
+            std::fs::write(dir.join(file), HAND).unwrap();
+        }
+        std::fs::write(dir.join("Nikon/notes.txt"), "not a profile").unwrap();
+        let names: Vec<String> = list_in(&dir).into_iter().map(|l| l.file).collect();
+        assert_eq!(
+            names,
+            ["Canon/EF 24-70.lcp", "Sigma/Art/EF 24-70.lcp", "Top.lcp"]
+        );
+        for name in &names {
+            let path = path_in(&dir, name).unwrap();
+            assert!(load(&path).is_some(), "{name} reads by its name");
+        }
+        for bad in [
+            "",
+            "Canon/../Top.lcp",
+            "Canon//EF.lcp",
+            "Canon\\EF.lcp",
+            "/Top.lcp",
+            "./Top.lcp",
+        ] {
+            assert!(path_in(&dir, bad).is_none(), "{bad:?} is refused");
+        }
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A link back up the tree is walked once; a link to a folder
+    /// outside is read as the folder it names.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_loop_is_walked_once() {
+        let tag = std::process::id();
+        let dir = std::env::temp_dir().join(format!("greycard-lcp-loop-{tag}"));
+        let outside = std::env::temp_dir().join(format!("greycard-lcp-loop-outside-{tag}"));
+        std::fs::create_dir_all(dir.join("Canon")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(dir.join("Canon/A.lcp"), HAND).unwrap();
+        std::fs::write(outside.join("B.lcp"), HAND).unwrap();
+        std::os::unix::fs::symlink(&dir, dir.join("Canon/up")).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("Linked")).unwrap();
+        let names: Vec<String> = list_in(&dir).into_iter().map(|l| l.file).collect();
+        assert_eq!(names, ["Canon/A.lcp", "Linked/B.lcp"]);
+        greycard_core::testing::remove_dir_retry(&dir);
+        greycard_core::testing::remove_dir_retry(&outside);
+    }
+
+    /// The head of a profile names its row as the whole file does, in
+    /// the element form and the attribute form, its entities undone.
+    #[test]
+    fn the_head_names_the_row_as_the_whole_file_does() {
+        let attributes = HAND
+            .replace("<stCamera:Author>greycard tests</stCamera:Author>", "")
+            .replace(
+                "<rdf:li rdf:parseType=\"Resource\">",
+                "<rdf:li rdf:parseType=\"Resource\" stCamera:Make=\"A &amp; B\" \
+                 stCamera:Model='Two'>",
+            );
+        for text in [HAND.to_string(), attributes] {
+            let whole = Lcp::parse(&text).unwrap();
+            let head = header_of(&text).unwrap();
+            assert_eq!(
+                head,
+                (whole.lens, whole.make, whole.model, whole.raw),
+                "{text}"
+            );
+        }
+        assert_eq!(
+            header_of(&HAND.replace(
+                "True</stCamera:CameraRawProfile>",
+                "False</stCamera:CameraRawProfile>"
+            ))
+            .map(|h| h.3),
+            Some(false)
+        );
+        assert_eq!(header_of("<x:xmpmeta/>"), None, "no lens, no row");
+        assert_eq!(
+            unescape("a &lt;&#65;&#x42;&gt; &bogus; &"),
+            "a <AB> &bogus; &"
+        );
+    }
+
+    /// A listing reads only each file's head: a profile whose samples
+    /// are cut off is listed by its head (and will not load), and one
+    /// whose head is past what the listing reads is not listed, though
+    /// it loads by its name.
+    #[test]
+    fn a_listing_reads_only_the_head() {
+        let dir = std::env::temp_dir().join(format!("greycard-lcp-head-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cut = &HAND[..HAND.find("<stCamera:PerspectiveModel").unwrap()];
+        std::fs::write(dir.join("Cut.lcp"), cut).unwrap();
+        let late = HAND.replacen(
+            "<x:xmpmeta",
+            &format!("<!-- {} --><x:xmpmeta", "x".repeat(HEAD as usize)),
+            1,
+        );
+        std::fs::write(dir.join("Late.lcp"), late).unwrap();
+        let listed = list_in(&dir);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            (listed[0].file.as_str(), listed[0].lens.as_str()),
+            ("Cut.lcp", "Testmaker 24-70mm F4")
+        );
+        assert!(listed[0].made_on("Testmaker", "One"));
+        assert!(load(&listed[0].path).is_none(), "its samples are cut off");
+        assert!(row_in(&dir, "Late.lcp").is_none());
+        assert!(load(&path_in(&dir, "Late.lcp").unwrap()).is_some());
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// One look test at a time: the looks' queue is the process's, and
+    /// a look asked while another waits takes its place.
+    static LOOK_TESTS: Mutex<()> = Mutex::new(());
+
+    /// The listing is held between looks: none before the first; a look
+    /// with nothing changed keeps its generation; a profile added in a
+    /// subfolder, or one rewritten in place, is a new one; and a look
+    /// off the caller's thread hands its listing on.
+    #[test]
+    fn the_listing_is_held_between_looks() {
+        let _one = LOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("greycard-lcp-held-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Canon")).unwrap();
+        std::fs::write(dir.join("Canon/A.lcp"), HAND).unwrap();
+        assert!(held_in(&dir).is_none());
+        let first = refresh_in(&dir, false);
+        assert_eq!(first.entries.len(), 1);
+        assert_eq!(held_in(&dir).unwrap().generation, first.generation);
+        assert_eq!(refresh_in(&dir, false).generation, first.generation);
+        assert_eq!(refresh_in(&dir, true).generation, first.generation);
+
+        // Past the folder's clock's step, so the file added moves it.
+        greycard_core::testing::a_moment(&dir.join("Canon"));
+        std::fs::write(dir.join("Canon/B.lcp"), HAND).unwrap();
+        let added = refresh_in(&dir, false);
+        assert_ne!(added.generation, first.generation);
+        assert_eq!(added.entries.len(), 2);
+
+        // Rewritten in place under another lens, at another length, the
+        // folder's clock standing: its head is read again.
+        let renamed = HAND.replace("Testmaker 24-70mm F4", "Testmaker 24-70mm F4 II");
+        std::fs::write(dir.join("Canon/B.lcp"), &renamed).unwrap();
+        let rewritten = refresh_in(&dir, false);
+        assert_ne!(rewritten.generation, added.generation);
+        assert!(rewritten.entries.iter().any(|l| l.lens.ends_with(" II")));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        look_in(
+            &dir,
+            false,
+            Box::new(move |listing| tx.send(listing.generation).unwrap()),
+        );
+        let looked = rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+        assert_eq!(looked, rewritten.generation);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A profile added where the folder's clock does not move (FAT, a
+    /// share's cache) is found by a look that walks whatever the clocks
+    /// say, and only by one.
+    #[cfg(unix)]
+    #[test]
+    fn a_forced_look_finds_what_the_clocks_hide() {
+        let _one = LOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("greycard-lcp-forced-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Canon")).unwrap();
+        std::fs::write(dir.join("Canon/A.lcp"), HAND).unwrap();
+        assert_eq!(refresh_in(&dir, false).entries.len(), 1);
+        let canon = dir.join("Canon");
+        let clock = std::fs::metadata(&canon).unwrap().modified().unwrap();
+        std::fs::write(canon.join("B.lcp"), HAND).unwrap();
+        // The folder's clock put back, as a file system that keeps it.
+        std::fs::File::open(&canon)
+            .unwrap()
+            .set_modified(clock)
+            .unwrap();
+        assert_eq!(refresh_in(&dir, false).entries.len(), 1, "the clocks stand");
+        let (tx, rx) = std::sync::mpsc::channel();
+        look_in(
+            &dir,
+            true,
+            Box::new(move |listing| tx.send(listing.entries.len()).unwrap()),
+        );
+        let found = rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+        assert_eq!(found, 2, "walked");
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A look whose `then` panics leaves the looks able to run: the
+    /// next one asked starts a thread and hands its listing on.
+    #[test]
+    fn a_look_that_panics_does_not_stop_the_next() {
+        let _one = LOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("greycard-lcp-panic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("A.lcp"), HAND).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        look_in(
+            &dir,
+            false,
+            Box::new(move |_| {
+                let _told = tx;
+                panic!("a test's look");
+            }),
+        );
+        // The sender dropped as the panic unwinds: the look is over.
+        assert!(rx.recv_timeout(std::time::Duration::from_secs(30)).is_err());
+        let started = std::time::Instant::now();
+        while LOOKS.lock().unwrap_or_else(|e| e.into_inner()).running {
+            assert!(started.elapsed().as_secs() < 30, "the mark stays up");
+            std::thread::yield_now();
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        look_in(
+            &dir,
+            false,
+            Box::new(move |listing| tx.send(listing.entries.len()).unwrap()),
+        );
+        assert_eq!(
+            rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap(),
+            1
+        );
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A file is read as a profile only when it is a regular file of a
+    /// lens profile's size, and named as one.
+    #[test]
+    fn only_a_regular_file_of_a_profiles_size_is_read() {
+        let dir = std::env::temp_dir().join(format!("greycard-lcp-read-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Folder.lcp")).unwrap();
+        let said = Lcp::read(&dir.join("Folder.lcp")).unwrap_err().to_string();
+        assert!(said.contains("not a regular file"), "{said}");
+        let huge = std::fs::File::create(dir.join("Huge.lcp")).unwrap();
+        huge.set_len(LARGEST + 1).unwrap();
+        let said = Lcp::read(&dir.join("Huge.lcp")).unwrap_err().to_string();
+        assert!(said.contains("too large"), "{said}");
+        assert!(path_in(&dir, "Canon/Lens.txt").is_none());
+        assert!(path_in(&dir, "Canon/Lens").is_none());
+        assert_eq!(
+            path_in(&dir, "Canon/Lens.LCP"),
+            Some(dir.join("Canon").join("Lens.LCP"))
+        );
         greycard_core::testing::remove_dir_retry(&dir);
     }
 }

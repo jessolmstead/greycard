@@ -64,14 +64,14 @@ fn files_read(edit: &Edit, looks: Option<&Path>, profiles: Option<&Path>) -> Vec
         files.push(path);
     }
     // An Adobe lens profile picked by hand, beside the camera
-    // profiles: read by its file name, so only a plain name counts.
+    // profiles: read by its name, its folders joined by `/`, so only a
+    // plain path under the directory counts.
     if let (LensChoice::Lcp(file), Some(dir)) = (&edit.lens.chosen, profiles)
         && edit.lens.enabled
         && edit.lens.profile
-        && !file.contains(['/', '\\'])
-        && !file.contains("..")
+        && let Some(path) = greycard_core::profile_folder::join(dir, file)
     {
-        files.push(dir.join(file));
+        files.push(path);
     }
     files
 }
@@ -254,6 +254,20 @@ mod tests {
         assert_ne!(
             develop_key_in(&edit, Some(&looks), Some(&profiles), None),
             with
+        );
+        // One in a maker's folder, as Adobe's tree keeps them: read by
+        // its path under the directory, so it moves the key too.
+        edit.lens.chosen = LensChoice::Lcp("Canon/Lens.lcp".into());
+        let without = develop_key_in(&edit, Some(&looks), Some(&profiles), None);
+        std::fs::create_dir_all(profiles.join("Canon")).unwrap();
+        std::fs::write(profiles.join("Canon").join("Lens.lcp"), b"one").unwrap();
+        let with = develop_key_in(&edit, Some(&looks), Some(&profiles), None);
+        assert_ne!(with, without, "the file appearing is another picture");
+        std::fs::write(profiles.join("Canon").join("Lens.lcp"), b"two").unwrap();
+        assert_ne!(
+            develop_key_in(&edit, Some(&looks), Some(&profiles), None),
+            with,
+            "the file changing is another picture"
         );
         greycard_core::testing::remove_dir_retry(&dir);
     }

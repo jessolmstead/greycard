@@ -34,7 +34,7 @@
 //! tripod bracket into one frame of the whole range.
 //!
 //! [`fs`] holds the rename into place that sidecars and merges end
-//! with.
+//! with; [`profile_folder`] the walk of a profile folder's tree.
 //!
 //! What this crate deliberately does not contain: any tone mapping, display
 //! transform, edit schema or UI concern. Those belong to consumers.
@@ -55,6 +55,7 @@ pub mod merge;
 pub mod opcodes;
 pub mod output;
 pub mod picture;
+pub mod profile_folder;
 pub mod raw;
 pub mod register;
 pub mod sharpness;

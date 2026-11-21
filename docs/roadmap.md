@@ -1524,8 +1524,9 @@ clears or a tester asks for it.
 - [ ] Presets given more room on the left: a tab of its own or a
       list dragged taller, judged after the left pane's rework (issue
       133, 2026-11-12)
-- [ ] Lens profiles (`.lcp`) read from the profile folder's
-      subfolders too, as the camera profiles are since §662
+- [ ] The lens picker's list held back while its popup is open, which
+      waits on Slint's ComboBox saying so; and "made under" hashing
+      the profile folder's subfolders (§725)
 - [ ] The output sharpen's Radius in output pixels, or a choice: it
       scales with an export's size today, so a web-size export barely
       sharpens (§663)

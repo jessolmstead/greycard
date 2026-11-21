@@ -2508,6 +2508,7 @@ fn follow_paths(st: &mut State, was: &Path, to: &Path) {
                 store: _,
                 lens: _,
                 lens_options: _,
+                lens_options_held: _,
                 profiles: _,
                 profiles_kept: _,
                 camera: _,

@@ -736,3 +736,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§722. A save that looks before it writes](notes/722-a-save-that-looks-before-it-writes.md) (2026-11-20)
 - [§723. A lens match that knows its line](notes/723-a-lens-match-that-knows-its-line.md) (2026-11-20)
 - [§724. States that are never rewritten](notes/724-states-that-are-never-rewritten.md) (2026-11-20)
+- [§725. Lens profiles from subfolders, their listing held](notes/725-lens-profiles-from-subfolders.md) (2026-11-21)

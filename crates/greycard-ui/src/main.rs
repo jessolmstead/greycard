@@ -1063,6 +1063,7 @@ impl State {
                 store: None,
                 lens: LensReport::NoDatabase,
                 lens_options: Vec::new(),
+                lens_options_held: None,
                 lens_frame: None,
                 profiles: Vec::new(),
                 profiles_kept: Default::default(),

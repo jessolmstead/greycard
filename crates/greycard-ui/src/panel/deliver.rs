@@ -712,6 +712,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let chosen = &st.develop.edit.lens.chosen;
             show_lens_opened(&lens, &lens_options, chosen, app, another);
             st.develop.lens_options = lens_options;
+            st.develop.lens_options_held = None;
             // No database on the machine: the first time a picture
             // is up, the download is offered without being asked for.
             // Every model at once is offered first, once ever; the
@@ -1457,6 +1458,26 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if making == crate::thumbpool::Making::Over {
                 crate::panel::browser::thumbs_idle(&mut st, app);
             }
+        }
+        Outcome::LensOptions {
+            generation,
+            options,
+        } => {
+            // A look at the profile folder behind the open found another
+            // list: the picker's rows again, for the frame still open.
+            let mut st = state.borrow_mut();
+            if !crate::panel::browser::opened_is_current(&st, generation) {
+                return;
+            }
+            // While Find a lens is typed in, its rows stay as they are
+            // under the typing; the field letting go shows these.
+            if app.get_lens_filter_focused() {
+                st.develop.lens_options_held = Some(options);
+                return;
+            }
+            st.develop.lens_options = options;
+            let d = &st.develop;
+            crate::panel::assets::show_lens(&d.lens, &d.lens_options, &d.edit.lens.chosen, app);
         }
         Outcome::LensesFetched => {
             let mut st = state.borrow_mut();

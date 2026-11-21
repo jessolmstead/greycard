@@ -565,8 +565,9 @@ Where to get LCPs:
   Windows from `C:\ProgramData\Adobe\CameraRaw\LensProfiles\1.0`, on
   a Mac from
   `/Library/Application Support/Adobe/CameraRaw/LensProfiles/1.0`.
-  They sit in one folder per maker; copy the `.lcp` files themselves, as
-  greycard reads only the profile folder's own files.
+  They sit in one folder per maker, and greycard reads the profile
+  folder's subfolders, so copy in the folders you need as they are, or
+  link in the whole `1.0` folder.
 - **Your own**, made with Adobe Lens Profile Creator for a lens no
   database has.
 

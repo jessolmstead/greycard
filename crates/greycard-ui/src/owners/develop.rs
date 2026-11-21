@@ -336,6 +336,10 @@ pub(crate) struct Develop {
     pub(crate) lens: LensReport,
     /// The lenses the LENS picker offers for it.
     pub(crate) lens_options: Vec<greycard_engine::lens::LensOption>,
+    /// Another list of them come from a look at the profile folder
+    /// while Find a lens is being typed in: held, so its rows do not
+    /// move under the typing, and shown when the field lets go.
+    pub(crate) lens_options_held: Option<Vec<greycard_engine::lens::LensOption>>,
     /// The frame the LENS filter and Maker row were last set for: a
     /// filter typed is kept while it stays open.
     pub(crate) lens_frame: Option<crate::versions::Key>,

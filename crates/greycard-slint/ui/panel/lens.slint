@@ -73,7 +73,7 @@ export component LensSection inherits Section {
             current-index <=> root.lens-maker-index;
             selected(v) => { root.lens-rows-changed(); }
         }
-        LineEdit {
+        find-lens := LineEdit {
             width: 96px;
             text <=> root.lens-filter;
             placeholder-text: @tr("Find a lens");
@@ -85,7 +85,10 @@ export component LensSection inherits Section {
                 if (e.text == Key.Escape) { Typing.done += 1; return accept; }
                 return reject;
             }
-            changed has-focus => { Typing.box-focus(self.has-focus); }
+            changed has-focus => {
+                Typing.box-focus(self.has-focus);
+                Typing.lens-filter = self.has-focus;
+            }
         }
     }
     Rectangle { height: Theme.space-1; }

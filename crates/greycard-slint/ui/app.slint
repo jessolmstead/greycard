@@ -1857,7 +1857,9 @@ export component App inherits Window {
         root.angle-moving = false;
         root.perspective-moving = false;
     }
-    changed shown-tab => { root.turn-sliders-gone(); }
+    // The tab shown changed, by a tab or by a frame frozen in the export
+    // queue: Find a lens, if it had the focus, is gone with its section.
+    changed shown-tab => { root.turn-sliders-gone(); Typing.lens-filter = false; }
     changed crop-order => { root.turn-sliders-gone(); }
     in-out property <float> geo-vertical: 0;
     in-out property <float> geo-horizontal: 0;
@@ -2141,6 +2143,13 @@ export component App inherits Window {
     in property <[string]> lens-makers: ["All"];
     in-out property <int> lens-maker-index: 0;
     in-out property <string> lens-filter: "";
+    // Find a lens has the keys (`Typing.lens-filter`): a list of lenses
+    // that comes meanwhile is held, and shown as soon as it lets go,
+    // however it does (the box destroyed with a tab or the grid too).
+    out property <bool> lens-filter-focused: Typing.lens-filter;
+    changed lens-filter-focused => {
+        if (!root.lens-filter-focused) { root.lens-rows-changed(); }
+    }
     in-out property <bool> lens-profile-on: true;
     in-out property <bool> lens-distortion: true;
     in-out property <bool> lens-ca: true;
@@ -2172,6 +2181,12 @@ export component App inherits Window {
     in-out property <float> lens-defringe-green-amount: 1;
     callback fetch-lenses();
     callback lens-rows-changed();
+    // Asked for when the LENS section is opened, so a lens profile put
+    // in the profile folder while the editor runs is listed.
+    callback lens-profiles-wanted();
+    changed collapsed-lens => {
+        if (!root.collapsed-lens) { root.lens-profiles-wanted(); }
+    }
     in-out property <bool> sharpen-auto-radius: true;
     in-out property <float> sharpen-radius: 0.75;
     in-out property <float> sharpen-iterations: 20;

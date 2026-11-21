@@ -673,14 +673,16 @@ pub(crate) fn lens_makers(
 /// when words are typed and match it, so every mount's lenses do not
 /// swamp the body's own. An off-mount lens is matched on its name and
 /// maker, never the mounts its label adds: "sony" on a Sony body is
-/// not every lens calibrated on Sony A.
+/// not every lens calibrated on Sony A. An Adobe profile's name is its
+/// label, the lens its file names (its choice is the file's path).
 fn lens_listed(o: &greycard_engine::lens::LensOption, filter: &str) -> bool {
     use greycard_edit::LensChoice;
     if !o.off_mount {
         return lens_matches(&format!("{} {}", o.label, o.maker), filter);
     }
     let name = match &o.choice {
-        LensChoice::Database(name) | LensChoice::Lcp(name) => name.as_str(),
+        LensChoice::Database(name) => name.as_str(),
+        LensChoice::Lcp(_) => o.label.as_str(),
         LensChoice::FromFile => return false,
     };
     !filter.trim().is_empty() && lens_matches(&format!("{name} {}", o.maker), filter)
@@ -744,6 +746,52 @@ pub(crate) fn lens_rows(
         keys,
         labels,
         index,
+    }
+}
+
+/// What a picked Adobe profile's row carries, read from its file on a
+/// thread of its own, never the window's, one read at most a row
+/// ([`LensOption::claim_read`]: a row shown again while it is read
+/// asks for none); the LENS section shown again when it is known.
+///
+/// [`LensOption::claim_read`]: greycard_engine::lens::LensOption::claim_read
+fn read_carries_aside(option: &greycard_engine::lens::LensOption, app: &App) {
+    if !option.claim_read() {
+        return;
+    }
+    let (option, weak) = (option.clone(), app.as_weak());
+    let spawned = std::thread::Builder::new()
+        .name("lens profile".into())
+        .spawn(move || {
+            option.carries();
+            let _ = weak.upgrade_in_event_loop(move |app| carries_read(&app, option));
+        });
+    if let Err(e) = spawned {
+        tracing::warn!("lens profile not read for its switches: {e}");
+    }
+}
+
+/// A row's file read aside: the LENS section shown again, if the frame's
+/// rows are still the ones it is in. The read is kept in the row itself,
+/// which every copy of the list shares, so any later draw shows it; a
+/// moment when the state is borrowed is tried again a moment later, so
+/// the switches do not wait for the next draw.
+fn carries_read(app: &App, option: greycard_engine::lens::LensOption) {
+    let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+        return;
+    };
+    let Ok(st) = state.try_borrow() else {
+        let weak = app.as_weak();
+        slint::Timer::single_shot(std::time::Duration::from_millis(20), move || {
+            if let Some(app) = weak.upgrade() {
+                carries_read(&app, option);
+            }
+        });
+        return;
+    };
+    let d = &st.develop;
+    if d.lens_options.contains(&option) {
+        show_lens(&d.lens, &d.lens_options, &d.edit.lens.chosen, app);
     }
 }
 
@@ -899,10 +947,14 @@ fn show_lens_as(
             _ => None,
         }
     } else {
-        options
-            .iter()
-            .find(|o| o.choice == *chosen)
-            .map(|o| o.carries)
+        // A profile picked whose file has not been read: all three meanwhile,
+        // its file read on a thread, and the switches shown again once it is.
+        options.iter().find(|o| o.choice == *chosen).map(|o| {
+            o.carries_known().unwrap_or_else(|| {
+                read_carries_aside(o, app);
+                greycard_engine::lens::Carries::ALL
+            })
+        })
     };
     let has = carries.unwrap_or(greycard_engine::lens::Carries::ALL);
     app.set_lens_has_distortion(has.distortion);
@@ -1698,10 +1750,33 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let st = state.borrow();
+            let mut st = state.borrow_mut();
+            // A list held while Find a lens was typed in, shown now the
+            // field has let go (`lens-filter-focused`).
+            if !app.get_lens_filter_focused()
+                && let Some(held) = st.develop.lens_options_held.take()
+            {
+                st.develop.lens_options = held;
+                let d = &st.develop;
+                show_lens(&d.lens, &d.lens_options, &d.edit.lens.chosen, &app);
+                return;
+            }
             let chosen = greycard_edit::LensChoice::from_key(app.get_lens_choice().as_str());
             show_lens_makers(&st.develop.lens_options, &chosen, &app);
             show_lens_rows(&st.develop.lens_options, &chosen, &app);
+        });
+    }
+    // The LENS section opened: the profile folder walked again behind
+    // the open frame, off the window's thread, so a profile put there
+    // while the editor runs is listed even where a folder's clock does
+    // not move when a file is added. Every open looks too, more cheaply.
+    {
+        let (state, app_weak, worker) = (state.clone(), app.as_weak(), worker.clone());
+        app.on_lens_profiles_wanted(move || {
+            if app_weak.upgrade().is_none() {
+                return;
+            }
+            worker.look_at_lens_profiles(&state.borrow().develop.edit.lens.chosen);
         });
     }
     // The model sheet answered.

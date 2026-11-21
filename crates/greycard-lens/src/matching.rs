@@ -575,7 +575,7 @@ fn is_plain(name: &str) -> bool {
 
 /// Whether two maker names are the same maker: the first token
 /// agrees ("Canon" and "Canon Inc.", "NIKON CORPORATION" and "Nikon").
-fn same_maker(a: &str, b: &str) -> bool {
+pub fn same_maker(a: &str, b: &str) -> bool {
     match (tokens(a).first(), tokens(b).first()) {
         (Some(x), Some(y)) => x == y,
         _ => false,

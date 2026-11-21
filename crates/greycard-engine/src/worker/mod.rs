@@ -425,6 +425,13 @@ pub enum Outcome {
         /// job asked for one and the file was a raw.
         blend: Option<f32>,
     },
+    /// The lenses a picker offers for the open of `generation`, again:
+    /// a look at the profile folder behind the open found another list
+    /// than the one `Opened` carried.
+    LensOptions {
+        generation: u64,
+        options: Vec<crate::lens::LensOption>,
+    },
     Developed {
         generation: u64,
         /// The frame's quarter turns it was developed at, which a
@@ -732,6 +739,9 @@ struct Queue {
     /// A lens database fetched since the worker read its own, for it
     /// to take up before its next develop.
     lenses: Option<Arc<greycard_lens::Database>>,
+    /// The open frame's body and shot, for the window to have the
+    /// profile folder looked at again behind it.
+    lens_look: Option<engine::LensLook>,
     /// The editor's device and queue, handed over once the window has
     /// them, for the engine's GPU ops to run on: the picture they
     /// leave is then the viewport's without a copy.

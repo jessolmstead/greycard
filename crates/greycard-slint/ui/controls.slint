@@ -1105,6 +1105,11 @@ export global Typing {
     // between boxes does not matter. While above zero, the pointer
     // crossing the picture leaves the keys with the box.
     in-out property <int> boxes: 0;
+    // The words that find a lens have the focus: a list of lenses that
+    // comes meanwhile is held until they let go. Set by that box, and
+    // let go of by `close-all` and when the panel's tab is taken away,
+    // since a box destroyed with the focus says nothing itself.
+    in-out property <bool> lens-filter: false;
     public function box-focus(has: bool) {
         self.boxes = has ? self.boxes + 1 : max(0, self.boxes - 1);
     }
@@ -1114,6 +1119,7 @@ export global Typing {
     // changed under the field.
     // A focused slider or text box lets go of the keys the same way.
     public function close-all() {
+        self.lens-filter = false;
         if (self.editing) {
             self.editing = false;
             self.cancel += 1;
