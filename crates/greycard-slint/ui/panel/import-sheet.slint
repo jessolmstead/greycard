@@ -45,8 +45,13 @@ export component ImportSheet inherits Rectangle {
     in property <string> import-backup;
     in-out property <string> import-subfolder;
     in-out property <string> import-name;
-    /// The presets by name, "None" first, and the one chosen.
+    /// The presets as keys, none's empty and first, then each by name,
+    /// and the key chosen. The picker shows `import-preset-labels`, no
+    /// preset's in the window's language, and chooses by place, so a
+    /// preset named "None" is that preset.
     in property <[string]> import-presets;
+    in property <[string]> import-preset-labels;
+    in-out property <int> import-preset-index;
     in-out property <string> import-preset;
     /// What the source holds, or what is being looked for.
     in property <string> import-note;
@@ -228,11 +233,12 @@ export component ImportSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 preset-words := Text { accessible-role: none; text: @tr("Preset"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                                ComboBox {
+                                presets := ComboBox {
                                     accessible-label: preset-words.text;
                                     horizontal-stretch: 1;
-                                    model: root.import-presets;
-                                    current-value <=> root.import-preset;
+                                    model: root.import-preset-labels;
+                                    current-index <=> root.import-preset-index;
+                                    selected(v) => { root.import-preset = root.import-presets[self.current-index]; }
                                 }
                             }
                             FolderRow {

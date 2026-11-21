@@ -57,6 +57,8 @@ design note behind it.
 
 ### Fixes
 
+- The import sheet's preset picker says "None" in the window's language,
+  and a preset named None is that preset.
 - The export sheet's labels are whole in every language: the label
   column is as wide as its longest label.
 - No preset and no look read "None" in the window's language in the

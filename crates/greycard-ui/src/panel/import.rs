@@ -88,7 +88,10 @@ pub(crate) const ADD_IN_PLACE: &str = "Add in place";
 /// reader at 10 MB/s is ten seconds; a read that hangs is forever.
 pub(crate) const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// The picker's word for no preset.
+/// The picker's word for no preset, shown in the window's language
+/// (the plain entry, marked for the catalog in `filter`). Its key is
+/// empty, which no preset's name is, so a preset named "None" is that
+/// preset.
 const NONE: &str = "None";
 
 fn path_text(p: &Option<PathBuf>) -> slint::SharedString {
@@ -162,7 +165,10 @@ fn named<'a>(st: &'a State, name: &str) -> Option<&'a preset::Entry> {
 /// The options the sheet makes, when it makes any.
 fn options(st: &State, app: &App) -> Option<Options> {
     let preset_name = app.get_import_preset();
-    let preset = named(st, &preset_name).map(|e| e.preset.clone());
+    let preset = (!preset_name.is_empty())
+        .then(|| named(st, &preset_name))
+        .flatten()
+        .map(|e| e.preset.clone());
     Some(Options {
         source: st.import.source.clone()?,
         destination: st.import.destination.clone()?,
@@ -499,24 +505,32 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         // The list's own spelling of it: a name remembered before the
         // list's names lost their control characters is still found.
         app.set_import_preset(if kept.preset.is_empty() {
-            NONE.into()
+            slint::SharedString::new()
         } else {
             named(st, &kept.preset)
                 .map_or(kept.preset, |e| e.preset.name.clone())
                 .into()
         });
     }
-    let mut names = vec![slint::SharedString::from(NONE)];
-    names.extend(
-        st.develop
-            .presets
-            .iter()
-            .map(|e| slint::SharedString::from(e.preset.name.as_str())),
-    );
-    if !names.iter().any(|n| *n == app.get_import_preset()) {
-        app.set_import_preset(NONE.into());
-    }
-    app.set_import_presets(ModelRc::new(VecModel::from(names)));
+    let names = st
+        .develop
+        .presets
+        .iter()
+        .map(|e| slint::SharedString::from(e.preset.name.as_str()));
+    let keys: Vec<slint::SharedString> = std::iter::once(slint::SharedString::new())
+        .chain(names.clone())
+        .collect();
+    let labels: Vec<slint::SharedString> = std::iter::once(crate::i18n::text(NONE).into())
+        .chain(names)
+        .collect();
+    let index = keys
+        .iter()
+        .position(|k| *k == app.get_import_preset())
+        .unwrap_or(0);
+    app.set_import_preset(keys[index].clone());
+    app.set_import_presets(ModelRc::new(VecModel::from(keys)));
+    app.set_import_preset_labels(ModelRc::new(VecModel::from(labels)));
+    app.set_import_preset_index(index as i32);
     app.set_import_open(true);
     look_at_folders(st, app);
     match st.import.source.clone() {
@@ -1126,7 +1140,7 @@ mod tests {
         }
         assert!(app.get_import_open());
         assert_eq!(app.get_import_presets().row_count(), 2);
-        assert_eq!(app.get_import_preset(), NONE);
+        assert_eq!(app.get_import_preset(), "", "none, by its key");
         assert!(!app.get_import_ready());
 
         // The search's answer, as its thread would post it.
@@ -1711,5 +1725,71 @@ mod tests {
         assert!(named(&st, "Warm\u{1b} One").is_some());
         drop(st);
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// In French the Preset picker says no preset in French while its
+    /// key stays empty; a develop preset named "None" is listed as
+    /// itself, chosen by its place, and the one the import lays on.
+    #[test]
+    fn a_preset_named_none_is_not_the_pickers_none() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::Key;
+        let app = crate::testing::window(0);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.3;
+        {
+            let mut st = state.borrow_mut();
+            st.develop.presets = ["None", "Warm"]
+                .into_iter()
+                .map(|name| Entry {
+                    path: PathBuf::from(format!("{name}.gcp")),
+                    preset: Preset::from_edit(name, &edit, &[Section::Light]),
+                })
+                .collect();
+            st.import.source = Some(PathBuf::from("/nowhere/card"));
+            st.import.destination = Some(PathBuf::from("/nowhere/pictures"));
+        }
+        let _french = crate::testing::in_language("fr");
+        let word = crate::i18n::text(NONE);
+        assert_ne!(word, NONE, "French has a word for no preset");
+        ask(&mut state.borrow_mut(), &app);
+        crate::testing::settle(&app);
+        let shown = || {
+            ElementHandle::find_by_element_id(&app, "ImportSheet::presets")
+                .next()
+                .expect("the picker")
+                .accessible_value()
+                .unwrap_or_default()
+                .to_string()
+        };
+        let laid_on = || {
+            options(&state.borrow(), &app)
+                .expect("the sheet makes options")
+                .preset
+                .map(|p| p.name)
+        };
+        assert_eq!(shown(), word, "no preset, in French");
+        assert_eq!(app.get_import_preset(), "");
+        assert_eq!(laid_on(), None);
+        // Down the list onto the preset named "None": it is that preset.
+        let (at, size) = crate::testing::by_id(&app, "ImportSheet::presets");
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::press(&app, Key::DownArrow);
+        crate::testing::press(&app, Key::Return);
+        crate::testing::settle(&app);
+        assert_eq!(app.get_import_preset(), NONE);
+        assert_eq!(shown(), NONE);
+        assert_eq!(laid_on().as_deref(), Some(NONE));
+        // And up again: none.
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::press(&app, Key::UpArrow);
+        crate::testing::press(&app, Key::Return);
+        crate::testing::settle(&app);
+        assert_eq!(app.get_import_preset(), "");
+        assert_eq!(shown(), word);
+        assert_eq!(laid_on(), None);
     }
 }

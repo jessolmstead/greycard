@@ -2703,7 +2703,9 @@ export component App inherits Window {
     in-out property <string> import-subfolder: "{date}";
     in-out property <string> import-name: "{name}";
     in property <[string]> import-presets: [];
-    in-out property <string> import-preset: "None";
+    in property <[string]> import-preset-labels: [];
+    in-out property <int> import-preset-index: 0;
+    in-out property <string> import-preset: "";
     in property <string> import-note: "";
     in property <string> import-preview: "";
     /// A word on the folders: the backup on the destination's drive.
@@ -6837,6 +6839,8 @@ export component App inherits Window {
         import-subfolder <=> root.import-subfolder;
         import-name <=> root.import-name;
         import-presets: root.import-presets;
+        import-preset-labels: root.import-preset-labels;
+        import-preset-index <=> root.import-preset-index;
         import-preset <=> root.import-preset;
         import-note: root.import-note;
         import-preview: root.import-preview;
