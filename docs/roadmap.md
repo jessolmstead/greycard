@@ -844,8 +844,10 @@ clears or a tester asks for it.
       editor
 - [ ] Bezier handles on a curve's points, so a point's reach along
       the curve can be set
-- [ ] The crop's overlays: other frameline options, and the grid's
-      line count and spacing chosen so a line can sit near a horizon
+- [ ] The crop's overlays: a choice of guides beside the thirds
+      (golden ratio, golden spiral, diagonals, triangles; asked by a
+      tester), and the grid's line count and spacing chosen so a line
+      can sit near a horizon
 - [ ] History grouped by tool: a run of steps on one tool folded into
       one line that opens, so the timeline reads clean and nothing is
       lost
