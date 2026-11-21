@@ -2657,8 +2657,11 @@ export component App inherits Window {
     /// Ask the desktop for the watermark's PNG.
     callback export-mark-choose();
     /// The export presets by name, the one chosen (empty for none)
-    /// and whether the sheet has moved from it since.
+    /// and whether the sheet has moved from it since; the picker's
+    /// words for them, and the place of the one chosen.
     in-out property <[string]> export-presets: [];
+    in property <[string]> export-preset-labels: [];
+    in-out property <int> export-preset-index: 0;
     in-out property <string> export-preset: "";
     in-out property <bool> export-preset-edited: false;
     callback export-preset-chosen(string);
@@ -6813,6 +6816,8 @@ export component App inherits Window {
         export-border-color <=> root.export-border-color;
         export-mark-choose => { root.export-mark-choose(); }
         export-presets <=> root.export-presets;
+        export-preset-labels: root.export-preset-labels;
+        export-preset-index <=> root.export-preset-index;
         export-preset <=> root.export-preset;
         export-preset-edited <=> root.export-preset-edited;
         export-preset-chosen(n) => { root.export-preset-chosen(n); }

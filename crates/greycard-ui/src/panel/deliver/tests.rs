@@ -451,6 +451,136 @@ fn the_sheet_picks_saves_marks_and_deletes_presets() {
     assert!(state.borrow().window.settings_file.is_none());
 }
 
+/// In French the Preset picker says no preset in French while its key
+/// stays `NO_PRESET`; a preset named that very word is listed as
+/// itself and chosen by its place, never taken for none.
+#[test]
+fn the_preset_picker_says_none_in_the_window_language() {
+    use i_slint_backend_testing::ElementHandle;
+    use slint::platform::Key;
+    let app = crate::testing::window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    state.borrow_mut().window.batch = true;
+    let _french = crate::testing::in_language("fr");
+    let word = crate::i18n::text(NO_PRESET);
+    assert_ne!(word, NO_PRESET, "French has a word for no preset");
+    let named = Sheet {
+        quality: 61.0,
+        ..Sheet::default()
+    };
+    state.borrow_mut().work.export_presets = vec![
+        ExportPreset {
+            name: word.clone(),
+            sheet: named.clone(),
+        },
+        ExportPreset {
+            name: "Web".into(),
+            sheet: Sheet::default(),
+        },
+    ];
+    show_presets_picker(&app, &state.borrow().work.export_presets, None);
+    app.set_export_open(true);
+    crate::testing::settle(&app);
+    let shown = || {
+        let picker = ElementHandle::find_by_element_id(&app, "ExportSheet::presets")
+            .next()
+            .expect("the picker");
+        picker.accessible_value().unwrap_or_default().to_string()
+    };
+    assert_eq!(shown(), word, "no preset, in French");
+    assert_eq!(app.get_export_preset(), NO_PRESET);
+    // The keys move down the list onto the preset of that name: it is
+    // chosen, by its name, and fills the sheet.
+    let (at, size) = crate::testing::by_id(&app, "ExportSheet::presets");
+    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    crate::testing::press(&app, Key::DownArrow);
+    crate::testing::press(&app, Key::Return);
+    crate::testing::settle(&app);
+    assert_eq!(app.get_export_preset(), word.as_str());
+    assert!(read_sheet(&app).same(&named), "the sheet is the preset's");
+    assert_eq!(chosen_preset(&app).as_deref(), Some(word.as_str()));
+    assert_eq!(shown(), word);
+    // And up again: no preset, by its key.
+    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    crate::testing::press(&app, Key::UpArrow);
+    crate::testing::press(&app, Key::Return);
+    crate::testing::settle(&app);
+    assert_eq!(app.get_export_preset(), NO_PRESET);
+    assert_eq!(chosen_preset(&app), None);
+    assert_eq!(shown(), word);
+}
+
+/// The sheet opened on a preset past the first shows that preset: the
+/// place the window sets wins over the picker's own, before the sheet
+/// is up and while it is.
+#[test]
+fn the_sheet_opens_on_the_preset_chosen() {
+    use i_slint_backend_testing::ElementHandle;
+    let app = crate::testing::window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    state.borrow_mut().window.batch = true;
+    let preset = |name: &str| ExportPreset {
+        name: name.into(),
+        sheet: Sheet::default(),
+    };
+    let presets = vec![preset("Web"), preset("Print"), preset("Archive")];
+    show_presets_picker(&app, &presets, Some("Archive"));
+    assert_eq!(app.get_export_preset_index(), 3);
+    app.set_export_open(true);
+    crate::testing::settle(&app);
+    let shown = || {
+        ElementHandle::find_by_element_id(&app, "ExportSheet::presets")
+            .next()
+            .expect("the picker")
+            .accessible_value()
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert_eq!(shown(), "Archive");
+    assert_eq!(app.get_export_preset(), "Archive");
+    // Chosen anew while the sheet is up, and the list changed under it.
+    show_presets_picker(&app, &presets[..2], Some("Print"));
+    crate::testing::settle(&app);
+    assert_eq!(shown(), "Print");
+    assert_eq!(app.get_export_preset_index(), 2);
+}
+
+/// A name that is the picker's own, typed in French with a space
+/// before it, is refused in the words the picker shows.
+#[test]
+fn a_name_for_none_is_refused_in_the_window_language() {
+    use slint::platform::Key;
+    let app = crate::testing::window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    state.borrow_mut().window.batch = true;
+    let _french = crate::testing::in_language("fr");
+    let word = crate::i18n::text(NO_PRESET);
+    assert_ne!(word, NO_PRESET, "French has a word for no preset");
+    show_presets_picker(&app, &[], None);
+    app.set_export_open(true);
+    crate::testing::settle(&app);
+    crate::testing::click_id(&app, "ExportSheet::save-as-button");
+    crate::testing::settle(&app);
+    crate::testing::type_text(&app, " none");
+    crate::testing::press(&app, Key::Return);
+    crate::testing::settle(&app);
+    assert!(
+        state.borrow().work.export_presets.is_empty(),
+        "nothing saved"
+    );
+    let status = app.get_status().to_string();
+    assert!(
+        status.contains(&word) && !status.contains(NO_PRESET),
+        "{status}"
+    );
+}
+
 /// A preset's Delete takes the focus and goes disabled as the
 /// preset it deleted leaves None chosen: Return then is the dead
 /// button's, taken and doing nothing, not the sheet's Export.

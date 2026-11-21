@@ -57,6 +57,8 @@ design note behind it.
 
 ### Fixes
 
+- No preset and no look read "None" in the window's language in the
+  export sheet's and the Look section's pickers.
 - The filter bar's flag chips say their names in the window's language.
 - An export whose edit names a camera profile that is not there says so
   in its report, and the headless export exits 2 as for a missing look.

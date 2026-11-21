@@ -178,8 +178,13 @@ export component ExportSheet inherits Rectangle {
         return max(1, round(max(root.export-width(), root.export-height()) * clamp(root.export-border-width, 0.5, 25) / 100));
     }
     callback export-mark-choose();
-    /// The picker's entries, "None" first, and the one on show.
+    /// The picker's entries, "None" first, and the one on show: keys,
+    /// compared and kept. The picker shows `export-preset-labels`, the
+    /// same list with no preset's word in the window's language, and
+    /// chooses by place, so a preset named that word is still itself.
     in-out property <[string]> export-presets;
+    in property <[string]> export-preset-labels;
+    in-out property <int> export-preset-index;
     in-out property <string> export-preset;
     in-out property <bool> export-preset-edited;
     callback export-preset-chosen(string);
@@ -280,9 +285,9 @@ export component ExportSheet inherits Rectangle {
                         presets := ComboBox {
                             accessible-label: preset-words.text;
                             horizontal-stretch: 1;
-                            model: root.export-presets;
-                            current-value <=> root.export-preset;
-                            selected(v) => { root.naming = false; root.export-preset-chosen(v); }
+                            model: root.export-preset-labels;
+                            current-index <=> root.export-preset-index;
+                            selected(v) => { root.naming = false; root.export-preset = root.export-presets[self.current-index]; root.export-preset-chosen(root.export-preset); }
                         }
                         Text {
                             // Export sheet: after a preset's name once its settings were changed

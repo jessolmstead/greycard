@@ -1556,8 +1556,16 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
                 off: off
                     || (profile_curve
                         && greycard_edit::look::fitted(&st.develop.looks, &name, curve)),
+                // No look's row says so in the window's language (the
+                // plain entry, marked for the catalog in `filter`); its
+                // key stays `look::NONE`, which no look may be named.
+                label: if name == greycard_edit::look::NONE {
+                    crate::i18n::text(&label)
+                } else {
+                    label
+                }
+                .into(),
                 name: name.into(),
-                label: label.into(),
                 note: curves.into(),
                 folded: false,
                 own: false,

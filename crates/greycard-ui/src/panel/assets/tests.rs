@@ -2388,3 +2388,66 @@ fn a_screen_reader_presses_a_look_row_as_a_click_does() {
         )
     });
 }
+
+/// In French the LOOK list's first row says no look in French while
+/// its key stays `look::NONE`; a look named that very word is a row of
+/// its own, chosen by its name.
+#[test]
+fn the_no_look_row_says_none_in_the_window_language() {
+    use greycard_edit::look::{Entry, LookLut, LutChoice, NONE};
+    use i_slint_backend_testing::ElementHandle;
+    let (app, state, _worker) = profile_window();
+    app.set_collapsed_camera(true);
+    app.set_collapsed_look(false);
+    show_looks(&state.borrow(), &LookLut::default(), &app);
+    let english = app
+        .get_look_rows()
+        .row_data(0)
+        .expect("the first row")
+        .label;
+    let _french = crate::testing::in_language("fr");
+    let word = crate::i18n::text(&english);
+    assert_ne!(word, english.as_str(), "French has a word for no look");
+    let entry = |name: &str| Entry {
+        name: name.into(),
+        variant: None,
+        path: std::path::PathBuf::from(format!("/nowhere/{name}.cube")),
+        title: None,
+        size: 33,
+        kind: greycard_core::lut::Kind::Cube3d,
+        encoding: Default::default(),
+        primaries: Default::default(),
+        comments: Vec::new(),
+    };
+    state.borrow_mut().develop.looks = vec![entry(&word), entry("Slide")];
+    show_looks(&state.borrow(), &LookLut::default(), &app);
+    crate::testing::settle(&app);
+    let rows: Vec<crate::LookRow> = app.get_look_rows().iter().collect();
+    assert_eq!(rows[0].name, NONE);
+    assert_eq!(rows[0].label, word.as_str(), "no look, in French");
+    let own = rows
+        .iter()
+        .position(|r| r.name == word.as_str())
+        .expect("the look of that name");
+    assert!(own > 0);
+    let press = |n: usize| {
+        let row = ElementHandle::find_by_element_id(&app, "LookSection::look-row")
+            .nth(n)
+            .expect("the row");
+        assert!(
+            row.accessible_label().unwrap_or_default().contains(&word),
+            "row {n} says its look"
+        );
+        row.invoke_accessible_default_action();
+        crate::testing::settle(&app);
+    };
+    press(own);
+    assert_eq!(app.get_look_name(), word.as_str());
+    assert_eq!(
+        state.borrow().develop.edit.look_lut.lut,
+        LutChoice::Named(word.clone())
+    );
+    press(0);
+    assert_eq!(app.get_look_name(), NONE);
+    assert_eq!(state.borrow().develop.edit.look_lut.lut, LutChoice::None);
+}

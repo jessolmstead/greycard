@@ -248,9 +248,19 @@ pub(crate) fn show_presets_picker(app: &App, presets: &[ExportPreset], chosen: O
                 .map(|p| p.name.as_str().into()),
         )
         .collect();
-    app.set_export_presets(ModelRc::new(VecModel::from(names)));
+    // The picker shows no preset's word in the window's language (the
+    // plain entry, marked for the catalog in `filter`) and the names as
+    // they are; it chooses by place, so the key is never the word.
+    let labels: Vec<slint::SharedString> = std::iter::once(crate::i18n::text(NO_PRESET).into())
+        .chain(names.iter().skip(1).cloned())
+        .collect();
     let chosen = chosen.and_then(|n| sheet::find(presets, n));
-    app.set_export_preset(chosen.map_or(NO_PRESET, |p| p.name.as_str()).into());
+    let key = chosen.map_or(NO_PRESET, |p| p.name.as_str());
+    let index = names.iter().position(|n| n == key).unwrap_or(0);
+    app.set_export_presets(ModelRc::new(VecModel::from(names)));
+    app.set_export_preset_labels(ModelRc::new(VecModel::from(labels)));
+    app.set_export_preset_index(index as i32);
+    app.set_export_preset(key.into());
     show_edited(app, presets);
 }
 
@@ -2433,7 +2443,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 app.set_status(
                     tr!(
                         "{none} is the picker's; choose another name",
-                        none = NO_PRESET
+                        none = crate::i18n::text(NO_PRESET)
                     )
                     .into(),
                 );
