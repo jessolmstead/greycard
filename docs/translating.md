@@ -46,6 +46,17 @@ source, and lists words the window may show that nothing marks for
 translation; `translations/untranslated.txt` holds the ones that are
 data or keys. CI runs it without `--list`.
 
+## Glossaries
+
+The German, Spanish, Italian, Dutch, Polish, and Brazilian Portuguese
+catalogs are drafts no native speaker has read yet. Each has a
+glossary beside it, `translations/<tag>/glossary.md`: the word chosen
+for each of the editor's terms, where it came from, and the
+alternatives, with the conventions the catalog keeps (how a button
+speaks, capitals, keys, and plurals). A reviewer can see there why a
+word was chosen, and correct it there and in the catalog together. A
+new translator is welcome to add one too.
+
 ## Where a string shows
 
 Each entry names the file it comes from (`#:`), and many carry a
