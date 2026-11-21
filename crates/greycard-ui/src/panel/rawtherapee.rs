@@ -1,5 +1,6 @@
 //! RawTherapee's profiles brought in from the window: offered once when
-//! a folder opens holding `.pp3` files beside its frames, then a sheet
+//! a folder opens holding `.pp3` files (or ART's `.arp`) beside its
+//! frames, then a sheet
 //! with the import's dry run as the command prints it, a switch for
 //! writing over the frames with edits here already, the write on a
 //! thread of its own with its progress, and the report again with what

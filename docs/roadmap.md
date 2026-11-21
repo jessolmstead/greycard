@@ -1337,8 +1337,10 @@ clears or a tester asks for it.
 - [ ] The parametric curve's three dividers show where they sit as
       numbers and take a typed value, beside the drag on the graph
       (2026-11-14)
-- [ ] ART's `.arp` profiles read beside a raw as RawTherapee's
-      `.pp3` are: the same key file, found by its extension
+- [ ] ART's `.arp` profiles, what the reader leaves: its black level
+      (a slider of ±2, times 2000 of RawTherapee's) and its Saturation
+      tool named, not carried; the offer and the sheet say RawTherapee
+      for a folder of `.arp` alone, which waits on words
       (pixls, 2026-10-24)
 - [ ] The clipping warnings as a pair of plain buttons, with the
       toolbar (pixls, 2026-10-24)

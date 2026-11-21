@@ -109,8 +109,9 @@ enum Command {
         #[arg(long, value_name = "DIR")]
         dir: Option<PathBuf>,
     },
-    /// Import RawTherapee's .pp3 profiles: for each raw, the profile
-    /// beside it (IMG_0001.CR3.pp3, or IMG_0001.pp3) read, its rank,
+    /// Import RawTherapee's .pp3 profiles, and ART's .arp: for each raw,
+    /// the profile beside it (IMG_0001.CR3.pp3, or IMG_0001.pp3; an .arp
+    /// by the same names is taken first) read, its rank,
     /// color label and trash mark carried into the meta exactly, and
     /// its white balance, exposure, geometry and lens settings, as near
     /// as this engine has them, laid over the edit as one state named

@@ -1,11 +1,11 @@
-//! A RawTherapee profile, a `.pp3`: read for a frame of no known size
-//! and for one with a size, carrying what it sets and carrying every
-//! section. The preset it makes and the edit laid onto a fresh one
+//! A RawTherapee profile, a `.pp3`, or ART's `.arp`: read as each, for
+//! a frame of no known size and for one with a size, carrying what it
+//! sets and carrying every section. The preset it makes and the edit laid onto a fresh one
 //! each write as JSON and read back equal.
 #![no_main]
 
 use greycard_edit::Edit;
-use greycard_edit_io::pp3::{self, Carry, Frame};
+use greycard_edit_io::pp3::{self, Carry, Dialect, Frame};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -21,13 +21,15 @@ fuzz_target!(|data: &[u8]| {
     ];
     for frame in frames {
         for carry in [Carry::Set, Carry::Every] {
-            let Ok(imported) = pp3::read_carrying(text, frame, carry) else {
-                return;
-            };
-            greycard_fuzz::preset_round_trips(&imported.preset, "pp3");
-            let edit = imported.applied(&Edit::default());
-            greycard_fuzz::edit_round_trips(&edit, "pp3 applied");
-            let _ = imported.report();
+            for dialect in Dialect::BY_PRECEDENCE {
+                let Ok(imported) = pp3::read_as(text, frame, carry, dialect) else {
+                    return;
+                };
+                greycard_fuzz::preset_round_trips(&imported.preset, "pp3");
+                let edit = imported.applied(&Edit::default());
+                greycard_fuzz::edit_round_trips(&edit, "pp3 applied");
+                let _ = imported.report();
+            }
         }
     }
 });

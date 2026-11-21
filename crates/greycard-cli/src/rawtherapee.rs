@@ -1,4 +1,5 @@
-//! `greycard rawtherapee`: RawTherapee's .pp3 profiles brought across.
+//! `greycard rawtherapee`: RawTherapee's .pp3 profiles, and ART's .arp,
+//! brought across.
 
 use std::path::PathBuf;
 

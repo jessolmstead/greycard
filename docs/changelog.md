@@ -7,6 +7,8 @@ design note behind it.
 
 ### The window
 
+- ART's `.arp` profiles beside a raw are offered and imported as RawTherapee's `.pp3`
+  are; with both, the `.arp` is read and the `.pp3` named.
 - A draft German translation, not yet read by a native speaker; corrections are welcome
   ([how to send one](https://github.com/jessolmstead/greycard/blob/master/docs/translating.md)).
 - A screen reader can open a frame from the grid or the strip, hears a
@@ -53,9 +55,12 @@ design note behind it.
 
 ### Fixes
 
-- The curve's backdrop no longer shows another mask's histogram, or the Original's, behind the edit's curve.
-- Edit in another program honors the export sheet's Metadata choice; its TIFF carried everything even under None.
-- Report a problem fills in the CPU, as it fills in the system and the graphics card.
+- The curve's backdrop no longer shows another mask's histogram, or the
+  Original's, behind the edit's curve.
+- Edit in another program honors the export sheet's Metadata choice; its
+  TIFF carried everything even under None.
+- Report a problem fills in the CPU, as it fills in the system and the
+  graphics card.
 - A model run refused for memory says so when the card is too small for
   it, where it blamed another program (issue 142).
 - A DNG whose color matrix names no illuminant, as a film scanner's may,

@@ -56,6 +56,22 @@
 //! profile's switch for it, so a lens profile carried leaves the
 //! frame's hand-set amounts as they are unless the profile sets some
 //! (or, forced, has the section at all).
+//!
+//! ART, Alberto Griggio's fork of RawTherapee, writes the same key
+//! file as `.arp` ([`Dialect`]), keeping the sections it took from
+//! RawTherapee under their names and keys, so the one reader reads
+//! both. Where ART changed a meaning this reader relies on, ART's
+//! value is named rather than read by RawTherapee's rule: its
+//! `[Exposure]` black and saturation (the second moved to a tool of
+//! its own), and a white balance kept as multipliers. A read section
+//! ART has switched off (`Enabled=false`, a switch most of the
+//! sections RawTherapee writes have none of) reads as its neutral.
+//! ART's own tools are named as any other section. ART's `exif` lens
+//! mode is RawTherapee's `metadata`; and since ART keeps the cull in
+//! its XMP sidecar by default, an `.arp` carries a rank, a label or a
+//! trash mark only when it sets one, never one cleared.
+
+use std::path::Path;
 
 use greycard_edit::geometry::{Aspect, Crop, Geometry, MIN_CROP};
 use greycard_edit::meta::{Flag, Label, Meta, STARS};
@@ -70,6 +86,59 @@ pub const KNOWN_VERSIONS: std::ops::RangeInclusive<u32> = 340..=353;
 
 /// The name the history and the report give the import's source.
 pub const SOURCE: &str = "RawTherapee";
+
+/// Which editor wrote a profile, told by its file's extension:
+/// RawTherapee's `.pp3`, or ART's `.arp`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Dialect {
+    #[default]
+    RawTherapee,
+    Art,
+}
+
+impl Dialect {
+    /// Each, in the order a profile beside a frame is taken when it has
+    /// both. ART's first: ART is the fork RawTherapee's users came to,
+    /// and RawTherapee never reads an `.arp`, so a frame with both was
+    /// most likely edited in RawTherapee and since in ART. A fixed
+    /// order rather than the newer file's: a copy can reset a file's
+    /// time, and the offer and the import must agree run to run.
+    pub const BY_PRECEDENCE: [Dialect; 2] = [Dialect::Art, Dialect::RawTherapee];
+
+    /// The extension of its profiles, without the dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Dialect::RawTherapee => "pp3",
+            Dialect::Art => "arp",
+        }
+    }
+
+    /// The editor's name, for the report and the history.
+    pub fn name(self) -> &'static str {
+        match self {
+            Dialect::RawTherapee => SOURCE,
+            Dialect::Art => "ART",
+        }
+    }
+
+    /// The dialect of the profile at `path`, by its extension.
+    pub fn of_path(path: &Path) -> Option<Self> {
+        let ext = path.extension()?.to_str()?;
+        Self::BY_PRECEDENCE
+            .into_iter()
+            .find(|d| ext.eq_ignore_ascii_case(d.extension()))
+    }
+
+    /// The profile versions this reader knows. ART numbers its own from
+    /// 1000, apart from RawTherapee's, and is read by its keys' names
+    /// alone, so none of its is too new.
+    fn known_versions(self) -> std::ops::RangeInclusive<u32> {
+        match self {
+            Dialect::RawTherapee => KNOWN_VERSIONS,
+            Dialect::Art => 1000..=u32::MAX,
+        }
+    }
+}
 
 /// A key file, parsed: its sections in the order the file has them,
 /// each with its keys in order. A section named twice is one section,
@@ -258,6 +327,8 @@ impl Rated {
 /// A profile read, with what came across and what could not.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Imported {
+    /// The editor that wrote it.
+    pub dialect: Dialect,
     /// `[Version] AppVersion`, as written.
     pub app_version: Option<String>,
     /// `[Version] Version`, the profile's own version.
@@ -319,15 +390,16 @@ impl Imported {
     /// A word on the profile's version when it is not one this reader
     /// knows; none when it is.
     pub fn version_note(&self) -> Option<String> {
+        let known = self.dialect.known_versions();
         match self.version {
             None => Some("no profile version; read as a current one".into()),
-            Some(v) if v > *KNOWN_VERSIONS.end() => Some(format!(
+            Some(v) if v > *known.end() => Some(format!(
                 "profile version {v} is newer than this reader knows ({}); read as that",
-                KNOWN_VERSIONS.end()
+                known.end()
             )),
-            Some(v) if v < *KNOWN_VERSIONS.start() => Some(format!(
+            Some(v) if v < *known.start() => Some(format!(
                 "profile version {v} is older than this reader knows ({}); read as that",
-                KNOWN_VERSIONS.start()
+                known.start()
             )),
             Some(_) => None,
         }
@@ -336,9 +408,10 @@ impl Imported {
     /// Where the profile came from, in words: "RawTherapee 5.10,
     /// profile version 351".
     pub fn source(&self) -> String {
+        let name = self.dialect.name();
         let app = match self.app_version.as_deref().map(str::trim) {
-            Some(v) if !v.is_empty() => format!("{SOURCE} {v}"),
-            _ => SOURCE.to_string(),
+            Some(v) if !v.is_empty() => format!("{name} {v}"),
+            _ => name.to_string(),
         };
         match self.version {
             Some(v) => format!("{app}, profile version {v}"),
@@ -376,7 +449,12 @@ pub fn read(text: &str, frame: Frame) -> Result<Imported> {
 
 /// Parse a profile and map it for `frame`, carrying as `carry` says.
 pub fn read_carrying(text: &str, frame: Frame, carry: Carry) -> Result<Imported> {
-    Ok(map(&parse(text)?, frame, carry))
+    read_as(text, frame, carry, Dialect::RawTherapee)
+}
+
+/// [`read_carrying`] for a profile `dialect` wrote.
+pub fn read_as(text: &str, frame: Frame, carry: Carry, dialect: Dialect) -> Result<Imported> {
+    Ok(map(&parse(text)?, frame, carry, dialect))
 }
 
 /// The transforms' shared settings: AutoFill and the scales, read
@@ -420,9 +498,20 @@ const READ: &[&str] = &[
     "CACorrection",
 ];
 
-/// The profile, mapped, carrying as `carry` says.
-pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
+/// The profile `dialect` wrote, mapped, carrying as `carry` says.
+pub fn map(p: &Profile, frame: Frame, carry: Carry, dialect: Dialect) -> Imported {
     let every = carry == Carry::Every;
+    let art = dialect == Dialect::Art;
+    // A read section switched off reads as its neutral: ART gives a
+    // switch to tools RawTherapee has none for, its Exposure among them.
+    let off = |section: &str| p.flag(section, "Enabled") == Some(false);
+    let num = |section: &str, key: &str| {
+        if off(section) {
+            Some(0.0)
+        } else {
+            p.num(section, key)
+        }
+    };
     let mut edit = Edit::default();
     let mut sections = Vec::new();
     let mut parts = Vec::new();
@@ -432,7 +521,10 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
     let mut skipped = Vec::new();
 
     // The meta, exactly; a value out of RawTherapee's range is named
-    // rather than held to it.
+    // rather than held to it. ART keeps the cull in its XMP sidecar by
+    // default and writes no rank, no label and no trash mark here
+    // whatever it is, so from an `.arp` only a label or a trash mark set
+    // is carried: never one cleared.
     let mut rated = Rated::default();
     if let Some(rank) = p.int("General", "Rank") {
         match u8::try_from(rank).ok().filter(|r| *r <= STARS) {
@@ -446,7 +538,7 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
             None => skipped.push(format!("General Rank {rank}")),
         }
     }
-    if let Some(n) = p.int("General", "ColorLabel") {
+    if let Some(n) = p.int("General", "ColorLabel").filter(|n| !(art && *n == 0)) {
         match usize::try_from(n).ok().and_then(|i| Label::ALL.get(i)) {
             Some(label) => {
                 rated.label = Some(*label);
@@ -458,7 +550,7 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
             None => skipped.push(format!("General ColorLabel {n}")),
         }
     }
-    if let Some(trash) = p.flag("General", "InTrash") {
+    if let Some(trash) = p.flag("General", "InTrash").filter(|t| *t || !art) {
         rated.trash = Some(trash);
         if trash {
             exact.push("reject".into());
@@ -468,7 +560,7 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
     // Exposure: the compensation in stops is the same number on a
     // different tone pipeline.
     let wanted = |v: &f64| every || *v != 0.0;
-    if let Some(ev) = p.num("Exposure", "Compensation").filter(wanted) {
+    if let Some(ev) = num("Exposure", "Compensation").filter(wanted) {
         edit.light.exposure = (ev as f32).clamp(-5.0, 5.0);
         parts.push(Part::LightExposure);
         if ev == 0.0 {
@@ -480,9 +572,12 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
     // The black point, on RawTherapee's 0..65535 after the exposure:
     // a positive one takes that much of white to black, which here is
     // a crush by a fraction of mid grey. A negative one lifts by a
-    // rule of its own, and is named.
-    if let Some(black) = p.num("Exposure", "Black").filter(wanted) {
-        if black > 0.0 {
+    // rule of its own, and is named. ART's black is on a scale of its
+    // own, and is named too.
+    if let Some(black) = num("Exposure", "Black").filter(wanted) {
+        if art && black != 0.0 {
+            skipped.push("Exposure Black".into());
+        } else if black > 0.0 {
             let of_grey = black / 65535.0 / f64::from(greycard_core::develop::noise::MID_GREY);
             edit.light.tone.blacks = (-of_grey as f32).clamp(-0.3, 0.0);
             parts.push(Part::LightBlacks);
@@ -495,8 +590,13 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
         }
     }
     // Saturation, ±100 with -100 grey, onto the global chroma scale
-    // whose -1 is grey too.
-    if let Some(s) = p.num("Exposure", "Saturation").filter(wanted) {
+    // whose -1 is grey too. ART moved its saturation to a tool of its
+    // own, so one under its Exposure is not one it wrote, and is named.
+    if art {
+        if num("Exposure", "Saturation").is_some_and(|s| s != 0.0) {
+            skipped.push("Exposure Saturation".into());
+        }
+    } else if let Some(s) = num("Exposure", "Saturation").filter(wanted) {
         edit.color.saturation = (s as f32 / 100.0).clamp(-1.0, 1.0);
         parts.push(Part::ColorSaturation);
         if s == 0.0 {
@@ -506,12 +606,12 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
         }
     }
     for key in ["Brightness", "Contrast", "HighlightCompr"] {
-        if p.num("Exposure", key).is_some_and(|v| v != 0.0) {
+        if num("Exposure", key).is_some_and(|v| v != 0.0) {
             skipped.push(format!("Exposure {key}"));
         }
     }
     for key in ["Curve", "Curve2"] {
-        if p.get("Exposure", key).is_some_and(|c| !is_linear_curve(c)) {
+        if !off("Exposure") && p.get("Exposure", key).is_some_and(|c| !is_linear_curve(c)) {
             skipped.push(format!("Exposure {key}"));
         }
     }
@@ -532,7 +632,11 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
             edit.white_balance = WhiteBalance::AsShot;
             sections.push(Section::WhiteBalance);
             exact.push("white balance as shot".into());
-        } else if method.to_ascii_lowercase().starts_with("auto") {
+        } else if method.to_ascii_lowercase().starts_with("auto")
+            || (art && !matches!(method, "Custom" | "CustomTemp"))
+        {
+            // ART's other settings keep the white as multipliers, which
+            // the temperature beside them does not say.
             skipped.push(format!("White Balance {method}"));
         } else if let Some(t) = p.num("White Balance", "Temperature").filter(|t| *t > 0.0) {
             let green = p
@@ -566,7 +670,7 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
         .unwrap_or(0);
     let hflip = p.flag("Coarse Transformation", "HorizontalFlip") == Some(true);
     let vflip = p.flag("Coarse Transformation", "VerticalFlip") == Some(true);
-    let angle = p.num("Rotation", "Degree").filter(|d| *d != 0.0).map(|d| {
+    let angle = num("Rotation", "Degree").filter(|d| *d != 0.0).map(|d| {
         (d as f32).clamp(
             -greycard_edit::geometry::MAX_ANGLE,
             greycard_edit::geometry::MAX_ANGLE,
@@ -700,11 +804,17 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
 
     // The lens: a profile is lensfun's here whichever RawTherapee
     // took, its three corrections switched as there. An LCP mode with
-    // no file named is no profile there (`useLcp`).
+    // no file named is no profile there (`useLcp`). ART's `exif` is
+    // RawTherapee's `metadata`.
     let mode = p
         .get("LensProfile", "LcMode")
         .map(str::trim)
         .unwrap_or("none");
+    let mode = if art && mode == "exif" {
+        "metadata"
+    } else {
+        mode
+    };
     let no_lcp = mode == "lcp"
         && p.get("LensProfile", "LCPFile")
             .is_none_or(|f| f.trim().is_empty());
@@ -748,7 +858,7 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
         parts.push(Part::LensProfile);
         neutral.push("no lens profile".into());
     }
-    if let Some(a) = p.num("Distortion", "Amount").filter(wanted) {
+    if let Some(a) = num("Distortion", "Amount").filter(wanted) {
         let (w, h) = frame.size.unwrap_or((3, 2));
         edit.lens.manual = poly3_for(a, w as f64, h as f64).clamp(
             -greycard_edit::lens::MAX_MANUAL as f64,
@@ -764,8 +874,8 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
     // The hand-set aberration is a part of its own, apart from the
     // profile's switch: carried when the profile sets it, or forced
     // with the section there, and otherwise the frame's own.
-    let red = p.num("CACorrection", "Red").unwrap_or(0.0);
-    let blue = p.num("CACorrection", "Blue").unwrap_or(0.0);
+    let red = num("CACorrection", "Red").unwrap_or(0.0);
+    let blue = num("CACorrection", "Blue").unwrap_or(0.0);
     if red != 0.0 || blue != 0.0 || (every && p.keys("CACorrection").is_some()) {
         let m = greycard_edit::lens::MAX_MANUAL_CA;
         edit.lens.ca_red = (red as f32).clamp(-m, m);
@@ -811,12 +921,13 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
         ..Choice::default()
     };
     Imported {
+        dialect,
         app_version: p.get("Version", "AppVersion").map(str::to_string),
         version: p
             .int("Version", "Version")
             .and_then(|v| u32::try_from(v).ok()),
         rated,
-        preset: Preset::from_choice(SOURCE, &edit, &choice),
+        preset: Preset::from_choice(dialect.name(), &edit, &choice),
         geometry,
         keeps_crop,
         exact,
@@ -949,7 +1060,7 @@ pub fn import_into(sidecar: &mut Sidecar, imported: &Imported) -> Landed {
     let edit = imported.has_edit()
         && sidecar.record_as(
             imported.applied(&sidecar.current),
-            Some(history::import_label(SOURCE)),
+            Some(history::import_label(imported.dialect.name())),
         );
     Landed { meta, edit }
 }
@@ -1842,5 +1953,271 @@ Method=amaze
                 ),
             ]
         );
+    }
+
+    /// A profile of the shape ART writes, composed for the tests: the
+    /// sections it kept from RawTherapee, its Exposure with a switch
+    /// and the highlight method in it (and a saturation of the old
+    /// kind, as a profile carried forward from RawTherapee's has), and
+    /// tools of its own. The cull as ART's default leaves it here: no
+    /// rank, and whatever label and trash mark were set.
+    const ART_SAMPLE: &str = "\
+[Version]
+AppVersion=1.25
+Version=1048
+
+[General]
+ColorLabel=4
+InTrash=false
+
+[Exposure]
+Enabled=true
+HLRecovery=Blend
+Compensation=0.7
+Black=0.01
+Saturation=25
+
+[Saturation]
+Enabled=true
+Saturation=20
+Vibrance=10
+
+[ToneCurve]
+Enabled=true
+Contrast=15
+
+[Local Contrast]
+Enabled=true
+
+[Smoothing]
+Enabled=true
+
+[ColorCorrection]
+Enabled=false
+
+[White Balance]
+Enabled=true
+Setting=CustomTemp
+Temperature=5200
+Green=1.04
+Equal=1
+
+[Crop]
+Enabled=true
+X=600
+Y=400
+W=4800
+H=3200
+FixedRatio=true
+Ratio=3:2
+
+[Coarse Transformation]
+Rotate=0
+HorizontalFlip=true
+VerticalFlip=false
+
+[Rotation]
+Degree=1.5
+
+[LensProfile]
+LcMode=lfauto
+UseDistortion=true
+UseVignette=true
+UseCA=false
+";
+
+    fn art(text: &str, carry: Carry) -> Imported {
+        read_as(text, frame(6000, 4000), carry, Dialect::Art).unwrap()
+    }
+
+    #[test]
+    fn a_profile_s_dialect_is_its_extension() {
+        let of = |name: &str| Dialect::of_path(Path::new(name));
+        assert_eq!(of("/s/IMG_0001.CR3.arp"), Some(Dialect::Art));
+        assert_eq!(of("IMG_0001.ARP"), Some(Dialect::Art));
+        assert_eq!(of("IMG_0001.pp3"), Some(Dialect::RawTherapee));
+        assert_eq!(of("IMG_0001.xmp"), None);
+        assert_eq!(of("arp"), None);
+        assert_eq!(Dialect::BY_PRECEDENCE[0], Dialect::Art);
+    }
+
+    #[test]
+    fn art_s_shared_keys_map_as_rawtherapee_s_and_its_own_tools_are_named() {
+        let i = art(ART_SAMPLE, Carry::Set);
+        let rt = read(ART_SAMPLE, frame(6000, 4000)).unwrap();
+        // The label set comes across; no rank, and the trash mark
+        // unset clears nothing.
+        assert_eq!(
+            i.rated,
+            Rated {
+                rating: None,
+                label: Some(Label::Blue),
+                trash: None,
+            }
+        );
+        let (e, by_rt) = (i.applied(&Edit::default()), rt.applied(&Edit::default()));
+        assert_eq!(e.light.exposure, 0.7);
+        // The keys the two share land alike.
+        assert_eq!(e.white_balance, by_rt.white_balance);
+        assert!(matches!(e.white_balance, WhiteBalance::Custom { .. }));
+        assert_eq!(e.geometry, by_rt.geometry);
+        assert_eq!(e.geometry.angle, 1.5);
+        assert!(e.geometry.crop.is_some() && e.geometry.flip);
+        assert_eq!(e.lens, by_rt.lens);
+        assert!(e.lens.profile);
+        // ART's black is not RawTherapee's, nor is a saturation under
+        // its Exposure the one its Saturation tool sets: named, and
+        // nothing set from them, where RawTherapee's rule reads both.
+        assert!(
+            by_rt.light.tone.blacks < 0.0,
+            "RawTherapee's rule reads one"
+        );
+        assert!(by_rt.color.saturation > 0.0);
+        assert_eq!(e.light.tone.blacks, 0.0);
+        assert_eq!(e.color.saturation, 0.0);
+        assert!(!i.preset.parts.contains(&Part::LightBlacks));
+        assert!(!i.preset.parts.contains(&Part::ColorSaturation));
+        assert_eq!(
+            i.skipped,
+            [
+                "Exposure Black",
+                "Exposure Saturation",
+                "Saturation",
+                "ToneCurve",
+                "Local Contrast",
+                "Smoothing"
+            ]
+        );
+        assert_eq!(i.source(), "ART 1.25, profile version 1048");
+        assert_eq!(i.version_note(), None);
+        assert_eq!(i.preset.name, "ART");
+        // Forced, still nothing of the saturation: ART's is elsewhere.
+        let every = art(ART_SAMPLE, Carry::Every);
+        assert!(!every.preset.parts.contains(&Part::ColorSaturation));
+        assert!(!every.neutral.iter().any(|n| n.contains("saturation")));
+        // A temperature set the RawTherapee way is read too.
+        let custom = art(
+            &ART_SAMPLE.replace("Setting=CustomTemp", "Setting=Custom"),
+            Carry::Set,
+        );
+        assert_eq!(
+            custom.applied(&Edit::default()).white_balance,
+            e.white_balance
+        );
+    }
+
+    #[test]
+    fn art_s_cull_never_clears_one_and_its_exif_lens_is_the_file_s_own() {
+        // ART's default: the cull in its XMP, the profile's at nothing.
+        let i = art("[General]\nColorLabel=0\nInTrash=false\n", Carry::Set);
+        assert!(i.rated.is_empty(), "{:?}", i.rated);
+        assert!(i.exact.is_empty());
+        // RawTherapee's carries both, as it always has.
+        let rt = read("[General]\nColorLabel=0\nInTrash=false\n", Frame::default()).unwrap();
+        assert_eq!(
+            (rt.rated.label, rt.rated.trash),
+            (Some(Label::None), Some(false))
+        );
+        // A rank, a label and a trash mark set come across.
+        let set = art(
+            "[General]\nRank=4\nColorLabel=2\nInTrash=true\n",
+            Carry::Set,
+        );
+        assert_eq!(
+            set.rated,
+            Rated {
+                rating: Some(4),
+                label: Some(Label::Yellow),
+                trash: Some(true),
+            }
+        );
+        // ART's `exif` is RawTherapee's `metadata`; to RawTherapee it
+        // is no mode at all.
+        let lens =
+            "[LensProfile]\nLcMode=exif\nUseDistortion=true\nUseVignette=false\nUseCA=true\n";
+        let i = art(lens, Carry::Set);
+        let e = i.applied(&Edit::default());
+        assert!(e.lens.profile && e.lens.distortion && !e.lens.vignetting);
+        assert!(e.lens.chromatic_aberration);
+        assert_eq!(
+            i.approximated,
+            ["lens profile (lensfun for the file's own)"]
+        );
+        assert!(i.skipped.is_empty());
+        let rt = read(lens, Frame::default()).unwrap();
+        assert_eq!(rt.skipped, ["LensProfile LcMode exif"]);
+    }
+
+    #[test]
+    fn art_s_switched_off_tools_and_multiplier_whites_are_not_read() {
+        // A tool switched off is nothing set, and nothing said.
+        let off = "[Exposure]\nEnabled=false\nCompensation=1.5\nBlack=0.2\n\
+                   [Distortion]\nEnabled=false\nAmount=0.1\n";
+        let i = art(off, Carry::Set);
+        assert!(!i.has_edit(), "{:?}", i.preset);
+        assert!(i.skipped.is_empty(), "{:?}", i.skipped);
+        // Forced, it is the neutral it means.
+        let i = art(off, Carry::Every);
+        let mut developed = Edit::default();
+        developed.light.exposure = 0.4;
+        developed.lens.manual = -0.05;
+        let e = i.applied(&developed);
+        assert_eq!((e.light.exposure, e.lens.manual), (0.0, 0.0));
+        // A white kept as multipliers: the temperature beside it is not
+        // the white, so it is named.
+        for setting in ["CustomMult", "CustomMultLegacy"] {
+            let i = art(
+                &format!(
+                    "[White Balance]\nEnabled=true\nSetting={setting}\nTemperature=5000\n\
+                     Green=1\nMultipliers=2.1;1;1.6\n"
+                ),
+                Carry::Set,
+            );
+            assert!(i.preset.is_empty(), "{setting}");
+            assert_eq!(i.skipped, [format!("White Balance {setting}")]);
+        }
+        let i = art(
+            "[White Balance]\nSetting=CustomTemp\nTemperature=3000\nGreen=1\n",
+            Carry::Set,
+        );
+        assert_eq!(
+            i.preset.edit.white_balance,
+            WhiteBalance::Custom {
+                temperature: 3000.0,
+                tint: 0.0
+            }
+        );
+        // A saturation under ART's Exposure is not one ART wrote.
+        let i = art("[Exposure]\nSaturation=30\n", Carry::Set);
+        assert!(i.preset.is_empty());
+        assert_eq!(i.skipped, ["Exposure Saturation"]);
+    }
+
+    #[test]
+    fn art_s_versions_and_a_malformed_arp() {
+        let older = art("[Version]\nVersion=351\n[General]\nRank=1\n", Carry::Set);
+        assert_eq!(
+            older.version_note().as_deref(),
+            Some("profile version 351 is older than this reader knows (1000); read as that")
+        );
+        let newer = art("[Version]\nVersion=4000\n", Carry::Set);
+        assert_eq!(newer.version_note(), None);
+        assert_eq!(newer.source(), "ART, profile version 4000");
+        // Refused as a malformed pp3 is.
+        for text in ["", "not a profile\nRank=3"] {
+            let e = read_as(text, Frame::default(), Carry::Set, Dialect::Art).unwrap_err();
+            assert_eq!(
+                e.to_string(),
+                read(text, Frame::default()).unwrap_err().to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn an_art_import_is_named_for_art() {
+        let mut sidecar = Sidecar::default();
+        let landed = import_into(&mut sidecar, &art(ART_SAMPLE, Carry::Set));
+        assert!(landed.meta && landed.edit);
+        assert_eq!(sidecar.current_label.as_deref(), Some("Imported from ART"));
     }
 }

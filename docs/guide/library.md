@@ -596,8 +596,14 @@ A profile named after the raw with its extension replaced
 (`IMG_0001.pp3`) belongs to the raw: the camera's JPEG beside it
 doesn't take it.
 
+ART's `.arp` profiles are found and read the same way, and imported as
+"Imported from ART". ART's own tools, and the settings it keeps
+differently (its black level, its saturation, and a white balance set
+as multipliers), are listed as having no place here. When a frame has
+both, the `.arp` is read and the report names the `.pp3` beside it.
+
 **Import...** opens a sheet with what the import would do, a few lines
-a frame: the profile and the RawTherapee version that wrote it, what
+a frame: the profile and the RawTherapee or ART version that wrote it, what
 comes across exactly (the stars, the color label, the trash mark as a
 reject, the lens profile's switches, the angle and turns), what comes
 across as a likeness (the exposure, the white balance, the crop, the

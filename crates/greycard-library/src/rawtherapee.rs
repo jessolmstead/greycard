@@ -1,5 +1,6 @@
 //! RawTherapee's processing profiles brought across: for each frame,
-//! the `.pp3` beside it read by [`greycard_edit_io::pp3`], its rank, color
+//! the `.pp3` beside it (or ART's `.arp`, the same key file) read by
+//! [`greycard_edit_io::pp3`], its rank, color
 //! label and trash mark into the meta exactly, and its white balance,
 //! exposure, geometry and lens settings, as near as this engine has
 //! them, laid over the frame's edit as one state named for the import.
@@ -177,12 +178,20 @@ impl FrameReport {
         matches!(self.fate, Fate::Unchanged | Fate::Would | Fate::Wrote)
     }
 
+    /// The editor whose profile it is, by the profile's extension:
+    /// "RawTherapee", or "ART".
+    fn editor(&self) -> &'static str {
+        pp3::Dialect::of_path(&self.profile)
+            .unwrap_or_default()
+            .name()
+    }
+
     /// What it writes, in words: "the meta and a state \"Imported from
     /// RawTherapee\"".
     fn what(&self) -> String {
         let state = format!(
             "a state \"{}\"",
-            greycard_edit::history::import_label(pp3::SOURCE)
+            greycard_edit::history::import_label(self.editor())
         );
         match (self.meta, self.edit) {
             (true, true) => format!("the meta and {state}"),
@@ -237,10 +246,14 @@ impl FrameReport {
             line(
                 "  forced",
                 match self.here {
-                    Here::History => "over its history here, RawTherapee's neutral settings too",
-                    Here::Meta | Here::Nothing => "over its stars, label and flag set here",
-                }
-                .to_string(),
+                    Here::History => format!(
+                        "over its history here, {}'s neutral settings too",
+                        self.editor()
+                    ),
+                    Here::Meta | Here::Nothing => {
+                        "over its stars, label and flag set here".to_string()
+                    }
+                },
             );
         }
         if !self.replaced.is_empty() {
@@ -473,7 +486,9 @@ impl std::fmt::Display for Report {
 /// `.DNG`) both take it, as they always did. A picture takes it only
 /// when no raw of its name (an `.ORI` aside) is beside it, so the
 /// camera's JPEG of a raw and JPEG pair does not take the raw's lens
-/// profile, white balance and exposure.
+/// profile, white balance and exposure. ART's `.arp` is found by the
+/// same two names, and taken before RawTherapee's when a frame has both
+/// ([`pp3::Dialect::BY_PRECEDENCE`]).
 pub fn profile_beside(file: &Path) -> Option<PathBuf> {
     profile_for(file, &mut RawStems::default())
 }
@@ -514,13 +529,30 @@ impl RawStems {
 
 /// [`profile_beside`], each folder's raws listed once in `stems`.
 fn profile_for(file: &Path, stems: &mut RawStems) -> Option<PathBuf> {
+    profiles_for(file, stems).into_iter().next()
+}
+
+/// Every profile beside `file`, an editor's at most each, in
+/// [`pp3::Dialect::BY_PRECEDENCE`]'s order: ART's `.arp` by either
+/// name, then RawTherapee's `.pp3`. The first is read; the rest are
+/// named in the report.
+fn profiles_for(file: &Path, stems: &mut RawStems) -> Vec<PathBuf> {
+    pp3::Dialect::BY_PRECEDENCE
+        .iter()
+        .filter_map(|d| dialect_profile_for(file, d.extension(), stems))
+        .collect()
+}
+
+/// The profile of extension `ext` beside `file`, by either name.
+fn dialect_profile_for(file: &Path, ext: &str, stems: &mut RawStems) -> Option<PathBuf> {
     let mut name = file.file_name()?.to_os_string();
-    name.push(".pp3");
+    name.push(".");
+    name.push(ext);
     let appended = file.with_file_name(name);
     if appended.is_file() {
         return Some(appended);
     }
-    let replaced = file.with_extension("pp3");
+    let replaced = file.with_extension(ext);
     if replaced == file || !replaced.is_file() {
         return None;
     }
@@ -693,7 +725,17 @@ fn sidecar_for(file: &Path) -> Result<Sidecar, String> {
 /// original takes it: the frame's other versions are as they were, as a
 /// preset laid over the frame leaves them.
 fn import_frame(file: &Path, options: &Options, stems: &mut RawStems) -> Option<FrameReport> {
-    let profile = profile_for(file, stems)?;
+    let mut found = profiles_for(file, stems).into_iter();
+    let profile = found.next()?;
+    let dialect = pp3::Dialect::of_path(&profile).unwrap_or_default();
+    // The other profiles beside it, never read in its place: named, so
+    // that one which will not read does not hide them.
+    let others: Vec<String> = found
+        .map(|p| {
+            let name = p.file_name().unwrap_or_default().to_string_lossy();
+            format!("{name}, beside it too")
+        })
+        .collect();
     let mut report = FrameReport {
         file: file.to_path_buf(),
         profile: profile.clone(),
@@ -708,7 +750,10 @@ fn import_frame(file: &Path, options: &Options, stems: &mut RawStems) -> Option<
         versions: 0,
         fate: Fate::Unchanged,
     };
-    let unreadable = |mut report: FrameReport, why: String| {
+    let unreadable = |mut report: FrameReport, mut why: String| {
+        for other in &others {
+            why.push_str(&format!("; not read: {other}"));
+        }
         report.fate = Fate::Unreadable(why);
         Some(report)
     };
@@ -738,12 +783,15 @@ fn import_frame(file: &Path, options: &Options, stems: &mut RawStems) -> Option<
     } else {
         pp3::Carry::Set
     };
-    let imported = match pp3::read_carrying(&text, frame, carry) {
+    let imported = match pp3::read_as(&text, frame, carry, dialect) {
         Ok(i) => i,
         Err(e) => return unreadable(report, format!("{}: {e}", profile.display())),
     };
     report.source = imported.source();
     report.said = imported.report();
+    for other in &others {
+        report.said.push(("not read", other.clone()));
+    }
     report.skipped = imported.skipped.clone();
     if here == Here::Meta {
         let mut after = sidecar.meta.clone();
@@ -835,6 +883,67 @@ Enabled=true
         // RawTherapee's own naming wins when both are there.
         std::fs::write(dir.join("IMG_0001.CR3.pp3"), PROFILE).unwrap();
         assert_eq!(profile_beside(&raw), Some(dir.join("IMG_0001.CR3.pp3")));
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// ART's `.arp` is found by the same two names, taken before a
+    /// `.pp3` beside the same frame, which the report names; it is
+    /// imported under ART's name, and one that will not read is said
+    /// as a `.pp3` is.
+    #[test]
+    fn an_art_profile_is_found_as_a_pp3_is_and_taken_first() {
+        let dir = scratch("arp-names");
+        let raw = dir.join("IMG_0001.CR3");
+        let jpeg = dir.join("IMG_0001.JPG");
+        std::fs::write(&raw, b"").unwrap();
+        std::fs::write(&jpeg, b"").unwrap();
+        std::fs::write(dir.join("IMG_0001.arp"), PROFILE).unwrap();
+        assert_eq!(profile_beside(&raw), Some(dir.join("IMG_0001.arp")));
+        assert_eq!(profile_beside(&jpeg), None, "the raw's, not its JPEG's");
+        std::fs::write(dir.join("IMG_0001.CR3.arp"), PROFILE).unwrap();
+        assert_eq!(profile_beside(&raw), Some(dir.join("IMG_0001.CR3.arp")));
+        // RawTherapee's beside it too: ART's is read, the other named.
+        std::fs::write(
+            dir.join("IMG_0001.CR3.pp3"),
+            PROFILE.replace("Compensation=-0.7", "Compensation=1"),
+        )
+        .unwrap();
+        assert_eq!(profile_beside(&raw), Some(dir.join("IMG_0001.CR3.arp")));
+        assert_eq!(waiting_in(&dir), 1);
+        let dry = one(&raw, write(false, false)).unwrap();
+        assert_eq!(dry.profile, dir.join("IMG_0001.CR3.arp"));
+        assert_eq!(dry.source, "ART 5.10, profile version 351");
+        assert!(
+            dry.said
+                .contains(&("not read", "IMG_0001.CR3.pp3, beside it too".to_string()))
+        );
+        assert!(dry.lines(Voice::Command).contains(&(
+            "  would write".to_string(),
+            "the meta and a state \"Imported from ART\"".to_string()
+        )));
+        assert_eq!(fate(&raw, write(true, false)), Some(Fate::Wrote));
+        let sidecar = Sidecar::load(&raw).unwrap().unwrap();
+        assert_eq!(sidecar.current_label.as_deref(), Some("Imported from ART"));
+        assert_eq!(sidecar.current.light.exposure, -0.7);
+        // One that will not read is that frame's line.
+        let other = dir.join("IMG_0002.CR3");
+        std::fs::write(&other, b"").unwrap();
+        std::fs::write(dir.join("IMG_0002.CR3.arp"), "not a profile").unwrap();
+        assert!(matches!(
+            fate(&other, write(true, false)),
+            Some(Fate::Unreadable(_))
+        ));
+        assert!(Sidecar::find(&other).is_none());
+        // With a `.pp3` beside it, that is named and not read instead.
+        std::fs::write(dir.join("IMG_0002.CR3.pp3"), PROFILE).unwrap();
+        let Some(Fate::Unreadable(why)) = fate(&other, write(true, false)) else {
+            panic!("unreadable");
+        };
+        assert!(
+            why.ends_with("; not read: IMG_0002.CR3.pp3, beside it too"),
+            "{why}"
+        );
+        assert!(Sidecar::find(&other).is_none());
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
