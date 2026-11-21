@@ -289,8 +289,7 @@ fn a_field_taken_away_while_open_hands_the_keys_back() {
     testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     testing::type_text(&app, "1");
     assert!(keys.borrow().is_empty(), "typed into the field");
-    let (at, size) = testing::labeled(&app, "Crop");
-    testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    testing::click_panel_tab(&app, "Crop");
     assert_eq!(app.get_panel_tab(), "Crop");
     testing::press(&app, "3");
     assert_eq!(*keys.borrow(), ["3"], "the rating key reached the window");

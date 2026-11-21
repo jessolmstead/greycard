@@ -421,7 +421,7 @@ fn the_sheet_renames_a_look_and_everything_of_the_folder_that_names_it() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(300));
         slint::platform::update_timers_and_animations();
     }
-    let (at, size) = crate::testing::labeled(&app, "Rename...");
+    let (at, size) = crate::testing::by_id(&app, "LookSection::rename-look-button");
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     slint::platform::update_timers_and_animations();
     assert!(app.get_look_rename_open());

@@ -562,6 +562,39 @@ fn a_click_on_a_folder_opens_its_frames_and_records_it() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// A screen reader's press on a folder's triangle folds and unfolds
+/// it, as a click does; a folder with none under it has no fold to
+/// press, says so, and the press does nothing.
+#[test]
+fn a_screen_reader_presses_a_folders_fold() {
+    use i_slint_backend_testing::ElementHandle;
+    let dir = scratch("press-fold");
+    let (app, state, worker) = archive(&dir, Some((1200.0, 800.0)));
+    let fold = |i: usize| {
+        crate::testing::settle(&app);
+        ElementHandle::find_by_element_id(&app, "FoldersSection::fold")
+            .nth(i)
+            .unwrap_or_else(|| panic!("no fold {i}"))
+    };
+    let expanded = || -> Vec<bool> { app.get_folder_tree().iter().map(|r| r.expanded).collect() };
+    assert_eq!(expanded(), [true, false], "the root open, the day not");
+    assert_eq!(fold(1).accessible_enabled(), Some(true));
+    fold(1).invoke_accessible_default_action();
+    land_sent(&state, &app, &worker);
+    assert_eq!(expanded(), [true, true, false], "the day unfolded");
+    assert_eq!(rows(&app)[2], ("more".into(), 2, 1, false));
+    let leaf = fold(2);
+    assert_eq!(leaf.accessible_enabled(), Some(false), "more has none");
+    leaf.invoke_accessible_default_action();
+    land_sent(&state, &app, &worker);
+    assert_eq!(expanded(), [true, true, false], "nothing to unfold");
+    assert_eq!(state.borrow().views.tree.expanded.len(), 2);
+    fold(1).invoke_accessible_default_action();
+    land_sent(&state, &app, &worker);
+    assert_eq!(expanded(), [true, false], "the day folded again");
+    done(&dir, state);
+}
+
 /// A pass that adds a folder under the root has the tree built
 /// again with it; one that only refreshed a sidecar does not.
 #[test]

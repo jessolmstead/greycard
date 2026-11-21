@@ -473,8 +473,11 @@ fn return_on_a_dead_delete_does_not_export() {
     app.on_export(move || counted.set(counted.get() + 1));
     app.set_export_open(true);
     slint::platform::update_timers_and_animations();
-    assert_eq!(crate::testing::count_labeled(&app, "Delete"), 1);
-    let (at, size) = crate::testing::labeled(&app, "Delete");
+    assert_eq!(
+        crate::testing::count_id(&app, "ExportSheet::delete-button"),
+        1
+    );
+    let (at, size) = crate::testing::by_id(&app, "ExportSheet::delete-button");
     crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     slint::platform::update_timers_and_animations();
     assert_eq!(app.get_export_preset(), NO_PRESET);
@@ -1453,9 +1456,9 @@ fn a_wheel_over_an_open_sheet_leaves_the_picture_alone() {
     // scrolled choices, and those choices scrolled to either end.
     app.set_export_mark("Text".into());
     app.set_export_open(true);
-    let (title, _) = shown(&app, "Export").expect("the title");
-    let (cancel, size) = shown(&app, "Cancel").expect("Cancel");
-    let (format, _) = shown(&app, "Format").expect("the Format row");
+    let (title, _) = shown_id(&app, "ExportSheet::title").expect("the title");
+    let (cancel, size) = shown_id(&app, "ExportSheet::cancel-button").expect("Cancel");
+    let (format, _) = shown_id(&app, "ExportSheet::format-row").expect("the Format row");
     still((title.x + 4.0, title.y + 4.0), "the export sheet's header");
     still(
         (cancel.x + size.width / 2.0, cancel.y + size.height / 2.0),
@@ -1482,28 +1485,29 @@ fn the_export_sheet_fits_a_short_window_and_its_choices_scroll() {
     app.set_export_queue_line("2 sets waiting".into());
     app.set_export_open(true);
 
-    let bottom = |label: &str| {
-        let (at, size) = shown(&app, label).unwrap_or_else(|| panic!("{label} on show"));
+    let bottom = |id: &str| {
+        let (at, size) = if id.contains("::") {
+            shown_id(&app, id)
+        } else {
+            shown(&app, id)
+        }
+        .unwrap_or_else(|| panic!("{id} on show"));
         at.y + size.height
     };
     // Every button in the window, below the choices, and the
-    // Folder row with them.
-    for label in [
+    // Folder row with them: its folder by the path it shows.
+    for id in [
         "/nowhere",
-        "Choose...",
-        "Cancel",
-        "Add to queue",
-        "Export the queue",
-        "Clear",
+        "ExportSheet::folder-choose-button",
+        "ExportSheet::cancel-button",
+        "ExportSheet::queue-add-button",
+        "ExportSheet::queue-run-button",
+        "ExportSheet::queue-clear-button",
     ] {
-        assert!(
-            bottom(label) <= height,
-            "{label} at {} in {height}",
-            bottom(label)
-        );
+        assert!(bottom(id) <= height, "{id} at {} in {height}", bottom(id));
     }
-    let (title, _) = shown(&app, "Export").expect("the title");
-    let (cancel, _) = shown(&app, "Cancel").expect("Cancel");
+    let (title, _) = shown_id(&app, "ExportSheet::title").expect("the title");
+    let (cancel, _) = shown_id(&app, "ExportSheet::cancel-button").expect("Cancel");
     let (folder, _) = shown(&app, "/nowhere").expect("the Folder row");
     // The watermark's strength is past the fold, until the choices
     // are scrolled to it.
@@ -1511,7 +1515,7 @@ fn the_export_sheet_fits_a_short_window_and_its_choices_scroll() {
         shown_id(&app, "ExportSheet::opacity-slider").is_none(),
         "the choices are taller than their view"
     );
-    let (format, _) = shown(&app, "Format").expect("the Format row");
+    let (format, _) = shown_id(&app, "ExportSheet::format-row").expect("the Format row");
     for _ in 0..20 {
         wheel(&app, format.x + 4.0, format.y + 4.0, -60.0);
     }
@@ -1522,12 +1526,14 @@ fn the_export_sheet_fits_a_short_window_and_its_choices_scroll() {
         "above the folder and buttons"
     );
     assert_eq!(
-        shown(&app, "Export").expect("the title").0,
+        shown_id(&app, "ExportSheet::title").expect("the title").0,
         title,
         "the header stays"
     );
     assert_eq!(
-        shown(&app, "Cancel").expect("Cancel").0,
+        shown_id(&app, "ExportSheet::cancel-button")
+            .expect("Cancel")
+            .0,
         cancel,
         "the buttons stay"
     );
@@ -1791,15 +1797,15 @@ fn enter_exports_and_escape_cancels_unless_a_field_has_it() {
     let saved = Rc::new(RefCell::new(Vec::<String>::new()));
     let seen = saved.clone();
     app.on_export_preset_saved(move |n| seen.borrow_mut().push(n.to_string()));
-    let at = |label: &str| {
+    let at = |id: &str| {
         use i_slint_backend_testing::ElementHandle;
         app.window()
             .dispatch_event(slint::platform::WindowEvent::PointerMoved {
                 position: slint::LogicalPosition::new(0.0, 0.0),
             });
-        let e = ElementHandle::find_by_accessible_label(&app, label)
+        let e = ElementHandle::find_by_element_id(&app, id)
             .next()
-            .unwrap_or_else(|| panic!("no {label:?}"));
+            .unwrap_or_else(|| panic!("no {id}"));
         let (p, s) = (e.absolute_position(), e.size());
         (p.x + s.width / 2.0, p.y + s.height / 2.0)
     };
@@ -1824,7 +1830,7 @@ fn enter_exports_and_escape_cancels_unless_a_field_has_it() {
     app.set_export_subfolder("".into());
 
     // The subfolder field focused: its Enter, not Export's.
-    let (x, y) = at("Subfolder");
+    let (x, y) = at("ExportSheet::subfolder-field");
     click(&app, x + 120.0, y);
     press(&app, Key::Return);
     assert!(app.get_export_open());
@@ -1835,7 +1841,7 @@ fn enter_exports_and_escape_cancels_unless_a_field_has_it() {
     // The name row: Enter saves the preset and exports nothing,
     // then the keys are the sheet's and Enter exports.
     app.set_export_open(true);
-    let (x, y) = at("Save as...");
+    let (x, y) = at("ExportSheet::save-as-button");
     click(&app, x, y);
     type_text(&app, "Web");
     press(&app, Key::Return);
@@ -1925,13 +1931,13 @@ fn the_sheets_fields_and_sliders_hand_enter_back_to_the_sheet() {
             .dispatch_event(slint::platform::WindowEvent::PointerMoved {
                 position: slint::LogicalPosition::new(0.0, 0.0),
             });
-        let e = ElementHandle::find_by_accessible_label(&app, "Save as...")
+        let e = ElementHandle::find_by_element_id(&app, "ExportSheet::save-as-button")
             .next()
             .expect("Save as...");
         let (p, s) = (e.absolute_position(), e.size());
         (p.x + s.width / 2.0, p.y + s.height / 2.0)
     };
-    let names = || crate::testing::count_labeled(&app, "Name");
+    let names = || crate::testing::count_id(&app, "ExportSheet::name-field");
     let closed = names();
     click(&app, x, y);
     assert_eq!(names(), closed + 1, "the name row");
@@ -1942,27 +1948,11 @@ fn the_sheets_fields_and_sliders_hand_enter_back_to_the_sheet() {
     assert!(!app.get_export_open());
 
     // And with the queue's Clear asked, its no.
-    let clears = || {
-        app.window()
-            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
-                position: slint::LogicalPosition::new(0.0, 0.0),
-            });
-        ElementHandle::find_by_accessible_label(&app, "Clear")
-            .map(|e| {
-                let (p, s) = (e.absolute_position(), e.size());
-                (p.x + s.width / 2.0, p.y + s.height / 2.0)
-            })
-            .collect::<Vec<_>>()
-    };
-    let under = clears();
     app.set_export_queue_sets(1);
     app.set_export_open(true);
     let asked = || crate::testing::count_labeled(&app, "Clear the queue of 1 set?");
-    let (x, y) = clears()
-        .into_iter()
-        .find(|c| !under.contains(c))
-        .expect("the queue's Clear");
-    click(&app, x, y);
+    let (p, s) = shown_id(&app, "ExportSheet::queue-clear-button").expect("the queue's Clear");
+    click(&app, p.x + s.width / 2.0, p.y + s.height / 2.0);
     assert_eq!(asked(), 1);
     press(&app, Key::Escape);
     assert!(app.get_export_open());

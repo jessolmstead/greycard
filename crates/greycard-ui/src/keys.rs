@@ -414,6 +414,20 @@ pub(crate) const TABLE: &[Group] = &[
                 marked::tr!("Brush opacity, less and more"),
             ),
             act("show-mask", &["O"], marked::tr!("Show the mask")),
+            // O's other line, as J has two: crop mode is the Crop
+            // tab's, where no mask is shown. Lightroom's crop keys.
+            act(
+                "show-mask",
+                &["O"],
+                // Keys sheet: O in crop mode, the next composition guide
+                marked::tr!("In the crop, the next guide over it"),
+            ),
+            act(
+                "crop-guide-turn",
+                &["Shift+O"],
+                // Keys sheet: Shift+O in crop mode
+                marked::tr!("In the crop, turn the golden spiral or the triangles"),
+            ),
             act(
                 "original",
                 &["\\"],

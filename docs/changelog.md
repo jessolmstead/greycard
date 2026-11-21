@@ -26,6 +26,9 @@ design note behind it.
 
 ### Develop
 
+- The crop has a choice of guides (golden ratio, golden spiral,
+  diagonals, triangles); O steps through them and Shift+O, now taken,
+  turns one.
 - Light's sliders sit in two groups, a hairline between Shadows and
   Whites.
 - The line under Lens names its profile's source, lensfun or an Adobe
@@ -48,6 +51,12 @@ design note behind it.
 
 ### Fixes
 
+- A model run refused for memory says so when the card is too small for
+  it, where it blamed another program (issue 142).
+- A DNG whose color matrix names no illuminant, as a film scanner's may,
+  develops where it was refused (issue 191).
+- A folder of raws moved by hand carries its sidecars faster: the old
+  folder is listed once, not once a frame.
 - A lens the database lacks no longer takes the profile of another
   line's lens of its name, a Summilux-TL's for a Summilux-M
   ([§723](https://github.com/jessolmstead/greycard/blob/master/docs/notes/723-a-lens-match-that-knows-its-line.md)).

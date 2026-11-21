@@ -260,7 +260,7 @@ export component ExportSheet inherits Rectangle {
                     padding: Theme.space-5;
                     padding-bottom: Theme.space-3;
                     spacing: Theme.space-2;
-                    Text {
+                    title := Text {
                         text: root.set-count > 1 ? @tr("Export {n} frame" | "Export {n} frames" % root.set-count) : @tr("Export");
                         font-size: Theme.font-lg;
                         font-weight: Theme.weight-medium;
@@ -296,14 +296,14 @@ export component ExportSheet inherits Rectangle {
                     if !root.naming: HorizontalLayout {
                         spacing: Theme.space-2;
                         padding-left: 68px + Theme.space-2;
-                        PanelButton {
+                        save-as-button := PanelButton {
                             text: @tr("Save as...");
                             clicked => {
                                 root.new-name = root.export-preset == "None" ? "" : root.export-preset;
                                 root.naming = true;
                             }
                         }
-                        PanelButton {
+                        delete-button := PanelButton {
                             text: @tr("Delete");
                             enabled: root.export-preset != "None" && root.export-preset != "";
                             clicked => { root.export-preset-deleted(); }
@@ -313,7 +313,7 @@ export component ExportSheet inherits Rectangle {
                     if root.naming: HorizontalLayout {
                         spacing: Theme.space-2;
                         name-words := Text { accessible-role: none; text: @tr("Name"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        LineEdit {
+                        name-field := LineEdit {
                             accessible-label: name-words.text;
                             horizontal-stretch: 1;
                             text <=> root.new-name;
@@ -350,7 +350,7 @@ export component ExportSheet inherits Rectangle {
                         HorizontalLayout {
                             spacing: Theme.space-2;
                             format-words := Text { accessible-role: none; text: @tr("Format"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { name: format-words.text; options: ["JPEG", "PNG", "TIFF 16-bit", "WebP"]; labels: ["JPEG", "PNG", @tr("TIFF 16-bit"), "WebP"]; current <=> root.export-format; }
+                            format-row := Segmented { name: format-words.text; options: ["JPEG", "PNG", "TIFF 16-bit", "WebP"]; labels: ["JPEG", "PNG", @tr("TIFF 16-bit"), "WebP"]; current <=> root.export-format; }
                         }
                         quality-slider := EditSlider {
                             label: @tr("Quality");
@@ -406,7 +406,7 @@ export component ExportSheet inherits Rectangle {
                             spacing: Theme.space-2;
                             // Export sheet: the color profile row
                             color-words := Text { accessible-role: none; text: @tr("Color"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { name: color-words.text; options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; current <=> root.export-space; }
+                            space-row := Segmented { name: color-words.text; options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; current <=> root.export-space; }
                         }
                         Toggle {
                             label: @tr("Embed profile");
@@ -423,7 +423,7 @@ export component ExportSheet inherits Rectangle {
                         HorizontalLayout {
                             spacing: Theme.space-2;
                             subfolder-words := Text { accessible-role: none; text: @tr("Subfolder"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            LineEdit {
+                            subfolder-field := LineEdit {
                                 accessible-label: subfolder-words.text;
                                 horizontal-stretch: 1;
                                 text <=> root.export-subfolder;
@@ -675,19 +675,19 @@ export component ExportSheet inherits Rectangle {
                             horizontal-stretch: 1;
                             overflow: elide;
                         }
-                        PanelButton {
+                        folder-choose-button := PanelButton {
                             text: @tr("Choose...");
                             clicked => { root.export-folder-choose(); keys.focus(); }
                         }
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;
-                        PanelButton {
+                        cancel-button := PanelButton {
                             text: @tr("Cancel");
                             clicked => { root.export-open = false; }
                         }
                         // What Export would send, kept to be sent later.
-                        PanelButton {
+                        queue-add-button := PanelButton {
                             text: @tr("Add to queue");
                             clicked => { root.export-open = false; root.queue-add(); }
                         }
@@ -786,12 +786,12 @@ export component ExportSheet inherits Rectangle {
                             horizontal-stretch: 1;
                             overflow: elide;
                         }
-                        PanelButton {
+                        queue-run-button := PanelButton {
                             text: @tr("Export the queue");
                             enabled: !root.exporting;
                             clicked => { root.export-open = false; root.queue-run(); }
                         }
-                        PanelButton {
+                        queue-clear-button := PanelButton {
                             // Export queue: the button that empties it
                             text: @tr("Clear");
                             enabled: !root.queue-running;

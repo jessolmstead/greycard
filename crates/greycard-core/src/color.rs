@@ -57,8 +57,9 @@ pub enum WhitePoint {
 /// Build the profile for a frame from the calibrations it carries.
 ///
 /// Uses the widest pair by temperature when there are several, and the one
-/// there is otherwise. Calibrations with an unknown illuminant or a matrix
-/// that is not an invertible 3x3 are ignored.
+/// there is otherwise. Calibrations with a matrix that is not an
+/// invertible 3x3 are ignored, and so are those with an unknown
+/// illuminant while any other has a known one ([`calibrations_to_use`]).
 ///
 /// A monochrome sensor's frame has no color to calibrate (its DNG
 /// carries no matrix) and takes [`monochrome_profile`].
@@ -83,21 +84,60 @@ pub fn monochrome_profile() -> CameraProfile {
     ))
 }
 
+/// The illuminant a calibration is taken at when its code names none we
+/// know (DNG's 0, unknown, which a scanner's file may carry): D50, DNG's
+/// reference white. One matrix is used whatever the scene's light, so
+/// for it the illuminant weighs nothing in the color; only between two
+/// does it place the matrices, and there a known one wins.
+pub const UNKNOWN_ILLUMINANT: CalibrationIlluminant = CalibrationIlluminant::D50;
+
+/// The calibrations a profile is made of, each with the illuminant it
+/// is taken at: those `usable` accepts whose illuminant we know or,
+/// when there are none, the first it accepts whose code we do not
+/// know, at [`UNKNOWN_ILLUMINANT`]. Adobe's DNG SDK, finding no
+/// temperature to interpolate by, likewise develops with the first
+/// matrix alone.
+pub(crate) fn calibrations_to_use(
+    calibrations: &[Calibration],
+    usable: impl Fn(&Calibration) -> bool,
+) -> Vec<(CalibrationIlluminant, &Calibration)> {
+    let known: Vec<_> = calibrations
+        .iter()
+        .filter(|c| usable(c))
+        .filter_map(|c| Some((CalibrationIlluminant::from_exif_code(c.illuminant)?, c)))
+        .collect();
+    if !known.is_empty() {
+        return known;
+    }
+    calibrations
+        .iter()
+        .find(|c| usable(c))
+        .map(|c| (UNKNOWN_ILLUMINANT, c))
+        .into_iter()
+        .collect()
+}
+
 /// [`profile_from_frame`] from the calibrations alone, as
 /// [`crate::decode::white_path`] reads them without a sample.
 pub fn profile_from_calibrations(calibrations: &[Calibration]) -> Result<CameraProfile> {
-    let mut calibrations: Vec<(f64, ProfileCalibration)> = calibrations
-        .iter()
-        .filter_map(|c| {
-            let illuminant = CalibrationIlluminant::from_exif_code(c.illuminant)?;
-            let color_matrix = to_mat3(&c.color_matrix)?;
-            let mut calibration = ProfileCalibration::new(illuminant, color_matrix);
-            if let Some(forward) = c.forward_matrix.as_deref().and_then(to_mat3) {
-                calibration = calibration.with_forward_matrix(forward);
-            }
-            Some((illuminant.cct(), calibration))
-        })
-        .collect();
+    let mut calibrations: Vec<(f64, ProfileCalibration)> =
+        calibrations_to_use(calibrations, |c| to_mat3(&c.color_matrix).is_some())
+            .into_iter()
+            .filter_map(|(illuminant, c)| {
+                if CalibrationIlluminant::from_exif_code(c.illuminant).is_none() {
+                    log::info!(
+                        "calibration illuminant {} unknown, taken as {UNKNOWN_ILLUMINANT:?}",
+                        c.illuminant
+                    );
+                }
+                let color_matrix = to_mat3(&c.color_matrix)?;
+                let mut calibration = ProfileCalibration::new(illuminant, color_matrix);
+                if let Some(forward) = c.forward_matrix.as_deref().and_then(to_mat3) {
+                    calibration = calibration.with_forward_matrix(forward);
+                }
+                Some((illuminant.cct(), calibration))
+            })
+            .collect();
 
     if calibrations.is_empty() {
         return Err(Error::NoCalibration);
@@ -1148,15 +1188,6 @@ pub(crate) mod tests {
             profile_from_frame(&frame_with(vec![])),
             Err(Error::NoCalibration)
         ));
-        let unknown = Calibration {
-            illuminant: 0,
-            color_matrix: rec2020_camera_matrix(),
-            forward_matrix: None,
-        };
-        assert!(matches!(
-            profile_from_frame(&frame_with(vec![unknown])),
-            Err(Error::NoCalibration)
-        ));
         let four_color = Calibration {
             illuminant: D65,
             color_matrix: vec![0.5; 12],
@@ -1175,6 +1206,53 @@ pub(crate) mod tests {
             profile_from_frame(&frame_with(vec![singular])),
             Err(Error::NoCalibration)
         ));
+    }
+
+    /// A scanner's LinearRaw DNG may carry one matrix and name no
+    /// illuminant for it (code 0): the matrix develops, at D50.
+    #[test]
+    fn a_matrix_with_no_known_illuminant_is_taken_at_d50() {
+        let m = rec2020_camera_matrix();
+        let cal = |illuminant, color_matrix: &Vec<f32>| Calibration {
+            illuminant,
+            color_matrix: color_matrix.clone(),
+            forward_matrix: None,
+        };
+        for code in [0, 99] {
+            let profile = profile_from_frame(&frame_with(vec![cal(code, &m)])).unwrap();
+            assert_eq!(profile.primary.illuminant, CalibrationIlluminant::D50);
+            assert_eq!(profile.primary.color_matrix, to_mat3(&m).unwrap());
+            assert!(profile.secondary.is_none());
+        }
+
+        // Two unknown: the first alone, as the DNG SDK does.
+        let other: Vec<f32> = m.iter().map(|v| v * 2.0).collect();
+        let profile = profile_from_frame(&frame_with(vec![cal(0, &other), cal(99, &m)])).unwrap();
+        assert_eq!(profile.primary.color_matrix, to_mat3(&other).unwrap());
+        assert!(profile.secondary.is_none());
+
+        // A known illuminant wins, alone or in a pair, as before.
+        let profile = profile_from_frame(&frame_with(vec![cal(0, &other), cal(D65, &m)])).unwrap();
+        assert_eq!(profile.primary.illuminant, CalibrationIlluminant::D65);
+        assert_eq!(profile.primary.color_matrix, to_mat3(&m).unwrap());
+        assert!(profile.secondary.is_none());
+        let profile =
+            profile_from_frame(&frame_with(vec![cal(D65, &m), cal(0, &other), cal(A, &m)]))
+                .unwrap();
+        assert_eq!(profile.primary.illuminant, CalibrationIlluminant::StandardA);
+        assert_eq!(
+            profile.secondary.unwrap().illuminant,
+            CalibrationIlluminant::D65
+        );
+
+        // An unknown illuminant does not rescue a matrix that will not
+        // serve.
+        for bad in [vec![1.0; 9], vec![0.5; 12]] {
+            assert!(matches!(
+                profile_from_frame(&frame_with(vec![cal(0, &bad)])),
+                Err(Error::NoCalibration)
+            ));
+        }
     }
 
     #[test]

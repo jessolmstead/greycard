@@ -599,13 +599,6 @@ pub(crate) fn click_switch_by_id(app: &App, id: &str) {
     click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
 }
 
-/// A click at the middle of the switch of the `Toggle` labeled
-/// `label`.
-pub(crate) fn click_switch(app: &App, label: &str) {
-    let (at, size) = toggle(app, label).switch;
-    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
-}
-
 /// The buttons a screen reader knows as `label`, top first: their top
 /// left and size, in logical pixels from the window's top left. A
 /// text's own label is its words, so a row whose name is drawn in it
@@ -879,6 +872,27 @@ pub(crate) fn segment(
         })
         .map(|e| bounds_of(&e))
         .unwrap_or_else(|| panic!("{id} has its option {option:?}"))
+}
+
+/// A click at the middle of the option `option` of the `Segmented`
+/// row `id`, as [`segment`] finds it: a row in view, as a sheet's is.
+pub(crate) fn click_segment(app: &App, id: &str, options: &[&str], option: &str) {
+    let (at, size) = segment(app, id, options, option);
+    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+}
+
+/// How many options the `Segmented` row `id` shows; none when the
+/// row is not there.
+pub(crate) fn segments_shown(app: &App, id: &str) -> usize {
+    count_id(app, id);
+    i_slint_backend_testing::ElementHandle::find_by_element_id(app, id)
+        .next()
+        .map_or(0, |row| {
+            row.query_descendants()
+                .match_id("Segmented::seg")
+                .find_all()
+                .len()
+        })
 }
 
 /// A click on the panel's tab `tab` (one of [`PANEL_TABS`]).

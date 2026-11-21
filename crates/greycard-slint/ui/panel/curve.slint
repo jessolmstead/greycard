@@ -53,7 +53,7 @@ export component CurvesSection inherits Section {
         current <=> root.curve-mode;
         selected(v) => { root.curve-mode-changed(); }
     }
-    if root.curve-mode == "Point": Segmented {
+    if root.curve-mode == "Point": channel-row := Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
         // Spoken by a screen reader: the point curve's row of channels

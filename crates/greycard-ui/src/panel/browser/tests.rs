@@ -2358,7 +2358,7 @@ fn a_click_on_a_frame_with_a_menu_up_only_closes_the_menu() {
 fn strip_bar(app: &App) -> Option<(slint::LogicalPosition, slint::LogicalSize, f32, f32)> {
     use i_slint_backend_testing::ElementHandle;
     press(app, Key::Shift);
-    let bar = ElementHandle::find_by_accessible_label(app, "Strip scroll").next()?;
+    let bar = ElementHandle::find_by_element_id(app, "Filmstrip::scroll-bar").next()?;
     let value = bar.accessible_value()?.parse().ok()?;
     let max = bar.accessible_value_maximum()?;
     Some((bar.absolute_position(), bar.size(), value, max))

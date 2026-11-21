@@ -148,7 +148,7 @@ export component LightSection inherits Section {
         spacing: Theme.space-2;
         padding-top: Theme.space-1;
         alignment: end;
-        PanelButton {
+        auto-button := PanelButton {
             text: @tr("Auto");
             enabled: root.raw-input;
             clicked => { root.light-auto(); }

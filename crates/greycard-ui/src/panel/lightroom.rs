@@ -1476,7 +1476,7 @@ mod tests {
         app.set_lr_details(ModelRc::new(VecModel::from(details)));
         app.set_lr_open(true);
         crate::testing::settle(&app);
-        ElementHandle::find_by_accessible_label(&app, "Details")
+        ElementHandle::find_by_element_id(&app, "LightroomSheet::details-fold")
             .next()
             .expect("the details' fold")
             .invoke_accessible_default_action();

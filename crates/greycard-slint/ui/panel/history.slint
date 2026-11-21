@@ -245,7 +245,7 @@ export component SnapshotsSection inherits Section {
         wrap: word-wrap;
     }
     Rectangle { height: Theme.space-1; }
-    PanelButton {
+    take-button := PanelButton {
         // Snapshots: take a snapshot of the edit as it is
         text: @tr("Take");
         icon: @image-url("../icons/plus.svg");

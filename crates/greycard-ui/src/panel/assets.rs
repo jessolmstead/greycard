@@ -953,7 +953,7 @@ fn lens_source(report: &LensReport, chosen: &greycard_edit::LensChoice) -> Optio
         LensChoice::Database(_) => Some(lensfun()),
         LensChoice::Lcp(_) => Some(
             // Lens section, after the lens name: profile from an Adobe .lcp file
-            tr!("Adobe profile"),
+            tr!("Adobe"),
         ),
     }
 }

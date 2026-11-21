@@ -619,7 +619,12 @@ mod tests {
         let taken = Rc::new(Cell::new(0));
         let t = taken.clone();
         app.on_snapshot_taken(move || t.set(t.get() + 1));
-        let (at, size) = found("Take");
+        let (at, size) = {
+            let e = ElementHandle::find_by_element_id(&app, "SnapshotsSection::take-button")
+                .next()
+                .expect("TAKE in the left pane");
+            (e.absolute_position(), e.size())
+        };
         for dy in [2.0, size.height / 2.0, size.height - 2.0] {
             let before = taken.get();
             click(&app, at.x + size.width / 2.0, at.y + dy);

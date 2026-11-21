@@ -32,7 +32,7 @@ component FolderRow inherits HorizontalLayout {
         text: @tr("Clear");
         clicked => { root.clear(); }
     }
-    PanelButton {
+    choose-button := PanelButton {
         text: @tr("Choose...");
         clicked => { root.choose(); }
     }

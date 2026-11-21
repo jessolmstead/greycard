@@ -276,7 +276,8 @@ with a drag moves the picture; a tap of **Space** still zooms.
 | [ ] | Brush size, smaller and bigger |
 | Shift+[ Shift+] | Brush feather, less and more |
 | Ctrl+[ Ctrl+] | Brush opacity, less and more |
-| O | Show the mask |
+| O | Show the mask; in the crop, the next guide over it |
+| Shift+O | In the crop, turn the golden spiral or the triangles |
 | ↑ ↓ ← →, + − | Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more, Ctrl on the slider for less, and Shift on a drag for finer |
 | Wheel | Nudge the focused slider, any slider with Shift; Ctrl for finer steps |
 | , . | The previous or the next slider |

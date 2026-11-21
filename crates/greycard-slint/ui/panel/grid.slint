@@ -478,7 +478,7 @@ export component GridSheet inherits Rectangle {
                         vertical-alignment: center;
                         overflow: elide;
                     }
-                    if root.queue-view: PanelButton {
+                    if root.queue-view: queue-run-button := PanelButton {
                         text: @tr("Export the queue");
                         icon: @image-url("../icons/image-down.svg");
                         words: @tr("Export every queued set, in order");
@@ -589,7 +589,7 @@ export component GridSheet inherits Rectangle {
                             }
                         }
                     }
-                    PanelButton {
+                    lightbox-button := PanelButton {
                         text: @tr("Lightbox");
                         icon: @image-url("../icons/grid-2x2.svg");
                         clicked => { root.focus-keys(); root.lightbox-asked(); }

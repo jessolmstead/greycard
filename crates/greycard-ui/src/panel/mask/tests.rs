@@ -1909,7 +1909,10 @@ fn the_mode_row_is_hidden_until_the_mask_has_a_shape() {
     let (_state, _worker) = crate::testing::state_for(&empty, Vec::new());
     empty.set_panel_tab("Masks".into());
     empty.invoke_new_mask();
-    assert_eq!(count_labeled(&empty, "Next shape mode"), 0);
+    assert_eq!(
+        crate::testing::count_id(&empty, "AdjustmentsSection::shape-mode-row"),
+        0
+    );
 
     let with_shape = window(1);
     // The tall desktop window the test was written at.
@@ -1920,7 +1923,10 @@ fn the_mode_row_is_hidden_until_the_mask_has_a_shape() {
     with_shape.set_panel_tab("Masks".into());
     with_shape.invoke_new_mask();
     with_shape.invoke_add_shape("Subject".into(), "Add".into());
-    assert_eq!(count_labeled(&with_shape, "Next shape mode"), 1);
+    assert_eq!(
+        crate::testing::count_id(&with_shape, "AdjustmentsSection::shape-mode-row"),
+        1
+    );
 }
 
 /// A window with one adjustment whose only shape is `shape`, chosen

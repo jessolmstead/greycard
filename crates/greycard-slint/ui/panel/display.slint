@@ -22,7 +22,7 @@ export component ProofSection inherits Section {
     on <=> root.proofing;
     switched => { root.proof-changed(); }
     body-spacing: Theme.space-1;
-    Segmented {
+    proof-row := Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
         name: @tr("Soft proof");
@@ -46,7 +46,7 @@ export component ProofSection inherits Section {
             clicked => { root.choose-proof-file(); }
         }
     }
-    Segmented {
+    intent-row := Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
         // Spoken by a screen reader: the soft proof's rendering intent,
@@ -84,7 +84,7 @@ export component MonitorSection inherits Section {
     icon: @image-url("../icons/maximize.svg");
     collapsed <=> root.collapsed-monitor;
     body-spacing: Theme.space-1;
-    Segmented {
+    profile-row := Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
         name: @tr("Profile");
@@ -127,7 +127,7 @@ export component MonitorSection inherits Section {
         padding-top: Theme.space-2;
         // Monitor section: the canvas shade row
         canvas-words := Text { accessible-role: none; text: @tr("Canvas"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-        Swatches {
+        canvas-swatches := Swatches {
             name: canvas-words.text;
             names: root.canvas-names;
             colors: root.canvas-colors;

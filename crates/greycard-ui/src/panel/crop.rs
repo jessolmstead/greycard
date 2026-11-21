@@ -8,6 +8,8 @@ use crate::panel::viewport::{effective_zoom, view_to_plane, view_to_source};
 use crate::worker::Worker;
 use crate::{App, Shared, State, placeholder, settings};
 
+pub(crate) mod overlay;
+
 /// Put a geometry on the panel.
 pub(crate) fn show_geometry(geometry: &Geometry, app: &App) {
     app.set_aspect_held(false);
@@ -1017,6 +1019,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             }
         });
     }
+    overlay::install(app, state);
 }
 
 #[cfg(test)]

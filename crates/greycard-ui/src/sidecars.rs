@@ -235,11 +235,8 @@ impl Why {
     /// first of which is `raw`, none when the log has to say it.
     fn words(self, raw: &Path, n: usize) -> Option<String> {
         match self {
-            Self::Newer => Some(tr!(
-                "its sidecar is from a newer greycard; update greycard to save it here"
-                    | "their sidecars are from a newer greycard; update greycard to save them here"
-                        % n
-            )),
+            Self::Newer => Some(tr!("its sidecar is from a newer greycard; update to save"
+                | "their sidecars are from a newer greycard; update to save" % n)),
             Self::Full => Some(tr!("the disk is full")),
             Self::ReadOnly => Some(tr!("the disk is read-only")),
             Self::Denied => Some(tr!(
@@ -350,15 +347,12 @@ pub(crate) fn said_asides(st: &mut State, bad: &[(PathBuf, PathBuf)], kept: &[(P
     let line = match (bad, kept) {
         ([], []) => return,
         ([], [(raw, to)]) => tr!(
-            "{name} was also edited elsewhere; that copy is kept as {file}",
+            "{name} was edited elsewhere; other copy kept as {file}",
             name = file_name(raw),
             file = file_name(to)
         ),
-        ([], more) => tr!(
-            "{n} frame was also edited elsewhere; its other copy is kept beside it"
-                | "{n} frames were also edited elsewhere; their other copies are kept beside them"
-                    % more.len()
-        ),
+        ([], more) => tr!("{n} frame was edited elsewhere; other copy kept beside it"
+            | "{n} frames were edited elsewhere; other copies kept beside them" % more.len()),
         (set_aside, _) => said_bad(set_aside),
     };
     if st.window.batch {
@@ -373,16 +367,12 @@ pub(crate) fn said_asides(st: &mut State, bad: &[(PathBuf, PathBuf)], kept: &[(P
 fn said_bad(set_aside: &[(PathBuf, PathBuf)]) -> String {
     match set_aside {
         [(raw, to)] => tr!(
-            "{name}'s sidecar could not be read and was kept as {file}; the edit here is saved",
+            "{name}: unreadable sidecar kept as {file}; edit saved",
             name = file_name(raw),
             file = file_name(to)
         ),
-        more => tr!(
-            "{n} sidecar could not be read and was kept beside its frame; the edit here is saved"
-                | "{n} sidecars could not be read and were kept beside their frames; the edits \
-                   here are saved"
-                    % more.len()
-        ),
+        more => tr!("{n} unreadable sidecar kept beside its frame; edit saved"
+            | "{n} unreadable sidecars kept beside their frames; edits saved" % more.len()),
     }
 }
 
@@ -1074,7 +1064,7 @@ pub(crate) mod tests {
         assert_eq!(kept.current.grain.amount, 0.4, "the other writer's preset");
         assert_eq!(
             app.get_status(),
-            "IMG_0000.CR3 was also edited elsewhere; that copy is kept as IMG_0000.CR3.gcd.other"
+            "IMG_0000.CR3 was edited elsewhere; other copy kept as IMG_0000.CR3.gcd.other"
         );
         assert!(st.work.unsaved.edits.is_empty());
         drop(st);
@@ -1143,14 +1133,12 @@ pub(crate) mod tests {
         write_sidecar(&mut st, 0);
         assert_eq!(
             app.get_status(),
-            "IMG_0000.CR3's sidecar could not be read and was kept as IMG_0000.CR3.gcd.bad; \
-             the edit here is saved"
+            "IMG_0000.CR3: unreadable sidecar kept as IMG_0000.CR3.gcd.bad; edit saved"
         );
         crate::panel::saves::save(&mut st, &[1]);
         assert_eq!(
             app.get_status(),
-            "IMG_0001.CR3's sidecar could not be read and was kept as IMG_0001.CR3.gcd.bad; \
-             the edit here is saved"
+            "IMG_0001.CR3: unreadable sidecar kept as IMG_0001.CR3.gcd.bad; edit saved"
         );
         assert_eq!(app.get_sync_note(), "");
         for (f, raw) in files.iter().enumerate() {
@@ -1202,7 +1190,7 @@ pub(crate) mod tests {
         assert_eq!(
             app.get_status(),
             "the edit of IMG_0000.CR3 is not saved: its sidecar is from a newer greycard; \
-             update greycard to save it here"
+             update to save"
         );
         drop(st);
         remove_scratch(state, &dir);
@@ -1261,7 +1249,7 @@ pub(crate) mod tests {
         assert_eq!(kept_copy(&files[1]).current.grain.amount, 0.4);
         assert_eq!(
             app.get_status(),
-            "IMG_0001.CR3 was also edited elsewhere; that copy is kept as IMG_0001.CR3.gcd.other"
+            "IMG_0001.CR3 was edited elsewhere; other copy kept as IMG_0001.CR3.gcd.other"
         );
         drop(st);
         remove_scratch(state, &dir);
@@ -1346,7 +1334,7 @@ pub(crate) mod tests {
         assert_eq!(
             app.get_status(),
             "the edit of IMG_0000.CR3 is not saved: its sidecar is from a newer greycard; \
-             update greycard to save it here"
+             update to save"
         );
         // The batch holds to it as well.
         st.sidecars[0].record(exposed(1.25));
@@ -1409,7 +1397,7 @@ pub(crate) mod tests {
         assert_eq!(
             detail(&[(raw("1"), Why::Newer), (raw("2"), Why::Newer)]),
             "the edits of IMG_1.CR3 and 1 other are not saved: their sidecars are from a newer \
-             greycard; update greycard to save them here"
+             greycard; update to save"
         );
         let raw = |n: &str| Path::new("shoot").join(format!("IMG_{n}.CR3"));
         assert_eq!(
@@ -1498,7 +1486,7 @@ pub(crate) mod tests {
         let newer = "{\"current\": {\"version\": 99, \"light\": {\"exposure\": 2.0}}}";
         std::fs::write(&folder, newer).unwrap();
         let failure = "the edit of IMG_0000.CR3 is not saved: its sidecar is from a newer \
-                       greycard; update greycard to save it here";
+                       greycard; update to save";
         let mut st = state.borrow_mut();
         st.sidecars[0].record(exposed(1.0));
         for batch in [false, true] {
@@ -1543,7 +1531,7 @@ pub(crate) mod tests {
             s.record(exposed(1.0));
         }
         let failure = "the edit of IMG_0001.CR3 is not saved: its sidecar is from a newer \
-                       greycard; update greycard to save it here";
+                       greycard; update to save";
         crate::panel::saves::save(&mut st, &[0, 1]);
         assert_eq!(app.get_status(), failure);
         // Failing again says nothing new, and nothing over the failure.

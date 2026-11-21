@@ -206,7 +206,7 @@ export component LightroomSheet inherits Rectangle {
                 middle := VerticalLayout {
                     vertical-stretch: 1;
                     spacing: root.shows-list ? Theme.space-2 : 0px;
-                    if root.lr-step > 0 && root.lr-details.length > 0: Fold {
+                    if root.lr-step > 0 && root.lr-details.length > 0: details-fold := Fold {
                         open <=> root.details-open;
                     }
 

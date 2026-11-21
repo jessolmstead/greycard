@@ -534,7 +534,7 @@ mod tests {
     use slint::platform::Key;
     use slint::{ComponentHandle, Model};
 
-    use crate::testing::{folder, labeled, press, state_for, window};
+    use crate::testing::{by_id, folder, press, state_for, window};
     use crate::worker::Worker;
     use crate::{App, Shared};
 
@@ -677,7 +677,7 @@ mod tests {
     #[test]
     fn the_generate_button_does_as_enter_and_only_with_strokes_painted() {
         let click = |app: &App| {
-            let (p, size) = labeled(app, "Generate");
+            let (p, size) = by_id(app, "RetouchSection::generate-button");
             crate::testing::click(app, p.x + size.width / 2.0, p.y + size.height / 2.0);
         };
         let (app, state, _worker) = painting(1);

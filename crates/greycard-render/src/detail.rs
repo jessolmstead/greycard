@@ -1320,6 +1320,125 @@ mod tests {
         }
     }
 
+    /// Every band of an export cut smaller, as a frame too large to
+    /// hold is ([`crate::export::reduced_frame`], on a limit lowered to
+    /// a quarter of a frame held whole here), is cut at the picture's
+    /// size, and fitted is the bands of the whole frame fitted, each to
+    /// near its own range.
+    #[test]
+    fn bands_cut_smaller_are_the_whole_frames_fitted() {
+        use crate::export::{fit_size, reduced_frame};
+        let (w, h) = (240, 160);
+        let image = picture(w, h);
+        let delta: Vec<f32> = (0..w * h)
+            .map(|i| (((i % w) as f32 / 6.0).sin() * ((i / w) as f32 / 5.0).cos()) * 0.2)
+            .collect();
+        let planes = DetailPlanes::make(
+            &image,
+            None,
+            CLIP,
+            DetailWants {
+                texture: true,
+                clarity: true,
+                structure: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .with_sharpen(sharpen_delta(&delta));
+        let planes =
+            DetailPlanes::with_sample(Some(Arc::new(planes)), Some(Arc::new(image.clone())), CLIP)
+                .unwrap();
+        let bands = planes.to_image();
+        assert!(bands.lanes.is_some() && bands.structure.is_some());
+        assert!(bands.sharpen.is_some() && bands.sample.is_some());
+        let turned = greycard_edit::geometry::Geometry {
+            angle: 7.0,
+            vertical: 15.0,
+            crop: Some(greycard_edit::geometry::Crop {
+                x: 0.08,
+                y: 0.1,
+                w: 0.8,
+                h: 0.75,
+            }),
+            ..Default::default()
+        };
+        let whole = bands.framed(&turned).unwrap();
+        let (fw, fh) = whole.size;
+        let edge = Some(48);
+        let target = fit_size(fw, fh, edge).unwrap();
+        let at = reduced_frame((fw, fh), edge, fw * fh / 4).unwrap();
+        assert!(at.0 < fw && at.0.max(at.1) > 48, "{at:?} of {fw}x{fh}");
+        let small = bands.framed_at(&turned, at).unwrap();
+        // Each band at the size the picture is cut at.
+        let picture = crate::geometry::apply_at(&image, &turned, at).unwrap();
+        assert_eq!((picture.width, picture.height), at);
+        assert_eq!(small.size, at);
+        let lanes = small.lanes.as_ref().unwrap();
+        let sample = small.sample.as_ref().unwrap();
+        for (what, size) in [
+            ("lanes", (lanes.width, lanes.height)),
+            ("structure", {
+                let s = small.structure.as_ref().unwrap();
+                (s.width, s.height)
+            }),
+            ("sharpen", {
+                let s = small.sharpen.as_ref().unwrap();
+                (s.width, s.height)
+            }),
+            ("sample", (sample.width, sample.height)),
+        ] {
+            assert_eq!(size, at, "{what}");
+        }
+        // The range masks' sample is the picture, cut as it is.
+        assert_eq!(sample.data, picture.data);
+        let a = whole.fit_exact(target.0, target.1).unwrap();
+        let b = small.fit_exact(target.0, target.1).unwrap();
+        assert_eq!(
+            (a.size, b.size),
+            (b.size, (target.0 as usize, target.1 as usize))
+        );
+        // The mean and most difference over the band's largest value.
+        let read = |a: &[f32], b: &[f32]| {
+            let range = a.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            let diffs: Vec<f32> = a.iter().zip(b).map(|(a, b)| (a - b).abs()).collect();
+            let mean = diffs.iter().sum::<f32>() / diffs.len() as f32 / range;
+            let most = diffs.iter().cloned().fold(0.0, f32::max) / range;
+            (mean, most)
+        };
+        // A turn half a degree off, cut and fitted the same, to show
+        // the bound tells a band out of place.
+        let off = greycard_edit::geometry::Geometry {
+            angle: 7.5,
+            ..turned
+        };
+        let off = bands
+            .framed_at(&off, at)
+            .unwrap()
+            .fit_exact(target.0, target.1)
+            .unwrap();
+        let of = |b: &BandImages| {
+            [
+                ("lanes", b.lanes.as_ref().unwrap().data.clone()),
+                ("structure", b.structure.as_ref().unwrap().data.clone()),
+                ("sharpen", b.sharpen.as_ref().unwrap().data.clone()),
+                ("sample", b.sample.as_ref().unwrap().data.clone()),
+            ]
+        };
+        for (((what, a), (_, b)), (_, o)) in of(&a).into_iter().zip(of(&b)).zip(of(&off)) {
+            assert_eq!(a.len(), b.len(), "{what}");
+            let (mean, most) = read(&a, &b);
+            // Measured 0.0014 to 0.0030 on the mean and 0.020 to 0.10
+            // at the most, the most on the sample's clip spikes and
+            // fine pattern, where the cut's box and the whole frame's
+            // Lanczos part; the turn half a degree off reads 0.0077 to
+            // 0.025 on the mean.
+            assert!(mean < 0.004 && most < 0.15, "{what}: {mean} {most}");
+            let (off, _) = read(&a, &o);
+            assert!(off > 0.006, "{what}: {off}");
+        }
+    }
+
     /// The CPU reference of a mask's Sharpen: over the whole frame at
     /// -1 it takes the develop's sharpen off, and at +1 on the picture
     /// before the sharpen it puts it on, through the whole export, to

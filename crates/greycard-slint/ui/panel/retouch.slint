@@ -137,7 +137,7 @@ export component RetouchSection inherits Section {
         selected(c) => { root.fill-chosen(c); }
     }
     // The Fill's strokes are painted first and made here, or by Enter.
-    if root.retouch-mode == "Fill": PanelButton {
+    if root.retouch-mode == "Fill": generate-button := PanelButton {
         // Retouch section: makes the Fill's painted strokes
         text: @tr("Generate");
         icon: @image-url("../icons/sparkles.svg");

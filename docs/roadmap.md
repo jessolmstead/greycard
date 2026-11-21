@@ -54,16 +54,14 @@ the reasoning lives in `docs/notes.md`.
       Dehaze-only edits (§643); waits on a measurement
 - [ ] States that are never rewritten: a turn, a look rename, the ISO
       seed, migrations, and an older build's save all change recorded
-      states under their ids, so no reconciliation can trust one; a
-      design is drafted and waits on the owner. It also answers: the
+      states under their ids, so no reconciliation can trust one.
+      Designed and agreed (§724), built in its seven steps behind one
+      bump to version 10, the turn first. It also answers: the
       archive sync landing crop and masks a quarter turn off across a
       turn difference; a look rename reaching only the open folder's
       sidecars; a snapshot renamed on one copy returning as two; Swap
       with original on one copy joining unrelated lines; a later
       build's mask shape dropped at an older build's save
-- [ ] The checked save (§722), what is left: the index's carry of a
-      hand-moved frame lists the old folder once a frame (cache it a
-      folder); the words of its three status lines wait on a sign-off
 - [ ] The note of edits not saved is out of sight in the lightbox,
       with every pane hidden, and in the grid while an import's line
       shows; so is the archive's note beside it
@@ -96,11 +94,7 @@ the reasoning lives in `docs/notes.md`.
       field instead (review, 2026-11-11)
 - [ ] The frame's limit of 200 megapixels, what is left: the detail
       bands frame at the same size, so an export just under it peaks
-      near 10 GB; a long edge asked above about 50 megapixels of a
-      frame past the limit is sometimes still refused where a cut
-      exists (`reduced_frame` looks one pixel either way and no
-      lower); no test takes detail bands through the smaller cut
-      (review, 2026-11-20)
+      near 10 GB (review, 2026-11-20)
 - [ ] A frame whose export failed leaves the queue (§213) with its
       reason only in the status line, when it is the one failure, and
       in the log; nowhere to read why afterwards
@@ -788,13 +782,20 @@ clears or a tester asks for it.
 
 #### Editor
 
-- [ ] Window tests find their controls by element id: 319 lookups
-      by translated words are left in 38 files (the guard,
-      `testing/by_label.rs`, lets a file's count only fall), about 150
-      of them a control that needs an id and an edit; items in a
+- [ ] The panels on the other side, or all on one side, for a
+      left-handed desk (discussion 192)
+- [ ] A screen reader's press while a menu is up: the mask row
+      ignores it, as a click only closes the menu; the preset,
+      collection, strip, and grid rows have the same guard on a click
+      and are unchecked for a press; the press does not close the
+      menu (Linux only, where the menu is drawn in the window)
+- [ ] Window tests find their controls by element id: 181 lookups
+      by translated words are left in 32 files (the guard,
+      `testing/by_label.rs`, lets a file's count only fall), many of
+      them data keys the scan cannot tell from a lookup; items in a
       repeater (grading wheels, look rows, mask rows, menus) share one
       id and need a key each; 78 lookups by position are untouched.
-      The suite in French (`GREYCARD_TEST_LANG=fr`) fails 500 tests,
+      The suite in French (`GREYCARD_TEST_LANG=fr`) fails 456 tests,
       618 before
 - [ ] The strings added since the French catalog was made
       translated (`scripts/translations-check.py --list` names them);
@@ -820,7 +821,16 @@ clears or a tester asks for it.
       crop; a key that applies a named preset beside it
 - [ ] Default folds: a set of sections folded by default; and the
       scopes folded away on a small screen, their space to the panel
-      (the sections' order is dragged since §689)
+      (the sections' order is dragged since §689). Asked by a tester
+      beyond it: a section hidden outright, named layouts of sections
+      for a kind of work, and the header's metadata and histogram
+      folded as a section is
+- [ ] A click that zooms to 1:1 in Cull's loupe and compare, as it
+      does in Develop (asked by a tester); in compare a click chooses
+      the frame today, so the zoom needs a gesture of its own there
+- [ ] Edit in with a set of frames, for an outside focus stacker
+      (Helicon Focus, Shine Stacker), and its result back beside them
+      as a merge's DNG is (asked by a tester; a small audience)
 - [ ] Before and after: the picture against a chosen history step or
       snapshot under a wipe the pointer drags, a history row's context
       action setting the Before and leaving the frame clearing it, as
@@ -841,8 +851,9 @@ clears or a tester asks for it.
       editor
 - [ ] Bezier handles on a curve's points, so a point's reach along
       the curve can be set
-- [ ] The crop's overlays: other frameline options, and the grid's
-      line count and spacing chosen so a line can sit near a horizon
+- [ ] The crop's overlays: the grid's line count and spacing chosen
+      so a line can sit near a horizon; the golden spiral's squares
+      drawn, and a turn of its own for the spiral and the triangles
 - [ ] History grouped by tool: a run of steps on one tool folded into
       one line that opens, so the timeline reads clean and nothing is
       lost

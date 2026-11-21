@@ -254,6 +254,14 @@ pub struct Settings {
     /// `panel::crop::aspect_key` spells it ("3:2", "Custom 7:5"):
     /// what "Last used" opens under. Written as it is picked.
     pub crop_last: String,
+    /// The guide drawn inside the crop in crop mode, by
+    /// `panel::crop::overlay::Overlay::name` ("Thirds", "Golden
+    /// spiral"), and how far the spiral or the triangles are turned: a
+    /// view's, never the edit's. Written as it is chosen; a name this
+    /// build does not know reads as the thirds.
+    #[serde(deserialize_with = "string_leniently")]
+    pub crop_overlay: String,
+    pub crop_overlay_turn: u32,
     /// What a Fill drawn next is made by, "Patch", "Fast" or "Best"
     /// (`FillChoice`), as last chosen in the panel or the Settings
     /// sheet; empty until one is, for the machine's default.
@@ -827,6 +835,8 @@ impl Default for Settings {
             sync_shift: SyncShift::default(),
             crop_start: "Original".into(),
             crop_last: "Free".into(),
+            crop_overlay: "Thirds".into(),
+            crop_overlay_turn: 0,
             fill_choice: String::new(),
             ui_scale: 100,
             ui_scale_system: 0.0,
@@ -1298,6 +1308,8 @@ mod tests {
             },
             crop_start: "Last used".into(),
             crop_last: "Custom 7:5".into(),
+            crop_overlay: "Golden spiral".into(),
+            crop_overlay_turn: 3,
             fill_choice: "Fast".into(),
             ui_scale: 150,
             ui_scale_system: 1.25,

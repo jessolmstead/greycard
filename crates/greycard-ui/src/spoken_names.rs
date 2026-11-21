@@ -609,7 +609,7 @@ fn a_screen_reader_presses_a_frame_in_the_strip_and_the_grid() {
 /// A mask's row, a shape's invert, and the soft proof's badge are
 /// buttons a screen reader presses, each as a click does: the row
 /// chooses its mask, the invert flips its shape, the badge ends the
-/// proof.
+/// proof. A row's press while a menu is up is nothing.
 #[test]
 fn a_screen_reader_presses_a_mask_an_invert_and_the_proof_badge() {
     use std::cell::RefCell;
@@ -638,6 +638,11 @@ fn a_screen_reader_presses_a_mask_an_invert_and_the_proof_badge() {
         e
     };
 
+    // While a menu is up a row's press is nothing, as a click then
+    // only closes the menu.
+    app.set_menu_up(true);
+    button("AdjustmentsList::mask-item", 1).invoke_accessible_default_action();
+    app.set_menu_up(false);
     // Global's row is the first; Mask 2's the third.
     button("AdjustmentsList::mask-item", 2).invoke_accessible_default_action();
     // The second shape is inverted, the first not; each invert says so.

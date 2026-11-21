@@ -885,8 +885,9 @@ struct SidecarNow {
 /// the time the move is made. The XMP, a visible file beside the raw,
 /// is left to the hand that moved the raw. Done in the first phase,
 /// before the new place's sidecar is read, so the row's meta is the
-/// carried sidecar's. True when a sidecar was carried.
-fn carry_sidecar(old: &Path, new: &Path) -> bool {
+/// carried sidecar's. True when a sidecar was carried. The asides are
+/// found in `listings`, the batch's one listing of the old folder.
+fn carry_sidecar(old: &Path, new: &Path, listings: &mut Listings) -> bool {
     disk_call();
     let Some(from) = Sidecar::find(old) else {
         return false;
@@ -915,18 +916,20 @@ fn carry_sidecar(old: &Path, new: &Path) -> bool {
     }
     // What saves put aside beside it goes along under the new name, so
     // no later frame of the old name takes it for its own.
-    let asides = greycard_edit::asides_of(&from);
+    let asides = listings.asides_of(&from);
     match move_noreplace(&from, &to) {
         Ok(()) => {
             log::info!("{}: sidecar carried from {}", to.display(), from.display());
+            listings.moved(&from, &to);
             for aside in asides {
                 let there = greycard_edit::aside_at(&aside, &from, &to);
-                if let Err(e) = move_noreplace(&aside, &there) {
-                    log::warn!(
+                match move_noreplace(&aside, &there) {
+                    Ok(()) => listings.moved(&aside, &there),
+                    Err(e) => log::warn!(
                         "{}: not carried to {}: {e}",
                         aside.display(),
                         there.display()
-                    );
+                    ),
                 }
             }
             true
@@ -938,6 +941,53 @@ fn carry_sidecar(old: &Path, new: &Path) -> bool {
                 from.display()
             );
             false
+        }
+    }
+}
+
+/// The names in the folders a batch carries sidecars out of, each
+/// listed once a batch: a folder of raws moved by hand is a carry a
+/// frame, and a listing a carry would list the folder once a frame,
+/// slow on a share. Kept to what the folder holds as the batch's own
+/// moves change it, so it answers as a fresh listing would. Owned by
+/// one batch and dropped at its end, since another hand may change the
+/// folder meanwhile; `move_noreplace` stays the judge of a name taken.
+#[derive(Default)]
+struct Listings(HashMap<PathBuf, Vec<OsString>>);
+
+impl Listings {
+    /// What saves put aside beside the sidecar at `sidecar`
+    /// ([`greycard_edit::asides_among`]): none when its folder will not
+    /// list, and a folder that would not list is asked again next time.
+    fn asides_of(&mut self, sidecar: &Path) -> Vec<PathBuf> {
+        let Some(folder) = sidecar.parent() else {
+            return Vec::new();
+        };
+        if !self.0.contains_key(folder) {
+            #[cfg(test)]
+            LISTED.with(|l| l.set(l.get() + 1));
+            let Ok(names) = std::fs::read_dir(folder)
+                .and_then(|d| d.map(|e| e.map(|e| e.file_name())).collect())
+            else {
+                return Vec::new();
+            };
+            self.0.insert(folder.to_path_buf(), names);
+        }
+        greycard_edit::asides_among(sidecar, &self.0[folder])
+    }
+
+    /// `from` moved to `to` by this batch: gone from its folder's
+    /// names and there in the other's, for each listed.
+    fn moved(&mut self, from: &Path, to: &Path) {
+        if let (Some(folder), Some(name)) = (from.parent(), from.file_name())
+            && let Some(names) = self.0.get_mut(folder)
+        {
+            names.retain(|n| n != name);
+        }
+        if let (Some(folder), Some(name)) = (to.parent(), to.file_name())
+            && let Some(names) = self.0.get_mut(folder)
+        {
+            names.push(name.to_os_string());
         }
     }
 }
@@ -1108,6 +1158,9 @@ thread_local! {
     /// While set, `probe` is under way: its disk calls are the one kind
     /// the second phase may make.
     static IN_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Folders listed for the asides of the sidecars carried on this
+    /// thread.
+    static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A test's count of a disk call the pass makes. Under the write lock
@@ -1261,6 +1314,7 @@ fn index_paths(
         f.many(items, read)
     });
     let mut since = Instant::now();
+    let mut listings = Listings::default();
     for (done, path) in files.iter().enumerate() {
         progress(Progress {
             done,
@@ -1377,13 +1431,18 @@ fn index_paths(
                     let (old, new) = (path_from_bytes(old), path.clone());
                     carried = match far {
                         Some(f) => {
+                            let mut held = std::mem::take(&mut listings);
                             let carry = f.one(move || {
                                 #[cfg(test)]
                                 tests::held_read(&old);
-                                carry_sidecar(&old, &new)
+                                let carried = carry_sidecar(&old, &new, &mut held);
+                                (carried, held)
                             });
                             match carry {
-                                Ok(carried) => carried,
+                                Ok((carried, held)) => {
+                                    listings = held;
+                                    carried
+                                }
                                 // Not recorded as a move, or its sidecar
                                 // would be left at the old path for good:
                                 // the next pass finds the move again and
@@ -1394,7 +1453,7 @@ fn index_paths(
                                 }
                             }
                         }
-                        None => carry_sidecar(&old, path),
+                        None => carry_sidecar(&old, path, &mut listings),
                     };
                     if carried {
                         report.carried += 1;
@@ -1494,6 +1553,7 @@ fn index_paths(
                 &mut report,
             )?;
             since = Instant::now();
+            listings = Listings::default();
             if stop() {
                 report.stopped = true;
                 return Ok(report);
@@ -5249,6 +5309,107 @@ pub(crate) mod tests {
         assert_eq!((report.moved, report.carried), (1, 0), "{report:?}");
         assert!(Sidecar::path_for(&r5).is_file(), "left where it was");
         assert_eq!(lib.by_path(&renamed).unwrap().unwrap().meta.rating, 1);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A folder of raws moved by hand, each with its sidecar and what
+    /// saves put aside beside it: the old folder is listed once a
+    /// batch for the asides, not once a frame, and each frame's go
+    /// with it under its new name.
+    #[test]
+    fn a_moved_folder_is_listed_once_for_its_asides() {
+        let dir = scratch("carry-listed");
+        let (from, to) = (dir.join("from"), dir.join("to"));
+        std::fs::create_dir(&from).unwrap();
+        std::fs::create_dir(&to).unwrap();
+        // A frame in each folder, so neither is ever empty.
+        write_frame(&from.join("keep.tif"), &A7, 900);
+        write_frame(&to.join("keep.tif"), &A7, 901);
+        let frames = 8;
+        let name = |i: usize| format!("f{i}.tif");
+        for i in 0..frames {
+            let raw = from.join(name(i));
+            write_frame(&raw, &R5, 100 + i as u16);
+            let mut s = Sidecar::default();
+            s.meta.rating = 3;
+            s.save(&raw).unwrap();
+            std::fs::write(from.join(format!("{}.gcd.other", name(i))), name(i)).unwrap();
+        }
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&from, &mut quiet()).unwrap();
+        lib.index_folder(&to, &mut quiet()).unwrap();
+        for i in 0..frames {
+            std::fs::rename(from.join(name(i)), to.join(name(i))).unwrap();
+        }
+        LISTED.with(|l| l.set(0));
+        let report = lib.index_folder(&to, &mut quiet()).unwrap();
+        assert_eq!(
+            (report.moved, report.carried),
+            (frames, frames),
+            "{report:?}"
+        );
+        let listed = LISTED.with(|l| l.get());
+        // One a batch: a slow machine may cut the pass by time.
+        assert!(listed < frames, "the old folder listed {listed} times");
+        for i in 0..frames {
+            let other = format!("{}.gcd.other", name(i));
+            assert_eq!(std::fs::read_to_string(to.join(&other)).unwrap(), name(i));
+            assert!(!from.join(&other).exists(), "{other} left behind");
+        }
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// The batch's listing follows its own moves: a sidecar carried
+    /// into a folder already listed, then on out of it, takes its
+    /// asides along, and each listing held reads as a fresh one.
+    #[test]
+    fn a_batch_listing_follows_its_own_moves() {
+        let dir = scratch("carry-listing");
+        let (a, b, c) = (dir.join("a"), dir.join("b"), dir.join("c"));
+        for d in [&a, &b, &c] {
+            std::fs::create_dir(d).unwrap();
+        }
+        for (folder, sidecar) in [(&a, "x.tif.gcd"), (&b, "w.tif.gcd")] {
+            std::fs::write(folder.join(sidecar), sidecar).unwrap();
+            let other = format!("{sidecar}.other");
+            std::fs::write(folder.join(&other), &other).unwrap();
+        }
+        let mut listings = Listings::default();
+        // `b` listed, then `x` carried into it, then on to `c`.
+        assert!(carry_sidecar(
+            &b.join("w.tif"),
+            &c.join("w.tif"),
+            &mut listings
+        ));
+        assert!(carry_sidecar(
+            &a.join("x.tif"),
+            &b.join("y.tif"),
+            &mut listings
+        ));
+        assert!(carry_sidecar(
+            &b.join("y.tif"),
+            &c.join("z.tif"),
+            &mut listings
+        ));
+        assert_eq!(
+            std::fs::read_to_string(c.join("z.tif.gcd.other")).unwrap(),
+            "x.tif.gcd.other"
+        );
+        assert!(!b.join("y.tif.gcd.other").exists(), "left behind");
+        let fresh = |folder: &Path| {
+            let mut names: Vec<OsString> = std::fs::read_dir(folder)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            names.sort();
+            names
+        };
+        for (folder, names) in &listings.0 {
+            let mut held = names.clone();
+            held.sort();
+            assert_eq!(held, fresh(folder), "{}", folder.display());
+        }
+        assert_eq!(listings.0.len(), 2, "a and b listed, once each");
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
