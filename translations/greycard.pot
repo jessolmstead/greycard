@@ -273,94 +273,94 @@ msgstr ""
 msgid "Left panel"
 msgstr ""
 
-#: crates/greycard-slint/ui/controls.slint:636
+#: crates/greycard-slint/ui/controls.slint:644
 msgid "Reset"
 msgstr ""
 
 #. Spoken by a screen reader: the typed value of the slider named {}
-#: crates/greycard-slint/ui/controls.slint:1761
+#: crates/greycard-slint/ui/controls.slint:1769
 msgid "{} value"
 msgstr ""
 
 #. Spoken by a screen reader for a thumbnail: its stars
-#: crates/greycard-slint/ui/controls.slint:2802
+#: crates/greycard-slint/ui/controls.slint:2820
 msgid "{n} star"
 msgid_plural "{n} stars"
 msgstr[0] ""
 msgstr[1] ""
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2804
+#: crates/greycard-slint/ui/controls.slint:2822
 msgid "pick"
 msgstr ""
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2804
+#: crates/greycard-slint/ui/controls.slint:2822
 msgid "reject"
 msgstr ""
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2808
+#: crates/greycard-slint/ui/controls.slint:2826
 msgid "green"
 msgstr ""
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2808
+#: crates/greycard-slint/ui/controls.slint:2826
 msgid "red"
 msgstr ""
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2808
+#: crates/greycard-slint/ui/controls.slint:2826
 msgid "yellow"
 msgstr ""
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2810
+#: crates/greycard-slint/ui/controls.slint:2828
 msgid "blue"
 msgstr ""
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2810
+#: crates/greycard-slint/ui/controls.slint:2828
 msgid "purple"
 msgstr ""
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2897
+#: crates/greycard-slint/ui/controls.slint:2915
 msgid "Edited"
 msgstr ""
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2911
+#: crates/greycard-slint/ui/controls.slint:2929
 msgid "Exported"
 msgstr ""
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2925
+#: crates/greycard-slint/ui/controls.slint:2943
 msgid "In a collection"
 msgstr ""
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2936
+#: crates/greycard-slint/ui/controls.slint:2954
 msgid "With the camera's JPEG"
 msgstr ""
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:2964
+#: crates/greycard-slint/ui/controls.slint:2982
 msgid "Frame {} of a stack of {}, open"
 msgstr ""
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:2966
+#: crates/greycard-slint/ui/controls.slint:2984
 msgid "Stack of {}"
 msgstr ""
 
 #. Spoken by a screen reader: a thumbnail's version badge
-#: crates/greycard-slint/ui/controls.slint:3013
+#: crates/greycard-slint/ui/controls.slint:3031
 msgid "Version {}"
 msgstr ""
 
 #. Spoken by a screen reader: a scroll bar
-#: crates/greycard-slint/ui/controls.slint:3467
+#: crates/greycard-slint/ui/controls.slint:3485
 msgid "Scroll"
 msgstr ""
 
@@ -402,41 +402,41 @@ msgid "Unfold {}"
 msgstr ""
 
 #. Look section: the tag on a look fitted to the open frame's camera
-#: crates/greycard-slint/ui/panel/assets.slint:107
+#: crates/greycard-slint/ui/panel/assets.slint:109
 msgid "this camera"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/assets.slint:144
+#: crates/greycard-slint/ui/panel/assets.slint:146
 msgid "Profile tone curve"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/assets.slint:151
+#: crates/greycard-slint/ui/panel/assets.slint:153
 msgid "Show all cameras"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/assets.slint:208
+#: crates/greycard-slint/ui/panel/assets.slint:210
 msgid "LOOK"
 msgstr ""
 
 #. Spoken by a screen reader: a look's row; {} is its name
-#: crates/greycard-slint/ui/panel/assets.slint:238
+#: crates/greycard-slint/ui/panel/assets.slint:240
 msgid "Look {}"
 msgstr ""
 
 #. Look section: the slider
-#: crates/greycard-slint/ui/panel/assets.slint:326
+#: crates/greycard-slint/ui/panel/assets.slint:332
 msgid "Strength"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/assets.slint:378
+#: crates/greycard-slint/ui/panel/assets.slint:384
 msgid "Rename..."
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/assets.slint:383
+#: crates/greycard-slint/ui/panel/assets.slint:389
 msgid "Remove this look..."
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/assets.slint:395
+#: crates/greycard-slint/ui/panel/assets.slint:401
 msgid "Fit this camera's look..."
 msgstr ""
 
@@ -2004,7 +2004,7 @@ msgstr ""
 
 #. Lens section: a greyed correction switch's hover text
 #: crates/greycard-slint/ui/panel/lens.slint:135
-msgid "The lens profile has no data for this correction."
+msgid "Not in the lens profile."
 msgstr ""
 
 #: crates/greycard-slint/ui/panel/lens.slint:137
@@ -2139,203 +2139,203 @@ msgstr ""
 msgid "Paste mask"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:273
+#: crates/greycard-slint/ui/panel/mask.slint:279
 msgid "New mask"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:359
+#: crates/greycard-slint/ui/panel/mask.slint:365
 msgid "MASK"
 msgstr ""
 
 #. Spoken by a screen reader: the mask's name field
-#: crates/greycard-slint/ui/panel/mask.slint:390
+#: crates/greycard-slint/ui/panel/mask.slint:396
 msgid "Mask name"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:409
+#: crates/greycard-slint/ui/panel/mask.slint:415
 msgid "Invert"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:416
+#: crates/greycard-slint/ui/panel/mask.slint:422
 msgid "Refine edge"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:447
+#: crates/greycard-slint/ui/panel/mask.slint:453
 msgid "Shapes"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:534
+#: crates/greycard-slint/ui/panel/mask.slint:540
 msgid "Invert this shape"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:584
+#: crates/greycard-slint/ui/panel/mask.slint:596
 msgid "Remove this shape"
 msgstr ""
 
 #. Luminance range: the fade at the dark end
-#: crates/greycard-slint/ui/panel/mask.slint:698
+#: crates/greycard-slint/ui/panel/mask.slint:710
 msgid "Low fade"
 msgstr ""
 
 #. Luminance range: the fade at the light end
-#: crates/greycard-slint/ui/panel/mask.slint:726
+#: crates/greycard-slint/ui/panel/mask.slint:738
 msgid "High fade"
 msgstr ""
 
 #. Color range: the button that reads a color off the picture
-#: crates/greycard-slint/ui/panel/mask.slint:754
+#: crates/greycard-slint/ui/panel/mask.slint:766
 msgid "Sample"
 msgstr ""
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:799
+#: crates/greycard-slint/ui/panel/mask.slint:811
 msgid "Hue fade"
 msgstr ""
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:829
+#: crates/greycard-slint/ui/panel/mask.slint:841
 msgid "Chroma fade"
 msgstr ""
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:893
+#: crates/greycard-slint/ui/panel/mask.slint:905
 msgid "Brush"
 msgstr ""
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:896
+#: crates/greycard-slint/ui/panel/mask.slint:908
 msgid "Add"
 msgstr ""
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:896
+#: crates/greycard-slint/ui/panel/mask.slint:908
 msgid "Erase"
 msgstr ""
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:896
+#: crates/greycard-slint/ui/panel/mask.slint:908
 msgid "Subtract"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:905
+#: crates/greycard-slint/ui/panel/mask.slint:917
 msgid "Add a shape"
 msgstr ""
 
 #. Spoken by a screen reader: the shape mode row
-#: crates/greycard-slint/ui/panel/mask.slint:930
+#: crates/greycard-slint/ui/panel/mask.slint:942
 msgid "Next shape mode"
 msgstr ""
 
 #. Shape mode: the shape cuts the mask down to where both are
-#: crates/greycard-slint/ui/panel/mask.slint:933
+#: crates/greycard-slint/ui/panel/mask.slint:945
 msgid "Intersect"
 msgstr ""
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:940
+#: crates/greycard-slint/ui/panel/mask.slint:952
 msgid "Linear"
 msgstr ""
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:947
+#: crates/greycard-slint/ui/panel/mask.slint:959
 msgid "Radial"
 msgstr ""
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:954
+#: crates/greycard-slint/ui/panel/mask.slint:966
 msgid "Paint"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:963
+#: crates/greycard-slint/ui/panel/mask.slint:975
 msgid "Subject"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:970
+#: crates/greycard-slint/ui/panel/mask.slint:982
 msgid "Background"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:979
+#: crates/greycard-slint/ui/panel/mask.slint:991
 msgid "Sky"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:996
+#: crates/greycard-slint/ui/panel/mask.slint:1008
 msgid "Landscape"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1015
+#: crates/greycard-slint/ui/panel/mask.slint:1027
 msgid "Object"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1034
+#: crates/greycard-slint/ui/panel/mask.slint:1046
 msgid "People"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1046
+#: crates/greycard-slint/ui/panel/mask.slint:1058
 msgid "Whole person"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1048
+#: crates/greycard-slint/ui/panel/mask.slint:1060
 msgid "Face"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1050
+#: crates/greycard-slint/ui/panel/mask.slint:1062
 msgid "Facial skin"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1051
+#: crates/greycard-slint/ui/panel/mask.slint:1063
 msgid "Eyebrows"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1052
+#: crates/greycard-slint/ui/panel/mask.slint:1064
 msgid "Eyes"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1053
+#: crates/greycard-slint/ui/panel/mask.slint:1065
 msgid "Iris"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1054
+#: crates/greycard-slint/ui/panel/mask.slint:1066
 msgid "Lips"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1055
+#: crates/greycard-slint/ui/panel/mask.slint:1067
 msgid "Teeth"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1057
+#: crates/greycard-slint/ui/panel/mask.slint:1069
 msgid "Body"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1058
+#: crates/greycard-slint/ui/panel/mask.slint:1070
 msgid "Skin"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1059
+#: crates/greycard-slint/ui/panel/mask.slint:1071
 msgid "Hair"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1060
+#: crates/greycard-slint/ui/panel/mask.slint:1072
 msgid "Hands"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1062
+#: crates/greycard-slint/ui/panel/mask.slint:1074
 msgid "Clothing"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1063
+#: crates/greycard-slint/ui/panel/mask.slint:1075
 msgctxt "clothing"
 msgid "Top"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1064
+#: crates/greycard-slint/ui/panel/mask.slint:1076
 msgid "Bottoms"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1065
+#: crates/greycard-slint/ui/panel/mask.slint:1077
 msgid "Shoes"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/mask.slint:1066
+#: crates/greycard-slint/ui/panel/mask.slint:1078
 msgid "All clothing"
 msgstr ""
 
@@ -3067,24 +3067,24 @@ msgstr ""
 msgid "camera preview"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/viewport.slint:852
+#: crates/greycard-slint/ui/panel/viewport.slint:855
 msgid "Soft proof on (S turns it off)"
 msgstr ""
 
 #. People mask: the button over the picture that takes everyone in it
-#: crates/greycard-slint/ui/panel/viewport.slint:1263
+#: crates/greycard-slint/ui/panel/viewport.slint:1266
 msgid "All people"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1437
+#: crates/greycard-slint/ui/panel/viewport.slint:1440
 msgid "Now the second line"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1439
+#: crates/greycard-slint/ui/panel/viewport.slint:1442
 msgid "Drag along two lines that should stand upright"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1440
+#: crates/greycard-slint/ui/panel/viewport.slint:1443
 msgid "Drag along two lines that should lie flat"
 msgstr ""
 
@@ -4975,7 +4975,7 @@ msgstr ""
 
 #. Lens section, after the lens name: profile from an Adobe .lcp file
 #: crates/greycard-ui/src/panel/assets.rs:956
-msgid "Adobe profile"
+msgid "Adobe"
 msgstr ""
 
 #. Lens section, after the lens name: profile from the lensfun database
@@ -5938,7 +5938,7 @@ msgid "{folder} is not a folder"
 msgstr ""
 
 #: crates/greycard-ui/src/panel/deliver.rs:2233
-#: crates/greycard-ui/src/sidecars.rs:246
+#: crates/greycard-ui/src/sidecars.rs:243
 msgid "{folder} cannot be written to"
 msgstr ""
 
@@ -8463,68 +8463,59 @@ msgid ""
 "version of it on record; nothing is written over it"
 msgstr ""
 
-#: crates/greycard-ui/src/sidecars.rs:239
-msgid "its sidecar is from a newer greycard; update greycard to save it here"
-msgid_plural ""
-"their sidecars are from a newer greycard; update greycard to save them here"
+#: crates/greycard-ui/src/sidecars.rs:238
+msgid "its sidecar is from a newer greycard; update to save"
+msgid_plural "their sidecars are from a newer greycard; update to save"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/sidecars.rs:243
+#: crates/greycard-ui/src/sidecars.rs:240
 msgid "the disk is full"
 msgstr ""
 
-#: crates/greycard-ui/src/sidecars.rs:244
+#: crates/greycard-ui/src/sidecars.rs:241
 msgid "the disk is read-only"
 msgstr ""
 
-#: crates/greycard-ui/src/sidecars.rs:301
+#: crates/greycard-ui/src/sidecars.rs:298
 msgid "{n} edit not saved"
 msgid_plural "{n} edits not saved"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/sidecars.rs:353
-msgid "{name} was also edited elsewhere; that copy is kept as {file}"
+#: crates/greycard-ui/src/sidecars.rs:350
+msgid "{name} was edited elsewhere; other copy kept as {file}"
 msgstr ""
 
-#: crates/greycard-ui/src/sidecars.rs:358
-msgid "{n} frame was also edited elsewhere; its other copy is kept beside it"
-msgid_plural ""
-"{n} frames were also edited elsewhere; their other copies are kept beside "
-"them"
+#: crates/greycard-ui/src/sidecars.rs:354
+msgid "{n} frame was edited elsewhere; other copy kept beside it"
+msgid_plural "{n} frames were edited elsewhere; other copies kept beside them"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/sidecars.rs:376
-msgid ""
-"{name}'s sidecar could not be read and was kept as {file}; the edit here is "
-"saved"
+#: crates/greycard-ui/src/sidecars.rs:370
+msgid "{name}: unreadable sidecar kept as {file}; edit saved"
 msgstr ""
 
-#: crates/greycard-ui/src/sidecars.rs:381
-msgid ""
-"{n} sidecar could not be read and was kept beside its frame; the edit here "
-"is saved"
-msgid_plural ""
-"{n} sidecars could not be read and were kept beside their frames; the edits "
-"here are saved"
+#: crates/greycard-ui/src/sidecars.rs:374
+msgid "{n} unreadable sidecar kept beside its frame; edit saved"
+msgid_plural "{n} unreadable sidecars kept beside their frames; edits saved"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/sidecars.rs:573
+#: crates/greycard-ui/src/sidecars.rs:563
 msgid "the edit of {name} is not saved: {why}"
 msgstr ""
 
-#: crates/greycard-ui/src/sidecars.rs:577
+#: crates/greycard-ui/src/sidecars.rs:567
 msgid "the edit of {name} is not saved; see the log"
 msgstr ""
 
-#: crates/greycard-ui/src/sidecars.rs:584
+#: crates/greycard-ui/src/sidecars.rs:574
 msgid "the edits of {names} are not saved: {why}"
 msgstr ""
 
-#: crates/greycard-ui/src/sidecars.rs:589
+#: crates/greycard-ui/src/sidecars.rs:579
 msgid "the edits of {names} are not saved; see the log"
 msgstr ""
 

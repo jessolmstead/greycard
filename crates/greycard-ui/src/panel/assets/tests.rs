@@ -985,7 +985,7 @@ fn a_lens_switch_stands_down_for_what_the_profile_has_not() {
             .unwrap_or_default();
         match words.as_str() {
             "" => false,
-            "The lens profile has no data for this correction." => true,
+            "Not in the lens profile." => true,
             other => panic!("{id} says {other:?}"),
         }
     };
@@ -1003,7 +1003,7 @@ fn a_lens_switch_stands_down_for_what_the_profile_has_not() {
         )
     };
     let lensfun = |lens: &str| (lens.to_string(), "lensfun".to_string());
-    let adobe = |lens: &str| (lens.to_string(), "Adobe profile".to_string());
+    let adobe = |lens: &str| (lens.to_string(), "Adobe".to_string());
 
     show_lens(&found, &options, &LensChoice::FromFile, &app);
     assert_eq!(switches(), [true, true, false]);

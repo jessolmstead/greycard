@@ -132,7 +132,7 @@ export component LensSection inherits Section {
     // keeps its setting for a profile that has it, and says why.
     property <bool> profile-applies: root.lens-available && root.lens-profile-on;
     // Lens section: a greyed correction switch's hover text
-    property <string> no-data: @tr("The lens profile has no data for this correction.");
+    property <string> no-data: @tr("Not in the lens profile.");
     distortion-switch := Toggle {
         label: @tr("Distortion");
         tip: root.profile-applies && !root.lens-has-distortion ? root.no-data : "";

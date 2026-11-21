@@ -290,7 +290,7 @@ fn rest_at(b: &Bench, x: f32) {
 /// when the pointer leaves.
 #[test]
 fn a_greyed_switch_says_its_tip_and_still_flips_nothing() {
-    const WHY: &str = "The lens profile has no data for this correction.";
+    const WHY: &str = "Not in the lens profile.";
     let b = bench("Vignetting", false);
     b.set_enabled(false);
     let p = parts(&b);
