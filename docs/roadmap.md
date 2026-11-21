@@ -356,6 +356,10 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       regrain drawn again; short of that, the mapped fill as the
       stand-in a pending patch shows while its fill is made again
       (§569)
+- [ ] A fill's regrain where the ring around the hole is full of
+      detail: a ridge against sky got heavy, blotchy grain in the
+      filled sky at 1024 and at 512, the noise estimate reading the
+      ring's detail as noise (2026-11-21)
 - [ ] A fill in hand stopped between UNet calls when a develop is
       asked for, up to 36 s saved at 1024 (§569)
 - [ ] The Fast fill's files uploaded to greycard-rorem-fast (the
