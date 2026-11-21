@@ -10,8 +10,8 @@ design note behind it.
 - ART's `.arp` profiles beside a raw are offered and imported as
   RawTherapee's `.pp3` are; with both, the `.arp` is read and the `.pp3`
   named.
-- Draft German, Spanish, Italian, Dutch, and Brazilian Portuguese translations, not yet
-  read by native speakers; corrections are welcome
+- Draft German, Spanish, Italian, Dutch, Polish, and Brazilian Portuguese translations,
+  not yet read by native speakers; corrections are welcome
   ([how to send one](https://github.com/jessolmstead/greycard/blob/master/docs/translating.md)).
 - A screen reader can open a frame from the grid or the strip, hears a
   held-out filter chip as excluded, and hears each label once.
