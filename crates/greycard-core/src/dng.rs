@@ -29,7 +29,6 @@ use ::rawler::rawimage::{
     BlackLevel, CFAConfig, RawImageData, RawPhotometricInterpretation, WhiteLevel,
 };
 use ::rawler::tags::{DngTag, ExifTag, TiffCommonTag};
-use rawcolor::CalibrationIlluminant;
 
 use crate::decode::rawler_backend::RawMetadata;
 use crate::error::{Error, Result};
@@ -467,17 +466,15 @@ fn plane(rgb: &[f32]) -> impl Iterator<Item = f32> + '_ {
 }
 
 /// The calibrations to write: warmest and coolest by illuminant temperature,
-/// or the one there is. Unknown illuminants and non-3x3 matrices are skipped,
-/// as [`crate::color::profile_from_frame`] skips them.
+/// or the one there is. Non-3x3 matrices are skipped, and an unknown
+/// illuminant is kept or skipped, as [`crate::color::profile_from_frame`]
+/// does; a kept one is written with the file's own code.
 fn calibration_pair(calibrations: &[Calibration]) -> Vec<&Calibration> {
-    let mut usable: Vec<(f64, &Calibration)> = calibrations
-        .iter()
-        .filter(|c| c.color_matrix.len() == 9)
-        .filter_map(|c| {
-            let illuminant = CalibrationIlluminant::from_exif_code(c.illuminant)?;
-            Some((illuminant.cct(), c))
-        })
-        .collect();
+    let mut usable: Vec<(f64, &Calibration)> =
+        crate::color::calibrations_to_use(calibrations, |c| c.color_matrix.len() == 9)
+            .into_iter()
+            .map(|(illuminant, c)| (illuminant.cct(), c))
+            .collect();
     usable.sort_by(|a, b| a.0.total_cmp(&b.0));
     match usable.len() {
         0 => vec![],
@@ -593,6 +590,25 @@ mod tests {
             for px in developed.image.pixels() {
                 assert!(px.iter().all(|v| (v - 1.0).abs() < 2e-2), "{px:?}");
             }
+        }
+    }
+
+    /// A matrix whose illuminant is unknown (code 0) is written with
+    /// that code and reads back as the develop takes it.
+    #[test]
+    fn an_unknown_illuminant_is_written_as_the_file_has_it() {
+        let mut frame = flat_frame();
+        frame.calibrations[0].illuminant = 0;
+        let out = demosaic(&frame, &DevelopSettings::default()).unwrap();
+        let mut buf = Cursor::new(Vec::new());
+        let gains = out.white_balance.coefficients_f32();
+        write_linear_dng(&mut buf, &frame, &out.image, gains, &Default::default()).unwrap();
+        let back = RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap();
+        assert_eq!(back.calibrations.len(), 1);
+        assert_eq!(back.calibrations[0].illuminant, 0);
+        let developed = develop(&back, &DevelopSettings::default()).unwrap();
+        for px in developed.image.pixels() {
+            assert!(px.iter().all(|v| (v - 1.0).abs() < 2e-2), "{px:?}");
         }
     }
 
@@ -971,7 +987,9 @@ mod tests {
             vec![17, 21]
         );
         assert_eq!(calibration_pair(&cals[..1]).len(), 1);
-        assert!(calibration_pair(&[cal(0, 9)]).is_empty());
+        // An unknown illuminant alone is kept, as the develop keeps it.
+        assert_eq!(calibration_pair(&[cal(0, 9)]).len(), 1);
+        assert!(calibration_pair(&[cal(0, 12)]).is_empty());
     }
 
     #[test]

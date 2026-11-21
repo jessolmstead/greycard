@@ -48,6 +48,8 @@ design note behind it.
 
 ### Fixes
 
+- A DNG whose color matrix names no illuminant, as a film scanner's may,
+  develops where it was refused (issue 191).
 - A folder of raws moved by hand carries its sidecars faster: the old
   folder is listed once, not once a frame.
 - A lens the database lacks no longer takes the profile of another
