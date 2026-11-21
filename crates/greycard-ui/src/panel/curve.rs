@@ -228,16 +228,37 @@ pub(crate) fn histogram_tap(app: &App, target: Option<usize>) -> Tap {
 
 /// The histogram the editor draws behind its curve: the last one read
 /// (`develop.bins`), only when it was taken at the tap the curve shown
-/// reads ([`histogram_tap`]). Another tap's is another curve's input,
-/// the global editor's behind a mask's, or a point curve's behind a
-/// color curve's, and is never drawn. The one rule for every draw of
-/// the editor and the frame loop's.
+/// reads ([`histogram_tap`]) and weighed as it is now ([`weighed_by`]).
+/// Another tap's is another curve's input, the global editor's behind
+/// a mask's, or a point curve's behind a color curve's; another
+/// weighing's is another mask's, or a mask's behind the whole frame's;
+/// neither is drawn. The one rule for every draw of the editor and the
+/// frame loop's.
 pub(crate) fn backdrop<'a>(app: &App, develop: &'a crate::owners::Develop) -> Option<&'a [u32]> {
     develop
         .bins
         .as_ref()
-        .filter(|(tap, _)| *tap == histogram_tap(app, develop.target))
-        .map(|(_, bins)| bins.as_slice())
+        .filter(|(tap, weigh_by, _)| {
+            *tap == histogram_tap(app, develop.target) && *weigh_by == weighed_by(app, develop)
+        })
+        .map(|(_, _, bins)| bins.as_slice())
+}
+
+/// The mask the editor's histogram is weighed by, as the frame loop
+/// weighs the analyses: the one chosen, when the Selection toggle asks
+/// and its mask has something live in it.
+fn weighed_by(app: &App, develop: &crate::owners::Develop) -> Option<usize> {
+    develop
+        .target
+        .filter(|&k| {
+            k < finish::MAX_LOCALS
+                && develop
+                    .edit
+                    .adjustments
+                    .get(k)
+                    .is_some_and(|a| !a.mask.is_empty())
+        })
+        .filter(|_| app.get_scope_selection())
 }
 
 /// The curve the editor shows: `None` for the parametric curve, else
@@ -1286,7 +1307,7 @@ mod tests {
                 look: Default::default(),
                 opacity: 1.0,
             });
-            st.develop.bins = Some((Tap::BeforeCurves, bins.to_vec()));
+            st.develop.bins = Some((Tap::BeforeCurves, None, bins.to_vec()));
         }
         app.set_panel_tab("Masks".into());
         app.invoke_tab_changed("Masks".into());
@@ -1345,7 +1366,7 @@ mod tests {
         let (app, state, _worker) = a_mask_of("Radial", &frame);
         app.set_panel_tab("Develop".into());
         app.invoke_tab_changed("Develop".into());
-        state.borrow_mut().develop.bins = Some((Tap::BeforeGlobalCurves, frame.clone()));
+        state.borrow_mut().develop.bins = Some((Tap::BeforeGlobalCurves, None, frame.clone()));
         app.invoke_curve_channel_changed();
         let shown = || image_bytes(&app.get_curve_image());
         let drawn = image_bytes(&draw_curve(&app, Some(&frame)));
@@ -1363,7 +1384,7 @@ mod tests {
         app.set_curve_channel("RGB".into());
         app.invoke_curve_channel_changed();
         assert_eq!(shown(), drawn, "back on the master");
-        state.borrow_mut().develop.bins = Some((Tap::AfterCurves, frame.clone()));
+        state.borrow_mut().develop.bins = Some((Tap::AfterCurves, None, frame.clone()));
         app.invoke_curve_mode_changed();
         assert_eq!(
             shown(),
@@ -1372,7 +1393,7 @@ mod tests {
         );
 
         // The global look's histogram, and a mask chosen.
-        state.borrow_mut().develop.bins = Some((Tap::BeforeGlobalCurves, frame.clone()));
+        state.borrow_mut().develop.bins = Some((Tap::BeforeGlobalCurves, None, frame.clone()));
         app.set_panel_tab("Masks".into());
         app.invoke_tab_changed("Masks".into());
         app.invoke_target_changed(1);
@@ -1382,6 +1403,103 @@ mod tests {
             shown(),
             image_bytes(&draw_curve(&app, None)),
             "the mask's curve drawn over the global curve's input"
+        );
+    }
+
+    /// Weighed by the selection, the editor's histogram is the chosen
+    /// mask's: one weighed by another mask is not drawn behind the
+    /// curve, nor one weighed once the toggle no longer weighs. Back
+    /// where it was taken, it draws again.
+    #[test]
+    fn bins_of_another_weighing_are_never_drawn_behind_the_curve() {
+        // A mask of a kind, not a control found by its words.
+        let radial = "Radial";
+        let frame = some_bins(3);
+        let (app, state, _worker) = a_mask_of(radial, &frame);
+        {
+            let mut st = state.borrow_mut();
+            let mut second = st.develop.edit.adjustments[0].clone();
+            second.id = 2;
+            second.name = "Mask 2".into();
+            st.develop.edit.adjustments.push(second);
+        }
+        app.set_scope_selection(true);
+        app.invoke_target_changed(1);
+        app.set_collapsed_curves(false);
+        // The analysis weighed by the first mask lands.
+        let weighed = some_bins(1);
+        crate::panel::startup::bins_read(
+            &mut state.borrow_mut(),
+            &app,
+            Tap::BeforeCurves,
+            Some(0),
+            weighed.clone(),
+        );
+        let shown = || image_bytes(&app.get_curve_image());
+        let drawn = image_bytes(&draw_curve(&app, Some(&weighed)));
+        assert_eq!(shown(), drawn, "the first mask's own histogram");
+
+        app.invoke_target_changed(2);
+        assert_eq!(state.borrow().develop.target, Some(1));
+        assert_eq!(
+            shown(),
+            image_bytes(&draw_curve(&app, None)),
+            "the second mask's curve drawn over the first's weighing"
+        );
+
+        app.invoke_target_changed(1);
+        assert_eq!(shown(), drawn, "back on the first mask");
+        app.set_scope_selection(false);
+        assert_eq!(
+            backdrop(&app, &state.borrow().develop),
+            None,
+            "the whole frame's input drawn as the mask's weighing"
+        );
+    }
+
+    /// While the Original shows, the histogram read is the Original's
+    /// picture's, not what the edit's curves take in: the editor keeps
+    /// the edit's.
+    #[test]
+    fn the_originals_histogram_is_never_drawn_behind_the_curve() {
+        // A mask of a kind, not a control found by its words.
+        let radial = "Radial";
+        let frame = some_bins(3);
+        let (app, state, _worker) = a_mask_of(radial, &frame);
+        app.set_panel_tab("Develop".into());
+        app.invoke_tab_changed("Develop".into());
+        app.set_collapsed_curves(false);
+        crate::panel::startup::bins_read(
+            &mut state.borrow_mut(),
+            &app,
+            Tap::BeforeGlobalCurves,
+            None,
+            frame.clone(),
+        );
+        let drawn = image_bytes(&draw_curve(&app, Some(&frame)));
+        assert_eq!(image_bytes(&app.get_curve_image()), drawn);
+
+        {
+            let mut st = state.borrow_mut();
+            st.develop.original.on = true;
+            st.develop.original.edit = Some(greycard_edit::Edit::default());
+            assert!(crate::panel::original::shown(&st).is_some());
+        }
+        crate::panel::startup::bins_read(
+            &mut state.borrow_mut(),
+            &app,
+            Tap::BeforeGlobalCurves,
+            None,
+            some_bins(1),
+        );
+        assert_eq!(
+            image_bytes(&app.get_curve_image()),
+            drawn,
+            "the edit's curve drawn over the Original's histogram"
+        );
+        assert_eq!(
+            backdrop(&app, &state.borrow().develop),
+            Some(frame.as_slice())
         );
     }
 
@@ -1449,6 +1567,7 @@ mod tests {
             &mut state.borrow_mut(),
             &app,
             Tap::BeforeCurves,
+            None,
             weighed.clone(),
         );
         assert_eq!(
@@ -1827,6 +1946,7 @@ mod tests {
             &mut state.borrow_mut(),
             &app,
             Tap::BeforeGlobalCurves,
+            None,
             spikes(128, 128, 128, 5),
         );
         assert!(

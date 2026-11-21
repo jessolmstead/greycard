@@ -1666,8 +1666,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // shown). Hidden, or over another frame's picture,
                     // the one on its way is let go and the editor's last
                     // with it; taken at another tap than the curve
-                    // shown reads, it is let go by the rule every draw
-                    // of the editor keeps (`curve::backdrop`).
+                    // shown reads, or under another weighing, it is let
+                    // go by the rule every draw of the editor keeps
+                    // (`curve::backdrop`).
                     let mut fresh = None;
                     if crate::panel::curve::curves_shown(&app) && own {
                         let tap = crate::panel::curve::histogram_tap(&app, st.develop.target);
@@ -1679,7 +1680,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                         let renderer = st.develop.renderer.as_mut().expect("drawn above");
                         let (bins, out) = renderer.histogram_at(&view, tap, weigh_by);
-                        fresh = bins.map(|b| (tap, b.to_vec()));
+                        fresh = bins.map(|b| (tap, weigh_by, b.to_vec()));
                         in_flight |= out;
                     } else {
                         st.develop
@@ -1760,8 +1761,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // A picture put up since the last frame is drawn.
                         crate::open_note::drawn();
                     }
-                    if let Some((tap, b)) = fresh {
-                        bins_read(st, &app, tap, b);
+                    if let Some((tap, weigh_by, b)) = fresh {
+                        bins_read(st, &app, tap, weigh_by, b);
                     }
                     // A new analysis picture under a resting pointer:
                     // the color there has changed, or the scope has.
@@ -2096,15 +2097,22 @@ pub(crate) fn clipping_read(app: &App, bins: &[u32]) {
 /// backdrop, whichever look it edits, moved on to the curve shown as
 /// it is drawn. A mask's raster landing, or a new weighing, changes
 /// the analysis's key, so it comes this way with no touch of the
-/// panel; a curve moved changes nothing it reads. Taken at `tap`, it
-/// is drawn by the editor's one rule (`curve::backdrop`).
+/// panel; a curve moved changes nothing it reads. Taken at `tap` and
+/// weighed by `weigh_by`, it is drawn by the editor's one rule
+/// (`curve::backdrop`). One read while the Original shows is of the
+/// Original's picture, not of what the edit's curves take in: the
+/// editor keeps the edit's.
 pub(crate) fn bins_read(
     st: &mut State,
     app: &App,
     tap: greycard_viewport::render::Tap,
+    weigh_by: Option<usize>,
     bins: Vec<u32>,
 ) {
-    st.develop.bins = Some((tap, bins));
+    if crate::panel::original::shown(st).is_some() {
+        return;
+    }
+    st.develop.bins = Some((tap, weigh_by, bins));
     app.set_curve_image(draw_curve(
         app,
         crate::panel::curve::backdrop(app, &st.develop),

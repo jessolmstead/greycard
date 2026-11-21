@@ -3088,6 +3088,7 @@ fn a_turn_over_the_placeholder_keeps_it_up_and_turns_the_picture() {
     let (state, _worker) = state_for(&app, folder(4));
     state.borrow_mut().develop.bins = Some((
         greycard_viewport::render::Tap::BeforeGlobalCurves,
+        None,
         (0..768).map(|i| (i % 97) as u32 + 1).collect(),
     ));
     app.invoke_select(1);
@@ -3367,6 +3368,7 @@ fn the_curve_editor_does_not_paint_the_last_frames_histogram_back() {
     let last = (0..768).map(|i| (i % 97) as u32 + 1).collect::<Vec<u32>>();
     state.borrow_mut().develop.bins = Some((
         greycard_viewport::render::Tap::BeforeGlobalCurves,
+        None,
         last.clone(),
     ));
     app.invoke_select(1);

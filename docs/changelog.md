@@ -53,6 +53,7 @@ design note behind it.
 
 ### Fixes
 
+- The curve's backdrop no longer shows another mask's histogram, or the Original's, behind the edit's curve.
 - Edit in another program honors the export sheet's Metadata choice; its TIFF carried everything even under None.
 - Report a problem fills in the CPU, as it fills in the system and the graphics card.
 - A model run refused for memory says so when the card is too small for
