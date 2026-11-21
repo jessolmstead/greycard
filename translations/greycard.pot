@@ -3929,7 +3929,7 @@ msgid "Filter the folder by rating, flag, label or words"
 msgstr ""
 
 #: crates/greycard-ui/src/keys.rs:469
-#: crates/greycard-ui/src/panel/startup.rs:1841
+#: crates/greycard-ui/src/panel/startup.rs:1842
 msgid "Open a folder"
 msgstr ""
 
@@ -6040,7 +6040,7 @@ msgid "exporting to {folder}..."
 msgstr ""
 
 #: crates/greycard-ui/src/panel/deliver.rs:2734
-#: crates/greycard-ui/src/panel/edit_in.rs:359
+#: crates/greycard-ui/src/panel/edit_in.rs:361
 msgid "not exported: another export is under way"
 msgstr ""
 
@@ -6387,7 +6387,7 @@ msgid "finding the building"
 msgstr ""
 
 #: crates/greycard-ui/src/panel/lightroom.rs:37
-#: crates/greycard-ui/src/panel/rawtherapee.rs:109
+#: crates/greycard-ui/src/panel/rawtherapee.rs:110
 msgid ""
 "This run writes no sidecars (--no-sidecars), so nothing can be imported."
 msgstr ""
@@ -6414,7 +6414,7 @@ msgid "{} at {at}"
 msgstr ""
 
 #: crates/greycard-ui/src/panel/lightroom.rs:385
-#: crates/greycard-ui/src/panel/rawtherapee.rs:406
+#: crates/greycard-ui/src/panel/rawtherapee.rs:407
 msgid "writing..."
 msgstr ""
 
@@ -6445,7 +6445,7 @@ msgid "imported the catalog"
 msgstr ""
 
 #: crates/greycard-ui/src/panel/lightroom.rs:529
-#: crates/greycard-ui/src/panel/rawtherapee.rs:519
+#: crates/greycard-ui/src/panel/rawtherapee.rs:520
 msgid "Not imported: {e}"
 msgstr ""
 
@@ -7238,53 +7238,53 @@ msgstr ""
 msgid "{sheet}, beside each original"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:103
+#: crates/greycard-ui/src/panel/rawtherapee.rs:104
 msgid "RawTherapee profiles found beside {n} frame"
 msgid_plural "RawTherapee profiles found beside {n} frames"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:273
+#: crates/greycard-ui/src/panel/rawtherapee.rs:274
 msgid "Import RawTherapee profiles"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:293
+#: crates/greycard-ui/src/panel/rawtherapee.rs:294
 msgid "reading the profiles..."
 msgstr ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:378
+#: crates/greycard-ui/src/panel/rawtherapee.rs:379
 msgid "{dir}; {n} frame, {profiled} with a profile"
 msgid_plural "{dir}; {n} frames, {profiled} with a profile"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:407
+#: crates/greycard-ui/src/panel/rawtherapee.rs:408
 msgid "importing the RawTherapee profiles..."
 msgstr ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:472
+#: crates/greycard-ui/src/panel/rawtherapee.rs:473
 msgid "importing the RawTherapee profiles: {} of {} frames"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:497
+#: crates/greycard-ui/src/panel/rawtherapee.rs:498
 msgid "imported the RawTherapee profiles: {n} frame written"
 msgid_plural "imported the RawTherapee profiles: {n} frames written"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:500
+#: crates/greycard-ui/src/panel/rawtherapee.rs:501
 msgid ", {left} left alone"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:503
+#: crates/greycard-ui/src/panel/rawtherapee.rs:504
 msgid ", {failed} would not write"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:520
+#: crates/greycard-ui/src/panel/rawtherapee.rs:521
 msgid "the RawTherapee profiles were not imported: {e}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:550
+#: crates/greycard-ui/src/panel/rawtherapee.rs:551
 msgid ""
 "the profiles are not offered again for this folder; greycard rawtherapee "
 "imports them from the command line"
@@ -7413,27 +7413,27 @@ msgstr ""
 msgid "{left} more of the stack left out"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/startup.rs:2250
+#: crates/greycard-ui/src/panel/startup.rs:2258
 msgid "{}'s profile from {}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/startup.rs:2254
+#: crates/greycard-ui/src/panel/startup.rs:2262
 msgid "{} knows no display profile"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/startup.rs:2286
+#: crates/greycard-ui/src/panel/startup.rs:2294
 msgid "{from}: nothing changed on the way to the screen"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/startup.rs:2298
+#: crates/greycard-ui/src/panel/startup.rs:2306
 msgid "{from}: up to {d} of 255 from sRGB"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/startup.rs:2309
+#: crates/greycard-ui/src/panel/startup.rs:2317
 msgid "{from}: cannot be read; nothing changed on the way to the screen"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/startup.rs:2930
+#: crates/greycard-ui/src/panel/startup.rs:2938
 msgid ""
 "Library and Loupe, top left (or G), switch between the grid and one frame; "
 "Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
@@ -8033,17 +8033,17 @@ msgstr ""
 msgid "{owner} there answers to {} too"
 msgstr ""
 
-#: crates/greycard-ui/src/report.rs:321
+#: crates/greycard-ui/src/report.rs:367
 msgid ""
 "the form is open in the browser, and the log's folder: drag greycard-ui.log "
 "into the form"
 msgstr ""
 
-#: crates/greycard-ui/src/report.rs:324
+#: crates/greycard-ui/src/report.rs:370
 msgid "the form is open in the browser; there is no log to attach"
 msgstr ""
 
-#: crates/greycard-ui/src/report.rs:340
+#: crates/greycard-ui/src/report.rs:386
 msgid "no browser would open: the form is at {}/issues/new"
 msgstr ""
 

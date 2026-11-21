@@ -3970,7 +3970,8 @@ msgstr "Dans le recadrage, repère suivant"
 #. Keys sheet: Shift+O in crop mode
 #: crates/greycard-ui/src/keys.rs:429
 msgid "In the crop, turn the golden spiral or the triangles"
-msgstr "Dans le recadrage, changer l'orientation de la spirale d'or ou des triangles"
+msgstr ""
+"Dans le recadrage, changer l'orientation de la spirale d'or ou des triangles"
 
 #: crates/greycard-ui/src/keys.rs:434
 msgid "Show the frame as it was, and back"
@@ -4008,7 +4009,7 @@ msgid "Filter the folder by rating, flag, label or words"
 msgstr "Filtrer le dossier par note, marqueur, étiquette ou mots"
 
 #: crates/greycard-ui/src/keys.rs:469
-#: crates/greycard-ui/src/panel/startup.rs:1841
+#: crates/greycard-ui/src/panel/startup.rs:1842
 msgid "Open a folder"
 msgstr "Ouvrir un dossier"
 
@@ -6279,7 +6280,7 @@ msgid "exporting to {folder}..."
 msgstr "exportation vers {folder}..."
 
 #: crates/greycard-ui/src/panel/deliver.rs:2734
-#: crates/greycard-ui/src/panel/edit_in.rs:359
+#: crates/greycard-ui/src/panel/edit_in.rs:361
 msgid "not exported: another export is under way"
 msgstr "non exporté : une autre exportation est en cours"
 
@@ -6631,7 +6632,7 @@ msgid "finding the building"
 msgstr "détection du bâtiment"
 
 #: crates/greycard-ui/src/panel/lightroom.rs:37
-#: crates/greycard-ui/src/panel/rawtherapee.rs:109
+#: crates/greycard-ui/src/panel/rawtherapee.rs:110
 msgid ""
 "This run writes no sidecars (--no-sidecars), so nothing can be imported."
 msgstr ""
@@ -6662,7 +6663,7 @@ msgid "{} at {at}"
 msgstr "{} à {at}"
 
 #: crates/greycard-ui/src/panel/lightroom.rs:385
-#: crates/greycard-ui/src/panel/rawtherapee.rs:406
+#: crates/greycard-ui/src/panel/rawtherapee.rs:407
 msgid "writing..."
 msgstr "écriture..."
 
@@ -6695,7 +6696,7 @@ msgid "imported the catalog"
 msgstr "catalogue importé"
 
 #: crates/greycard-ui/src/panel/lightroom.rs:529
-#: crates/greycard-ui/src/panel/rawtherapee.rs:519
+#: crates/greycard-ui/src/panel/rawtherapee.rs:520
 msgid "Not imported: {e}"
 msgstr "Non importé : {e}"
 
@@ -7569,53 +7570,53 @@ msgstr "{sheet}, vers {folder} à côté de chaque original"
 msgid "{sheet}, beside each original"
 msgstr "{sheet}, à côté de chaque original"
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:103
+#: crates/greycard-ui/src/panel/rawtherapee.rs:104
 msgid "RawTherapee profiles found beside {n} frame"
 msgid_plural "RawTherapee profiles found beside {n} frames"
 msgstr[0] "Profils RawTherapee trouvés à côté de {n} photo"
 msgstr[1] "Profils RawTherapee trouvés à côté de {n} photos"
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:273
+#: crates/greycard-ui/src/panel/rawtherapee.rs:274
 msgid "Import RawTherapee profiles"
 msgstr "Importer les profils RawTherapee"
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:293
+#: crates/greycard-ui/src/panel/rawtherapee.rs:294
 msgid "reading the profiles..."
 msgstr "lecture des profils..."
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:378
+#: crates/greycard-ui/src/panel/rawtherapee.rs:379
 msgid "{dir}; {n} frame, {profiled} with a profile"
 msgid_plural "{dir}; {n} frames, {profiled} with a profile"
 msgstr[0] "{dir} ; {n} photo, {profiled} avec un profil"
 msgstr[1] "{dir} ; {n} photos, {profiled} avec un profil"
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:407
+#: crates/greycard-ui/src/panel/rawtherapee.rs:408
 msgid "importing the RawTherapee profiles..."
 msgstr "importation des profils RawTherapee..."
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:472
+#: crates/greycard-ui/src/panel/rawtherapee.rs:473
 msgid "importing the RawTherapee profiles: {} of {} frames"
 msgstr "importation des profils RawTherapee : {} photos sur {}"
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:497
+#: crates/greycard-ui/src/panel/rawtherapee.rs:498
 msgid "imported the RawTherapee profiles: {n} frame written"
 msgid_plural "imported the RawTherapee profiles: {n} frames written"
 msgstr[0] "profils RawTherapee importés : {n} photo écrite"
 msgstr[1] "profils RawTherapee importés : {n} photos écrites"
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:500
+#: crates/greycard-ui/src/panel/rawtherapee.rs:501
 msgid ", {left} left alone"
 msgstr ", {left} laissées intactes"
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:503
+#: crates/greycard-ui/src/panel/rawtherapee.rs:504
 msgid ", {failed} would not write"
 msgstr ", {failed} n'ont pas pu être écrites"
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:520
+#: crates/greycard-ui/src/panel/rawtherapee.rs:521
 msgid "the RawTherapee profiles were not imported: {e}"
 msgstr "les profils RawTherapee n'ont pas été importés : {e}"
 
-#: crates/greycard-ui/src/panel/rawtherapee.rs:550
+#: crates/greycard-ui/src/panel/rawtherapee.rs:551
 msgid ""
 "the profiles are not offered again for this folder; greycard rawtherapee "
 "imports them from the command line"
@@ -7751,28 +7752,28 @@ msgstr "comparaison de la pile de {name}"
 msgid "{left} more of the stack left out"
 msgstr "{left} autres photos de la pile exclues"
 
-#: crates/greycard-ui/src/panel/startup.rs:2250
+#: crates/greycard-ui/src/panel/startup.rs:2258
 msgid "{}'s profile from {}"
 msgstr "profil de {} depuis {}"
 
-#: crates/greycard-ui/src/panel/startup.rs:2254
+#: crates/greycard-ui/src/panel/startup.rs:2262
 msgid "{} knows no display profile"
 msgstr "{} ne connaît aucun profil d'écran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2286
+#: crates/greycard-ui/src/panel/startup.rs:2294
 msgid "{from}: nothing changed on the way to the screen"
 msgstr "{from} : aucune modification avant l'affichage à l'écran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2298
+#: crates/greycard-ui/src/panel/startup.rs:2306
 msgid "{from}: up to {d} of 255 from sRGB"
 msgstr "{from} : écart jusqu'à {d} sur 255 par rapport à sRGB"
 
-#: crates/greycard-ui/src/panel/startup.rs:2309
+#: crates/greycard-ui/src/panel/startup.rs:2317
 msgid "{from}: cannot be read; nothing changed on the way to the screen"
 msgstr ""
 "{from} : lecture impossible ; aucune modification avant l'affichage à l'écran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2930
+#: crates/greycard-ui/src/panel/startup.rs:2938
 msgid ""
 "Library and Loupe, top left (or G), switch between the grid and one frame; "
 "Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
@@ -8411,7 +8412,7 @@ msgstr "{} se trouve déjà dans {}"
 msgid "{owner} there answers to {} too"
 msgstr "{owner} y répond aussi au nom de {}"
 
-#: crates/greycard-ui/src/report.rs:321
+#: crates/greycard-ui/src/report.rs:367
 msgid ""
 "the form is open in the browser, and the log's folder: drag greycard-ui.log "
 "into the form"
@@ -8419,11 +8420,11 @@ msgstr ""
 "le formulaire et le dossier du journal sont ouverts dans le navigateur : "
 "glissez greycard-ui.log dans le formulaire"
 
-#: crates/greycard-ui/src/report.rs:324
+#: crates/greycard-ui/src/report.rs:370
 msgid "the form is open in the browser; there is no log to attach"
 msgstr "le formulaire est ouvert dans le navigateur ; aucun journal à joindre"
 
-#: crates/greycard-ui/src/report.rs:340
+#: crates/greycard-ui/src/report.rs:386
 msgid "no browser would open: the form is at {}/issues/new"
 msgstr "aucun navigateur ouvert : le formulaire se trouve sur {}/issues/new"
 
@@ -8907,8 +8908,12 @@ msgstr ""
 #: crates/greycard-ui/src/sidecars.rs:238
 msgid "its sidecar is from a newer greycard; update to save"
 msgid_plural "their sidecars are from a newer greycard; update to save"
-msgstr[0] "son fichier annexe vient d'une version plus récente de greycard ; mettez à jour pour enregistrer"
-msgstr[1] "leurs fichiers annexes viennent d'une version plus récente de greycard ; mettez à jour pour enregistrer"
+msgstr[0] ""
+"son fichier annexe vient d'une version plus récente de greycard ; mettez à "
+"jour pour enregistrer"
+msgstr[1] ""
+"leurs fichiers annexes viennent d'une version plus récente de greycard ; "
+"mettez à jour pour enregistrer"
 
 #: crates/greycard-ui/src/sidecars.rs:240
 msgid "the disk is full"
@@ -8926,23 +8931,33 @@ msgstr[1] "{n} modifications non enregistrées"
 
 #: crates/greycard-ui/src/sidecars.rs:350
 msgid "{name} was edited elsewhere; other copy kept as {file}"
-msgstr "{name} a été modifiée ailleurs ; l'autre copie est conservée sous {file}"
+msgstr ""
+"{name} a été modifiée ailleurs ; l'autre copie est conservée sous {file}"
 
 #: crates/greycard-ui/src/sidecars.rs:354
 msgid "{n} frame was edited elsewhere; other copy kept beside it"
 msgid_plural "{n} frames were edited elsewhere; other copies kept beside them"
-msgstr[0] "{n} photo a été modifiée ailleurs ; l'autre copie est conservée à côté"
-msgstr[1] "{n} photos ont été modifiées ailleurs ; les autres copies sont conservées à côté"
+msgstr[0] ""
+"{n} photo a été modifiée ailleurs ; l'autre copie est conservée à côté"
+msgstr[1] ""
+"{n} photos ont été modifiées ailleurs ; les autres copies sont conservées à "
+"côté"
 
 #: crates/greycard-ui/src/sidecars.rs:370
 msgid "{name}: unreadable sidecar kept as {file}; edit saved"
-msgstr "{name} : fichier annexe illisible conservé sous {file} ; modifications enregistrées"
+msgstr ""
+"{name} : fichier annexe illisible conservé sous {file} ; modifications "
+"enregistrées"
 
 #: crates/greycard-ui/src/sidecars.rs:374
 msgid "{n} unreadable sidecar kept beside its frame; edit saved"
 msgid_plural "{n} unreadable sidecars kept beside their frames; edits saved"
-msgstr[0] "{n} fichier annexe illisible conservé à côté de sa photo ; modifications enregistrées"
-msgstr[1] "{n} fichiers annexes illisibles conservés à côté de leurs photos ; modifications enregistrées"
+msgstr[0] ""
+"{n} fichier annexe illisible conservé à côté de sa photo ; modifications "
+"enregistrées"
+msgstr[1] ""
+"{n} fichiers annexes illisibles conservés à côté de leurs photos ; "
+"modifications enregistrées"
 
 #: crates/greycard-ui/src/sidecars.rs:563
 msgid "the edit of {name} is not saved: {why}"
@@ -8958,7 +8973,8 @@ msgstr "les modifications de {names} ne sont pas enregistrées : {why}"
 
 #: crates/greycard-ui/src/sidecars.rs:579
 msgid "the edits of {names} are not saved; see the log"
-msgstr "les modifications de {names} ne sont pas enregistrées ; voir le journal"
+msgstr ""
+"les modifications de {names} ne sont pas enregistrées ; voir le journal"
 
 #: crates/greycard-ui/src/sort.rs:242
 msgid "Hand order"
