@@ -26,6 +26,9 @@ design note behind it.
 
 ### Develop
 
+- The crop has a choice of guides (golden ratio, golden spiral,
+  diagonals, triangles); O steps through them and Shift+O, now taken,
+  turns one.
 - Light's sliders sit in two groups, a hairline between Shadows and
   Whites.
 - The line under Lens names its profile's source, lensfun or an Adobe

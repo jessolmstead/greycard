@@ -1194,6 +1194,19 @@ export component App inherits Window {
     // fresh crop wherever it starts. Put down on leaving crop mode,
     // and by the level or a guide taken up in its place.
     in-out property <bool> crop-draw-armed: false;
+    // The guide drawn inside the crop, by its name in
+    // `panel::crop::overlay` ("Thirds" to "None"), and how far the
+    // spiral or the triangles are turned, which each reads modulo its
+    // own ways. A view's, kept in the settings file, never the edit's.
+    in-out property <string> crop-overlay: "Thirds";
+    in-out property <int> crop-overlay-turn: 0;
+    // Chosen from the CROP section's list: kept in the file.
+    callback crop-overlay-chosen();
+    // O, or Shift+O to turn it (`true`): stepped and kept in Rust.
+    callback crop-overlay-key(bool);
+    // The spiral's path at a turn, on a tall crop or not, over a view
+    // box of one by one.
+    pure callback crop-spiral(int, bool) -> string;
     changed crop-mode => { if (!root.crop-mode) { root.crop-draw-armed = false; } }
     changed level-mode => { if (root.level-mode) { root.crop-draw-armed = false; } }
     changed guide-mode => { if (root.guide-mode != "") { root.crop-draw-armed = false; } }
@@ -3815,6 +3828,16 @@ export component App inherits Window {
                 }
                 return accept;
             }
+            // O and Shift+O in crop mode, Lightroom's crop keys: the
+            // next guide inside the crop, and the spiral or the
+            // triangles turned. Crop mode is the Crop tab's alone, so
+            // the Show mask below never wants O at the same time.
+            // Held, one step.
+            if ((chord == "O" || chord == "Shift+O") && root.crop-mode && !root.grid-open
+                && !root.cull-mode) {
+                if (!e.repeat) { root.crop-overlay-key(chord == "Shift+O"); }
+                return accept;
+            }
             // O, Lightroom's overlay key: the chosen mask's Show mask,
             // as a click on it.
             if (chord == "O" && !root.grid-open && !root.cull-mode
@@ -3979,6 +4002,9 @@ export component App inherits Window {
                 crop-top: root.crop-top;
                 crop-width: root.crop-width;
                 crop-height: root.crop-height;
+                crop-overlay: root.crop-overlay;
+                crop-overlay-turn: root.crop-overlay-turn;
+                crop-spiral(a, b) => { return root.crop-spiral(a, b); }
                 crop-pressed(a) => { root.hold-crop(); root.crop-pressed(a); }
                 crop-dragged(a, b, c) => { root.crop-dragged(a, b, c); }
                 crop-released => { root.crop-held = false; root.crop-released(); }
@@ -5152,6 +5178,8 @@ export component App inherits Window {
                                     portrait-shown: root.portrait-shown;
                                     portrait-live: root.portrait-live;
                                     crop-draw-armed <=> root.crop-draw-armed;
+                                    crop-overlay <=> root.crop-overlay;
+                                    crop-overlay-chosen => { root.crop-overlay-chosen(); }
                                     crop-clicked => { root.crop-in-or-out(); }
                                     crop-toggled => { root.crop-toggled(); }
                                     geometry-changed => { root.geometry-changed(); }

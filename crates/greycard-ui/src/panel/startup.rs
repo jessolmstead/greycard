@@ -545,6 +545,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         monitors
     };
     app.set_canvas_choice(render::canvas_choice(&remembered.canvas_color));
+    crate::panel::crop::overlay::show(&app, &remembered);
     app.set_one_section(remembered.one_section);
     app.set_filter_bar(remembered.filter_bar);
     app.set_camera_profiles_all(remembered.profiles_all_cameras);
@@ -2554,6 +2555,8 @@ fn merged(
         match_unchecked,
         crop_start,
         crop_last,
+        crop_overlay,
+        crop_overlay_turn,
         fill_choice,
         ui_scale,
         keys,
@@ -2627,6 +2630,8 @@ fn merged(
     settings.match_unchecked = match_unchecked;
     settings.crop_start = crop_start;
     settings.crop_last = crop_last;
+    settings.crop_overlay = crop_overlay;
+    settings.crop_overlay_turn = crop_overlay_turn;
     settings.fill_choice = fill_choice;
     settings.ui_scale = ui_scale;
     settings.keys = keys;
@@ -2868,6 +2873,10 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // aspect is picked from the crop's list.
         crop_start: String::new(),
         crop_last: String::new(),
+        // Written as a guide is chosen or turned, in the crop's list
+        // or by its keys.
+        crop_overlay: String::new(),
+        crop_overlay_turn: 0,
         // Written as the Fill's choice is made, in the panel or the
         // Settings sheet.
         fill_choice: String::new(),

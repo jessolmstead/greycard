@@ -18,6 +18,10 @@ export component CropSection inherits Section {
     // Draw in hand: the next drag on the picture, inside the crop
     // too, draws a fresh one (`Viewport.crop-draw-armed`).
     in-out property <bool> crop-draw-armed;
+    // The guide drawn inside the crop, a view's and no part of the
+    // edit (`Viewport.crop-overlay`); a choice is kept in the file.
+    in-out property <string> crop-overlay;
+    callback crop-overlay-chosen();
     callback crop-toggled();
     // The Crop button: the window's, which R shares.
     callback crop-clicked();
@@ -39,6 +43,14 @@ export component CropSection inherits Section {
         }
         aspect-box.current-index = root.aspect-index(root.aspect-name);
     }
+    // The guides by their names, which the settings file keeps, in
+    // the order O steps through them (`panel::crop::overlay`).
+    property <[string]> overlays: ["Thirds", "Golden ratio", "Golden spiral", "Diagonals", "Triangles", "None"];
+    pure function overlay-index(name: string) -> int {
+        return name == "Thirds" ? 0 : name == "Golden ratio" ? 1 : name == "Golden spiral" ? 2
+            : name == "Diagonals" ? 3 : name == "Triangles" ? 4 : name == "None" ? 5 : -1;
+    }
+    changed crop-overlay => { overlay-box.current-index = root.overlay-index(root.crop-overlay); }
     // The aspects by their names, which the edit keeps and the Rust
     // side compares; the box shows each in words, at the same index.
     property <[string]> aspects: ["Free", "Original", "1:1", "3:2", "4:3", "5:4", "16:9", "65:24", "Custom"];
@@ -130,6 +142,31 @@ export component CropSection inherits Section {
                 if (root.portrait-live) {
                     root.portrait = !root.portrait;
                     root.geometry-changed();
+                }
+            }
+        }
+        // The guide over the crop in crop mode: a view's, so the
+        // edit and its history never hear of it.
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            overlay-words := Text {
+                accessible-role: none;
+                // Crop section: the list of composition guides over the crop
+                text: @tr("Guides");
+                width: LabelColumn.width;
+                color: Theme.text;
+                font-size: Theme.font-sm;
+                vertical-alignment: center;
+            }
+            overlay-box := ComboBox {
+                accessible-label: overlay-words.text;
+                // Crop section: composition guides drawn over the crop
+                model: [@tr("Thirds"), @tr("Golden ratio"), @tr("Golden spiral"), @tr("Diagonals"),
+                    @tr("Triangles"), @tr("crop guide" => "None")];
+                current-index: root.overlay-index(root.crop-overlay);
+                selected(v) => {
+                    root.crop-overlay = root.overlays[self.current-index];
+                    root.crop-overlay-chosen();
                 }
             }
         }
