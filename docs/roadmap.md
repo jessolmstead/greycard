@@ -821,7 +821,16 @@ clears or a tester asks for it.
       crop; a key that applies a named preset beside it
 - [ ] Default folds: a set of sections folded by default; and the
       scopes folded away on a small screen, their space to the panel
-      (the sections' order is dragged since §689)
+      (the sections' order is dragged since §689). Asked by a tester
+      beyond it: a section hidden outright, named layouts of sections
+      for a kind of work, and the header's metadata and histogram
+      folded as a section is
+- [ ] A click that zooms to 1:1 in Cull's loupe and compare, as it
+      does in Develop (asked by a tester); in compare a click chooses
+      the frame today, so the zoom needs a gesture of its own there
+- [ ] Edit in with a set of frames, for an outside focus stacker
+      (Helicon Focus, Shine Stacker), and its result back beside them
+      as a merge's DNG is (asked by a tester; a small audience)
 - [ ] Before and after: the picture against a chosen history step or
       snapshot under a wipe the pointer drags, a history row's context
       action setting the Before and leaving the frame clearing it, as
