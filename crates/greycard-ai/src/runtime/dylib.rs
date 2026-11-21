@@ -438,7 +438,7 @@ fn missing_instructions() -> Vec<&'static str> {
 /// The processor's brand string, from the CPUID leaves every x86-64
 /// processor since 2003 answers: the same text `/proc/cpuinfo` shows
 /// as its model name, on any platform and without reading a file.
-fn processor_name() -> Option<String> {
+pub fn processor_name() -> Option<String> {
     #[cfg(target_arch = "x86_64")]
     {
         use std::arch::x86_64::__cpuid;

@@ -53,6 +53,7 @@ design note behind it.
 
 ### Fixes
 
+- Report a problem fills in the CPU, as it fills in the system and the graphics card.
 - A model run refused for memory says so when the card is too small for
   it, where it blamed another program (issue 142).
 - A DNG whose color matrix names no illuminant, as a film scanner's may,

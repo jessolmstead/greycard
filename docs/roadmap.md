@@ -986,10 +986,9 @@ clears or a tester asks for it.
       to move the shape off the frame's middle, as darktable has and
       Lightroom has not; the center kept as fractions of the frame so
       it sits on the crop
-- [ ] Report a problem fills in the CPU as it fills the OS and the GPU
-      (report.rs): `/proc/cpuinfo`'s model name, `sysctl
-      machdep.cpu.brand_string`, the registry on Windows. The bug form
-      has the field since 0.8.1; two of ten issues turned on it
+- [ ] Report a problem fills in the CPU on Windows on ARM and on ARM
+      Linux, where it is left empty (the registry; no model name in
+      `/proc/cpuinfo`)
 - [ ] A Windows install for all users: an -AllUsers switch on the
       installer that elevates itself, puts the program under Program
       Files, and writes the common Start Menu folder, the machine's

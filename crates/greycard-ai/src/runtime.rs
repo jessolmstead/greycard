@@ -61,7 +61,7 @@ pub use on_card::{
     read_store_again_for_tests, set_test_here, set_test_store,
 };
 
-pub use dylib::{FETCH_RUNTIME, LIBRARY, SHIPS, Unavailable};
+pub use dylib::{FETCH_RUNTIME, LIBRARY, SHIPS, Unavailable, processor_name};
 
 /// An execution provider, in the order they are tried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
