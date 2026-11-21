@@ -120,7 +120,7 @@ msgstr "Mode tri"
 #. Develop, Crop, Masks, and Retouch
 #: crates/greycard-slint/ui/app.slint:4155
 msgid "Panel tabs"
-msgstr ""
+msgstr "Onglets du panneau"
 
 #. The Loupe's mode buttons at the top of the develop panel
 #: crates/greycard-slint/ui/app.slint:4158
@@ -463,9 +463,8 @@ msgstr "Tout décocher"
 
 #. where edits are kept
 #: crates/greycard-slint/ui/panel/carry-list.slint:186
-#, fuzzy
 msgid "Masks go"
-msgstr "Masques"
+msgstr "Masques : remplacer ou ajouter"
 
 #. Sync sheet: how the masks go across
 #: crates/greycard-slint/ui/panel/carry-list.slint:189
@@ -653,7 +652,7 @@ msgstr "NOIR ET BLANC"
 #. color filters
 #: crates/greycard-slint/ui/panel/color.slint:439
 msgid "Filter"
-msgstr ""
+msgstr "Filtre"
 
 #. Black & white: the color filters, None for no filter
 #: crates/greycard-slint/ui/panel/color.slint:442
@@ -760,37 +759,36 @@ msgstr "Portrait"
 #. Crop section: the list of composition guides over the crop
 #: crates/greycard-slint/ui/panel/crop.slint:155
 msgid "Guides"
-msgstr ""
+msgstr "Repères"
 
 #. Crop section: composition guides drawn over the crop
 #: crates/greycard-slint/ui/panel/crop.slint:164
 msgid "Diagonals"
-msgstr ""
+msgstr "Diagonales"
 
 #. Crop section: composition guides drawn over the crop
 #: crates/greycard-slint/ui/panel/crop.slint:164
 msgid "Golden ratio"
-msgstr ""
+msgstr "Nombre d'or"
 
 #. Crop section: composition guides drawn over the crop
 #: crates/greycard-slint/ui/panel/crop.slint:164
 msgid "Golden spiral"
-msgstr ""
+msgstr "Spirale d'or"
 
 #. Crop section: composition guides drawn over the crop
 #: crates/greycard-slint/ui/panel/crop.slint:164
 msgid "Thirds"
-msgstr ""
+msgstr "Tiers"
 
 #: crates/greycard-slint/ui/panel/crop.slint:165
-#, fuzzy
 msgctxt "crop guide"
 msgid "None"
 msgstr "Aucun"
 
 #: crates/greycard-slint/ui/panel/crop.slint:165
 msgid "Triangles"
-msgstr ""
+msgstr "Triangles"
 
 #: crates/greycard-slint/ui/panel/crop.slint:194
 msgid "ROTATE"
@@ -996,9 +994,8 @@ msgstr "Point"
 
 #. Spoken by a screen reader: the point curve's row of channels
 #: crates/greycard-slint/ui/panel/curve.slint:60
-#, fuzzy
 msgid "Channel"
-msgstr "Par couche"
+msgstr "Couche"
 
 #. Curves: the input axis of the point under the pointer
 #: crates/greycard-slint/ui/panel/curve.slint:82
@@ -1266,7 +1263,7 @@ msgstr "Choisir..."
 #. three by three grid of places
 #: crates/greycard-slint/ui/panel/deliver.slint:514
 msgid "Position"
-msgstr ""
+msgstr "Position"
 
 #. Export watermark: the slider
 #: crates/greycard-slint/ui/panel/deliver.slint:529
@@ -1354,9 +1351,8 @@ msgstr "Aucun profil sélectionné"
 
 #. Perceptual or Relative
 #: crates/greycard-slint/ui/panel/display.slint:54
-#, fuzzy
 msgid "Intent"
-msgstr "Intersection"
+msgstr "Mode de rendu"
 
 #: crates/greycard-slint/ui/panel/display.slint:56
 msgid "Perceptual"
@@ -1406,9 +1402,8 @@ msgstr "Contraste"
 
 #. Light: the learned fill of clipped highlights
 #: crates/greycard-slint/ui/panel/edit.slint:111
-#, fuzzy
 msgid "Highlight fill"
-msgstr "Hautes lumières"
+msgstr "Reconstruction des hautes lumières"
 
 #: crates/greycard-slint/ui/panel/edit.slint:123
 msgid "Whites"
@@ -1445,7 +1440,7 @@ msgstr "désactivé"
 
 #: crates/greycard-slint/ui/panel/edit.slint:251
 msgid "Try again"
-msgstr ""
+msgstr "Réessayer"
 
 #: crates/greycard-slint/ui/panel/edit.slint:258
 msgid "Luma"
@@ -1543,12 +1538,12 @@ msgstr "Style"
 #. Vignette: a falloff in the scene; laid over the picture
 #: crates/greycard-slint/ui/panel/edit.slint:645
 msgid "Natural"
-msgstr ""
+msgstr "Naturel"
 
 #. Vignette: a falloff in the scene; laid over the picture
 #: crates/greycard-slint/ui/panel/edit.slint:645
 msgid "Overlay"
-msgstr ""
+msgstr "Superposé"
 
 #: crates/greycard-slint/ui/panel/edit.slint:661
 msgid "GRAIN"
@@ -1579,7 +1574,7 @@ msgstr "Dématriçage"
 #. Spoken: a filter chip that hides its matches
 #: crates/greycard-slint/ui/panel/filter.slint:93
 msgid "excluded"
-msgstr ""
+msgstr "exclu"
 
 #. Filter bar: the rating row
 #: crates/greycard-slint/ui/panel/filter.slint:428
@@ -2057,9 +2052,8 @@ msgstr "Télécharger les profils d'objectif"
 
 #. Lens section: a greyed correction switch's hover text
 #: crates/greycard-slint/ui/panel/lens.slint:135
-#, fuzzy
 msgid "Not in the lens profile."
-msgstr "Télécharger les profils d'objectif ?"
+msgstr "Absent du profil d'objectif."
 
 #: crates/greycard-slint/ui/panel/lens.slint:137
 msgid "Distortion"
@@ -2698,18 +2692,17 @@ msgstr "Synchroniser"
 #. paints the shadows' clipping over the picture
 #: crates/greycard-slint/ui/panel/scopes.slint:269
 msgid "Shadow clipping"
-msgstr ""
+msgstr "Écrêtage des ombres"
 
 #. paints the highlights' clipping over the picture
 #: crates/greycard-slint/ui/panel/scopes.slint:283
-#, fuzzy
 msgid "Highlight clipping"
-msgstr "Hautes lumières"
+msgstr "Écrêtage des hautes lumières"
 
 #. histogram or a scope
 #: crates/greycard-slint/ui/panel/scopes.slint:300
 msgid "Scope"
-msgstr ""
+msgstr "Type de graphique"
 
 #. Scopes: the button that reads the selected area only
 #: crates/greycard-slint/ui/panel/scopes.slint:327
@@ -2862,9 +2855,8 @@ msgstr "Dernier dossier"
 
 #. that picks the view greycard opens in, Loupe or Library
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:646
-#, fuzzy
 msgid "Start view"
-msgstr "Ouvrir sur"
+msgstr "Vue au démarrage"
 
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:654
 msgid "Show the filter bar"
@@ -3973,12 +3965,12 @@ msgstr "Afficher le masque"
 #. Keys sheet: O in crop mode, the next composition guide
 #: crates/greycard-ui/src/keys.rs:423
 msgid "In the crop, the next guide over it"
-msgstr ""
+msgstr "Dans le recadrage, repère suivant"
 
 #. Keys sheet: Shift+O in crop mode
 #: crates/greycard-ui/src/keys.rs:429
 msgid "In the crop, turn the golden spiral or the triangles"
-msgstr ""
+msgstr "Dans le recadrage, changer l'orientation de la spirale d'or ou des triangles"
 
 #: crates/greycard-ui/src/keys.rs:434
 msgid "Show the frame as it was, and back"
@@ -5208,12 +5200,12 @@ msgstr "{lens} (boîtier inconnu)"
 #. Lens section, after the lens name: profile from an Adobe .lcp file
 #: crates/greycard-ui/src/panel/assets.rs:956
 msgid "Adobe"
-msgstr ""
+msgstr "Adobe"
 
 #. Lens section, after the lens name: profile from the lensfun database
 #: crates/greycard-ui/src/panel/assets.rs:964
 msgid "lensfun"
-msgstr ""
+msgstr "lensfun"
 
 #. Camera profile picker: the raw's own embedded profile
 #: crates/greycard-ui/src/panel/assets.rs:1016
@@ -6064,9 +6056,8 @@ msgstr "{first} et {last}"
 
 #. Status line: the highlight fill's picture to come
 #: crates/greycard-ui/src/panel/deliver.rs:143
-#, fuzzy
 msgid "developing... the highlight fill is at work"
-msgstr "développement... le modèle de remplissage traite {name}"
+msgstr "développement... reconstruction des hautes lumières en cours"
 
 #: crates/greycard-ui/src/panel/deliver.rs:487
 msgid "learned: not on X-Trans yet"
@@ -6074,9 +6065,8 @@ msgstr "par apprentissage : pas encore disponible pour X-Trans"
 
 #. WORDING PENDING the user's approval.
 #: crates/greycard-ui/src/panel/deliver.rs:490
-#, fuzzy
 msgid "learned: not on this graphics card"
-msgstr "par apprentissage : pas encore disponible pour X-Trans"
+msgstr "par apprentissage : indisponible sur cette carte graphique"
 
 #: crates/greycard-ui/src/panel/deliver.rs:684
 msgid "{bits}-bit {kind} read as {space}; already rendered"
@@ -7262,14 +7252,12 @@ msgid "merging: writing the file"
 msgstr "fusion : écriture du fichier"
 
 #: crates/greycard-ui/src/panel/merge.rs:735
-#, fuzzy
 msgid "no learned denoise on this graphics card"
-msgstr ", réduction du bruit par apprentissage depuis le cache en {seconds} s"
+msgstr "pas de réduction du bruit par apprentissage sur cette carte graphique"
 
 #: crates/greycard-ui/src/panel/merge.rs:736
-#, fuzzy
 msgid "no learned denoise on X-Trans"
-msgstr "par apprentissage : pas encore disponible pour X-Trans"
+msgstr "pas de réduction du bruit par apprentissage sur X-Trans"
 
 #: crates/greycard-ui/src/panel/merge.rs:747
 msgid "not merged: {why}"
@@ -7283,9 +7271,8 @@ msgstr[1] "{n} photos fusionnées dans {name}"
 
 #. The finished line, then why the learned denoise did not run.
 #: crates/greycard-ui/src/panel/merge.rs:762
-#, fuzzy
 msgid "{line}; {why}"
-msgstr "{file} : {why}."
+msgstr "{line} ; {why}"
 
 #. Models list: a model's state
 #: crates/greycard-ui/src/panel/models.rs:241
@@ -8920,69 +8907,58 @@ msgstr ""
 #: crates/greycard-ui/src/sidecars.rs:238
 msgid "its sidecar is from a newer greycard; update to save"
 msgid_plural "their sidecars are from a newer greycard; update to save"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "son fichier annexe vient d'une version plus récente de greycard ; mettez à jour pour enregistrer"
+msgstr[1] "leurs fichiers annexes viennent d'une version plus récente de greycard ; mettez à jour pour enregistrer"
 
 #: crates/greycard-ui/src/sidecars.rs:240
 msgid "the disk is full"
-msgstr ""
+msgstr "le disque est plein"
 
 #: crates/greycard-ui/src/sidecars.rs:241
 msgid "the disk is read-only"
-msgstr ""
+msgstr "le disque est en lecture seule"
 
 #: crates/greycard-ui/src/sidecars.rs:298
-#, fuzzy
 msgid "{n} edit not saved"
 msgid_plural "{n} edits not saved"
-msgstr[0] "{} n'est pas un fichier"
-msgstr[1] "{} n'est pas un fichier"
+msgstr[0] "{n} modification non enregistrée"
+msgstr[1] "{n} modifications non enregistrées"
 
 #: crates/greycard-ui/src/sidecars.rs:350
 msgid "{name} was edited elsewhere; other copy kept as {file}"
-msgstr ""
+msgstr "{name} a été modifiée ailleurs ; l'autre copie est conservée sous {file}"
 
 #: crates/greycard-ui/src/sidecars.rs:354
 msgid "{n} frame was edited elsewhere; other copy kept beside it"
 msgid_plural "{n} frames were edited elsewhere; other copies kept beside them"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{n} photo a été modifiée ailleurs ; l'autre copie est conservée à côté"
+msgstr[1] "{n} photos ont été modifiées ailleurs ; les autres copies sont conservées à côté"
 
 #: crates/greycard-ui/src/sidecars.rs:370
-#, fuzzy
 msgid "{name}: unreadable sidecar kept as {file}; edit saved"
-msgstr ""
-"impossible de lire le fichier annexe de {} ({e}) ; rien ne sera écrit par-"
-"dessus"
+msgstr "{name} : fichier annexe illisible conservé sous {file} ; modifications enregistrées"
 
 #: crates/greycard-ui/src/sidecars.rs:374
-#, fuzzy
 msgid "{n} unreadable sidecar kept beside its frame; edit saved"
 msgid_plural "{n} unreadable sidecars kept beside their frames; edits saved"
-msgstr[0] "; {n} dossier illisible, ses photos n'ont pas été importées"
-msgstr[1] "; {n} dossiers illisibles, leurs photos n'ont pas été importées"
+msgstr[0] "{n} fichier annexe illisible conservé à côté de sa photo ; modifications enregistrées"
+msgstr[1] "{n} fichiers annexes illisibles conservés à côté de leurs photos ; modifications enregistrées"
 
 #: crates/greycard-ui/src/sidecars.rs:563
-#, fuzzy
 msgid "the edit of {name} is not saved: {why}"
-msgstr "le panneau n'affiche pas encore les réglages propres à {name} : {what}"
+msgstr "les modifications de {name} ne sont pas enregistrées : {why}"
 
 #: crates/greycard-ui/src/sidecars.rs:567
-#, fuzzy
 msgid "the edit of {name} is not saved; see the log"
-msgstr ""
-"l'opération sur les photos rejetées s'est arrêtée sans rapport ; voir le "
-"journal"
+msgstr "les modifications de {name} ne sont pas enregistrées ; voir le journal"
 
 #: crates/greycard-ui/src/sidecars.rs:574
-#, fuzzy
 msgid "the edits of {names} are not saved: {why}"
-msgstr "impossible de déplacer les photos rejetées : {why}"
+msgstr "les modifications de {names} ne sont pas enregistrées : {why}"
 
 #: crates/greycard-ui/src/sidecars.rs:579
-#, fuzzy
 msgid "the edits of {names} are not saved; see the log"
-msgstr "Impossible de déplacer les fichiers annexes ; voir le journal."
+msgstr "les modifications de {names} ne sont pas enregistrées ; voir le journal"
 
 #: crates/greycard-ui/src/sort.rs:242
 msgid "Hand order"
