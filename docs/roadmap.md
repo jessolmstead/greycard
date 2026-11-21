@@ -784,6 +784,8 @@ clears or a tester asks for it.
 
 #### Editor
 
+- [ ] The panels on the other side, or all on one side, for a
+      left-handed desk (discussion 192)
 - [ ] A screen reader's press while a menu is up: the mask row
       ignores it, as a click only closes the menu; the preset,
       collection, strip, and grid rows have the same guard on a click
