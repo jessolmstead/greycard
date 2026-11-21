@@ -57,6 +57,8 @@ design note behind it.
 
 ### Fixes
 
+- The export sheet's labels are whole in every language: the label
+  column is as wide as its longest label.
 - No preset and no look read "None" in the window's language in the
   export sheet's and the Look section's pickers.
 - The filter bar's flag chips say their names in the window's language.

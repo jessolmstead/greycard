@@ -104,7 +104,7 @@ export component ExportSheet inherits Rectangle {
     /// How many characters the row's folder holds: the sheet's row
     /// less its label, the button and the gaps, at a conservative 7px
     /// a character; the text also elides whatever still overflows.
-    property <int> folder-room: max(8, floor((root.sheet-width - 2 * Theme.space-5 - 68px - 88px - 2 * Theme.space-2) / 7px));
+    property <int> folder-room: max(8, floor((root.sheet-width - 2 * Theme.space-5 - root.label-column - 88px - 2 * Theme.space-2) / 7px));
     /// A watermark place's words: the setting keeps the English name.
     pure function position-words(place: string) -> string {
         return place == "Top left" ? @tr("watermark place" => "Top left")
@@ -207,7 +207,7 @@ export component ExportSheet inherits Rectangle {
     in property <int> key-passed;
     changed key-passed => { keys.key-pressed(SliderKeys.passed-key); }
     property <string> new-name;
-    property <length> sheet-width: 420px;
+    property <length> sheet-width: 420px + root.label-column - 68px;
 
     background: #000000a0;
     TouchArea { clicked => { root.export-open = false; } }
@@ -281,7 +281,7 @@ export component ExportSheet inherits Rectangle {
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;
-                        preset-words := Text { accessible-role: none; text: @tr("Preset"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        preset-words := Text { accessible-role: none; text: @tr("Preset"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         presets := ComboBox {
                             accessible-label: preset-words.text;
                             horizontal-stretch: 1;
@@ -300,7 +300,7 @@ export component ExportSheet inherits Rectangle {
                     }
                     if !root.naming: HorizontalLayout {
                         spacing: Theme.space-2;
-                        padding-left: 68px + Theme.space-2;
+                        padding-left: root.label-column + Theme.space-2;
                         save-as-button := PanelButton {
                             text: @tr("Save as...");
                             clicked => {
@@ -317,7 +317,7 @@ export component ExportSheet inherits Rectangle {
                     }
                     if root.naming: HorizontalLayout {
                         spacing: Theme.space-2;
-                        name-words := Text { accessible-role: none; text: @tr("Name"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        name-words := Text { accessible-role: none; text: @tr("Name"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         name-field := LineEdit {
                             accessible-label: name-words.text;
                             horizontal-stretch: 1;
@@ -354,13 +354,13 @@ export component ExportSheet inherits Rectangle {
                         spacing: Theme.space-2;
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            format-words := Text { accessible-role: none; text: @tr("Format"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            format-words := Text { accessible-role: none; text: @tr("Format"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             format-row := Segmented { name: format-words.text; options: ["JPEG", "PNG", "TIFF 16-bit", "WebP"]; labels: ["JPEG", "PNG", @tr("TIFF 16-bit"), "WebP"]; current <=> root.export-format; }
                         }
                         quality-slider := EditSlider {
                             label: @tr("Quality");
                             // The sheet's own column, not the panel's.
-                            label-width: 68px;
+                            label-width: root.label-column;
                             enabled: root.export-format == "JPEG";
                             minimum: 50;
                             maximum: 100;
@@ -372,13 +372,13 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            long-edge-words := Text { accessible-role: none; text: @tr("Long edge"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            long-edge-words := Text { accessible-role: none; text: @tr("Long edge"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             // Export size: the full size, with the pixel counts beside it
                             Segmented { name: long-edge-words.text; options: ["Full", "4096", "2048", "1024", "Custom"]; labels: [@tr("Full"), "4096", "2048", "1024", @tr("Custom")]; current <=> root.export-size; }
                         }
                         if root.export-size == "Custom": HorizontalLayout {
                             spacing: Theme.space-2;
-                            pixels-words := Text { accessible-role: none; text: @tr("Pixels"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            pixels-words := Text { accessible-role: none; text: @tr("Pixels"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
                                 accessible-label: pixels-words.text;
                                 width: 96px;
@@ -403,14 +403,14 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            sharpen-words := Text { accessible-role: none; text: @tr("Sharpen"); width: 68px; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                            sharpen-words := Text { accessible-role: none; text: @tr("Sharpen"); width: root.label-column; overflow: elide; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
                             // Export sharpen: the four levels
                             Segmented { name: sharpen-words.text; options: ["Off", "Low", "Standard", "High"]; labels: [@tr("Off"), @tr("Low"), @tr("Standard"), @tr("High")]; current <=> root.export-sharpen; }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
                             // Export sheet: the color profile row
-                            color-words := Text { accessible-role: none; text: @tr("Color"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            color-words := Text { accessible-role: none; text: @tr("Color"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             space-row := Segmented { name: color-words.text; options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; current <=> root.export-space; }
                         }
                         Toggle {
@@ -419,7 +419,7 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            metadata-words := Text { accessible-role: none; text: @tr("Metadata"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            metadata-words := Text { accessible-role: none; text: @tr("Metadata"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             // Export metadata: all, all but greycard's edit record, or none
                             Segmented { name: metadata-words.text; options: ["All", "No edit", "None"]; labels: [@tr("metadata" => "All"), @tr("No edit"), @tr("metadata" => "None")]; current <=> root.export-metadata; }
                         }
@@ -427,7 +427,7 @@ export component ExportSheet inherits Rectangle {
                         // with no chooser; left empty, the chooser asks.
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            subfolder-words := Text { accessible-role: none; text: @tr("Subfolder"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            subfolder-words := Text { accessible-role: none; text: @tr("Subfolder"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             subfolder-field := LineEdit {
                                 accessible-label: subfolder-words.text;
                                 horizontal-stretch: 1;
@@ -449,7 +449,7 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            name-2-words := Text { accessible-role: none; text: @tr("Name"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            name-2-words := Text { accessible-role: none; text: @tr("Name"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
                                 accessible-label: name-2-words.text;
                                 horizontal-stretch: 1;
@@ -468,18 +468,18 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            if-it-exists-words := Text { accessible-role: none; text: @tr("If it exists"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            if-it-exists-words := Text { accessible-role: none; text: @tr("If it exists"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             Segmented { name: if-it-exists-words.text; options: ["Increment", "Overwrite", "Skip"]; labels: [@tr("Increment"), @tr("Overwrite"), @tr("Skip")]; current <=> root.export-on-exists; }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            watermark-words := Text { accessible-role: none; text: @tr("Watermark"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            watermark-words := Text { accessible-role: none; text: @tr("Watermark"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             // Export watermark: off, a text, or a PNG
                             Segmented { name: watermark-words.text; options: ["Off", "Text", "Image"]; labels: [@tr("Off"), @tr("Text"), @tr("Image")]; current <=> root.export-mark; }
                         }
                         if root.export-mark == "Text": HorizontalLayout {
                             spacing: Theme.space-2;
-                            text-words := Text { accessible-role: none; text: @tr("Text"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            text-words := Text { accessible-role: none; text: @tr("Text"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
                                 accessible-label: text-words.text;
                                 horizontal-stretch: 1;
@@ -491,7 +491,7 @@ export component ExportSheet inherits Rectangle {
                         }
                         if root.export-mark == "Image": HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: @tr("Image"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Image"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             Text {
                                 text: root.export-mark-image-name == "" ? @tr("No PNG chosen") : root.export-mark-image-name;
                                 color: root.export-mark-image-name == "" ? Theme.text-muted : Theme.text-secondary;
@@ -532,7 +532,7 @@ export component ExportSheet inherits Rectangle {
                                 size-slider := EditSlider {
                                     // Export watermark: the slider
                                     label: @tr("Size");
-                                    label-width: 68px;
+                                    label-width: root.mark-column;
                                     minimum: 1;
                                     maximum: 50;
                                     default: 15;
@@ -544,7 +544,7 @@ export component ExportSheet inherits Rectangle {
                                 margin-slider := EditSlider {
                                     // Export watermark: the slider
                                     label: @tr("Margin");
-                                    label-width: 68px;
+                                    label-width: root.mark-column;
                                     minimum: 0;
                                     maximum: 10;
                                     default: 2;
@@ -556,7 +556,7 @@ export component ExportSheet inherits Rectangle {
                                 opacity-slider := EditSlider {
                                     // Export watermark: the slider
                                     label: @tr("Opacity");
-                                    label-width: 68px;
+                                    label-width: root.mark-column;
                                     minimum: 5;
                                     maximum: 100;
                                     default: 60;
@@ -574,7 +574,7 @@ export component ExportSheet inherits Rectangle {
                             spacing: 4px;
                             // The row's word is its radio group to a screen
                             // reader: the row has no box of its own to be one.
-                            Text { accessible-role: radio-group; accessible-label: self.text; text: @tr("Border"); width: 68px + Theme.space-2 - 4px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { accessible-role: radio-group; accessible-label: self.text; text: @tr("Border"); width: root.label-column + Theme.space-2 - 4px; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             for choice in [
                                 // Export border: no border
                                 { name: "Off", fill: Theme.base, word: @tr("Off"), wide: true },
@@ -642,7 +642,7 @@ export component ExportSheet inherits Rectangle {
                         if root.export-border: width-slider := EditSlider {
                             // Export border: the slider
                             label: @tr("Width");
-                            label-width: 68px;
+                            label-width: root.label-column;
                             minimum: 0.5;
                             maximum: 25;
                             default: 5;
@@ -671,7 +671,7 @@ export component ExportSheet inherits Rectangle {
                     // it stays in view with it however short the window.
                     HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text { text: @tr("Folder"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Text { text: @tr("Folder"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         Text {
                             text: root.folder-line;
                             color: Theme.text-secondary;
@@ -826,5 +826,50 @@ export component ExportSheet inherits Rectangle {
                 }
             }
         }
+    }
+
+    // The sheet's label column: as wide as its widest label, and no
+    // narrower than the 68 px English has always had, nor wider than
+    // 150 px, past which a label is cut short. Every label is measured,
+    // those of the rows a watermark, a size, or a border brings in
+    // among them, so the column holds still as they come and go; a
+    // slider's label keeps its gap to the track inside the column. The
+    // sheet widens by what the column adds to English's, so the controls
+    // keep the room they have in English.
+    property <length> label-column: clamp(max(
+        max(max(max(widest-preset.preferred-width, widest-name.preferred-width), max(widest-format.preferred-width, widest-long-edge.preferred-width)),
+            max(max(widest-pixels.preferred-width, widest-sharpen.preferred-width), max(widest-color.preferred-width, widest-metadata.preferred-width))),
+        max(max(max(widest-subfolder.preferred-width, widest-if-it-exists.preferred-width), max(widest-watermark.preferred-width, widest-text.preferred-width)),
+            max(max(widest-image.preferred-width, widest-border.preferred-width), widest-folder.preferred-width)),
+        max(widest-quality.preferred-width, widest-width.preferred-width) + Theme.space-2), 68px, 150px);
+    // The watermark's sliders, beside its grid, by their own labels.
+    property <length> mark-column: clamp(max(max(widest-size.preferred-width, widest-margin.preferred-width), widest-opacity.preferred-width) + Theme.space-2, 68px, 150px);
+    // Laid out and never drawn: their words are transparent, which the
+    // renderers skip outright (no layer, as an opacity would make, and
+    // no glyphs), and not hidden, so a test can read each one's width
+    // beside its label's.
+    Rectangle {
+        width: 0px;
+        height: 0px;
+        widest-preset := Text { text: @tr("Preset"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-name := Text { text: @tr("Name"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-format := Text { text: @tr("Format"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-quality := Text { text: @tr("Quality"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-long-edge := Text { text: @tr("Long edge"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-pixels := Text { text: @tr("Pixels"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-sharpen := Text { text: @tr("Sharpen"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-color := Text { text: @tr("Color"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-metadata := Text { text: @tr("Metadata"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-subfolder := Text { text: @tr("Subfolder"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-if-it-exists := Text { text: @tr("If it exists"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-watermark := Text { text: @tr("Watermark"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-text := Text { text: @tr("Text"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-image := Text { text: @tr("Image"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-border := Text { text: @tr("Border"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-width := Text { text: @tr("Width"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-folder := Text { text: @tr("Folder"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-size := Text { text: @tr("Size"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-margin := Text { text: @tr("Margin"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
+        widest-opacity := Text { text: @tr("Opacity"); font-size: Theme.font-sm; color: transparent; accessible-role: none; }
     }
 }

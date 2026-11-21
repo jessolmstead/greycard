@@ -1599,6 +1599,130 @@ fn a_wheel_over_an_open_sheet_leaves_the_picture_alone() {
     }
 }
 
+/// The export sheet in every bundled language at 150 %: its label
+/// column as wide as its widest label, so none is cut short, every
+/// control still inside the card, and the card in the least window
+/// the window goes to and in 1024 by 640. English keeps the 68 px
+/// column it has always had.
+#[test]
+fn the_export_sheet_labels_fit_at_150_percent_in_each_language() {
+    use i_slint_backend_testing::ElementHandle;
+    let languages =
+        std::iter::once("").chain(crate::i18n::languages().into_iter().map(|(tag, _)| tag));
+    for language in languages {
+        let app = crate::testing::window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let _language = crate::testing::in_language(language);
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged { scale_factor: 1.5 });
+        // Tall enough that no row is scrolled out of view, with every
+        // row the sheet has on show.
+        app.window()
+            .set_size(slint::LogicalSize::new(1024.0, 1400.0));
+        app.set_export_mark("Text".into());
+        app.set_export_size("Custom".into());
+        app.set_export_border(true);
+        app.set_export_open(true);
+        crate::testing::settle(&app);
+        let one = |id: &str| {
+            ElementHandle::find_by_element_id(&app, &format!("ExportSheet::{id}"))
+                .next()
+                .unwrap_or_else(|| panic!("{language}: {id}"))
+        };
+        // Each label beside what it needs, measured by the sheet's own
+        // hidden copy of its words.
+        for (label, words) in [
+            ("preset-words", "widest-preset"),
+            ("format-words", "widest-format"),
+            ("long-edge-words", "widest-long-edge"),
+            ("pixels-words", "widest-pixels"),
+            ("sharpen-words", "widest-sharpen"),
+            ("color-words", "widest-color"),
+            ("metadata-words", "widest-metadata"),
+            ("subfolder-words", "widest-subfolder"),
+            ("name-2-words", "widest-name"),
+            ("if-it-exists-words", "widest-if-it-exists"),
+            ("watermark-words", "widest-watermark"),
+            ("text-words", "widest-text"),
+        ] {
+            let need = one(words).size().width;
+            let has = one(label).size().width;
+            assert!(need > 0.0, "{language}: {words} measured");
+            assert!(
+                has + 0.5 >= need.min(150.0),
+                "{language}: {label} is {has} px for {need} px"
+            );
+            if language.is_empty() {
+                assert_eq!(has, 68.0, "{label}: English's column");
+            }
+        }
+        // A slider's label, its gap to the track kept.
+        for (slider, words) in [
+            ("quality-slider", "widest-quality"),
+            ("width-slider", "widest-width"),
+            ("size-slider", "widest-size"),
+            ("margin-slider", "widest-margin"),
+            ("opacity-slider", "widest-opacity"),
+        ] {
+            let need = one(words).size().width;
+            let label = one(slider)
+                .query_descendants()
+                .match_id("EditSlider::label-words")
+                .find_first()
+                .unwrap_or_else(|| panic!("{language}: {slider}'s label"));
+            let has = label.size().width;
+            assert!(
+                has + 0.5 >= need.min(150.0),
+                "{language}: {slider}'s label is {has} px for {need} px"
+            );
+        }
+        // Every control inside the card's padding (`Theme.space-5`), and
+        // the card as wide as English's but for what the column adds.
+        let card = one("card");
+        let right = card.absolute_position().x + card.size().width - 24.0;
+        let column = one("format-words").size().width;
+        assert_eq!(
+            card.size().width,
+            420.0 + column - 68.0,
+            "{language}: the card"
+        );
+        for kind in [
+            "Segmented",
+            "LineEdit",
+            "ComboBox",
+            "EditSlider",
+            "PanelButton",
+        ] {
+            for c in card.query_descendants().match_inherits(kind).find_all() {
+                let end = c.absolute_position().x + c.size().width;
+                assert!(
+                    end <= right + 0.5,
+                    "{language}: a {kind} ends at {end}, the card's padding at {right}"
+                );
+            }
+        }
+        // And in the least window the card fits it, Export in reach.
+        let least = (app.get_least_width(), app.get_least_height());
+        for (width, height) in [least, (1024.0, 640.0)] {
+            app.window()
+                .set_size(slint::LogicalSize::new(width, height));
+            crate::testing::settle(&app);
+            let card = one("card");
+            let (at, size) = (card.absolute_position(), card.size());
+            assert!(
+                at.x >= 0.0 && at.x + size.width <= width && at.y + size.height <= height,
+                "{language} in {width} by {height}: the card at {at:?} {size:?}"
+            );
+            let cancel = one("cancel-button");
+            assert!(
+                cancel.absolute_position().y + cancel.size().height <= height,
+                "{language} in {width} by {height}: Cancel in reach"
+            );
+        }
+    }
+}
+
 #[test]
 fn the_export_sheet_fits_a_short_window_and_its_choices_scroll() {
     let app = crate::testing::window(1);

@@ -65,7 +65,7 @@ export global ScrollBars {
 // no English label is cut. `most` holds the panel's
 // longest labels, English and French, at the panel's type. The window
 // sets `panel-width` as the panel's width changes. The sheets keep a
-// 68 px column of their own.
+// column of their own (the export sheet's as wide as its labels).
 export global LabelColumn {
     in-out property <length> panel-width: 334px;
     out property <length> least: 68px;
