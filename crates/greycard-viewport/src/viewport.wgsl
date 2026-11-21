@@ -1221,6 +1221,10 @@ const MIDTONES_PEAK: f32 = 0.4375;
 const MIDTONES_UNDER_FOOT: f32 = 0.5;
 const MIDTONES_REACH: f32 = 1.75;
 const MIDTONES_LIMIT: f32 = 2.0;
+// What the summed shadows and highlights are held to, as `finish.rs`
+// has it: the sliders' own limit, as the midtones is.
+const SHADOWS_LIMIT: f32 = 2.0;
+const HIGHLIGHTS_LIMIT: f32 = 2.0;
 
 // The foot of the highlights ramp's span and the span, in stops over
 // mid grey as `shape` reads a region, as `highlights_span` in
@@ -1368,23 +1372,24 @@ fn whites_roll(c: vec3<f32>, whites: f32) -> vec3<f32> {
 fn shape(x: vec3<f32>, look: Look, g: f32, has_guide: bool, span: vec2<f32>, kept: vec4<f32>) -> vec3<f32> {
     let c = MID_GREY * pow(max(x, vec3<f32>(0.0)) / MID_GREY, vec3<f32>(look.contrast));
     let l = select(log2(max(dot(LUMA, c), 1e-6) / MID_GREY), g, has_guide);
-    var lifted = l + look.shadows * (1.0 - smoothstep(SHADOWS_RAMP.x, SHADOWS_RAMP.y, l));
+    var lifted = l + clamp(look.shadows, -SHADOWS_LIMIT, SHADOWS_LIMIT) * (1.0 - smoothstep(SHADOWS_RAMP.x, SHADOWS_RAMP.y, l));
     // The middle on the frame's own span, as the whites' pivot is.
     if (look.midtones != 0.0) {
         lifted = lifted + clamp(look.midtones, -MIDTONES_LIMIT, MIDTONES_LIMIT) * midtones_weight(lifted, span);
     }
     // A merge's kept range pulled under display white first, the ramp
     // then on its span as pulled; the whites' pivot stays on `span`.
+    let highlights = clamp(look.highlights, -HIGHLIGHTS_LIMIT, HIGHLIGHTS_LIMIT);
     var read = lifted;
     var ramp_span = span;
-    if (kept.w > 0.0 && look.highlights < 0.0) {
-        let share = clamp(-look.highlights / HIGHLIGHTS_TRAVEL, 0.0, 1.0);
+    if (kept.w > 0.0 && highlights < 0.0) {
+        let share = clamp(-highlights / HIGHLIGHTS_TRAVEL, 0.0, 1.0);
         read = kept_pull(kept, lifted, share);
         let top = kept_pull(kept, kept.y, share);
         let width = clamp(top - kept_pull(kept, kept.x, share), HIGHLIGHTS_SPAN.x, HIGHLIGHTS_SPAN.y);
         ramp_span = vec2<f32>(top - width, width);
     }
-    let shifted = read + look.highlights * highlights_weight(read, ramp_span);
+    let shifted = read + highlights * highlights_weight(read, ramp_span);
     let pivot = clamp(span.x, WHITES_PIVOT.x, WHITES_PIVOT.y);
     return black_point(whites_roll(white_point(c * exp2(shifted - l), look.whites, pivot), look.whites), look.blacks);
 }

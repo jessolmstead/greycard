@@ -1687,6 +1687,14 @@ pub const MIDTONES_REACH: f32 = 1.75;
 /// the bell's slope is the 0.75 above. Unheld, a mask at the limit over
 /// a picture at it would double that and fold the curve.
 pub const MIDTONES_LIMIT: f32 = 2.0;
+/// What the shadows and the highlights that reach the region shifts
+/// are held to, once summed as the midtones is ([`MIDTONES_LIMIT`]): the
+/// sliders' own limit, where shadows' least slope is 0.14 and
+/// highlights' 0.125. A mask at the limit over a picture at it would
+/// take either under zero and fold the tones.
+pub const SHADOWS_LIMIT: f32 = 2.0;
+/// As [`SHADOWS_LIMIT`].
+pub const HIGHLIGHTS_LIMIT: f32 = 2.0;
 
 /// How much of the midtones slider a region takes, by where it sits
 /// in the frame's span ([`highlights_span`]): a bell, full
@@ -1875,7 +1883,8 @@ fn shape_rolled(
         let y = LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2];
         (y.max(1e-6) / MID_GREY).log2()
     });
-    let lifted = g + t.shadows * (1.0 - smoothstep(SHADOWS_RAMP.0, SHADOWS_RAMP.1, g));
+    let lifted = g + t.shadows.clamp(-SHADOWS_LIMIT, SHADOWS_LIMIT)
+        * (1.0 - smoothstep(SHADOWS_RAMP.0, SHADOWS_RAMP.1, g));
     // The middle on the frame's own span, as the whites' pivot is.
     let lifted = if t.midtones == 0.0 {
         lifted
@@ -1885,14 +1894,15 @@ fn shape_rolled(
     // A frame with headroom: the negative travel pulls its kept range
     // under display white first, the ramp then on its span as pulled.
     // The whites keeps its pivot on the span as the frame has it.
+    let highlights = t.highlights.clamp(-HIGHLIGHTS_LIMIT, HIGHLIGHTS_LIMIT);
     let (read, ramp_span) = match kept {
-        Some(k) if t.highlights < 0.0 => {
-            let share = Kept::share(t.highlights);
+        Some(k) if highlights < 0.0 => {
+            let share = Kept::share(highlights);
             (k.pull(lifted, share), k.span(share))
         }
         _ => (lifted, span),
     };
-    let shifted = read + t.highlights * highlights_weight(read, ramp_span);
+    let shifted = read + highlights * highlights_weight(read, ramp_span);
     let gain = 2f32.powf(shifted - g);
     let pointed = white_point(
         c.map(|v| v * gain),
@@ -3092,6 +3102,116 @@ mod tests {
             let grey = finish_pixel([MID_GREY; 3], &global, &on, &m)[1];
             let light = finish_pixel([1.0; 3], &global, &on, &m)[1];
             assert!(dark < grey && grey < light, "{n}: {dark} {grey} {light}");
+        }
+    }
+
+    /// Shadows and highlights summed under masks are held to the
+    /// sliders' limit, as the midtones is: past it, the picture's and
+    /// its masks' render as the limit on the picture alone, under one
+    /// mask or several overlapping, either sign, on a plain frame and
+    /// on a merge whose kept range the negative highlights pulls; at
+    /// the limit and under it the sum is the sum, to the bit.
+    #[test]
+    fn summed_shadows_and_highlights_are_held_to_the_limit() {
+        let m = crate::export::Space::Srgb.matrix();
+        let toned = |highlights: bool, v: f32| {
+            let mut look = Look::default();
+            if highlights {
+                look.light.tone.highlights = v;
+            } else {
+                look.light.tone.shadows = v;
+            }
+            look
+        };
+        let pixels: Vec<[f32; 3]> = (-14..=8)
+            .map(|k| grey_at(k as f32 * 0.5))
+            .chain([[0.6, 0.3, 0.9], [0.02, 0.05, 0.01], [3.0, 2.0, 1.2]])
+            .collect();
+        // A merge with two stops kept, its guide's top past white, so
+        // the pull is in play under a negative highlights.
+        let merge = Source::Scene(Baseline::DEFAULT.with_headroom(2.0));
+        let range = [-1.5, 3.5];
+        let picture = merge.baseline(&Edit::default().light);
+        let kept = Kept::of(range, picture, 1.0, 2.0, DISPLAY_WHITE_STOPS);
+        assert!(kept.is_some());
+        for (source, guided) in [(Source::SCENE, false), (merge, true)] {
+            let render = |highlights: bool, picture: f32, masks: &[(f32, f32)]| {
+                let mut edit = Edit::default();
+                edit.set_look(toned(highlights, picture));
+                let global = Baked::global(&edit, source);
+                let locals: Vec<Baked> = masks
+                    .iter()
+                    .map(|&(v, _)| Baked::of(&toned(highlights, v)))
+                    .collect();
+                let on: Vec<(&Baked, f32)> = locals
+                    .iter()
+                    .zip(masks)
+                    .map(|(b, &(_, w))| (b, w))
+                    .collect();
+                pixels
+                    .iter()
+                    .map(|&px| {
+                        let reading = (px[1] / MID_GREY).log2();
+                        let guide = guided.then_some((reading, range));
+                        finish_pixel_with(px, &global, &on, 0.0, None, None, guide, None, None, &m)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            // The same masks with nothing to their tone: what a picture
+            // at `v` renders as under them, the reference each sum is
+            // held to, its locals' other passes the same.
+            let zeroed =
+                |masks: &[(f32, f32)]| masks.iter().map(|&(_, w)| (0.0, w)).collect::<Vec<_>>();
+            for highlights in [false, true] {
+                for s in [1.0f32, -1.0] {
+                    let what = format!("{source:?}, highlights {highlights}, sign {s}");
+                    // Past it: one mask, one in part, and several
+                    // overlapping, over the picture or over nothing.
+                    for (picture, masks) in [
+                        (1.5, vec![(1.5, 1.0)]),
+                        (1.5, vec![(2.0, 1.0)]),
+                        (2.0, vec![(2.0, 0.75)]),
+                        (1.0, vec![(1.0, 1.0), (1.0, 1.0)]),
+                        (2.0, vec![(2.0, 1.0), (2.0, 0.5), (1.0, 1.0)]),
+                        (0.0, vec![(1.5, 1.0), (1.5, 1.0)]),
+                    ] {
+                        let masks: Vec<_> = masks.iter().map(|&(v, w)| (v * s, w)).collect();
+                        assert_eq!(
+                            render(highlights, picture * s, &masks),
+                            render(highlights, 2.0 * s, &zeroed(&masks)),
+                            "{what}: {picture} under {masks:?}"
+                        );
+                    }
+                    // At it, the sum is the limit's own.
+                    for masks in [vec![(2.0 * s, 0.5)], vec![(0.5 * s, 1.0), (0.5 * s, 1.0)]] {
+                        assert_eq!(
+                            render(highlights, s, &masks),
+                            render(highlights, 2.0 * s, &zeroed(&masks)),
+                            "{what}: {masks:?}"
+                        );
+                    }
+                    // Just under it, the sum, and not the limit.
+                    let masks = [(0.875 * s, 1.0)];
+                    let under = render(highlights, s, &masks);
+                    assert_eq!(
+                        under,
+                        render(highlights, 1.875 * s, &zeroed(&masks)),
+                        "{what}"
+                    );
+                    assert_ne!(
+                        under,
+                        render(highlights, 2.0 * s, &zeroed(&masks)),
+                        "{what}"
+                    );
+                    // Against each other, the sum.
+                    let masks = [(-1.5 * s, 1.0), (-s, 0.5)];
+                    assert_eq!(
+                        render(highlights, 2.0 * s, &masks),
+                        render(highlights, 0.0, &zeroed(&masks)),
+                        "{what}"
+                    );
+                }
+            }
         }
     }
 

@@ -56,6 +56,8 @@ design note behind it.
 
 ### Fixes
 
+- A mask's Shadows or Highlights stacked on the picture's past the
+  slider's limit no longer folds the tones; the sum is held at the limit.
 - The curve's backdrop no longer shows another mask's histogram, or the
   Original's, behind the edit's curve.
 - Edit in another program honors the export sheet's Metadata choice; its

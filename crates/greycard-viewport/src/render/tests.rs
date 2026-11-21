@@ -72,17 +72,21 @@ fn the_shaders_shift_fade_at_black_is_the_cpus() {
     }
 }
 
-/// The shader's midtones bell is the render crate's exactly.
+/// The shader's midtones bell, and what the summed midtones, shadows,
+/// and highlights are held to, are the render crate's exactly.
 #[test]
 fn the_shaders_midtones_bell_is_the_cpus() {
     use greycard_render::finish::{
-        MIDTONES_LIMIT, MIDTONES_PEAK, MIDTONES_REACH, MIDTONES_UNDER_FOOT,
+        HIGHLIGHTS_LIMIT, MIDTONES_LIMIT, MIDTONES_PEAK, MIDTONES_REACH, MIDTONES_UNDER_FOOT,
+        SHADOWS_LIMIT,
     };
     for (name, value) in [
         ("MIDTONES_PEAK", MIDTONES_PEAK),
         ("MIDTONES_UNDER_FOOT", MIDTONES_UNDER_FOOT),
         ("MIDTONES_REACH", MIDTONES_REACH),
         ("MIDTONES_LIMIT", MIDTONES_LIMIT),
+        ("SHADOWS_LIMIT", SHADOWS_LIMIT),
+        ("HIGHLIGHTS_LIMIT", HIGHLIGHTS_LIMIT),
     ] {
         assert_eq!(shader_literal(name), value, "the shader's {name}");
     }
@@ -1585,7 +1589,8 @@ fn a_fitted_table_is_off_under_another_curve_on_both_sides() {
 /// exposures and two contrasts, beside the shadows and the highlights
 /// it sits between, the guide plane read, and in a mask that adds its
 /// own over the picture's, past the slider's limit where the sum is
-/// held.
+/// held; and the shadows and highlights summed past it the same way,
+/// under one mask and under two overlapping, either sign.
 #[test]
 fn midtones_on_the_gpu_is_the_cpus() {
     use greycard_render::finish::{finish_with, guide_plane};
@@ -1628,15 +1633,37 @@ fn midtones_on_the_gpu_is_the_cpus() {
     for exposure in [-1.0f32, 0.0, 1.0] {
         for contrast in [1.0f32, 1.3] {
             for midtones in [-2.0f32, -0.6, 1.0, 2.0] {
-                cases.push((exposure, contrast, midtones, 0.0, 0.0, None));
+                cases.push((exposure, contrast, midtones, 0.0, 0.0, vec![]));
             }
         }
     }
-    cases.push((0.3, 1.0, 1.5, 1.0, -1.0, None));
-    cases.push((0.0, 1.0, -1.5, -1.0, 1.5, None));
-    // A mask over the right half adding its own past the limit.
-    cases.push((0.0, 1.0, 1.5, 0.0, 0.0, Some(1.5f32)));
-    cases.push((0.0, 1.0, -0.5, 0.0, 0.0, Some(-2.0f32)));
+    cases.push((0.3, 1.0, 1.5, 1.0, -1.0, vec![]));
+    cases.push((0.0, 1.0, -1.5, -1.0, 1.5, vec![]));
+    // A mask over the right half adding its own past the limit, its
+    // midtones, shadows, and highlights; a second over the right two
+    // thirds, overlapping it.
+    cases.push((0.0, 1.0, 1.5, 0.0, 0.0, vec![[1.5f32, 0.0, 0.0]]));
+    cases.push((0.0, 1.0, -0.5, 0.0, 0.0, vec![[-2.0, 0.0, 0.0]]));
+    cases.push((0.0, 1.0, 0.0, 1.5, 0.0, vec![[0.0, 1.5, 0.0]]));
+    cases.push((0.0, 1.0, 0.0, -1.0, 0.0, vec![[0.0, -2.0, 0.0]]));
+    cases.push((0.0, 1.0, 0.0, 0.0, 1.5, vec![[0.0, 0.0, 2.0]]));
+    cases.push((0.0, 1.0, 0.0, 0.0, -1.5, vec![[0.0, 0.0, -1.5]]));
+    cases.push((
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        -1.0,
+        vec![[0.0, 1.0, -1.0], [0.0, 1.5, -1.5]],
+    ));
+    cases.push((
+        0.3,
+        1.0,
+        0.5,
+        -1.0,
+        1.0,
+        vec![[0.5, -1.5, 1.5], [1.0, -1.0, 1.0]],
+    ));
     for (exposure, contrast, midtones, shadows, highlights, local) in cases {
         let mut edit = greycard_edit::Edit::default();
         edit.light.exposure = exposure;
@@ -1644,16 +1671,19 @@ fn midtones_on_the_gpu_is_the_cpus() {
         edit.light.tone.midtones = midtones;
         edit.light.tone.shadows = shadows;
         edit.light.tone.highlights = highlights;
-        if let Some(m) = local {
+        for (i, [m, s, hl]) in local.iter().copied().enumerate() {
             let mut look = Look::default();
             look.light.tone.midtones = m;
+            look.light.tone.shadows = s;
+            look.light.tone.highlights = hl;
+            let from = [0.45 - 0.2 * i as f32, 0.0];
             edit.adjustments.push(greycard_edit::Adjustment {
-                id: 1,
+                id: 1 + i as u64,
                 mask: Mask {
                     components: vec![Component {
                         shape: Shape::Linear {
-                            from: [0.45, 0.0],
-                            to: [0.55, 0.0],
+                            from,
+                            to: [from[0] + 0.1, 0.0],
                         },
                         ..Default::default()
                     }],

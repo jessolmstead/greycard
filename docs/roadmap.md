@@ -69,9 +69,6 @@ the reasoning lives in `docs/notes.md`.
       (the sharpen guide's among them, §643) while its denoiser or
       removal asks for room; on a short card the release could drop
       them too, at the cost of the window's next develop (§646)
-- [ ] A mask's Shadows and Highlights summed with the picture's are
-      not held to the slider's limit (Midtones' sum is, §644): a mask
-      at +2 over a picture at +2 can fold the tones
 - [ ] The GPU aberration tests hold each pass's fit within what the
       reference's own fit moves under one ulp of input, shown on
       NVIDIA and lavapipe; an RX 7700 XT's farthest-tile distance was
