@@ -175,6 +175,11 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Slint built without its default features, so its OpenGL
       renderer and glutin leave the binary (discussion 168); check
       `cargo tree -i glutin` first
+- [ ] A worker test that fails can take the whole test process down
+      with SIGABRT, so the run names no cause: seen twice at
+      `a_cached_thumbnail_job_finds_what_the_pool_kept` under load
+      (2026-11-22). Its wait is longer now; the abort itself is not
+      found
 - [ ] A right-click while a menu is open does not close it, on
       Windows (issue 179); unverified here
 - [ ] The native context menu on Windows opens away from the pointer

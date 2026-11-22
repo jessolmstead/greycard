@@ -2293,7 +2293,9 @@ fn a_cached_thumbnail_job_finds_what_the_pool_kept() {
             Outcome::NoThumbnail { index, .. } => format!("none {index}"),
             _ => return,
         };
-        tx.lock().unwrap().send(line).unwrap();
+        // A send after the test gave up must not panic on the worker's
+        // thread: that aborts the whole run and hides which wait failed.
+        let _ = tx.lock().unwrap().send(line);
     });
     let mut thumbs = Thumbs::at(dir.join("thumbs"), greycard_library::thumbs::DEFAULT_CAP);
     let made = crate::made::made_size(worker.pool().expect("a window's worker").size());
@@ -2313,7 +2315,9 @@ fn a_cached_thumbnail_job_finds_what_the_pool_kept() {
         hash: hash.clone(),
         stamp,
     });
-    let wait = std::time::Duration::from_secs(10);
+    // Ten seconds was too short on a loaded runner, beside the long
+    // tests of this suite.
+    let wait = std::time::Duration::from_secs(60);
     assert_eq!(
         rx.recv_timeout(wait).unwrap(),
         format!("thumbnail 3 {made} 5 true")
