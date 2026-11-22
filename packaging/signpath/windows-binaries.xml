@@ -21,6 +21,13 @@
   version Cargo.toml's), the uninstaller from Inno Setup
   (packaging/windows/greycard.iss: AppName, AppVersion). The workflow
   passes the version as the parameter.
+
+  The uninstaller's name and version are not checked. Inno Setup pads
+  both to a fixed width in its version resource ("greycard" and 52
+  spaces), SignPath compares the whole string, and it takes no
+  wildcard there, so a check can only be met by spelling the padding
+  out. It is our build of Inno's uninstaller, named and versioned as
+  the executables are, and it reaches SignPath in no other request.
 -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <parameters>
@@ -30,10 +37,12 @@
     <pe-file-set product-name="greycard" product-version="${version}">
       <include path="greycard-ui.exe" />
       <include path="greycard.exe" />
-      <include path="uninstaller.exe" />
       <for-each>
         <authenticode-sign />
       </for-each>
     </pe-file-set>
+    <pe-file path="uninstaller.exe">
+      <authenticode-sign />
+    </pe-file>
   </zip-file>
 </artifact-configuration>

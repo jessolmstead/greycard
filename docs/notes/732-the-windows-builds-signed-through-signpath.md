@@ -24,8 +24,15 @@ has two Windows legs, so four requests.
 
 The artifact configurations are kept with the code
 (`packaging/signpath`) and pasted into SignPath; the two are changed
-together. Each checks the product name and version of every file, as
-the Foundation's terms ask.
+together. Each checks the product name and version of our two
+executables, as the Foundation's terms ask.
+
+Inno Setup's own two files, the uninstaller and the setup, are signed
+without that check. Inno pads the name and the version to a fixed
+width in their version resources ("greycard" and 52 spaces), SignPath
+compares the whole string, and it takes no wildcard there. The first
+test runs failed on exactly that; the question of a check that holds
+for Inno's files is with SignPath.
 
 ## What is not signed
 
