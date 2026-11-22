@@ -16,6 +16,7 @@ pub mod export;
 pub mod finish;
 pub mod geometry;
 pub mod halves;
+pub mod lanczos;
 pub mod output_sharpen;
 pub mod profile_tone;
 pub mod reduce;

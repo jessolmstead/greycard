@@ -628,7 +628,8 @@ pub fn render_framed(
                 "the export",
             )
         });
-    let detail_fitted = detail.and_then(|(d, _)| d.fit(settings.long_edge, sample.is_some()));
+    let mut detail_fitted = detail
+        .and_then(|(d, meta)| d.fit(settings.long_edge, sample.is_some(), image, meta.sharpened));
     let sample_fitted = match &detail_fitted {
         Some(d) => d.sample.clone(),
         None => sample.and_then(|s| fit(s, settings.long_edge).map(std::sync::Arc::new)),
@@ -646,7 +647,20 @@ pub fn render_framed(
                     unsharpened = f.clone();
                     sampled = Some(&unsharpened);
                 }
+                // The picture on the sharpen's other side, output
+                // sharpened alike, so the masks' Sharpen of one reaches
+                // it after this step as before it.
+                let sharpened = detail.is_some_and(|(_, m)| m.sharpened);
+                let other = detail_fitted
+                    .as_ref()
+                    .and_then(|d| d.sharpen.as_ref())
+                    .filter(|d| (d.width, d.height) == (f.width, f.height))
+                    .map(|d| crate::detail::other_side(&f, d, sharpened));
                 sharpen::sharpen(&mut f, &options, None, clip_level);
+                if let (Some(mut other), Some(d)) = (other, detail_fitted.as_mut()) {
+                    sharpen::sharpen(&mut other, &options, None, clip_level);
+                    d.sharpen = Some(crate::detail::delta_between(&f, &other, sharpened));
+                }
             }
             fitted = f;
             &fitted
@@ -985,19 +999,18 @@ pub(crate) fn fit_size(width: usize, height: usize, long_edge: Option<u32>) -> O
     Some((w, h))
 }
 
-/// `image` resampled to `w` by `h` as [`fit`] resamples it, up or down;
-/// `None` when it is that size already.
+/// `image` resampled to `w` by `h` as [`fit`] resamples it, up or down,
+/// by our Lanczos3 ([`crate::lanczos`]), which keeps light over one and
+/// values under zero; `None` when it is that size already.
 pub fn fit_exact(image: &WorkingImage, w: u32, h: u32) -> Option<WorkingImage> {
     if (image.width as u32, image.height as u32) == (w, h) {
         return None;
     }
-    let src: image::ImageBuffer<image::Rgb<f32>, &[f32]> =
-        image::ImageBuffer::from_raw(image.width as u32, image.height as u32, &image.data[..])?;
-    let out = image::imageops::resize(&src, w, h, image::imageops::FilterType::Lanczos3);
+    let (w, h) = (w as usize, h as usize);
     Some(WorkingImage {
-        width: w as usize,
-        height: h as usize,
-        data: out.into_raw(),
+        width: w,
+        height: h,
+        data: crate::lanczos::resize(&image.data, image.width, image.height, 3, w, h),
     })
 }
 
@@ -1013,10 +1026,9 @@ pub fn fit_exact_plane(
     if (width as u32, height as u32) == (w, h) {
         return None;
     }
-    let src: image::ImageBuffer<image::Luma<f32>, &[f32]> =
-        image::ImageBuffer::from_raw(width as u32, height as u32, data)?;
-    let out = image::imageops::resize(&src, w, h, image::imageops::FilterType::Lanczos3);
-    Some(out.into_raw())
+    Some(crate::lanczos::resize(
+        data, width, height, 1, w as usize, h as usize,
+    ))
 }
 
 /// What an export says about itself beyond the source's tags: where
@@ -1865,6 +1877,67 @@ mod tests {
             .expect("a profile");
         assert_eq!(icc, Space::DisplayP3.icc().unwrap());
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A smaller export keeps the light over one: a grey ramp to scene
+    /// 1.9, exported at full size and at half under exposure -1.5,
+    /// reads the same at each scene value, where the resize used to hold
+    /// everything over one at one and the half-size export went flat
+    /// past scene 1.0 (56856 from 1.14 to 1.80, against 58445 to 62871
+    /// at full size).
+    #[test]
+    fn a_smaller_export_keeps_the_light_over_one() {
+        let (w, h) = (240usize, 60usize);
+        let mut image = WorkingImage::new(w, h);
+        for (i, px) in image.data.chunks_mut(3).enumerate() {
+            px.fill(1.9 * (i % w) as f32 / w as f32);
+        }
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.exposure = -1.5;
+        let at = |long_edge| {
+            let settings = Settings {
+                format: Format::Tiff,
+                sharpen: Sharpen::Off,
+                long_edge,
+                ..Settings::default()
+            };
+            let rendered = render(
+                &image,
+                &edit,
+                &greycard_edit::NoStores,
+                (w as u32, h as u32),
+                &settings,
+                &Default::default(),
+                2.0,
+                None,
+                finish::Source::SCENE,
+                None,
+                None,
+            );
+            let Pixels::Sixteen(p) = rendered.pixels else {
+                panic!("a TIFF is sixteen bits")
+            };
+            (rendered.width as usize, p)
+        };
+        let (fw, full) = at(None);
+        let (hw, half) = at(Some(120));
+        assert_eq!((fw, hw), (w, w / 2));
+        let row = h / 4;
+        let mut last = 0;
+        for x in (70..115).step_by(5) {
+            // Half-size pixel x covers full-size pixels 2x and 2x + 1.
+            let small = half[(row / 2 * hw + x) * 3];
+            let large = (u32::from(full[(row * fw + 2 * x) * 3])
+                + u32::from(full[(row * fw + 2 * x + 1) * 3]))
+                / 2;
+            let scene = 1.9 * (2 * x + 1) as f32 / w as f32;
+            assert!(small > last, "flat at scene {scene}: {small}");
+            assert!(
+                (i64::from(small) - i64::from(large)).abs() < 40,
+                "scene {scene}: {small} at half, {large} at full"
+            );
+            last = small;
+        }
     }
 
     /// A mask with every section of a look moved, over a feathered

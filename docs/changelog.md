@@ -71,6 +71,11 @@ design note behind it.
 
 ### Fixes
 
+- An export made smaller keeps highlights past white, and a mask's
+  Sharpen, Texture, Clarity, and Structure act in it as at full size
+  ([§728](https://github.com/jessolmstead/greycard/blob/master/docs/notes/728-our-own-resize-for-smaller-exports.md)).
+- Output Sharpen no longer cuts a dark halo beside a blown highlight in
+  an export made smaller.
 - The left pane holds still while a root's frame count climbs or a pass
   finds folders, and the culling filter's chips keep their scroll.
 - Dragging the Level tool's ruler no longer lays a grid over the

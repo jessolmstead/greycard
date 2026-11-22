@@ -60,16 +60,28 @@ use crate::worker::ThumbCache;
 /// the edit", so the two never name one entry. Raise the low bits when
 /// the shrink, the un-turn or the encode below make another picture
 /// from the same finished one; a change to the develop or the finish
-/// is `greycard_edit::key::DEVELOP_RECIPE`'s.
-pub const EDITED_RECIPE: u16 = 0x8001;
+/// is `greycard_edit::key::DEVELOP_RECIPE`'s, unless it changes these
+/// pictures alone, which raise both recipes past every value either
+/// held ([`RETIRED_RECIPES`]).
+///
+/// 0x8003: the resize to [`BIG`] keeps light over one and values under
+/// zero, and a mask's Sharpen there is the delta between the resized
+/// pictures, 2026-11-21. Raised here, not in `DEVELOP_RECIPE`, which
+/// also names the learned masks' rasters.
+pub const EDITED_RECIPE: u16 = 0x8003;
 
 /// The recipe the pictures the reduced develop made are kept under
 /// (`reduced`): the edit's too, and looked up after
 /// [`EDITED_RECIPE`]'s, but made from the binned mosaic with no capture
 /// sharpen and no denoise. The open frame's develop makes the edit's
 /// pictures under [`EDITED_RECIPE`] when the frame is opened, and they
-/// take these ones' place.
-pub const REDUCED_RECIPE: u16 = 0x8002;
+/// take these ones' place. 0x8004 with [`EDITED_RECIPE`]'s 0x8003.
+pub const REDUCED_RECIPE: u16 = 0x8004;
+
+/// The values the two recipes held before, never used again: a picture
+/// kept under one is never asked for.
+#[cfg(test)]
+const RETIRED_RECIPES: [u16; 2] = [0x8001, 0x8002];
 
 /// Both recipes of the edit's pictures, in the order they are looked
 /// up.
@@ -1198,10 +1210,12 @@ pub fn make(
     // is placed by the output's own pixels: a crop rounded at another
     // scale would put the picture a pixel off it.
     let (w, h) = fitted_size(finish.full, &edit.geometry, None);
+    let framed_picture = image;
     let fitted = greycard_render::export::fit_exact(image, w, h);
     let image = fitted.as_ref().unwrap_or(image);
     // The masks' bands by the same steps: reduced by the whole factor
-    // the picture was, framed, and fitted.
+    // the picture was, framed, and fitted, the sharpen's delta in the
+    // fit made from the picture as the export makes it.
     let detail = finish.detail.as_ref().map(|planes| {
         let mut bands = if (planes.width, planes.height) == (reduced.width, reduced.height) {
             planes.to_image()
@@ -1215,7 +1229,9 @@ pub fn make(
         if !whole {
             bands = bands.framed(&edit.geometry)?;
         }
-        Ok(bands.fit_exact(w, h).unwrap_or(bands))
+        Ok(bands
+            .fit_exact_beside(w, h, true, framed_picture, planes.meta.sharpened)
+            .unwrap_or(bands))
     });
     let detail = detail.transpose()?;
     let (sw, sh) = (finish.source.0 as f32, finish.source.1 as f32);
@@ -1409,6 +1425,19 @@ pub fn keep(edited: &Edited, job: Keeping, done: impl FnOnce(Key)) {
 pub mod tests {
     use super::*;
     use crate::testing::edited::{Heard, rig};
+
+    /// The edit's two recipes are apart from each other and from the
+    /// camera's (the high bit), and from every value they held before,
+    /// so a picture kept under a retired one is never read back.
+    #[test]
+    fn the_edits_recipes_are_new_and_apart() {
+        assert_ne!(EDITED_RECIPE, REDUCED_RECIPE);
+        for recipe in EDIT_RECIPES {
+            assert_ne!(recipe & 0x8000, 0, "{recipe:#x}");
+            assert_ne!(recipe, crate::worker::THUMB_RECIPE);
+            assert!(!RETIRED_RECIPES.contains(&recipe), "{recipe:#x} was used");
+        }
+    }
 
     /// A CR3's pictures are keyed with the headroom's version, as its
     /// index row is, and every other file's keep the edit's own key;

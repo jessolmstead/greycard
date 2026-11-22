@@ -739,3 +739,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§725. Lens profiles from subfolders, their listing held](notes/725-lens-profiles-from-subfolders.md) (2026-11-21)
 - [§726. A large fill at 512, as the last resort](notes/726-a-large-fill-at-512-as-the-last-resort.md) (2026-11-21)
 - [§727. CJK text in its region's typeface](notes/727-cjk-text-in-its-region-s-typeface.md) (2026-11-21)
+- [§728. Our own resize for smaller exports, with no clamp](notes/728-our-own-resize-for-smaller-exports.md) (2026-11-21)
