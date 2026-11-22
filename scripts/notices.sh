@@ -66,7 +66,7 @@ out=${1:-target/THIRD-PARTY-NOTICES}
 # word "copyright", and a project missing from `known` credited beside
 # one in it. Add a project to `known` as it is ported. Before
 # cargo-about, so it runs without it.
-known="RawTherapee darktable RCD Exiv2 ExifTool Pillow OpenColorIO dcraw LibRaw Blender G'MIC"
+known="RawTherapee darktable RCD Exiv2 ExifTool Pillow OpenColorIO dcraw LibRaw Blender G'MIC image-rs"
 unlisted=$(git ls-files 'crates/*.rs' 'crates/*.wgsl' | while read -r f; do
     header=$(awk '/^[[:space:]]*(\/\/|$)/ {
         sub(/^[[:space:]]*\/\/[!\/]?[[:space:]]*/, ""); printf "%s ", $0; next
