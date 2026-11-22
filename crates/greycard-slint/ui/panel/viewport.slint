@@ -1424,7 +1424,6 @@ export component Viewport inherits Rectangle {
                 if (self.pressed) { leveler.x1 = self.mouse-x; leveler.y1 = self.mouse-y; }
             }
         }
-        if leveler.dragging: AlignGrid { width: 100%; height: 100%; }
         if leveler.dragging: Path {
             width: 100%;
             height: 100%;

@@ -64,6 +64,8 @@ design note behind it.
 
 ### Fixes
 
+- Dragging the Level tool's ruler no longer lays a grid over the
+  picture; the grid still shows while the Angle slider moves.
 - The import sheet's preset picker says "None" in the window's language,
   and a preset named None is that preset.
 - The export sheet's labels are whole in every language: the label
