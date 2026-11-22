@@ -16,12 +16,23 @@ the reasoning lives in `docs/notes.md`.
       view, so what it finds depends on the window's height. One failed
       on CI alone at the 0.12.0 cut; the rest want an audit, and ids
       (2026-11-17)
-- [ ] A small integrated GPU is given every learned model at full
-      size, because the machine's memory is counted as the card's
-      (§431): on a Ryzen 5700U a denoise takes 64 s and the desktop
-      stalls while it runs. The models on the CPU, or smaller tiles,
-      on such a chip; waits on the reporter's tile test and a policy
-      (issue 181)
+- [ ] A slow GPU, integrated or a 2 GB card, runs the learned models at
+      a minute or more a frame and stalls the desktop, at any tile
+      (§431): time the first tiles and finish on the CPU below a floor
+      (issue 181, discussion 168). First a variable that keeps the
+      learned models on the CPU, for a tester's timing
+- [ ] On unified memory the models' guards see no free figure and let
+      every model run; count a capped share (issue 181)
+- [ ] On Windows, card memory spills into system RAM while the window
+      is minimized beside other GPU programs, until a crash (issue
+      195); unverified, waits on the reporter's logs and a run with
+      the denoiser off
+- [ ] On Windows the models' memory guard reads Vulkan's budget while
+      the models run on D3D12 (§431); read DXGI's (issue 195)
+- [ ] The learned denoiser's buffers stay on the card for the session
+      after one denoise; give them back when idle or hidden
+- [ ] A WebGPU out of memory that loses no device is not handled: step
+      the tile down and remember it for the card (issue 195)
 - [ ] A save rereads the XMP it is about to rewrite whole, with no
       bound (`xmp::stage_dated`); every other read stops at 64 MB
       (§705). Bounding it makes the save of a larger one fail
