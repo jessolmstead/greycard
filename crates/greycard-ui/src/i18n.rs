@@ -186,13 +186,18 @@ pub fn own_name(tag: &'static str) -> &'static str {
 
 /// The catalog's tag for a language asked for (a setting, or the
 /// system's locale such as `fr-CA` or `fr_FR.UTF-8`): the catalog of
-/// the whole tag, else of its language part; empty for English, which
-/// is also what a language with no catalog gets.
+/// the whole tag, else of its language part (for Chinese, one in the
+/// same written form first); empty for English, which is also what a
+/// language with no catalog gets.
 pub fn pick(wanted: &str) -> &'static str {
     pick_among(&TABLES.iter().map(|t| t.tag).collect::<Vec<_>>(), wanted).unwrap_or("")
 }
 
 fn pick_among<'a>(tags: &[&'a str], wanted: &str) -> Option<&'a str> {
+    // Chinese's two written forms are two catalogs: a region with no
+    // catalog of its own (`zh_HK`, `zh_SG`) takes its form's, not
+    // whichever of the language's sorts first.
+    let form = face::Region::of(wanted);
     // The encoding and the modifier are no part of the language.
     let wanted = wanted
         .split(['.', '@'])
@@ -224,6 +229,10 @@ fn pick_among<'a>(tags: &[&'a str], wanted: &str) -> Option<&'a str> {
     let base = |t: &str| t.split('_').next().unwrap_or("").to_ascii_lowercase();
     tags.iter()
         .find(|t| t.replace('-', "_").eq_ignore_ascii_case(&wanted))
+        .or_else(|| {
+            tags.iter()
+                .find(|t| base(t) == base(&wanted) && face::Region::of(t) == form)
+        })
         .or_else(|| tags.iter().find(|t| base(t) == base(&wanted)))
         .copied()
 }
@@ -699,6 +708,16 @@ msgstr "\a\b\f\v\101\x42\t"
         assert_eq!(pick_among(&chinese, "zh-Hant-TW"), Some("zh_TW"));
         assert_eq!(pick_among(&chinese, "zh_TW"), Some("zh_TW"));
         assert_eq!(pick_among(&chinese, "sr-Latn-RS"), Some("sr"));
+        // A region with no catalog takes its written form's.
+        assert_eq!(pick_among(&chinese, "zh_HK.UTF-8"), Some("zh_TW"));
+        assert_eq!(pick_among(&chinese, "zh-MO"), Some("zh_TW"));
+        assert_eq!(pick_among(&chinese, "zh-Hant-HK"), Some("zh_TW"));
+        assert_eq!(pick_among(&chinese, "zh_SG"), Some("zh_CN"));
+        assert_eq!(pick_among(&chinese, "zh-Hans-HK"), Some("zh_CN"));
+        assert_eq!(pick_among(&chinese, "zh"), Some("zh_CN"));
+        // Either form alone serves the whole language.
+        assert_eq!(pick_among(&["zh_TW"], "zh_CN"), Some("zh_TW"));
+        assert_eq!(pick_among(&["zh_CN"], "zh_HK"), Some("zh_CN"));
         // The build carries French, and nothing selected is English.
         assert_eq!(pick("fr-BE"), "fr");
         assert_eq!(pick("xx"), "");

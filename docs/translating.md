@@ -56,10 +56,9 @@ data or keys. CI runs it without `--list`.
 ## Glossaries
 
 The German, Spanish, Italian, Dutch, Polish, Brazilian Portuguese,
-Japanese, and Simplified Chinese catalogs are drafts no native speaker
-has read yet.
-Each has a glossary beside it, `translations/<tag>/glossary.md`: the
-word chosen
+Japanese, Simplified Chinese, and Traditional Chinese catalogs are
+drafts no native speaker has read yet. Each has a glossary beside it,
+`translations/<tag>/glossary.md`: the word chosen
 for each of the editor's terms, where it came from, and the
 alternatives, with the conventions the catalog keeps (how a button
 speaks, capitals, keys, and plurals). A reviewer can see there why a

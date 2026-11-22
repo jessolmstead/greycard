@@ -173,6 +173,11 @@ fn a_tag_names_its_region() {
     assert_eq!(Region::of("zh_TW"), Some(Region::TraditionalChinese));
     assert_eq!(Region::of("zh-Hant"), Some(Region::TraditionalChinese));
     assert_eq!(Region::of("zh_HK"), Some(Region::TraditionalChinese));
+    assert_eq!(Region::of("zh_MO.UTF-8"), Some(Region::TraditionalChinese));
+    assert_eq!(Region::of("zh-Hant-HK"), Some(Region::TraditionalChinese));
+    // A script given outweighs the region's usual one.
+    assert_eq!(Region::of("zh-Hans-HK"), Some(Region::SimplifiedChinese));
+    assert_eq!(Region::of("zh_SG"), Some(Region::SimplifiedChinese));
     assert_eq!(Region::of(""), None);
     assert_eq!(Region::of("jv"), None);
 }

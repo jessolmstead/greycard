@@ -48,8 +48,9 @@ impl Region {
     ];
 
     /// The region a language's text is written for, from a catalog's
-    /// tag (`ja`, `zh_CN`, `zh-Hant`, `ko_KR`); none for any other
-    /// language, English (empty) included.
+    /// tag or a locale (`ja`, `zh_CN`, `zh-Hant`, `zh_HK`, `ko_KR`):
+    /// Chinese by its script when one is given, else by its region;
+    /// none for any other language, English (empty) included.
     pub(crate) fn of(tag: &str) -> Option<Self> {
         let tag = tag.replace('-', "_").to_ascii_lowercase();
         let mut parts = tag.split(['_', '.', '@']);
@@ -57,7 +58,11 @@ impl Region {
             "ja" => Some(Self::Japan),
             "ko" => Some(Self::Korea),
             "zh" => {
-                let traditional = parts.any(|p| matches!(p, "tw" | "hk" | "mo" | "hant"));
+                let parts: Vec<&str> = parts.collect();
+                let traditional = !parts.contains(&"hans")
+                    && parts
+                        .iter()
+                        .any(|p| matches!(*p, "tw" | "hk" | "mo" | "hant"));
                 Some(if traditional {
                     Self::TraditionalChinese
                 } else {
