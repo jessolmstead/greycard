@@ -5208,6 +5208,84 @@ impl Ai {
         })
     }
 
+    /// [`Ai::raster_cached`] for the raster made again on the retouched
+    /// picture under the Fill patches of print `under`
+    /// ([`Retouched::print_over`]): in memory when it was made for this
+    /// shape under these patches on a base of `base`'s print, else read
+    /// from the print's own slot on disk (and kept in memory), as
+    /// [`Ai::raster_retouched`] would read it. No model loads or runs.
+    // `under` is the patches' print beside `raster_cached`'s own.
+    #[allow(clippy::too_many_arguments)]
+    pub fn remade_cached(
+        &mut self,
+        frame: (usize, usize),
+        base: Base,
+        turn: u8,
+        key: Key,
+        shape: &Shape,
+        model: Option<&'static Model>,
+        under: u64,
+    ) -> Option<Made> {
+        let made = |ai: &Self, raster: Arc<Raster>| Made {
+            note: ai.empty_note(shape, &raster),
+            raster,
+            provider: None,
+            seconds: 0.0,
+            part: None,
+        };
+        if let Some((s, p, b, r)) = self.retouched.get(&(key, turn))
+            && s == shape
+            && *p == under
+            && *b == base.print
+        {
+            return Some(made(self, r.clone()));
+        }
+        if !prompted(shape) {
+            return None;
+        }
+        let width = raster_width(shape, frame);
+        let aspect = frame.1 as f32 / frame.0.max(1) as f32;
+        let height = raster_height(width, aspect);
+        self.print = base.print;
+        self.salt = Some(under);
+        let path = self.cached_path_at(shape, model, turn, width);
+        self.salt = None;
+        let raster = Arc::new(Raster::from_data(
+            aspect,
+            width,
+            read_raster(&path?, width, height)?,
+        ));
+        self.retouched.insert(
+            (key, turn),
+            (shape.clone(), under, base.print, raster.clone()),
+        );
+        Some(made(self, raster))
+    }
+
+    /// Where the raster for `shape` of `file` at `turn`, asked with
+    /// `model` on a frame of `frame` (width, height), is kept on disk:
+    /// made on the base of `print`, or made again on the retouched
+    /// picture under the Fill patches of print `under`. For a test that
+    /// puts one there as the worker would.
+    #[cfg(test)]
+    pub(crate) fn cached_path_under(
+        &mut self,
+        file: &Path,
+        (shape, model): (&Shape, Option<&'static Model>),
+        frame: (usize, usize),
+        print: Print,
+        under: Option<u64>,
+    ) -> Option<PathBuf> {
+        if self.file.as_deref() != Some(file) {
+            self.forget(Some(file.to_path_buf()));
+        }
+        self.print = print;
+        self.salt = under;
+        let path = self.cached_path_at(shape, model, 0, raster_width(shape, frame));
+        self.salt = None;
+        path
+    }
+
     // `base` to `turn` are `worker::masks::On`'s picture; moving it is its own change.
     #[allow(clippy::too_many_arguments)]
     fn raster_of(

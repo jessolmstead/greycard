@@ -87,6 +87,8 @@ design note behind it.
 
 ### Fixes
 
+- A frame with fills and an AI mask opens with the mask on its first
+  picture, where it showed without it for a moment and then with.
 - The grid's filter bar shows its Kind, Style, Day, and Keyword chips
   again: the ISO and Focal ranges had pushed that row out of sight
   (discussion 59).

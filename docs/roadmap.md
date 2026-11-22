@@ -398,6 +398,12 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       ring's detail as noise (2026-11-21)
 - [ ] An existing fill's model changed in place (LaMa to Fast or
       Best), keeping its path, so a hard outline is not drawn again
+- [ ] A thumbnail's and a strip picture's AI mask made again under
+      the frame's fills, as the viewport's is: where a fill covers
+      part of the shape the two can differ
+- [ ] An AI mask made again under fills goes stale when a fill is
+      remade at another size (512 against 1024), or when a fill that
+      does not overlap the shape changes the picture it was found on
 - [ ] A fill in hand stopped between UNet calls when a develop is
       asked for, up to 36 s saved at 1024 (§569)
 - [ ] The Fast fill's files uploaded to greycard-rorem-fast (the

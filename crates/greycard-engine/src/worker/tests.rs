@@ -7875,6 +7875,112 @@ fn a_mask_answered_with_the_open_is_given_with_the_window_s_model() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// A frame whose learned mask a fill lies over, made again on the
+/// retouched picture on an earlier visit, draws it the first time it is
+/// stepped back to: the raster made under its fills is read from the
+/// mask cache and goes ahead of the picture, and nothing is asked again
+/// after it, so the window never draws the frame without the mask and
+/// then with it.
+#[test]
+fn a_mask_made_again_under_a_fill_comes_before_the_first_picture() {
+    use greycard_edit::mask::Component;
+    let (dir, paths) = dngs("mask-under-fill", &["filled.dng", "other.dng"], 128, 96);
+    let store = greycard_ai::Store::at(dir.join("models"));
+    let shape = Shape::Background {};
+    let model = &greycard_ai::SUBJECT;
+    let mut edit = Edit::default();
+    edit.adjustments.push(greycard_edit::Adjustment {
+        id: 1,
+        name: "Background".into(),
+        mask: greycard_edit::mask::Mask {
+            components: vec![Component {
+                shape: shape.clone(),
+                ..Component::default()
+            }],
+            ..Default::default()
+        },
+        ..greycard_edit::Adjustment::default()
+    });
+    edit.retouch = Retouch {
+        enabled: true,
+        patches: vec![greycard_edit::retouch::Patch {
+            id: 1,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[0.5, 0.5]],
+            radius: 0.04,
+            ..Default::default()
+        }],
+    };
+    // The base's raster, every texel the shape, and the one made again
+    // under the fill over it, as an earlier visit left them.
+    let frame = (128, 96);
+    let width = greycard_edit::brush::raster_width(&shape, frame);
+    let height = greycard_edit::brush::raster_height(width, 96.0 / 128.0);
+    let raster =
+        greycard_edit::brush::Raster::from_data(96.0 / 128.0, width, vec![255; width * height]);
+    let under = crate::ai::print_of(&crate::ai::overlapping(&edit.retouch, &raster));
+    let print = crate::mask_base::print(Some(&paths[0]), &edit, 0, crate::mask_base::Size::Full);
+    let mut ai = Ai::for_test_on_disk(store.clone());
+    for (salt, value) in [(None, 255), (Some(under), 200)] {
+        let slot = ai
+            .cached_path_under(&paths[0], (&shape, Some(model)), frame, print, salt)
+            .expect("a slot in the mask cache");
+        std::fs::create_dir_all(slot.parent().unwrap()).unwrap();
+        image::GrayImage::from_pixel(width as u32, height as u32, image::Luma([value]))
+            .save_with_format(&slot, image::ImageFormat::Png)
+            .unwrap();
+    }
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let worker = Worker::new(move |o| {
+        let s = match o {
+            Outcome::Developed {
+                generation, fills, ..
+            } => format!("developed {generation}: {:?}", fills.pending),
+            Outcome::Mask { key, raster, .. } => {
+                format!("mask {key:?}: {}", raster.data()[0])
+            }
+            Outcome::MaskFailed { key, .. } => format!("failed {key:?}"),
+            _ => return,
+        };
+        log.lock().unwrap().push(s);
+    });
+    worker.models_by_test(store);
+    worker.fill_by_test(0.9);
+    let open = |path: &PathBuf, generation| Job::Open {
+        path: path.clone(),
+        version: None,
+        edit: edit.clone(),
+        generation,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+        learned: vec![((1, 0), model)],
+    };
+    let said = |what: &str| seen.lock().unwrap().iter().any(|s| s == what);
+    // The first visit makes the fill and keeps it.
+    worker.send(open(&paths[0], 1));
+    until("the fill is made", &|| said("developed 1: []"));
+    worker.send(open(&paths[1], 2));
+    until("the step away develops", &|| said("developed 2: []"));
+    std::thread::sleep(masks::SETTLE + std::time::Duration::from_millis(200));
+    seen.lock().unwrap().clear();
+    // Stepped back to.
+    worker.send(open(&paths[0], 3));
+    until("the step back develops", &|| said("developed 3: []"));
+    std::thread::sleep(masks::SETTLE + std::time::Duration::from_millis(200));
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![
+            "mask (1, 0): 200".to_string(),
+            "developed 3: []".to_string()
+        ],
+        "the mask made under the fill, then the picture, and nothing after"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
 /// A develop aside, the before of a before and after, leaves the open
 /// frame's own as it was: its base, the stamp the masks know it by,
 /// the edit they see it through, and the develop it last delivered;
