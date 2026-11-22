@@ -744,3 +744,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§730. Output sharpen in a mask, and its radius in the picture made](notes/730-output-sharpen-in-a-mask-and-its-radius.md) (2026-11-22)
 - [§731. The learned denoiser on X-Trans: one plane at the canonical phase](notes/731-the-learned-denoiser-on-x-trans.md) (2026-11-22)
 - [§732. The Windows builds signed through SignPath](notes/732-the-windows-builds-signed-through-signpath.md) (2026-11-22)
+- [§733. The render gate: kept pictures for existing edits](notes/733-the-render-gate.md) (2026-11-22)

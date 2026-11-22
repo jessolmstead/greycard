@@ -807,9 +807,14 @@ touches.
 - [ ] Process versions, the foundation: each state records the
       rendering it was made under (schema 10), and until 1.0 nothing is
       kept by it. Waits on the sidecar branch
-- [ ] A render gate: fixture edits whose pictures the gates compare
-      with kept ones, so a change that moves a picture is a decision,
-      takes a new process number, and gets its changelog line
+- [ ] The render gate (§733) enforced on macOS and Windows. Waits on
+      `render_gate_spread` run on each
+- [ ] The render gate's fixtures near the thresholds it misses:
+      capture sharpen's spike and flat tests, CA's shift blur, and the
+      hot pixel threshold
+- [ ] Markesteijn's direction choice ties exactly beside a clipped
+      plateau, so an ulp upstream moves pixels at a hard edge against
+      clipped light (§733)
 - [ ] The choices an edit looks up, recorded in it: the learned
       denoiser's model beside its tier, and the lens matched
 - [ ] A generative fill kept as made, and not made again because the

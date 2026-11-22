@@ -4,6 +4,9 @@
 *.png
 # The disk image's window background, which package.sh copies in.
 !/packaging/dmg/background.tiff
+# The render gate's kept pictures, synthetic renders the gate holds
+# every edit to.
+!/crates/greycard-engine/tests/render-gate/kept/*.png
 /CLAUDE.local.md
 /data/
 /.idea/

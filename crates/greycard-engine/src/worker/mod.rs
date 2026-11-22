@@ -30,6 +30,8 @@ mod keep;
 mod masks;
 mod prefetch;
 #[cfg(test)]
+mod render_gate;
+#[cfg(test)]
 mod samples;
 mod shelf;
 #[cfg(test)]
