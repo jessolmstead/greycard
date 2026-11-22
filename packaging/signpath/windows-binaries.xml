@@ -22,12 +22,14 @@
   (packaging/windows/greycard.iss: AppName, AppVersion). The workflow
   passes the version as the parameter.
 
-  The uninstaller's name and version are not checked. Inno Setup pads
-  both to a fixed width in its version resource ("greycard" and 52
-  spaces), SignPath compares the whole string, and it takes no
-  wildcard there, so a check can only be met by spelling the padding
-  out. It is our build of Inno's uninstaller, named and versioned as
-  the executables are, and it reaches SignPath in no other request.
+  Inno Setup pads the uninstaller's name and version to a fixed width
+  in its version resource (the name to 60 characters, the version to
+  50), SignPath compares the whole string, and it takes no wildcard
+  there. So the check for the uninstaller spells the padding out: 52
+  spaces after the name, and 44 after a version of six characters. A
+  version of another length needs the spaces changed here, in
+  windows-setup.xml, and in SignPath; scripts/signpath.sh stops a
+  build whose version does not fit.
 -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <parameters>
@@ -41,7 +43,7 @@
         <authenticode-sign />
       </for-each>
     </pe-file-set>
-    <pe-file path="uninstaller.exe">
+    <pe-file path="uninstaller.exe" product-name="greycard                                                    " product-version="${version}                                            ">
       <authenticode-sign />
     </pe-file>
   </zip-file>

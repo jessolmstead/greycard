@@ -1670,6 +1670,9 @@ Slint, a runtime exposing what it knows, a rawler release. It joins a
 release when the wait clears.
 
 #### Platform
+- [ ] SignPath's padded version check changed for a version that is
+      not six characters long (1.0.0), in `packaging/signpath` and in
+      SignPath's copies (§732)
 - [ ] The Windows signing's first runs (§732): a test run of the
       package workflows, then the first release under SignPath
       Foundation's certificate, which waits on its issue; the allowed

@@ -12,17 +12,16 @@
   Setup installer to sign what is inside it, which is why the files
   inside were signed in the first request and this one signs the
   setup alone. Its name and version are Inno Setup's version resource
-  (packaging/windows/greycard.iss: AppName, AppVersion). They are not
-  checked here, for the reason windows-binaries.xml gives for the
-  uninstaller: Inno Setup pads them, and SignPath compares the whole
-  string. The file's own name carries the version, and is checked.
+  (packaging/windows/greycard.iss: AppName, AppVersion), padded as
+  windows-binaries.xml says of the uninstaller, and checked here with
+  the same padding spelled out.
 -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <parameters>
     <parameter name="version" required="true" />
   </parameters>
   <zip-file>
-    <pe-file path="greycard-${version}-*-windows-setup.exe">
+    <pe-file path="greycard-${version}-*-windows-setup.exe" product-name="greycard                                                    " product-version="${version}                                            ">
       <authenticode-sign />
     </pe-file>
   </zip-file>

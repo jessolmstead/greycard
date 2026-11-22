@@ -27,12 +27,14 @@ The artifact configurations are kept with the code
 together. Each checks the product name and version of our two
 executables, as the Foundation's terms ask.
 
-Inno Setup's own two files, the uninstaller and the setup, are signed
-without that check. Inno pads the name and the version to a fixed
-width in their version resources ("greycard" and 52 spaces), SignPath
-compares the whole string, and it takes no wildcard there. The first
-test runs failed on exactly that; the question of a check that holds
-for Inno's files is with SignPath.
+Inno Setup's own two files, the uninstaller and the setup, are
+checked too. Inno pads the name and the version to a fixed width in
+their version resources (60 and 50 characters), SignPath compares the
+whole string, and it takes no wildcard there, so their checks spell
+the padding out. The first test runs failed on the unpadded name. The
+spaces fit a version of six characters; `scripts/signpath.sh` stops a
+build whose version is of another length, and the configurations are
+changed then.
 
 ## What is not signed
 

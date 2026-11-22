@@ -47,6 +47,18 @@ if [ -z "$version" ]; then
     echo "signpath.sh: no version given, and none in Cargo.toml" >&2
     exit 1
 fi
+# Inno Setup pads the version in its files' version resources to 50
+# characters, and SignPath's check spells the padding out
+# (packaging/signpath). A version of another length would fail at
+# SignPath after the whole build; it fails here first.
+padded=$(printf '%s%*s' "$version" $((50 - ${#version})) '')
+for f in packaging/signpath/windows-binaries.xml packaging/signpath/windows-setup.xml; do
+    if ! grep -qF "product-version=\"\${version}${padded#"$version"}\"" "$f"; then
+        echo "signpath.sh: $f does not pad a version as long as $version to 50 characters;" >&2
+        echo "change the spaces there and in SignPath's copy" >&2
+        exit 1
+    fi
+done
 host=$(rustc -vV | sed -n 's/^host: //p')
 name="greycard-$version-${host%%-*}-windows"
 work=target/signpath
