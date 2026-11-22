@@ -730,6 +730,9 @@ the user.
       selection side by side, the better kept and the next brought in
       against it, until one is left; the winner flagged or rated, the
       rest untouched unless asked
+- [ ] From the lightbox straight to Develop on one of its frames, and
+      back to the same lightbox: an outlier seen there adjusted and
+      compared again
 - [ ] Focus peaking in the lightbox: its tiles are Slint images, not
       the viewport's draw, so Shift+J does not reach them (§542)
 - [ ] Search by phrase: an image embedding from a CLIP-style model
