@@ -564,12 +564,16 @@ pub struct Ai {
     /// seed, with the patch, the window and why: not run again for the
     /// open file, where each develop would wait on it again, until the
     /// patch or its seed changes.
-    failed: HashMap<(u64, u32), (Patch, Window, String)>,
+    failed: HashMap<(u64, u32), FillFailed>,
     /// Each Fill patch's window and depth ([`window_for`]), by patch
     /// id, with the patch and the picture's size they were found for:
     /// finding them reads the whole region, which a stroke across the
     /// frame makes about the frame.
     windows: HashMap<u64, (Patch, (usize, usize), Window, f32)>,
+    /// What the crop shows of the open file's picture where it may
+    /// reach a Fill's window, as the last walk's retouch had it
+    /// ([`Ai::set_shown`]).
+    shown: Option<crate::shown::Shown>,
     /// Each fill refused for the card's memory, by patch id, with the
     /// patch, its window, the card's free memory then, and why: neither
     /// counted ahead nor asked of the card again by a develop
@@ -1241,10 +1245,15 @@ pub enum NoFill {
     Later,
 }
 
-/// A fill made: the patch, window and engine it was made for, the
+/// A fill made: the patch, window and engine it was made for, what
+/// the crop hid of the window ([`crate::shown::fingerprint`]), the
 /// print of the picture under the window ([`window_print`]), and the
 /// region's values.
-type FillMade = (Patch, Window, WindowPrint, Engine, Vec<f32>);
+type FillMade = (Patch, Window, Option<u64>, WindowPrint, Engine, Vec<f32>);
+
+/// A fill that failed: the patch and window it was asked for, what the
+/// crop hid of the window ([`crate::shown::fingerprint`]), and why.
+type FillFailed = (Patch, Window, Option<u64>, String);
 
 /// Which model makes a Fill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2304,7 +2313,8 @@ struct Regrained {
 /// The frame's own noise put under a fill the model made smooth:
 /// `out` is the region's replacement in the picture's values, filled
 /// in `window` of `image`. The noise is measured on the window's known
-/// pixels, in the picture's values after the develop's own denoise, so
+/// pixels, those neither covered nor hidden by the crop (`hidden`, row
+/// by row), in the picture's values after the develop's own denoise, so
 /// a denoised frame is given back only what it kept, and on its luma
 /// and chroma axes, so its grain keeps the frame's color
 /// ([`noise::PictureNoise`]), and drawn to make up the frame's grain at
@@ -2312,11 +2322,14 @@ struct Regrained {
 /// region's coverage less what the fill carries already, and the
 /// retouch's blend feathers it with the coverage's own edge. Seeded
 /// by `seed` and the place in the frame, so a fill made again is the
-/// same. `None` when the frame measures no noise.
+/// same. `None` when the frame measures no noise, or nothing is known:
+/// a window whose every uncovered pixel the crop hides is left smooth,
+/// which is rare and out of sight.
 fn regrain(
     out: &mut [f32],
     region: &Region,
     window: Window,
+    hidden: Option<&[bool]>,
     image: &WorkingImage,
     seed: u64,
 ) -> Option<Regrained> {
@@ -2336,7 +2349,11 @@ fn regrain(
     for py in wy..wy + wh {
         let row = (py * image.width + wx) * 3;
         values.extend_from_slice(&image.data[row..row + ww * 3]);
-        known.extend((wx..wx + ww).map(|px| !covered(px, py)));
+        // What the crop hides is not measured: the user never saw it.
+        known
+            .extend((wx..wx + ww).map(|px| {
+                !covered(px, py) && !hidden.is_some_and(|h| h[(py - wy) * ww + px - wx])
+            }));
     }
     let frame = noise::estimate_picture_noise(&values, ww, wh, &known);
     if frame.is_silent() {
@@ -2444,6 +2461,7 @@ impl Ai {
             fills: HashMap::new(),
             failed: HashMap::new(),
             windows: HashMap::new(),
+            shown: None,
             refused: HashMap::new(),
             short_at_1024: HashMap::new(),
             due_at_512: HashMap::new(),
@@ -2608,6 +2626,7 @@ impl Ai {
         self.fills.clear();
         self.failed.clear();
         self.windows.clear();
+        self.shown = None;
         self.refused.clear();
         self.short_at_1024.clear();
         self.due_at_512.clear();
@@ -2784,11 +2803,14 @@ impl Ai {
             .filter(|p| {
                 p.region(image.width, image.height).is_some_and(|region| {
                     let (window, _) = self.window_of(p, &region, image);
+                    let hidden = self.hidden_key(window, (image.width, image.height));
                     let in_memory = any_print
                         && self
                             .fills
                             .get(&(p.id, p.seed))
-                            .is_some_and(|(kept, w, _, _, _)| same_fill(kept, p) && *w == window);
+                            .is_some_and(|(kept, w, k, ..)| {
+                                same_fill(kept, p) && *w == window && *k == hidden
+                            });
                     !in_memory
                         && self.never_on_card(p, window).is_none()
                         && self.still_refused(p, window).is_none()
@@ -2830,16 +2852,28 @@ impl Ai {
         image: &WorkingImage,
     ) -> Option<String> {
         let (window, _) = self.window_of(patch, region, image);
+        let hidden = self.hidden_key(window, (image.width, image.height));
         self.failed
             .get(&(patch.id, patch.seed))
-            .filter(|(p, w, _)| same_fill(p, patch) && *w == window)
-            .map(|(_, _, why)| why.clone())
+            .filter(|(p, w, k, _)| same_fill(p, patch) && *w == window && *k == hidden)
+            .map(|(_, _, _, why)| why.clone())
     }
 
-    /// The patch's fill, as it is now, failed with `why`.
-    fn remember_failure(&mut self, patch: &Patch, window: Window, why: String) -> NoFill {
-        self.failed
-            .insert((patch.id, patch.seed), (patch.clone(), window, why.clone()));
+    /// The patch's fill, as it is now, failed with `why` in `window`
+    /// of a picture of `size`: kept by what the crop hides of the
+    /// window too, so a crop that changes the hole asks again.
+    fn remember_failure(
+        &mut self,
+        patch: &Patch,
+        window: Window,
+        size: (usize, usize),
+        why: String,
+    ) -> NoFill {
+        let hidden = self.hidden_key(window, size);
+        self.failed.insert(
+            (patch.id, patch.seed),
+            (patch.clone(), window, hidden, why.clone()),
+        );
         NoFill::Failed(why)
     }
 
@@ -2849,8 +2883,27 @@ impl Ai {
         let (window, _) = self.window_of(patch, region, image);
         let print = window_print(image, region, window);
         let size = (image.width, image.height);
-        self.fill_in_memory(patch, window, &print).is_some()
+        self.fill_in_memory(patch, window, size, &print).is_some()
             || self.fill_from_disk(patch, region, size, window, &print)
+    }
+
+    /// What the crop shows of the open file's picture, for the fills
+    /// asked for from now: the retouch step's, set by the walk before
+    /// its fills are asked for. A Fill's window takes what the crop
+    /// hides as unknown, and its fill is keyed by it.
+    pub fn set_shown(&mut self, shown: Option<crate::shown::Shown>) {
+        self.shown = shown;
+    }
+
+    /// The pixels of `window`, in a picture of `size`, the crop hides:
+    /// none when it hides none.
+    fn hidden(&self, window: Window, size: (usize, usize)) -> Option<Vec<bool>> {
+        self.shown.as_ref()?.hidden(window, size)
+    }
+
+    /// [`Ai::hidden`]'s fingerprint, for the fill's keys.
+    fn hidden_key(&self, window: Window, size: (usize, usize)) -> Option<u64> {
+        crate::shown::fingerprint(self.hidden(window, size).as_deref())
     }
 
     /// The patch's fill, as it is now, kept in memory: made for this
@@ -2863,16 +2916,44 @@ impl Ai {
         &self,
         patch: &Patch,
         window: Window,
+        size: (usize, usize),
         print: &[[u16; 3]],
     ) -> Option<(Vec<f32>, Engine)> {
+        let hidden = self.hidden_key(window, size);
         self.fills
             .get(&(patch.id, patch.seed))
-            .filter(|(p, w, pr, _, _)| {
+            .filter(|(p, w, k, pr, _, _)| {
                 same_fill(p, patch)
                     && *w == window
+                    && *k == hidden
                     && prints_agree(pr, print, PRINT_TOLERANCE, Compare::Every)
             })
-            .map(|(_, _, _, engine, data)| (data.clone(), *engine))
+            .map(|(_, _, _, _, engine, data)| (data.clone(), *engine))
+    }
+
+    /// The fill in memory that stands in for the patch's while it is
+    /// remade because the crop changed what its window sees: made for
+    /// this patch, this window, and this picture under it, under
+    /// another crop. Kept until the new fill takes its place.
+    pub fn stand_in(
+        &mut self,
+        patch: &Patch,
+        region: &Region,
+        image: &WorkingImage,
+    ) -> Option<Vec<f32>> {
+        let (window, _) = self.window_of(patch, region, image);
+        let size = (image.width, image.height);
+        let hidden = self.hidden_key(window, size);
+        let print = window_print(image, region, window);
+        self.fills
+            .get(&(patch.id, patch.seed))
+            .filter(|(p, w, k, pr, _, _)| {
+                same_fill(p, patch)
+                    && *w == window
+                    && *k != hidden
+                    && prints_agree(pr, &print, PRINT_TOLERANCE, Compare::Every)
+            })
+            .map(|(.., data)| data.clone())
     }
 
     /// The patch's fill read from its slot on disk into memory, if it
@@ -2906,9 +2987,10 @@ impl Ai {
             region.width,
             region.height
         );
+        let hidden = self.hidden_key(window, size);
         self.fills.insert(
             (patch.id, patch.seed),
-            (patch.clone(), window, stored, engine, data),
+            (patch.clone(), window, hidden, stored, engine, data),
         );
         true
     }
@@ -2945,13 +3027,9 @@ impl Ai {
         window: Window,
     ) -> Option<PathBuf> {
         let file = self.file.as_ref()?;
-        Some(fill_slot(
-            &self.fills_root()?,
-            file,
-            patch,
-            region,
-            size,
-            window,
+        Some(hidden_slot(
+            fill_slot(&self.fills_root()?, file, patch, region, size, window),
+            self.hidden_key(window, size),
         ))
     }
 
@@ -2965,9 +3043,13 @@ impl Ai {
         window: Window,
     ) {
         if let (Some(file), Some(root)) = (self.file.as_ref(), self.fills_root()) {
-            let_go_of_earlier_slots(&earlier_fill_slots(
-                &root, file, patch, region, size, window,
-            ));
+            let hidden = self.hidden_key(window, size);
+            let earlier: Vec<PathBuf> =
+                earlier_fill_slots(&root, file, patch, region, size, window)
+                    .into_iter()
+                    .map(|slot| hidden_slot(slot, hidden))
+                    .collect();
+            let_go_of_earlier_slots(&earlier);
         }
     }
 
@@ -2999,9 +3081,10 @@ impl Ai {
                 &data,
             );
         }
+        let hidden = self.hidden_key(window, size);
         self.fills.insert(
             (patch.id, patch.seed),
-            (patch.clone(), window, print, engine, data.clone()),
+            (patch.clone(), window, hidden, print, engine, data.clone()),
         );
         data
     }
@@ -3896,6 +3979,7 @@ impl Ai {
             fills: _,
             failed: _,
             windows: _,
+            shown: _,
             refused: _,
             short_at_1024: _,
             due_at_512: _,
@@ -3991,6 +4075,7 @@ impl Ai {
             fills: _,
             failed: _,
             windows: _,
+            shown: _,
             refused: _,
             short_at_1024: _,
             due_at_512: _,
@@ -4163,11 +4248,11 @@ impl Ai {
         let (window, depth) = self.window_of(patch, region, image);
         let print = window_print(image, region, window);
         let size = (image.width, image.height);
-        if let Some(kept) = self.fill_in_memory(patch, window, &print) {
+        if let Some(kept) = self.fill_in_memory(patch, window, size, &print) {
             return Ok(kept);
         }
         if self.fill_from_disk(patch, region, size, window, &print)
-            && let Some(kept) = self.fill_in_memory(patch, window, &print)
+            && let Some(kept) = self.fill_in_memory(patch, window, size, &print)
         {
             return Ok(kept);
         }
@@ -4266,25 +4351,21 @@ impl Ai {
         } = window;
         let to_srgb = greycard_render::export::Space::Srgb.matrix();
         let from_srgb = invert(&to_srgb);
-        // Coverage over the window, and the picture's values there.
-        let mut hole = vec![0.0f32; ww * wh];
+        // The hole the engine is given: the region's coverage, and what
+        // the crop hides of the window, which the user never saw, so
+        // the engine is not shown it either ([`crate::shown`]).
+        let hidden = self.hidden(window, (image.width, image.height));
+        let hole = engine_hole(region, window, hidden.as_deref());
+        // The picture's values over the window.
         let mut values = Vec::with_capacity(ww * wh * 3);
         let (mut luma_sum, mut luma_n) = (0.0f32, 0usize);
         for y in 0..wh {
             for x in 0..ww {
-                let (px, py) = (wx + x, wy + y);
-                let i = (py * image.width + px) * 3;
+                let i = ((wy + y) * image.width + wx + x) * 3;
                 let p = [image.data[i], image.data[i + 1], image.data[i + 2]];
                 let s = mul(&to_srgb, p).map(|v| v.max(0.0));
                 values.extend(s);
-                let covered = px >= region.x
-                    && px < region.x + region.width
-                    && py >= region.y
-                    && py < region.y + region.height
-                    && region.cover[(py - region.y) * region.width + (px - region.x)] > 0.0;
-                if covered {
-                    hole[y * ww + x] = 1.0;
-                } else {
+                if hole[y * ww + x] <= 0.0 {
                     luma_sum += 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2];
                     luma_n += 1;
                 }
@@ -4299,6 +4380,14 @@ impl Ai {
         let gain = (0.18 / mean.max(1e-4)).clamp(0.25, 16.0);
         let encoded: Vec<f32> = values.iter().map(|v| encode(v * gain)).collect();
         let input = Rgbf::new(ww, wh, encoded);
+        // The hidden pixels made the hole deeper: LaMa's scale follows,
+        // so near a crop's edge LaMa may take the window down further
+        // and fill softer, the regrain making up the grain.
+        let depth = if hidden.is_some() {
+            greycard_ai::fill::depth(&hole, ww, wh)
+        } else {
+            depth
+        };
         let started = Instant::now();
         // The scale LaMa made the window at; the remove's answer is
         // regrained at any factor it was taken down by, so it counts
@@ -4319,7 +4408,7 @@ impl Ai {
                     Ok(f) => f,
                     Err(e) => {
                         tracing::debug!("fill: {e}");
-                        return Err(self.remember_failure(patch, window, e.to_string()));
+                        return Err(self.remember_failure(patch, window, size, e.to_string()));
                     }
                 };
                 let fill = self.fill.as_ref().expect("LaMa, loaded above");
@@ -4367,14 +4456,14 @@ impl Ai {
                 let remove = self.remove.as_mut().expect("the remove, loaded above");
                 remove.hold_unet(self.fills_queued);
                 if let Err(e) = remove.set_steps(steps_for(patch)) {
-                    return Err(self.remember_failure(patch, window, e.to_string()));
+                    return Err(self.remember_failure(patch, window, size, e.to_string()));
                 }
                 let made =
                     match remove.remove_window_at(&input, &hole, remove_seed(patch), side, told) {
                         Ok(f) => f,
                         Err(e) => {
                             tracing::debug!("remove: {e}");
-                            return Err(self.remember_failure(patch, window, e.to_string()));
+                            return Err(self.remember_failure(patch, window, size, e.to_string()));
                         }
                     };
                 let remove = self.remove.as_ref().expect("the remove, loaded above");
@@ -4463,6 +4552,7 @@ impl Ai {
                 &mut out,
                 region,
                 window,
+                hidden.as_deref(),
                 image,
                 patch.id ^ (u64::from(patch.seed) << 40),
             )
@@ -6601,8 +6691,10 @@ fn evict_other_bases(path: &Path) {
 /// mosaic's noise line drawn past its bins of texture, so a frame
 /// whose old line read its grain several times over is denoised less,
 /// and a fill made on the smoother base would sit smooth in a grainier
-/// surround.
-const FILL_VERSION: u8 = 6;
+/// surround; 7, the remove's sampler started from the window with the
+/// hole filled from round it, so a large colored object is no longer
+/// painted back ([`greycard_ai::remove::prefilled`]).
+const FILL_VERSION: u8 = 7;
 
 /// The version before the print was kept in the file, whose file holds
 /// none: what [`read_fill`] and [`write_fill`] tell the two layouts
@@ -7271,6 +7363,43 @@ fn fill_slot_under(
     root.join(format!("{:016x}.fill", h.finish()))
 }
 
+/// The hole a Fill's engine is given over `window`, 1 or 0 a pixel:
+/// where `region` covers, and where the crop hides the window
+/// (`hidden`, row by row), which the engine makes up with the hole and
+/// never reads as its surround. Only the region's coverage is put back
+/// in the picture ([`greycard_core::develop::retouch::apply_replacement`]).
+fn engine_hole(region: &Region, window: Window, hidden: Option<&[bool]>) -> Vec<f32> {
+    let Window {
+        x: wx,
+        y: wy,
+        width: ww,
+        height: wh,
+    } = window;
+    (0..ww * wh)
+        .map(|i| {
+            let (px, py) = (wx + i % ww, wy + i / ww);
+            let covered = (region.x..region.x + region.width).contains(&px)
+                && (region.y..region.y + region.height).contains(&py)
+                && region.cover[(py - region.y) * region.width + (px - region.x)] > 0.0;
+            f32::from(u8::from(covered || hidden.is_some_and(|h| h[i])))
+        })
+        .collect()
+}
+
+/// The slot of a fill whose window the crop hides `hidden` of
+/// ([`crate::shown::fingerprint`]): `slot` itself when it hides none,
+/// so a fill no crop reaches keeps its slot; else another, of `slot`
+/// and the fingerprint.
+fn hidden_slot(slot: PathBuf, hidden: Option<u64>) -> PathBuf {
+    let Some(key) = hidden else {
+        return slot;
+    };
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    slot.file_name().hash(&mut h);
+    key.hash(&mut h);
+    slot.with_file_name(format!("{:016x}.fill", h.finish()))
+}
+
 /// What reads the fills kept on disk for a develop that makes none:
 /// the reduced develop's, for one file.
 #[derive(Debug, Clone)]
@@ -7294,13 +7423,19 @@ impl FillReader {
         image: &WorkingImage,
         factor: usize,
         full: (usize, usize),
+        shown: Option<&crate::shown::Shown>,
     ) -> Option<Vec<f32>> {
         if factor == 0 || !PRINT_BLOCK.is_multiple_of(factor) {
             return None;
         }
         let full_region = patch.region(full.0, full.1)?;
         let (window, _) = window_for(&full_region, full.0, full.1);
-        let path = fill_slot(&self.root, &self.file, patch, &full_region, full, window);
+        let hidden =
+            crate::shown::fingerprint(shown.and_then(|s| s.hidden(window, full)).as_deref());
+        let path = hidden_slot(
+            fill_slot(&self.root, &self.file, patch, &full_region, full, window),
+            hidden,
+        );
         let print = reduced_print(image, &full_region, window, factor);
         let (fw, fh) = (full_region.width, full_region.height);
         let (_, _, data) = read_slot(&path, full, window, (fw, fh), |stored| {
@@ -8542,7 +8677,12 @@ mod tests {
         let region = patch.region(image.width, image.height).unwrap();
         assert!(ai.could_fill_more(&retouch(&patch), &image));
         let (window, _) = ai.window_of(&patch, &region, &image);
-        ai.remember_failure(&patch, window, "the card answered garbage".into());
+        ai.remember_failure(
+            &patch,
+            window,
+            (image.width, image.height),
+            "the card answered garbage".into(),
+        );
         assert!(!ai.could_fill_more(&retouch(&patch), &image));
         match ai.fill(&patch, &region, &image) {
             Err(NoFill::Failed(why)) => assert_eq!(why, "the card answered garbage"),
@@ -8569,7 +8709,12 @@ mod tests {
             patches: vec![patch.clone(), bigger.clone(), heal],
         };
         assert_eq!(ai.fills_unmade(&both, &image), 2);
-        ai.remember_failure(&patch, window, "refused".into());
+        ai.remember_failure(
+            &patch,
+            window,
+            (image.width, image.height),
+            "refused".into(),
+        );
         assert_eq!(ai.fills_unmade(&both, &image), 1);
         // On a picture the fill was not made from, the fill is ahead
         // of a develop (the count is asked before the retouch) but a
@@ -8688,7 +8833,7 @@ mod tests {
         assert!(!ai.fill_kept(&lama, &region, &image));
         ai.forget(Some(file.clone()));
         assert!(ai.fill_kept(&patch, &region, &image));
-        assert!(ai.fill_in_memory(&fast, window, &print).is_none());
+        assert!(ai.fill_in_memory(&fast, window, size, &print).is_none());
         ai.forget(Some(file.clone()));
         // So is the patch on the picture developed otherwise: another
         // white balance, or a virtual copy's, under the window.
@@ -8701,7 +8846,7 @@ mod tests {
         // The fill now in memory is no more the warmer picture's than
         // the slot was: the base changed under the window, the fill
         // is made again.
-        assert!(ai.fill_in_memory(&patch, window, &print).is_some());
+        assert!(ai.fill_in_memory(&patch, window, size, &print).is_some());
         assert!(!ai.fill_kept(&patch, &region, &warmer));
         assert!(ai.fill_kept(&patch, &region, &image));
         // So is the patch on a picture of another size.
@@ -8725,7 +8870,7 @@ mod tests {
         // the fill is made again in the same slot.
         write_fill(
             &path,
-            FILL_VERSION - 2,
+            FILL_VERSION_HASHED,
             Engine::Remove,
             size,
             window,
@@ -8752,7 +8897,12 @@ mod tests {
         assert!(!ai.fill_kept(&patch, &region, &image));
 
         // A failure is not kept on disk.
-        ai.remember_failure(&varied, window, "refused".into());
+        ai.remember_failure(
+            &varied,
+            window,
+            (image.width, image.height),
+            "refused".into(),
+        );
         ai.forget(Some(file));
         assert!(ai.failed_before(&varied, &region, &image).is_none());
 
@@ -8760,6 +8910,78 @@ mod tests {
         let mut memory = Ai::for_test(Store::at(dir.join("models")), vec![Provider::Cpu]);
         memory.forget(Some(PathBuf::from("open.CR3")));
         assert!(memory.fill_path(&patch, &region, size, window).is_none());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// What the crop hides of a Fill's window is the engine's to make
+    /// up with the hole, never its surround; and a fill is keyed by
+    /// what is hidden: made under one crop it is not served under
+    /// another that hides other pixels of its window, in memory or on
+    /// disk, and a crop that hides none of it keys it as no crop does.
+    #[test]
+    fn a_crop_over_a_fills_window_hides_it_and_keys_the_fill() {
+        let dir = crate::testing::scratch_dir("fill-cropped");
+        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
+        ai.providers = vec![Provider::Cpu];
+        ai.forget(Some(PathBuf::from("open.CR3")));
+        let image = WorkingImage::new(200, 100);
+        let patch = Patch {
+            id: 3,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[0.9, 0.25]],
+            radius: 0.05,
+            feather: 0.0,
+            ..Default::default()
+        };
+        let region = patch.region(image.width, image.height).unwrap();
+        let (window, _) = ai.window_of(&patch, &region, &image);
+        let size = (image.width, image.height);
+        let crop = |c: [f32; 4]| {
+            let g = greycard_edit::Geometry {
+                crop: Some(greycard_edit::geometry::Crop::of(c)),
+                ..Default::default()
+            };
+            crate::shown::Shown::of(&g, 200.0, 100.0, None)
+        };
+
+        // The engine's hole: the coverage, and the hidden columns from
+        // x 190 on, and nothing else.
+        let near = crop([0.0, 0.0, 0.95, 1.0]);
+        let hidden = near.unwrap().hidden(window, size).expect("hides some");
+        let hole = engine_hole(&region, window, Some(&hidden));
+        let plain = engine_hole(&region, window, None);
+        for (i, (&h, &p)) in hole.iter().zip(&plain).enumerate() {
+            let px = window.x + i % window.width;
+            assert_eq!(h > 0.0, p > 0.0 || px >= 190, "{i}");
+        }
+        assert!(plain.iter().any(|&p| p > 0.0));
+
+        let made = |v: f32| vec![v; region.width * region.height * 3];
+        ai.keep_fill(&patch, &region, &image, window, Engine::Remove, made(0.1));
+        assert!(ai.fill_kept(&patch, &region, &image));
+        // Under the crop that hides the window's edge: not this fill.
+        ai.set_shown(near);
+        assert!(!ai.fill_kept(&patch, &region, &image));
+        ai.keep_fill(&patch, &region, &image, window, Engine::Remove, made(0.2));
+        assert!(ai.fill_kept(&patch, &region, &image));
+        // Another crop hiding other pixels of it: not that one either.
+        ai.set_shown(crop([0.0, 0.0, 0.97, 1.0]));
+        assert!(!ai.fill_kept(&patch, &region, &image));
+        // A crop that hides none of the window keys it as none does: the
+        // first fill, from disk.
+        ai.set_shown(crop([0.5, 0.0, 0.5, 1.0]));
+        assert!(ai.fill_kept(&patch, &region, &image));
+        ai.set_shown(None);
+        match ai.fill(&patch, &region, &image) {
+            Ok((data, _)) => assert!((data[0] - 0.1).abs() < 1e-3, "{}", data[0]),
+            Err(_) => panic!("the first fill, kept"),
+        }
+        // And the cropped one comes back under its crop.
+        ai.set_shown(near);
+        match ai.fill(&patch, &region, &image) {
+            Ok((data, _)) => assert!((data[0] - 0.2).abs() < 1e-3, "{}", data[0]),
+            Err(_) => panic!("the cropped fill, kept"),
+        }
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -9115,7 +9337,7 @@ mod tests {
         // Not on disk yet.
         assert!(
             reader
-                .fill_read_only(&patch, &small_region, &small, 2, full)
+                .fill_read_only(&patch, &small_region, &small, 2, full, None)
                 .is_none()
         );
         let kept = ai.keep_fill(&patch, &region, &big, window, Engine::Remove, fill);
@@ -9123,7 +9345,7 @@ mod tests {
             let small = reduced_by(&big, factor);
             let small_region = patch.region(small.width, small.height).unwrap();
             let read = reader
-                .fill_read_only(&patch, &small_region, &small, factor, full)
+                .fill_read_only(&patch, &small_region, &small, factor, full, None)
                 .unwrap_or_else(|| panic!("read at {factor}"));
             assert_eq!(read.len(), small_region.width * small_region.height * 3);
             let want = box_down(&kept, &region, &small_region, &small, factor);
@@ -9137,14 +9359,14 @@ mod tests {
             // Another file's slot is not this one's.
             assert!(
                 other_reader
-                    .fill_read_only(&patch, &small_region, &small, factor, full)
+                    .fill_read_only(&patch, &small_region, &small, factor, full, None)
                     .is_none()
             );
             // A picture the fill was not made from.
             let moved = scaled(&small, 1.0 + REDUCED_PRINT_TOLERANCE * 2.0);
             assert!(
                 reader
-                    .fill_read_only(&patch, &small_region, &moved, factor, full)
+                    .fill_read_only(&patch, &small_region, &moved, factor, full, None)
                     .is_none()
             );
         }
@@ -9153,17 +9375,65 @@ mod tests {
         let third_region = patch.region(third.width, third.height).unwrap();
         assert!(
             reader
-                .fill_read_only(&patch, &third_region, &third, 3, (402, 240))
+                .fill_read_only(&patch, &third_region, &third, 3, (402, 240), None)
                 .is_none()
         );
         assert!(
             reader
-                .fill_read_only(&patch, &third_region, &third, 3, full)
+                .fill_read_only(&patch, &third_region, &third, 3, full, None)
                 .is_none()
         );
         // Off the disk, no reader.
         let memory = Ai::for_test(Store::at(dir.join("models")), vec![Provider::Cpu]);
         assert!(memory.fill_reader(&file).is_none());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A fill kept under a crop that hides part of its window is read
+    /// by a reduced develop under that crop, and not under none: the
+    /// reduced develop keys it as the full one does.
+    #[test]
+    fn a_reduced_develop_reads_a_fill_kept_under_its_crop() {
+        let dir = crate::testing::scratch_dir("fill-reduced-crop");
+        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
+        ai.providers = vec![Provider::Cpu];
+        let file = PathBuf::from("open.CR3");
+        ai.forget(Some(file.clone()));
+        let mut big = WorkingImage::new(400, 240);
+        big.data.fill(0.3);
+        let full = (big.width, big.height);
+        let patch = Patch {
+            id: 4,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[0.92, 0.5]],
+            radius: 0.04,
+            remove: true,
+            ..Default::default()
+        };
+        let geometry = greycard_edit::Geometry {
+            crop: Some(greycard_edit::geometry::Crop::of([0.0, 0.0, 0.96, 1.0])),
+            ..Default::default()
+        };
+        let shown = crate::shown::Shown::of(&geometry, 400.0, 240.0, None);
+        let region = patch.region(full.0, full.1).unwrap();
+        let (window, _) = ai.window_of(&patch, &region, &big);
+        assert!(
+            shown.unwrap().hidden(window, full).is_some(),
+            "the crop hides some of it"
+        );
+        ai.set_shown(shown);
+        let made = vec![0.6; region.width * region.height * 3];
+        ai.keep_fill(&patch, &region, &big, window, Engine::Remove, made);
+        let reader = ai.fill_reader(&file).expect("on disk");
+        let small = reduced_by(&big, 2);
+        let small_region = patch.region(small.width, small.height).unwrap();
+        let read = |shown: Option<&crate::shown::Shown>| {
+            reader.fill_read_only(&patch, &small_region, &small, 2, full, shown)
+        };
+        let under = read(shown.as_ref()).expect("read under its crop");
+        let centre = (small_region.height / 2 * small_region.width + small_region.width / 2) * 3;
+        assert!((under[centre] - 0.6).abs() < 1e-3, "{}", under[centre]);
+        assert!(read(None).is_none(), "not under no crop");
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -9256,7 +9526,7 @@ mod tests {
         // Not exactly flat: the middle's evening carries a trace of the
         // band's own grain into the hole, a hundredth of the grain.
         assert!(spread(&out) < 0.02 * sigma, "flat before: {}", spread(&out));
-        let r = regrain(&mut out, &region, window, &image, 3).expect("the frame has noise");
+        let r = regrain(&mut out, &region, window, None, &image, 3).expect("the frame has noise");
         let want = sigma * (1.0f32 + 0.09 / 3.0).sqrt();
         let after = spread(&out);
         assert!((after / want - 1.0).abs() < 0.2, "{after} against {want}");
@@ -9380,8 +9650,8 @@ mod tests {
         });
         let before = spread(&out, &middle);
         let mut again = out.clone();
-        regrain(&mut out, &region, window, &image, 7).expect("the frame has noise");
-        regrain(&mut again, &region, window, &image, 7).unwrap();
+        regrain(&mut out, &region, window, None, &image, 7).expect("the frame has noise");
+        regrain(&mut again, &region, window, None, &image, 7).unwrap();
         assert_eq!(out, again);
         let mut patched = image.clone();
         greycard_core::develop::retouch::apply_replacement(&mut patched, &region, &out, 1.0);

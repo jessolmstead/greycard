@@ -454,7 +454,11 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
     // so one left behind on the state just moved from made the next
     // read of the panel news to the history, and its save cut the
     // rows above the one clicked.
-    let develop = !same_develop(&edit, &st.develop.edit);
+    // A geometry that shows a Fill otherwise (an undo across a crop
+    // change, a preset's or a paste's crop) makes it again, as the
+    // panel's own crop change does (`crop::fills_see_otherwise`).
+    let develop = !same_develop(&edit, &st.develop.edit)
+        || crate::panel::crop::fills_see_otherwise(st, &edit.geometry);
     st.develop.edit = edit;
     crate::panel::original::off(st, app, develop);
     if !develop || !crate::panel::edit::develops_here(st) {

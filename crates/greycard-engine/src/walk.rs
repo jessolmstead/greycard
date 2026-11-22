@@ -380,6 +380,9 @@ pub struct Patched<'a> {
     /// The Fill patches left as they were, by id: the picture there is
     /// the base's.
     pub unmade: &'a [u64],
+    /// What the crop showed where it reached a Fill's window
+    /// ([`crate::shown::Shown`]).
+    pub shown: Option<&'a crate::shown::Shown>,
 }
 
 /// The models a walk runs, lent by whoever holds them.
@@ -402,10 +405,27 @@ pub trait Models {
     /// leaves the patch as it was.
     fn fill(&mut self, patch: &Patch, region: &Region, picture: &WorkingImage) -> Option<Vec<f32>>;
 
+    /// What stands in for a fill [`Models::fill`] left to be made later
+    /// because the crop changed what its window sees: the fill made for
+    /// the same patch, window, and picture under the crop before, so a
+    /// remake never shows what the patch took out. The patch is still
+    /// unmade, and made at its turn.
+    fn stand_in(&mut self, _: &Patch, _: &Region, _: &WorkingImage) -> Option<Vec<f32>> {
+        None
+    }
+
+    /// What the crop shows of the picture where it may reach a Fill's
+    /// window, for the fills asked for from now, and for what is asked
+    /// of them ([`Models::could_fill_more`], [`Models::fills_ahead`]):
+    /// told by the walk before its retouch's fills, or before it asks
+    /// of a kept one's.
+    fn shown(&mut self, _shown: Option<&crate::shown::Shown>) {}
+
     /// A fill kept for `patch` at the full develop's size, `full`, read
     /// and taken down by `factor` to `region` of `picture`, that
-    /// develop's picture reduced: none where none is kept for this
-    /// picture. No model runs.
+    /// develop's picture reduced, with what the crop hid of its window
+    /// under `shown`: none where none is kept for this picture. No
+    /// model runs.
     fn fill_read(
         &mut self,
         _patch: &Patch,
@@ -413,6 +433,7 @@ pub trait Models {
         _picture: &WorkingImage,
         _factor: usize,
         _full: (usize, usize),
+        _shown: Option<&crate::shown::Shown>,
     ) -> Option<Vec<f32>> {
         None
     }
@@ -597,6 +618,8 @@ impl KeptBuf {
 struct Applied {
     retouch: Retouch,
     unmade: Vec<u64>,
+    /// What the crop showed where it reached a Fill's window.
+    shown: Option<crate::shown::Shown>,
 }
 
 /// What the stages up to a kept point measured, and the sources the
@@ -855,6 +878,7 @@ impl Kept {
                 let serves = Self::point_serves(p, steps, plan, at, &map)
                     && match (&p.retouch, &p.buf) {
                         (Some(a), KeptBuf::Working(image)) if !a.unmade.is_empty() => {
+                            models.shown(a.shown.as_ref());
                             !models.could_fill_more(&a.retouch, image)
                         }
                         _ => true,
@@ -1105,6 +1129,7 @@ impl Kept {
                 image,
                 retouch: &applied.retouch,
                 unmade: &applied.unmade,
+                shown: applied.shown.as_ref(),
             }),
             _ => None,
         }
@@ -1536,6 +1561,7 @@ fn walk_held(
                             image,
                             retouch: &applied.retouch,
                             unmade: &applied.unmade,
+                            shown: applied.shown.as_ref(),
                         }),
                         _ => None,
                     });
@@ -2532,33 +2558,40 @@ fn cpu_op(
             greycard_core::develop::defringe::defringe(&mut image, options);
             st.buf = Buf::Working(Arc::new(image));
         }
-        Stage::Retouch(retouch, fills) => {
+        Stage::Retouch(retouch, fills, shown) => {
             let image = working(&mut st.buf);
             let chosen = retouch.choose_sources(&image);
             let applied = retouch.with_sources(&chosen);
             walked.sources = applied.chosen_patches(&chosen);
             let mut picture = (*image).clone();
             let mut unmade = Vec::new();
+            models.shown(shown.as_ref());
             models.fills_ahead(&applied, &picture);
             applied.apply_with(&mut picture, |patch, region, before| {
                 let made = match fills {
                     Fills::Run => models.fill(patch, region, before),
                     Fills::Read { factor, full } => {
-                        let read = models.fill_read(patch, region, before, *factor, *full);
+                        let read =
+                            models.fill_read(patch, region, before, *factor, *full, shown.as_ref());
                         if read.is_none() {
                             walked.without.push(format!("the fill {}", patch.name()));
                         }
                         read
                     }
                 };
-                if made.is_none() {
-                    unmade.push(patch.id);
+                if made.is_some() {
+                    return made;
                 }
-                made
+                unmade.push(patch.id);
+                match fills {
+                    Fills::Run => models.stand_in(patch, region, before),
+                    Fills::Read { .. } => None,
+                }
             });
             st.retouch = Some(Applied {
                 retouch: applied,
                 unmade,
+                shown: *shown,
             });
             st.buf = Buf::Working(Arc::new(picture));
         }
@@ -5279,6 +5312,7 @@ mod tests {
                 picture: &WorkingImage,
                 factor: usize,
                 full: (usize, usize),
+                _: Option<&crate::shown::Shown>,
             ) -> Option<Vec<f32>> {
                 let region = patch.region(full.0, full.1)?;
                 self.0.push(crate::ai::fill_print(

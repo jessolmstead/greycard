@@ -1862,7 +1862,7 @@ impl crate::walk::Hold for Newer<'_> {
 
 /// The fills the open frame's develop left to make after its picture
 /// landed: what the next round walks.
-struct FillsDue {
+pub(super) struct FillsDue {
     edit: Edit,
     turn: u8,
     generation: u64,
@@ -1881,8 +1881,12 @@ impl FillsDue {
     /// that will not load fails the same fill each round). Rounds ended
     /// with fills left say none to come, so the window drops their
     /// outlines and its bar, and the frame's pictures are not kept for
-    /// the edit's without them.
-    fn after(
+    /// the edit's without them. Nor is its patched picture: a fill
+    /// still to come may have had a stand-in there
+    /// (`Models::stand_in`), which a later develop resuming from it
+    /// would show for good; let go, the next walk asks again and shows
+    /// the patch as it was.
+    pub(super) fn after(
         outcome: &mut Outcome,
         edit: &Edit,
         turn: u8,
@@ -1913,6 +1917,7 @@ impl FillsDue {
             if let Some(h) = base {
                 h.filling = false;
                 h.left_out.extend(left);
+                h.kept.drop_unmade();
             }
         }
         if fills.pending.is_empty() && !fills.highlight_pending {

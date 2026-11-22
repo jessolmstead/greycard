@@ -5893,6 +5893,183 @@ fn a_develop_shows_its_picture_and_then_makes_its_fills_one_a_round() {
     assert!(fills.pending.is_empty() && fills.made.is_empty());
 }
 
+/// A crop that changes what a Fill's window sees has the fill made
+/// again, and the fill made under the crop before stands in until the
+/// new one lands: the develop the crop asks for shows the old fill,
+/// still to make, never what the patch took out; the round after shows
+/// the new one. A crop's fill that fails has no stand-in.
+#[test]
+fn a_fill_remade_for_a_crop_shows_the_old_one_until_it_lands() {
+    use greycard_edit::retouch::{Method, Patch};
+    let mut image = WorkingImage::new(256, 256);
+    image.data.fill(0.4);
+    let input = picture_input(&Arc::new(image));
+    let mut edit = Edit {
+        retouch: Retouch {
+            enabled: true,
+            patches: vec![Patch {
+                id: 1,
+                method: Method::Fill,
+                points: vec![[0.93, 0.5]],
+                radius: 0.04,
+                ..Default::default()
+            }],
+        },
+        ..Default::default()
+    };
+    let mut ai = Ai::for_test(greycard_ai::Store::at("no-store"), Vec::new());
+    ai.fill_by_test = Some(0.9);
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut base = None;
+    let develop = |edit: &Edit, ai: &mut Ai, round: &mut Round, base: &mut Option<FrameKept>| {
+        let (outcome, image) = develop_round(
+            &input,
+            edit,
+            0,
+            1,
+            base,
+            ai,
+            (None, None),
+            &mut None,
+            &deliver,
+            round,
+            &crate::walk::NoHold,
+        );
+        let Outcome::Developed { fills, .. } = outcome else {
+            panic!("developed");
+        };
+        let image = image.expect("on the CPU");
+        // The fill's middle: the crop keeps the left edge.
+        let v = image.data[(128 * image.width + 238) * 3];
+        (fills.pending, v)
+    };
+    let mut round = Round::first();
+    assert_eq!(
+        develop(&edit, &mut ai, &mut round, &mut base),
+        (vec![1], 0.4)
+    );
+    round = Round::next(round.ahead);
+    let (left, v) = develop(&edit, &mut ai, &mut round, &mut base);
+    assert!(left.is_empty() && (v - 0.9).abs() < 5e-3, "made: {v}");
+
+    // Cropped over the fill's window, its edge hidden.
+    edit.geometry.crop = Some(greycard_edit::geometry::Crop::of([0.0, 0.0, 0.97, 1.0]));
+    ai.fill_by_test = Some(0.7);
+    let mut round = Round::first();
+    let (left, v) = develop(&edit, &mut ai, &mut round, &mut base);
+    assert_eq!(left, [1], "made again");
+    assert!((v - 0.9).abs() < 5e-3, "the old fill stands in, not {v}");
+    round = Round::next(round.ahead);
+    let (left, v) = develop(&edit, &mut ai, &mut round, &mut base);
+    assert!(
+        left.is_empty() && (v - 0.7).abs() < 5e-3,
+        "the new fill: {v}"
+    );
+
+    // Another crop whose fill fails: the patch as it was.
+    edit.geometry.crop = Some(greycard_edit::geometry::Crop::of([0.0, 0.0, 0.95, 1.0]));
+    ai.fill_by_test = Some(-1.0);
+    let mut round = Round::first();
+    develop(&edit, &mut ai, &mut round, &mut base);
+    round = Round::next(round.ahead);
+    let (_, v) = develop(&edit, &mut ai, &mut round, &mut base);
+    assert_eq!(v, 0.4, "a failed fill has no stand-in");
+}
+
+/// A removal remade for a crop on a card that refuses it each round:
+/// its stand-in shows while it is still to come, and once its rounds
+/// end stuck the next develop shows the patch as it was, not the old
+/// crop's fill kept in a patched picture.
+#[test]
+fn a_refused_fill_ends_on_the_base_not_its_stand_in() {
+    use super::engine::FillsDue;
+    use greycard_edit::retouch::{FillChoice, Method, Patch};
+    const GIB: u64 = 1 << 30;
+    let mut image = WorkingImage::new(256, 256);
+    image.data.fill(0.4);
+    let input = picture_input(&Arc::new(image));
+    let mut patch = Patch {
+        id: 1,
+        method: Method::Fill,
+        points: vec![[0.93, 0.5]],
+        radius: 0.04,
+        remove: true,
+        ..Default::default()
+    };
+    patch.set_fill_choice(FillChoice::Best);
+    let mut edit = Edit {
+        retouch: Retouch {
+            enabled: true,
+            patches: vec![patch],
+        },
+        ..Default::default()
+    };
+    let mut ai = Ai::for_test(greycard_ai::Store::at("no-store"), Vec::new());
+    ai.fill_by_test = Some(0.9);
+    ai.card_by_test = Some(Some(16 * GIB));
+    ai.free_memory_by_test = Some(16 * GIB);
+    ai.set_providers_by_test(vec![
+        greycard_ai::Provider::WebGpu,
+        greycard_ai::Provider::Cpu,
+    ]);
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut base = None;
+    let develop = |edit: &Edit, ai: &mut Ai, round: &mut Round, base: &mut Option<FrameKept>| {
+        let (outcome, image) = develop_round(
+            &input,
+            edit,
+            0,
+            1,
+            base,
+            ai,
+            (None, None),
+            &mut None,
+            &deliver,
+            round,
+            &crate::walk::NoHold,
+        );
+        let image = image.expect("on the CPU");
+        let v = image.data[(128 * image.width + 238) * 3];
+        (outcome, v)
+    };
+    let pending = |o: &Outcome| match o {
+        Outcome::Developed { fills, .. } => fills.pending.clone(),
+        _ => panic!("developed"),
+    };
+    let mut round = Round::first();
+    develop(&edit, &mut ai, &mut round, &mut base);
+    round = Round::next(round.ahead);
+    let (_, v) = develop(&edit, &mut ai, &mut round, &mut base);
+    assert!((v - 0.9).abs() < 5e-3, "made: {v}");
+
+    // Cropped over its window, on a card with too little free for it.
+    edit.geometry.crop = Some(greycard_edit::geometry::Crop::of([0.0, 0.0, 0.97, 1.0]));
+    ai.free_memory_by_test = Some(GIB / 4);
+    let mut round = Round::first();
+    let (outcome, v) = develop(&edit, &mut ai, &mut round, &mut base);
+    assert_eq!(pending(&outcome), [1]);
+    assert!((v - 0.9).abs() < 5e-3, "the stand-in: {v}");
+    // Each round after refuses it, until the rounds end stuck.
+    let mut left = Some(1);
+    for _ in 0..4 {
+        round = Round::next(round.ahead);
+        let (mut outcome, _) = develop(&edit, &mut ai, &mut round, &mut base);
+        let due = FillsDue::after(&mut outcome, &edit, 0, round, left, base.as_mut());
+        match due {
+            Some(_) => left = Some(pending(&outcome).len()),
+            None => {
+                left = None;
+                break;
+            }
+        }
+    }
+    assert!(left.is_none(), "the rounds ended");
+    // A slider past the retouch: the patch as it was.
+    edit.light.exposure = 0.0001;
+    let (_, v) = develop(&edit, &mut ai, &mut Round::first(), &mut base);
+    assert!((v - 0.4).abs() < 5e-3, "the base, not the stand-in: {v}");
+}
+
 /// A develop that starts past its retouch, from a point that left fills
 /// for later, says them still to make: a sharpen moved between two
 /// rounds does not give the fills up.

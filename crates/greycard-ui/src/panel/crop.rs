@@ -641,6 +641,43 @@ fn straighten_apply(
     level_by(state, app, on_screen);
 }
 
+/// What `geometry` shows of the developed picture where it reaches a
+/// Fill of `retouch`, as the develop's retouch step takes it
+/// (`greycard_engine::shown`): none where it reaches none, or before
+/// the frame's develop has said its size. Two geometries whose
+/// outlines differ here make some Fill's hole differ.
+pub(crate) fn fill_outline(
+    st: &State,
+    geometry: &Geometry,
+    retouch: &greycard_edit::retouch::Retouch,
+) -> Option<greycard_engine::shown::Shown> {
+    let (w, h) = (
+        st.develop.source_size.0 as f32,
+        st.develop.source_size.1 as f32,
+    );
+    let camera = crate::panel::viewport::camera_crop(st);
+    greycard_engine::shown::Shown::of(geometry, w, h, camera).filter(|s| s.reaches(retouch, w, h))
+}
+
+/// Whether a change of the geometry is still in hand: the Angle or a
+/// keystone slider held (or stepped by wheel or key within its
+/// second), or the Custom aspect being typed. Its develop waits for
+/// `geometry-settled`, so a pause along it makes no Fill.
+pub(crate) fn geometry_held(app: &App) -> bool {
+    app.get_angle_moving() || app.get_perspective_moving() || app.get_aspect_typing()
+}
+
+/// Whether the panel's geometry, `now`, shows the Fills of the
+/// develop's retouch otherwise than the geometry the develop was last
+/// made under: the geometry is the finish's alone, drawn by the shader
+/// with no develop, but a Fill's engine is not shown what the crop
+/// hides, so a crop change that changes that makes the Fill again.
+pub(crate) fn fills_see_otherwise(st: &State, now: &Geometry) -> bool {
+    let edit = &st.develop.edit;
+    *now != edit.geometry
+        && fill_outline(st, now, &edit.retouch) != fill_outline(st, &edit.geometry, &edit.retouch)
+}
+
 /// The geometry as the panel shows it.
 pub(crate) fn read_geometry(app: &App) -> Geometry {
     Geometry {
@@ -853,6 +890,17 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             }
             refit_crop(&app, sw, sh, settled, camera);
             app.invoke_view_changed();
+        });
+    }
+    // A slider let go, an aspect typed and accepted or left: the change
+    // is over, and what it does to a Fill may be asked for now
+    // (`geometry_held`).
+    {
+        let app_weak = app.as_weak();
+        app.on_geometry_settled(move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.invoke_view_changed();
+            }
         });
     }
     {

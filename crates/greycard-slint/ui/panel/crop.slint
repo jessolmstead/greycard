@@ -26,6 +26,12 @@ export component CropSection inherits Section {
     // The Crop button: the window's, which R shares.
     callback crop-clicked();
     callback geometry-changed();
+    /// A change of the geometry over, after which the engine may be
+    /// asked for a develop: a slider let go, an aspect typed and
+    /// accepted or left.
+    callback geometry-settled();
+    /// The Custom aspect being typed: no develop while it is.
+    in-out property <bool> aspect-typing;
     callback guide-dropped();
     // The keys to the window, so Escape puts a tool down wherever the
     // pointer is.
@@ -40,6 +46,11 @@ export component CropSection inherits Section {
         if (root.aspect-name != "Custom" && root.custom-focused) {
             root.custom-focused = false;
             Typing.close-all();
+        }
+        // The box gone, what was typed in it is over.
+        if (root.aspect-name != "Custom" && root.aspect-typing) {
+            root.aspect-typing = false;
+            root.geometry-settled();
         }
         aspect-box.current-index = root.aspect-index(root.aspect-name);
     }
@@ -115,8 +126,15 @@ export component CropSection inherits Section {
                 placeholder-text: "W:H";
                 accessible-label: @tr("Custom aspect");
                 // Enter or Escape gives the keys back to the window.
-                accepted(t) => { root.geometry-changed(); Typing.done += 1; }
-                edited(t) => { root.geometry-changed(); }
+                accepted(t) => {
+                    root.aspect-typing = false;
+                    root.geometry-changed();
+                    Typing.done += 1;
+                }
+                edited(t) => {
+                    root.aspect-typing = true;
+                    root.geometry-changed();
+                }
                 key-pressed(e) => {
                     if (e.text == Key.Escape) { Typing.done += 1; return accept; }
                     return reject;
@@ -124,6 +142,10 @@ export component CropSection inherits Section {
                 changed has-focus => {
                     root.custom-focused = self.has-focus;
                     Typing.box-focus(self.has-focus);
+                    if (!self.has-focus && root.aspect-typing) {
+                        root.aspect-typing = false;
+                        root.geometry-settled();
+                    }
                 }
             }
         }
@@ -183,6 +205,7 @@ export component RotateSection inherits Section {
     /// The Angle slider being set, by drag, wheel, or key: the
     /// viewport lays its grid on.
     in-out property <bool> angle-moving;
+    callback geometry-settled();
     callback geometry-turned(int);
     callback geometry-flipped(bool);
     callback crop-toggled();
@@ -265,8 +288,16 @@ export component RotateSection inherits Section {
             steps: Steps.tenths;
             value <=> root.geo-angle;
             text: (root.geo-angle >= 0 ? "+" : "") + round(root.geo-angle * 10) / 10 + "°";
-            changed(v) => { root.geometry-changed(); }
-            changed moving => { root.angle-moving = self.moving; }
+            // Said before the change, not after it as `changed moving`
+            // would: the change's develop waits while the slider moves.
+            changed(v) => {
+                root.angle-moving = self.moving;
+                root.geometry-changed();
+            }
+            changed moving => {
+                root.angle-moving = self.moving;
+                if (!self.moving) { root.geometry-settled(); }
+            }
         }
         // The frame's own turn, under the edit's.
         // The four above are a step in developing
@@ -307,6 +338,7 @@ export component PerspectiveSection inherits Section {
     /// The Vertical or the Horizontal slider being set, as the Angle
     /// slider's `angle-moving`: the viewport lays its grid on.
     in-out property <bool> perspective-moving;
+    callback geometry-settled();
     callback crop-toggled();
     callback geometry-changed();
     callback geometry-reset();
@@ -360,8 +392,14 @@ export component PerspectiveSection inherits Section {
                 steps: Steps.tenths;
                 value <=> root.geo-vertical;
                 text: (root.geo-vertical >= 0 ? "+" : "") + round(root.geo-vertical * 10) / 10 + "°";
-                changed(v) => { root.geometry-changed(); }
-                changed moving => { root.perspective-moving = self.moving || horizontal.moving; }
+                changed(v) => {
+                    root.perspective-moving = self.moving || horizontal.moving;
+                    root.geometry-changed();
+                }
+                changed moving => {
+                    root.perspective-moving = self.moving || horizontal.moving;
+                    if (!root.perspective-moving) { root.geometry-settled(); }
+                }
             }
             horizontal := EditSlider {
                 // Perspective section: the slider
@@ -373,8 +411,14 @@ export component PerspectiveSection inherits Section {
                 steps: Steps.tenths;
                 value <=> root.geo-horizontal;
                 text: (root.geo-horizontal >= 0 ? "+" : "") + round(root.geo-horizontal * 10) / 10 + "°";
-                changed(v) => { root.geometry-changed(); }
-                changed moving => { root.perspective-moving = self.moving || vertical.moving; }
+                changed(v) => {
+                    root.perspective-moving = self.moving || vertical.moving;
+                    root.geometry-changed();
+                }
+                changed moving => {
+                    root.perspective-moving = self.moving || vertical.moving;
+                    if (!root.perspective-moving) { root.geometry-settled(); }
+                }
             }
         }
         // The whole of the Crop tab goes back at

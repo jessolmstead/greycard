@@ -1531,6 +1531,27 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 );
                 return;
             }
+            // A geometry change that shows a Fill otherwise, its crop
+            // over the Fill's window moved: the develop's geometry is
+            // the panel's and the Fill is made again, once the change
+            // has rested; the picture on show stays until it lands.
+            // Asked at a change's end (a release, a control), never
+            // along a drag: a crop's handles call no `view_changed` until
+            // let go, and a slider held or an aspect being typed waits
+            // for `geometry-settled`.
+            let geometry = read_geometry(&app);
+            if !crate::panel::crop::geometry_held(&app)
+                && crate::panel::crop::fills_see_otherwise(&st, &geometry)
+            {
+                st.develop.edit.geometry = geometry;
+                crate::panel::edit::develop_soon(
+                    &mut st,
+                    state.clone(),
+                    worker.clone(),
+                    app.as_weak(),
+                );
+                return;
+            }
             app.window().request_redraw();
             schedule_save(&mut st, app.as_weak());
         });

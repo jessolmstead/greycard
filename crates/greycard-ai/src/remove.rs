@@ -9,10 +9,15 @@
 //! are constants in the store ([`crate::registry::REMOVE`]). A window
 //! of the picture, no side over [`MAX`], is mirrored out to a square
 //! of 512 or 1024 ([`size_for`]), the sizes the VAE graphs are
-//! exported at. The VAE encoder makes latents of the window and of
-//! the window with the hole blanked (the latent mean, times
-//! [`SCALE`]); the hole is taken to the latents' grid ([`latent_mask`]);
-//! the UNet sees those two and the noisy latents, nine channels; Euler
+//! exported at. The VAE encoder makes latents of the window with the
+//! hole filled smoothly from round it ([`prefilled`]), which the
+//! sampler starts from, and of the window with the hole blanked, which
+//! the UNet is conditioned on (the latent mean, times [`SCALE`]);
+//! diffusers starts from the window as it is, and a large colored
+//! object under the hole then shows through the start's noise and is
+//! painted back (`remove/start.rs` says why). The hole is taken to
+//! the latents' grid ([`latent_mask`]); the UNet sees those two and
+//! the noisy latents, nine channels; Euler
 //! discrete steps over the model's own schedule ([`schedule`]: scaled
 //! linear betas, leading spacing, offset 1) from [`STRENGTH`] 0.99,
 //! which is 24 UNet calls at [`STEPS`] 25; the decoder brings the
@@ -79,10 +84,12 @@ mod middle;
 mod mottle;
 mod scale;
 mod seam;
+mod start;
 
 pub use middle::{Middle, evened};
 pub use scale::{FACTOR, factor_for, scaled, scaled_size};
 pub use seam::{Gains, matched};
+pub use start::prefilled;
 
 /// The longest side of a window, the larger VAE export's.
 pub const MAX: usize = 1024;
@@ -679,6 +686,47 @@ pub enum Pool {
     /// The block's top left pixel, as diffusers' nearest resize does:
     /// for matching its reference.
     TopLeft,
+}
+
+/// How a removal is run: our way, or the reference pipeline's, which
+/// the parity tests match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pipeline {
+    /// The hole taken to the latents by [`Pool::Any`], and the sampler
+    /// started from the window with the hole filled from round it
+    /// ([`prefilled`]).
+    Ours,
+    /// diffusers' SDXL inpainting as RORem runs it: [`Pool::TopLeft`],
+    /// and the sampler started from the window as it is, the object
+    /// to be removed in it.
+    Reference,
+}
+
+impl Pipeline {
+    fn pool(self) -> Pool {
+        match self {
+            Pipeline::Ours => Pool::Any,
+            Pipeline::Reference => Pool::TopLeft,
+        }
+    }
+}
+
+/// The window mirrored out to a `size` square as the encoder takes it
+/// ([`squared`]): the picture the sampler's start latents are made from,
+/// the picture with the hole blanked the UNet is conditioned on, and the
+/// hole. Our start is the window with the hole filled from round it
+/// ([`prefilled`]), so nothing of what the hole covers is in it; the
+/// reference's is the window itself.
+fn inputs(
+    image: &Rgbf,
+    hole: &[f32],
+    size: usize,
+    pipeline: Pipeline,
+) -> (Vec<f32>, Vec<f32>, Vec<bool>) {
+    match pipeline {
+        Pipeline::Ours => squared(&prefilled(image, hole), hole, size),
+        Pipeline::Reference => squared(image, hole, size),
+    }
 }
 
 /// The square a window of `width` × `height` is run at: the smaller
@@ -1398,14 +1446,15 @@ fn unet_path(store: &Store, steps: Steps, size: usize) -> std::path::PathBuf {
     }
 }
 
-/// A session of one of the remove's graphs, on WebGPU. No warm-up:
-/// with WebGPU the only provider there is nothing to fall through to,
-/// and a warm-up of the UNet is a step's time on every open.
-fn open_graph(path: &std::path::Path) -> Result<Session> {
+/// A session of one of the remove's graphs, on `provider` alone (WebGPU
+/// but for [`Remove::load_on_cpu`]). No warm-up: with one provider
+/// there is nothing to fall through to, and a warm-up of the UNet is a
+/// step's time on every open.
+fn open_graph(path: &std::path::Path, provider: Provider) -> Result<Session> {
     let loaded = runtime::open(
         path,
         GraphOptimizationLevel::Level3,
-        &[Provider::WebGpu],
+        &[provider],
         None,
         |_| Ok(()),
     )?;
@@ -1456,7 +1505,7 @@ pub fn prepare(store: &Store, steps: Steps) {
                 return;
             }
             let t = Instant::now();
-            let prepared = UNET.prepare(&path, || open_graph(&path));
+            let prepared = UNET.prepare(&path, || open_graph(&path, Provider::WebGpu));
             if matches!(prepared, Ok(true)) {
                 OPENED_AHEAD.store(true, std::sync::atomic::Ordering::SeqCst);
             }
@@ -1483,6 +1532,8 @@ pub fn prepare(store: &Store, steps: Steps) {
 /// for the size last run kept open.
 pub struct Remove {
     store: Store,
+    /// WebGPU, but for [`Remove::load_on_cpu`].
+    provider: Provider,
     memory: Memory,
     vae: Vae,
     steps: Steps,
@@ -1559,6 +1610,7 @@ impl Remove {
         );
         Ok(Self {
             store: store.clone(),
+            provider: Provider::WebGpu,
             memory,
             vae,
             steps: Steps::Euler25,
@@ -1631,9 +1683,23 @@ impl Remove {
         }
     }
 
-    /// Where it runs: WebGPU, always.
+    /// Where it runs: WebGPU, but for [`Remove::load_on_cpu`].
     pub fn provider(&self) -> Provider {
-        Provider::WebGpu
+        self.provider
+    }
+
+    /// [`Remove::load`] on ONNX Runtime's CPU provider, never offered
+    /// to the editor: for checking a removal against the model on a
+    /// machine whose card is busy or missing, at about 1.4 s a UNet
+    /// call at 512 on 16 cores (24 calls a removal). The UNet held
+    /// between removals is one a process, known by its path, so a
+    /// process that opened the WebGPU one ahead ([`prepare`]) would
+    /// run that: the two are never wanted in one process.
+    #[doc(hidden)]
+    pub fn load_on_cpu(store: &Store) -> Result<Self> {
+        let mut remove = Self::load_on(store, &[Provider::WebGpu], None)?;
+        remove.provider = Provider::Cpu;
+        Ok(remove)
     }
 
     /// How the sessions share the card, as `load` chose.
@@ -1680,7 +1746,7 @@ impl Remove {
         let size = self.check(image, hole)?;
         let l = size / 8;
         let noise = normals(self.steps.noises() * 4 * l * l, seed);
-        self.run(image, hole, &noise, Pool::Any, told)
+        self.run(image, hole, &noise, Pipeline::Ours, told)
     }
 
     /// [`Remove::remove`] for a window of a side up to [`FACTOR`] times
@@ -1734,9 +1800,10 @@ impl Remove {
     }
 
     /// [`Remove::remove`] on given noise, [`Steps::noises`] latents of
-    /// [1, 4, size / 8, size / 8] one after another, with the hole
-    /// taken to the latents as diffusers takes it
-    /// ([`Pool::TopLeft`]): for matching the reference pipeline.
+    /// [1, 4, size / 8, size / 8] one after another, run as the
+    /// reference pipeline runs it: the hole taken to the latents as
+    /// diffusers takes it ([`Pool::TopLeft`]) and the sampler started
+    /// from the window as it is, not prefilled. For matching it.
     #[doc(hidden)]
     pub fn remove_with_noise(&mut self, image: &Rgbf, hole: &[f32], noise: &[f32]) -> Result<Rgbf> {
         let size = self.check(image, hole)?;
@@ -1746,7 +1813,7 @@ impl Remove {
                 noise.len()
             )));
         }
-        self.run(image, hole, noise, Pool::TopLeft, &mut |_, _| {})
+        self.run(image, hole, noise, Pipeline::Reference, &mut |_, _| {})
     }
 
     /// The decoder's whole answer for [`Remove::remove_with_noise`],
@@ -1768,7 +1835,7 @@ impl Remove {
         }
         let total = Instant::now();
         let (decoded, mut times) =
-            self.generate(image, hole, noise, Pool::TopLeft, &mut |_, _| {})?;
+            self.generate(image, hole, noise, Pipeline::Reference, &mut |_, _| {})?;
         times.drift = drift(image, hole, &decoded);
         times.total = total.elapsed().as_secs_f64();
         self.times = times;
@@ -1872,7 +1939,8 @@ impl Remove {
         // and is let go after.
         if part == Part::Unet && (keep || UNET.holds(&path)) {
             let t = Instant::now();
-            let mut lease = UNET.acquire(&path, || open_graph(&path))?;
+            let provider = self.provider;
+            let mut lease = UNET.acquire(&path, || open_graph(&path, provider))?;
             let load = t.elapsed().as_secs_f64();
             let out = f(lease.value());
             drop(lease);
@@ -1897,7 +1965,7 @@ impl Remove {
         let t = Instant::now();
         let mut session = match kept {
             Some(s) => s,
-            None => open_graph(&path)?,
+            None => open_graph(&path, self.provider)?,
         };
         let load = t.elapsed().as_secs_f64();
         let out = f(&mut session);
@@ -1912,12 +1980,12 @@ impl Remove {
         image: &Rgbf,
         hole: &[f32],
         noise: &[f32],
-        pool: Pool,
+        pipeline: Pipeline,
         told: &mut dyn FnMut(usize, usize),
     ) -> Result<Rgbf> {
         let (w, h) = (image.width, image.height);
         let total = Instant::now();
-        let (decoded, mut times) = self.generate(image, hole, noise, pool, told)?;
+        let (decoded, mut times) = self.generate(image, hole, noise, pipeline, told)?;
         times.drift = drift(image, hole, &decoded);
         let out = leveled(image, hole, &decoded).map(|(out, level, under)| {
             times.level = level;
@@ -1956,7 +2024,7 @@ impl Remove {
         image: &Rgbf,
         hole: &[f32],
         noise: &[f32],
-        pool: Pool,
+        pipeline: Pipeline,
         told: &mut dyn FnMut(usize, usize),
     ) -> Result<(Rgbf, Times)> {
         let (w, h) = (image.width, image.height);
@@ -1977,8 +2045,8 @@ impl Remove {
             tiled: self.tiles(size),
             ..Times::default()
         };
-        let (picture, masked, square) = squared(image, hole, size);
-        let mask = latent_mask(&square, size, pool);
+        let (picture, masked, square) = inputs(image, hole, size, pipeline);
+        let mask = latent_mask(&square, size, pipeline.pool());
 
         let t = Instant::now();
         let ((image_lat, masked_lat), load) = self.with(Part::Encoder, size, |s| {
@@ -2390,6 +2458,64 @@ mod tests {
         // In -1 to 1.
         assert_eq!(picture[0], -1.0);
         assert!((picture[2 * n + 2 * 512 + 3] - ((13.0 / 20.0) * 2.0 - 1.0)).abs() < 1e-6);
+    }
+
+    /// What the sampler starts from: ours has nothing of an orange
+    /// object under the hole in it, not in the window nor in its
+    /// mirrored copies past the window's edges, which the object runs
+    /// off; the reference's has it. The conditioning, the hole blanked,
+    /// is the same either way, and outside the hole so is the start.
+    #[test]
+    fn the_start_has_nothing_of_what_the_hole_covers() {
+        let (w, h) = (300, 200);
+        let orange = [0.95f32, 0.42, 0.06];
+        // Water: blue-green with a ripple, no red past 0.35.
+        let water = |x: usize, y: usize| {
+            let r = 0.05 * ((x as f32 * 0.21).sin() + (y as f32 * 0.13).cos());
+            [0.2 + r, 0.4 + r, 0.5 + r]
+        };
+        // An object in the bottom right corner, off both edges, and a
+        // hole well past it.
+        let inside = |x: usize, y: usize, r: f32| {
+            let (dx, dy) = ((x as f32 - 280.0) / r, (y as f32 - 185.0) / (0.6 * r));
+            dx * dx + dy * dy <= 1.0
+        };
+        let mut data = Vec::with_capacity(w * h * 3);
+        let mut hole = Vec::with_capacity(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                data.extend_from_slice(&if inside(x, y, 120.0) {
+                    orange
+                } else {
+                    water(x, y)
+                });
+                hole.push(f32::from(u8::from(inside(x, y, 150.0))));
+            }
+        }
+        let image = Rgbf::new(w, h, data);
+        let size = size_for(w, h).expect("a size");
+        let (ours, masked, square) = inputs(&image, &hole, size, Pipeline::Ours);
+        let (theirs, reference_masked, reference_square) =
+            inputs(&image, &hole, size, Pipeline::Reference);
+        assert_eq!((&masked, &square), (&reference_masked, &reference_square));
+        let n = size * size;
+        let red = |planes: &[f32], d: usize| (planes[d] + 1.0) / 2.0;
+        let (mut most, mut orange_in_theirs, mut mirrored) = (0.0f32, 0, 0);
+        for (d, &m) in square.iter().enumerate() {
+            if !m {
+                for c in 0..3 {
+                    assert_eq!(ours[c * n + d], theirs[c * n + d]);
+                }
+                continue;
+            }
+            most = most.max(red(&ours, d));
+            orange_in_theirs += usize::from(red(&theirs, d) > 0.9);
+            let (x, y) = (d % size, d / size);
+            mirrored += usize::from(x >= w || y >= h);
+        }
+        assert!(mirrored > 0, "the hole runs off the window into its mirror");
+        assert!(orange_in_theirs > 0);
+        assert!(most < 0.35, "red up to {most} in the start under the hole");
     }
 
     fn flat(w: usize, h: usize, v: f32) -> Rgbf {

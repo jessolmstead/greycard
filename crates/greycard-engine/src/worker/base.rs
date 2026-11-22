@@ -351,6 +351,7 @@ impl WorkerModels<'_> {
         if patched.unmade.is_empty() {
             return;
         }
+        self.ai.set_shown(patched.shown.copied());
         let left = Retouch {
             patches: patched
                 .retouch
@@ -427,6 +428,24 @@ impl crate::walk::Models for WorkerModels<'_> {
             .map_err(|e| learned_failure(&e))?;
         self.learned = report;
         Ok(rgb)
+    }
+
+    fn shown(&mut self, shown: Option<&crate::shown::Shown>) {
+        self.ai.set_shown(shown.copied());
+    }
+
+    // Only for a fill still to come: one failed or refused is said so,
+    // and the patch is left as it was.
+    fn stand_in(
+        &mut self,
+        patch: &Patch,
+        region: &Region,
+        picture: &WorkingImage,
+    ) -> Option<Vec<f32>> {
+        if !self.fills.pending.contains(&patch.id) {
+            return None;
+        }
+        self.ai.stand_in(patch, region, picture)
     }
 
     fn fill(&mut self, patch: &Patch, region: &Region, picture: &WorkingImage) -> Option<Vec<f32>> {

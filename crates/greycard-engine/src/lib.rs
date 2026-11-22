@@ -42,6 +42,7 @@ pub mod queue;
 pub mod reduced;
 pub mod settings;
 pub mod sheet;
+pub mod shown;
 pub mod stages;
 pub mod thumbpool;
 pub mod version_key;

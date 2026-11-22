@@ -263,8 +263,10 @@ impl Models for ReadFills<'_> {
         picture: &WorkingImage,
         factor: usize,
         full: (usize, usize),
+        shown: Option<&crate::shown::Shown>,
     ) -> Option<Vec<f32>> {
-        self.0?.fill_read_only(patch, region, picture, factor, full)
+        self.0?
+            .fill_read_only(patch, region, picture, factor, full, shown)
     }
 
     fn could_fill_more(

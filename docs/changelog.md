@@ -71,6 +71,11 @@ design note behind it.
 
 ### Fixes
 
+- A Fill over a large, strongly colored object removes it; kept fills
+  are made again once
+  ([§729](https://github.com/jessolmstead/greycard/blob/master/docs/notes/729-a-large-object-removed-and-the-crop-in-a-fill.md)).
+- A Fill no longer brings back an object that runs on past the crop's
+  edge.
 - An export made smaller keeps highlights past white, and a mask's
   Sharpen, Texture, Clarity, and Structure act in it as at full size
   ([§728](https://github.com/jessolmstead/greycard/blob/master/docs/notes/728-our-own-resize-for-smaller-exports.md)).

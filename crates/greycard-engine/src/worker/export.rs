@@ -214,7 +214,7 @@ pub(super) fn walk_for_export(
         .iter()
         .any(|s| matches!(s, Step::Tap(Tap::Masks(_))))
         && steps.ops().any(|s| {
-            matches!(s, Stage::Retouch(r, _)
+            matches!(s, Stage::Retouch(r, ..)
                 if r.patches.iter().any(|p| p.method == greycard_edit::retouch::Method::Fill))
         });
     steps.steps.retain(|s| match s {

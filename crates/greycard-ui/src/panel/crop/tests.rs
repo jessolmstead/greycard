@@ -2297,3 +2297,263 @@ fn handles_leave_mid_drag(trigger: &str) {
         "{trigger}: the arrow reads the crop as it stands"
     );
 }
+
+/// A frame of 6000 by 4000 open and developed, its develop's retouch a
+/// Fill at `at` (in the picture's widths), in crop mode.
+fn filled_frame(at: [f32; 2]) -> (App, Rc<crate::Shared>, Rc<crate::worker::Worker>) {
+    let app = window(1);
+    let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    app.set_panel_tab("Crop".into());
+    open_frame(&app, &state, 0, (6000, 4000));
+    state
+        .borrow_mut()
+        .develop
+        .edit
+        .retouch
+        .patches
+        .push(greycard_edit::retouch::Patch {
+            id: 1,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![at],
+            radius: 0.03,
+            feather: 0.0,
+            ..Default::default()
+        });
+    press_crop(&app);
+    // Whatever opening the crop asked has gone out.
+    develop_rest();
+    (app, state, worker)
+}
+
+/// The develop's wait, past.
+fn develop_rest() {
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+        crate::panel::edit::DEBOUNCE_MS + 50,
+    ));
+}
+
+fn generation(state: &Rc<crate::Shared>) -> u64 {
+    state.borrow().develop.generation
+}
+
+/// A crop released over a Fill's window asks for one develop, which
+/// makes the Fill again with what the crop now hides left out of its
+/// hole's surround, said as any develop is; the develop's geometry is
+/// the panel's. Along the drag nothing is asked.
+#[test]
+fn a_crop_released_over_a_fill_develops_once() {
+    let (app, state, _worker) = filled_frame([0.97, 0.3]);
+    let before = generation(&state);
+    app.invoke_crop_pressed(4);
+    app.invoke_crop_dragged(4, -40.0, -20.0);
+    app.invoke_crop_dragged(4, -60.0, -30.0);
+    develop_rest();
+    assert_eq!(generation(&state), before, "nothing along the drag");
+    app.invoke_crop_released();
+    develop_rest();
+    assert_eq!(generation(&state), before + 1, "one develop at the release");
+    assert_eq!(app.get_status(), "developing...");
+    assert_eq!(
+        state.borrow().develop.edit.geometry,
+        super::read_geometry(&app),
+        "the develop's geometry is the panel's"
+    );
+    // Asked again with nothing moved: nothing new to see.
+    app.invoke_view_changed();
+    develop_rest();
+    assert_eq!(generation(&state), before + 1);
+}
+
+/// The Custom aspect typed with no Enter, then the crop dragged over a
+/// Fill: the press takes no focus, but the typing is over
+/// there, and the release asks for one develop; along the drag,
+/// nothing.
+#[test]
+fn a_crop_dragged_after_an_aspect_typed_develops_at_the_release() {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    let (app, state, _worker) = filled_frame([0.97, 0.3]);
+    app.set_aspect_name("Custom".into());
+    crate::testing::settle(&app);
+    let (field, fsize) = crate::testing::by_id(&app, "CropSection::custom-aspect-field");
+    crate::testing::click(
+        &app,
+        field.x + fsize.width / 2.0,
+        field.y + fsize.height / 2.0,
+    );
+    for _ in 0..8 {
+        crate::testing::press(&app, slint::platform::Key::Backspace);
+    }
+    crate::testing::type_text(&app, "3:2");
+    wait(600);
+    let before = generation(&state);
+    assert!(app.get_aspect_typing(), "typed, not accepted");
+
+    // The crop's body, dragged.
+    let base = ElementHandle::find_by_element_type_name(&app, "Viewport")
+        .next()
+        .expect("the viewport is on screen")
+        .absolute_position();
+    let x = base.x + app.get_crop_left() + app.get_crop_width() / 2.0;
+    let y = base.y + app.get_crop_top() + app.get_crop_height() / 2.0;
+    let p = |d: f32| slint::LogicalPosition::new(x + d, y);
+    let button = PointerEventButton::Left;
+    let crop = super::read_geometry(&app).crop;
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: p(0.0) });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: p(0.0),
+        button,
+    });
+    for d in [10.0, 40.0, 80.0] {
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position: p(d) });
+        wait(600);
+        assert_eq!(generation(&state), before, "nothing along the drag");
+    }
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: p(80.0),
+        button,
+    });
+    assert_ne!(super::read_geometry(&app).crop, crop, "the drag moved it");
+    assert!(!app.get_aspect_typing(), "the typing is over");
+    wait(600);
+    assert_eq!(generation(&state), before + 1, "one at the release");
+}
+
+/// A crop that reaches no Fill's window asks for nothing: the shader
+/// draws the geometry, as before.
+#[test]
+fn a_crop_away_from_every_fill_develops_nothing() {
+    let (app, state, _worker) = filled_frame([0.5, 0.3]);
+    let before = generation(&state);
+    drag_corner(&app);
+    develop_rest();
+    assert_eq!(generation(&state), before);
+}
+
+/// The geometry's sliders and the Custom aspect ask for a Fill's
+/// develop once their change is over, never along it: the Angle held
+/// and paused past the develop's wait asks nothing and its release one;
+/// wheel steps a debounce apart ask one, after the last, once the
+/// slider rests; the Custom aspect typed asks nothing until Enter, then
+/// one. The Fill sits in the top right corner, which the fitted crop
+/// of a turned picture leaves out.
+#[test]
+fn a_geometry_control_develops_a_fill_once_its_change_is_over() {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    let (app, state, _worker) = crop_tab();
+    {
+        let mut st = state.borrow_mut();
+        st.develop.source_size = (6000, 4000);
+        super::start_landed(&mut st, &app);
+        st.develop
+            .edit
+            .retouch
+            .patches
+            .push(greycard_edit::retouch::Patch {
+                id: 1,
+                method: greycard_edit::retouch::Method::Fill,
+                points: vec![[0.97, 0.02]],
+                radius: 0.03,
+                feather: 0.0,
+                ..Default::default()
+            });
+    }
+    let id = "RotateSection::angle";
+    let (at, size) = crate::testing::by_id(&app, id);
+    let from = at.x + app.global::<crate::LabelColumn>().get_width();
+    let to = at.x + size.width - 60.0;
+    let (x, y) = ((from + to) / 2.0, at.y + size.height / 2.0);
+    let at = |x: f32| slint::LogicalPosition::new(x, y);
+    let button = PointerEventButton::Left;
+    let before = generation(&state);
+
+    // Three wheel steps, each past the develop's wait: one, after the
+    // slider rests.
+    for step in 1..=3 {
+        wheel(&app, id, App::get_geo_angle);
+        wait(400);
+        assert_eq!(generation(&state), before, "wheel step {step}: nothing yet");
+    }
+    wait(2500);
+    assert_eq!(generation(&state), before + 1, "one once the wheel rests");
+
+    // Held, moved, paused past the develop's wait, moved again.
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at(x) });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at(x),
+        button,
+    });
+    let turned = app.get_geo_angle();
+    for step in 1..=3 {
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: at(x + step as f32 * 4.0),
+        });
+        wait(600);
+        assert_eq!(generation(&state), before + 1, "held, step {step}: nothing");
+    }
+    assert!(app.get_geo_angle() != turned, "the drag turned it");
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at(x + 12.0),
+        button,
+    });
+    wait(600);
+    assert_eq!(generation(&state), before + 2, "one at the release");
+
+    // The Custom aspect, typed: nothing until Enter.
+    app.set_aspect_name("Custom".into());
+    crate::testing::settle(&app);
+    let (field, fsize) = crate::testing::by_id(&app, "CropSection::custom-aspect-field");
+    crate::testing::click(
+        &app,
+        field.x + fsize.width / 2.0,
+        field.y + fsize.height / 2.0,
+    );
+    for _ in 0..8 {
+        crate::testing::press(&app, slint::platform::Key::Backspace);
+    }
+    crate::testing::type_text(&app, "2:1");
+    wait(600);
+    assert_eq!(generation(&state), before + 2, "nothing while typed");
+    crate::testing::press(&app, slint::platform::Key::Return);
+    wait(600);
+    assert_eq!(generation(&state), before + 3, "one at Enter");
+}
+
+/// An undo across a crop change over a Fill, as a preset's or a
+/// paste's crop, goes through the same settling of the panel: it
+/// develops where the Fill sees otherwise, and not where it does not.
+#[test]
+fn an_undo_across_a_crop_over_a_fill_develops() {
+    let (app, state, worker) = filled_frame([0.97, 0.3]);
+    let crop_at = |w: f32| greycard_edit::Geometry {
+        crop: Some(Crop {
+            x: 0.0,
+            y: 0.0,
+            w,
+            h: 1.0,
+        }),
+        ..Default::default()
+    };
+    let settle_to = |g: greycard_edit::Geometry| {
+        let mut st = state.borrow_mut();
+        let mut edit = st.develop.edit.clone();
+        edit.geometry = g;
+        st.line_mut(0).expect("the open frame's line").current = edit;
+        crate::panel::history::take_current_settled(&mut st, &app, &worker);
+    };
+    let before = generation(&state);
+    settle_to(crop_at(0.95));
+    assert_eq!(
+        generation(&state),
+        before + 1,
+        "the crop hides the Fill's edge"
+    );
+    settle_to(crop_at(0.95));
+    assert_eq!(generation(&state), before + 1, "the same crop again");
+    // No crop: the outline no longer reaches the Fill, which sees
+    // otherwise again.
+    settle_to(greycard_edit::Geometry::default());
+    assert_eq!(generation(&state), before + 2);
+}

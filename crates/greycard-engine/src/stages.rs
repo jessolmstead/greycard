@@ -582,8 +582,10 @@ pub enum Stage {
     /// on, the same size.
     Lens(Vec<LensCorrection>),
     Defringe(DefringeOptions),
-    /// The retouch, its fills made or refused.
-    Retouch(Retouch, Fills),
+    /// The retouch, its fills made or refused, and what the crop shows
+    /// of the picture where a Fill's window may reach past it
+    /// ([`crate::shown::Shown`]).
+    Retouch(Retouch, Fills, Option<crate::shown::Shown>),
     LocalContrast(LocalContrastOptions),
     Dehaze(DehazeOptions),
     /// The capture sharpen, and the delta beside it for the masks'
@@ -1309,6 +1311,13 @@ pub fn stages(
         if *purpose == Purpose::ModelsSee {
             s.skip("the retouch", Skip::ModelsSee);
         } else {
+            // What the crop shows, only where it may cross a Fill's
+            // window: a crop moved anywhere else keeps the step as it
+            // was, and nothing past it is made again.
+            let (fw, fh) = facts.full();
+            let shown =
+                crate::shown::Shown::of(&edit.geometry, fw as f32, fh as f32, facts.camera())
+                    .filter(|v| v.reaches(&edit.retouch, fw as f32, fh as f32));
             s.op(Stage::Retouch(
                 edit.retouch.clone(),
                 if reduced {
@@ -1319,6 +1328,7 @@ pub fn stages(
                 } else {
                     Fills::Run
                 },
+                shown,
             ));
         }
     }
@@ -1815,7 +1825,7 @@ mod tests {
             .map(|step| match step {
                 Step::Op(Stage::Bin(n)) => format!("bin {n}"),
                 Step::Op(Stage::Reduce(n)) => format!("reduce {n}"),
-                Step::Op(Stage::Retouch(_, Fills::Read { .. })) => "retouch, fills read".into(),
+                Step::Op(Stage::Retouch(_, Fills::Read { .. }, _)) => "retouch, fills read".into(),
                 Step::Op(Stage::Finish(Finish::Shader)) => "shader".into(),
                 Step::Op(Stage::Finish(Finish::Cpu { fit, .. })) => format!("finish {fit:?}"),
                 Step::Op(Stage::IntoWorking { .. }) => "into working".into(),
@@ -1883,6 +1893,37 @@ mod tests {
         assert!(!p.settings.clip_codes, "off reads no cells");
         p.settings.clip_codes = true;
         on
+    }
+
+    /// The retouch step carries what the crop shows only where the
+    /// crop's edge may cross a Fill's window: a crop moved anywhere else
+    /// leaves the step, and all that a walk kept past it, as it was.
+    #[test]
+    fn the_retouch_knows_the_crop_only_near_a_fill() {
+        let shown = |crop: Option<Crop>, at: [f32; 2]| {
+            let mut edit = Edit::default();
+            edit.geometry.crop = crop;
+            edit.retouch.patches.push(Patch {
+                method: Method::Fill,
+                points: vec![at],
+                radius: 0.03,
+                ..Patch::default()
+            });
+            let s = stages(&edit, &Purpose::Viewport, &raw(0), None);
+            s.ops()
+                .find_map(|o| match o {
+                    Stage::Retouch(_, _, shown) => Some(*shown),
+                    _ => None,
+                })
+                .expect("a retouch")
+        };
+        let near = Some(Crop::of([0.02, 0.05, 0.93, 0.93]));
+        let other = Some(Crop::of([0.03, 0.04, 0.92, 0.94]));
+        assert_eq!(shown(None, [0.95, 0.6]), None);
+        assert!(shown(near, [0.95, 0.6]).is_some());
+        // A Fill in the middle: no crop reaches it, any crop the same.
+        assert_eq!(shown(near, [0.5, 0.3]), None);
+        assert_eq!(shown(other, [0.5, 0.3]), None);
     }
 
     /// The fill off makes the list it made before the fill: no stage,

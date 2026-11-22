@@ -1859,9 +1859,17 @@ export component App inherits Window {
     // the Crop tab left, the panel put away, the sections reordered.
     // A drag of a section moves its row in the model rather than set
     // a new one, so `order::moved` calls this itself.
+    // The Custom aspect being typed, its box gone with its section, is
+    // over too.
     public function turn-sliders-gone() {
-        root.angle-moving = false;
-        root.perspective-moving = false;
+        // The change a slider held or a box typed made is over all the
+        // same.
+        if (root.angle-moving || root.perspective-moving || root.aspect-typing) {
+            root.angle-moving = false;
+            root.perspective-moving = false;
+            root.aspect-typing = false;
+            root.geometry-settled();
+        }
     }
     // The tab shown changed, by a tab or by a frame frozen in the export
     // queue: Find a lens, if it had the focus, is gone with its section.
@@ -1918,6 +1926,10 @@ export component App inherits Window {
     callback crop-draw-dragged(length, length);
     callback crop-draw-released();
     callback geometry-changed();
+    /// A change of the geometry over (`CropSection::geometry-settled`).
+    callback geometry-settled();
+    /// The Custom aspect being typed.
+    in-out property <bool> aspect-typing: false;
     callback geometry-reset();
     callback level-end(length, length, length, length);
     /// The Straighten button: the picture's dominant line leveled.
@@ -4033,10 +4045,10 @@ export component App inherits Window {
                 crop-spiral(a, b) => { return root.crop-spiral(a, b); }
                 crop-pressed(a) => { root.hold-crop(); root.crop-pressed(a); }
                 crop-dragged(a, b, c) => { root.crop-dragged(a, b, c); }
-                crop-released => { root.crop-held = false; root.crop-released(); }
+                crop-released => { root.crop-held = false; root.crop-released(); root.aspect-settle(); }
                 crop-draw-pressed(a, b) => { root.hold-crop(); root.crop-draw-pressed(a, b); }
                 crop-draw-dragged(a, b) => { root.crop-draw-dragged(a, b); }
-                crop-draw-released => { root.crop-held = false; root.crop-draw-released(); }
+                crop-draw-released => { root.crop-held = false; root.crop-draw-released(); root.aspect-settle(); }
                 crop-done => { if (root.crop-mode) { root.crop-in-or-out(); } }
                 crop-draw-armed <=> root.crop-draw-armed;
                 level-end(a, b, c, d) => { root.level-end(a, b, c, d); }
@@ -5200,6 +5212,8 @@ export component App inherits Window {
                                     collapsed-crop <=> root.collapsed-crop;
                                     aspect-name <=> root.aspect-name;
                                     aspect-custom <=> root.aspect-custom;
+                                    aspect-typing <=> root.aspect-typing;
+                                    geometry-settled => { root.geometry-settled(); }
                                     portrait <=> root.portrait;
                                     portrait-shown: root.portrait-shown;
                                     portrait-live: root.portrait-live;
@@ -5228,6 +5242,7 @@ export component App inherits Window {
                                     collapsed-rotate <=> root.collapsed-rotate;
                                     geo-angle <=> root.geo-angle;
                                     angle-moving <=> root.angle-moving;
+                                    geometry-settled => { root.geometry-settled(); }
                                     geometry-turned(a) => { root.geometry-turned(a); }
                                     geometry-flipped(a) => { root.geometry-flipped(a); }
                                     crop-toggled => { root.crop-toggled(); }
@@ -5255,6 +5270,7 @@ export component App inherits Window {
                                     geo-vertical <=> root.geo-vertical;
                                     geo-horizontal <=> root.geo-horizontal;
                                     perspective-moving <=> root.perspective-moving;
+                                    geometry-settled => { root.geometry-settled(); }
                                     crop-toggled => { root.crop-toggled(); }
                                     geometry-changed => { root.geometry-changed(); }
                                     geometry-reset => { root.geometry-reset(); }
@@ -5453,7 +5469,22 @@ export component App inherits Window {
     property <length> arrow-crop-top: root.crop-held ? root.held-crop-top : root.crop-top;
     property <length> arrow-crop-width: root.crop-held ? root.held-crop-width : root.crop-width;
     property <length> arrow-crop-height: root.crop-held ? root.held-crop-height : root.crop-height;
+    // The Custom aspect typed and not yet accepted when a crop handle
+    // is taken: the press takes no focus, so its typing is over here,
+    // and what it does to a Fill is asked at the release, never along
+    // the drag.
+    property <bool> aspect-settle-due: false;
+    function aspect-settle() {
+        if (root.aspect-settle-due) {
+            root.aspect-settle-due = false;
+            root.geometry-settled();
+        }
+    }
     function hold-crop() {
+        if (root.aspect-typing) {
+            root.aspect-typing = false;
+            root.aspect-settle-due = true;
+        }
         root.held-crop-left = root.crop-left;
         root.held-crop-top = root.crop-top;
         root.held-crop-width = root.crop-width;
