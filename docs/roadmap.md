@@ -931,8 +931,11 @@ clears or a tester asks for it.
       first (§498)
 - [ ] The panel's look, refined as the editor grows (§14); in develop
       order on Develop, Crop, Masks and Retouch tabs since 2026-09-14
+- [ ] Export to an ICC profile the user loads, matrix or table
+      (discussion 193)
 - [ ] ProPhoto as an export color space, beside sRGB, Display P3,
-      Rec.2020, and Adobe RGB (§20; a pixls tester, 2026-10-22); the
+      Rec.2020, and Adobe RGB (§20; a pixls tester, 2026-10-22;
+      discussion 193); the
       viewport shows the chosen one since §42
   - ProPhoto as a working space: no (§84). It stays an output space and
     an intermediate inside the operations defined in it
@@ -1324,6 +1327,15 @@ clears or a tester asks for it.
 #### User Requests
 
 - [ ] MIDI Controller support
+- [ ] SHARPEN's Radius past 2, to 3 (discussion 194)
+- [ ] A crop held to a longest side in pixels, to judge what
+      resolution a tight crop leaves, as RawTherapee has (discussion
+      194)
+- [ ] Turn the picture by dragging on it in the Crop tab, as Lightroom
+      does (discussion 59)
+- [ ] A key for a named export preset (discussion 59)
+- [ ] Defringe's Purple and Green labels set apart from the sliders
+      under them, and other sub-labels with them (discussion 59)
 - [ ] HEIC/HEIF as pictures: HEVC is patent-encumbered, so nothing of
       ours ships a decoder; macOS through ImageIO, Linux and Windows
       through a libheif found at runtime and loaded by name as ONNX
