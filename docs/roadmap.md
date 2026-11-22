@@ -390,6 +390,8 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       detail: a ridge against sky got heavy, blotchy grain in the
       filled sky at 1024 and at 512, the noise estimate reading the
       ring's detail as noise (2026-11-21)
+- [ ] An existing fill's model changed in place (LaMa to Fast or
+      Best), keeping its path, so a hard outline is not drawn again
 - [ ] A fill in hand stopped between UNet calls when a develop is
       asked for, up to 36 s saved at 1024 (§569)
 - [ ] The Fast fill's files uploaded to greycard-rorem-fast (the
