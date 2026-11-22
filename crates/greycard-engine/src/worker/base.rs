@@ -524,6 +524,13 @@ impl crate::walk::Models for WorkerModels<'_> {
                 // models and asks for it again, once (`ask_fills_again`).
                 if short.is_some() && !self.patient {
                     self.fills.pending.push(patch.id);
+                    // A removal refused at 1024 is asked again, at 512
+                    // where 1024 is still short: still to come, said
+                    // refused only if it ends so.
+                    if self.ai.asks_again_at_512(patch) {
+                        self.ai.take_short_figures();
+                        return None;
+                    }
                 }
                 // What the window says of a removal the card was short
                 // of, now or still: its need and the card's free memory.

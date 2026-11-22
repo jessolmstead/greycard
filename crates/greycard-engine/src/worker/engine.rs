@@ -268,6 +268,10 @@ pub(super) fn run(
                         greycard_ai::Provider::Cpu,
                     ]);
                 }
+                #[cfg(test)]
+                if let Some(unet) = q.unet_by_test.take() {
+                    ai.unet_by_test = Some(unet);
+                }
                 if let Some(check) = q.remote_check.take() {
                     peeks.set_remote(check);
                 }
@@ -779,8 +783,11 @@ pub(super) fn run(
                         // again, or in a set whose frame before met a short.
                         let fall = tried_again || failed_sets.contains(&set);
                         ai.set_cpu_fallback(fall);
+                        // A removal at 1024 falls to 512 likewise.
+                        ai.set_fill_fallback(fall);
                         if let Some(o) = set_ai.as_mut() {
                             o.set_cpu_fallback(fall);
+                            o.set_fill_fallback(fall);
                         }
                         // As the window's jobs: a removal, a mask, or the
                         // learned denoiser short of the card has the engine
@@ -847,6 +854,7 @@ pub(super) fn run(
                                 let other = set_ai.get_or_insert_with(Ai::new);
                                 other.set_patience(Some(patience.clone()));
                                 other.set_cpu_fallback(fall);
+                                other.set_fill_fallback(fall);
                                 other.set_card_release(gpu.as_ref().map(card_release));
                                 ai.lend_parts(other);
                                 let written = export_other(
@@ -885,21 +893,29 @@ pub(super) fn run(
                             && !failed_sets.contains(&set)
                             && short
                             && matches!(held, Ok(crate::queue::Done::Failed { .. }))
-                            && give_back(
+                        {
+                            let gave = give_back(
                                 &mut ai,
                                 [&mut people_ai, &mut set_ai, &mut masks_ai],
                                 true,
                                 lock,
-                            )
-                        {
-                            tried_again = true;
-                            retried = true;
-                            ai.retry_patiently();
-                            if let Some(o) = set_ai.as_mut() {
-                                o.retry_patiently();
+                            );
+                            // Tried again too where nothing was given back
+                            // but a removal at 1024 was refused: in the
+                            // frame tried again it runs at 512 where 1024
+                            // is still short. Not for a canceled set.
+                            let large = ai.card_given_back()
+                                | set_ai.as_mut().is_some_and(Ai::card_given_back);
+                            if gave || (large && !set.is_canceled()) {
+                                tried_again = true;
+                                retried = true;
+                                ai.retry_patiently();
+                                if let Some(o) = set_ai.as_mut() {
+                                    o.retry_patiently();
+                                }
+                                tracing::info!("the card given back; the frame tried again");
+                                continue;
                             }
-                            tracing::info!("the card given back; the frame tried again");
-                            continue;
                         }
                         break held;
                     };
@@ -930,9 +946,11 @@ pub(super) fn run(
                 ai.take_mask_short() | set_ai.as_mut().is_some_and(Ai::take_mask_short);
             ai.set_patience(None);
             ai.set_cpu_fallback(false);
+            ai.set_fill_fallback(false);
             if let Some(o) = set_ai.as_mut() {
                 o.set_patience(None);
                 o.set_cpu_fallback(false);
+                o.set_fill_fallback(false);
             }
             if hit {
                 short_sets.insert(&set);
@@ -1393,6 +1411,10 @@ pub(super) fn run(
                     ai.fills_queued(due.left > 1);
                     let mut round = Round::next(due.round.ahead);
                     ai.clear_shorts();
+                    // Asked again after the card was given back across
+                    // the models, a removal still short of 1024 runs at
+                    // 512 in this round; cleared after, as below.
+                    ai.set_fill_fallback(asked_again);
                     // A removal short of the card may have the engine
                     // let go of what a develop makes again, as the open
                     // frame's masks may; cleared after, and after a
@@ -1416,6 +1438,12 @@ pub(super) fn run(
                         &Newer(lock),
                     );
                     ai.set_card_release(None);
+                    ai.set_fill_fallback(false);
+                    #[cfg(test)]
+                    lock.lock()
+                        .expect("worker queue")
+                        .ran_at_by_test
+                        .append(&mut ai.ran_at_by_test);
                     // Given way to a newer develop in the making of its
                     // highlight fill: nothing kept, nothing delivered,
                     // and the newer develop's rounds take over.
@@ -2175,6 +2203,7 @@ fn open_frame_masks(
 /// fallen to again until the next, and nothing of it is left to call.
 fn open_frame_masks_done(ai: &mut Ai) {
     ai.set_cpu_fallback(false);
+    ai.set_fill_fallback(false);
     ai.set_card_release(None);
     ai.set_on_cpu(None);
 }
@@ -2282,9 +2311,10 @@ impl ShortSets {
 }
 
 /// After a develop round: a fill the card was short of gives the card
-/// back across the worker's models, and when that let anything go the
-/// fills are asked for again with `again`, once a develop. True when
-/// the card was given back.
+/// back across the worker's models, and when that let anything go, or
+/// a removal at 1024 was refused, which now runs at 512 where 1024 is
+/// still short ([`Ai::card_given_back`]), the fills are asked for again
+/// with `again`, once a develop. True when the card was given back.
 fn ask_fills_again(
     ai: &mut Ai,
     others: [&mut Option<Ai>; 3],
@@ -2297,7 +2327,8 @@ fn ask_fills_again(
         return false;
     }
     let gave = give_back(ai, others, true, lock);
-    if gave && fills_due.is_none() && !*asked_again {
+    let large = ai.card_given_back();
+    if (gave || large) && fills_due.is_none() && !*asked_again {
         *asked_again = true;
         *fills_due = Some(again);
     }

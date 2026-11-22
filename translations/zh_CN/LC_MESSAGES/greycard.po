@@ -902,13 +902,17 @@ msgstr "处理后的图像"
 msgid ""
 "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · Enter "
 "develops"
-msgstr "1-5 星级 · P 留用 · X 排除 · U 取消旗标 · 6-9 色标 · Space 1:1 · Enter 修改照片"
+msgstr ""
+"1-5 星级 · P 留用 · X 排除 · U 取消旗标 · 6-9 色标 · Space 1:1 · Enter 修改照"
+"片"
 
 #: crates/greycard-slint/ui/panel/cull.slint:102
 msgid ""
 "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · V compare "
 "· Enter develops"
-msgstr "1-5 星级 · P 留用 · X 排除 · U 取消旗标 · 6-9 色标 · Space 1:1 · V 比较 · Enter 修改照片"
+msgstr ""
+"1-5 星级 · P 留用 · X 排除 · U 取消旗标 · 6-9 色标 · Space 1:1 · V 比较 · "
+"Enter 修改照片"
 
 #. Culling section: the row with the Left and Right buttons
 #: crates/greycard-slint/ui/panel/cull.slint:113
@@ -2364,7 +2368,9 @@ msgstr "拟合本相机的风格"
 msgid ""
 "Fits a look per camera and picture style to its JPEGs. Groups under 20 "
 "frames borrow or are skipped."
-msgstr "按相机和照片风格，依据其 JPEG 拟合风格。不足 20 张的组会借用其他组的风格，或被跳过。"
+msgstr ""
+"按相机和照片风格，依据其 JPEG 拟合风格。不足 20 张的组会借用其他组的风格，或"
+"被跳过。"
 
 #: crates/greycard-slint/ui/panel/match-sheet.slint:151
 msgid "Fit {}"
@@ -3047,7 +3053,9 @@ msgstr "同步设置"
 msgid ""
 "Crop and retouch never copy; camera profiles only to the same camera. A part "
 "copied alone leaves the rest of its section as each frame has it."
-msgstr "裁剪和修饰从不拷贝；相机配置文件只拷贝到同款相机。单独拷贝某一项时，其所在部分的其余内容保持各照片原样。"
+msgstr ""
+"裁剪和修饰从不拷贝；相机配置文件只拷贝到同款相机。单独拷贝某一项时，其所在部"
+"分的其余内容保持各照片原样。"
 
 #: crates/greycard-slint/ui/panel/sync-sheet.slint:172
 msgid "Apply"
@@ -3087,15 +3095,15 @@ msgstr "软打样已开启（按 S 关闭）"
 msgid "All people"
 msgstr "所有人物"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1531
+#: crates/greycard-slint/ui/panel/viewport.slint:1530
 msgid "Now the second line"
 msgstr "现在画第二条线"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1533
+#: crates/greycard-slint/ui/panel/viewport.slint:1532
 msgid "Drag along two lines that should stand upright"
 msgstr "沿两条应当竖直的线拖动"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1534
+#: crates/greycard-slint/ui/panel/viewport.slint:1533
 msgid "Drag along two lines that should lie flat"
 msgstr "沿两条应当水平的线拖动"
 
@@ -3107,7 +3115,8 @@ msgstr "Vulkan 或 DX12"
 msgid ""
 "no GPU greycard can draw on through {api}: drawing in software and "
 "developing on the CPU, which is slow"
-msgstr "没有 greycard 能通过 {api} 绘制的 GPU：改用软件绘制并在 CPU 上处理，速度较慢"
+msgstr ""
+"没有 greycard 能通过 {api} 绘制的 GPU：改用软件绘制并在 CPU 上处理，速度较慢"
 
 #: crates/greycard-ui/src/adapter.rs:139
 msgid "drawing in software on {name} and developing on the CPU, which is slow"
@@ -3257,7 +3266,8 @@ msgstr "无法打开文件选择器：没有 D-Bus 会话总线；请安装 zeni
 msgid ""
 "no file chooser: no desktop portal answered; install xdg-desktop-portal-gtk "
 "or zenity"
-msgstr "无法打开文件选择器：没有桌面门户响应；请安装 xdg-desktop-portal-gtk 或 zenity"
+msgstr ""
+"无法打开文件选择器：没有桌面门户响应；请安装 xdg-desktop-portal-gtk 或 zenity"
 
 #: crates/greycard-ui/src/chooser.rs:233
 msgid "the file chooser failed: {e}"
@@ -3705,7 +3715,8 @@ msgstr "打开在网格或灯箱中选中的照片；在选片中则进入修改
 msgid ""
 "Bigger or smaller tiles in the grid; fewer or more across the lightbox; in "
 "the Loupe, zoom in or out"
-msgstr "在网格中放大或缩小图块；在灯箱中每行减少或增加照片；在放大视图中放大或缩小"
+msgstr ""
+"在网格中放大或缩小图块；在灯箱中每行减少或增加照片；在放大视图中放大或缩小"
 
 #: crates/greycard-ui/src/keys.rs:259
 msgid ""
@@ -3873,7 +3884,9 @@ msgstr "滑块"
 msgid ""
 "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for "
 "more, Ctrl on the slider for less, and Shift on a drag for finer"
-msgstr "微调获得焦点的滑块，或用 ↑ ↓ 微调其输入值；箭头键加 Shift 幅度更大，在滑块上加 Ctrl 幅度更小，拖动时加 Shift 更精细"
+msgstr ""
+"微调获得焦点的滑块，或用 ↑ ↓ 微调其输入值；箭头键加 Shift 幅度更大，在滑块上"
+"加 Ctrl 幅度更小，拖动时加 Shift 更精细"
 
 #: crates/greycard-ui/src/keys.rs:452
 msgid "The previous or the next slider"
@@ -4196,7 +4209,8 @@ msgid ""
 "{n} frame already on {label}, {elsewhere} under a different folder, skipped."
 msgid_plural ""
 "{n} frames already on {label}, {elsewhere} under a different folder, skipped."
-msgstr[0] "{n} 张照片已在 {label} 上（其中 {elsewhere} 张在其他文件夹下），已跳过。"
+msgstr[0] ""
+"{n} 张照片已在 {label} 上（其中 {elsewhere} 张在其他文件夹下），已跳过。"
 
 #: crates/greycard-ui/src/panel/archive.rs:994
 msgid "{n} frame already here, skipped."
@@ -4474,7 +4488,8 @@ msgstr "没有归档：请从根文件夹的菜单中将其标记为归档"
 msgid ""
 "Remove rejects works on one folder: pick one in the tree with With "
 "subfolders off"
-msgstr "“移除排除的照片”只针对一个文件夹：请关闭“包含子文件夹”，再在树中选择一个"
+msgstr ""
+"“移除排除的照片”只针对一个文件夹：请关闭“包含子文件夹”，再在树中选择一个"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:166
 #: crates/greycard-ui/src/panel/delete.rs:332
@@ -4485,7 +4500,9 @@ msgstr "没有打开任何内容"
 msgid ""
 "the open folder is on {label}: its rejects folder is {label}'s own, and "
 "Delete rejects folder is the way to take it off"
-msgstr "打开的文件夹位于 {label} 上：其排除文件夹属于 {label} 本身，要移去它请用“删除排除文件夹”"
+msgstr ""
+"打开的文件夹位于 {label} 上：其排除文件夹属于 {label} 本身，要移去它请用“删除"
+"排除文件夹”"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:197
 msgid "looking for the rejects on {label}..."
@@ -4618,7 +4635,8 @@ msgid ""
 msgid_plural ""
 "{label} isn't reachable; the move of {n} rejects is queued until it's "
 "back{dropped}"
-msgstr[0] "{label} 无法访问；{n} 张排除照片的移动已排队，待其恢复后执行{dropped}"
+msgstr[0] ""
+"{label} 无法访问；{n} 张排除照片的移动已排队，待其恢复后执行{dropped}"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:683
 msgid "{label} isn't reachable, and the move couldn't be queued: {e}"
@@ -4741,7 +4759,10 @@ msgid ""
 "The lensfun database, about {size} KB from {host}.\n"
 "License: {license} ({url}).\n"
 "Kept in {kept_in}."
-msgstr "lensfun 数据库，约 {size} KB，来自 {host}。\n许可证：{license}（{url}）。\n保存在 {kept_in}。"
+msgstr ""
+"lensfun 数据库，约 {size} KB，来自 {host}。\n"
+"许可证：{license}（{url}）。\n"
+"保存在 {kept_in}。"
 
 #: crates/greycard-ui/src/panel/assets.rs:62
 #: crates/greycard-ui/src/panel/assets.rs:283
@@ -4784,7 +4805,10 @@ msgid ""
 "{size} MB from {host}.\n"
 "License: {license} ({url}).\n"
 "Kept in {kept_in}."
-msgstr "{size} MB，来自 {host}。\n许可证：{license}（{url}）。\n保存在 {kept_in}。"
+msgstr ""
+"{size} MB，来自 {host}。\n"
+"许可证：{license}（{url}）。\n"
+"保存在 {kept_in}。"
 
 #: crates/greycard-ui/src/panel/assets.rs:181
 #: crates/greycard-ui/src/panel/models.rs:588
@@ -4803,7 +4827,13 @@ msgid ""
 "MB kept.\n"
 "License: {license} ({url}).\n"
 "Kept in {kept_in}."
-msgstr "{reason}，因此 AI 功能已关闭。\n\n{name} 只能在 CPU 上运行这些功能，速度较慢：从 {host} 下载 {download} MB，占用 {kept} MB。\n许可证：{license}（{url}）。\n保存在 {kept_in}。"
+msgstr ""
+"{reason}，因此 AI 功能已关闭。\n"
+"\n"
+"{name} 只能在 CPU 上运行这些功能，速度较慢：从 {host} 下载 {download} MB，占"
+"用 {kept} MB。\n"
+"许可证：{license}（{url}）。\n"
+"保存在 {kept_in}。"
 
 #: crates/greycard-ui/src/panel/assets.rs:295
 msgid ""
@@ -4819,7 +4849,9 @@ msgstr "没有主体模型时，“整个人”保留较粗糙的边缘"
 msgid ""
 "For a Whole person's finer edge, hair against the sky; the mask is made "
 "meanwhile with a coarser one. {note}"
-msgstr "用于“整个人”更精细的边缘，例如天空前的头发；在此期间先用较粗糙的边缘生成蒙版。{note}"
+msgstr ""
+"用于“整个人”更精细的边缘，例如天空前的头发；在此期间先用较粗糙的边缘生成蒙"
+"版。{note}"
 
 #: crates/greycard-ui/src/panel/assets.rs:407
 msgid "No configuration directory to keep presets in."
@@ -5297,7 +5329,8 @@ msgid ""
 msgid_plural ""
 "{name}: {n} frames shown, {missing} missing (moved or deleted, and kept "
 "until found)"
-msgstr[0] "{name}：显示 {n} 张照片，缺失 {missing} 张（已移动或删除，找到前保留）"
+msgstr[0] ""
+"{name}：显示 {n} 张照片，缺失 {missing} 张（已移动或删除，找到前保留）"
 
 #: crates/greycard-ui/src/panel/collections.rs:307
 msgid "{name}: {n} frame"
@@ -5571,7 +5604,8 @@ msgid ""
 msgid_plural ""
 "{n} versions left out: a file's delete takes its versions with it; a version "
 "is deleted from its own cell"
-msgstr[0] "{n} 个版本未计入：删除文件会连同其版本一起删除；版本要在其自身的单元格中删除"
+msgstr[0] ""
+"{n} 个版本未计入：删除文件会连同其版本一起删除；版本要在其自身的单元格中删除"
 
 #: crates/greycard-ui/src/panel/delete.rs:262
 #: crates/greycard-ui/src/panel/delete.rs:437
@@ -6344,7 +6378,9 @@ msgid ""
 msgid_plural ""
 "{n} pictures {place} use it; they will show the look as missing and render "
 "without it."
-msgstr[0] "{place}有 {n} 张照片使用它；它们会将该风格显示为缺失，并在没有它的情况下渲染。"
+msgstr[0] ""
+"{place}有 {n} 张照片使用它；它们会将该风格显示为缺失，并在没有它的情况下渲"
+"染。"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:171
 #: crates/greycard-ui/src/panel/look_rename.rs:328
@@ -6364,7 +6400,9 @@ msgstr "这些文件会进入系统回收站，可从中恢复。"
 msgid ""
 "The trash refused files from the look folder earlier. Try the trash again, "
 "or delete them permanently. A permanent delete cannot be undone."
-msgstr "回收站之前拒绝了风格文件夹中的文件。请再试一次回收站，或永久删除它们。永久删除无法撤销。"
+msgstr ""
+"回收站之前拒绝了风格文件夹中的文件。请再试一次回收站，或永久删除它们。永久删"
+"除无法撤销。"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:191
 msgid ""
@@ -6483,7 +6521,9 @@ msgstr[0] "{n} 个文件"
 msgid ""
 "Only the case differs from its name now, and Windows and macOS take the two "
 "for one name. Rename it to another name first, then to this one."
-msgstr "现在的名称与原名仅大小写不同，而 Windows 和 macOS 将二者视为同一名称。请先重命名为其他名称，再改为此名称。"
+msgstr ""
+"现在的名称与原名仅大小写不同，而 Windows 和 macOS 将二者视为同一名称。请先重"
+"命名为其他名称，再改为此名称。"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:212
 msgid "There is a look called \"{new}\" already."
@@ -6540,7 +6580,8 @@ msgid ""
 msgid_plural ""
 "{n} pictures {place} name it; their edits, history and snapshots will name "
 "the new one."
-msgstr[0] "{place}有 {n} 张照片引用它；其编辑、历史记录和快照将改为引用新名称。"
+msgstr[0] ""
+"{place}有 {n} 张照片引用它；其编辑、历史记录和快照将改为引用新名称。"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:333
 msgid "{n} preset names it and will name the new one."
@@ -6621,7 +6662,8 @@ msgstr "{what}无法读取或写入，仍引用 {old}"
 msgid ""
 "{} could not be reached (offline, on an archive and not read yet, or "
 "sidecars off) and may still name {old}"
-msgstr "{}无法访问（脱机、位于尚未读取的归档上，或附属文件已关闭），可能仍引用 {old}"
+msgstr ""
+"{}无法访问（脱机、位于尚未读取的归档上，或附属文件已关闭），可能仍引用 {old}"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:828
 msgid "{n} picture's sidecar"
@@ -6885,13 +6927,18 @@ msgid ""
 "\n"
 "\n"
 "{n} skipped here: {why}."
-msgstr "\n\n此处跳过 {n} 个：{why}。"
+msgstr ""
+"\n"
+"\n"
+"此处跳过 {n} 个：{why}。"
 
 #: crates/greycard-ui/src/panel/models.rs:632
 msgid ""
 "Licenses: {}; each full text sits beside its model in the store. Asked once; "
 "Download all is also in Settings, Models."
-msgstr "许可证：{}；每个模型的完整许可证文本位于模型库中的模型旁。只询问一次；“全部下载”也可在“设置 > 模型”中找到。"
+msgstr ""
+"许可证：{}；每个模型的完整许可证文本位于模型库中的模型旁。只询问一次；“全部下"
+"载”也可在“设置 > 模型”中找到。"
 
 #: crates/greycard-ui/src/panel/models.rs:640
 msgid "each model comes the first time it's used"
@@ -7119,7 +7166,8 @@ msgstr "RawTherapee 配置文件未导入：{e}"
 msgid ""
 "the profiles are not offered again for this folder; greycard rawtherapee "
 "imports them from the command line"
-msgstr "不会再为此文件夹提供这些配置文件；可从命令行用 greycard rawtherapee 导入"
+msgstr ""
+"不会再为此文件夹提供这些配置文件；可从命令行用 greycard rawtherapee 导入"
 
 #: crates/greycard-ui/src/panel/recent.rs:190
 msgid "opening {}..."
@@ -7264,7 +7312,9 @@ msgstr "{from}：无法读取；到屏幕的过程中未做任何更改"
 msgid ""
 "Library and Loupe, top left (or G), switch between the grid and one frame; "
 "Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
-msgstr "左上角的“图库”和“放大视图”（或按 G）在网格和单张照片之间切换；“选片”和“修改照片”（C 和 D）是放大视图的两种模式；按 ? 列出快捷键"
+msgstr ""
+"左上角的“图库”和“放大视图”（或按 G）在网格和单张照片之间切换；“选片”和“修改照"
+"片”（C 和 D）是放大视图的两种模式；按 ? 列出快捷键"
 
 #: crates/greycard-ui/src/panel/sync.rs:137
 msgid "From {from} onto {n} other frame."
@@ -7275,14 +7325,18 @@ msgstr[0] "从 {from} 同步到其他 {n} 张照片。"
 msgid ""
 "This frame's as-shot light cannot be read (it is no raw, or its raw does not "
 "say): its Temperature and Tint are set."
-msgstr "此照片的原照光线无法读取（它不是 RAW，或其 RAW 未记录）：其色温和色调为设定值。"
+msgstr ""
+"此照片的原照光线无法读取（它不是 RAW，或其 RAW 未记录）：其色温和色调为设定"
+"值。"
 
 #: crates/greycard-ui/src/panel/sync.rs:182
 msgid ""
 "Set gives every frame this frame's value. Shift moves each frame from its "
 "own by this frame's difference from its as-shot light (Temperature, Tint) or "
 "from 0 EV (Exposure)."
-msgstr "“设为”会将每张照片设为此照片的值。“偏移”会让每张照片在各自的值上，移动此照片相对其原照光线（色温、色调）或 0 EV（曝光度）的差值。"
+msgstr ""
+"“设为”会将每张照片设为此照片的值。“偏移”会让每张照片在各自的值上，移动此照片"
+"相对其原照光线（色温、色调）或 0 EV（曝光度）的差值。"
 
 #: crates/greycard-ui/src/panel/sync.rs:188
 msgid ""
@@ -7758,7 +7812,8 @@ msgstr "拾取时去边已关闭；缩放到 1:1 并单击色边；按 Esc 结�
 msgid ""
 "click a color for its band, drag up or down for saturation, sideways for "
 "hue; Esc to finish"
-msgstr "单击某种颜色选择其色带，上下拖动调整饱和度，左右拖动调整色相；按 Esc 结束"
+msgstr ""
+"单击某种颜色选择其色带，上下拖动调整饱和度，左右拖动调整色相；按 Esc 结束"
 
 #. The file chooser's filter name for profiles
 #: crates/greycard-ui/src/panel/viewport.rs:1430
@@ -7781,7 +7836,8 @@ msgstr "那里没有色边：该颜色与周围的颜色没有偏离"
 msgid ""
 "that color is nearly grey (chroma {chroma}, under the floor's {floor}): "
 "lower Chroma to take it in"
-msgstr "该颜色接近灰色（色度 {chroma}，低于下限 {floor}）：降低“色度”才能纳入它"
+msgstr ""
+"该颜色接近灰色（色度 {chroma}，低于下限 {floor}）：降低“色度”才能纳入它"
 
 #: crates/greycard-ui/src/placeholder.rs:184
 msgid "{word}: {what}, {at}; developing..."
@@ -7849,7 +7905,8 @@ msgstr "那里的 {owner} 也叫 {}"
 msgid ""
 "the form is open in the browser, and the log's folder: drag greycard-ui.log "
 "into the form"
-msgstr "已在浏览器中打开表单，并打开了日志所在的文件夹：请将 greycard-ui.log 拖入表单"
+msgstr ""
+"已在浏览器中打开表单，并打开了日志所在的文件夹：请将 greycard-ui.log 拖入表单"
 
 #: crates/greycard-ui/src/report.rs:370
 msgid "the form is open in the browser; there is no log to attach"

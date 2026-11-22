@@ -3143,15 +3143,15 @@ msgstr "Prueba en pantalla activada (S la desactiva)"
 msgid "All people"
 msgstr "Todas las personas"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1531
+#: crates/greycard-slint/ui/panel/viewport.slint:1530
 msgid "Now the second line"
 msgstr "Ahora la segunda línea"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1533
+#: crates/greycard-slint/ui/panel/viewport.slint:1532
 msgid "Drag along two lines that should stand upright"
 msgstr "Arrastre a lo largo de dos líneas que deberían estar verticales"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1534
+#: crates/greycard-slint/ui/panel/viewport.slint:1533
 msgid "Drag along two lines that should lie flat"
 msgstr "Arrastre a lo largo de dos líneas que deberían estar horizontales"
 

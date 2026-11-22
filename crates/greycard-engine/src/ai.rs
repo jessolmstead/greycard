@@ -577,6 +577,18 @@ pub struct Ai {
     /// card stays short of does not bring a fill round, and a
     /// give-back, on every develop.
     refused: HashMap<u64, (Patch, Window, u64, u64, String)>,
+    /// Removals of a window run at 1024 refused at 1024, by patch id,
+    /// with the patch and its window, before the card was given back
+    /// across the worker's models ([`Ai::card_given_back`]).
+    short_at_1024: HashMap<u64, (Patch, Window)>,
+    /// Those refused at 1024 with the card given back across the
+    /// worker's models since: the full way at 1024 gone, each is asked
+    /// again and runs at 512 where 1024 is still short
+    /// ([`Ai::room_for_remove`]).
+    due_at_512: HashMap<u64, (Patch, Window)>,
+    /// Whether a removal at 1024 short of the card runs at 512 at once
+    /// ([`Ai::set_fill_fallback`]).
+    fill_fallback: bool,
     /// The preview of base develop `stamp`, and its luma.
     preview: Option<(u64, Rgb8, Vec<f32>)>,
     embedding: Option<(u64, Embedding)>,
@@ -676,6 +688,15 @@ pub struct Ai {
     /// The most of [`Ai::offer_by_test`] read so far, 0 for none.
     #[cfg(any(test, feature = "testing"))]
     offer_read_by_test: std::sync::atomic::AtomicU64,
+    /// Each fill begun, by name, and the side it ran at
+    /// ([`Ai::room_for_remove`]), a test's fill being made with no model.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) ran_at_by_test: Vec<(String, usize)>,
+    /// A UNet held open for a queue, as a test has it: the side it runs
+    /// at and the bytes it holds of the card, given back when it is let
+    /// go ([`Ai::let_go_unet_by_test`]).
+    #[cfg(any(test, feature = "testing"))]
+    pub unet_by_test: Option<(usize, u64)>,
     /// The last run refused for the card's memory since it was taken
     /// ([`Ai::take_short`]): an export asks again on it, and fails its
     /// item when it stays short.
@@ -2176,6 +2197,10 @@ pub fn give_back_card(ais: &mut [&mut Ai], force: bool) -> bool {
         ai.drop_sessions();
     }
     let unet = greycard_ai::remove::let_go_unet();
+    #[cfg(any(test, feature = "testing"))]
+    let unet = ais
+        .iter_mut()
+        .fold(unet, |unet, ai| ai.let_go_unet_by_test() | unet);
     if !(held || unet) {
         return false;
     }
@@ -2420,6 +2445,9 @@ impl Ai {
             failed: HashMap::new(),
             windows: HashMap::new(),
             refused: HashMap::new(),
+            short_at_1024: HashMap::new(),
+            due_at_512: HashMap::new(),
+            fill_fallback: false,
             preview: None,
             embedding: None,
             sam3: None,
@@ -2461,6 +2489,10 @@ impl Ai {
             offer_by_test: None,
             #[cfg(any(test, feature = "testing"))]
             offer_read_by_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(any(test, feature = "testing"))]
+            ran_at_by_test: Vec::new(),
+            #[cfg(any(test, feature = "testing"))]
+            unet_by_test: None,
             short: None,
             fills_ran: false,
             fill_short: false,
@@ -2577,6 +2609,8 @@ impl Ai {
         self.failed.clear();
         self.windows.clear();
         self.refused.clear();
+        self.short_at_1024.clear();
+        self.due_at_512.clear();
         self.preview = None;
         self.embedding = None;
         self.scene = None;
@@ -2770,9 +2804,10 @@ impl Ai {
     /// Why the patch's fill was refused for the card's memory, when it
     /// was as it is, in `window`, with no more free since and no
     /// give-back: a give-back, a patch or window changed, or more memory
-    /// free lets it be asked again. An export, patient, always asks.
+    /// free lets it be asked again. An export, patient, always asks, and
+    /// so does a removal due at 512 ([`Ai::card_given_back`]).
     fn still_refused(&mut self, patch: &Patch, window: Window) -> Option<String> {
-        if self.patience.is_some() {
+        if self.patience.is_some() || self.due_at_512_for(patch, window) {
             return None;
         }
         let (p, w, at, _, why) = self.refused.get(&patch.id)?;
@@ -3039,20 +3074,157 @@ impl Ai {
     /// it and is not remembered as failed, so it is asked for again;
     /// the worker is told ([`Ai::take_fill_short`]). A removal never
     /// falls to the CPU, which takes minutes a fill, nor to LaMa, which
-    /// the user did not choose.
-    fn room_for_remove(&mut self, patch: &Patch, window: Window) -> Result<(), NoFill> {
+    /// the user did not choose. The answer is the side it runs at.
+    ///
+    /// A window run at 1024 runs at 512, taken down to it as one past
+    /// 1024 is taken to 1024, only as the last resort: on a card that
+    /// can never hold 1024, whatever is given back ([`Ai::never_holds`]);
+    /// or once the full way at 1024 is gone and it is still short. For
+    /// the window's fills that is the ask after the card was given back
+    /// across the worker's models ([`Ai::card_given_back`]); for an
+    /// export, its frame tried again or a frame of a set already short
+    /// ([`Ai::set_fill_fallback`]). Until then it is refused at 1024 as
+    /// it always was. Short at 512 too, it is refused at 512, the last
+    /// ask. A window past 2048, which 512 would take down by more than
+    /// [`greycard_ai::remove::FACTOR`], is asked at 1024 alone.
+    fn room_for_remove(&mut self, patch: &Patch, window: Window) -> Result<usize, NoFill> {
+        use greycard_ai::remove::{FACTOR, MAX};
+        const SMALL: usize = 512;
         let Some(size) = greycard_ai::remove::run_size(window.width, window.height) else {
-            return Ok(());
+            return Ok(MAX);
         };
+        if size <= SMALL || window.width.max(window.height) > FACTOR * SMALL {
+            return self.room_for_remove_at(patch, window, size).map(|()| size);
+        }
+        let cold = remove_needs(size, false);
+        if let Some(card) = self.never_holds(cold) {
+            tracing::info!(
+                "fill {}: a removal at {size} needs {} GiB, past the card's {} GiB: runs at 512, the window of {}x{} taken down to it",
+                patch.name(),
+                gib_said(cold),
+                gib_said(card),
+                window.width,
+                window.height
+            );
+            return self
+                .room_for_remove_at(patch, window, SMALL)
+                .map(|()| SMALL);
+        }
+        if !self.fill_fallback && !self.due_at_512_for(patch, window) {
+            let first = self.room_for_remove_at(patch, window, size);
+            if first.is_err() {
+                self.short_at_1024.insert(patch.id, (patch.clone(), window));
+            }
+            return first.map(|()| size);
+        }
+        // The last resort: as they were, for a run at 512 that is no
+        // refusal.
+        self.due_at_512.remove(&patch.id);
+        let said = (
+            self.short.clone(),
+            self.fill_short,
+            self.short_failed,
+            self.short_figures,
+        );
+        // Refused as it is with nothing free since, the window's ask at
+        // 1024 is not made again; an export's always is.
+        let free = self.free_memory().map(|(f, _)| f);
+        let hopeless = self.patience.is_none()
+            && self.refused.get(&patch.id).is_some_and(|(p, w, at, ..)| {
+                same_fill(p, patch) && *w == window && free.is_some_and(|f| f <= *at)
+            });
+        if !hopeless && self.room_for_remove_at(patch, window, size).is_ok() {
+            return Ok(size);
+        }
+        let need = remove_needs(size, self.unet_held(patch, size));
+        let at = self.free_memory().map_or(0, |(f, _)| f);
+        // Refused at 512 too, its words and figures are the last ask's.
+        self.room_for_remove_at(patch, window, SMALL)?;
+        tracing::info!(
+            "fill {}: a removal at {size} is still short, {} GiB free of the {} GiB it needs: runs at 512, the window of {}x{} taken down to it",
+            patch.name(),
+            gib_said(at),
+            gib_said(need),
+            window.width,
+            window.height
+        );
+        (
+            self.short,
+            self.fill_short,
+            self.short_failed,
+            self.short_figures,
+        ) = said;
+        self.refused.remove(&patch.id);
+        Ok(SMALL)
+    }
+
+    /// The card's memory, the least of a discrete card's whole
+    /// ([`Ai::card_whole`]) and the most it has offered this process,
+    /// where `need` is past it: a run of that need never fits, whatever
+    /// is given back. Not known, none; and none where the free memory is
+    /// not known (unified memory, an integrated GPU, whose adapter's
+    /// figure is the driver's carve-out), which is never short.
+    fn never_holds(&self, need: u64) -> Option<u64> {
+        // The offer is read after a free figure, as `room` reads it.
+        self.free_memory()?;
+        [self.card_whole(), self.card_offer()]
+            .into_iter()
+            .flatten()
+            .min()
+            .filter(|&card| need > card)
+    }
+
+    /// Whether `patch`'s removal, refused at 1024 by the ask just made,
+    /// is asked again, at 512 where 1024 is still short: a develop's
+    /// round says it still to come, not refused ([`Ai::card_given_back`]).
+    pub fn asks_again_at_512(&self, patch: &Patch) -> bool {
+        self.short_at_1024.contains_key(&patch.id)
+    }
+
+    /// Whether `patch`'s removal in `window` is due at 512 where 1024 is
+    /// still short ([`Ai::card_given_back`]).
+    fn due_at_512_for(&self, patch: &Patch, window: Window) -> bool {
+        self.due_at_512
+            .get(&patch.id)
+            .is_some_and(|(p, w)| same_fill(p, patch) && *w == window)
+    }
+
+    /// The card was given back across the worker's models after a
+    /// removal at 1024 was refused: the full way at 1024 is gone for
+    /// each so refused, and each is asked again, at 512 where 1024 is
+    /// still short ([`Ai::room_for_remove`]). True when any was, so
+    /// the worker asks again even where nothing was given back.
+    pub fn card_given_back(&mut self) -> bool {
+        let any = !self.short_at_1024.is_empty();
+        let refused: Vec<_> = self.short_at_1024.drain().collect();
+        self.due_at_512.extend(refused);
+        any
+    }
+
+    /// Whether a removal at 1024 still short of the card after its
+    /// give-backs and an export's waits runs at 512 at once: on for an
+    /// export's frame tried again after the card was given back, and
+    /// for a frame of a set whose frame before was short, as a learned
+    /// mask falls to the CPU ([`Ai::set_cpu_fallback`]); on for the
+    /// window's fills asked again after the card was given back across
+    /// the worker's models; off for the rest.
+    pub fn set_fill_fallback(&mut self, on: bool) {
+        self.fill_fallback = on;
+    }
+
+    /// [`Ai::room_for_remove`] at `size`, refused as it says.
+    fn room_for_remove_at(
+        &mut self,
+        patch: &Patch,
+        window: Window,
+        size: usize,
+    ) -> Result<(), NoFill> {
         let what = format!("a removal at {size}");
         let need = |ai: &Ai| remove_needs(size, ai.unet_held(patch, size));
         // A queue's UNet at the other size is kept: beside the others'
         // sessions, letting it go gives nothing back, and the queue's
         // next fill would open it again.
-        let keep_unet = self
-            .store
-            .as_ref()
-            .is_some_and(|s| greycard_ai::remove::unet_held_elsewhere(s, steps_for(patch), size));
+        let keep_unet = self.unet_held_elsewhere(patch, size);
         let refuse = |ai: &mut Ai, why: String| {
             ai.fill_short = true;
             ai.short_failed = true;
@@ -3468,6 +3640,8 @@ impl Ai {
         let held = self.holds_sessions();
         self.drop_sessions();
         let unet = !keep_unet && greycard_ai::remove::let_go_unet();
+        #[cfg(any(test, feature = "testing"))]
+        let unet = unet | (!keep_unet && self.let_go_unet_by_test());
         if held || unet {
             greycard_ai::runtime::trim_heap();
             self.refused.clear();
@@ -3583,9 +3757,39 @@ impl Ai {
         if let Some(held) = self.unet_held_by_test {
             return held;
         }
+        #[cfg(any(test, feature = "testing"))]
+        if let Some((at, _)) = self.unet_by_test {
+            return at == size;
+        }
         self.store
             .as_ref()
             .is_some_and(|s| greycard_ai::remove::unet_held(s, steps_for(patch), size))
+    }
+
+    /// Whether a UNet for `patch`'s removals at a size other than `size`
+    /// is held, a queue's ([`greycard_ai::remove::unet_held_elsewhere`]),
+    /// or as a test has it.
+    fn unet_held_elsewhere(&self, patch: &Patch, size: usize) -> bool {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some((at, _)) = self.unet_by_test {
+            return at != size;
+        }
+        self.store
+            .as_ref()
+            .is_some_and(|s| greycard_ai::remove::unet_held_elsewhere(s, steps_for(patch), size))
+    }
+
+    /// A test's UNet held for a queue ([`Ai::unet_by_test`]) let go, its
+    /// bytes given back to the test's card. True when one went.
+    #[cfg(any(test, feature = "testing"))]
+    fn let_go_unet_by_test(&mut self) -> bool {
+        let Some((_, bytes)) = self.unet_by_test.take() else {
+            return false;
+        };
+        if let Some(free) = self.free_memory_by_test.as_mut() {
+            *free += bytes;
+        }
+        true
     }
 
     /// Whether a fill's model ran since the card was last given back,
@@ -3616,6 +3820,12 @@ impl Ai {
     /// The shorts met so far forgotten: before each develop round, so
     /// one met by another job does not move the next.
     pub fn clear_shorts(&mut self) {
+        // Refused at 1024 by a round the worker did not ask again for
+        // (one given way to a newer develop): asked again at 1024 by the
+        // next, not held refused at 1024's figures ([`Ai::still_refused`]).
+        for (id, _) in self.short_at_1024.drain() {
+            self.refused.remove(&id);
+        }
         self.fill_short = false;
         self.mask_short = false;
         self.mask_cpu = false;
@@ -3687,6 +3897,9 @@ impl Ai {
             failed: _,
             windows: _,
             refused: _,
+            short_at_1024: _,
+            due_at_512: _,
+            fill_fallback: _,
             preview: _,
             embedding: _,
             sam3,
@@ -3723,6 +3936,10 @@ impl Ai {
                 offer_by_test: _,
             #[cfg(any(test, feature = "testing"))]
                 offer_read_by_test: _,
+            #[cfg(any(test, feature = "testing"))]
+                ran_at_by_test: _,
+            #[cfg(any(test, feature = "testing"))]
+                unet_by_test: _,
             short: _,
             fills_ran: _,
             fill_short: _,
@@ -3775,6 +3992,9 @@ impl Ai {
             failed: _,
             windows: _,
             refused: _,
+            short_at_1024: _,
+            due_at_512: _,
+            fill_fallback: _,
             preview: _,
             embedding: _,
             sam3,
@@ -3811,6 +4031,10 @@ impl Ai {
                 offer_by_test: _,
             #[cfg(any(test, feature = "testing"))]
                 offer_read_by_test: _,
+            #[cfg(any(test, feature = "testing"))]
+                ran_at_by_test: _,
+            #[cfg(any(test, feature = "testing"))]
+                unet_by_test: _,
             short: _,
             fills_ran: _,
             fill_short: _,
@@ -3981,11 +4205,17 @@ impl Ai {
         }
         // Sure to start, the card is asked: given back on a short, and
         // waited on as an export's [`Patience`] says ([`Ai::room`]).
-        if self.held_to_card(patch, window, engine) {
-            self.room_for_remove(patch, window)?;
-        }
+        let side = if self.held_to_card(patch, window, engine) {
+            self.room_for_remove(patch, window)?
+        } else {
+            greycard_ai::remove::MAX
+        };
         self.refused.remove(&patch.id);
+        self.short_at_1024.remove(&patch.id);
+        self.due_at_512.remove(&patch.id);
         self.fills_ran = true;
+        #[cfg(any(test, feature = "testing"))]
+        self.ran_at_by_test.push((patch.name(), side));
         #[cfg(any(test, feature = "testing"))]
         if let Some(v) = self.fill_by_test {
             if v < 0.0 {
@@ -4139,14 +4369,14 @@ impl Ai {
                 if let Err(e) = remove.set_steps(steps_for(patch)) {
                     return Err(self.remember_failure(patch, window, e.to_string()));
                 }
-                let made = match remove.remove_window_told(&input, &hole, remove_seed(patch), told)
-                {
-                    Ok(f) => f,
-                    Err(e) => {
-                        tracing::debug!("remove: {e}");
-                        return Err(self.remember_failure(patch, window, e.to_string()));
-                    }
-                };
+                let made =
+                    match remove.remove_window_at(&input, &hole, remove_seed(patch), side, told) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            tracing::debug!("remove: {e}");
+                            return Err(self.remember_failure(patch, window, e.to_string()));
+                        }
+                    };
                 let remove = self.remove.as_ref().expect("the remove, loaded above");
                 let t = remove.times();
                 tracing::info!(
@@ -11231,6 +11461,351 @@ mod tests {
         assert!(!give_back_due(&[&unknown]));
         assert!(!give_back_card(&mut [&mut unknown], true));
         assert!(unknown.holds_sessions());
+    }
+
+    /// A window of 1000 by 800, run at 1024.
+    const LARGE: Window = Window {
+        x: 0,
+        y: 0,
+        width: 1000,
+        height: 800,
+    };
+
+    /// An Ai on a test's card with `free` bytes free and no UNet held.
+    fn cold_on(free: u64) -> Ai {
+        let mut ai = on_card(free, 0);
+        ai.unet_held_by_test = Some(false);
+        ai
+    }
+
+    fn refused_why(got: Result<usize, NoFill>) -> String {
+        match got {
+            Err(NoFill::Failed(why)) => why,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A window run at 1024 runs at 512 only as the last resort: short
+    /// of 1024 it is refused at 1024 as it always was, and the worker
+    /// told; once the card was given back across the worker's models it
+    /// is asked again, and short of 1024 still runs at 512, nothing said
+    /// refused. With the room for 1024 then, it runs at 1024. Its free
+    /// memory not known, as on unified memory, it runs at 1024; a window
+    /// of 512 or less is asked at 512 alone, as before.
+    #[test]
+    fn a_large_fill_runs_at_512_only_once_the_card_was_given_back() {
+        let patch = remove_patch(31);
+        assert_eq!(
+            cold_on(8 * GIB).room_for_remove(&patch, LARGE).ok(),
+            Some(1024)
+        );
+        let mut ai = cold_on(65 * GIB / 10);
+        let why = refused_why(ai.room_for_remove(&patch, LARGE));
+        assert_eq!(
+            why,
+            "the card has 6.5 GiB free, short of the 7.1 GiB a removal at 1024 needs; another program may be using it"
+        );
+        assert!(ai.take_fill_short());
+        assert_eq!(ai.take_short().as_deref(), Some(why.as_str()));
+        // Asked again with nothing given back, it is the same refusal.
+        assert!(ai.room_for_remove(&patch, LARGE).is_err());
+        assert!(ai.card_given_back());
+        assert!(!ai.card_given_back(), "taken");
+        ai.clear_shorts();
+        assert_eq!(ai.room_for_remove(&patch, LARGE).ok(), Some(512));
+        assert!(!ai.take_fill_short() && ai.take_short().is_none());
+        assert!(ai.short_figures.is_none() && ai.refused.is_empty());
+        // Due at 512 once: asked again after, it is at 1024 first.
+        assert!(ai.room_for_remove(&patch, LARGE).is_err());
+        // The card given back with room for 1024 then: 1024.
+        let mut ai = cold_on(65 * GIB / 10);
+        assert!(ai.room_for_remove(&patch, LARGE).is_err());
+        ai.free_memory_by_test = Some(8 * GIB);
+        assert!(ai.card_given_back());
+        assert_eq!(ai.room_for_remove(&patch, LARGE).ok(), Some(1024));
+        let mut ai = cold_on(0);
+        ai.free_memory_by_test = None;
+        assert_eq!(ai.room_for_remove(&patch, LARGE).ok(), Some(1024));
+        let small = Window {
+            width: 400,
+            height: 300,
+            ..LARGE
+        };
+        assert_eq!(
+            cold_on(65 * GIB / 10).room_for_remove(&patch, small).ok(),
+            Some(512)
+        );
+    }
+
+    /// Short of 512 too on the last ask, a removal is refused at 512 in
+    /// the words the card's memory has for it, its figures 512's: no
+    /// "too small for a fill this large" where 512 would run with the
+    /// memory free.
+    #[test]
+    fn a_large_fill_short_of_both_is_refused_at_512() {
+        let patch = remove_patch(33);
+        let mut ai = cold_on(6 * GIB);
+        assert!(ai.room_for_remove(&patch, LARGE).is_err());
+        assert!(ai.card_given_back());
+        ai.clear_shorts();
+        let why = refused_why(ai.room_for_remove(&patch, LARGE));
+        assert_eq!(
+            why,
+            "the card has 6.0 GiB free, short of the 6.3 GiB a removal at 512 needs; another program may be using it"
+        );
+        assert!(ai.take_fill_short());
+        assert_eq!(ai.take_short().as_deref(), Some(why.as_str()));
+        let figures = (remove_needs(512, false), 6 * GIB);
+        assert_eq!(ai.short_figures, Some(figures));
+        let (_, _, at, need, said) = &ai.refused[&patch.id];
+        assert_eq!(((*need, *at), said), (figures, &why));
+        // On a card that never offered 1024's need but offers 512's, the
+        // first ask is at 512, and refused in 512's words.
+        let mut ai = cold_on(6 * GIB);
+        ai.card_by_test = Some(Some(8 * GIB));
+        ai.offer_by_test = Some(7 * GIB);
+        assert_eq!(refused_why(ai.room_for_remove(&patch, LARGE)), why);
+        assert_eq!(ai.short_figures, Some(figures));
+    }
+
+    /// A card that can never hold 1024, its whole memory or the most it
+    /// has offered under 1024's need, runs a large window at 512 on the
+    /// first ask, nothing refused; one whose offer is another program's
+    /// hold (under 80% of its whole) is asked at 1024 first.
+    #[test]
+    fn a_card_that_never_holds_1024_runs_at_512_at_once() {
+        let patch = remove_patch(34);
+        let mut ai = cold_on(65 * GIB / 10);
+        ai.card_by_test = Some(Some(7 * GIB));
+        assert_eq!(ai.room_for_remove(&patch, LARGE).ok(), Some(512));
+        assert!(!ai.take_fill_short() && ai.refused.is_empty());
+        let mut ai = cold_on(65 * GIB / 10);
+        ai.card_by_test = Some(Some(8 * GIB));
+        ai.offer_by_test = Some(7 * GIB);
+        assert_eq!(ai.room_for_remove(&patch, LARGE).ok(), Some(512));
+        let mut ai = cold_on(65 * GIB / 10);
+        ai.card_by_test = Some(Some(16 * GIB));
+        ai.offer_by_test = Some(7 * GIB);
+        assert!(ai.room_for_remove(&patch, LARGE).is_err());
+    }
+
+    /// An export short of 1024 for a few reads waits at 1024 as it
+    /// always did and runs at 1024 once the card has the room; short at
+    /// every read it is refused at 1024 after its tries. Its frame tried
+    /// again with the fallback on runs at 512 where 1024 is still short.
+    #[test]
+    fn an_export_waits_for_1024_before_it_falls_to_512() {
+        let patch = remove_patch(41);
+        let patient = |ai: &mut Ai| {
+            ai.set_patience(Some(Patience {
+                tries: 5,
+                wait: std::time::Duration::ZERO,
+                canceled: Arc::new(|| false),
+            }))
+        };
+        let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu, Provider::Cpu]);
+        ai.unet_held_by_test = Some(false);
+        patient(&mut ai);
+        let mut figures = vec![Some(65 * GIB / 10); 6];
+        figures.push(Some(8 * GIB));
+        set_free_by_test(Some(figures));
+        let before = waits_by_test();
+        let got = ai.room_for_remove(&patch, LARGE);
+        let waits = waits_by_test() - before;
+        set_free_by_test(None);
+        assert_eq!(got.ok(), Some(1024));
+        assert!(waits > 0, "waited");
+        // Short at every read: refused at 1024 after its tries.
+        let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu, Provider::Cpu]);
+        ai.unet_held_by_test = Some(false);
+        patient(&mut ai);
+        set_free_by_test(Some(vec![Some(65 * GIB / 10)]));
+        let before = waits_by_test();
+        let why = refused_why(ai.room_for_remove(&patch, LARGE));
+        assert_eq!(waits_by_test() - before, 4);
+        assert!(why.contains("a removal at 1024 needs"), "{why}");
+        assert!(ai.short_failed());
+        // The frame tried again, the fallback on: 512.
+        ai.retry_patiently();
+        ai.set_fill_fallback(true);
+        let got = ai.room_for_remove(&patch, LARGE);
+        set_free_by_test(None);
+        assert_eq!(got.ok(), Some(512));
+        assert!(!ai.short_failed() && ai.take_short().is_none());
+    }
+
+    /// A queue of fills holding the UNet at 512 on a 16 GiB card: a
+    /// large fill after the small ones keeps that UNet and is refused at
+    /// 1024, not run at 512 beside it; the worker's give-back lets it go
+    /// and the fill, asked again, runs at 1024.
+    #[test]
+    fn a_queues_unet_at_512_is_let_go_for_a_large_fill_at_1024() {
+        let unet = greycard_ai::remove::UNET_ON_CARD;
+        let mut ai = on_card(3 * GIB, 0);
+        ai.card_by_test = Some(Some(16 * GIB));
+        ai.unet_by_test = Some((512, unet));
+        let small = Window {
+            width: 400,
+            height: 300,
+            ..LARGE
+        };
+        assert_eq!(ai.room_for_remove(&remove_patch(1), small).ok(), Some(512));
+        let patch = remove_patch(2);
+        assert!(ai.room_for_remove(&patch, LARGE).is_err());
+        assert_eq!(ai.unet_by_test, Some((512, unet)), "the queue's UNet kept");
+        assert!(give_back_card(&mut [&mut ai], true));
+        assert!(ai.card_given_back());
+        assert_eq!(ai.room_for_remove(&patch, LARGE).ok(), Some(1024));
+    }
+
+    /// A window past 2048, which 512 would take down by more than four,
+    /// is asked at 1024 alone: refused at 1024, never due at 512, on a
+    /// card short of it now and on one that never holds it.
+    #[test]
+    fn a_window_past_2048_never_falls_to_512() {
+        let patch = remove_patch(35);
+        let wide = Window {
+            width: 2100,
+            height: 1000,
+            ..LARGE
+        };
+        let mut ai = cold_on(65 * GIB / 10);
+        let why = refused_why(ai.room_for_remove(&patch, wide));
+        assert!(why.contains("a removal at 1024 needs"), "{why}");
+        assert!(!ai.card_given_back());
+        assert!(ai.room_for_remove(&patch, wide).is_err());
+        ai.set_fill_fallback(true);
+        assert!(ai.room_for_remove(&patch, wide).is_err());
+        let mut ai = cold_on(65 * GIB / 10);
+        ai.card_by_test = Some(Some(7 * GIB));
+        let why = refused_why(ai.room_for_remove(&patch, wide));
+        assert!(why.contains("a removal at 1024 needs"), "{why}");
+        // At 2048 it may.
+        let edge = Window {
+            width: 2048,
+            ..wide
+        };
+        assert_eq!(ai.room_for_remove(&patch, edge).ok(), Some(512));
+    }
+
+    /// An integrated GPU: its free memory not known, its adapter's
+    /// figure the driver's carve-out. A large window runs at 1024 there,
+    /// as wherever the free memory is not known, not at 512.
+    #[test]
+    fn an_integrated_gpus_carve_out_is_not_the_cards_size() {
+        let patch = remove_patch(51);
+        let mut ai = cold_on(0);
+        ai.free_memory_by_test = None;
+        ai.card_by_test = Some(Some(2 * GIB));
+        assert_eq!(ai.room_for_remove(&patch, LARGE).ok(), Some(1024));
+    }
+
+    /// In a round asked again after the card was given back across the
+    /// worker's models (the fallback on), a large fill asked there for
+    /// the first time and short of 1024 runs at 512 in the same ask,
+    /// nothing said refused and nothing left due for a round that will
+    /// not come; short of 512 too, it is refused at 512.
+    #[test]
+    fn a_large_fill_first_asked_in_the_round_asked_again_runs_at_512() {
+        let patch = remove_patch(52);
+        let mut ai = cold_on(65 * GIB / 10);
+        ai.set_fill_fallback(true);
+        assert_eq!(ai.room_for_remove(&patch, LARGE).ok(), Some(512));
+        assert!(!ai.take_fill_short() && ai.refused.is_empty());
+        assert!(!ai.asks_again_at_512(&patch) && !ai.card_given_back());
+        let mut ai = cold_on(6 * GIB);
+        ai.set_fill_fallback(true);
+        let why = refused_why(ai.room_for_remove(&patch, LARGE));
+        assert!(why.contains("a removal at 512 needs"), "{why}");
+        assert!(!ai.asks_again_at_512(&patch));
+    }
+
+    /// A refusal at 1024 a window's round left, its round given up for
+    /// another job, is not an export frame's: a frame's patience clears
+    /// it, so the frame is not tried again for it.
+    #[test]
+    fn a_window_rounds_refusal_at_1024_is_not_an_export_frames() {
+        let patch = remove_patch(53);
+        let mut ai = cold_on(65 * GIB / 10);
+        assert!(ai.room_for_remove(&patch, LARGE).is_err());
+        assert!(ai.asks_again_at_512(&patch));
+        ai.set_patience(Some(Patience {
+            tries: 1,
+            wait: std::time::Duration::ZERO,
+            canceled: Arc::new(|| false),
+        }));
+        assert!(!ai.asks_again_at_512(&patch));
+        assert!(!ai.card_given_back());
+    }
+
+    /// A fill round refuses a large fill at 1024 and gives way to a newer
+    /// develop before the worker asks again: the newer develop's round
+    /// asks 1024 again, not holding it refused at 1024's figures, so it
+    /// is still to come and the round asked again runs it at 512.
+    #[test]
+    fn a_refusal_at_1024_a_round_gave_way_on_is_asked_again() {
+        let image = WorkingImage::new(3000, 2000);
+        let big = Patch {
+            radius: 0.15,
+            ..remove_patch(54)
+        };
+        let region = big.region(image.width, image.height).unwrap();
+        let mut ai = cold_on(65 * GIB / 10);
+        ai.clear_shorts();
+        assert!(ai.fill(&big, &region, &image).is_err());
+        assert!(ai.asks_again_at_512(&big));
+        // Given way: the newer develop's round.
+        ai.clear_shorts();
+        assert!(ai.fill(&big, &region, &image).is_err());
+        assert!(ai.take_fill_short(), "the card asked again");
+        assert!(ai.asks_again_at_512(&big), "still to come");
+        assert!(ai.card_given_back());
+        ai.clear_shorts();
+        ai.fill(&big, &region, &image).expect("made at 512");
+        assert_eq!(ai.ran_at_by_test, [(big.name(), 512)]);
+    }
+
+    /// Through the fill: a large window refused at 1024 is left for the
+    /// worker; asked again after the card was given back it is made at
+    /// 512 and kept, the side it ran at the fill's; with the room, at
+    /// 1024; a card whose whole is short of 512 is refused before any
+    /// ask.
+    #[test]
+    fn a_large_fill_is_made_at_the_side_it_ran_at() {
+        let image = WorkingImage::new(3000, 2000);
+        let big = Patch {
+            radius: 0.15,
+            ..remove_patch(32)
+        };
+        let region = big.region(image.width, image.height).unwrap();
+        let mut ai = cold_on(65 * GIB / 10);
+        let (window, _) = ai.window_of(&big, &region, &image);
+        assert_eq!(
+            greycard_ai::remove::run_size(window.width, window.height),
+            Some(1024),
+            "{window:?}"
+        );
+        assert!(matches!(
+            ai.fill(&big, &region, &image),
+            Err(NoFill::Failed(_))
+        ));
+        assert!(ai.ran_at_by_test.is_empty());
+        // Refused as it is, it is not asked of the card again.
+        assert!(ai.fill(&big, &region, &image).is_err());
+        assert!(ai.card_given_back());
+        ai.fill(&big, &region, &image).expect("made at 512");
+        assert_eq!(ai.ran_at_by_test, [(big.name(), 512)]);
+        assert!(ai.fill_kept(&big, &region, &image));
+        let mut ai = cold_on(8 * GIB);
+        ai.fill(&big, &region, &image).expect("made at 1024");
+        assert_eq!(ai.ran_at_by_test, [(big.name(), 1024)]);
+        let mut ai = cold_on(65 * GIB / 10);
+        ai.card_by_test = Some(Some(6 * GIB));
+        assert!(matches!(
+            ai.fill(&big, &region, &image),
+            Err(NoFill::Card { .. })
+        ));
+        assert!(ai.ran_at_by_test.is_empty());
     }
 
     /// A removal short of the card after its own give-back has the

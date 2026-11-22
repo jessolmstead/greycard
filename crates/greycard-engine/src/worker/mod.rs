@@ -844,6 +844,14 @@ struct Queue {
     /// How many times the worker gave the card back, for a test.
     #[cfg(test)]
     gave_back_by_test: usize,
+    /// A UNet held for a queue of fills, as a test has it
+    /// (`Ai::unet_by_test`).
+    #[cfg(test)]
+    unet_by_test: Option<(usize, u64)>,
+    /// Each of the open frame's fills begun, by name, and the side it
+    /// ran at, for a test.
+    #[cfg(test)]
+    ran_at_by_test: Vec<(String, usize)>,
     /// What the open frame's fills let go of the card, as a test has
     /// it for a worker with no device.
     #[cfg(test)]

@@ -3145,15 +3145,15 @@ msgstr "Softproof an (S schaltet ihn aus)"
 msgid "All people"
 msgstr "Alle Personen"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1531
+#: crates/greycard-slint/ui/panel/viewport.slint:1530
 msgid "Now the second line"
 msgstr "Jetzt die zweite Linie"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1533
+#: crates/greycard-slint/ui/panel/viewport.slint:1532
 msgid "Drag along two lines that should stand upright"
 msgstr "An zwei Linien entlangziehen, die senkrecht stehen sollen"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1534
+#: crates/greycard-slint/ui/panel/viewport.slint:1533
 msgid "Drag along two lines that should lie flat"
 msgstr "An zwei Linien entlangziehen, die waagerecht liegen sollen"
 

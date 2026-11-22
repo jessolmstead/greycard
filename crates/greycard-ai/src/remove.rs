@@ -299,6 +299,21 @@ pub fn run_size(width: usize, height: usize) -> Option<usize> {
     size_for(width.min(MAX), height.min(MAX))
 }
 
+/// The side a `width` × `height` window is taken down to for a run at
+/// a square of `side` at most ([`MAX`] past it): none where it runs as
+/// it is, and an error past [`FACTOR`] times `side` or for nothing.
+pub fn taken_to(width: usize, height: usize, side: usize) -> Result<Option<usize>> {
+    let side = side.min(MAX);
+    let long = width.max(height);
+    if width == 0 || height == 0 || long > FACTOR * side {
+        return Err(Error::Shape(format!(
+            "remove wants a side of 1 to {}, got {width}x{height}",
+            FACTOR * side
+        )));
+    }
+    Ok((long > side).then_some(side))
+}
+
 /// How long a removal about to run waits for its UNet being opened
 /// ahead ([`prepare`]) to land before it counts it as not open: a Mac's
 /// WebGPU takes tens of seconds, and a hung open never holds the worker.
@@ -1686,22 +1701,35 @@ impl Remove {
         seed: u64,
         told: &mut dyn FnMut(usize, usize),
     ) -> Result<Rgbf> {
+        self.remove_window_at(image, hole, seed, MAX, told)
+    }
+
+    /// [`Remove::remove_window_told`] run at a square of `side` at most,
+    /// one of [`SIZES`]: a window past it is taken down to it and its
+    /// fill brought back up as one past [`MAX`] is ([`scaled`]), for a
+    /// card with the room for the smaller run alone, never by more than
+    /// [`FACTOR`] ([`taken_to`]). At [`MAX`] it is
+    /// [`Remove::remove_window_told`].
+    pub fn remove_window_at(
+        &mut self,
+        image: &Rgbf,
+        hole: &[f32],
+        seed: u64,
+        side: usize,
+        told: &mut dyn FnMut(usize, usize),
+    ) -> Result<Rgbf> {
         let (w, h) = (image.width, image.height);
-        match factor_for(w, h) {
-            Some(f) if f > 1.0 => {
+        match taken_to(w, h, side)? {
+            Some(side) => {
                 let total = Instant::now();
-                let out = scaled(image, hole, MAX, |small, small_hole| {
+                let out = scaled(image, hole, side, |small, small_hole| {
                     self.remove_told(small, small_hole, seed, told)
                 });
-                self.times.factor = f;
+                self.times.factor = w.max(h) as f32 / side as f32;
                 self.times.total = total.elapsed().as_secs_f64();
                 out
             }
-            Some(_) => self.remove_told(image, hole, seed, told),
-            None => Err(Error::Shape(format!(
-                "remove wants a side of 1 to {}, got {w}x{h}",
-                FACTOR * MAX
-            ))),
+            None => self.remove_told(image, hole, seed, told),
         }
     }
 
@@ -2031,6 +2059,22 @@ fn file(name: &str) -> &'static File {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A window is taken down to the side it runs at when past it, at
+    /// most by [`FACTOR`]: past 2048 at 512 it is refused, as past 4096
+    /// at 1024; a side past [`MAX`] is [`MAX`].
+    #[test]
+    fn a_window_is_taken_to_its_side_by_four_at_most() {
+        assert_eq!(taken_to(400, 300, 512).unwrap(), None);
+        assert_eq!(taken_to(1000, 800, 512).unwrap(), Some(512));
+        assert_eq!(taken_to(1000, 800, MAX).unwrap(), None);
+        assert_eq!(taken_to(800, 2048, 512).unwrap(), Some(512));
+        assert!(taken_to(800, 2049, 512).is_err());
+        assert_eq!(taken_to(4096, 3000, MAX).unwrap(), Some(MAX));
+        assert_eq!(taken_to(4096, 3000, 2 * MAX).unwrap(), Some(MAX));
+        assert!(taken_to(4097, 3000, MAX).is_err());
+        assert!(taken_to(0, 300, 512).is_err());
+    }
 
     /// diffusers' `EulerDiscreteScheduler` from RORem's own config,
     /// `set_timesteps(25)` and the inpainting pipeline's cut at

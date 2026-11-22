@@ -3171,15 +3171,15 @@ msgstr "Próba kolorów włączona (S wyłącza)"
 msgid "All people"
 msgstr "Wszystkie osoby"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1531
+#: crates/greycard-slint/ui/panel/viewport.slint:1530
 msgid "Now the second line"
 msgstr "Teraz druga linia"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1533
+#: crates/greycard-slint/ui/panel/viewport.slint:1532
 msgid "Drag along two lines that should stand upright"
 msgstr "Przeciągnij wzdłuż dwóch linii, które powinny być pionowe"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1534
+#: crates/greycard-slint/ui/panel/viewport.slint:1533
 msgid "Drag along two lines that should lie flat"
 msgstr "Przeciągnij wzdłuż dwóch linii, które powinny być poziome"
 

@@ -441,4 +441,52 @@ mod tests {
         let i = (650 * w + 950) * 3;
         assert!((out.data[i] - 0.5).abs() < 1e-3, "{}", out.data[i]);
     }
+
+    /// A window run at 1024 taken down to 512 for a card with the room
+    /// for 512 alone: the run is given the window at 512, its hole with
+    /// it, and its fill comes back under the hole alone.
+    #[test]
+    fn a_window_taken_to_512_runs_at_512_and_comes_back() {
+        let (w, h) = (1000, 800);
+        assert_eq!(super::super::taken_to(w, h, 512).unwrap(), Some(512));
+        let image = Rgbf::new(
+            w,
+            h,
+            gradient_and_edge(w, h)
+                .into_iter()
+                .map(|v| to_srgb(v) * 0.9 + 0.03)
+                .collect(),
+        );
+        let hole: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                f32::from(u8::from((300..700).contains(&x) && (200..600).contains(&y)))
+            })
+            .collect();
+        let mut seen = (0, 0, 0);
+        let out = scaled(&image, &hole, 512, |small, small_hole| {
+            let holed = small_hole.iter().filter(|m| **m > 0.0).count();
+            seen = (small.width, small.height, holed);
+            let mut out = small.clone();
+            for (i, _) in small_hole.iter().enumerate().filter(|(_, m)| **m > 0.0) {
+                out.data[i * 3..i * 3 + 3].copy_from_slice(&[0.5; 3]);
+            }
+            Ok(out)
+        })
+        .unwrap();
+        // 400 a side at 1000 is about 205 at 512, its edge pixels in.
+        let (sw, sh, holed) = seen;
+        assert_eq!((sw, sh), (512, 410));
+        assert!((205 * 205..=207 * 207).contains(&holed), "{holed}");
+        for (i, &m) in hole.iter().enumerate() {
+            if m <= 0.0 {
+                for c in 0..3 {
+                    let (a, b) = (out.data[i * 3 + c], image.data[i * 3 + c]);
+                    assert_eq!(a.to_bits(), b.to_bits(), "{i}");
+                }
+            }
+        }
+        let i = (400 * w + 500) * 3;
+        assert!((out.data[i] - 0.5).abs() < 1e-3, "{}", out.data[i]);
+    }
 }

@@ -36,6 +36,9 @@ design note behind it.
 
 ### Develop
 
+- A large generative fill the card cannot hold at 1024 runs at 512 as
+  the last resort, where it was refused
+  ([§726](https://github.com/jessolmstead/greycard/blob/master/docs/notes/726-a-large-fill-at-512-as-the-last-resort.md), issue 142).
 - Lens profiles (`.lcp`) are read from the profile folder's subfolders, so Adobe's
   maker folders can be copied or linked in whole
   ([§725](https://github.com/jessolmstead/greycard/blob/master/docs/notes/725-lens-profiles-from-subfolders.md)).

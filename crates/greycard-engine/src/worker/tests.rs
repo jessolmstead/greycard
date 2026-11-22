@@ -6029,7 +6029,7 @@ fn fill_worker(
 fn fill_worker_at(
     what: &str,
     value: f32,
-    (width, height): (usize, usize),
+    size: (usize, usize),
 ) -> (
     Worker,
     PathBuf,
@@ -6037,6 +6037,31 @@ fn fill_worker_at(
     std::sync::mpsc::Receiver<String>,
     std::sync::mpsc::Sender<()>,
 ) {
+    let (worker, dir, path, rx, go, _) = fill_worker_noting(what, value, size);
+    (worker, dir, path, rx, go)
+}
+
+/// What each develop of [`fill_worker_noting`] said refused: its
+/// generation, the fills failed, and the removals short of the card
+/// with their need, bytes.
+type Refusals = Arc<Mutex<Vec<(u64, Vec<String>, Vec<(String, u64)>)>>>;
+
+/// [`fill_worker_at`], each develop that says a fill refused noted.
+#[allow(clippy::type_complexity)]
+fn fill_worker_noting(
+    what: &str,
+    value: f32,
+    (width, height): (usize, usize),
+) -> (
+    Worker,
+    PathBuf,
+    PathBuf,
+    std::sync::mpsc::Receiver<String>,
+    std::sync::mpsc::Sender<()>,
+    Refusals,
+) {
+    let refusals: Refusals = Arc::default();
+    let noted = refusals.clone();
     let (dir, paths) = dngs(what, &[&format!("{what}.dng")], width, height);
     let (tx, rx) = std::sync::mpsc::channel();
     let tx = Mutex::new(tx);
@@ -6047,6 +6072,17 @@ fn fill_worker_at(
             generation, fills, ..
         } => {
             let first = fills.pending.len() == 3;
+            if !fills.failed.is_empty() || !fills.short.is_empty() {
+                noted.lock().unwrap().push((
+                    generation,
+                    fills.failed.iter().map(|(n, _)| n.clone()).collect(),
+                    fills
+                        .short
+                        .iter()
+                        .map(|(n, need, _)| (n.clone(), *need))
+                        .collect(),
+                ));
+            }
             tx.lock()
                 .unwrap()
                 .send(format!("developed {generation}: {:?}", fills.pending))
@@ -6069,7 +6105,7 @@ fn fill_worker_at(
         _ => {}
     });
     worker.fill_by_test(value);
-    (worker, dir, paths[0].clone(), rx, go_tx)
+    (worker, dir, paths[0].clone(), rx, go_tx, refusals)
 }
 
 fn open_with_fills(path: &std::path::Path) -> Job {
@@ -6344,11 +6380,29 @@ fn fills_said_then(
     what: &str,
     size: (usize, usize),
     edit: Edit,
-    (free, freed, elsewhere): (u64, u64, u64),
+    card: (u64, u64, u64),
     then: Option<Job>,
 ) -> (Vec<String>, Vec<usize>) {
-    let (worker, dir, path, rx, go) = fill_worker_at(what, 0.9, size);
+    let (said, gave, _, _) = fills_said_at(what, size, edit, card, None, then);
+    (said, gave)
+}
+
+/// [`fills_said_then`] with a UNet held for a queue as `unet` has it
+/// (`Worker::unet_by_test`), and each fill begun with the side it ran
+/// at.
+fn fills_said_at(
+    what: &str,
+    size: (usize, usize),
+    edit: Edit,
+    (free, freed, elsewhere): (u64, u64, u64),
+    unet: Option<(usize, u64)>,
+    then: Option<Job>,
+) -> FillsSaid {
+    let (worker, dir, path, rx, go, refusals) = fill_worker_noting(what, 0.9, size);
     worker.free_by_test(free, freed, elsewhere);
+    if let Some((side, bytes)) = unet {
+        worker.unet_by_test(side, bytes);
+    }
     go.send(()).unwrap();
     worker.send(Job::Open {
         path: path.to_path_buf(),
@@ -6388,10 +6442,21 @@ fn fills_said_then(
         to_mask(&mut said);
         gave.push(worker.gave_back_by_test());
     }
+    let ran_at = worker.ran_at_by_test();
     worker.stop();
     crate::testing::remove_dir_retry(&dir);
-    (said, gave)
+    let refused = refusals.lock().unwrap().clone();
+    (said, gave, ran_at, refused)
 }
+
+/// What [`fills_said_at`] saw: the worker's words, its give-backs by
+/// job, each fill begun with its side, and each develop's refusals.
+type FillsSaid = (
+    Vec<String>,
+    Vec<usize>,
+    Vec<(String, usize)>,
+    Vec<(u64, Vec<String>, Vec<(String, u64)>)>,
+);
 
 /// [`three_fills`]' edit, each a removal.
 fn three_removes() -> Edit {
@@ -7033,13 +7098,24 @@ fn a_fill_job_lets_go_for_a_removal_and_clears_it_after() {
     assert!(!left);
 }
 
-/// A big fill among small ones, the card short of it alone, gives its
-/// place in the round to the next: the small ones are made. Nothing
-/// given back since, the big one is not asked of the card again, and
-/// the queue ends; a develop after asks no fill round and gives
-/// nothing back.
+/// The three fills' names with the side each ran at, in the order they
+/// were made: the second, at `big`, last, refused in its turn.
+fn ran_at(big: usize) -> Vec<(String, usize)> {
+    vec![
+        ("Fill 1".into(), 512),
+        ("Fill 3".into(), 512),
+        ("Fill 2".into(), big),
+    ]
+}
+
+/// A big fill among small ones, the card short of it at 1024 alone and
+/// nothing to give back: refused at 1024 in its turn, as it always was,
+/// the small ones made; asked again after the card was given back
+/// (nothing went), it runs at 512, the last resort. No develop says it
+/// refused: still to come after its refusal at 1024. A develop after
+/// asks no fill round and gives nothing back.
 #[test]
-fn a_big_fill_the_card_is_short_of_lets_the_small_ones_by() {
+fn a_big_fill_the_card_is_short_of_at_1024_runs_at_512() {
     const GIB: u64 = 1 << 30;
     let mut edit = three_removes();
     // A window past 512 runs at 1024 (7.1 GiB); the others at 512 (6.3).
@@ -7050,11 +7126,12 @@ fn a_big_fill_the_card_is_short_of_lets_the_small_ones_by() {
         turn: 0,
         of: None,
     };
-    let (said, gave) = fills_said_then(
+    let (said, gave, ran, refused) = fills_said_at(
         "short-big",
         (1600, 1200),
         edit,
         (6 * GIB + GIB / 2, 0, 0),
+        None,
         Some(then),
     );
     assert_eq!(
@@ -7066,12 +7143,99 @@ fn a_big_fill_the_card_is_short_of_lets_the_small_ones_by() {
             "filling 1: Fill 2",
             "filling 1: Fill 3",
             "developed 1: [2]",
+            "filling 1: Fill 2",
             "developed 1: []",
             "mask",
             "developed 2: []",
         ]
     );
+    assert_eq!(ran, ran_at(512));
+    assert_eq!(refused, [], "never said refused");
     assert_eq!(gave[0], gave[1], "nothing given back by the develop");
+}
+
+/// The card short of every fill and nothing to give back anywhere: the
+/// small ones are said refused in the first round; the big one, refused
+/// at 1024 there, is still to come, and is said refused only from the
+/// round that asked it again, at 512, with 512's need.
+#[test]
+fn a_big_fill_short_of_both_is_said_refused_at_512_alone() {
+    const GIB: u64 = 1 << 30;
+    let mut edit = three_removes();
+    edit.retouch.patches[1].radius = 0.25;
+    let (said, _, ran, refused) = fills_said_at(
+        "short-both",
+        (1600, 1200),
+        edit,
+        (6 * GIB, 0, 0),
+        None,
+        None,
+    );
+    assert!(ran.is_empty(), "{ran:?}");
+    let need = crate::ai::remove_needs(512, false);
+    let small = |n: &str| (n.to_string(), need);
+    let all = (
+        1,
+        vec!["Fill 1".into(), "Fill 2".into(), "Fill 3".into()],
+        vec![small("Fill 1"), small("Fill 2"), small("Fill 3")],
+    );
+    // The round after it says the refusal again, as for any fill the
+    // card stays short of, and the rounds end.
+    assert_eq!(
+        refused,
+        [
+            (
+                1,
+                vec!["Fill 1".into(), "Fill 3".into()],
+                vec![small("Fill 1"), small("Fill 3")]
+            ),
+            all.clone(),
+            all,
+        ],
+        "{said:?}"
+    );
+}
+
+/// The big fill short of 1024 where the worker's other models hold
+/// 8 GiB: refused at 1024, the card given back once across them, and
+/// made at 1024, never at 512.
+#[test]
+fn a_big_fill_short_of_1024_with_room_elsewhere_runs_at_1024() {
+    const GIB: u64 = 1 << 30;
+    let mut edit = three_removes();
+    edit.retouch.patches[1].radius = 0.25;
+    let (said, gave, ran, _) = fills_said_at(
+        "short-big-elsewhere",
+        (1600, 1200),
+        edit,
+        (6 * GIB + GIB / 2, 0, 8 * GIB),
+        None,
+        None,
+    );
+    assert_eq!(ran, ran_at(1024), "{said:?}");
+    assert_eq!(gave[0], 1, "{said:?}");
+}
+
+/// A queue holding the UNet at 512, a big fill after a small one: the
+/// big one keeps the queue's UNet and is refused at 1024 rather than
+/// run at 512 beside it; the worker's give-back lets the UNet go and
+/// the big one, asked again, runs at 1024.
+#[test]
+fn a_queues_unet_at_512_gives_way_to_a_big_fill_at_1024() {
+    const GIB: u64 = 1 << 30;
+    let mut edit = three_removes();
+    edit.retouch.patches[1].radius = 0.25;
+    // 3 GiB free beside the UNet: 512 held needs 2.4, 1024 cold 7.1.
+    let (said, gave, ran, _) = fills_said_at(
+        "queue-unet",
+        (1600, 1200),
+        edit,
+        (3 * GIB, 0, 0),
+        Some((512, greycard_ai::remove::UNET_ON_CARD)),
+        None,
+    );
+    assert_eq!(ran, ran_at(1024), "{said:?}");
+    assert_eq!(gave[0], 1, "{said:?}");
 }
 
 /// A set of two frames the card stays short of gives the card back
@@ -7128,6 +7292,126 @@ fn a_set_short_of_the_card_gives_it_back_once() {
         assert!(failed, "a frame the card is short of fails");
     }
     assert_eq!(worker.gave_back_by_test(), 1);
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A set of two frames, each with a big removal the card is short of
+/// at 1024 and nothing to give back: the first frame is refused at 1024
+/// after its tries and tried again, where it runs at 512; the second,
+/// its set met short, falls to 512 at once. Both are written.
+#[test]
+fn a_set_short_of_1024_alone_is_written_at_512() {
+    const GIB: u64 = 1 << 30;
+    let (dir, paths) = dngs("short-set-big", &["short-set-big.dng"], 1600, 1200);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::SetFrameDone { done, .. } = o {
+            let failed = matches!(done, crate::queue::Done::Failed { .. });
+            tx.lock().unwrap().send(failed).unwrap();
+        }
+    });
+    worker.fill_by_test(0.9);
+    worker.free_by_test(6 * GIB + GIB / 2, 0, 0);
+    worker.send(Job::Open {
+        path: paths[0].clone(),
+        version: None,
+        edit: Edit::default(),
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+        learned: Vec::new(),
+    });
+    let set = Arc::new(crate::queue::Set::new(
+        2,
+        None,
+        greycard_render::export::Settings::default(),
+        greycard_render::export::OnExists::Overwrite,
+    ));
+    let mut edit = three_removes();
+    edit.retouch.patches[1].radius = 0.25;
+    let frame = |i: usize| crate::queue::Frame {
+        source: paths[0].clone(),
+        edit: edit.clone(),
+        version: None,
+        turn: 0,
+        time_shift: 0,
+        seed_blend: false,
+        out: dir.join(format!("short-set-big-{i}.jpg")),
+        moved_from: None,
+    };
+    worker.send(Job::ExportSet {
+        set,
+        frames: vec![frame(0), frame(1)],
+    });
+    for i in 0..2 {
+        let failed = rx
+            .recv_timeout(std::time::Duration::from_secs(120))
+            .expect("a frame done");
+        assert!(!failed, "frame {i} written at 512");
+    }
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A set canceled while its frame runs, its big removal refused at
+/// 1024 with nothing to give back: the frame is not tried again at 512,
+/// and fails as a canceled frame short of the card does.
+#[test]
+fn a_canceled_set_is_not_tried_again_at_512() {
+    const GIB: u64 = 1 << 30;
+    let (dir, paths) = dngs("short-set-cancel", &["short-set-cancel.dng"], 1600, 1200);
+    let set = Arc::new(crate::queue::Set::new(
+        1,
+        None,
+        greycard_render::export::Settings::default(),
+        greycard_render::export::OnExists::Overwrite,
+    ));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let canceling = set.clone();
+    let worker = Worker::new(move |o| match o {
+        // Canceled as its first fill starts.
+        Outcome::Filling { .. } => canceling.cancel(),
+        Outcome::SetFrameDone { done, .. } => tx.lock().unwrap().send(done).unwrap(),
+        _ => {}
+    });
+    worker.fill_by_test(0.9);
+    worker.free_by_test(6 * GIB + GIB / 2, 0, 0);
+    worker.send(Job::Open {
+        path: paths[0].clone(),
+        version: None,
+        edit: Edit::default(),
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+        learned: Vec::new(),
+    });
+    let mut edit = three_removes();
+    edit.retouch.patches[1].radius = 0.25;
+    worker.send(Job::ExportSet {
+        set,
+        frames: vec![crate::queue::Frame {
+            source: paths[0].clone(),
+            edit,
+            version: None,
+            turn: 0,
+            time_shift: 0,
+            seed_blend: false,
+            out: dir.join("short-set-cancel.jpg"),
+            moved_from: None,
+        }],
+    });
+    let done = rx
+        .recv_timeout(std::time::Duration::from_secs(120))
+        .expect("the frame done");
+    assert!(
+        matches!(done, crate::queue::Done::Failed { .. }),
+        "{done:?}"
+    );
     worker.stop();
     crate::testing::remove_dir_retry(&dir);
 }

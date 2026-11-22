@@ -737,3 +737,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§723. A lens match that knows its line](notes/723-a-lens-match-that-knows-its-line.md) (2026-11-20)
 - [§724. States that are never rewritten](notes/724-states-that-are-never-rewritten.md) (2026-11-20)
 - [§725. Lens profiles from subfolders, their listing held](notes/725-lens-profiles-from-subfolders.md) (2026-11-21)
+- [§726. A large fill at 512, as the last resort](notes/726-a-large-fill-at-512-as-the-last-resort.md) (2026-11-21)

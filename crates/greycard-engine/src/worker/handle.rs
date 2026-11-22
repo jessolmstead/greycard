@@ -830,6 +830,23 @@ impl Worker {
         cv.notify_one();
     }
 
+    /// A UNet held for a queue of fills at `side`, holding `bytes` of
+    /// the card until it is let go.
+    #[cfg(test)]
+    pub(super) fn unet_by_test(&self, side: usize, bytes: u64) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().expect("worker queue").unet_by_test = Some((side, bytes));
+        cv.notify_one();
+    }
+
+    /// Each of the open frame's fills begun so far, by name, and the
+    /// side it ran at.
+    #[cfg(test)]
+    pub(super) fn ran_at_by_test(&self) -> Vec<(String, usize)> {
+        let (lock, _) = &*self.queue;
+        lock.lock().expect("worker queue").ran_at_by_test.clone()
+    }
+
     /// How many times the worker has given the card back.
     #[cfg(test)]
     pub(super) fn gave_back_by_test(&self) -> usize {
