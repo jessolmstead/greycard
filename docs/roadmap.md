@@ -1340,6 +1340,14 @@ clears or a tester asks for it.
 #### User Requests
 
 - [ ] MIDI Controller support
+- [ ] An export color space "as shot": the camera's setting for a raw,
+      the file's own profile for a picture (a pixls tester,
+      2026-11-22)
+- [ ] AVIF and JPEG XL as export formats (a pixls tester, 2026-11-22)
+- [ ] A Feather on the learned masks, beside Refine edge (a pixls
+      tester, 2026-11-22)
+- [ ] A mask's Detail with its own sharpen radius and threshold, and a
+      denoise in a mask (a pixls tester, 2026-11-22)
 - [ ] SHARPEN's Radius past 2, to 3 (discussion 194)
 - [ ] A crop held to a longest side in pixels, to judge what
       resolution a tight crop leaves, as RawTherapee has (discussion
