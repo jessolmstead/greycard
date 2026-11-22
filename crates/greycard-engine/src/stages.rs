@@ -847,8 +847,10 @@ pub const LEARNED_DENOISER: &str = "the learned denoiser";
 /// user's approval.
 pub const OFF_CARD: &str = "the learned denoiser is not on this graphics card";
 
-/// Why the learned denoiser is skipped on an X-Trans mosaic.
-pub const NO_XTRANS: &str = "the learned denoiser has no X-Trans version yet";
+/// Why the learned denoiser is skipped on a merge's X-Trans frame: a
+/// merge takes it on Bayer frames only, though a single X-Trans frame
+/// takes its tier's X-Trans network.
+pub const NO_XTRANS: &str = "a merge takes the learned denoiser on Bayer frames only";
 
 /// The name a list's skips give the learned highlight fill.
 pub const HIGHLIGHT_FILL: &str = "the highlight fill";
@@ -915,8 +917,8 @@ impl Steps {
 
     /// Whether the picture this list makes is kept under the reduced
     /// recipe: the reduced develop or the models' left something of
-    /// the edit out. A stage the frame cannot take is not one: an
-    /// X-Trans frame's learned tier stands the full develop in, which
+    /// the edit out. A stage the frame cannot take is not one: a
+    /// learned tier on a card it lost stands the full develop in, which
     /// is the edit's picture.
     pub fn reduced_recipe(&self) -> bool {
         self.skipped
@@ -1006,7 +1008,10 @@ impl Steps {
 /// What a develop must have before the decode.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Needs {
-    /// The learned denoiser's model.
+    /// The learned denoiser's model: the tier's Bayer network, since
+    /// the frame's mosaic is not known before the decode. An X-Trans
+    /// frame's list runs the tier's X-Trans network ([`stages`]); a
+    /// merge's frame names its own.
     pub denoiser: Option<&'static greycard_ai::Model>,
     /// The look the edit names, when it has strength.
     pub look: Option<String>,
@@ -1146,18 +1151,15 @@ pub fn stages(
             merged,
             ..
         } => {
-            let tier = edit
-                .noise
-                .tier()
-                .map(|t| greycard_ai::denoiser(t).expect("the edit's tiers are the registry's"));
+            // The tier the edit names, as the frame's mosaic has it: an
+            // X-Trans frame runs the tier's X-Trans network.
             let xtrans = pattern.as_ref().is_some_and(CfaPattern::is_xtrans);
+            let tier = edit.noise.tier().map(|t| {
+                greycard_ai::denoiser_for(t, xtrans).expect("the edit's tiers are the registry's")
+            });
             let learned = match tier {
                 Some(_) if reduced => {
                     s.skip(LEARNED_DENOISER, Skip::Reduced);
-                    None
-                }
-                Some(_) if xtrans => {
-                    s.skip(LEARNED_DENOISER, Skip::Unavailable(NO_XTRANS));
                     None
                 }
                 Some(_) if pattern.is_none() => {
@@ -1170,7 +1172,7 @@ pub fn stages(
                     None
                 }
                 // On record as off this card: it lost the card while it
-                // ran. Skipped as on X-Trans, which comes first.
+                // ran.
                 Some(_) if crate::ai::learned_off_card() => {
                     s.skip(LEARNED_DENOISER, Skip::Unavailable(OFF_CARD));
                     None
@@ -1198,6 +1200,15 @@ pub fn stages(
                     // The fill's cells, read beside opposed; only for
                     // the fill, so a list without it prepares as it did.
                     clip_codes: fill.is_some(),
+                    // On X-Trans the method resolved as the prepare
+                    // resolves it, so the demosaic that stands in for
+                    // the network, where it runs and what it is, is
+                    // X-Trans's own (a Bayer method has a device
+                    // version an X-Trans mosaic must not be sent to).
+                    demosaic: match pattern {
+                        Some(p) if xtrans && learned.is_some() => settings.demosaic.for_mosaic(p),
+                        _ => settings.demosaic,
+                    },
                     ..settings.clone()
                 },
                 measure_noise: learned.is_some(),
@@ -2794,9 +2805,10 @@ mod tests {
             }));
     }
 
-    /// A learned tier on a card the denoiser lost is skipped as on
-    /// X-Trans, in its own words, in the window and an export alike; on
-    /// X-Trans, X-Trans's words win. Off the record, it runs.
+    /// A learned tier on a card the denoiser lost is skipped in its own
+    /// words, in the window and an export alike, on X-Trans as on
+    /// Bayer. Off the record, it runs: on X-Trans, the tier's X-Trans
+    /// network.
     ///
     /// The nine pairs: the off-card flag is the same for a record of any
     /// tier (greycard-ai's `a_record_of_any_tier_puts_the_denoiser_off`),
@@ -2845,14 +2857,19 @@ mod tests {
         let x = stages(&edit, &Purpose::Viewport, &xtrans(), None);
         assert_eq!(
             x.skipped,
-            vec![(
-                LEARNED_DENOISER,
-                Skip::Unavailable("the learned denoiser has no X-Trans version yet")
-            )]
+            vec![(LEARNED_DENOISER, Skip::Unavailable(OFF_CARD))]
         );
         crate::ai::set_test_off_card(Some(false));
         let on = stages(&edit, &Purpose::Viewport, &raw(0), None);
-        assert!(on.ops().any(|o| matches!(o, Stage::Learned(_))));
+        assert!(
+            on.ops()
+                .any(|o| *o == Stage::Learned(&greycard_ai::DENOISE_BEST))
+        );
+        let x = stages(&edit, &Purpose::Viewport, &xtrans(), None);
+        assert!(
+            x.ops()
+                .any(|o| *o == Stage::Learned(&greycard_ai::DENOISE_XTRANS_BEST))
+        );
         crate::ai::set_test_off_card(None);
     }
 
@@ -2904,17 +2921,43 @@ mod tests {
         assert!(reduced.skipped.contains(&(LEARNED_DENOISER, Skip::Reduced)));
         assert_eq!(needs(&edit, &Purpose::Reduced).denoiser, None);
 
-        // Nor does an X-Trans mosaic, which it has no version for; the
-        // full develop stands in, which is the edit's picture, so the
-        // list is not the reduced recipe's.
-        let x = stages(&edit, &Purpose::Viewport, &xtrans(), None);
-        assert!(!x.ops().any(|o| matches!(o, Stage::Learned(_))));
-        assert!(matches!(
-            x.skipped[..],
-            [(LEARNED_DENOISER, Skip::Unavailable(_))]
-        ));
-        assert!(!x.reduced_recipe());
-        assert!(!stages(&edit, &export(), &xtrans(), None).reduced_recipe());
+        // An X-Trans mosaic takes the tier's X-Trans network, in the
+        // same place, blended as on Bayer, the profiled denoise not run.
+        for purpose in [Purpose::Viewport, export()] {
+            let x = stages(&edit, &purpose, &xtrans(), None);
+            assert_eq!(
+                names(&x)[..6],
+                [
+                    "prepare",
+                    "CA",
+                    "learned denoiser",
+                    "into working",
+                    "keep Pair",
+                    "blend"
+                ]
+            );
+            assert!(
+                x.ops()
+                    .any(|o| *o == Stage::Learned(&greycard_ai::DENOISE_XTRANS_BEST))
+            );
+            assert!(x.skipped.is_empty(), "{:?}", x.skipped);
+            let Some(Stage::Prepare(p)) = x.ops().next() else {
+                panic!("a raw's list begins at its prepare");
+            };
+            assert!(p.measure_noise && p.settings.denoise.is_none());
+            // Without its model, the engine's own path stands in: the
+            // mosaic's own demosaic and the profiled denoise.
+            let stand_in = x.without_learned();
+            assert!(!stand_in.ops().any(|o| matches!(o, Stage::Learned(_))));
+            let method = stand_in.ops().find_map(|o| match o {
+                Stage::Demosaic(m, _) => Some(*m),
+                _ => None,
+            });
+            assert_eq!(method, Some(DemosaicMethod::Markesteijn3));
+            assert!(!stand_in.ops().any(Stage::demosaics_on_device));
+        }
+        let reduced = stages(&edit, &Purpose::Reduced, &xtrans(), None);
+        assert!(reduced.skipped.contains(&(LEARNED_DENOISER, Skip::Reduced)));
     }
 
     /// A merge's frame: the prepare with nothing clipped and its noise

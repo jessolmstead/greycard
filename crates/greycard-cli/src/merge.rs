@@ -403,7 +403,7 @@ mod tests {
         );
         assert_eq!(
             notes(&[], Some(merge::LearnedSkipped::XTrans)),
-            vec!["no learned denoise on X-Trans"]
+            vec!["no learned denoise in an X-Trans merge"]
         );
         assert_eq!(notes(&warnings, None), warnings);
         assert!(notes(&[], None).is_empty());

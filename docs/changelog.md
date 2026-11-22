@@ -40,6 +40,9 @@ design note behind it.
 
 ### Develop
 
+- The learned denoiser works on Fujifilm X-Trans raws, in the same
+  three tiers; each tier's X-Trans network is a separate download
+  ([§731](https://github.com/jessolmstead/greycard/blob/master/docs/notes/731-the-learned-denoiser-on-x-trans.md)).
 - A mask's Detail has an Output sharpen, −100 to +100: it takes the
   picture's sharpening away under the mask or adds its own (issue 135,
   [§730](https://github.com/jessolmstead/greycard/blob/master/docs/notes/730-output-sharpen-in-a-mask-and-its-radius.md)).

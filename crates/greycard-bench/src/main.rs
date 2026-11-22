@@ -185,10 +185,8 @@ fn main() -> Result<()> {
             cli.pattern
         )
     })?;
-    // The learned denoiser takes a packed 2x2 Bayer mosaic.
-    if pattern.is_xtrans() && cli.ai_model.is_some() {
-        bail!("--ai-model needs a Bayer pattern: the learned denoiser has no X-Trans version");
-    }
+    // A model takes its own mosaic: one handed the other's refuses it
+    // at its run ("not a 2x2 Bayer pattern", "not an X-Trans pattern").
     let methods: Vec<DemosaicMethod> = if cli.ai_model.is_some() {
         // The network stands in for every method; one placeholder run.
         vec![DemosaicMethod::default()]

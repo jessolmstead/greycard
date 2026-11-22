@@ -37,7 +37,7 @@ fn a_merge_that_went_without_the_tier_says_why() {
     );
     assert_eq!(
         landed(Some(merge::LearnedSkipped::XTrans)),
-        "merged 3 frames into IMG_0-HDR.dng; no learned denoise on X-Trans"
+        "merged 3 frames into IMG_0-HDR.dng; no learned denoise in an X-Trans merge"
     );
     assert_eq!(landed(None), "merged 3 frames into IMG_0-HDR.dng");
 }

@@ -35,9 +35,10 @@ pub use fill::Fill;
 pub use image::{Mask, Rgb8, Rgbf};
 pub use refine::refine;
 pub use registry::{
-    DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISERS, FILL, MODELS, Model, REMOVE,
-    REMOVE_FAST, RETIRED, Retired, Runtime, SAM, SAM3, SKY, SUBJECT, SUBJECT_WEBGPU, cpu_runtime,
-    denoiser, model, tier_of,
+    DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISE_XTRANS_BALANCED, DENOISE_XTRANS_BEST,
+    DENOISE_XTRANS_FAST, DENOISERS, FILL, MODELS, Model, REMOVE, REMOVE_FAST, RETIRED, Retired,
+    Runtime, SAM, SAM3, SKY, SUBJECT, SUBJECT_WEBGPU, XTRANS_DENOISERS, cpu_runtime, denoiser,
+    denoiser_for, for_mosaic, model, takes_xtrans, tier_of,
 };
 pub use remove::Remove;
 pub use runtime::Provider;

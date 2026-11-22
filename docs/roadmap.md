@@ -1134,22 +1134,9 @@ clears or a tester asks for it.
       any mosaic (§331)
 - [ ] The capture sharpen's radius measured from an X-Trans mosaic
       (§322)
-- [ ] A learned denoiser for X-Trans, in this order (§322). First the
-      contract: a packing of the 6x6 pattern into the network's input,
-      since the Bayer four planes at half resolution have no
-      equivalent, and that decides the data's shape. Then the data,
-      from three sources: the bulk from the archive's low-ISO Bayer
-      frames, demosaiced and re-mosaiced onto the X-Trans pattern
-      (thousands of frames, license ours); raw.pixls.us's base-ISO
-      RAFs, CC0, one to a few per body across X-Trans I to the
-      current sensors in both compressions, as real-pattern training
-      examples and as the held-out validation set, so the reported
-      number is on real X-Trans; and the noise model per body fitted
-      from the flat regions of raw.pixls.us's high-ISO RAFs and our
-      own Fuji samples. Our side writes the re-mosaic export and a
-      fetch script for the pixls set; the training is the user's, as
-      the Bayer tiers were. The README's training clause grows the
-      CC0 set
+- [ ] The X-Trans denoiser, what is left (§731): fp16 copies for Core
+      ML, a merge of X-Trans frames, and a tier's fetch taking only the
+      network a library needs
 - [ ] A GPU X-Trans demosaic, if the CPU's 0.6 s on 40 MP becomes what
       a develop waits on (§322)
 - [ ] Per-camera hot pixel defect map. Waits on a place for per-camera

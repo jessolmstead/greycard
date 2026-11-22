@@ -63,35 +63,31 @@ fn what_the_edit_went_without_reaches_the_status_line() {
 }
 
 /// The learned denoiser on record as off this card rests its tiers
-/// on a raw, with the section's hint; X-Trans's hint wins; off the
-/// record, nothing rests; a picture's section is left as it says.
+/// on a raw, with the section's hint; off the record, nothing rests; a
+/// picture's section is left as it says.
 #[test]
 fn a_card_the_denoiser_lost_rests_its_tiers() {
     use crate::testing::{folder, state_for, window};
     assert_eq!(
-        learned_unavailable(false, true),
+        learned_unavailable(true),
         "learned: not on this graphics card"
     );
-    assert_eq!(
-        learned_unavailable(true, true),
-        "learned: not on X-Trans yet"
-    );
-    assert_eq!(learned_unavailable(false, false), "");
+    assert_eq!(learned_unavailable(false), "");
     let app = window(1);
-    let (state, _worker) = state_for(&app, folder(1));
+    let (_state, _worker) = state_for(&app, folder(1));
     app.set_raw_input(true);
     crate::ai::set_test_off_card(Some(true));
-    show_learned_unavailable(&state.borrow(), &app);
+    show_learned_unavailable(&app);
     assert_eq!(
         app.get_learned_unavailable(),
         "learned: not on this graphics card"
     );
     crate::ai::set_test_off_card(Some(false));
-    show_learned_unavailable(&state.borrow(), &app);
+    show_learned_unavailable(&app);
     assert_eq!(app.get_learned_unavailable(), "");
     app.set_raw_input(false);
     crate::ai::set_test_off_card(Some(true));
-    show_learned_unavailable(&state.borrow(), &app);
+    show_learned_unavailable(&app);
     assert_eq!(app.get_learned_unavailable(), "");
     crate::ai::set_test_off_card(None);
 }
@@ -103,7 +99,7 @@ fn a_card_the_denoiser_lost_rests_its_tiers() {
 fn the_hint_never_reads_the_record_on_the_windows_thread() {
     use crate::testing::{folder, state_for, window};
     let app = window(1);
-    let (state, _worker) = state_for(&app, folder(1));
+    let (_state, _worker) = state_for(&app, folder(1));
     let root = std::env::temp_dir().join(format!(
         "greycard-hint-no-read-{}-{:?}",
         std::process::id(),
@@ -135,7 +131,7 @@ fn the_hint_never_reads_the_record_on_the_windows_thread() {
     crate::ai::set_test_off_card(None);
     app.set_raw_input(true);
     let before = greycard_ai::runtime::here_asked_on_this_thread();
-    show_learned_unavailable(&state.borrow(), &app);
+    show_learned_unavailable(&app);
     assert_eq!(
         greycard_ai::runtime::here_asked_on_this_thread(),
         before,
@@ -181,7 +177,7 @@ fn try_again_takes_this_cards_record_off_and_brings_the_tiers_back() {
     app.set_raw_input(true);
     app.set_collapsed_noise(false);
     crate::ai::set_test_off_card(Some(true));
-    show_learned_unavailable(&state.borrow(), &app);
+    show_learned_unavailable(&app);
     crate::testing::settle(&app);
     assert_eq!(
         app.get_learned_unavailable(),
@@ -204,17 +200,9 @@ fn try_again_takes_this_cards_record_off_and_brings_the_tiers_back() {
     let record = std::fs::read_to_string(greycard_ai::runtime::off_card_path(&root)).unwrap();
     assert!(!record.contains(here), "{record}");
     assert!(record.contains("Other GPU"), "{record}");
-    // X-Trans keeps its own hint, and has no Try again.
-    assert_eq!(
-        learned_unavailable(true, true),
-        "learned: not on X-Trans yet"
-    );
-    assert!(!retry_offered(true, true));
-    assert!(!retry_offered(true, false));
-    assert!(!retry_offered(false, false));
-    assert!(retry_offered(false, true));
-    // An X-Trans raw open on a recorded card: its hint, and no
-    // button in the window.
+    // An X-Trans raw open on a recorded card rests as a Bayer one
+    // does, with the card's hint and Try again; off the record, its
+    // tiers are on: it has a network for each.
     let xtrans = greycard_core::RawFrame {
         width: 6,
         height: 6,
@@ -225,11 +213,19 @@ fn try_again_takes_this_cards_record_off_and_brings_the_tiers_back() {
     let profile = greycard_core::color::profile_from_frame(&xtrans).unwrap();
     state.borrow_mut().develop.frame = Some((std::sync::Arc::new(xtrans), Box::new(profile)));
     crate::ai::set_test_off_card(Some(true));
-    show_learned_unavailable(&state.borrow(), &app);
+    show_learned_unavailable(&app);
     crate::testing::settle(&app);
-    assert_eq!(app.get_learned_unavailable(), "learned: not on X-Trans yet");
+    assert_eq!(
+        app.get_learned_unavailable(),
+        "learned: not on this graphics card"
+    );
+    assert!(app.get_learned_retry());
+    assert!(button().is_some(), "Try again on X-Trans too");
+    crate::ai::set_test_off_card(Some(false));
+    show_learned_unavailable(&app);
+    crate::testing::settle(&app);
+    assert_eq!(app.get_learned_unavailable(), "");
     assert!(!app.get_learned_retry());
-    assert!(button().is_none(), "no Try again on X-Trans");
     state.borrow_mut().develop.frame = None;
     crate::ai::set_test_off_card(None);
     greycard_ai::runtime::set_test_here(None);

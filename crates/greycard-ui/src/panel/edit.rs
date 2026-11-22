@@ -1217,7 +1217,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 .as_ref()
                 .map(|s| s.root().to_path_buf());
             crate::ai::forget_learned_off_card(root.as_deref());
-            crate::panel::deliver::show_learned_unavailable(&state.borrow(), &app);
+            crate::panel::deliver::show_learned_unavailable(&app);
             app.invoke_develop_changed();
         });
     }

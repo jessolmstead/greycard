@@ -5,12 +5,19 @@ use anyhow::{Context, Result};
 
 use crate::common::{denoiser_tiers, megabytes};
 
-/// The models `what` names: a denoiser tier, a model's id, or `all`.
+/// The models `what` names: a denoiser tier (its Bayer network and its
+/// X-Trans one), a model's id, or `all`.
 fn models_named(what: &str) -> Result<Vec<&'static greycard_ai::Model>> {
     if what == "all" {
         return Ok(greycard_ai::MODELS.iter().collect());
     }
-    if let Some(model) = greycard_ai::denoiser(what).or_else(|| greycard_ai::model(what)) {
+    if let (Some(bayer), Some(xtrans)) = (
+        greycard_ai::denoiser_for(what, false),
+        greycard_ai::denoiser_for(what, true),
+    ) {
+        return Ok(vec![bayer, xtrans]);
+    }
+    if let Some(model) = greycard_ai::model(what) {
         return Ok(vec![model]);
     }
     let ids: Vec<&str> = greycard_ai::MODELS.iter().map(|m| m.id).collect();
@@ -450,7 +457,18 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(ids("all").len(), greycard_ai::MODELS.len());
-        assert_eq!(ids("fast"), vec![greycard_ai::DENOISE_FAST.id]);
+        assert_eq!(
+            ids("fast"),
+            vec![
+                greycard_ai::DENOISE_FAST.id,
+                greycard_ai::DENOISE_XTRANS_FAST.id
+            ],
+            "a tier word fetches both its networks"
+        );
+        assert_eq!(
+            ids(greycard_ai::DENOISE_XTRANS_BEST.id),
+            vec![greycard_ai::DENOISE_XTRANS_BEST.id]
+        );
         assert_eq!(
             ids(greycard_ai::SUBJECT.id),
             vec![greycard_ai::SUBJECT.id],

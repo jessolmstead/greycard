@@ -636,12 +636,14 @@ impl crate::walk::Models for WorkerModels<'_> {
     }
 }
 
-/// The learned denoiser's network takes a packed 2x2 Bayer mosaic.
-fn bayer_only(frame: &RawFrame) -> anyhow::Result<()> {
+/// The learned denoiser's networks take a 2x2 Bayer mosaic or an
+/// X-Trans one, each tier a network for each.
+fn bayer_or_xtrans(frame: &RawFrame) -> anyhow::Result<()> {
     if let greycard_core::raw::SensorLayout::Cfa(p) = &frame.layout
         && !greycard_core::develop::rcd::is_bayer(p)
+        && !p.is_xtrans()
     {
-        anyhow::bail!("the learned denoiser needs a 2x2 Bayer mosaic, not a {p} one");
+        anyhow::bail!("the learned denoiser needs a 2x2 Bayer or an X-Trans mosaic, not a {p} one");
     }
     Ok(())
 }
@@ -705,11 +707,11 @@ pub(crate) fn network(
     tiling: greycard_ai::denoise::Tiling,
 ) -> anyhow::Result<(Vec<f32>, LearnedReport)> {
     use anyhow::Context;
-    bayer_only(frame)?;
+    bayer_or_xtrans(frame)?;
     let pattern = prepared
         .pattern
         .clone()
-        .context("the learned denoiser needs a Bayer mosaic")?;
+        .context("the learned denoiser needs a mosaic")?;
     let noise = prepared
         .noise_model()
         .context("the learned denoiser needs the frame's noise model")?;
@@ -727,7 +729,7 @@ pub(crate) fn network(
             // loaded between develops, the denoiser's run, not its
             // load, is what asks for the most.
             if denoiser.provider() == greycard_ai::Provider::WebGpu {
-                crate::ai::denoise_room(tiling.tile)?;
+                crate::ai::denoise_room(model, tiling.tile)?;
             }
             let rgb = denoiser.run(
                 &prepared.samples,

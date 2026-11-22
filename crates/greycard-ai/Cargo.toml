@@ -126,3 +126,7 @@ required-features = ["webgpu"]
 [[example]]
 name = "mask_peak"
 required-features = ["webgpu"]
+
+[[example]]
+name = "denoise_xtrans_speed"
+required-features = ["webgpu"]

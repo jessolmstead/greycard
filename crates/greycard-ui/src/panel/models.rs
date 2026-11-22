@@ -174,7 +174,7 @@ fn probed(app: &App, here: Here, generation: u64) {
     crate::panel::retouch::show_patches(&st, &st.develop.edit, app);
     // And the record read: the learned tiers rest on a card the
     // denoiser lost.
-    crate::panel::deliver::show_learned_unavailable(&st, app);
+    crate::panel::deliver::show_learned_unavailable(app);
     if st.current.is_some() {
         offer_once(&mut st, app);
     }

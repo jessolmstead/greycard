@@ -1228,7 +1228,7 @@ pub(super) fn run(
                             &mut base,
                             shelf.get_or_insert_with(Shelf::user),
                             (opened_file.take(), coming.as_ref().map(|k| (k, &opened))),
-                            (&edit, turn, &|e: &Edit| stands_in(&ai, e)),
+                            (&edit, turn, &|e: &Edit, x| stands_in(&ai, e, x)),
                             gpu.as_ref(),
                             lenses.as_deref(),
                         );
@@ -2051,8 +2051,20 @@ pub(super) fn drop_changed(
 }
 
 /// Whether the engine's own path would stand in for the learned
-/// denoiser an edit asks for ([`stands_in`]).
-pub(super) type StandsIn<'a> = &'a dyn Fn(&Edit) -> bool;
+/// denoiser an edit asks for on a frame, X-Trans or not ([`stands_in`]).
+pub(super) type StandsIn<'a> = &'a dyn Fn(&Edit, bool) -> bool;
+
+/// Whether a frame opened is an X-Trans raw, whose tier is its own
+/// network.
+fn input_xtrans(input: &Input) -> bool {
+    matches!(input, Input::Raw(f)
+        if matches!(&f.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans()))
+}
+
+/// Whether the frame a base was made of is an X-Trans raw.
+fn facts_xtrans(facts: &crate::stages::Facts) -> bool {
+    matches!(&facts.input, crate::stages::InputKind::Raw { pattern: Some(p), .. } if p.is_xtrans())
+}
 
 /// The open frame's base set aside for the frame `coming` to be
 /// opened under `edit` at `turn`: what the frame in hand kept put on
@@ -2084,12 +2096,18 @@ pub(super) fn swap_base(
             gpu.release();
         }
         if let Some(file) = leaving {
-            let standing = stands_in(&b.edit);
+            let standing = stands_in(&b.edit, facts_xtrans(&b.facts));
             shelf.put(file, b, standing);
         }
     }
     if let Some((file, opened)) = coming
-        && let Some(mut b) = shelf.take(file, edit, turn, (gpu.is_some(), stands_in(edit)), lenses)
+        && let Some(mut b) = shelf.take(
+            file,
+            edit,
+            turn,
+            (gpu.is_some(), stands_in(edit, input_xtrans(opened))),
+            lenses,
+        )
     {
         // The shelf matched the file's path, stat, and decode: the
         // frame opened is the one the base was made from, read again.
@@ -2112,15 +2130,16 @@ pub(super) fn swap_base(
 }
 
 /// Whether the learned denoiser `edit` asks for is not to be had as a
-/// walk of it starts, so the engine's own path stands in from the
-/// first step: its model is not in the store, or there is no runtime
+/// walk of it starts on a frame, X-Trans where `xtrans`, so the
+/// engine's own path stands in from the first step: the tier's model
+/// for that mosaic is not in the store, or there is no runtime
 /// ([`Ai::denoiser_there`], what the walk asks first). A stand-in the
 /// walk falls to later, for the card's memory or a failed run, is not
 /// this: the next walk asks the card again.
-pub(super) fn stands_in(ai: &Ai, edit: &Edit) -> bool {
+pub(super) fn stands_in(ai: &Ai, edit: &Edit, xtrans: bool) -> bool {
     edit.noise
         .tier()
-        .and_then(greycard_ai::denoiser)
+        .and_then(|t| greycard_ai::denoiser_for(t, xtrans))
         .is_some_and(|model| ai.denoiser_there(model).is_err())
 }
 

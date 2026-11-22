@@ -624,10 +624,10 @@ fn forget_off_card_at(store_root: &Path, here: Option<(String, String)>) -> usiz
     gone
 }
 
+/// Whether `model` is a denoiser tier's id, on either mosaic: a card
+/// lost under one rests them all.
 fn is_denoiser(model: &str) -> bool {
-    crate::registry::DENOISERS
-        .iter()
-        .any(|(_, m)| m.id == model)
+    crate::registry::model(model).is_some_and(|m| crate::registry::tier_of(m).is_some())
 }
 
 /// Whether `entries` hold any denoiser tier off the card for an adapter

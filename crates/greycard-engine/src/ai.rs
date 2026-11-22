@@ -1845,8 +1845,48 @@ pub fn remove_needs(size: usize, held: bool) -> u64 {
     peak + CARD_MARGIN
 }
 
+/// What an X-Trans tier's run asks of the card over the loaded tier,
+/// in tenths of a GiB, at tiles of 1024, 512, 384, and 256 (cut to
+/// 1200, 720, 576, and 432 a side): measured on an RTX 5070 Ti under
+/// ONNX Runtime's WebGPU provider, a 26 MP frame, the card's peak over
+/// the loaded tier, rounded up. At 1024 (`denoise_xtrans_speed`) 2.11,
+/// 3.43, and 5.05 GiB; at 512, 384, and 256 (`denoise_tiles`, one tile
+/// a process) 0.62, 0.34, and 0.17 for fast, 0.87, 0.47, and 0.25 for
+/// balanced, and 1.89, 0.58, and 0.49 for best. The best X-Trans tier
+/// asks 1.2 GiB more at 1024 than the Bayer best's table does: its head
+/// runs at the mosaic's full resolution.
+const XTRANS_PEAKS: [(&str, [u64; 4]); 3] = [
+    ("fast", [22, 7, 4, 2]),
+    ("balanced", [35, 9, 5, 3]),
+    ("best", [51, 19, 6, 5]),
+];
+
+/// The card's free memory the learned denoiser `model`'s run at `tile`
+/// needs, loaded: an X-Trans tier's own ([`XTRANS_PEAKS`]), any other
+/// the Bayer tiers' table ([`denoise_needs`]).
+pub fn denoise_needs_of(model: &Model, tile: usize) -> u64 {
+    let peaks = greycard_ai::tier_of(model)
+        .filter(|_| greycard_ai::takes_xtrans(model))
+        .and_then(|t| XTRANS_PEAKS.iter().find(|(n, _)| *n == t))
+        .map(|(_, p)| p);
+    let Some(peaks) = peaks else {
+        return denoise_needs(tile);
+    };
+    let tenths = if tile <= 256 {
+        peaks[3] as f64
+    } else if tile <= 384 {
+        peaks[2] as f64
+    } else if tile <= 512 {
+        peaks[1] as f64
+    } else {
+        // Past 1024 (`GREYCARD_DENOISE_TILE`), by the tile's area.
+        peaks[0] as f64 * (tile as f64 / 1024.0).powi(2).max(1.0)
+    };
+    (tenths * TENTH_GIB as f64) as u64 + CARD_MARGIN
+}
+
 /// The card's free memory the learned denoiser's run at `tile` needs,
-/// loaded.
+/// loaded: the Bayer tiers', by the best's peaks.
 pub fn denoise_needs(tile: usize) -> u64 {
     let peak = if tile <= 256 {
         DENOISE_PEAK_256
@@ -1936,8 +1976,8 @@ fn offer_as_size(offer: Option<u64>, heap: Option<u64>) -> Option<u64> {
 
 /// What the learned denoiser at `tile` is said to be too small for
 /// ([`short_of`]): where its least tile is past `offer` too, else none.
-fn denoise_small(tile: usize, offer: Option<u64>) -> Option<&'static str> {
-    too_small(denoise_needs(denoise_least(tile)), offer).then_some("it")
+fn denoise_small(model: &Model, tile: usize, offer: Option<u64>) -> Option<&'static str> {
+    too_small(denoise_needs_of(model, denoise_least(tile)), offer).then_some("it")
 }
 
 /// The least tile the learned denoiser at `tile` steps down to
@@ -2240,13 +2280,13 @@ pub fn give_back_due(ais: &[&Ai]) -> bool {
 /// now, refused with why when it is short: the last word before its
 /// run, after [`Ai::denoise_room_for`] has given the card back and
 /// waited. Where the card's free memory is not known it may.
-pub fn denoise_room(tile: usize) -> Result<(), CardShort> {
+pub fn denoise_room(model: &Model, tile: usize) -> Result<(), CardShort> {
     let what = format!("the learned denoiser at a tile of {tile}");
     match card_free_now().and_then(|(free, card)| {
         // Read after the free figure; too small only where its least
         // tile is past the card too.
-        let small = denoise_small(tile, card_offer_now());
-        short_of(&card, free, denoise_needs(tile), &what, small)
+        let small = denoise_small(model, tile, card_offer_now());
+        short_of(&card, free, denoise_needs_of(model, tile), &what, small)
     }) {
         Some(why) => Err(CardShort(why)),
         None => Ok(()),
@@ -3506,7 +3546,7 @@ impl Ai {
             return Ok(DenoiseOn::Card);
         }
         let tile = d.tiling().tile;
-        self.denoise_room_at(tile)
+        self.denoise_room_at(model, tile)
     }
 
     /// [`Ai::denoise_room_for`] for a denoiser on the card at `tile`.
@@ -3517,7 +3557,11 @@ impl Ai {
     /// and the engine's own denoise stands in, or an export fails. The
     /// log says what was chosen and why. Where the card's memory is not
     /// known it runs as it is.
-    pub(crate) fn denoise_room_at(&mut self, tile: usize) -> Result<DenoiseOn, CardShort> {
+    pub(crate) fn denoise_room_at(
+        &mut self,
+        model: &'static Model,
+        tile: usize,
+    ) -> Result<DenoiseOn, CardShort> {
         let what = format!("the learned denoiser at a tile of {tile}");
         let short = self.short.clone();
         // A canceled export lets nothing go.
@@ -3528,8 +3572,14 @@ impl Ai {
         let patience = self.patience.take();
         // Too small for it only where its least tile is past the card too.
         let least = denoise_least(tile);
-        let small = move |offer| denoise_small(tile, offer);
-        let first = self.room(&what, &|_| denoise_needs(tile), &small, false, release);
+        let small = move |offer| denoise_small(model, tile, offer);
+        let first = self.room(
+            &what,
+            &|_| denoise_needs_of(model, tile),
+            &small,
+            false,
+            release,
+        );
         self.patience = patience;
         let Err(mut why) = first else {
             return Ok(DenoiseOn::Card);
@@ -3540,7 +3590,7 @@ impl Ai {
         // smallest does.
         let past_card = self
             .card_size()
-            .is_some_and(|size| denoise_needs(tile) > size);
+            .is_some_and(|size| denoise_needs_of(model, tile) > size);
         if past_card {
             self.give_back_own(false);
         }
@@ -3561,11 +3611,14 @@ impl Ai {
             std::iter::once(tile)
                 .chain(DENOISE_SMALLER_TILES)
                 .filter(|&t| t <= from)
-                .find(|&t| free.is_none_or(|f| f >= denoise_needs(t)))
+                .find(|&t| free.is_none_or(|f| f >= denoise_needs_of(model, t)))
         };
         // The need as it is compared: the refusal's tenth can round it
         // away.
-        let found = format!("{why} ({} GiB needed)", gib_said(denoise_needs(tile)));
+        let found = format!(
+            "{why} ({} GiB needed)",
+            gib_said(denoise_needs_of(model, tile))
+        );
         let at = |t: usize| {
             if t == tile {
                 DenoiseOn::Card
@@ -3577,7 +3630,7 @@ impl Ai {
         if let Some(t) = smaller {
             tracing::info!(
                 "{found}: the learned denoiser runs at a tile of {t}, which needs {} GiB",
-                gib_said(denoise_needs(t))
+                gib_said(denoise_needs_of(model, t))
             );
             // Handled, no refusal and no short met.
             self.short = short;
@@ -3588,7 +3641,13 @@ impl Ai {
         if self.patience.is_some() {
             let what = format!("the learned denoiser at a tile of {least}");
             if self
-                .room(&what, &|_| denoise_needs(least), &small, false, false)
+                .room(
+                    &what,
+                    &|_| denoise_needs_of(model, least),
+                    &small,
+                    false,
+                    false,
+                )
                 .is_ok()
                 && let Some(t) = fitting(self, tile)
             {
@@ -3599,7 +3658,13 @@ impl Ai {
             // Said at its own tile, as it always was, the card as it is.
             if let Some(w) = self.free_memory().and_then(|(free, card)| {
                 let small = small(self.card_offer());
-                short_of(&card, free, denoise_needs(tile), &what_at(tile), small)
+                short_of(
+                    &card,
+                    free,
+                    denoise_needs_of(model, tile),
+                    &what_at(tile),
+                    small,
+                )
             }) {
                 why = w;
             }
@@ -12266,15 +12331,15 @@ mod tests {
     #[test]
     fn the_denoiser_is_refused_on_a_short_card() {
         set_free_by_test(Some(vec![Some(GIB)]));
-        let short = denoise_room(1024).expect_err("short");
+        let short = denoise_room(&greycard_ai::DENOISE_BEST, 1024).expect_err("short");
         assert!(
             short.0.contains("the learned denoiser at a tile of 1024"),
             "{short}"
         );
         set_free_by_test(Some(vec![Some(3 * GIB)]));
-        assert!(denoise_room(512).is_ok());
+        assert!(denoise_room(&greycard_ai::DENOISE_BEST, 512).is_ok());
         set_free_by_test(Some(vec![None]));
-        assert!(denoise_room(1024).is_ok());
+        assert!(denoise_room(&greycard_ai::DENOISE_BEST, 1024).is_ok());
         set_free_by_test(None);
         let e = anyhow::Error::new(CardShort("short".into()));
         assert!(matches!(
@@ -12304,6 +12369,76 @@ mod tests {
         (ai, calls)
     }
 
+    /// Each X-Trans tier asks the card for its own peak: on a 6 GB card
+    /// with 4.5 GiB free the best tier (5.6 GiB at 1024) runs at 512,
+    /// the fast one (2.7) at its own 1024; the Bayer tiers' answers, by
+    /// the Bayer best's table (4.35), are what they were.
+    #[test]
+    fn each_xtrans_tier_asks_for_its_own_peak() {
+        let six = || {
+            let (mut ai, _) = denoiser_on_card(45 * GIB / 10, 0);
+            ai.card_by_test = Some(Some(6 * GIB));
+            ai
+        };
+        use greycard_ai::{
+            DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISE_XTRANS_BALANCED,
+            DENOISE_XTRANS_BEST, DENOISE_XTRANS_FAST,
+        };
+        let on = |model| six().denoise_room_at(model, 1024).unwrap();
+        assert_eq!(on(&DENOISE_XTRANS_BEST), DenoiseOn::Tile(512));
+        assert_eq!(on(&DENOISE_XTRANS_BALANCED), DenoiseOn::Card);
+        assert_eq!(on(&DENOISE_XTRANS_FAST), DenoiseOn::Card);
+        for bayer in [&DENOISE_FAST, &DENOISE_BALANCED, &DENOISE_BEST] {
+            assert_eq!(on(bayer), DenoiseOn::Card);
+            for tile in [256, 384, 512, 1024, 2048] {
+                assert_eq!(denoise_needs_of(bayer, tile), denoise_needs(tile));
+            }
+        }
+        assert_eq!(
+            gib_said(denoise_needs_of(&DENOISE_XTRANS_BEST, 1024)),
+            "5.6"
+        );
+        assert_eq!(
+            gib_said(denoise_needs_of(&DENOISE_XTRANS_FAST, 1024)),
+            "2.7"
+        );
+        // The measured smaller tiles: best's 1.89 at 512 is 2.4 with the
+        // margin, fast's 0.17 at 256 is 0.7.
+        assert_eq!(gib_said(denoise_needs_of(&DENOISE_XTRANS_BEST, 512)), "2.4");
+        assert_eq!(gib_said(denoise_needs_of(&DENOISE_XTRANS_FAST, 256)), "0.7");
+        // Issue 130's 4 GB card, 1.8 GiB free: best steps down to 384
+        // (1.1), fast to 512 (1.2); a Bayer tier at 512 runs at 384.
+        let four = || {
+            let (mut ai, _) = denoiser_on_card(18 * GIB / 10, 0);
+            ai.card_by_test = Some(Some(4 * GIB));
+            ai
+        };
+        let at = |model, tile| four().denoise_room_at(model, tile).unwrap();
+        assert_eq!(at(&DENOISE_XTRANS_BEST, 1024), DenoiseOn::Tile(384));
+        assert_eq!(at(&DENOISE_XTRANS_FAST, 1024), DenoiseOn::Tile(512));
+        assert_eq!(at(&DENOISE_BEST, 512), DenoiseOn::Tile(384));
+        // Each tier's need falls with its tile, and grows with the tier.
+        for tiers in [[256, 384], [384, 512], [512, 1024]] {
+            for m in [
+                &DENOISE_XTRANS_FAST,
+                &DENOISE_XTRANS_BALANCED,
+                &DENOISE_XTRANS_BEST,
+            ] {
+                assert!(denoise_needs_of(m, tiers[0]) < denoise_needs_of(m, tiers[1]));
+            }
+        }
+        for tile in [256, 384, 512, 1024] {
+            assert!(
+                denoise_needs_of(&DENOISE_XTRANS_FAST, tile)
+                    < denoise_needs_of(&DENOISE_XTRANS_BALANCED, tile)
+            );
+            assert!(
+                denoise_needs_of(&DENOISE_XTRANS_BALANCED, tile)
+                    < denoise_needs_of(&DENOISE_XTRANS_BEST, tile)
+            );
+        }
+    }
+
     /// A tester's 2 GB card, 1.5 GiB free with nothing of the engine's
     /// to let go: short of 512's 1.95, the denoiser runs at 384 (1.05),
     /// and the tiling the run is handed is 384, whatever the session
@@ -12314,7 +12449,7 @@ mod tests {
     fn a_two_gigabyte_cards_denoiser_runs_at_the_smaller_tile() {
         let (mut ai, _) = denoiser_on_card(15 * GIB / 10, 0);
         ai.card_by_test = Some(Some(2 * GIB));
-        let on = ai.denoise_room_at(512).unwrap();
+        let on = ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).unwrap();
         assert_eq!(on, DenoiseOn::Tile(384));
         let reloaded = greycard_ai::denoise::Tiling {
             tile: 512,
@@ -12326,7 +12461,7 @@ mod tests {
         // denoise in its place.
         let (mut ai, _) = denoiser_on_card(9 * GIB / 10, 0);
         ai.card_by_test = Some(Some(2 * GIB));
-        assert!(ai.denoise_room_at(512).is_err());
+        assert!(ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).is_err());
         assert_eq!(gib_said(denoise_needs(256)), "0.95");
     }
 
@@ -12343,28 +12478,46 @@ mod tests {
         let free = 18 * GIB / 10;
         // 0.5 let go: 2.3 free, room at 512.
         let (mut ai, calls) = denoiser_on_card(free, GIB / 2);
-        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Card);
+        assert_eq!(
+            ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).unwrap(),
+            DenoiseOn::Card
+        );
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert!(ai.take_short().is_none());
         assert!(!ai.short_failed());
         // Nothing let go: 384 needs 1.05.
         let (mut ai, _) = denoiser_on_card(free, 0);
-        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Tile(384));
+        assert_eq!(
+            ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).unwrap(),
+            DenoiseOn::Tile(384)
+        );
         assert!(ai.take_short().is_none());
         assert!(!ai.short_failed());
         // Not enough let go for 512: the smaller tile still.
         let (mut ai, _) = denoiser_on_card(GIB, GIB / 10);
-        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Tile(384));
+        assert_eq!(
+            ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).unwrap(),
+            DenoiseOn::Tile(384)
+        );
         // Room at 256 alone.
         let (mut ai, _) = denoiser_on_card(GIB, 0);
-        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Tile(256));
+        assert_eq!(
+            ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).unwrap(),
+            DenoiseOn::Tile(256)
+        );
         // From 1024, 512 is the first smaller tile asked.
         let (mut ai, _) = denoiser_on_card(2 * GIB, 0);
-        assert_eq!(ai.denoise_room_at(1024).unwrap(), DenoiseOn::Tile(512));
+        assert_eq!(
+            ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 1024)
+                .unwrap(),
+            DenoiseOn::Tile(512)
+        );
         // Short at every tile: refused in the words the window has
         // always shown, a failure for the set.
         let (mut ai, _) = denoiser_on_card(GIB / 2, GIB / 10);
-        let short = ai.denoise_room_at(512).expect_err("refused");
+        let short = ai
+            .denoise_room_at(&greycard_ai::DENOISE_BEST, 512)
+            .expect_err("refused");
         assert_eq!(
             short.0,
             "the card has 0.6 GiB free, short of the 1.9 GiB the learned denoiser at a tile of 512 needs; another program may be using it"
@@ -12378,26 +12531,45 @@ mod tests {
         ));
         // The card with the room, or its memory not known: no rung.
         let (mut ai, calls) = denoiser_on_card(3 * GIB, GIB);
-        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Card);
+        assert_eq!(
+            ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).unwrap(),
+            DenoiseOn::Card
+        );
         assert_eq!(calls.load(Ordering::Relaxed), 0);
         let mut unknown = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu]);
-        assert_eq!(unknown.denoise_room_at(512).unwrap(), DenoiseOn::Card);
+        assert_eq!(
+            unknown
+                .denoise_room_at(&greycard_ai::DENOISE_BEST, 512)
+                .unwrap(),
+            DenoiseOn::Card
+        );
         // Its own sessions given back first: room then, nothing let go.
         let (mut ai, calls) = denoiser_on_card(free, GIB);
         ai.freed_by_test = GIB;
-        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Card);
+        assert_eq!(
+            ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).unwrap(),
+            DenoiseOn::Card
+        );
         assert_eq!(calls.load(Ordering::Relaxed), 0);
         // Its own tile past the whole card: the engine lets go before the
         // smaller tiles are judged (0.8 and 0.4 let go: room at 384).
         let (mut ai, calls) = denoiser_on_card(8 * GIB / 10, 4 * GIB / 10);
         ai.card_by_test = Some(Some(4 * GIB));
-        assert_eq!(ai.denoise_room_at(1024).unwrap(), DenoiseOn::Tile(384));
+        assert_eq!(
+            ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 1024)
+                .unwrap(),
+            DenoiseOn::Tile(384)
+        );
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         // Its own sessions given back there too (0.4 of them).
         let (mut ai, calls) = denoiser_on_card(8 * GIB / 10, 0);
         ai.card_by_test = Some(Some(4 * GIB));
         ai.freed_by_test = 4 * GIB / 10;
-        assert_eq!(ai.denoise_room_at(1024).unwrap(), DenoiseOn::Tile(384));
+        assert_eq!(
+            ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 1024)
+                .unwrap(),
+            DenoiseOn::Tile(384)
+        );
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         // A canceled export lets nothing go.
         let (mut ai, calls) = denoiser_on_card(GIB / 2, GIB);
@@ -12406,7 +12578,7 @@ mod tests {
             wait: std::time::Duration::ZERO,
             canceled: Arc::new(|| true),
         }));
-        assert!(ai.denoise_room_at(512).is_err());
+        assert!(ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).is_err());
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
 
@@ -12430,7 +12602,9 @@ mod tests {
                         canceled: Arc::new(|| false),
                     }));
                 }
-                ai.denoise_room_at(512).expect_err("refused").0
+                ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512)
+                    .expect_err("refused")
+                    .0
             };
             let small = format!("{said}; this card is too small for it");
             let why = refused(Some(9 * GIB / 10));
@@ -12463,7 +12637,10 @@ mod tests {
             }),
         }));
         let waits = waits_by_test();
-        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Tile(384));
+        assert_eq!(
+            ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).unwrap(),
+            DenoiseOn::Tile(384)
+        );
         // A smaller tile fits: no wait, nothing met.
         assert_eq!(waits_by_test(), waits, "no wait");
         assert_eq!(looked.load(Ordering::SeqCst), 0);
@@ -12472,12 +12649,14 @@ mod tests {
         // Short at every tile: it waits its tries at the smallest, then
         // is refused at its own, a failure met for the set.
         ai.free_memory_by_test = Some(GIB / 2);
-        let short = ai.denoise_room_at(512).expect_err("refused");
+        let short = ai
+            .denoise_room_at(&greycard_ai::DENOISE_BEST, 512)
+            .expect_err("refused");
         assert_eq!(waits_by_test(), waits + 2);
         assert!(short.0.contains("at a tile of 512"), "{short}");
         assert!(ai.hit_short() && ai.short_failed());
         // The next ask of the walk waits for nothing.
-        assert!(ai.denoise_room_at(512).is_err());
+        assert!(ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).is_err());
         assert_eq!(waits_by_test(), waits + 2, "once a set");
     }
 
@@ -12536,7 +12715,10 @@ mod tests {
         for _ in 0..3 {
             ai.free_memory_by_test = Some(18 * GIB / 10);
             ai.set_patience(patience());
-            assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Card);
+            assert_eq!(
+                ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).unwrap(),
+                DenoiseOn::Card
+            );
             assert!(!ai.hit_short() && !ai.short_failed());
         }
         // A card a smaller tile fits: no wait either.
@@ -12544,7 +12726,10 @@ mod tests {
         for _ in 0..3 {
             ai.free_memory_by_test = Some(18 * GIB / 10);
             ai.set_patience(patience());
-            assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Tile(384));
+            assert_eq!(
+                ai.denoise_room_at(&greycard_ai::DENOISE_BEST, 512).unwrap(),
+                DenoiseOn::Tile(384)
+            );
         }
         assert_eq!(calls.load(Ordering::Relaxed), 3, "let go each frame");
         let image = WorkingImage::new(200, 100);

@@ -487,15 +487,13 @@ pub(crate) fn take_thumbnails(
     }
 }
 
-/// Why the learned denoiser's tiers rest on a raw, or nothing: it has
-/// no X-Trans version yet, or it lost this graphics card while it ran
-/// (on record for this card, driver, and build), X-Trans's first. The
-/// section says so and its tiers rest, while the profiled denoise works
-/// as on any raw.
-pub(crate) fn learned_unavailable(xtrans: bool, off_card: bool) -> String {
-    if xtrans {
-        tr!("learned: not on X-Trans yet")
-    } else if off_card {
+/// Why the learned denoiser's tiers rest on a raw, or nothing: it lost
+/// this graphics card while it ran (on record for this card, driver,
+/// and build). The section says so and its tiers rest, while the
+/// profiled denoise works as on any raw. An X-Trans raw takes each
+/// tier's X-Trans network, as a Bayer raw takes its own.
+pub(crate) fn learned_unavailable(off_card: bool) -> String {
+    if off_card {
         // WORDING PENDING the user's approval.
         tr!("learned: not on this graphics card")
     } else {
@@ -507,24 +505,23 @@ pub(crate) fn learned_unavailable(xtrans: bool, off_card: bool) -> String {
 /// again when the card's record may have changed (the models probe has
 /// read it, or a develop's run put the denoiser off the card). Not on a
 /// picture, which says "raw only" of the whole section.
-pub(crate) fn show_learned_unavailable(st: &State, app: &App) {
+pub(crate) fn show_learned_unavailable(app: &App) {
     if !app.get_raw_input() {
         return;
     }
-    let xtrans = st.develop.frame.as_ref().is_some_and(
-        |(f, _)| matches!(&f.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans()),
-    );
     // As known now: the first read of the record loads ONNX Runtime,
     // which is the worker's to do, not this thread's.
     let off_card = crate::ai::learned_off_card_known();
-    app.set_learned_unavailable(learned_unavailable(xtrans, off_card).into());
-    app.set_learned_retry(retry_offered(xtrans, off_card));
+    app.set_learned_unavailable(learned_unavailable(off_card).into());
+    app.set_learned_retry(off_card);
 }
 
-/// Whether Try again sits beside the hint: where the card is why, and
-/// not on X-Trans, whose hint it is and which has no version to try.
-fn retry_offered(xtrans: bool, off_card: bool) -> bool {
-    off_card && !xtrans
+/// Whether the raw open now is an X-Trans one, whose tiers are their
+/// X-Trans networks.
+fn open_xtrans(st: &State) -> bool {
+    st.develop.frame.as_ref().is_some_and(
+        |(f, _)| matches!(&f.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans()),
+    )
 }
 
 /// A result from the worker, on the UI thread.
@@ -670,7 +667,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     app.set_raw_input(true);
                     app.set_source_note("".into());
                     app.set_noise_unavailable("".into());
-                    show_learned_unavailable(&st, app);
+                    show_learned_unavailable(app);
                     // The raw's mosaic, now known from its pixels: the
                     // menu, if the worker's read ahead had not said.
                     let mosaic = match st.develop.frame.as_ref().map(|(f, _)| &f.layout) {
@@ -836,13 +833,14 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 use crate::panel::assets::AfterRuntime;
                 let have =
                     |m: &greycard_ai::Model| st.develop.store.as_ref().is_some_and(|s| s.have(m));
+                let xtrans = open_xtrans(&st);
                 let tier = st
                     .develop
                     .edit
                     .noise
                     .learned
                     .tier()
-                    .and_then(greycard_ai::denoiser);
+                    .and_then(|t| greycard_ai::denoiser_for(t, xtrans));
                 let next = match tier {
                     Some(model) if denoise_failed && !have(model) => {
                         AfterRuntime::Model(model, false)
@@ -856,7 +854,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             }
             // A run that lost the card in this develop put the denoiser
             // off it: its tiers rest from now.
-            show_learned_unavailable(&st, app);
+            show_learned_unavailable(app);
             match learned {
                 LearnedReport::Off
                 | LearnedReport::Kept
@@ -1636,13 +1634,14 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
 fn develop_for(st: &mut State, app: &App, arrived: impl Fn(&greycard_ai::Model) -> bool) {
     // A model arrived: the Original kept may have gone without it.
     crate::panel::original::drop_picture(st);
+    let xtrans = open_xtrans(st);
     let denoiser = st
         .develop
         .edit
         .noise
         .learned
         .tier()
-        .and_then(greycard_ai::denoiser)
+        .and_then(|t| greycard_ai::denoiser_for(t, xtrans))
         .is_some_and(&arrived);
     // Either fill model: a patch drawn for the remove is LaMa's where
     // its window is past the remove's.

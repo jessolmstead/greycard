@@ -2895,7 +2895,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
         &mut base,
         &mut shelf,
         (Some(key.clone()), None),
-        (&edit, 0, &|_| false),
+        (&edit, 0, &|_, _| false),
         None,
         None,
     );
@@ -2908,7 +2908,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
         &mut base,
         &mut shelf,
         (None, Some((&key, &Input::Raw(reread.clone())))),
-        (&edit, 0, &|_| false),
+        (&edit, 0, &|_, _| false),
         None,
         None,
     );
@@ -2939,7 +2939,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
         &mut base,
         &mut shelf,
         (Some(key.clone()), Some((&key, &Input::Raw(frame.clone())))),
-        (&warmer, 0, &|_| false),
+        (&warmer, 0, &|_, _| false),
         None,
         None,
     );
@@ -3018,7 +3018,7 @@ fn a_base_under_a_camera_profile_is_taken_back_after_the_directory_is_listed() {
             base,
             shelf,
             (Some(from.clone()), Some((to.0, &Input::Raw(to.1.clone())))),
-            (&edit, 0, &|_| false),
+            (&edit, 0, &|_, _| false),
             None,
             None,
         );
@@ -3199,7 +3199,11 @@ fn a_base_standing_in_for_the_learned_denoiser_is_taken_back() {
             assert!(matches!(outcome, Outcome::Developed { .. }));
             image.expect("a picture on the CPU")
         };
-    assert!(stands_in(&ai(), &edit), "no model in the test's store");
+    assert!(
+        stands_in(&ai(), &edit, false),
+        "no model in the test's store"
+    );
+    assert!(stands_in(&ai(), &edit, true), "nor its X-Trans network");
     let a = Arc::new(aberrated_frame(120, 80));
     let b = Arc::new(aberrated_frame(64, 48));
     let (ka, kb) = (shelf_key("a.CR2", &a), shelf_key("b.CR2", &b));
@@ -3216,7 +3220,7 @@ fn a_base_standing_in_for_the_learned_denoiser_is_taken_back() {
             base,
             shelf,
             (Some(from.clone()), Some((to.0, &Input::Raw(to.1.clone())))),
-            (&edit, 0, &|e| stands_in(&ai(), e)),
+            (&edit, 0, &|e, x| stands_in(&ai(), e, x)),
             None,
             None,
         );
@@ -3274,7 +3278,7 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
         &mut base,
         &mut shelf,
         (Some(key.clone()), None),
-        (&edit, 0, &|_| false),
+        (&edit, 0, &|_, _| false),
         gpu.as_ref(),
         None,
     );
@@ -3283,7 +3287,7 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
         &mut base,
         &mut shelf,
         (None, Some((&key, &Input::Raw(frame.clone())))),
-        (&edit, 0, &|_| false),
+        (&edit, 0, &|_, _| false),
         gpu.as_ref(),
         None,
     );
@@ -3387,7 +3391,7 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
         &mut base,
         &mut shelf,
         (None, Some((&key, &input))),
-        (&edit, 0, &|_| false),
+        (&edit, 0, &|_, _| false),
         None,
         None,
     );
@@ -5213,10 +5217,11 @@ fn a_set_frame_s_walk_writes_what_the_develop_writes() {
     }
 }
 
-/// An X-Trans mosaic has no learned denoiser: the walk says so in the
-/// develop's words, and writes its picture.
+/// An X-Trans mosaic asks for its tier's X-Trans network: not in the
+/// store, the walk names that network as the develop does, stands the
+/// engine's path in, and writes its picture.
 #[test]
-fn a_set_frame_s_walk_says_the_x_trans_has_no_learned_denoiser() {
+fn a_set_frame_s_walk_asks_for_the_x_trans_network() {
     let mut frame = aberrated_frame(168, 120);
     frame.layout = greycard_core::raw::SensorLayout::Cfa(greycard_core::raw::CfaPattern::xtrans());
     let mut edit = Edit::default();
@@ -5225,10 +5230,17 @@ fn a_set_frame_s_walk_says_the_x_trans_has_no_learned_denoiser() {
         develop_and_walk("export-walk-xtrans", &Input::Raw(Arc::new(frame)), &edit, 0);
     same_pixels(&developed, &walked);
     assert_eq!(left_out, said);
-    assert_eq!(
-        left_out,
-        ["the denoise: the learned denoiser has no X-Trans version yet; none ran"]
-    );
+    // Where ONNX Runtime cannot be had, the runtime is why, as on Bayer.
+    let want = match greycard_ai::runtime::status() {
+        Ok(_) => format!(
+            "the learned denoiser: {} is not downloaded; the engine's denoise instead",
+            greycard_ai::DENOISE_XTRANS_FAST.name
+        ),
+        Err(why) => {
+            format!("the learned denoiser failed ({why}); the engine's denoise instead")
+        }
+    };
+    assert_eq!(left_out, [want]);
 }
 
 /// A picture file walks as its develop does: turned, cropped, its
@@ -6806,7 +6818,7 @@ fn a_frame_taken_back_from_the_shelf_still_says_the_card() {
         &mut base,
         &mut shelf,
         (Some(a.clone()), None),
-        (&edit, 0, &|_| false),
+        (&edit, 0, &|_, _| false),
         None,
         None,
     );
@@ -6816,7 +6828,7 @@ fn a_frame_taken_back_from_the_shelf_still_says_the_card() {
         &mut base,
         &mut shelf,
         (Some(b), Some((&a, &Input::Raw(frame.clone())))),
-        (&edit, 0, &|_| false),
+        (&edit, 0, &|_, _| false),
         None,
         None,
     );
@@ -8511,7 +8523,7 @@ fn open_after(
         &mut base,
         shelf,
         (None, Some((&key, &input))),
-        (edit, turn, &|_| false),
+        (edit, turn, &|_, _| false),
         None,
         None,
     );

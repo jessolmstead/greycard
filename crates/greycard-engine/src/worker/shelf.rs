@@ -1057,7 +1057,7 @@ mod tests {
             &mut held,
             &mut shelf,
             (Some(file("b")), Some((&file("a"), &opened))),
-            (&edit, 0, &|_| false),
+            (&edit, 0, &|_, _| false),
             None,
             None,
         );
@@ -1070,7 +1070,7 @@ mod tests {
             &mut held,
             &mut shelf,
             (Some(file("a")), Some((&file("a"), &opened))),
-            (&edit, 0, &|_| false),
+            (&edit, 0, &|_, _| false),
             None,
             None,
         );
@@ -1082,7 +1082,7 @@ mod tests {
             &mut held,
             &mut shelf,
             (None, None),
-            (&edit, 0, &|_| false),
+            (&edit, 0, &|_, _| false),
             None,
             None,
         );

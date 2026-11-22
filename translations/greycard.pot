@@ -5173,8 +5173,8 @@ msgstr ""
 
 #: crates/greycard-ui/src/panel/browser.rs:889
 #: crates/greycard-ui/src/panel/cull.rs:446
-#: crates/greycard-ui/src/panel/deliver.rs:1662
-#: crates/greycard-ui/src/panel/deliver.rs:1696
+#: crates/greycard-ui/src/panel/deliver.rs:1661
+#: crates/greycard-ui/src/panel/deliver.rs:1695
 #: crates/greycard-ui/src/panel/edit.rs:480
 #: crates/greycard-ui/src/panel/edit.rs:1276
 #: crates/greycard-ui/src/panel/history.rs:473
@@ -5830,230 +5830,226 @@ msgstr ""
 msgid "developing... the highlight fill is at work"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:497
-msgid "learned: not on X-Trans yet"
-msgstr ""
-
 #. WORDING PENDING the user's approval.
-#: crates/greycard-ui/src/panel/deliver.rs:500
+#: crates/greycard-ui/src/panel/deliver.rs:498
 msgid "learned: not on this graphics card"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:694
+#: crates/greycard-ui/src/panel/deliver.rs:691
 msgid "{bits}-bit {kind} read as {space}; already rendered"
 msgstr ""
 
 #. Export status: the picture's kind when its file has no extension
-#: crates/greycard-ui/src/panel/deliver.rs:702
+#: crates/greycard-ui/src/panel/deliver.rs:699
 msgid "picture"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:872
+#: crates/greycard-ui/src/panel/deliver.rs:870
 msgid "the engine's denoise until the model is fetched"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:877
+#: crates/greycard-ui/src/panel/deliver.rs:875
 msgid "the engine's denoise: the learned one failed ({message})"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:882
+#: crates/greycard-ui/src/panel/deliver.rs:880
 msgid "no denoise: {why}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:890
+#: crates/greycard-ui/src/panel/deliver.rs:888
 msgid "{names} left as it was until the fill model is fetched"
 msgid_plural "{names} left as they were until the fill model is fetched"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:926
+#: crates/greycard-ui/src/panel/deliver.rs:924
 msgid "{name} left as it was: the remove needs a GPU"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:937
+#: crates/greycard-ui/src/panel/deliver.rs:935
 msgid "{name} left as it was: the fill model failed ({why})"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1089
+#: crates/greycard-ui/src/panel/deliver.rs:1087
 msgid "developing... the fill model is at work on {name}, {at} of {of}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1096
+#: crates/greycard-ui/src/panel/deliver.rs:1094
 msgid "developing... the fill model is at work on {name}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1123
+#: crates/greycard-ui/src/panel/deliver.rs:1121
 msgid "failed: {message}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1242
+#: crates/greycard-ui/src/panel/deliver.rs:1240
 msgid "{name} found on {provider} in {seconds} s"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1309
+#: crates/greycard-ui/src/panel/deliver.rs:1307
 msgid "mask: {message}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1326
+#: crates/greycard-ui/src/panel/deliver.rs:1324
 msgid "downloading {name}: {done} of {total} MB"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1341
+#: crates/greycard-ui/src/panel/deliver.rs:1339
 msgid "{name} is ready"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1386
+#: crates/greycard-ui/src/panel/deliver.rs:1384
 msgid "{name} is ready: the AI features run on the CPU, slower"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1442
+#: crates/greycard-ui/src/panel/deliver.rs:1440
 msgid "downloading the lens profiles: {done} of {total} KB"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1485
+#: crates/greycard-ui/src/panel/deliver.rs:1483
 msgid "the lens profiles are ready"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1515
+#: crates/greycard-ui/src/panel/deliver.rs:1513
 msgid "the lens profiles could not be fetched: {message}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1577
+#: crates/greycard-ui/src/panel/deliver.rs:1575
 msgid "{name} is there already: nothing exported"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1819
+#: crates/greycard-ui/src/panel/deliver.rs:1818
 msgid " ({note})"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1825
+#: crates/greycard-ui/src/panel/deliver.rs:1824
 msgid ", without {what}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1829
+#: crates/greycard-ui/src/panel/deliver.rs:1828
 msgid "exported {name} in {seconds} s{said}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:1840
+#: crates/greycard-ui/src/panel/deliver.rs:1839
 msgid "one thing the edit names that this machine has not got (see the log)"
 msgid_plural ""
 "{n} things the edit names that this machine has not got (see the log)"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2000
+#: crates/greycard-ui/src/panel/deliver.rs:1999
 msgid "nothing to export"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2042
+#: crates/greycard-ui/src/panel/deliver.rs:2041
 msgid "exporting {n} frame..."
 msgid_plural "exporting {n} frames..."
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2091
+#: crates/greycard-ui/src/panel/deliver.rs:2090
 msgid "{name} is there already"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2092
+#: crates/greycard-ui/src/panel/deliver.rs:2091
 msgid "{n} file is there already"
 msgid_plural "{n} files are there already"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2102
+#: crates/greycard-ui/src/panel/deliver.rs:2101
 msgid "{title}: overwrite?"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2124
+#: crates/greycard-ui/src/panel/deliver.rs:2123
 msgid "export canceled"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2150
+#: crates/greycard-ui/src/panel/deliver.rs:2149
 msgid " beside each original"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2231
+#: crates/greycard-ui/src/panel/deliver.rs:2230
 msgid "Export to a folder"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2263
+#: crates/greycard-ui/src/panel/deliver.rs:2262
 #: crates/greycard-ui/src/panel/export_queue.rs:504
 msgid "{folder} is not there"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2264
+#: crates/greycard-ui/src/panel/deliver.rs:2263
 msgid "{folder} is not a folder"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2283
+#: crates/greycard-ui/src/panel/deliver.rs:2282
 #: crates/greycard-ui/src/sidecars.rs:243
 msgid "{folder} cannot be written to"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2353
+#: crates/greycard-ui/src/panel/deliver.rs:2352
 msgid "choosing the folder exports go to..."
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2367
+#: crates/greycard-ui/src/panel/deliver.rs:2366
 msgid "exports go to {folder}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2369
+#: crates/greycard-ui/src/panel/deliver.rs:2368
 msgid "the export folder is as it was"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2377
+#: crates/greycard-ui/src/panel/deliver.rs:2376
 msgid "; the export waiting on {folder} was not started"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2409
+#: crates/greycard-ui/src/panel/deliver.rs:2408
 msgid "stopping the export after the frame in hand..."
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2480
+#: crates/greycard-ui/src/panel/deliver.rs:2479
 msgid "export preset {name}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2497
+#: crates/greycard-ui/src/panel/deliver.rs:2496
 msgid "{none} is the picker's; choose another name"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2509
+#: crates/greycard-ui/src/panel/deliver.rs:2508
 msgid "export preset {name} saved"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2534
+#: crates/greycard-ui/src/panel/deliver.rs:2533
 msgid "export preset {name} deleted"
 msgstr ""
 
 #. The frame on screen with a panel that is not its own (its
 #. root offline, its sidecar not read): nothing to export, and
 #. the worker's open picture is another frame's.
-#: crates/greycard-ui/src/panel/deliver.rs:2674
+#: crates/greycard-ui/src/panel/deliver.rs:2673
 msgid "nothing is exported"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2721
-#: crates/greycard-ui/src/panel/deliver.rs:2728
-#: crates/greycard-ui/src/panel/deliver.rs:2816
+#: crates/greycard-ui/src/panel/deliver.rs:2720
+#: crates/greycard-ui/src/panel/deliver.rs:2727
+#: crates/greycard-ui/src/panel/deliver.rs:2815
 msgid "not exported: {why}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2764
+#: crates/greycard-ui/src/panel/deliver.rs:2763
 msgid "exporting to {folder}..."
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2796
+#: crates/greycard-ui/src/panel/deliver.rs:2795
 #: crates/greycard-ui/src/panel/edit_in.rs:361
 msgid "not exported: another export is under way"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2804
+#: crates/greycard-ui/src/panel/deliver.rs:2803
 msgid "{why}: choose another folder"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/deliver.rs:2821
+#: crates/greycard-ui/src/panel/deliver.rs:2820
 msgid "not exported: {why}; {failed}"
 msgstr ""
 
@@ -6944,22 +6940,23 @@ msgstr ""
 msgid "no learned denoise on this graphics card"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/merge.rs:736
-msgid "no learned denoise on X-Trans"
+#. WORDING PENDING the owner's sign-off.
+#: crates/greycard-ui/src/panel/merge.rs:737
+msgid "no learned denoise in an X-Trans merge"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/merge.rs:747
+#: crates/greycard-ui/src/panel/merge.rs:748
 msgid "not merged: {why}"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/merge.rs:757
+#: crates/greycard-ui/src/panel/merge.rs:758
 msgid "merged {n} frame into {name}"
 msgid_plural "merged {n} frames into {name}"
 msgstr[0] ""
 msgstr[1] ""
 
 #. The finished line, then why the learned denoise did not run.
-#: crates/greycard-ui/src/panel/merge.rs:762
+#: crates/greycard-ui/src/panel/merge.rs:763
 msgid "{line}; {why}"
 msgstr ""
 

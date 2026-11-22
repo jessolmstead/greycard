@@ -5198,8 +5198,8 @@ msgstr "カメラのJPEGあり、{}"
 
 #: crates/greycard-ui/src/panel/browser.rs:889
 #: crates/greycard-ui/src/panel/cull.rs:446
-#: crates/greycard-ui/src/panel/deliver.rs:1662
-#: crates/greycard-ui/src/panel/deliver.rs:1696
+#: crates/greycard-ui/src/panel/deliver.rs:1661
+#: crates/greycard-ui/src/panel/deliver.rs:1695
 #: crates/greycard-ui/src/panel/edit.rs:480
 #: crates/greycard-ui/src/panel/edit.rs:1276
 #: crates/greycard-ui/src/panel/history.rs:473
@@ -5845,226 +5845,222 @@ msgstr "{first}と{last}"
 msgid "developing... the highlight fill is at work"
 msgstr "現像中... ハイライト補完を処理中"
 
-#: crates/greycard-ui/src/panel/deliver.rs:497
-msgid "learned: not on X-Trans yet"
-msgstr "学習型：X-Transにはまだ非対応"
-
 #. WORDING PENDING the user's approval.
-#: crates/greycard-ui/src/panel/deliver.rs:500
+#: crates/greycard-ui/src/panel/deliver.rs:498
 msgid "learned: not on this graphics card"
 msgstr "学習型：このグラフィックカードでは使用不可"
 
-#: crates/greycard-ui/src/panel/deliver.rs:694
+#: crates/greycard-ui/src/panel/deliver.rs:691
 msgid "{bits}-bit {kind} read as {space}; already rendered"
 msgstr "{bits}ビットの{kind}を{space}として読み込み。レンダリング済み"
 
 #. Export status: the picture's kind when its file has no extension
-#: crates/greycard-ui/src/panel/deliver.rs:702
+#: crates/greycard-ui/src/panel/deliver.rs:699
 msgid "picture"
 msgstr "画像"
 
-#: crates/greycard-ui/src/panel/deliver.rs:872
+#: crates/greycard-ui/src/panel/deliver.rs:870
 msgid "the engine's denoise until the model is fetched"
 msgstr "モデルを取得するまではエンジンのノイズ除去"
 
-#: crates/greycard-ui/src/panel/deliver.rs:877
+#: crates/greycard-ui/src/panel/deliver.rs:875
 msgid "the engine's denoise: the learned one failed ({message})"
 msgstr "エンジンのノイズ除去：学習型が失敗しました（{message}）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:882
+#: crates/greycard-ui/src/panel/deliver.rs:880
 msgid "no denoise: {why}"
 msgstr "ノイズ除去なし：{why}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:890
+#: crates/greycard-ui/src/panel/deliver.rs:888
 msgid "{names} left as it was until the fill model is fetched"
 msgid_plural "{names} left as they were until the fill model is fetched"
 msgstr[0] "塗りつぶしモデルを取得するまで、{names}は元のままです"
 
-#: crates/greycard-ui/src/panel/deliver.rs:926
+#: crates/greycard-ui/src/panel/deliver.rs:924
 msgid "{name} left as it was: the remove needs a GPU"
 msgstr "{name}は元のまま：除去にはGPUが必要です"
 
-#: crates/greycard-ui/src/panel/deliver.rs:937
+#: crates/greycard-ui/src/panel/deliver.rs:935
 msgid "{name} left as it was: the fill model failed ({why})"
 msgstr "{name}は元のまま：塗りつぶしモデルが失敗しました（{why}）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1089
+#: crates/greycard-ui/src/panel/deliver.rs:1087
 msgid "developing... the fill model is at work on {name}, {at} of {of}"
 msgstr "現像中... 塗りつぶしモデルが{name}を処理中（{of}中{at}）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1096
+#: crates/greycard-ui/src/panel/deliver.rs:1094
 msgid "developing... the fill model is at work on {name}"
 msgstr "現像中... 塗りつぶしモデルが{name}を処理中"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1123
+#: crates/greycard-ui/src/panel/deliver.rs:1121
 msgid "failed: {message}"
 msgstr "失敗：{message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1242
+#: crates/greycard-ui/src/panel/deliver.rs:1240
 msgid "{name} found on {provider} in {seconds} s"
 msgstr "{provider}で{name}を検出（{seconds}秒）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1309
+#: crates/greycard-ui/src/panel/deliver.rs:1307
 msgid "mask: {message}"
 msgstr "マスク：{message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1326
+#: crates/greycard-ui/src/panel/deliver.rs:1324
 msgid "downloading {name}: {done} of {total} MB"
 msgstr "{name}をダウンロード中：{total} MB中{done} MB"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1341
+#: crates/greycard-ui/src/panel/deliver.rs:1339
 msgid "{name} is ready"
 msgstr "{name}の準備ができました"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1386
+#: crates/greycard-ui/src/panel/deliver.rs:1384
 msgid "{name} is ready: the AI features run on the CPU, slower"
 msgstr "{name}の準備ができました：AI機能はCPUで低速に動作します"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1442
+#: crates/greycard-ui/src/panel/deliver.rs:1440
 msgid "downloading the lens profiles: {done} of {total} KB"
 msgstr "レンズプロファイルをダウンロード中：{total} KB中{done} KB"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1485
+#: crates/greycard-ui/src/panel/deliver.rs:1483
 msgid "the lens profiles are ready"
 msgstr "レンズプロファイルの準備ができました"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1515
+#: crates/greycard-ui/src/panel/deliver.rs:1513
 msgid "the lens profiles could not be fetched: {message}"
 msgstr "レンズプロファイルを取得できませんでした：{message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1577
+#: crates/greycard-ui/src/panel/deliver.rs:1575
 msgid "{name} is there already: nothing exported"
 msgstr "{name}は既にあります：何も書き出していません"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1819
+#: crates/greycard-ui/src/panel/deliver.rs:1818
 msgid " ({note})"
 msgstr "（{note}）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1825
+#: crates/greycard-ui/src/panel/deliver.rs:1824
 msgid ", without {what}"
 msgstr "、{what}を除く"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1829
+#: crates/greycard-ui/src/panel/deliver.rs:1828
 msgid "exported {name} in {seconds} s{said}"
 msgstr "{name}を{seconds}秒で書き出しました{said}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1840
+#: crates/greycard-ui/src/panel/deliver.rs:1839
 msgid "one thing the edit names that this machine has not got (see the log)"
 msgid_plural ""
 "{n} things the edit names that this machine has not got (see the log)"
 msgstr[0] "編集で指定された、このコンピューターにないもの{n}件（ログを参照）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2000
+#: crates/greycard-ui/src/panel/deliver.rs:1999
 msgid "nothing to export"
 msgstr "書き出すものがありません"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2042
+#: crates/greycard-ui/src/panel/deliver.rs:2041
 msgid "exporting {n} frame..."
 msgid_plural "exporting {n} frames..."
 msgstr[0] "{n}枚を書き出し中..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2091
+#: crates/greycard-ui/src/panel/deliver.rs:2090
 msgid "{name} is there already"
 msgstr "{name}は既にあります"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2092
+#: crates/greycard-ui/src/panel/deliver.rs:2091
 msgid "{n} file is there already"
 msgid_plural "{n} files are there already"
 msgstr[0] "{n}個のファイルが既にあります"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2102
+#: crates/greycard-ui/src/panel/deliver.rs:2101
 msgid "{title}: overwrite?"
 msgstr "{title}：上書きしますか？"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2124
+#: crates/greycard-ui/src/panel/deliver.rs:2123
 msgid "export canceled"
 msgstr "書き出しをキャンセルしました"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2150
+#: crates/greycard-ui/src/panel/deliver.rs:2149
 msgid " beside each original"
 msgstr "（各元画像と同じ場所）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2231
+#: crates/greycard-ui/src/panel/deliver.rs:2230
 msgid "Export to a folder"
 msgstr "フォルダーに書き出し"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2263
+#: crates/greycard-ui/src/panel/deliver.rs:2262
 #: crates/greycard-ui/src/panel/export_queue.rs:504
 msgid "{folder} is not there"
 msgstr "{folder}がありません"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2264
+#: crates/greycard-ui/src/panel/deliver.rs:2263
 msgid "{folder} is not a folder"
 msgstr "{folder}はフォルダーではありません"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2283
+#: crates/greycard-ui/src/panel/deliver.rs:2282
 #: crates/greycard-ui/src/sidecars.rs:243
 msgid "{folder} cannot be written to"
 msgstr "{folder}に書き込めません"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2353
+#: crates/greycard-ui/src/panel/deliver.rs:2352
 msgid "choosing the folder exports go to..."
 msgstr "書き出し先のフォルダーを選択中..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2367
+#: crates/greycard-ui/src/panel/deliver.rs:2366
 msgid "exports go to {folder}"
 msgstr "書き出し先：{folder}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2369
+#: crates/greycard-ui/src/panel/deliver.rs:2368
 msgid "the export folder is as it was"
 msgstr "書き出し先のフォルダーは変更されていません"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2377
+#: crates/greycard-ui/src/panel/deliver.rs:2376
 msgid "; the export waiting on {folder} was not started"
 msgstr "。{folder}を待っていた書き出しは開始されませんでした"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2409
+#: crates/greycard-ui/src/panel/deliver.rs:2408
 msgid "stopping the export after the frame in hand..."
 msgstr "処理中の写真の後で書き出しを停止します..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2480
+#: crates/greycard-ui/src/panel/deliver.rs:2479
 msgid "export preset {name}"
 msgstr "書き出しプリセット「{name}」"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2497
+#: crates/greycard-ui/src/panel/deliver.rs:2496
 msgid "{none} is the picker's; choose another name"
 msgstr "「{none}」は選択肢用の名前です。別の名前を選んでください"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2509
+#: crates/greycard-ui/src/panel/deliver.rs:2508
 msgid "export preset {name} saved"
 msgstr "書き出しプリセット「{name}」を保存しました"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2534
+#: crates/greycard-ui/src/panel/deliver.rs:2533
 msgid "export preset {name} deleted"
 msgstr "書き出しプリセット「{name}」を削除しました"
 
 #. The frame on screen with a panel that is not its own (its
 #. root offline, its sidecar not read): nothing to export, and
 #. the worker's open picture is another frame's.
-#: crates/greycard-ui/src/panel/deliver.rs:2674
+#: crates/greycard-ui/src/panel/deliver.rs:2673
 msgid "nothing is exported"
 msgstr "何も書き出されません"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2721
-#: crates/greycard-ui/src/panel/deliver.rs:2728
-#: crates/greycard-ui/src/panel/deliver.rs:2816
+#: crates/greycard-ui/src/panel/deliver.rs:2720
+#: crates/greycard-ui/src/panel/deliver.rs:2727
+#: crates/greycard-ui/src/panel/deliver.rs:2815
 msgid "not exported: {why}"
 msgstr "書き出しませんでした：{why}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2764
+#: crates/greycard-ui/src/panel/deliver.rs:2763
 msgid "exporting to {folder}..."
 msgstr "{folder}に書き出し中..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2796
+#: crates/greycard-ui/src/panel/deliver.rs:2795
 #: crates/greycard-ui/src/panel/edit_in.rs:361
 msgid "not exported: another export is under way"
 msgstr "書き出しませんでした：別の書き出しが進行中です"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2804
+#: crates/greycard-ui/src/panel/deliver.rs:2803
 msgid "{why}: choose another folder"
 msgstr "{why}：別のフォルダーを選んでください"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2821
+#: crates/greycard-ui/src/panel/deliver.rs:2820
 msgid "not exported: {why}; {failed}"
 msgstr "書き出しませんでした：{why}。{failed}"
 
@@ -6969,21 +6965,23 @@ msgstr "合成中：ファイルを書き込んでいます"
 msgid "no learned denoise on this graphics card"
 msgstr "このグラフィックカードでは学習型ノイズ除去を使えません"
 
-#: crates/greycard-ui/src/panel/merge.rs:736
-msgid "no learned denoise on X-Trans"
+#. WORDING PENDING the owner's sign-off.
+#: crates/greycard-ui/src/panel/merge.rs:737
+#, fuzzy
+msgid "no learned denoise in an X-Trans merge"
 msgstr "X-Transでは学習型ノイズ除去を使えません"
 
-#: crates/greycard-ui/src/panel/merge.rs:747
+#: crates/greycard-ui/src/panel/merge.rs:748
 msgid "not merged: {why}"
 msgstr "合成しませんでした：{why}"
 
-#: crates/greycard-ui/src/panel/merge.rs:757
+#: crates/greycard-ui/src/panel/merge.rs:758
 msgid "merged {n} frame into {name}"
 msgid_plural "merged {n} frames into {name}"
 msgstr[0] "{n}枚を{name}に合成しました"
 
 #. The finished line, then why the learned denoise did not run.
-#: crates/greycard-ui/src/panel/merge.rs:762
+#: crates/greycard-ui/src/panel/merge.rs:763
 msgid "{line}; {why}"
 msgstr "{line}。{why}"
 
@@ -8805,3 +8803,6 @@ msgstr "確認中..."
 #: crates/greycard-ui/src/update.rs:415
 msgid "the release page is open in the browser: {url}"
 msgstr "ブラウザーでリリースページを開きました：{url}"
+
+#~ msgid "learned: not on X-Trans yet"
+#~ msgstr "学習型：X-Transにはまだ非対応"

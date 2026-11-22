@@ -203,7 +203,7 @@ impl LearnedSkipped {
     /// The CLI's note, and the log's.
     pub fn words(self) -> &'static str {
         match self {
-            Self::XTrans => "no learned denoise on X-Trans",
+            Self::XTrans => "no learned denoise in an X-Trans merge",
             Self::OffCard => "no learned denoise on this graphics card",
         }
     }
@@ -2169,7 +2169,7 @@ mod tests {
         );
         assert_eq!(
             LearnedSkipped::XTrans.words(),
-            "no learned denoise on X-Trans"
+            "no learned denoise in an X-Trans merge"
         );
     }
 

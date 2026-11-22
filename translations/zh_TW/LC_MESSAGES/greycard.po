@@ -5125,8 +5125,8 @@ msgstr "附相機 JPEG，{}"
 
 #: crates/greycard-ui/src/panel/browser.rs:889
 #: crates/greycard-ui/src/panel/cull.rs:446
-#: crates/greycard-ui/src/panel/deliver.rs:1662
-#: crates/greycard-ui/src/panel/deliver.rs:1696
+#: crates/greycard-ui/src/panel/deliver.rs:1661
+#: crates/greycard-ui/src/panel/deliver.rs:1695
 #: crates/greycard-ui/src/panel/edit.rs:480
 #: crates/greycard-ui/src/panel/edit.rs:1276
 #: crates/greycard-ui/src/panel/history.rs:473
@@ -5748,226 +5748,222 @@ msgstr "{first} 和 {last}"
 msgid "developing... the highlight fill is at work"
 msgstr "正在處理...亮部填補正在進行"
 
-#: crates/greycard-ui/src/panel/deliver.rs:497
-msgid "learned: not on X-Trans yet"
-msgstr "AI：暫不支援 X-Trans"
-
 #. WORDING PENDING the user's approval.
-#: crates/greycard-ui/src/panel/deliver.rs:500
+#: crates/greycard-ui/src/panel/deliver.rs:498
 msgid "learned: not on this graphics card"
 msgstr "AI：此顯示卡不支援"
 
-#: crates/greycard-ui/src/panel/deliver.rs:694
+#: crates/greycard-ui/src/panel/deliver.rs:691
 msgid "{bits}-bit {kind} read as {space}; already rendered"
 msgstr "{bits} 位元 {kind}，依 {space} 讀取；已經過處理"
 
 #. Export status: the picture's kind when its file has no extension
-#: crates/greycard-ui/src/panel/deliver.rs:702
+#: crates/greycard-ui/src/panel/deliver.rs:699
 msgid "picture"
 msgstr "影像"
 
-#: crates/greycard-ui/src/panel/deliver.rs:872
+#: crates/greycard-ui/src/panel/deliver.rs:870
 msgid "the engine's denoise until the model is fetched"
 msgstr "取得模型前，使用引擎內建的降噪"
 
-#: crates/greycard-ui/src/panel/deliver.rs:877
+#: crates/greycard-ui/src/panel/deliver.rs:875
 msgid "the engine's denoise: the learned one failed ({message})"
 msgstr "引擎內建的降噪：AI 降噪失敗（{message}）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:882
+#: crates/greycard-ui/src/panel/deliver.rs:880
 msgid "no denoise: {why}"
 msgstr "無降噪：{why}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:890
+#: crates/greycard-ui/src/panel/deliver.rs:888
 msgid "{names} left as it was until the fill model is fetched"
 msgid_plural "{names} left as they were until the fill model is fetched"
 msgstr[0] "取得填補模型前，{names} 保持原樣"
 
-#: crates/greycard-ui/src/panel/deliver.rs:926
+#: crates/greycard-ui/src/panel/deliver.rs:924
 msgid "{name} left as it was: the remove needs a GPU"
 msgstr "{name} 保持原樣：移除需要 GPU"
 
-#: crates/greycard-ui/src/panel/deliver.rs:937
+#: crates/greycard-ui/src/panel/deliver.rs:935
 msgid "{name} left as it was: the fill model failed ({why})"
 msgstr "{name} 保持原樣：填補模型失敗（{why}）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1089
+#: crates/greycard-ui/src/panel/deliver.rs:1087
 msgid "developing... the fill model is at work on {name}, {at} of {of}"
 msgstr "正在處理...填補模型正在處理 {name}，{at}/{of}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1096
+#: crates/greycard-ui/src/panel/deliver.rs:1094
 msgid "developing... the fill model is at work on {name}"
 msgstr "正在處理...填補模型正在處理 {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1123
+#: crates/greycard-ui/src/panel/deliver.rs:1121
 msgid "failed: {message}"
 msgstr "失敗：{message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1242
+#: crates/greycard-ui/src/panel/deliver.rs:1240
 msgid "{name} found on {provider} in {seconds} s"
 msgstr "在 {provider} 上找到 {name}，耗時 {seconds} s"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1309
+#: crates/greycard-ui/src/panel/deliver.rs:1307
 msgid "mask: {message}"
 msgstr "遮色片：{message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1326
+#: crates/greycard-ui/src/panel/deliver.rs:1324
 msgid "downloading {name}: {done} of {total} MB"
 msgstr "正在下載 {name}：{done}/{total} MB"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1341
+#: crates/greycard-ui/src/panel/deliver.rs:1339
 msgid "{name} is ready"
 msgstr "{name} 已就緒"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1386
+#: crates/greycard-ui/src/panel/deliver.rs:1384
 msgid "{name} is ready: the AI features run on the CPU, slower"
 msgstr "{name} 已就緒：AI 功能在 CPU 上執行，速度較慢"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1442
+#: crates/greycard-ui/src/panel/deliver.rs:1440
 msgid "downloading the lens profiles: {done} of {total} KB"
 msgstr "正在下載鏡頭描述檔：{done}/{total} KB"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1485
+#: crates/greycard-ui/src/panel/deliver.rs:1483
 msgid "the lens profiles are ready"
 msgstr "鏡頭描述檔已就緒"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1515
+#: crates/greycard-ui/src/panel/deliver.rs:1513
 msgid "the lens profiles could not be fetched: {message}"
 msgstr "無法取得鏡頭描述檔：{message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1577
+#: crates/greycard-ui/src/panel/deliver.rs:1575
 msgid "{name} is there already: nothing exported"
 msgstr "{name} 已存在：未匯出任何內容"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1819
+#: crates/greycard-ui/src/panel/deliver.rs:1818
 msgid " ({note})"
 msgstr "（{note}）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1825
+#: crates/greycard-ui/src/panel/deliver.rs:1824
 msgid ", without {what}"
 msgstr "，未使用{what}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1829
+#: crates/greycard-ui/src/panel/deliver.rs:1828
 msgid "exported {name} in {seconds} s{said}"
 msgstr "已匯出 {name}，耗時 {seconds} s{said}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1840
+#: crates/greycard-ui/src/panel/deliver.rs:1839
 msgid "one thing the edit names that this machine has not got (see the log)"
 msgid_plural ""
 "{n} things the edit names that this machine has not got (see the log)"
 msgstr[0] "編輯所指定的 {n} 項內容此電腦上沒有（見記錄檔）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2000
+#: crates/greycard-ui/src/panel/deliver.rs:1999
 msgid "nothing to export"
 msgstr "沒有可匯出的內容"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2042
+#: crates/greycard-ui/src/panel/deliver.rs:2041
 msgid "exporting {n} frame..."
 msgid_plural "exporting {n} frames..."
 msgstr[0] "正在匯出 {n} 張相片..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2091
+#: crates/greycard-ui/src/panel/deliver.rs:2090
 msgid "{name} is there already"
 msgstr "{name} 已存在"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2092
+#: crates/greycard-ui/src/panel/deliver.rs:2091
 msgid "{n} file is there already"
 msgid_plural "{n} files are there already"
 msgstr[0] "{n} 個檔案已存在"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2102
+#: crates/greycard-ui/src/panel/deliver.rs:2101
 msgid "{title}: overwrite?"
 msgstr "{title}：覆寫？"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2124
+#: crates/greycard-ui/src/panel/deliver.rs:2123
 msgid "export canceled"
 msgstr "已取消匯出"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2150
+#: crates/greycard-ui/src/panel/deliver.rs:2149
 msgid " beside each original"
 msgstr "，位於每張原始相片旁"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2231
+#: crates/greycard-ui/src/panel/deliver.rs:2230
 msgid "Export to a folder"
 msgstr "匯出到資料夾"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2263
+#: crates/greycard-ui/src/panel/deliver.rs:2262
 #: crates/greycard-ui/src/panel/export_queue.rs:504
 msgid "{folder} is not there"
 msgstr "{folder} 不存在"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2264
+#: crates/greycard-ui/src/panel/deliver.rs:2263
 msgid "{folder} is not a folder"
 msgstr "{folder} 不是資料夾"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2283
+#: crates/greycard-ui/src/panel/deliver.rs:2282
 #: crates/greycard-ui/src/sidecars.rs:243
 msgid "{folder} cannot be written to"
 msgstr "無法寫入 {folder}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2353
+#: crates/greycard-ui/src/panel/deliver.rs:2352
 msgid "choosing the folder exports go to..."
 msgstr "正在選擇匯出資料夾..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2367
+#: crates/greycard-ui/src/panel/deliver.rs:2366
 msgid "exports go to {folder}"
 msgstr "匯出到 {folder}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2369
+#: crates/greycard-ui/src/panel/deliver.rs:2368
 msgid "the export folder is as it was"
 msgstr "匯出資料夾未變更"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2377
+#: crates/greycard-ui/src/panel/deliver.rs:2376
 msgid "; the export waiting on {folder} was not started"
 msgstr "；等待 {folder} 的匯出未開始"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2409
+#: crates/greycard-ui/src/panel/deliver.rs:2408
 msgid "stopping the export after the frame in hand..."
 msgstr "完成目前相片後停止匯出..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2480
+#: crates/greycard-ui/src/panel/deliver.rs:2479
 msgid "export preset {name}"
 msgstr "匯出預設集 {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2497
+#: crates/greycard-ui/src/panel/deliver.rs:2496
 msgid "{none} is the picker's; choose another name"
 msgstr "{none} 是選擇器內建的名稱；請換一個名稱"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2509
+#: crates/greycard-ui/src/panel/deliver.rs:2508
 msgid "export preset {name} saved"
 msgstr "已儲存匯出預設集 {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2534
+#: crates/greycard-ui/src/panel/deliver.rs:2533
 msgid "export preset {name} deleted"
 msgstr "已刪除匯出預設集 {name}"
 
 #. The frame on screen with a panel that is not its own (its
 #. root offline, its sidecar not read): nothing to export, and
 #. the worker's open picture is another frame's.
-#: crates/greycard-ui/src/panel/deliver.rs:2674
+#: crates/greycard-ui/src/panel/deliver.rs:2673
 msgid "nothing is exported"
 msgstr "沒有匯出任何內容"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2721
-#: crates/greycard-ui/src/panel/deliver.rs:2728
-#: crates/greycard-ui/src/panel/deliver.rs:2816
+#: crates/greycard-ui/src/panel/deliver.rs:2720
+#: crates/greycard-ui/src/panel/deliver.rs:2727
+#: crates/greycard-ui/src/panel/deliver.rs:2815
 msgid "not exported: {why}"
 msgstr "未匯出：{why}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2764
+#: crates/greycard-ui/src/panel/deliver.rs:2763
 msgid "exporting to {folder}..."
 msgstr "正在匯出到 {folder}..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2796
+#: crates/greycard-ui/src/panel/deliver.rs:2795
 #: crates/greycard-ui/src/panel/edit_in.rs:361
 msgid "not exported: another export is under way"
 msgstr "未匯出：另一項匯出正在進行"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2804
+#: crates/greycard-ui/src/panel/deliver.rs:2803
 msgid "{why}: choose another folder"
 msgstr "{why}：請選擇其他資料夾"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2821
+#: crates/greycard-ui/src/panel/deliver.rs:2820
 msgid "not exported: {why}; {failed}"
 msgstr "未匯出：{why}；{failed}"
 
@@ -6841,21 +6837,23 @@ msgstr "正在合併：寫入檔案"
 msgid "no learned denoise on this graphics card"
 msgstr "此顯示卡不支援 AI 降噪"
 
-#: crates/greycard-ui/src/panel/merge.rs:736
-msgid "no learned denoise on X-Trans"
+#. WORDING PENDING the owner's sign-off.
+#: crates/greycard-ui/src/panel/merge.rs:737
+#, fuzzy
+msgid "no learned denoise in an X-Trans merge"
 msgstr "X-Trans 不支援 AI 降噪"
 
-#: crates/greycard-ui/src/panel/merge.rs:747
+#: crates/greycard-ui/src/panel/merge.rs:748
 msgid "not merged: {why}"
 msgstr "未合併：{why}"
 
-#: crates/greycard-ui/src/panel/merge.rs:757
+#: crates/greycard-ui/src/panel/merge.rs:758
 msgid "merged {n} frame into {name}"
 msgid_plural "merged {n} frames into {name}"
 msgstr[0] "已將 {n} 張相片合併為 {name}"
 
 #. The finished line, then why the learned denoise did not run.
-#: crates/greycard-ui/src/panel/merge.rs:762
+#: crates/greycard-ui/src/panel/merge.rs:763
 msgid "{line}; {why}"
 msgstr "{line}；{why}"
 
@@ -8643,3 +8641,6 @@ msgstr "正在檢查..."
 #: crates/greycard-ui/src/update.rs:415
 msgid "the release page is open in the browser: {url}"
 msgstr "已在瀏覽器中開啟發佈頁面：{url}"
+
+#~ msgid "learned: not on X-Trans yet"
+#~ msgstr "AI：暫不支援 X-Trans"

@@ -181,7 +181,8 @@ pub(crate) struct DevelopArgs {
     /// Demosaic and denoise with the learned model instead of the
     /// engine's own demosaic and profiled denoise: a tier from the
     /// model store (fast, balanced, best; see `greycard models
-    /// --fetch`) or a path to a model.
+    /// --fetch`), each a network for a Bayer raw and one for an X-Trans
+    /// raw, or a path to a model.
     /// Always run here at full blend; the editor's own sidecar
     /// starts a fresh file at a blend that follows its ISO (lower
     /// at base ISO, full from ISO 3200 up) and remembers whatever
@@ -464,13 +465,14 @@ fn greycard_edit_lens(
     lens
 }
 
-/// What to say when a tier is named but its model was never fetched:
-/// the way to get it is `greycard models`, not the editor's panel,
-/// since the machine asking may have no window at all.
-fn missing_tier_complaint(store: &greycard_ai::Store, name: &str) -> String {
-    let model = greycard_ai::denoiser(name).expect("a tier");
+/// What to say when a tier is named but its model for the frame's
+/// mosaic was never fetched: the way to get it is `greycard models`,
+/// not the editor's panel, since the machine asking may have no window
+/// at all. The tier's name fetches both its networks, Bayer and X-Trans.
+fn missing_tier_complaint(store: &greycard_ai::Store, model: &greycard_ai::Model) -> String {
+    let what = greycard_ai::tier_of(model).unwrap_or(model.id);
     format!(
-        "{} is not in {}; run `greycard models --fetch {name}` to get it ({} MB, {})",
+        "{} is not in {}; run `greycard models --fetch {what}` to get it ({} MB, {})",
         model.name,
         store.root().display(),
         megabytes(model.bytes()),
@@ -479,7 +481,9 @@ fn missing_tier_complaint(store: &greycard_ai::Store, name: &str) -> String {
 }
 
 /// The model for `--ai-denoise`: a registered tier from the model
-/// store, whose answers the disk cache keeps, or a path.
+/// store, whose answers the disk cache keeps, or a path. A tier is its
+/// Bayer network here; a frame's mosaic picks the network it runs, and
+/// whether the store has that one is asked there ([`develop_learned`]).
 fn denoiser_for(name: &str) -> Result<(PathBuf, Option<&'static greycard_ai::Model>)> {
     let Some(model) = greycard_ai::denoiser(name) else {
         // Not a tier, so a path; a mistyped tier would otherwise go
@@ -494,11 +498,6 @@ fn denoiser_for(name: &str) -> Result<(PathBuf, Option<&'static greycard_ai::Mod
         return Ok((path, None));
     };
     let store = greycard_ai::Store::user().context("finding the model store")?;
-    anyhow::ensure!(
-        store.have(model),
-        "{}",
-        missing_tier_complaint(&store, name)
-    );
     Ok((store.path(model, &model.files[0]), Some(model)))
 }
 
@@ -521,22 +520,27 @@ fn load_learned(
 }
 
 /// The engine's develop with the learned denoiser in place of the
-/// demosaic and the profiled denoise.
+/// demosaic and the profiled denoise: a tier's network for the frame's
+/// mosaic, Bayer or X-Trans, or the file named.
 fn develop_learned(
     frame: &RawFrame,
     settings: &DevelopSettings,
     (path, model): &(PathBuf, Option<&'static greycard_ai::Model>),
 ) -> Result<greycard_core::develop::Developed> {
-    // Before the model is loaded or the frame prepared: the network
-    // takes a 2x2 Bayer mosaic and nothing else.
+    // Before the model is loaded or the frame prepared: a tier has a
+    // network for a 2x2 Bayer mosaic and one for X-Trans, and nothing
+    // else.
+    let xtrans = matches!(&frame.layout, SensorLayout::Cfa(p) if p.is_xtrans());
     if let SensorLayout::Cfa(p) = &frame.layout
         && !greycard_core::develop::rcd::is_bayer(p)
+        && !xtrans
     {
         return Err(greycard_core::error::Error::Unsupported(format!(
-            "the learned denoiser takes a 2x2 Bayer mosaic, not a {p} one"
+            "the learned denoiser takes a 2x2 Bayer or an X-Trans mosaic, not a {p} one"
         ))
         .into());
     }
+    let model = model.map(|m| greycard_ai::for_mosaic(m, xtrans));
     let start = std::time::Instant::now();
     let providers = greycard_ai::Provider::available();
     // A registered tier goes through the store, so a provider's
@@ -551,7 +555,14 @@ fn develop_learned(
         Some(_) => Some(greycard_ai::Store::user().context("finding the model store")?),
         None => greycard_ai::Store::user().ok(),
     };
-    let mut denoiser = load_learned((path, *model), store.as_ref(), &providers)?;
+    let path = match (model, &store) {
+        (Some(m), Some(store)) => {
+            anyhow::ensure!(store.have(m), "{}", missing_tier_complaint(store, m));
+            store.path(m, &m.files[0])
+        }
+        _ => path.clone(),
+    };
+    let mut denoiser = load_learned((&path, model), store.as_ref(), &providers)?;
     tracing::info!(
         "learned denoiser {} on {} ({:.1} s to load)",
         denoiser.version(),
@@ -562,7 +573,7 @@ fn develop_learned(
     let pattern = prepared
         .pattern
         .as_ref()
-        .context("the learned denoiser needs a Bayer mosaic")?;
+        .context("the learned denoiser needs a mosaic")?;
     let noise = prepared
         .noise_model()
         .context("the learned denoiser needs the frame's noise model")?;
@@ -1092,7 +1103,7 @@ fn run_develop(
     if greycard_core::picture::is_picture_path(file) {
         if ai_denoise.is_some() {
             tracing::warn!(
-                "--ai-denoise needs a Bayer mosaic; {} is a picture already rendered, so it is ignored",
+                "--ai-denoise needs a mosaic; {} is a picture already rendered, so it is ignored",
                 file.display()
             );
         }
@@ -2108,12 +2119,21 @@ mod tests {
         assert!(complaint.contains("turbo"), "{complaint}");
         // The way out of a missing tier is the CLI's own, not a panel.
         let store = greycard_ai::Store::at(std::env::temp_dir().join("greycard-no-models"));
-        let missing = missing_tier_complaint(&store, "fast");
+        let missing = missing_tier_complaint(&store, &greycard_ai::DENOISE_FAST);
         assert!(
             missing.contains("greycard models --fetch fast"),
             "{missing}"
         );
         assert!(!missing.contains("panel"), "{missing}");
+        // An X-Trans tier is fetched by the tier's name too, which
+        // brings both its networks.
+        let x = &greycard_ai::DENOISE_XTRANS_FAST;
+        let missing = missing_tier_complaint(&store, x);
+        assert!(
+            missing.contains("greycard models --fetch fast"),
+            "{missing}"
+        );
+        assert!(missing.contains(x.name), "{missing}");
         // A file that is there is taken as a model of its own.
         let file = std::env::temp_dir().join(format!("greycard-cli-{}.onnx", std::process::id()));
         std::fs::write(&file, b"stands in for a model").unwrap();

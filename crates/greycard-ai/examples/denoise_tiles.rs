@@ -1,7 +1,8 @@
 //! The learned denoiser on a real frame at two tiles, to see what the
 //! smaller tile costs: `denoise_tiles RAW [TIER] [TILE_A TILE_B]` with
 //! `GREYCARD_MODELS` set to a store root holding the tier (`best`,
-//! the default, `balanced`, or `fast`). Runs the tier on WebGPU at
+//! the default, `balanced`, or `fast`), its network for the raw's
+//! mosaic, Bayer or X-Trans. Runs the tier on WebGPU at
 //! `TILE_A` and `TILE_B` (1024 and 512 by default) and prints each
 //! run's time, the two answers' largest difference and PSNR in the
 //! samples' units (white at 1), and what the editor would choose here.
@@ -54,7 +55,6 @@ fn main() {
         a.get(3).map_or(1024, |t| t.parse().expect("a tile")),
         a.get(4).map_or(512, |t| t.parse().expect("a tile")),
     ];
-    let model = greycard_ai::registry::denoiser(tier).expect("best, balanced, or fast");
     let store = Store::at(std::env::var_os("GREYCARD_MODELS").expect("GREYCARD_MODELS"));
 
     let unified = runtime::webgpu_unified();
@@ -75,7 +75,10 @@ fn main() {
 
     let frame = greycard_core::decode::decode_path(&a[1]).expect("the raw decodes");
     let prepared = prepare(&frame, &DevelopSettings::default(), true).expect("prepared");
-    let pattern = prepared.pattern.clone().expect("a Bayer mosaic");
+    let pattern = prepared.pattern.clone().expect("a mosaic");
+    // The tier's network for the frame's mosaic.
+    let model =
+        greycard_ai::denoiser_for(tier, pattern.is_xtrans()).expect("best, balanced, or fast");
     let noise = prepared.noise_model().expect("a noise model");
     // Opened by path, not through the store, so nothing is written to
     // the store's record of providers.

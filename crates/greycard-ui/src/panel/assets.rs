@@ -1834,7 +1834,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         tr!("without the GPU model the original Subject model is offered")
                     } else if model.id == greycard_ai::FILL.id {
                         tr!("without the model a fill is left as it was")
-                    } else if greycard_ai::DENOISERS.iter().any(|(_, m)| m.id == model.id) {
+                    } else if greycard_ai::tier_of(model).is_some() {
                         tr!("without the model the engine's own denoise stands in")
                     } else {
                         tr!("without the model the shape masks nothing")

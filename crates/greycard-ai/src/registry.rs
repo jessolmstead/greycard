@@ -580,6 +580,71 @@ pub const DENOISE_BEST: Model = Model {
     }],
 };
 
+/// The URL of an X-Trans tier's file `name`, published beside the
+/// Bayer tiers', at the commit of their upload.
+macro_rules! xtrans_url {
+    ($name:literal) => {
+        concat!(
+            "https://huggingface.co/jessolmstead/greycard-denoise/resolve/",
+            "39bced6dec9a9d61ff07b888d55c814fa3cc9064/",
+            $name
+        )
+    };
+}
+
+/// greycard's denoiser for Fujifilm's 6x6 X-Trans mosaic, the speed
+/// tier: v19's shape, warm-started from it, the mosaic at full
+/// resolution in (see [`crate::denoise`]). 1.2 M parameters.
+pub const DENOISE_XTRANS_FAST: Model = Model {
+    id: "greycard-denoise-xtrans-fast-1",
+    name: "greycard denoise for X-Trans, fast (xtrans-fast-1)",
+    purpose: "learned denoise and demosaic on X-Trans, the speed tier",
+    source: DENOISE_SOURCE,
+    license: DENOISE_LICENSE,
+    modified: None,
+    beside: None,
+    files: &[File {
+        name: "xtrans-fast.onnx",
+        url: xtrans_url!("xtrans-fast.onnx"),
+        bytes: 4_959_937,
+        sha256: "ee4100d7899ee523b73b4c1dcc874455d088969ef04484f3c6f7b3fd34a0138f",
+    }],
+};
+
+/// The X-Trans middle tier: v15's shape, 2.3 M parameters.
+pub const DENOISE_XTRANS_BALANCED: Model = Model {
+    id: "greycard-denoise-xtrans-balanced-1",
+    name: "greycard denoise for X-Trans, balanced (xtrans-balanced-1)",
+    purpose: "learned denoise and demosaic on X-Trans, the middle tier",
+    source: DENOISE_SOURCE,
+    license: DENOISE_LICENSE,
+    modified: None,
+    beside: None,
+    files: &[File {
+        name: "xtrans-balanced.onnx",
+        url: xtrans_url!("xtrans-balanced.onnx"),
+        bytes: 9_071_315,
+        sha256: "4e171a34abda0cfd2db683138e8b459b9ce3227b2ab494a361a4cf10cb271ed5",
+    }],
+};
+
+/// The X-Trans quality tier: v20's shape, 5.1 M parameters.
+pub const DENOISE_XTRANS_BEST: Model = Model {
+    id: "greycard-denoise-xtrans-best-1",
+    name: "greycard denoise for X-Trans, best (xtrans-best-1)",
+    purpose: "learned denoise and demosaic on X-Trans, the quality tier",
+    source: DENOISE_SOURCE,
+    license: DENOISE_LICENSE,
+    modified: None,
+    beside: None,
+    files: &[File {
+        name: "xtrans-best.onnx",
+        url: xtrans_url!("xtrans-best.onnx"),
+        bytes: 20_345_043,
+        sha256: "3b483e25841561db314c9f864df3c6179271a9c278f18bdf83e25d9ac02654f0",
+    }],
+};
+
 /// The fp16 copies of the denoiser tiers, which Core ML runs 1.4 to
 /// 2.5 times quicker on an M5 and within 0.01 stops of the fp32 file
 /// but in the deepest shadows (§481, §489). Made from the fp32 files
@@ -640,18 +705,53 @@ pub const MODELS: &[Model] = &[
     DENOISE_BEST,
     REMOVE,
     REMOVE_FAST,
+    DENOISE_XTRANS_FAST,
+    DENOISE_XTRANS_BALANCED,
+    DENOISE_XTRANS_BEST,
 ];
 
-/// The denoiser's tiers by the names an edit and the CLI use.
+/// The denoiser's tiers by the names an edit and the CLI use: the
+/// Bayer networks, what a tier is on any 2x2 mosaic.
 pub const DENOISERS: &[(&str, &Model)] = &[
     ("fast", &DENOISE_FAST),
     ("balanced", &DENOISE_BALANCED),
     ("best", &DENOISE_BEST),
 ];
 
-/// The denoiser tier called `name`, if there is one.
+/// The same tiers on Fujifilm's 6x6 X-Trans mosaic, whose network is
+/// its own ([`crate::denoise`]): an edit names the tier, and the
+/// frame's mosaic picks the network.
+pub const XTRANS_DENOISERS: &[(&str, &Model)] = &[
+    ("fast", &DENOISE_XTRANS_FAST),
+    ("balanced", &DENOISE_XTRANS_BALANCED),
+    ("best", &DENOISE_XTRANS_BEST),
+];
+
+/// The denoiser tier called `name`, if there is one: its Bayer network.
 pub fn denoiser(name: &str) -> Option<&'static Model> {
     DENOISERS.iter().find(|(n, _)| *n == name).map(|(_, m)| *m)
+}
+
+/// The tier called `name` for a frame's mosaic: its X-Trans network
+/// where `xtrans`, else its Bayer one ([`denoiser`]).
+pub fn denoiser_for(name: &str, xtrans: bool) -> Option<&'static Model> {
+    let tiers = if xtrans { XTRANS_DENOISERS } else { DENOISERS };
+    tiers.iter().find(|(n, _)| *n == name).map(|(_, m)| *m)
+}
+
+/// The tier `model` is, on the other mosaic where asked: `model`'s
+/// tier's X-Trans network where `xtrans`, its Bayer one where not;
+/// `model` itself where it is no tier.
+pub fn for_mosaic(model: &'static Model, xtrans: bool) -> &'static Model {
+    tier_of(model)
+        .and_then(|t| denoiser_for(t, xtrans))
+        .unwrap_or(model)
+}
+
+/// Whether `model` is an X-Trans tier, whose network takes the 6x6
+/// mosaic at full resolution rather than a packed 2x2 one.
+pub fn takes_xtrans(model: &Model) -> bool {
+    XTRANS_DENOISERS.iter().any(|(_, m)| m.id == model.id)
 }
 
 /// The registered model with this id, if there is one.
@@ -938,10 +1038,11 @@ pub fn runtime(id: &str) -> Option<&'static Runtime> {
     RUNTIMES.iter().find(|r| r.id == id)
 }
 
-/// The denoiser tier a model is, if it is one.
+/// The denoiser tier a model is, if it is one, on either mosaic.
 pub fn tier_of(model: &Model) -> Option<&'static str> {
     DENOISERS
         .iter()
+        .chain(XTRANS_DENOISERS)
         .find(|(_, m)| m.id == model.id)
         .map(|(n, _)| *n)
 }
@@ -1038,6 +1139,48 @@ mod tests {
         }
         assert!(tier_of(&SUBJECT).is_none());
         assert!(denoiser("off").is_none());
+    }
+
+    /// Each tier has an X-Trans network of its own under the same name,
+    /// in a store directory of its own, published beside the Bayer
+    /// tiers.
+    #[test]
+    fn each_tier_has_an_xtrans_network_of_its_own() {
+        let bayer_dir = DENOISE_FAST.files[0]
+            .url
+            .rsplit_once("/resolve/")
+            .unwrap()
+            .0;
+        for ((name, bayer), (x_name, xtrans)) in DENOISERS.iter().zip(XTRANS_DENOISERS) {
+            assert_eq!(name, x_name);
+            assert_eq!(denoiser_for(name, true).map(|m| m.id), Some(xtrans.id));
+            assert_eq!(denoiser_for(name, false).map(|m| m.id), Some(bayer.id));
+            assert_eq!(
+                denoiser(name).map(|m| m.id),
+                Some(bayer.id),
+                "a tier is Bayer's"
+            );
+            assert_eq!(tier_of(xtrans), Some(*name));
+            assert!(takes_xtrans(xtrans) && !takes_xtrans(bayer));
+            assert_eq!(for_mosaic(bayer, true).id, xtrans.id);
+            assert_eq!(for_mosaic(xtrans, false).id, bayer.id);
+            assert_eq!(for_mosaic(bayer, false).id, bayer.id);
+            assert_eq!(model(xtrans.id), Some(*xtrans), "in MODELS");
+            assert_eq!(xtrans.files.len(), 1, "a denoiser is one file");
+            assert_ne!(xtrans.dir(), bayer.dir());
+            assert!(DENOISERS.iter().all(|(_, m)| m.id != xtrans.id));
+            let f = xtrans.files[0];
+            assert!(DENOISERS.iter().all(|(_, m)| m.files[0].name != f.name));
+            assert_eq!(f.url.rsplit_once("/resolve/").unwrap().0, bayer_dir);
+            assert!(
+                !f.url.contains("/resolve/0000000000"),
+                "{name}: a placeholder commit"
+            );
+            assert!(core_ml_file(xtrans).is_none(), "no fp16 file yet");
+            assert!(xtrans.license_note().contains(f.sha256));
+        }
+        assert_eq!(for_mosaic(&SKY, true).id, SKY.id, "no tier, no other");
+        assert!(!takes_xtrans(&SKY));
     }
 
     #[test]
