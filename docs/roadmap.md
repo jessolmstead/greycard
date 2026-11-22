@@ -1344,6 +1344,9 @@ clears or a tester asks for it.
 #### User Requests
 
 - [ ] MIDI Controller support
+- [ ] A `{total}` token in the import's and the export's Name, for
+      "3 of 40", and renaming files already in the library by a
+      pattern (discussion 59)
 - [ ] An export color space "as shot": the camera's setting for a raw,
       the file's own profile for a picture (a pixls tester,
       2026-11-22)
