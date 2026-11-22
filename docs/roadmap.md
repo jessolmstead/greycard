@@ -7,6 +7,12 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The editor's window stops drawing on GNOME Wayland after
+      sitting covered on another monitor, while clicks go on being
+      handled, and comes back minutes later: winit 0.30 waits on a
+      frame callback mutter does not send. The log names the stall
+      (`window: a press ... no frame since`); the fix is winit's or
+      Slint's, and waits on a logged stall to report with
 - [ ] The Back up sheet says "N frames already there have newer
       sidecars here" for every sidecar-only item, also when the
       archive's edit is the newer one coming home, or a join

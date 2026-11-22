@@ -1186,6 +1186,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     }
                 }
                 slint::RenderingState::BeforeRendering => {
+                    crate::panel::stall::frame_drawn(std::time::Instant::now());
                     frames.1 += 1;
                     if frames.0.elapsed() >= FRAMES_COUNTED_OVER {
                         let (since, n, drawn, for_scopes) =
@@ -2719,6 +2720,10 @@ pub(crate) fn keep_choices(app: &App, state: &Rc<Shared>, choices: &Choices) -> 
     let (app_weak, state, choices) = (app.as_weak(), state.clone(), choices.clone());
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::Repeated, CHOICES_EVERY, move || {
+        // The stall watch's look, whoever holds the state.
+        if let Some(app) = app_weak.upgrade() {
+            crate::panel::stall::tick(&app);
+        }
         let (Some(app), Ok(mut st)) = (app_weak.upgrade(), state.try_borrow_mut()) else {
             return;
         };

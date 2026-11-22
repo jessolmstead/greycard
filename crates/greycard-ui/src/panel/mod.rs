@@ -45,6 +45,7 @@ pub(crate) mod side_buttons;
 pub(crate) mod sizes;
 pub(crate) mod sort;
 pub(crate) mod stacks;
+pub(crate) mod stall;
 pub(crate) mod startup;
 pub(crate) mod sync;
 pub(crate) mod time_shift;

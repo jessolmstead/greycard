@@ -17,6 +17,7 @@
 //! The same hook keeps the window's `menu-up` with Slint's own popups
 //! before each event goes on (`menu_up`), so a menu opened while a text
 //! box had the focus holds the step here and every surface's press.
+//! It also tells the stall watch (`stall`) what it hears.
 
 use slint::ComponentHandle;
 use slint::winit_030::EventResult;
@@ -39,6 +40,7 @@ impl SideButtons {
     /// window took and for that press's release.
     pub(crate) fn event(&mut self, app: &App, event: &WindowEvent) -> EventResult {
         menu_up(app);
+        heard(event);
         match event {
             WindowEvent::ModifiersChanged(m) => {
                 self.shift = m.state().shift_key();
@@ -92,13 +94,37 @@ impl SideButtons {
 /// has the answer as it stands; it lags a close only until the next
 /// event, and nothing reads it between.
 pub(crate) fn menu_up(app: &App) {
-    use slint::private_unstable_api::re_exports::{WindowInner, WindowKind};
-    let up = WindowInner::from_pub(app.window())
-        .active_popups()
-        .iter()
-        .any(|p| !matches!(p.window_kind, WindowKind::ToolTip));
+    let up = popups(app) > 0;
     if app.get_menu_up() != up {
         app.set_menu_up(up);
+    }
+}
+
+/// How many of Slint's popups are up on `app`'s window, tooltips not
+/// counting.
+pub(crate) fn popups(app: &App) -> usize {
+    use slint::private_unstable_api::re_exports::{WindowInner, WindowKind};
+    WindowInner::from_pub(app.window())
+        .active_popups()
+        .iter()
+        .filter(|p| !matches!(p.window_kind, WindowKind::ToolTip))
+        .count()
+}
+
+/// What the stall watch (`stall`) hears of the window's events: the
+/// presses, the redraws winit delivers, and the focus and occlusion.
+fn heard(event: &WindowEvent) {
+    use crate::panel::stall;
+    let now = std::time::Instant::now;
+    match event {
+        WindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            ..
+        } => stall::pressed(now()),
+        WindowEvent::RedrawRequested => stall::redraw_delivered(now()),
+        WindowEvent::Focused(on) => stall::focused(*on, now()),
+        WindowEvent::Occluded(on) => stall::occluded(*on, now()),
+        _ => {}
     }
 }
 
